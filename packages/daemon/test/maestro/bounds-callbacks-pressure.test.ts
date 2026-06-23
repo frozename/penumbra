@@ -1,6 +1,5 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, CapCheckWarn } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,18 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+
 import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
 
 const MAESTRO_AGENT: AgentDescriptor = {
   name: "claude-acp-sonnet",
@@ -41,18 +45,19 @@ function createTaskHarness(nowMs = 1_000): {
   const bus = new TaskEventBus();
   let currentNow = nowMs;
   const taskWriter = new TaskWriter(db, {
-    now: () => currentNow,
+    now: (): number => currentNow,
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name): AgentDescriptor | undefined =>
+      name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined,
   });
-  const sessions = new MaestroSessionWriter({ db, now: () => currentNow });
+  const sessions = new MaestroSessionWriter({ db, now: (): number => currentNow });
 
   return {
     db,
     bus,
     taskWriter,
     sessions,
-    setNowMs: (value) => {
+    setNowMs: (value: number): void => {
       currentNow = value;
     },
   };
@@ -109,10 +114,10 @@ test("pressure soft warn injects a warning and records an orchestrate_warning ev
       started_at: 0,
     });
 
-    const inject = mock(
-      async (_chainHandoffId: string, _msg: { role: "user"; text: string }) => {},
+    const inject = mock((_chainHandoffId: string, _msg: { role: "user"; text: string }) =>
+      Promise.resolve(),
     );
-    const chainCancel = mock(async (_chainHandoffId: string) => {});
+    const chainCancel = mock((_chainHandoffId: string) => Promise.resolve());
     const outcome: CapCheckWarn = {
       state: "warn",
       provider: "anthropic",
@@ -131,7 +136,7 @@ test("pressure soft warn injects a warning and records an orchestrate_warning ev
       injector: { inject },
       bus: harness.bus,
       chainCancel,
-      now: () => 8_500,
+      now: (): number => 8_500,
     });
 
     const session = harness.sessions.get(taskId);
@@ -191,9 +196,7 @@ test("pressure soft warn swallows injector errors and logs them", async () => {
     });
 
     const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
-    const inject = mock(async () => {
-      throw new Error("inject failed");
-    });
+    const inject = mock(() => Promise.reject(new Error("inject failed")));
     const outcome: CapCheckWarn = {
       state: "warn",
       provider: "anthropic",
@@ -211,14 +214,16 @@ test("pressure soft warn swallows injector errors and logs them", async () => {
       sessions: harness.sessions,
       injector: { inject },
       bus: harness.bus,
-      chainCancel: async () => {},
-      now: () => 8_500,
+      chainCancel: () => Promise.resolve(),
+      now: (): number => 8_500,
     });
 
     const session = harness.sessions.get(taskId);
     expect(session).toBeTruthy();
 
-    expect(() => callbacks.onPressureSoftWarn(session!, outcome)).not.toThrow();
+    expect(() => {
+      callbacks.onPressureSoftWarn(session!, outcome);
+    }).not.toThrow();
     await Bun.sleep(0);
 
     expect(errorSpy).toHaveBeenCalledTimes(1);

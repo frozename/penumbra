@@ -1,14 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+import { buildServices, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, mock, type Mock, test, vi } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
+
 import type { ExtraWorkerConfig } from "../../src/workers/config.js";
-import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
+
 import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
+import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
+import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
 
 try {
   if (process.platform === "darwin") {
@@ -26,17 +28,8 @@ type FakeSubprocess = {
   exited: Promise<number>;
   exit: (code: number, signal?: string | null) => void;
   kill: (signal: "SIGTERM" | "SIGKILL") => void;
-  stdout: null;
-  stderr: null;
-};
-
-type FakeReadableStream = {
-  getReader: () => {
-    read: () => Promise<{
-      done: boolean;
-      value?: Uint8Array;
-    }>;
-  };
+  stdout: ReadableStream<Uint8Array> | null;
+  stderr: ReadableStream<Uint8Array> | null;
 };
 
 type SpawnCall = {
@@ -48,11 +41,85 @@ type SpawnCall = {
   };
 };
 
+type TestLogFn = Mock<(...args: unknown[]) => void>;
+
+type TestLogger = Logger & {
+  info: TestLogFn;
+  warn: TestLogFn;
+  error: TestLogFn;
+  debug: TestLogFn;
+  trace: TestLogFn;
+  fatal: TestLogFn;
+  silent: TestLogFn;
+  child: Mock<() => TestLogger>;
+};
+
+type SupervisorStateProbe = {
+  pid: number | null;
+  proc: FakeSubprocess | null;
+};
+
+type SupervisorTestProbe = {
+  readonly states: Map<string, SupervisorStateProbe>;
+  readonly logDir: string;
+  pipeStreamToLog: (
+    stream: ReadableStream<Uint8Array> | null | undefined,
+    logPath: string,
+  ) => Promise<void>;
+  restartWorker: (nextExtra: ExtraWorkerConfig) => Promise<void>;
+  onProcessExit: (
+    extra: ExtraWorkerConfig,
+    proc: FakeSubprocess,
+    state: SupervisorStateProbe,
+  ) => Promise<void>;
+};
+
+type SupervisorHarness = {
+  supervisor: ExtraWorkerSupervisor;
+  spawnCalls: SpawnCall[];
+  processes: FakeSubprocess[];
+  spawn: Mock<(args: string[], options: SpawnCall["options"]) => FakeSubprocess>;
+  warnSpy: TestLogFn;
+  log: TestLogger;
+};
+
+function supervisorProbe(supervisor: ExtraWorkerSupervisor): SupervisorTestProbe {
+  // Tests intentionally probe private supervisor internals; keep that access typed here.
+  return supervisor as unknown as SupervisorTestProbe;
+}
+
+function createTestLogger(): TestLogger {
+  const log = {
+    info: mock(() => undefined),
+    warn: mock(() => undefined),
+    error: mock(() => undefined),
+    debug: mock(() => undefined),
+    trace: mock(() => undefined),
+    fatal: mock(() => undefined),
+    silent: mock(() => undefined),
+    child: mock(() => log),
+  } as unknown as TestLogger;
+  return log;
+}
+
+function parseHandoffCreateResponse(value: unknown): { handoff_id: string } {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("expected handoff response object");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.handoff_id !== "string") {
+    throw new Error("expected handoff_id");
+  }
+  return { handoff_id: record.handoff_id };
+}
+
 const homes: string[] = [];
 let previousHome: string | undefined;
 
 function flushPromises(): Promise<void> {
-  return new Promise((resolve) => queueMicrotask(resolve));
+  return new Promise((resolve) => {
+    queueMicrotask(resolve);
+  });
 }
 
 function tempServices(): Services {
@@ -70,7 +137,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-06-09T20:44:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return (): string => `e-${String(++n)}`;
     })(),
   });
 }
@@ -104,7 +171,7 @@ function createFakeProcess(nextPid: () => number): FakeSubprocess {
     exit: (code: number, signal: string | null = null) => {
       if (proc.exitCode !== null) return;
       proc.exitCode = code;
-      if (signal != null) proc.signalCode = signal;
+      if (signal !== null) proc.signalCode = signal;
       exit(code);
     },
     kill: (signal: "SIGTERM" | "SIGKILL") => {
@@ -122,30 +189,23 @@ function createFakeProcess(nextPid: () => number): FakeSubprocess {
   return proc;
 }
 
-function createFailingStream(error: Error): FakeReadableStream {
-  return {
-    getReader: () => ({
-      read: async () => {
-        throw error;
-      },
-    }),
-  };
+function createFailingStream(error: Error): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller): void {
+      controller.error(error);
+    },
+  });
 }
 
-function createChunkedStream(chunks: Array<Uint8Array | string>): FakeReadableStream {
-  let index = 0;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (index >= chunks.length) return { done: true };
-        const value = chunks[index++];
-        return {
-          done: false,
-          value: typeof value === "string" ? new TextEncoder().encode(value) : value,
-        };
-      },
-    }),
-  };
+function createChunkedStream(chunks: (Uint8Array | string)[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller): void {
+      for (const chunk of chunks) {
+        controller.enqueue(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
+      }
+      controller.close();
+    },
+  });
 }
 
 function createSupervisor(
@@ -155,29 +215,23 @@ function createSupervisor(
     storageRoot?: string;
     spawnImpl?: (args: string[], options: SpawnCall["options"]) => FakeSubprocess;
   },
-) {
+): SupervisorHarness {
   const spawnCalls: SpawnCall[] = [];
   const processes: FakeSubprocess[] = [];
   let pidSeq = 1;
-  const spawnImpl = options?.spawnImpl ?? ((_args, _options) => createFakeProcess(() => pidSeq++));
-  const spawn = vi.fn((args: string[], options: SpawnCall["options"]) => {
+  const spawnImpl =
+    options?.spawnImpl ??
+    ((_args: string[], _options: SpawnCall["options"]): FakeSubprocess =>
+      createFakeProcess(() => pidSeq++));
+  const spawn = mock((args: string[], options: SpawnCall["options"]): FakeSubprocess => {
     const proc = spawnImpl(args, options);
     spawnCalls.push({ args, options });
     processes.push(proc);
     onSpawn?.(args, options, proc);
-    return proc as unknown as any;
+    return proc;
   });
-  const warnSpy = vi.fn();
-  const log: any = {
-    info: vi.fn(),
-    warn: warnSpy,
-    error: vi.fn(),
-    debug: vi.fn(),
-    trace: vi.fn(),
-    fatal: vi.fn(),
-    silent: vi.fn(),
-    child: () => log,
-  };
+  const log = createTestLogger();
+  const warnSpy = log.warn;
   const supervisor = new ExtraWorkerSupervisor({
     extras,
     storageRoot: options?.storageRoot ?? "/tmp/penumbra-storage",
@@ -249,7 +303,7 @@ describe("extra worker supervisor", () => {
     expect(spawnCalls).toHaveLength(2);
     expect(processes).toHaveLength(2);
     expect(processes[0]!.pid).not.toBe(processes[1]!.pid);
-    const states = (supervisor as any).states as Map<string, { pid: number | null }>;
+    const states = supervisorProbe(supervisor).states;
     expect(states.get("worker-a")?.pid).toBe(processes[0]!.pid);
     expect(states.get("worker-b")?.pid).toBe(processes[1]!.pid);
   });
@@ -488,12 +542,8 @@ describe("extra worker supervisor", () => {
         },
       ],
       (_args, _options, proc) => {
-        (proc as unknown as { stdout: FakeReadableStream }).stdout = createFailingStream(
-          new Error("reader failure"),
-        );
-        (proc as unknown as { stderr: FakeReadableStream }).stderr = createFailingStream(
-          new Error("reader failure"),
-        );
+        proc.stdout = createFailingStream(new Error("reader failure"));
+        proc.stderr = createFailingStream(new Error("reader failure"));
       },
     );
 
@@ -521,7 +571,7 @@ describe("extra worker supervisor", () => {
     const logPath = join(process.env.HOME!, "ordered.log");
     writeFileSync(logPath, "start");
 
-    await (supervisor as any).pipeStreamToLog(
+    await supervisorProbe(supervisor).pipeStreamToLog(
       createChunkedStream(["-one", "-two", "-three"]),
       logPath,
     );
@@ -544,7 +594,7 @@ describe("extra worker supervisor", () => {
     );
 
     await supervisor.start();
-    expect((supervisor as { logDir: string }).logDir).toBe(join(storageRoot, "workers"));
+    expect(supervisorProbe(supervisor).logDir).toBe(join(storageRoot, "workers"));
   });
 
   test("reconcile() adds extra workers", async () => {
@@ -850,17 +900,19 @@ describe("extra worker supervisor", () => {
       // means the gate let two passes interleave.
       let active = 0;
       let maxConcurrent = 0;
-      const originalRestartWorker = (supervisor as any).restartWorker.bind(supervisor);
-      (supervisor as any).restartWorker = async function (
-        ...args: Parameters<typeof originalRestartWorker>
-      ) {
+      const probe = supervisorProbe(supervisor);
+      const originalRestartWorker: SupervisorTestProbe["restartWorker"] =
+        probe.restartWorker.bind(supervisor);
+      probe.restartWorker = async (
+        ...args: Parameters<SupervisorTestProbe["restartWorker"]>
+      ): Promise<void> => {
         active += 1;
         maxConcurrent = Math.max(maxConcurrent, active);
         try {
           // Yield once so a concurrent caller, if let through, has a chance to
           // enter and bump `active` to 2 before we decrement.
           await flushPromises();
-          return await originalRestartWorker(...args);
+          await originalRestartWorker(...args);
         } finally {
           active -= 1;
         }
@@ -914,10 +966,11 @@ describe("extra worker supervisor", () => {
     const { supervisor, processes, log } = createSupervisor([
       { id: "worker-a", concurrency: 1, isolation: "shared" },
     ]);
-    const onProcessExit = vi.fn(async () => {
-      throw new Error("boom");
-    });
-    (supervisor as any).onProcessExit = onProcessExit;
+    const onProcessExit = mock(
+      (..._args: Parameters<SupervisorTestProbe["onProcessExit"]>): Promise<void> =>
+        Promise.reject(new Error("boom")),
+    );
+    supervisorProbe(supervisor).onProcessExit = onProcessExit;
 
     await supervisor.start();
     processes[0]!.exit(1);
@@ -940,54 +993,43 @@ describe("extra worker supervisor", () => {
     const supervisor = new ExtraWorkerSupervisor({
       extras: [{ id: "worker-a", concurrency: 1, isolation: "shared" }],
       storageRoot: "/tmp/penumbra-storage",
-      log: {
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-        debug: vi.fn(),
-        trace: vi.fn(),
-        fatal: vi.fn(),
-        silent: vi.fn(),
-        child: () => ({}) as any,
-      } as any,
-      spawn: (() => {
+      log: createTestLogger(),
+      spawn: ((): Mock<() => FakeSubprocess> => {
         let pid = 1;
         const proc = createFakeProcess(() => pid++);
-        return vi.fn(() => proc as any);
-      })() as any,
+        return mock((): FakeSubprocess => proc);
+      })(),
       orphanHandoffRecovery: recovery,
     });
 
-    const noStart = await (
-      await handoffsCreateRoute(
-        new Request("http://x", {
-          method: "POST",
-          body: JSON.stringify({
-            from: "a",
-            to: "b",
-            message: "m-1",
-            conversation_id: "c-1",
-            triggered_by_event_id: "e-1",
-          }),
+    const noStartResponse = await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m-1",
+          conversation_id: "c-1",
+          triggered_by_event_id: "e-1",
         }),
-        services,
-      )
-    ).json();
-    const started = await (
-      await handoffsCreateRoute(
-        new Request("http://x", {
-          method: "POST",
-          body: JSON.stringify({
-            from: "a",
-            to: "b",
-            message: "m-2",
-            conversation_id: "c-2",
-            triggered_by_event_id: "e-2",
-          }),
+      }),
+      services,
+    );
+    const noStart = parseHandoffCreateResponse(await noStartResponse.json());
+    const startedResponse = await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m-2",
+          conversation_id: "c-2",
+          triggered_by_event_id: "e-2",
         }),
-        services,
-      )
-    ).json();
+      }),
+      services,
+    );
+    const started = parseHandoffCreateResponse(await startedResponse.json());
 
     await handoffsApproveRoute(
       new Request("http://x", { method: "POST", body: "{}" }),
@@ -1012,7 +1054,9 @@ describe("extra worker supervisor", () => {
     });
 
     await supervisor.start();
-    const proc = (supervisor as any).states.get("worker-a").proc as FakeSubprocess;
+    const proc = supervisorProbe(supervisor).states.get("worker-a")?.proc;
+    expect(proc).toBeDefined();
+    if (!proc) throw new Error("expected worker process");
     proc.exit(1);
     await flushPromises();
     await flushPromises();

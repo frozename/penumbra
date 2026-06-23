@@ -1,12 +1,15 @@
-import { beforeEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, MaestroSessionWriter, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
 import { enforceMaestroBudget } from "../../src/maestro/chain-budget-gate.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    /* already loaded */
+  }
 }
 
 function setupDb(): Database {
@@ -105,7 +108,7 @@ let sessions: MaestroSessionWriter;
 
 beforeEach(() => {
   db = setupDb();
-  sessions = new MaestroSessionWriter({ db, now: () => 0 });
+  sessions = new MaestroSessionWriter({ db, now: (): number => 0 });
 });
 
 test("no parent_handoff_id returns ok", () => {
@@ -200,7 +203,9 @@ test("concurrent gate calls allow 10 and tolerate one over-the-line race", async
   expect(okCount).toBeGreaterThanOrEqual(10);
   expect(okCount).toBeLessThanOrEqual(11);
   expect(blocked.length).toBe(50 - okCount);
-  expect(blocked.every((r) => !r.ok && r.status === 429)).toBeTrue();
+  for (const blockedResult of blocked) {
+    expect(blockedResult).toMatchObject({ ok: false, status: 429 });
+  }
 
   const consumed = sessions.get("task-concurrent")?.sub_dispatches_consumed ?? 0;
   expect(consumed).toBeGreaterThanOrEqual(10);

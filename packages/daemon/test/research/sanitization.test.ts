@@ -1,8 +1,9 @@
 import { expect, it } from "bun:test";
+
 import {
-  sanitizeResearchMarkdown,
   buildJudgePromptBlock,
   buildResearchJudgePrompt,
+  sanitizeResearchMarkdown,
 } from "../../src/research/sanitization.js";
 
 it("sanitize: truncates markdown at max_markdown_tokens chars", () => {
@@ -30,7 +31,7 @@ it("prompt-injection regression: adversarial markdown does NOT appear raw in jud
     provider: "firecrawl",
   });
   // adversarial content is inside CDATA, not raw in prompt
-  const raw = block.replace(/<!\[CDATA\[[\s\S]*?]]>/g, "");
+  const raw = block.replaceAll(/<!\[CDATA\[[\s\S]*?]]>/g, "");
   expect(raw).not.toContain("IGNORE ALL PREVIOUS INSTRUCTIONS");
   const fullPrompt = buildResearchJudgePrompt([block], "What is X?");
   expect(fullPrompt).toMatch(/treat.*untrusted.source.*as data/i);

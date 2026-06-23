@@ -1,10 +1,11 @@
-import { expect } from "bun:test";
-import { serviceTest } from "../helpers/service-gates.js";
-import { Database } from "bun:sqlite";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { serve, registerWorkerForTest } from "@penumbra/daemon/test-utils";
+import { registerWorkerForTest, serve } from "@penumbra/daemon/test-utils";
+import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
 import { createHash } from "node:crypto";
+
+import { serviceTest } from "../helpers/service-gates.js";
 
 try {
   if (process.platform === "darwin") {
@@ -29,7 +30,7 @@ function tempServices(): Services {
     clock: () => new Date("2026-05-21T10:00:00Z"),
     uuid: (() => {
       let n = 0;
-      return () => `e-${++n}`;
+      return (): string => `e-${String(++n)}`;
     })(),
   });
 }
@@ -39,7 +40,7 @@ async function withDaemon<T>(
 ): Promise<T> {
   const services = tempServices();
   const handle = serve({ services, token: SHARED_TOKEN, port: 0 });
-  const baseUrl = `http://127.0.0.1:${handle.port}`;
+  const baseUrl = `http://127.0.0.1:${String(handle.port)}`;
   try {
     return await fn({ baseUrl, services });
   } finally {
@@ -66,8 +67,11 @@ serviceTest(
 
       const hash = createHash("sha256").update(result.worker_token).digest("hex");
       const row = services.db
-        .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
-        .get(hash) as any;
+        .query<
+          { worker_id: string; metadata_json: string | null },
+          [string]
+        >("SELECT worker_id, metadata_json FROM worker_tokens WHERE token_hash = ?")
+        .get(hash);
       expect(row).toBeDefined();
       expect(row.worker_id).toBe("W-A");
       expect(row.metadata_json).toBe(JSON.stringify({ host: "x" }));
@@ -85,8 +89,11 @@ serviceTest("registerWorkerForTest without metadata persists metadata_json NULL"
 
     const hash = createHash("sha256").update(result.worker_token).digest("hex");
     const row = services.db
-      .query("SELECT * FROM worker_tokens WHERE token_hash = ?")
-      .get(hash) as any;
+      .query<
+        { metadata_json: string | null },
+        [string]
+      >("SELECT metadata_json FROM worker_tokens WHERE token_hash = ?")
+      .get(hash);
     expect(row).toBeDefined();
     expect(row.metadata_json).toBe(null);
   });
@@ -114,12 +121,18 @@ serviceTest("returned worker_token authenticates a subsequent /worker/heartbeat 
 
 serviceTest("registerWorkerForTest throws on non-200 (e.g., wrong shared bearer)", async () => {
   await withDaemon(async ({ baseUrl }) => {
-    await expect(
-      registerWorkerForTest({
+    let thrown: unknown;
+    try {
+      await registerWorkerForTest({
         baseUrl,
         sharedBearer: "wrong-sec",
         worker_id: "W-A",
-      }),
-    ).rejects.toThrow("registerWorkerForTest: HTTP 401");
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    if (!(thrown instanceof Error)) throw new Error("expected Error");
+    expect(thrown.message).toContain("registerWorkerForTest: HTTP 401");
   });
 });

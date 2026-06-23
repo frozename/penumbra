@@ -1,6 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,21 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, test } from "bun:test";
+
 import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+type ChainStartResult = { handoff_id: string; conversation_id: string };
+type MaestroTerminateReason = Parameters<MaestroSessionWriter["terminate"]>[1];
 
 const DEFAULT_BOUNDS = {
   wall_clock_ms: 1_800_000,
@@ -35,6 +42,25 @@ const SECOND_AGENT: AgentDescriptor = {
   tags: ["typescript"],
   tier: "standard",
 };
+
+function resolveKnownAgent(name: string): AgentDescriptor | undefined {
+  return name === MAESTRO_AGENT.name
+    ? MAESTRO_AGENT
+    : name === SECOND_AGENT.name
+      ? SECOND_AGENT
+      : undefined;
+}
+
+function resolveMaestroAgent(name: string): AgentDescriptor | undefined {
+  return name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined;
+}
+
+function resolvedChainStartResult(
+  handoffId: string,
+  conversationId: string,
+): Promise<ChainStartResult> {
+  return Promise.resolve({ handoff_id: handoffId, conversation_id: conversationId });
+}
 
 function makeChainStartError(
   body: Record<string, unknown>,
@@ -57,7 +83,7 @@ function setupDb(): Database {
 
 async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 1000): Promise<void> {
   const started = Date.now();
-  while (true) {
+  for (;;) {
     try {
       await assertion();
       return;
@@ -70,7 +96,7 @@ async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 1000):
   }
 }
 
-afterEach(() => {
+afterEach((): Promise<void> => {
   // allow async iterator cleanup to settle between tests
   return Bun.sleep(5);
 });
@@ -81,12 +107,7 @@ test("spawn happy path: creates session, leases task, calls chainStart, and reco
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -95,16 +116,11 @@ test("spawn happy path: creates session, leases task, calls chainStart, and reco
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
+      return resolvedChainStartResult("handoff-1", "conv-1");
     },
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -182,8 +198,8 @@ async function dispatchLeasedOrchestrateTask(opts: {
     bus: opts.bus,
     sessions: opts.sessions,
     taskWriter: opts.taskWriter,
-    chainStart: async () => ({ handoff_id: "handoff-bk", conversation_id: "conv-bk" }),
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => resolvedChainStartResult("handoff-bk", "conv-bk"),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
     ...(opts.log ? { log: opts.log } : {}),
   });
@@ -210,13 +226,13 @@ function insertTerminalHandoff(db: Database, status: string): void {
   );
 }
 
-test("completion backstop: bounds per-tick batch and still reconciles remaining tasks on the next tick", async () => {
+test("completion backstop: bounds per-tick batch and still reconciles remaining tasks on the next tick", () => {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const reactor = createOrchestrateReactor({
@@ -224,8 +240,8 @@ test("completion backstop: bounds per-tick batch and still reconciles remaining 
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => ({ handoff_id: "handoff-batch", conversation_id: "conv-batch" }),
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => resolvedChainStartResult("handoff-batch", "conv-batch"),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -235,7 +251,7 @@ test("completion backstop: bounds per-tick batch and still reconciles remaining 
   const TOTAL = 501;
   const taskIds: string[] = [];
   for (let i = 0; i < TOTAL; i += 1) {
-    const id = `synthetic-task-${i}`;
+    const id = `synthetic-task-${String(i)}`;
     taskIds.push(id);
     db.run(
       `INSERT INTO tasks(id, kind, prompt, status, priority, created_by_kind, created_by_id, created_at, updated_at, eligibility, requires_review)
@@ -281,7 +297,7 @@ test("completion backstop: still-leased task whose chain completed is failed, no
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
@@ -324,7 +340,7 @@ test("completion backstop: still-leased task whose chain failed is failed with c
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
@@ -349,37 +365,39 @@ test("completion backstop: logs and retries recordTerminated failures", async ()
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const failOnce = new Error("terminate busy");
-  const originalTerminate = sessions.terminate.bind(sessions);
+  const originalTerminate: MaestroSessionWriter["terminate"] = sessions.terminate.bind(sessions);
   let terminateCalls = 0;
-  sessions.terminate = ((taskId, reason) => {
+  sessions.terminate = (taskId: string, reason: MaestroTerminateReason): void => {
     terminateCalls += 1;
     if (terminateCalls === 1) throw failOnce;
     originalTerminate(taskId, reason);
-  }) as MaestroSessionWriter["terminate"];
+  };
 
-  const warnCalls: Array<[Record<string, unknown>, string]> = [];
+  const warnCalls: [Record<string, unknown>, string][] = [];
   const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
     db,
     bus,
     sessions,
     taskWriter,
     log: {
-      warn: (obj, msg) => warnCalls.push([obj, msg]),
+      warn: (obj: Record<string, unknown>, msg: string): void => {
+        warnCalls.push([obj, msg]);
+      },
     },
   });
   const unhandled: unknown[] = [];
-  const onUnhandled = (reason: unknown) => {
+  const onUnhandled = (reason: unknown): void => {
     unhandled.push(reason);
   };
 
   insertTerminalHandoff(db, "completed");
   process.on("unhandledRejection", onUnhandled);
   try {
-    (reactor as ReturnType<typeof createOrchestrateReactor>).reconcileChainCompletions();
+    reactor.reconcileChainCompletions();
     await Bun.sleep(20);
 
     expect(unhandled).toEqual([]);
@@ -416,7 +434,7 @@ test("completion backstop: leaves a task the agent already self-completed untouc
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { reactor, task_id } = await dispatchLeasedOrchestrateTask({
@@ -446,12 +464,7 @@ test("pre-bound session with null chain_handoff_id dispatches using session.agen
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -460,16 +473,11 @@ test("pre-bound session with null chain_handoff_id dispatches using session.agen
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-prebound", conversation_id: "conv-prebound" };
+      return resolvedChainStartResult("handoff-prebound", "conv-prebound");
     },
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -512,12 +520,7 @@ test("pre-bound session with non-null chain_handoff_id short-circuits dispatch",
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -526,16 +529,11 @@ test("pre-bound session with non-null chain_handoff_id short-circuits dispatch",
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-ignored", conversation_id: "conv-ignored" };
+      return resolvedChainStartResult("handoff-ignored", "conv-ignored");
     },
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -577,7 +575,7 @@ test("idempotent on event replay: duplicate filed event does not create duplicat
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -586,11 +584,11 @@ test("idempotent on event replay: duplicate filed event does not create duplicat
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
+      return resolvedChainStartResult("handoff-1", "conv-1");
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -641,7 +639,7 @@ test("chainStart rejects: records orchestrate_terminated, no session, task remai
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const reactor = createOrchestrateReactor({
@@ -649,10 +647,8 @@ test("chainStart rejects: records orchestrate_terminated, no session, task remai
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => {
-      throw new Error("boom");
-    },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => Promise.reject(new Error("boom")),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -702,9 +698,9 @@ test("subscription_pressure_capped with future earliest_resets_at records orches
   const sessions = new MaestroSessionWriter({ db });
   const nowMs = new Date("2026-05-08T02:00:00Z").getTime();
   const taskWriter = new TaskWriter(db, {
-    now: () => nowMs,
+    now: (): number => nowMs,
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const reactor = createOrchestrateReactor({
@@ -712,19 +708,20 @@ test("subscription_pressure_capped with future earliest_resets_at records orches
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => {
-      throw makeChainStartError({
-        error: {
-          code: "subscription_pressure_capped",
-          provider: "openai",
-          window_label: "five_hour",
-          earliest_resets_at: nowMs + 60_000,
-        },
-      });
-    },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () =>
+      Promise.reject(
+        makeChainStartError({
+          error: {
+            code: "subscription_pressure_capped",
+            provider: "openai",
+            window_label: "five_hour",
+            earliest_resets_at: nowMs + 60_000,
+          },
+        }),
+      ),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
-    now: () => nowMs,
+    now: (): number => nowMs,
   });
   reactor.start();
 
@@ -783,7 +780,7 @@ test("subscription_pressure_capped with null earliest_resets_at records orchestr
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const reactor = createOrchestrateReactor({
@@ -791,17 +788,18 @@ test("subscription_pressure_capped with null earliest_resets_at records orchestr
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => {
-      throw makeChainStartError({
-        error: {
-          code: "subscription_pressure_capped",
-          provider: "openai",
-          window_label: "five_hour",
-          earliest_resets_at: null,
-        },
-      });
-    },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () =>
+      Promise.reject(
+        makeChainStartError({
+          error: {
+            code: "subscription_pressure_capped",
+            provider: "openai",
+            window_label: "five_hour",
+            earliest_resets_at: null,
+          },
+        }),
+      ),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -842,7 +840,7 @@ test("per-task bounds override defaults", async () => {
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const reactor = createOrchestrateReactor({
@@ -850,8 +848,8 @@ test("per-task bounds override defaults", async () => {
     bus,
     sessions,
     taskWriter,
-    chainStart: async () => ({ handoff_id: "handoff-2", conversation_id: "conv-2" }),
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => resolvedChainStartResult("handoff-2", "conv-2"),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -884,7 +882,7 @@ test("unknown agent in allow_agents: terminates without spawning", async () => {
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -893,9 +891,9 @@ test("unknown agent in allow_agents: terminates without spawning", async () => {
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-3", conversation_id: "conv-3" };
+      return resolvedChainStartResult("handoff-3", "conv-3");
     },
     resolveAgent: () => undefined,
     defaults: DEFAULT_BOUNDS,
@@ -948,7 +946,7 @@ test("non-orchestrate task is ignored", async () => {
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -957,11 +955,11 @@ test("non-orchestrate task is ignored", async () => {
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-4", conversation_id: "conv-4" };
+      return resolvedChainStartResult("handoff-4", "conv-4");
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();

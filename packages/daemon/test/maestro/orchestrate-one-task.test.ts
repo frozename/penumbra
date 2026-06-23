@@ -1,6 +1,5 @@
-import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
@@ -8,13 +7,20 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { orchestrateOneTask } from "../../src/maestro/orchestrate-one-task.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  /* already loaded */
+}
+
+type ChainStartResult = { handoff_id: string; conversation_id: string };
 
 const DEFAULT_BOUNDS = {
   wall_clock_ms: 1_800_000,
@@ -36,6 +42,36 @@ const SECOND_AGENT: AgentDescriptor = {
   tier: "standard",
 };
 
+function resolveKnownAgent(name: string): AgentDescriptor | undefined {
+  return name === MAESTRO_AGENT.name
+    ? MAESTRO_AGENT
+    : name === SECOND_AGENT.name
+      ? SECOND_AGENT
+      : undefined;
+}
+
+function resolveMaestroAgent(name: string): AgentDescriptor | undefined {
+  return name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined;
+}
+
+function resolvedChainStartResult(
+  handoffId: string,
+  conversationId: string,
+): Promise<ChainStartResult> {
+  return Promise.resolve({ handoff_id: handoffId, conversation_id: conversationId });
+}
+
+function createSessionsWithFailingStart(sessions: MaestroSessionWriter): MaestroSessionWriter {
+  const get: MaestroSessionWriter["get"] = (id) => sessions.get(id);
+  const start: MaestroSessionWriter["start"] = () => {
+    throw new Error("db_write_failure");
+  };
+  const markDispatched: MaestroSessionWriter["markDispatched"] = (id, handoffId) =>
+    sessions.markDispatched(id, handoffId);
+  const partial = { get, start, markDispatched };
+  return partial as unknown as MaestroSessionWriter;
+}
+
 function setupDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -49,12 +85,7 @@ test("orchestrateOneTask dispatches and creates session when no pre-bound sessio
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -70,16 +101,11 @@ test("orchestrateOneTask dispatches and creates session when no pre-bound sessio
     db,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
+      return resolvedChainStartResult("handoff-1", "conv-1");
     },
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -114,12 +140,7 @@ test("orchestrateOneTask dispatches a pre-bound session using session.agent_id",
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -142,16 +163,11 @@ test("orchestrateOneTask dispatches a pre-bound session using session.agent_id",
     db,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-prebound", conversation_id: "conv-prebound" };
+      return resolvedChainStartResult("handoff-prebound", "conv-prebound");
     },
-    resolveAgent: (name) =>
-      name === MAESTRO_AGENT.name
-        ? MAESTRO_AGENT
-        : name === SECOND_AGENT.name
-          ? SECOND_AGENT
-          : undefined,
+    resolveAgent: resolveKnownAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -174,7 +190,7 @@ test("orchestrateOneTask leases for the full wall-clock budget, not the 90s defa
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -189,8 +205,8 @@ test("orchestrateOneTask leases for the full wall-clock budget, not the 90s defa
     db,
     sessions,
     taskWriter,
-    chainStart: async () => ({ handoff_id: "handoff-ttl", conversation_id: "conv-ttl" }),
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => resolvedChainStartResult("handoff-ttl", "conv-ttl"),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -217,7 +233,7 @@ test("orchestrateOneTask: lease conflict short-circuits before chainStart is cal
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -239,11 +255,11 @@ test("orchestrateOneTask: lease conflict short-circuits before chainStart is cal
     db,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (req) => {
       chainStartCalls.push(req);
-      return { handoff_id: "should-not-happen", conversation_id: "should-not-happen" };
+      return resolvedChainStartResult("should-not-happen", "should-not-happen");
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -261,7 +277,7 @@ test("orchestrateOneTask: chainStart succeeds but sessions.start throws -> chain
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -277,22 +293,17 @@ test("orchestrateOneTask: chainStart succeeds but sessions.start throws -> chain
 
   const result = await orchestrateOneTask(task_id, {
     db,
-    sessions: {
-      get: (id) => sessions.get(id),
-      start: () => {
-        throw new Error("db_write_failure");
-      },
-      markDispatched: (id, hid) => sessions.markDispatched(id, hid),
-    } as unknown as MaestroSessionWriter,
+    sessions: createSessionsWithFailingStart(sessions),
     taskWriter,
-    chainStart: async () => {
+    chainStart: () => {
       chainStartCallCount++;
-      return { handoff_id: "orphan-chain-handoff", conversation_id: "conv-orphan" };
+      return resolvedChainStartResult("orphan-chain-handoff", "conv-orphan");
     },
-    chainCancel: async (handoff_id: string) => {
+    chainCancel: (handoff_id: string) => {
       cancelledHandoffs.push(handoff_id);
+      return Promise.resolve();
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -310,7 +321,7 @@ test("orchestrateOneTask: chainStart fails -> compensation commits all four writ
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -330,10 +341,8 @@ test("orchestrateOneTask: chainStart fails -> compensation commits all four writ
     db,
     sessions,
     taskWriter,
-    chainStart: async () => {
-      throw new Error("chain start blew up");
-    },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    chainStart: () => Promise.reject(new Error("chain start blew up")),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -366,7 +375,8 @@ test("orchestrateOneTask: chainStart fails -> compensation commits all four writ
     >(`SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'released'`)
     .get(task_id);
   expect(releasedEvent).not.toBeNull();
-  expect(JSON.parse(releasedEvent!.payload_json!).reason).toBe("chain_start_failed");
+  const releasedPayload = JSON.parse(releasedEvent!.payload_json!) as { reason?: string };
+  expect(releasedPayload.reason).toBe("chain_start_failed");
 
   db.close();
 });
@@ -377,7 +387,7 @@ test("orchestrateOneTask: mid-compensation failure rolls back all four writes", 
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
 
   const { task_id } = taskWriter.file({
@@ -396,15 +406,15 @@ test("orchestrateOneTask: mid-compensation failure rolls back all four writes", 
     db,
     sessions,
     taskWriter,
-    chainStart: async () => {
+    chainStart: () => {
       // Force the third compensation write (gh_outbox INSERT inside
       // enqueueGhStatusSyncOnDb) to throw by dropping the table after the
       // lease was acquired but before the catch block runs. The transaction
       // wrapping the four writes must then roll back the first two writes too.
       db.run(`DROP TABLE gh_outbox`);
-      throw new Error("chain start blew up");
+      return Promise.reject(new Error("chain start blew up"));
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
     defaults: DEFAULT_BOUNDS,
   });
 
@@ -438,7 +448,7 @@ test("orchestrateOneTask: mid-compensation failure rolls back all four writes", 
 test("orchestrateOneTask fails with unknown_agent when selected agent does not resolve", async () => {
   const db = setupDb();
   const taskWriter = new TaskWriter(db, {
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: resolveMaestroAgent,
   });
   const sessions = new MaestroSessionWriter({ db });
   const { task_id } = taskWriter.file({
@@ -453,10 +463,7 @@ test("orchestrateOneTask fails with unknown_agent when selected agent does not r
     db,
     sessions,
     taskWriter,
-    chainStart: async () => ({
-      handoff_id: "should-not-happen",
-      conversation_id: "should-not-happen",
-    }),
+    chainStart: () => resolvedChainStartResult("should-not-happen", "should-not-happen"),
     resolveAgent: () => undefined,
     defaults: DEFAULT_BOUNDS,
   });
