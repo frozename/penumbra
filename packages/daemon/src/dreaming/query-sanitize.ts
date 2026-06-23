@@ -11,8 +11,10 @@ export function sanitizeTitleForQuery(title: string): string | null {
     return null;
   }
 
-  if (/[\u0000-\u001f]/.test(trimmed)) {
-    return null;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    if (trimmed.charCodeAt(i) <= 0x1f) {
+      return null;
+    }
   }
 
   return trimmed;

@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
+
 import { retireNonDirectMemory } from "@penumbra/core";
+
 import type { DreamConfig } from "../config.js";
+
 import { detectT2Ephemera } from "./t2-ephemera-detector.js";
 
 function isEnvTruthy(value: string | undefined): boolean {
@@ -22,18 +25,18 @@ function readCursor(db: Database): string {
   return cursorRow?.value ?? "";
 }
 
-export async function runPC1Phase(
+export function runPC1Phase(
   db: Database,
   cycleId: string,
   config: DreamConfig,
   _deps: object,
-): Promise<void> {
+): void {
   const autoRetireEnabled = isEnvTruthy(process.env.PENUMBRA_PC1_AUTORETIRE);
-  const batchSize = config.pc1BatchSize ?? 100;
+  const batchSize = config.pc1BatchSize;
 
   const patternRows = db
     .prepare(`SELECT pattern FROM curator_ephemera_patterns WHERE status='approved' AND enabled=1`)
-    .all() as Array<{ pattern: string }>;
+    .all() as { pattern: string }[];
   const runtimePatterns = patternRows.map((r) => r.pattern);
 
   // F4: read cursor — default '' means start from beginning
@@ -45,12 +48,12 @@ export async function runPC1Phase(
        WHERE retired_at IS NULL AND memory_id > ?
        ORDER BY memory_id ASC LIMIT ?`,
     )
-    .all(cursor, batchSize + 1) as Array<{
+    .all(cursor, batchSize + 1) as {
     memory_id: string;
     title: string;
     body: string;
     kind: string;
-  }>;
+  }[];
   const page = memories.slice(0, batchSize);
 
   for (const mem of page) {
@@ -96,7 +99,9 @@ export async function runPC1Phase(
     return;
   }
 
-  const lastId = page[page.length - 1]!.memory_id;
+  const lastPage = page.at(-1);
+  if (!lastPage) return;
+  const lastId = lastPage.memory_id;
   const hasMore = memories.length > batchSize;
   upsertCursor(db, "pc1_memory_id", page.length < batchSize || !hasMore ? "" : lastId);
 }

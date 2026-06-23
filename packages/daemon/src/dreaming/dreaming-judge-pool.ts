@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
-import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
+
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
+
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 
 // Shared helper approach was considered but deferred: t2-judge-pool returns
 // T2MemoryExtraction[] while dreaming returns DreamingVoteRaw — the generic
@@ -24,6 +26,10 @@ interface DreamingVoteRaw {
   rationale: string;
 }
 
+interface ChatCompletionResponse {
+  choices?: { message?: { content?: string } }[];
+}
+
 export function buildDreamingPromptBlock({ body, kind }: { body: string; kind: string }): string {
   return `You are a memory quality judge deciding whether a candidate memory record should be promoted to long-term storage.
 
@@ -43,7 +49,7 @@ export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```[\s\S]*$/, "")
       .trim();
-    const match = stripped.match(/\{[\s\S]*\}/);
+    const match = /\{[\s\S]*\}/.exec(stripped);
     if (!match) throw new Error("no_json_object");
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
     return {
@@ -91,13 +97,15 @@ class DreamingJudgePoolImpl implements JudgePool {
         temperature: 0,
       }),
     };
-    if (judge.caPem) (init as any).tls = { ca: judge.caPem };
+    if (judge.caPem) init.tls = { ca: judge.caPem };
     const res = await this.fetchImpl(url, init);
     if (!res.ok) {
-      throw new Error(`dreaming judge ${judge.name} returned ${res.status}: ${await res.text()}`);
+      throw new Error(
+        `dreaming judge ${judge.name} returned ${String(res.status)}: ${await res.text()}`,
+      );
     }
-    const json = (await res.json()) as any;
-    const content: string = json.choices?.[0]?.message?.content ?? "";
+    const json = (await res.json()) as ChatCompletionResponse;
+    const content = json.choices?.[0]?.message?.content ?? "";
     return parseDreamingJudgeResponse(content);
   }
 
@@ -106,9 +114,16 @@ class DreamingJudgePoolImpl implements JudgePool {
     kind: "promote_t1" | "link" | "retire" | "rewrite";
   }): Promise<{ confidence: number; verdict: "yes" | "no" | "unsure"; rationale?: string }> {
     const prompt = buildDreamingPromptBlock(args);
-    const idx = this.nextIndex % this.judges.length;
-    this.nextIndex = (idx + 1) % this.judges.length;
-    const judge = this.judges[idx]!;
+    const judgeCount = this.judges.length;
+    if (judgeCount === 0) {
+      throw new Error("dreaming judge pool has no configured judges");
+    }
+    const idx = this.nextIndex % judgeCount;
+    this.nextIndex = (idx + 1) % judgeCount;
+    const judge = this.judges[idx];
+    if (!judge) {
+      throw new Error("dreaming judge pool index out of range");
+    }
     const raw = await this.callJudge(judge, prompt);
     return {
       confidence: raw.confidence,
@@ -122,7 +137,7 @@ class DreamingJudgePoolImpl implements JudgePool {
     kind: "promote_t1" | "link" | "retire" | "rewrite";
   }): Promise<JudgeVote[]> {
     const prompt = buildDreamingPromptBlock(args);
-    return Promise.all(
+    return await Promise.all(
       this.judges.map(async (judge): Promise<JudgeVote> => {
         try {
           const raw = await this.callJudge(judge, prompt);
@@ -159,26 +174,33 @@ export function createDreamingJudgePoolFromAgentchat(
   }
 
   const roleTag = process.env["PENUMBRA_DREAMING_JUDGE_ROLE"] ?? "dreaming-judge";
-  const eligible = (cfg.agents ?? []).filter(
+  const eligible = cfg.agents.filter(
     (agent) =>
       agent.adapter === "openai-compat-http" &&
       Array.isArray(agent.roles) &&
       agent.roles.includes(roleTag) &&
-      typeof agent.options?.["baseUrl"] === "string" &&
-      (agent.options["baseUrl"] as string).length > 0,
+      typeof agent.options.baseUrl === "string" &&
+      agent.options.baseUrl.length > 0,
   );
 
   // Require ≥2 agents: P1 auto-promote threshold is ceil(total*2/3) with
   // autoPromoteMinJudges=2 — a single judge can never reach quorum.
   if (eligible.length < 2) return null;
 
-  const judges: DreamingJudgeEntry[] = eligible.map((agent) => ({
-    name: agent.name,
-    baseUrl: agent.options["baseUrl"] as string,
-    apiKey: (agent.options["apiKey"] as string | undefined) ?? "",
-    model: (agent.options["model"] as string | undefined) ?? "local",
-    caPath: agent.options["caPath"] as string | undefined,
-  }));
+  const judges: DreamingJudgeEntry[] = [];
+  for (const agent of eligible) {
+    const baseUrl = agent.options.baseUrl;
+    if (!baseUrl) continue;
+    judges.push({
+      name: agent.name,
+      baseUrl,
+      apiKey: agent.options.apiKey ?? "",
+      model: agent.options.model ?? "local",
+      caPath: agent.options.caPath,
+    });
+  }
+
+  if (judges.length < 2) return null;
 
   return new DreamingJudgePoolImpl(judges, fetchImpl);
 }

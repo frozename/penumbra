@@ -26,11 +26,11 @@ const W_AGE = 0.05;
 // signalling the memory should be retired.
 const FACTOR_AGREE_CUTOFF = 0.7;
 
-export async function computeRetireScore(
+export function computeRetireScore(
   factors: RetireFactors,
   _judgePool: VaguenessJudge,
   threshold = 0.85,
-): Promise<RetireScore> {
+): RetireScore {
   const composite =
     W_RECALL * factors.recall_freq_penalty +
     W_VAGUENESS * factors.judge_vagueness_score +

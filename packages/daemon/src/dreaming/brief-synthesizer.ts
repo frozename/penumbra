@@ -1,15 +1,16 @@
 import { readFileSync } from "node:fs";
+
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 
 export interface BriefSynthesizerInput {
   project_id: string;
-  recent_memories: Array<{
+  recent_memories: {
     memory_id: string;
     kind: string;
     title: string;
     body: string;
     created_at: string;
-  }>;
+  }[];
   prior_brief?: string;
 }
 
@@ -29,6 +30,10 @@ interface BriefSynthesizerEntry {
 
 type BriefSynthesizerState = BriefSynthesizerEntry & { caPem?: string };
 
+interface ChatCompletionResponse {
+  choices?: { message?: { content?: string } }[];
+}
+
 const PUBLIC_API_HOSTS = [
   "api.anthropic.com",
   "api.openai.com",
@@ -46,7 +51,7 @@ function isPublicEndpoint(baseUrl: string): boolean {
 
 export function buildBriefPrompt(input: BriefSynthesizerInput): string {
   const memorySection = input.recent_memories
-    .map((m, i) => `### Memory ${i + 1} [${m.kind}] — ${m.title}\n${m.body}`)
+    .map((m, i) => `### Memory ${String(i + 1)} [${m.kind}] — ${m.title}\n${m.body}`)
     .join("\n\n");
 
   const priorSection = input.prior_brief
@@ -110,31 +115,36 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
         temperature: 0.3,
       }),
     };
-    if (agent.caPem) (init as any).tls = { ca: agent.caPem };
+    if (agent.caPem) init.tls = { ca: agent.caPem };
     const res = await this.fetchImpl(url, init);
     if (!res.ok) {
       throw new Error(
-        `brief synthesizer ${agent.name} returned ${res.status}: ${await res.text()}`,
+        `brief synthesizer ${agent.name} returned ${String(res.status)}: ${await res.text()}`,
       );
     }
-    const json = (await res.json()) as any;
-    const rawContent: string = json.choices?.[0]?.message?.content ?? "";
+    const json = (await res.json()) as ChatCompletionResponse;
+    const rawContent = json.choices?.[0]?.message?.content ?? "";
     return parseSynthesizerResponse(rawContent);
   }
 
   async synthesize(
     input: BriefSynthesizerInput,
   ): Promise<{ markdown: string; source_memory_ids: string[] }> {
+    const agentCount = this.agents.length;
+    if (agentCount === 0) {
+      throw new Error("brief synthesizer has no configured agents");
+    }
     const prompt = buildBriefPrompt(input);
-    const start = this.nextIndex % this.agents.length;
-    this.nextIndex = (start + 1) % this.agents.length;
+    const start = this.nextIndex % agentCount;
+    this.nextIndex = (start + 1) % agentCount;
     // Try the round-robin pick first, then fail over to the remaining agents in
     // order. A single down seat (e.g. an unreachable local MLX endpoint) must not
     // degrade the brief to a stub when a healthy sibling is one retry away — only
     // throw (caller falls back to stub) when EVERY seat fails.
     const errors: string[] = [];
-    for (let i = 0; i < this.agents.length; i += 1) {
-      const agent = this.agents[(start + i) % this.agents.length]!;
+    for (let i = 0; i < agentCount; i += 1) {
+      const agent = this.agents[(start + i) % agentCount];
+      if (!agent) continue;
       try {
         const markdown = await this.callAgent(agent, prompt);
         return {
@@ -165,7 +175,7 @@ export function createBriefSynthesizerFromAgentchat(
   try {
     cfg = loadAgentChatConfig();
   } catch (err) {
-    services?.log?.warn?.(
+    services?.log?.warn(
       { err, configDir },
       "dreaming: failed to load agentchat config for brief synthesizer",
     );
@@ -173,13 +183,13 @@ export function createBriefSynthesizerFromAgentchat(
   }
 
   const roleTag = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE"] ?? "brief-synthesizer";
-  const eligible = (cfg.agents ?? []).filter(
+  const eligible = cfg.agents.filter(
     (agent) =>
       agent.adapter === "openai-compat-http" &&
       Array.isArray(agent.roles) &&
       agent.roles.includes(roleTag) &&
-      typeof agent.options?.["baseUrl"] === "string" &&
-      (agent.options["baseUrl"] as string).length > 0,
+      typeof agent.options.baseUrl === "string" &&
+      agent.options.baseUrl.length > 0,
   );
 
   if (eligible.length === 0) return null;
@@ -187,9 +197,10 @@ export function createBriefSynthesizerFromAgentchat(
   const allowPublic = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC"] === "1";
   const agents: BriefSynthesizerEntry[] = [];
   for (const agent of eligible) {
-    const baseUrl = agent.options["baseUrl"] as string;
+    const baseUrl = agent.options.baseUrl;
+    if (!baseUrl) continue;
     if (isPublicEndpoint(baseUrl) && !allowPublic) {
-      services?.log?.warn?.(
+      services?.log?.warn(
         { agent: agent.name, baseUrl },
         "dreaming: brief synthesizer endpoint is a public API — skipping to protect memory privacy. Set PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC=1 to override.",
       );
@@ -198,9 +209,9 @@ export function createBriefSynthesizerFromAgentchat(
     agents.push({
       name: agent.name,
       baseUrl,
-      apiKey: (agent.options["apiKey"] as string | undefined) ?? "",
-      model: (agent.options["model"] as string | undefined) ?? "local",
-      caPath: agent.options["caPath"] as string | undefined,
+      apiKey: agent.options.apiKey ?? "",
+      model: agent.options.model ?? "local",
+      caPath: agent.options.caPath,
     });
   }
 

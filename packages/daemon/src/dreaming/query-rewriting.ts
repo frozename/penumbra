@@ -38,7 +38,7 @@ export const INTERNAL_TERMS_SEED = [
 ] as const;
 
 const COMMIT_PREFIX_RE =
-  /^(feat|fix|refactor|chore|docs|test|perf|style|build|ci|revert)(\([^)]*\))?:/i;
+  /^(?:feat|fix|refactor|chore|docs|test|perf|style|build|ci|revert)(?:\([^)]*\))?:/i;
 
 const STOP_WORDS = new Set([
   "a",
@@ -90,9 +90,9 @@ function isCodeIdentifier(title: string): boolean {
     const underscoreCount = (token.match(/_/g) ?? []).length;
     if (underscoreCount >= 2) return true;
     if (underscoreCount === 1 && token.length >= 10) return true;
-    if (/^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$/.test(token) && token.length >= 8) return true;
+    if (/^[a-z][\da-z]*[A-Z][\dA-Za-z]*$/.test(token) && token.length >= 8) return true;
     if (token.includes("::") && token.length >= 4) return true;
-    if (/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/i.test(token)) return true;
+    if (/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}$/i.test(token)) return true;
     return false;
   });
 }
@@ -121,7 +121,7 @@ function hasInternalJargon(title: string): boolean {
       continue;
     }
 
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = term.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`(?:^|[^a-z0-9_])${escaped}(?:[^a-z0-9_]|$)`);
     if (pattern.test(normalizedTitle)) return true;
   }

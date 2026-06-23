@@ -49,7 +49,7 @@ function normalizeQueryTerms(query: string): string[] {
 
 function countMarkdownLinks(markdown: string): number {
   const markdownLinks = markdown.match(/\[[^\]]+\]\([^)]+\)/g)?.length ?? 0;
-  const bareUrls = markdown.match(/https?:\/\/[^\s\]\)]+/g)?.length ?? 0;
+  const bareUrls = markdown.match(/https?:\/\/[^\s\])]+/g)?.length ?? 0;
   return markdownLinks + bareUrls;
 }
 
@@ -64,7 +64,7 @@ export class ContentQualityJudge {
     this.trustedDomains = cfg.trustedDomains ?? DEFAULT_TRUSTED_DOMAINS;
   }
 
-  async judge(
+  judge(
     result: { url: string; title: string; markdown: string },
     query: string,
   ): Promise<ContentQualityVerdict> {
@@ -97,10 +97,10 @@ export class ContentQualityJudge {
       `domain:${isTrustedDomain ? "trusted" : "untrusted"}`,
     ];
 
-    return {
+    return Promise.resolve({
       score,
       reasons,
       lowQuality: score < this.cfg.threshold,
-    };
+    });
   }
 }

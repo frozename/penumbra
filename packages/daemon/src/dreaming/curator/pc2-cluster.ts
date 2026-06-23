@@ -1,17 +1,20 @@
 import type { Database } from "bun:sqlite";
+
 import { retireNonDirectMemory } from "@penumbra/core";
+
 import type { DreamConfig } from "../config.js";
+
 import { findSimilarityClusters } from "./cluster-detection.js";
 
-export async function runPC2Phase(
+export function runPC2Phase(
   db: Database,
   cycleId: string,
   config: DreamConfig,
-  deps: {},
-): Promise<void> {
-  const minSize = config.pc2MinClusterSize ?? 3;
-  const minWeight = config.pc2ClusterLinkThreshold ?? 0.85;
-  const autoThreshold = config.pc2AutoThreshold ?? 0.97;
+  _deps: object,
+): void {
+  const minSize = config.pc2MinClusterSize;
+  const minWeight = config.pc2ClusterLinkThreshold;
+  const autoThreshold = config.pc2AutoThreshold;
 
   const clusters = findSimilarityClusters(db, { minSize, minWeight });
 
@@ -28,7 +31,7 @@ export async function runPC2Phase(
       ORDER BY created_at DESC
     `,
       )
-      .all(...cluster) as Array<{ memory_id: string; retired_at: number | null }>;
+      .all(...cluster) as { memory_id: string; retired_at: number | null }[];
 
     const canonical = memberRows.find((row) => row.retired_at === null);
     if (!canonical) continue;
@@ -64,7 +67,7 @@ export async function runPC2Phase(
         AND target_ids IN (${cluster.map((id) => "?").join(",")})
     `,
       )
-      .all(...cluster.map((id) => JSON.stringify([id]))) as Array<{ target_ids: string }>;
+      .all(...cluster.map((id) => JSON.stringify([id]))) as { target_ids: string }[];
     const existingSet = new Set(existingActionRows.map((row) => row.target_ids));
 
     db.transaction(() => {

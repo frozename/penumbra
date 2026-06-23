@@ -1,19 +1,65 @@
-import crypto from "node:crypto";
-import type { Database } from "bun:sqlite";
-import type { DreamConfig } from "./config.js";
-import type { DreamPhaseCostEstimatesUsd } from "./config.js";
 import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
-import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
-import { sanitizeResearchMarkdown, buildJudgePromptBlock } from "../research/sanitization.js";
-import { isDomainAllowed } from "../research/firecrawl-adapter.js";
+import type { Database } from "bun:sqlite";
+
+import crypto from "node:crypto";
+
+import type { DreamConfig, DreamPhaseCostEstimatesUsd } from "./config.js";
+import type {
+  ContentQualityJudge,
+  ContentQualityVerdict,
+} from "./curator/content-quality-judge.js";
 import type { DreamCostMeter } from "./cycle.js";
 
+import { isDomainAllowed } from "../research/firecrawl-adapter.js";
+import { buildJudgePromptBlock, sanitizeResearchMarkdown } from "../research/sanitization.js";
+
+interface DreamingProjectConfig {
+  research_provider?: string;
+  allowed_domains?: string[];
+}
+
+interface ResearchProject {
+  dreaming?: DreamingProjectConfig;
+}
+
 export interface ResearchDeps {
-  getResearchAdapter?: (project: any) => WebResearchAdapter | null;
-  projectRegistry?: { get(id: string): any };
+  getResearchAdapter?: (project: ResearchProject) => WebResearchAdapter | null;
+  projectRegistry?: { get(id: string): ResearchProject | undefined };
   contentQualityJudge?: ContentQualityJudge;
   costMeter?: DreamCostMeter;
   phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
+}
+
+interface ResearchActionRow {
+  action_id: string;
+  target_ids: string;
+  payload_json: string;
+}
+
+interface ResearchPayload {
+  query?: unknown;
+  url?: unknown;
+}
+
+interface ResearchCacheRow {
+  url: string;
+  title: string;
+  markdown: string;
+  fetched_at: string;
+  provider: WebResearchResult["source_provider"];
+  is_negative: number | null;
+  expires_at: number;
+}
+
+interface ParsedAction {
+  project_id: string;
+  query: string;
+  urlFromPayload?: string;
+}
+
+interface FetchOutcome {
+  results: WebResearchResult[];
+  usedExternalResearchCall: boolean;
 }
 
 function sanitizeUsd(value: unknown): number {
@@ -29,6 +75,350 @@ export function hashQuery(query: string, url: string): string {
     .digest("hex");
 }
 
+function parseAction(action: ResearchActionRow): ParsedAction {
+  let project_id = "";
+  try {
+    const targets = JSON.parse(action.target_ids) as unknown;
+    if (Array.isArray(targets) && targets.length > 0 && typeof targets[0] === "string") {
+      project_id = targets[0];
+    }
+  } catch {
+    // fall through with empty project_id
+  }
+
+  let query = "";
+  let urlFromPayload: string | undefined;
+  try {
+    const payload = JSON.parse(action.payload_json) as ResearchPayload;
+    query = typeof payload.query === "string" ? payload.query : "";
+    urlFromPayload = typeof payload.url === "string" ? payload.url : undefined;
+  } catch {
+    // fall through with empty query
+  }
+
+  return { project_id, query, urlFromPayload };
+}
+
+function markActionFailed(db: Database, actionId: string, decidedBy?: string): void {
+  if (decidedBy) {
+    db.prepare(
+      `UPDATE dream_actions SET status='failed', decided_by=?, decided_at=? WHERE action_id=?`,
+    ).run(decidedBy, Date.now(), actionId);
+  } else {
+    db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(
+      Date.now(),
+      actionId,
+    );
+  }
+}
+
+function markActionCompleted(db: Database, actionId: string): void {
+  db.prepare(`UPDATE dream_actions SET status='completed', decided_at=? WHERE action_id=?`).run(
+    Date.now(),
+    actionId,
+  );
+}
+
+function readCache(db: Database, cacheKey: string): ResearchCacheRow | undefined {
+  const row = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as
+    | ResearchCacheRow
+    | undefined;
+  return row;
+}
+
+function writeNegativeCache(
+  db: Database,
+  cacheKey: string,
+  projectId: string,
+  resolvedUrl: string,
+  now: number,
+  expiresAt: number,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO dream_research_cache(
+      cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd, is_negative
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+  ).run(cacheKey, "negative", projectId, resolvedUrl, cacheKey, "", "", now, expiresAt, 0);
+}
+
+function writeResultCache(
+  db: Database,
+  cacheKey: string,
+  projectId: string,
+  result: WebResearchResult,
+  now: number,
+): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    cacheKey,
+    result.source_provider,
+    projectId,
+    result.url,
+    cacheKey,
+    result.title,
+    result.markdown,
+    now,
+    now + 7 * 24 * 3600 * 1000,
+    result.source_billed_usd ?? 0,
+  );
+}
+
+async function fetchExternalResults(
+  adapter: WebResearchAdapter,
+  query: string,
+  resolvedUrl: string,
+  allowedDomains: string[],
+): Promise<WebResearchResult[]> {
+  if (resolvedUrl.startsWith("http")) {
+    if (allowedDomains.length > 0) {
+      const hostname = new URL(resolvedUrl).hostname;
+      if (!isDomainAllowed(hostname, allowedDomains)) {
+        throw new Error(`domain not allowed: ${hostname}`);
+      }
+    }
+    return [await adapter.scrape({ url: resolvedUrl })];
+  }
+
+  const searchResults = await adapter.search({
+    query,
+    max_pages: 1,
+    allowed_domains: allowedDomains.length > 0 ? allowedDomains : null,
+  });
+  if (searchResults.length === 0) {
+    throw new Error("no results");
+  }
+  return searchResults;
+}
+
+function applyDomainGate(
+  results: WebResearchResult[],
+  allowedDomains: string[],
+): WebResearchResult[] {
+  if (allowedDomains.length === 0) return results;
+  return results.filter((r) => {
+    try {
+      return isDomainAllowed(new URL(r.url).hostname, allowedDomains);
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function scoreResults(
+  results: WebResearchResult[],
+  query: string,
+  judge: ContentQualityJudge | undefined,
+): Promise<{ result: WebResearchResult; verdict: ContentQualityVerdict | null }[]> {
+  if (!judge) {
+    return results.map((result) => ({ result, verdict: null }));
+  }
+  return await Promise.all(
+    results.map(async (result) => ({
+      result,
+      verdict: await judge.judge(result, query),
+    })),
+  );
+}
+
+function insertEnrichmentAction(
+  db: Database,
+  cycleId: string,
+  projectId: string,
+  result: WebResearchResult,
+  verdict: ContentQualityVerdict | null,
+): void {
+  const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });
+  const block = buildJudgePromptBlock({
+    url: result.url,
+    markdown: sanitized,
+    provider: result.source_provider,
+  });
+
+  const payload: { markdown: string; quality_score?: number; low_quality?: boolean } = {
+    markdown: block,
+  };
+
+  if (verdict !== null) {
+    payload.quality_score = verdict.score;
+    if (verdict.lowQuality) {
+      payload.low_quality = true;
+    }
+  }
+
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
+     VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`,
+  ).run(crypto.randomUUID(), cycleId, JSON.stringify([projectId]), JSON.stringify(payload));
+}
+
+interface ActionContext {
+  parsed: ParsedAction;
+  adapter: WebResearchAdapter;
+  resolvedUrl: string;
+  cacheKey: string;
+  allowedDomains: string[];
+  now: number;
+  negativeCacheTtlMs: number;
+}
+
+function resolveActionContext(
+  config: DreamConfig,
+  deps: ResearchDeps,
+  parsed: ParsedAction,
+): ActionContext | null {
+  const project = deps.projectRegistry?.get(parsed.project_id);
+  const dreamingConfig = project?.dreaming ?? {};
+  const adapter = project ? (deps.getResearchAdapter?.(project) ?? null) : null;
+  if (!adapter) return null;
+  const resolvedUrl = parsed.urlFromPayload ?? parsed.query;
+  return {
+    parsed,
+    adapter,
+    resolvedUrl,
+    cacheKey: hashQuery(parsed.query, resolvedUrl),
+    allowedDomains: dreamingConfig.allowed_domains ?? [],
+    now: Date.now(),
+    negativeCacheTtlMs: config.negativeCacheTtlMs ?? 3_600_000,
+  };
+}
+
+function readCachedOutcome(
+  db: Database,
+  ctx: ActionContext,
+): { kind: "negative" } | { kind: "positive"; outcome: FetchOutcome } | { kind: "miss" } {
+  const cached = readCache(db, ctx.cacheKey);
+  if (cached === undefined) return { kind: "miss" };
+  if (Number(cached.is_negative) === 1) {
+    return cached.expires_at > ctx.now ? { kind: "negative" } : { kind: "miss" };
+  }
+  return {
+    kind: "positive",
+    outcome: {
+      results: [
+        {
+          url: cached.url,
+          title: cached.title,
+          markdown: cached.markdown,
+          fetched_at: cached.fetched_at,
+          source_provider: cached.provider,
+        },
+      ],
+      usedExternalResearchCall: false,
+    },
+  };
+}
+
+async function fetchAndCache(db: Database, ctx: ActionContext): Promise<FetchOutcome | null> {
+  try {
+    const fetched = await fetchExternalResults(
+      ctx.adapter,
+      ctx.parsed.query,
+      ctx.resolvedUrl,
+      ctx.allowedDomains,
+    );
+    for (const [i, result] of fetched.entries()) {
+      // The first result is cached under the lookup-shaped key (hashQuery(query, resolvedUrl)).
+      // For search actions resolvedUrl === query, so the per-URL key chosen below would never
+      // match a future lookup and the cache would be write-only — re-billing every cycle.
+      const resultCacheKey = i === 0 ? ctx.cacheKey : hashQuery(ctx.parsed.query, result.url);
+      writeResultCache(db, resultCacheKey, ctx.parsed.project_id, result, ctx.now);
+    }
+    return { results: fetched, usedExternalResearchCall: true };
+  } catch {
+    return null;
+  }
+}
+
+function recordResearchCost(deps: ResearchDeps, outcome: FetchOutcome, estimateUsd: number): void {
+  if (!outcome.usedExternalResearchCall || !deps.costMeter) return;
+  const billedUsd = outcome.results.reduce(
+    (sum, result) => sum + sanitizeUsd(result.source_billed_usd ?? 0),
+    0,
+  );
+  deps.costMeter.record("P5", "research", billedUsd > 0 ? billedUsd : estimateUsd);
+}
+
+async function processAction(
+  db: Database,
+  cycleId: string,
+  config: DreamConfig,
+  deps: ResearchDeps,
+  action: ResearchActionRow,
+): Promise<void> {
+  const researchEstimateUsd = sanitizeUsd(deps.phaseCostEstimates?.p5ResearchUsd ?? 0);
+  if (
+    researchEstimateUsd > 0 &&
+    deps.costMeter &&
+    !deps.costMeter.canAfford("P5", "research", researchEstimateUsd)
+  ) {
+    return;
+  }
+
+  const parsed = parseAction(action);
+  if (!parsed.project_id || !parsed.query) {
+    markActionFailed(db, action.action_id);
+    return;
+  }
+
+  const ctx = resolveActionContext(config, deps, parsed);
+  if (!ctx) {
+    markActionFailed(db, action.action_id);
+    return;
+  }
+
+  const cachedOutcome = readCachedOutcome(db, ctx);
+  if (cachedOutcome.kind === "negative") {
+    markActionFailed(db, action.action_id, "negative-cache-hit");
+    return;
+  }
+
+  let outcome: FetchOutcome;
+  if (cachedOutcome.kind === "positive") {
+    outcome = cachedOutcome.outcome;
+  } else {
+    const fetched = await fetchAndCache(db, ctx);
+    if (!fetched) {
+      writeNegativeCache(
+        db,
+        ctx.cacheKey,
+        ctx.parsed.project_id,
+        ctx.resolvedUrl,
+        ctx.now,
+        ctx.now + ctx.negativeCacheTtlMs,
+      );
+      markActionFailed(db, action.action_id);
+      return;
+    }
+    outcome = fetched;
+  }
+
+  recordResearchCost(deps, outcome, researchEstimateUsd);
+
+  const domainGated = applyDomainGate(outcome.results, ctx.allowedDomains);
+  const scored = await scoreResults(domainGated, ctx.parsed.query, deps.contentQualityJudge);
+
+  if (scored.length === 0) {
+    writeNegativeCache(
+      db,
+      ctx.cacheKey,
+      ctx.parsed.project_id,
+      ctx.resolvedUrl,
+      ctx.now,
+      ctx.now + ctx.negativeCacheTtlMs,
+    );
+    markActionFailed(db, action.action_id);
+    return;
+  }
+
+  for (const { result, verdict } of scored) {
+    insertEnrichmentAction(db, cycleId, ctx.parsed.project_id, result, verdict);
+  }
+
+  markActionCompleted(db, action.action_id);
+}
+
 export async function runP5Phase(
   db: Database,
   cycleId: string,
@@ -41,228 +431,9 @@ export async function runP5Phase(
     .prepare(
       `SELECT action_id, target_ids, payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status='queued' LIMIT ?`,
     )
-    .all(K) as Array<{ action_id: string; target_ids: string; payload_json: string }>;
+    .all(K) as ResearchActionRow[];
 
   for (const action of pendingResearch) {
-    const researchEstimateUsd = sanitizeUsd(deps.phaseCostEstimates?.p5ResearchUsd ?? 0);
-    if (
-      researchEstimateUsd > 0 &&
-      deps.costMeter &&
-      !deps.costMeter.canAfford("P5", "research", researchEstimateUsd)
-    ) {
-      continue;
-    }
-
-    let project_id = "";
-    try {
-      const targets = JSON.parse(action.target_ids);
-      if (targets && targets.length > 0) project_id = targets[0];
-    } catch {}
-
-    let query = "";
-    let urlFromPayload: string | undefined;
-    try {
-      const payload = JSON.parse(action.payload_json);
-      query = payload.query || "";
-      urlFromPayload = payload.url ?? undefined;
-    } catch {}
-
-    if (!project_id || !query) {
-      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(
-        Date.now(),
-        action.action_id,
-      );
-      continue;
-    }
-
-    const project = deps.projectRegistry?.get(project_id);
-    const dreamingConfig = project?.dreaming || { research_provider: "off" };
-    const provider = (dreamingConfig.research_provider || "off") as string;
-    const researchAdapter = project ? (deps.getResearchAdapter?.(project) ?? null) : null;
-
-    if (!researchAdapter) {
-      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(
-        Date.now(),
-        action.action_id,
-      );
-      continue;
-    }
-
-    const resolvedUrl = urlFromPayload ?? query;
-    const cacheKey = hashQuery(query, resolvedUrl);
-    const allowedDomains: string[] = dreamingConfig.allowed_domains || [];
-    const now = Date.now();
-    const negativeCacheTtlMs = config.negativeCacheTtlMs ?? 3_600_000;
-    let rawResults: WebResearchResult[] = [];
-    let usedExternalResearchCall = false;
-
-    const cacheNegativeResult = () => {
-      db.prepare(
-        `INSERT OR REPLACE INTO dream_research_cache(
-          cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd, is_negative
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      ).run(
-        cacheKey,
-        "negative",
-        project_id,
-        resolvedUrl,
-        cacheKey,
-        "",
-        "",
-        now,
-        now + negativeCacheTtlMs,
-        0,
-      );
-    };
-
-    const cached = db
-      .prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`)
-      .get(cacheKey) as any;
-
-    const isLiveNegative = cached && Number(cached.is_negative) === 1 && cached.expires_at > now;
-    const hasPositiveCache = cached && Number(cached.is_negative) !== 1;
-
-    if (isLiveNegative) {
-      db.prepare(
-        `UPDATE dream_actions SET status='failed', decided_by='negative-cache-hit', decided_at=? WHERE action_id=?`,
-      ).run(Date.now(), action.action_id);
-      continue;
-    }
-
-    if (hasPositiveCache) {
-      rawResults = [
-        {
-          url: cached.url,
-          title: cached.title,
-          markdown: cached.markdown,
-          fetched_at: cached.fetched_at,
-          source_provider: cached.provider,
-        },
-      ];
-    } else {
-      try {
-        usedExternalResearchCall = true;
-        if (resolvedUrl.startsWith("http")) {
-          // Pre-scrape domain check — always apply regardless of judge presence
-          if (allowedDomains.length > 0) {
-            const hostname = new URL(resolvedUrl).hostname;
-            if (!isDomainAllowed(hostname, allowedDomains)) {
-              throw new Error(`domain not allowed: ${hostname}`);
-            }
-          }
-          rawResults = [await researchAdapter.scrape({ url: resolvedUrl })];
-        } else {
-          const searchResults = await researchAdapter.search({
-            query,
-            max_pages: 1,
-            allowed_domains: allowedDomains.length > 0 ? allowedDomains : null,
-          });
-          if (!searchResults || searchResults.length === 0) {
-            cacheNegativeResult();
-            throw new Error("no results");
-          }
-          rawResults = searchResults;
-        }
-
-        for (let i = 0; i < rawResults.length; i++) {
-          const fetchResult = rawResults[i];
-          if (!fetchResult) continue;
-          // The first result is cached under the lookup-shaped key (hashQuery(query, resolvedUrl)).
-          // For search actions resolvedUrl === query, so the per-URL key chosen below would never
-          // match a future lookup and the cache would be write-only — re-billing every cycle.
-          const resultCacheKey = i === 0 ? cacheKey : hashQuery(query, fetchResult.url);
-          db.prepare(
-            `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            resultCacheKey,
-            fetchResult.source_provider,
-            project_id,
-            fetchResult.url,
-            resultCacheKey,
-            fetchResult.title,
-            fetchResult.markdown,
-            now,
-            now + 7 * 24 * 3600 * 1000,
-            fetchResult.source_billed_usd || 0,
-          );
-        }
-      } catch (err) {
-        cacheNegativeResult();
-        db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(
-          Date.now(),
-          action.action_id,
-        );
-        continue;
-      }
-    }
-
-    if (usedExternalResearchCall && deps.costMeter) {
-      const billedUsd = rawResults.reduce(
-        (sum, result) => sum + sanitizeUsd(result.source_billed_usd ?? 0),
-        0,
-      );
-      deps.costMeter.record("P5", "research", billedUsd > 0 ? billedUsd : researchEstimateUsd);
-    }
-
-    // F1: domain gate ALWAYS runs post-fetch; judge only scores domain-allowed survivors
-    const domainGated =
-      allowedDomains.length > 0
-        ? rawResults.filter((r) => {
-            try {
-              return isDomainAllowed(new URL(r.url).hostname, allowedDomains);
-            } catch {
-              return false;
-            }
-          })
-        : rawResults;
-
-    const scored = deps.contentQualityJudge
-      ? await Promise.all(
-          domainGated.map(async (r) => ({
-            r,
-            verdict: await deps.contentQualityJudge!.judge(r, query),
-          })),
-        )
-      : domainGated.map((r) => ({ r, verdict: null as any }));
-
-    if (scored.length === 0) {
-      cacheNegativeResult();
-      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(
-        Date.now(),
-        action.action_id,
-      );
-      continue;
-    }
-
-    for (const { r: result, verdict } of scored) {
-      const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });
-      const block = buildJudgePromptBlock({
-        url: result.url,
-        markdown: sanitized,
-        provider: result.source_provider || provider,
-      });
-
-      const payload: { markdown: string; quality_score?: number; low_quality?: boolean } = {
-        markdown: block,
-      };
-
-      if (verdict !== null) {
-        payload.quality_score = verdict.score;
-        if (verdict.lowQuality) {
-          payload.low_quality = true;
-        }
-      }
-
-      db.prepare(
-        `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
-         VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`,
-      ).run(crypto.randomUUID(), cycleId, JSON.stringify([project_id]), JSON.stringify(payload));
-    }
-
-    db.prepare(`UPDATE dream_actions SET status='completed', decided_at=? WHERE action_id=?`).run(
-      Date.now(),
-      action.action_id,
-    );
+    await processAction(db, cycleId, config, deps, action);
   }
 }

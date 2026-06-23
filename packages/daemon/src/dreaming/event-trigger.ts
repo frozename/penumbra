@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
+
 import type { DreamConfig } from "./config.js";
-import { runDreamCycle, type DreamCycleDeps } from "./cycle.js";
+
+import { type DreamCycleDeps, runDreamCycle } from "./cycle.js";
 
 export interface IdleSignalDeps {
   mutexHeld: boolean;

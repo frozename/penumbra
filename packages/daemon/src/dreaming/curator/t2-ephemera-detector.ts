@@ -7,9 +7,9 @@ export function likeToRegex(pattern: string): RegExp {
   const startsWithWildcard = pattern.startsWith("%");
   const endsWithWildcard = pattern.endsWith("%");
   const s = pattern
-    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/%/g, ".*")
-    .replace(/_/g, ".");
+    .replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replaceAll("%", ".*")
+    .replaceAll("_", ".");
   const anchored = `${startsWithWildcard ? "" : "^"}${s}${endsWithWildcard ? "" : "$"}`;
   return new RegExp(anchored, "i");
 }

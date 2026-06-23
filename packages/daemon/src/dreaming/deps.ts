@@ -1,18 +1,35 @@
-import { randomUUID } from "crypto";
 import type { Database } from "bun:sqlite";
-import { readSubscriptionPressure, type DispatchEventInput, type Logger } from "@penumbra/core";
+
+import { type DispatchEventInput, type Logger, readSubscriptionPressure } from "@penumbra/core";
+import { randomUUID } from "node:crypto";
+
+import type { DreamConfig } from "./config.js";
+import type { DreamCycleDeps } from "./cycle.js";
+
 import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
-import { StubJudgePool } from "./judge-pool.js";
-import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
 import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
-import type { DreamCycleDeps } from "./cycle.js";
-import type { DreamConfig } from "./config.js";
+import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
+import { StubJudgePool } from "./judge-pool.js";
+
+interface DreamingResearchConfig {
+  research_provider?: "firecrawl" | "webfetch" | "off";
+  allowed_domains?: string[];
+}
+
+interface ResearchProjectShape {
+  dreaming?: DreamingResearchConfig;
+}
+
+interface ProjectRegistryLike {
+  get(id: string): unknown;
+  list(): unknown[];
+}
 
 export function buildDreamCycleDeps(
   services: {
-    projectRegistry?: { get(id: string): any; list(): any[] };
+    projectRegistry?: ProjectRegistryLike;
     embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
     dispatchEventLog?: { record(event: DispatchEventInput): void };
     log?: Logger;
@@ -20,7 +37,7 @@ export function buildDreamCycleDeps(
   db: Database,
   dreamConfig: DreamConfig,
 ): DreamCycleDeps {
-  const memoryObserve = async (
+  const memoryObserve = (
     briefMarkdown: string,
     projectId: string,
     cycleId: string,
@@ -43,7 +60,7 @@ export function buildDreamCycleDeps(
       nowIso,
       nowIso,
     );
-    return { memory_id };
+    return Promise.resolve({ memory_id });
   };
 
   const realJudgePool = createDreamingJudgePoolFromAgentchat();
@@ -56,14 +73,18 @@ export function buildDreamCycleDeps(
       ? new ContentQualityJudge({ threshold: dreamConfig.contentQualityThreshold })
       : undefined;
 
+  const embedder = services.embedder;
+  const dispatchEventLog = services.dispatchEventLog;
+
   const deps: DreamCycleDeps = {
     projectRegistry: services.projectRegistry,
-    getResearchAdapter: (project: any) => {
-      const provider = project.dreaming?.research_provider as string | undefined;
+    getResearchAdapter: (project: unknown) => {
+      const dreaming = (project as ResearchProjectShape).dreaming;
+      const provider = dreaming?.research_provider;
       if (!provider || provider === "off") return null;
       return createResearchAdapter({
-        provider: provider as "firecrawl" | "webfetch",
-        allowedDomains: project.dreaming?.allowed_domains,
+        provider,
+        allowedDomains: dreaming.allowed_domains,
       });
     },
     memoryObserve,
@@ -71,9 +92,10 @@ export function buildDreamCycleDeps(
     briefSynthesizer: briefSynthesizer ?? undefined,
     contentQualityJudge,
     pressureGuard: {
-      check: async () => ({
-        anyThrottled: isAnyProviderOverPressure(readSubscriptionPressure(db)),
-      }),
+      check: (): Promise<{ anyThrottled: boolean }> =>
+        Promise.resolve({
+          anyThrottled: isAnyProviderOverPressure(readSubscriptionPressure(db)),
+        }),
     },
     phaseCostEstimates: dreamConfig.phaseCostEstimatesUsd,
     log: services.log,
@@ -85,12 +107,16 @@ export function buildDreamCycleDeps(
     get: () => services.projectRegistry,
   });
 
-  if (services.embedder) {
-    deps.onReembed = async (_id: string, text: string) =>
-      (await services.embedder!.embed([text]))[0]!;
+  if (embedder) {
+    deps.onReembed = async (_id: string, text: string): Promise<Float32Array> => {
+      const vectors = await embedder.embed([text]);
+      const first = vectors[0];
+      if (!first) throw new Error("embedder returned no vectors");
+      return first;
+    };
   }
-  if (services.dispatchEventLog) {
-    deps.dispatchEventLog = services.dispatchEventLog;
+  if (dispatchEventLog) {
+    deps.dispatchEventLog = dispatchEventLog;
   }
 
   return deps;
