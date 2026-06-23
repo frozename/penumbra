@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { type MaestroSessionWriter } from "@penumbra/core";
 
 export function enforceMaestroBudget(opts: {
@@ -24,7 +25,7 @@ export function enforceMaestroBudget(opts: {
   }
 
   const session = opts.sessions.getByChainHandoff(parentHandoffId);
-  if (!session || session.terminated_at !== null) {
+  if (session?.terminated_at !== null) {
     return { ok: true };
   }
 

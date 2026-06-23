@@ -1,19 +1,20 @@
-import type { Database } from "bun:sqlite";
 import type {
   AgentDescriptor,
   ChainStartRequest,
   MaestroSessionRecord,
   TaskWriter,
 } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
 import {
+  enqueueGhStatusSyncOnDb,
   InvalidTaskStatus,
   LeaseConflict,
-  enqueueGhStatusSyncOnDb,
   MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
   MaestroSessionWriter,
-  synthesizeMaestroPrompt,
   routeAgent,
+  synthesizeMaestroPrompt,
 } from "@penumbra/core";
 
 interface OrchestrateDefaults {
@@ -72,11 +73,127 @@ export type OrchestrateOneTaskResult =
 
 const DEFER_RESUME_FLOOR_MS = 5 * 60_000;
 
-export async function orchestrateOneTask(
+interface OrchestrateBudgets {
+  wall_clock_budget_ms: number;
+  cost_budget_cents: number;
+  sub_dispatch_budget: number;
+}
+
+function selectAgentName(
+  taskId: string,
+  allowAgents: readonly string[],
+  opts: OrchestrateOneTaskOpts,
+  nowMs: number,
+): { kind: "ok"; agentName: string } | { kind: "result"; result: OrchestrateOneTaskResult } {
+  const firstAgent = allowAgents[0];
+  if (firstAgent === undefined) {
+    return {
+      kind: "result",
+      result: { status: "failed", error: "unknown_agent", agent_name: null },
+    };
+  }
+  let agentName = firstAgent;
+  if (allowAgents.length <= 1) return { kind: "ok", agentName };
+
+  const routeAgentFn = opts.routeAgent ?? routeAgent;
+  try {
+    const ranked = routeAgentFn({
+      db: opts.db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      minSamples: 1,
+      includeNeutral: false,
+      includeCost: false,
+      now: new Date(nowMs),
+    });
+    if (ranked.detail !== "rank") throw new Error("unexpected routeAgent detail");
+    const allowAgentSet = new Set(allowAgents);
+    const rankedAgent = ranked.candidates.candidates.find((candidate) =>
+      allowAgentSet.has(candidate.agent_name),
+    );
+    if (rankedAgent) {
+      agentName = rankedAgent.agent_name;
+    } else {
+      console.warn(
+        "[orchestrate-reactor] agent_rank lookup returned no overlapping eligible agents; falling back to first allowed agent",
+        { task_id: taskId, allow_agents: allowAgents },
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "[orchestrate-reactor] agent_rank lookup failed; falling back to first allowed agent",
+      { task_id: taskId, allow_agents: allowAgents, error: String(error) },
+    );
+  }
+  return { kind: "ok", agentName };
+}
+
+function releaseLeaseAfterChainFailure(
+  opts: OrchestrateOneTaskOpts,
+  taskId: string,
+  leaseId: string,
+  releasedAt: number,
+): void {
+  // chainStart failed AFTER we won the lease. Release the lease and revert the
+  // task to `pending` for a clean retry (NOT `failed`) — mirrors the lease-expiry
+  // sweeper's raw reclaim. Wrapped in a single transaction so the four writes
+  // either all commit or all roll back; the lease-sweeper backstop is not
+  // designed to repair half-compensated state.
+  try {
+    opts.db.transaction(() => {
+      const leaseRelease = opts.db.run(
+        `UPDATE task_leases SET released_at = ?, release_reason = 'chain_start_failed' WHERE task_id = ? AND released_at IS NULL`,
+        [releasedAt, taskId],
+      );
+      if (leaseRelease.changes === 0) return;
+      opts.db.run(
+        `UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'leased'`,
+        [releasedAt, taskId],
+      );
+      enqueueGhStatusSyncOnDb(opts.db, releasedAt, taskId, "leased", "pending");
+      opts.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'released', NULL, ?)`,
+        [taskId, releasedAt, JSON.stringify({ reason: "chain_start_failed", lease_id: leaseId })],
+      );
+    })();
+  } catch {
+    // best-effort; the lease sweeper reclaims the task on TTL expiry if this fails
+  }
+}
+
+function handleChainStartFailure(
+  error: unknown,
+  agentName: string,
+  nowMs: number,
+): OrchestrateOneTaskResult {
+  const parsed = parseSubscriptionPressureError(error);
+  if (parsed && parsed.earliest_resets_at !== null) {
+    let resumeAtMs = parsed.earliest_resets_at;
+    if (resumeAtMs <= nowMs) {
+      resumeAtMs = nowMs + DEFER_RESUME_FLOOR_MS;
+    }
+    return {
+      status: "short_circuited",
+      reason: "subscription_pressure_capped",
+      resume_at_ms: resumeAtMs,
+      provider: parsed.provider,
+      window_label: parsed.window_label,
+      original_error: parsed.body,
+    };
+  }
+  return { status: "failed", error: String(error), agent_name: agentName };
+}
+
+interface LoadOrchestrateTaskResult {
+  task: ReturnType<TaskWriter["get"]>;
+  preboundSession: MaestroSessionRecord | null;
+}
+
+function loadOrchestrateTask(
   taskId: string,
   opts: OrchestrateOneTaskOpts,
-): Promise<OrchestrateOneTaskResult> {
-  const now = opts.now ?? Date.now;
+): LoadOrchestrateTaskResult | OrchestrateOneTaskResult {
   const existingSession = opts.sessions.get(taskId);
   if (existingSession?.chain_handoff_id) {
     return { status: "short_circuited", reason: "already_dispatched" };
@@ -97,59 +214,108 @@ export async function orchestrateOneTask(
     return { status: "short_circuited", reason: "already_dispatched" };
   }
 
+  return { task, preboundSession: preboundSession ?? null };
+}
+
+function acquireLeaseForDispatch(
+  opts: OrchestrateOneTaskOpts,
+  taskId: string,
+  agentName: string,
+  wall_clock_budget_ms: number,
+): { kind: "ok"; leaseId: string } | { kind: "result"; result: OrchestrateOneTaskResult } {
+  try {
+    const leaseResult = opts.taskWriter.lease({
+      task_id: taskId,
+      agent_id: agentName,
+      ttl_ms: wall_clock_budget_ms + LEASE_TTL_MARGIN_MS,
+    });
+    return { kind: "ok", leaseId: leaseResult.lease_id };
+  } catch (error) {
+    if (error instanceof LeaseConflict || error instanceof InvalidTaskStatus) {
+      return {
+        kind: "result",
+        result: { status: "short_circuited", reason: "already_dispatched" },
+      };
+    }
+    return {
+      kind: "result",
+      result: { status: "failed", error: String(error), agent_name: agentName },
+    };
+  }
+}
+
+function bindSessionToChain(
+  opts: OrchestrateOneTaskOpts,
+  taskId: string,
+  agentName: string,
+  chain: { handoff_id: string; conversation_id: string },
+  preboundSession: MaestroSessionRecord | null,
+  budgets: OrchestrateBudgets,
+  leaseId: string,
+): OrchestrateOneTaskResult | null {
+  try {
+    if (preboundSession) {
+      opts.sessions.markDispatched(taskId, chain.handoff_id);
+    } else {
+      opts.sessions.start({
+        task_id: taskId,
+        chain_handoff_id: chain.handoff_id,
+        agent_id: agentName,
+        wall_clock_budget_ms: budgets.wall_clock_budget_ms,
+        cost_budget_cents: budgets.cost_budget_cents,
+        sub_dispatch_budget: budgets.sub_dispatch_budget,
+      });
+    }
+    return null;
+  } catch (error) {
+    if (opts.chainCancel) {
+      opts.chainCancel(chain.handoff_id).catch((err: unknown) => {
+        console.warn("[orchestrate-one-task] best-effort chainCancel failed", err);
+      });
+    }
+    try {
+      opts.taskWriter.fail({ task_id: taskId, lease_id: leaseId, reason: "session_start_failed" });
+    } catch {
+      // best-effort; the lease sweeper can reclaim the task if fail() also fails
+    }
+    if (error instanceof MaestroSessionExists || error instanceof MaestroSessionAlreadyDispatched) {
+      return { status: "short_circuited", reason: "already_dispatched" };
+    }
+    return { status: "failed", error: String(error), agent_name: agentName };
+  }
+}
+
+function resolveBudgets(
+  task: ReturnType<TaskWriter["get"]>,
+  preboundSession: MaestroSessionRecord | null,
+  defaults: OrchestrateDefaults,
+): OrchestrateBudgets {
+  return {
+    wall_clock_budget_ms:
+      preboundSession?.wall_clock_budget_ms ?? task.bounds_wall_clock_ms ?? defaults.wall_clock_ms,
+    cost_budget_cents:
+      preboundSession?.cost_budget_cents ?? task.bounds_cost_cents ?? defaults.cost_cents,
+    sub_dispatch_budget:
+      preboundSession?.sub_dispatch_budget ??
+      task.bounds_max_sub_dispatches ??
+      defaults.sub_dispatches,
+  };
+}
+
+function resolveAgentForDispatch(
+  taskId: string,
+  task: ReturnType<TaskWriter["get"]>,
+  preboundSession: MaestroSessionRecord | null,
+  opts: OrchestrateOneTaskOpts,
+  nowMs: number,
+): { kind: "ok"; agentName: string } | { kind: "result"; result: OrchestrateOneTaskResult } {
   let agentName = preboundSession?.agent_id ?? "";
   if (!preboundSession) {
     const allowAgents = task.eligibility.allow_agents ?? [];
-    if (allowAgents.length === 0) {
-      return {
-        status: "failed",
-        error: "unknown_agent",
-        agent_name: null,
-      };
-    }
-
-    agentName = allowAgents[0]!;
-    if (allowAgents.length > 1) {
-      const routeAgentFn = opts.routeAgent ?? routeAgent;
-      try {
-        const ranked = routeAgentFn({
-          db: opts.db,
-          detail: "rank",
-          taskType: "implement_substantial",
-          minSamples: 1,
-          includeNeutral: false,
-          includeCost: false,
-          now: new Date(now()),
-        });
-        if (ranked.detail !== "rank") throw new Error("unexpected routeAgent detail");
-        const allowAgentSet = new Set(allowAgents);
-        const rankedAgent = ranked.candidates.candidates.find((candidate) =>
-          allowAgentSet.has(candidate.agent_name),
-        );
-        if (rankedAgent) {
-          agentName = rankedAgent.agent_name;
-        } else {
-          console.warn(
-            "[orchestrate-reactor] agent_rank lookup returned no overlapping eligible agents; falling back to first allowed agent",
-            {
-              task_id: taskId,
-              allow_agents: allowAgents,
-            },
-          );
-        }
-      } catch (error) {
-        console.warn(
-          "[orchestrate-reactor] agent_rank lookup failed; falling back to first allowed agent",
-          {
-            task_id: taskId,
-            allow_agents: allowAgents,
-            error: String(error),
-          },
-        );
-      }
-    }
+    const selection = selectAgentName(taskId, allowAgents, opts, nowMs);
+    if (selection.kind === "result") return selection;
+    agentName = selection.agentName;
   }
-
   const descriptor = opts.resolveAgent(agentName);
   if (!descriptor) {
     console.warn("[orchestrate-reactor] unknown agent for task", {
@@ -157,45 +323,35 @@ export async function orchestrateOneTask(
       agent_name: agentName,
     });
     return {
-      status: "failed",
-      error: "unknown_agent",
-      agent_name: agentName,
+      kind: "result",
+      result: { status: "failed", error: "unknown_agent", agent_name: agentName },
     };
   }
+  return { kind: "ok", agentName };
+}
 
-  const wall_clock_budget_ms =
-    preboundSession?.wall_clock_budget_ms ??
-    task.bounds_wall_clock_ms ??
-    opts.defaults.wall_clock_ms;
-  const cost_budget_cents =
-    preboundSession?.cost_budget_cents ?? task.bounds_cost_cents ?? opts.defaults.cost_cents;
-  const sub_dispatch_budget =
-    preboundSession?.sub_dispatch_budget ??
-    task.bounds_max_sub_dispatches ??
-    opts.defaults.sub_dispatches;
-  const prompt = synthesizeMaestroPrompt(task, {
-    wall_clock_budget_ms,
-    cost_budget_cents,
-    sub_dispatch_budget,
-  });
+export async function orchestrateOneTask(
+  taskId: string,
+  opts: OrchestrateOneTaskOpts,
+): Promise<OrchestrateOneTaskResult> {
+  const now = opts.now ?? Date.now;
 
-  let leaseId: string;
-  try {
-    const leaseResult = opts.taskWriter.lease({
-      task_id: taskId,
-      agent_id: agentName,
-      ttl_ms: wall_clock_budget_ms + LEASE_TTL_MARGIN_MS,
-    });
-    leaseId = leaseResult.lease_id;
-  } catch (error) {
-    if (error instanceof LeaseConflict || error instanceof InvalidTaskStatus) {
-      return { status: "short_circuited", reason: "already_dispatched" };
-    }
-    return { status: "failed", error: String(error), agent_name: agentName };
-  }
+  const loaded = loadOrchestrateTask(taskId, opts);
+  if ("status" in loaded) return loaded;
+  const { task, preboundSession } = loaded;
+
+  const agentSelection = resolveAgentForDispatch(taskId, task, preboundSession, opts, now());
+  if (agentSelection.kind === "result") return agentSelection.result;
+  const agentName = agentSelection.agentName;
+
+  const budgets = resolveBudgets(task, preboundSession, opts.defaults);
+  const prompt = synthesizeMaestroPrompt(task, budgets);
+
+  const lease = acquireLeaseForDispatch(opts, taskId, agentName, budgets.wall_clock_budget_ms);
+  if (lease.kind === "result") return lease.result;
+  const leaseId = lease.leaseId;
 
   let chain: { handoff_id: string; conversation_id: string };
-  let chainIsOurs = false;
   try {
     chain = await opts.chainStart({
       initial_agent: agentName,
@@ -210,96 +366,21 @@ export async function orchestrateOneTask(
       // self-complete this task. See agentchat withOrchestrateTools.
       dispatch_kind: "orchestrate",
     });
-    chainIsOurs = true;
   } catch (error) {
-    // chainStart failed AFTER we won the lease. Release the lease and revert the
-    // task to `pending` for a clean retry (NOT `failed`) — mirrors the lease-expiry
-    // sweeper's raw reclaim. The reactor's terminated-backstop then sees no open
-    // lease and leaves the task retryable, while still recording the
-    // orchestrate_terminated event from the `failed` status returned below.
-    try {
-      const releasedAt = now();
-      // Wrap the four writes in a single transaction so they either all commit
-      // or all roll back. A mid-failure (e.g. a transient SQLITE_BUSY on the
-      // task_events INSERT) must not leave the lease released while the task
-      // never gets reverted to 'pending' or vice versa — the inconsistent
-      // half-compensated state is exactly what the lease-sweeper backstop is
-      // not designed to repair, so the rollback hands the recovery off cleanly
-      // to the TTL-expiry path instead. Mirrors task-leases.ts:33.
-      opts.db.transaction(() => {
-        const leaseRelease = opts.db.run(
-          `UPDATE task_leases SET released_at = ?, release_reason = 'chain_start_failed' WHERE task_id = ? AND released_at IS NULL`,
-          [releasedAt, taskId],
-        );
-        // Only revert + emit if we actually closed the open lease (guards against a
-        // concurrent release). Mirror the lease-sweeper: flip the task to pending,
-        // keep the gh status-sync invariant, and record a 'released' audit event.
-        if (leaseRelease.changes === 0) return;
-        opts.db.run(
-          `UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'leased'`,
-          [releasedAt, taskId],
-        );
-        enqueueGhStatusSyncOnDb(opts.db, releasedAt, taskId, "leased", "pending");
-        opts.db.run(
-          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-           VALUES (?, ?, 'released', NULL, ?)`,
-          [taskId, releasedAt, JSON.stringify({ reason: "chain_start_failed", lease_id: leaseId })],
-        );
-      })();
-    } catch {
-      // best-effort; the lease sweeper reclaims the task on TTL expiry if this fails
-    }
-    const parsed = parseSubscriptionPressureError(error);
-    if (parsed && parsed.earliest_resets_at !== null) {
-      let resumeAtMs = parsed.earliest_resets_at;
-      if (resumeAtMs <= now()) {
-        resumeAtMs = now() + DEFER_RESUME_FLOOR_MS;
-      }
-      return {
-        status: "short_circuited",
-        reason: "subscription_pressure_capped",
-        resume_at_ms: resumeAtMs,
-        provider: parsed.provider,
-        window_label: parsed.window_label,
-        original_error: parsed.body,
-      };
-    }
-    return {
-      status: "failed",
-      error: String(error),
-      agent_name: agentName,
-    };
+    releaseLeaseAfterChainFailure(opts, taskId, leaseId, now());
+    return handleChainStartFailure(error, agentName, now());
   }
 
-  try {
-    if (preboundSession) {
-      opts.sessions.markDispatched(taskId, chain.handoff_id);
-    } else {
-      opts.sessions.start({
-        task_id: taskId,
-        chain_handoff_id: chain.handoff_id,
-        agent_id: agentName,
-        wall_clock_budget_ms,
-        cost_budget_cents,
-        sub_dispatch_budget,
-      });
-    }
-  } catch (error) {
-    if (chainIsOurs && opts.chainCancel) {
-      opts
-        .chainCancel(chain.handoff_id)
-        .catch((err) => console.warn("[orchestrate-one-task] best-effort chainCancel failed", err));
-    }
-    try {
-      opts.taskWriter.fail({ task_id: taskId, lease_id: leaseId, reason: "session_start_failed" });
-    } catch {
-      // best-effort; the lease sweeper can reclaim the task if fail() also fails
-    }
-    if (error instanceof MaestroSessionExists || error instanceof MaestroSessionAlreadyDispatched) {
-      return { status: "short_circuited", reason: "already_dispatched" };
-    }
-    return { status: "failed", error: String(error), agent_name: agentName };
-  }
+  const bindResult = bindSessionToChain(
+    opts,
+    taskId,
+    agentName,
+    chain,
+    preboundSession,
+    budgets,
+    leaseId,
+  );
+  if (bindResult) return bindResult;
 
   const session = opts.sessions.get(taskId);
   if (!session) {
@@ -349,7 +430,7 @@ function extractErrorBody(error: unknown): Record<string, unknown> | null {
   }
   if (typeof withBody.bodyText === "string") {
     try {
-      const parsed = JSON.parse(withBody.bodyText);
+      const parsed: unknown = JSON.parse(withBody.bodyText);
       return typeof parsed === "object" && parsed !== null
         ? (parsed as Record<string, unknown>)
         : null;

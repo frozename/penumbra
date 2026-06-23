@@ -1,6 +1,8 @@
-import type { Database } from "bun:sqlite";
 import type { BoundsAxis, CapCheckWarn, MaestroSessionRecord } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
 import { MaestroSessionWriter } from "@penumbra/core";
+
 import { rollupCostForChain } from "./cost-rollup.js";
 
 export interface CreateBoundsTrackerOpts {
@@ -56,79 +58,78 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
 
   let timer: ReturnType<typeof setInterval> | null = null;
 
+  // Returns true when the pressure probe owned the session this tick.
+  function handlePressureProbe(session: MaestroSessionRecord): boolean {
+    const pressureAxis = opts.evaluatePressure?.(session);
+    if (!pressureAxis) return false;
+    if (pressureAxis.kind === "warn") {
+      if (session.soft_warned_at !== null) return true;
+      try {
+        opts.onPressureSoftWarn?.(session, pressureAxis.outcome);
+        opts.sessions.markSoftWarned(session.task_id);
+      } catch (error) {
+        opts.log?.warn(
+          {
+            task_id: session.task_id,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "maestro bounds-tracker pressure warning failed",
+        );
+      }
+      return true;
+    }
+    opts.onHardKill(session, pressureAxis.axis, kind);
+    return true;
+  }
+
+  function emitSoftWarn(session: MaestroSessionRecord): void {
+    try {
+      opts.onSoftWarn(session, kind);
+      opts.sessions.markSoftWarned(session.task_id);
+    } catch (error) {
+      opts.log?.warn(
+        {
+          task_id: session.task_id,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        "maestro bounds-tracker soft warning failed",
+      );
+    }
+  }
+
+  function evaluateNumericAxes(session: MaestroSessionRecord & { chain_handoff_id: string }): void {
+    const wallPct = percent(now() - session.started_at, session.wall_clock_budget_ms);
+    const costCents = rollupCost(opts.db, session.chain_handoff_id);
+    opts.sessions.bumpCostConsumed(session.task_id, costCents);
+    const freshSession = opts.sessions.get(session.task_id);
+    if (!freshSession) return;
+
+    const costPct =
+      freshSession.cost_budget_cents === 0 ? 1 : percent(costCents, freshSession.cost_budget_cents);
+    const subPct = percent(freshSession.sub_dispatches_consumed, freshSession.sub_dispatch_budget);
+    const pct = Math.max(wallPct, costPct, subPct);
+
+    if (pct >= 1) {
+      opts.onHardKill(freshSession, firstExceededAxis(wallPct, costPct, subPct), kind);
+      return;
+    }
+
+    if (pct >= warnThreshold && freshSession.soft_warned_at === null) {
+      emitSoftWarn(freshSession);
+    }
+  }
+
   function tick(): void {
     const live = opts.sessions.listLive();
     opts.log?.info({ session_count: live.length }, "maestro bounds-tracker tick");
     for (const session of live) {
-      if (!session.chain_handoff_id) {
-        continue;
-      }
-      // Pressure backstop: fires every tick, independent of numeric budget axes.
-      // Lets the tracker terminate a long-running maestro when its subscription
-      // window crosses the cap mid-flight, even if wall_clock/cost/sub_dispatches
-      // are all healthy.
-      const pressureAxis = opts.evaluatePressure?.(session);
-      if (pressureAxis?.kind === "warn") {
-        if (session.soft_warned_at === null) {
-          try {
-            opts.onPressureSoftWarn?.(session, pressureAxis.outcome);
-            opts.sessions.markSoftWarned(session.task_id);
-          } catch (error) {
-            opts.log?.warn(
-              {
-                task_id: session.task_id,
-                err: error instanceof Error ? error.message : String(error),
-              },
-              "maestro bounds-tracker pressure warning failed",
-            );
-          }
-        }
-        continue;
-      }
-      if (pressureAxis?.kind === "refuse") {
-        opts.onHardKill(session, pressureAxis.axis, kind);
-        continue;
-      }
-
-      const wallPct = percent(now() - session.started_at, session.wall_clock_budget_ms);
-
-      const costCents = rollupCost(opts.db, session.chain_handoff_id);
-      opts.sessions.bumpCostConsumed(session.task_id, costCents);
-      const freshSession = opts.sessions.get(session.task_id);
-      if (!freshSession) {
-        continue;
-      }
-
-      const costPct =
-        freshSession.cost_budget_cents === 0
-          ? 1
-          : percent(costCents, freshSession.cost_budget_cents);
-
-      const subPct = percent(
-        freshSession.sub_dispatches_consumed,
-        freshSession.sub_dispatch_budget,
-      );
-      const pct = Math.max(wallPct, costPct, subPct);
-
-      if (pct >= 1) {
-        opts.onHardKill(freshSession, firstExceededAxis(wallPct, costPct, subPct), kind);
-        continue;
-      }
-
-      if (pct >= warnThreshold && freshSession.soft_warned_at === null) {
-        try {
-          opts.onSoftWarn(freshSession, kind);
-          opts.sessions.markSoftWarned(freshSession.task_id);
-        } catch (error) {
-          opts.log?.warn(
-            {
-              task_id: freshSession.task_id,
-              err: error instanceof Error ? error.message : String(error),
-            },
-            "maestro bounds-tracker soft warning failed",
-          );
-        }
-      }
+      const chainHandoffId = session.chain_handoff_id;
+      if (!chainHandoffId) continue;
+      // Pressure backstop fires every tick, independent of numeric budget axes,
+      // so a long-running maestro is terminated when its subscription window
+      // crosses the cap mid-flight even if numeric axes are healthy.
+      if (handlePressureProbe(session)) continue;
+      evaluateNumericAxes({ ...session, chain_handoff_id: chainHandoffId });
     }
   }
 

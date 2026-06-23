@@ -1,14 +1,14 @@
-import { TaskClassSchema, type TaskClass } from "@penumbra/core";
+import { type TaskClass, TaskClassSchema } from "@penumbra/core";
 
 export interface AutoRecallDeps {
   memoryRecall: (args: { query: string; top_k: number; project_id?: string }) => Promise<{
-    hits: Array<{
+    hits: {
       id: string;
       title: string;
       snippet?: string;
       obs_type?: string;
       tier?: string;
-    }>;
+    }[];
   }>;
   logger?: (level: "debug" | "warn", msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -21,12 +21,12 @@ export interface AutoRecallInput {
 
 export interface AutoRecallResult {
   recalled_memory_ids: string[];
-  recalled_memories: Array<{
+  recalled_memories: {
     id: string;
     title: string;
     obs_type: string;
     snippet_head?: string;
-  }>;
+  }[];
   recalled_query: string;
   injected_text: string | null;
 }
@@ -55,14 +55,14 @@ export async function autoRecallForDispatch(
     if (Array.isArray(result.hits) && result.hits.length === 0 && input.project_id !== undefined) {
       const fallbackArgs: { query: string; top_k: number } = { query: recalled_query, top_k };
       const fallback = await deps.memoryRecall(fallbackArgs);
-      if (fallback && Array.isArray(fallback.hits) && fallback.hits.length > 0) {
+      if (Array.isArray(fallback.hits) && fallback.hits.length > 0) {
         result = fallback;
         deps.logger?.("debug", "auto-recall used cross-project fallback", {
           task_class: taskClass,
         });
       }
     }
-    if (!result || !Array.isArray(result.hits)) {
+    if (!Array.isArray(result.hits)) {
       throw new Error("memoryRecall returned invalid hits");
     }
 
@@ -102,7 +102,7 @@ export async function autoRecallForDispatch(
   }
 }
 
-function renderInjectedText(hits: Array<{ id: string; title: string; snippet?: string }>): string {
+function renderInjectedText(hits: { id: string; title: string; snippet?: string }[]): string {
   const lines = hits.map((hit) => {
     const detail = truncateSnippet(hit.snippet ?? hit.title, 120);
     return `- ${hit.title} - ${detail}`;

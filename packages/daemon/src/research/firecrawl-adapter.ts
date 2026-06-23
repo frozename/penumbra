@@ -1,4 +1,5 @@
 import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
+
 import { OffAdapter } from "./off-adapter.js";
 import { WebFetchAdapter } from "./webfetch-adapter.js";
 
@@ -14,12 +15,12 @@ export interface FirecrawlTransport {
 }
 
 export interface FirecrawlSearchResponse {
-  data: Array<{
+  data: {
     url: string;
     title?: string;
     markdown?: string;
     source_billed_usd?: number;
-  }>;
+  }[];
   source_billed_usd?: number;
 }
 
@@ -46,7 +47,12 @@ export function normalizeFirecrawlSearchResponse(json: unknown): FirecrawlSearch
     data: rawItems
       .map((rawItem) => {
         const item = asRecord(rawItem) ?? {};
-        const url = String(item.url ?? "");
+        const url =
+          typeof item.url === "string"
+            ? item.url
+            : typeof item.url === "number"
+              ? String(item.url)
+              : "";
         const markdown =
           typeof item.markdown === "string" && item.markdown.length > 0
             ? item.markdown
@@ -93,7 +99,7 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
       }),
     });
     if (!res.ok) {
-      const err = Object.assign(new Error(`Firecrawl search failed: ${res.status}`), {
+      const err = Object.assign(new Error(`Firecrawl search failed: ${String(res.status)}`), {
         status: res.status,
       });
       throw err;
@@ -109,12 +115,12 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
       body: JSON.stringify({ url: args.url, formats: ["markdown"] }),
     });
     if (!res.ok) {
-      const err = Object.assign(new Error(`Firecrawl scrape failed: ${res.status}`), {
+      const err = Object.assign(new Error(`Firecrawl scrape failed: ${String(res.status)}`), {
         status: res.status,
       });
       throw err;
     }
-    return res.json() as Promise<FirecrawlScrapeResponse>;
+    return await (res.json() as Promise<FirecrawlScrapeResponse>);
   }
 }
 
@@ -145,11 +151,12 @@ export class FirecrawlAdapter implements WebResearchAdapter {
     const topLevelBilled = response.source_billed_usd;
 
     let items = response.data;
-    if (args.allowed_domains && args.allowed_domains.length > 0) {
+    const allowedDomains = args.allowed_domains;
+    if (allowedDomains && allowedDomains.length > 0) {
       items = items.filter((item) => {
         try {
           const hostname = new URL(item.url).hostname;
-          return isDomainAllowed(hostname, args.allowed_domains!);
+          return isDomainAllowed(hostname, allowedDomains);
         } catch {
           return false;
         }
@@ -171,8 +178,7 @@ export class FirecrawlAdapter implements WebResearchAdapter {
     if (this.allowedDomains && this.allowedDomains.length > 0) {
       const hostname = new URL(args.url).hostname;
       if (!isDomainAllowed(hostname, this.allowedDomains)) {
-        // Throw a string so rejects.toMatch() works in tests without coercion.
-        throw `domain not allowed: ${hostname}`;
+        throw new Error(`domain not allowed: ${hostname}`);
       }
     }
     const response = await this.transport.scrape({ url: args.url });
@@ -210,7 +216,7 @@ class FirecrawlWithFallbackAdapter implements WebResearchAdapter {
     try {
       return await this.primary.search(args);
     } catch (err) {
-      if (isUnauthorized(err)) return this.fallback.search(args);
+      if (isUnauthorized(err)) return await this.fallback.search(args);
       throw err;
     }
   }
@@ -219,7 +225,7 @@ class FirecrawlWithFallbackAdapter implements WebResearchAdapter {
     try {
       return await this.primary.scrape(args);
     } catch (err) {
-      if (isUnauthorized(err)) return this.fallback.scrape(args);
+      if (isUnauthorized(err)) return await this.fallback.scrape(args);
       throw err;
     }
   }

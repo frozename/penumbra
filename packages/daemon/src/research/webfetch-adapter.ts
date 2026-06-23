@@ -2,10 +2,10 @@ import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/re
 
 function htmlToMarkdown(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<script[\s\S]*?<\/script>/gi, "")
+    .replaceAll(/<style[\s\S]*?<\/style>/gi, "")
+    .replaceAll(/<[^>]+>/g, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
@@ -19,32 +19,37 @@ function isHostnameAllowed(hostname: string, allowedDomains: string[]): boolean 
 // metadata hostnames. The check is hostname-only and does not perform DNS
 // resolution, so a public DNS name that resolves to an internal IP can still
 // slip through — pair with an allowlist for full coverage.
-export function isInternalOrMetadataHost(hostname: string): boolean {
-  if (!hostname) return true;
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+function isInternalIpv4(h: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const [, aStr, bStr] = m;
+  if (aStr === undefined || bStr === undefined) return false;
+  const a = parseInt(aStr, 10);
+  const b = parseInt(bStr, 10);
+  if (a === 127 || a === 0 || a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
 
-  if (h === "localhost" || h.endsWith(".localhost")) return true;
-  if (h === "metadata" || h === "metadata.google.internal") return true;
-
+function isInternalIpv6(h: string): boolean {
   if (h === "::1") return true;
   if (h.startsWith("fe80:") || h.startsWith("fe80::")) return true;
   if (/^f[cd][0-9a-f]{2}:/.test(h)) return true;
-
-  const m = /^(\d{1,3})\.(\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})$/.exec(h);
-  if (m) {
-    const [, aStr, bStr] = m;
-    if (aStr === undefined || bStr === undefined) return false;
-    const a = parseInt(aStr, 10);
-    const b = parseInt(bStr, 10);
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 10) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 169 && b === 254) return true;
-  }
-
   return false;
+}
+
+function isInternalHostname(h: string): boolean {
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h === "metadata" || h === "metadata.google.internal") return true;
+  return false;
+}
+
+export function isInternalOrMetadataHost(hostname: string): boolean {
+  if (!hostname) return true;
+  const h = hostname.toLowerCase().replaceAll(/^\[|\]$/g, "");
+  return isInternalHostname(h) || isInternalIpv6(h) || isInternalIpv4(h);
 }
 
 export class WebFetchAdapter implements WebResearchAdapter {
@@ -56,7 +61,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
 
   // Returns a search-engine URL as a navigation hint; no network call.
   // Callers can scrape the returned URL for actual content.
-  async search(args: {
+  search(args: {
     query: string;
     max_pages?: number;
     allowed_domains?: string[] | null;
@@ -67,11 +72,11 @@ export class WebFetchAdapter implements WebResearchAdapter {
       );
       if (!allowed) {
         // Known limitation: WebFetch only outputs DDG URL, so if DDG is not allowed, return empty.
-        return [];
+        return Promise.resolve([]);
       }
     }
     const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(args.query)}`;
-    return [
+    return Promise.resolve([
       {
         url: searchUrl,
         title: `Search: ${args.query}`,
@@ -80,18 +85,31 @@ export class WebFetchAdapter implements WebResearchAdapter {
         source_provider: "webfetch",
         source_billed_usd: 0,
       },
-    ];
+    ]);
   }
 
   private checkHost(hostname: string): void {
     if (isInternalOrMetadataHost(hostname)) {
-      throw `internal host blocked: ${hostname}`;
+      throw new Error(`internal host blocked: ${hostname}`);
     }
     if (this.allowedDomains && this.allowedDomains.length > 0) {
       if (!isHostnameAllowed(hostname, this.allowedDomains)) {
-        throw `domain not allowed: ${hostname}`;
+        throw new Error(`domain not allowed: ${hostname}`);
       }
     }
+  }
+
+  private resolveRedirect(res: Response, currentUrl: string): string | null {
+    const loc = res.headers.get("location");
+    if (!loc) return null;
+    let nextUrl: URL;
+    try {
+      nextUrl = new URL(loc, currentUrl);
+    } catch {
+      throw new Error(`invalid redirect URL: ${loc}`);
+    }
+    this.checkHost(nextUrl.hostname);
+    return nextUrl.toString();
   }
 
   async scrape(args: { url: string }): Promise<WebResearchResult> {
@@ -99,7 +117,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     try {
       currentUrl = new URL(args.url).toString();
     } catch {
-      throw `invalid URL: ${args.url}`;
+      throw new Error(`invalid URL: ${args.url}`);
     }
     this.checkHost(new URL(currentUrl).hostname);
 
@@ -110,24 +128,14 @@ export class WebFetchAdapter implements WebResearchAdapter {
     let res: Response | undefined;
     for (let hops = 0; hops <= maxRedirects; hops++) {
       res = await fetch(currentUrl, { redirect: "manual" });
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get("location");
-        if (!loc) break;
-        let nextUrl: URL;
-        try {
-          nextUrl = new URL(loc, currentUrl);
-        } catch {
-          throw `invalid redirect URL: ${loc}`;
-        }
-        this.checkHost(nextUrl.hostname);
-        currentUrl = nextUrl.toString();
-        continue;
-      }
-      break;
+      if (res.status < 300 || res.status >= 400) break;
+      const next = this.resolveRedirect(res, currentUrl);
+      if (next === null) break;
+      currentUrl = next;
     }
-    if (!res) throw `fetch failed: ${args.url}`;
+    if (!res) throw new Error(`fetch failed: ${args.url}`);
     if (res.status >= 300 && res.status < 400) {
-      throw `too many redirects: ${args.url}`;
+      throw new Error(`too many redirects: ${args.url}`);
     }
     const html = await res.text();
     const markdown = htmlToMarkdown(html);

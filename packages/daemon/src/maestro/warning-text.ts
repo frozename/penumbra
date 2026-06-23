@@ -19,10 +19,14 @@ export function formatBudgetWarning(consumed: BoundsConsumed, budgets: WarningBu
   const budgetSubs = budgets.sub_dispatch_budget;
   const subPct = Math.round(consumed.axis_breakdown.sub_dispatches * 100);
 
+  const wallLine = `Wall-clock: ${String(consumedMin)} / ${String(budgetMin)} min (${String(wallPct)}%)`;
+  const costLine = `Cost: $${consumedDollars} / $${budgetDollars} (${String(costPct)}%)`;
+  const subLine = `Sub-dispatches: ${String(consumedSubs)} / ${String(budgetSubs)} (${String(subPct)}%)`;
+
   return `BUDGET WARNING — wrap up now.
-Wall-clock: ${consumedMin} / ${budgetMin} min (${wallPct}%)
-Cost: $${consumedDollars} / $${budgetDollars} (${costPct}%)
-Sub-dispatches: ${consumedSubs} / ${budgetSubs} (${subPct}%)
+${wallLine}
+${costLine}
+${subLine}
 
 You have ~20% remaining on at least one axis. Call task.complete with what you have, or task.fail with a reason. If you call chain_start now and it returns 429 BudgetExceeded, you must call task.fail.`;
 }

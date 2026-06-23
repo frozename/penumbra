@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import type {
   BoundsAxis,
   CapCheckWarn,
@@ -6,9 +5,12 @@ import type {
   MaestroTerminationReason,
   Services,
 } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
 import { checkPressureCap, enqueueGhStatusSyncOnDb } from "@penumbra/core";
-import { formatBudgetWarning } from "./warning-text.js";
+
 import { buildProviderCaps } from "./build-provider-caps.js";
+import { formatBudgetWarning } from "./warning-text.js";
 
 interface BoundsSnapshot {
   wall_clock_ms: number;
@@ -52,12 +54,12 @@ interface OpenLeaseRow {
 }
 
 type AgentChatConfigLike = {
-  agents: Array<{
+  agents: {
     name: string;
     pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
-  }>;
+  }[];
 };
 
 function ratio(consumed: number, budget: number): number {
@@ -105,7 +107,7 @@ function insertTaskEvent(
   bus.publish({
     task_id: input.task_id,
     at: input.at,
-    kind: input.kind as never,
+    kind: input.kind,
     actor: null,
     payload: input.payload,
   });
@@ -220,10 +222,11 @@ function terminateSessionWithReason(opts: {
     },
   });
 
-  if (opts.session.chain_handoff_id) {
-    void opts.chainCancel(opts.session.chain_handoff_id).catch((error) => {
+  const chainHandoffId = opts.session.chain_handoff_id;
+  if (chainHandoffId) {
+    void opts.chainCancel(chainHandoffId).catch((error: unknown) => {
       console.error(
-        `[bounds-callbacks] chain cancel failed for chain_handoff_id=${opts.session.chain_handoff_id}`,
+        `[bounds-callbacks] chain cancel failed for chain_handoff_id=${chainHandoffId}`,
         error,
       );
     });
@@ -244,7 +247,7 @@ function evaluatePressureForSession(
   if (!services) return null;
   const cfg = services.agentchatConfig;
   const agent = cfg?.agents?.find((candidate) => candidate.name === session.agent_id);
-  if (!agent || agent.pricing_mode !== "subscription") return null;
+  if (agent?.pricing_mode !== "subscription") return null;
   const providerCaps = buildProviderCaps(services.providerQuotas);
   const agentForCheck = {
     name: agent.name,
@@ -253,34 +256,37 @@ function evaluatePressureForSession(
     subscription_model: agent.subscription_model,
   };
   const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
-  for (const quota of services.providerQuotas as any[]) {
+  for (const quota of services.providerQuotas) {
     if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
   }
 
   const getRecentDispatchCount = (provider: string, windowSeconds: number): number => {
     const cfg = services.agentchatConfig;
-    if (!cfg || !cfg.agents) return 0;
+    if (!cfg?.agents) return 0;
     const agentsForProvider = cfg.agents
       .filter(
-        (a: any) =>
+        (a) =>
           (a.pricing_mode === "subscription"
             ? a.subscription_provider
             : (a.api_provider ?? a.subscription_provider)) === provider,
       )
-      .map((a: any) => a.name);
+      .map((a) => a.name);
     if (agentsForProvider.length === 0) return 0;
     const cutoff = new Date(services.clock().getTime() - windowSeconds * 1000).toISOString();
     const placeholders = agentsForProvider.map(() => "?").join(",");
     const row = services.db
-      .query(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
-      .get(...agentsForProvider, cutoff) as { c: number };
+      .query<
+        { c: number },
+        (string | null)[]
+      >(`SELECT COUNT(*) as c FROM handoffs WHERE to_agent IN (${placeholders}) AND ts >= ?`)
+      .get(...agentsForProvider, cutoff);
     return row?.c ?? 0;
   };
 
   const outcome = checkPressureCap({
     cache: services.subscriptionPressureCache,
     agent: agentForCheck,
-    providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]["providerCaps"],
+    providerCaps: providerCaps,
     syntheticCaps,
     getRecentDispatchCount,
   });
@@ -297,7 +303,7 @@ function evaluatePressureForSession(
 }
 
 function formatPressureWarning(outcome: CapCheckWarn): string {
-  return `Subscription pressure on ${outcome.provider} is at ${outcome.used_pct}% for the ${outcome.window_label} window (warn threshold ${outcome.warn_pct}%, refuse threshold ${outcome.refuse_pct}%). You may be hard-stopped soon if usage continues. Consider winding down the current task or routing the next dispatch to a different provider.`;
+  return `Subscription pressure on ${outcome.provider} is at ${String(outcome.used_pct)}% for the ${outcome.window_label} window (warn threshold ${String(outcome.warn_pct)}%, refuse threshold ${String(outcome.refuse_pct)}%). You may be hard-stopped soon if usage continues. Consider winding down the current task or routing the next dispatch to a different provider.`;
 }
 
 export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
@@ -312,7 +318,9 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
   const services = opts.services;
 
   return {
-    evaluatePressure(session) {
+    evaluatePressure(
+      session,
+    ): { kind: "warn"; outcome: CapCheckWarn } | { kind: "refuse"; axis: BoundsAxis } | null {
       const result = evaluatePressureForSession(services, session);
       if (!result) return null;
       if (result.kind === "warn") return { kind: "warn", outcome: result.outcome };
@@ -336,12 +344,13 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
         },
       );
 
-      if (session.chain_handoff_id) {
+      const softChainHandoffId = session.chain_handoff_id;
+      if (softChainHandoffId) {
         void opts.injector
-          .inject(session.chain_handoff_id, { role: "user", text })
-          .catch((error) => {
+          .inject(softChainHandoffId, { role: "user", text })
+          .catch((error: unknown) => {
             console.error(
-              `[bounds-callbacks] soft warn inject failed for chain_handoff_id=${session.chain_handoff_id}`,
+              `[bounds-callbacks] soft warn inject failed for chain_handoff_id=${softChainHandoffId}`,
               error,
             );
           });
@@ -363,12 +372,13 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
       const nowMs = now();
       const text = formatPressureWarning(outcome);
 
-      if (session.chain_handoff_id) {
+      const pressureChainHandoffId = session.chain_handoff_id;
+      if (pressureChainHandoffId) {
         void opts.injector
-          .inject(session.chain_handoff_id, { role: "user", text })
-          .catch((error) => {
+          .inject(pressureChainHandoffId, { role: "user", text })
+          .catch((error: unknown) => {
             console.error(
-              `[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`,
+              `[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${pressureChainHandoffId}`,
               error,
             );
           });

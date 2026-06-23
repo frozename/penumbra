@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type {
-  AcpInjectMessage,
   AcpInjectableSessionLike,
+  AcpInjectMessage,
   AcpWorkerManagerLike,
 } from "./acp-injector.js";
 
@@ -23,32 +24,33 @@ export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWo
   let warned = false;
   if (!workerUrl) {
     return {
-      lookupSession: async () => {
+      lookupSession: (): Promise<AcpInjectableSessionLike | null> => {
         if (!warned) {
           warned = true;
           deps.logWarn?.("[serve] worker URL unavailable; ACP soft warnings will no-op");
         }
-        return null;
+        return Promise.resolve(null);
       },
     };
   }
   return {
-    lookupSession: async (handoffId: string): Promise<AcpInjectableSessionLike> => ({
-      adapter: "remote-worker",
-      inject: async (message: AcpInjectMessage) => {
-        const res = await (deps.fetch ?? fetch)(`${workerUrl}/sessions/${handoffId}/inject`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ content: message.text }),
-        });
-        if (!res.ok) {
-          throw new Error(`worker inject ${res.status}: ${await res.text()}`);
-        }
-      },
-    }),
+    lookupSession: (handoffId: string): Promise<AcpInjectableSessionLike> =>
+      Promise.resolve({
+        adapter: "remote-worker",
+        inject: async (message: AcpInjectMessage) => {
+          const res = await (deps.fetch ?? fetch)(`${workerUrl}/sessions/${handoffId}/inject`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ content: message.text }),
+          });
+          if (!res.ok) {
+            throw new Error(`worker inject ${String(res.status)}: ${await res.text()}`);
+          }
+        },
+      }),
   };
 }
 
@@ -59,7 +61,7 @@ function readWorkerUrl(): string | null {
     if (!port) return null;
     const parsedPort = Number(port);
     if (!Number.isInteger(parsedPort) || parsedPort <= 0) return null;
-    return `http://127.0.0.1:${parsedPort}`;
+    return `http://127.0.0.1:${String(parsedPort)}`;
   } catch {
     return null;
   }

@@ -19,10 +19,10 @@ const log = createLogger({ component: "daemon", level: "silent" });
 
 export function createMcpEventBus(): McpEventBus {
   const subs = new Map<string, Set<Handler>>();
-  const key = (server: string, event: string) => `${server}::${event}`;
+  const key = (server: string, event: string): string => `${server}::${event}`;
 
   return {
-    publish(evt) {
+    publish(evt): void {
       const handlers = subs.get(key(evt.server, evt.event));
       if (!handlers) return;
       for (const handler of handlers) {
@@ -40,12 +40,13 @@ export function createMcpEventBus(): McpEventBus {
         set = new Set<Handler>();
         subs.set(k, set);
       }
-      set.add(handler);
+      const bound = set;
+      bound.add(handler);
       return () => {
-        set?.delete(handler);
+        bound.delete(handler);
       };
     },
-    clear() {
+    clear(): void {
       subs.clear();
     },
   };
@@ -54,9 +55,7 @@ export function createMcpEventBus(): McpEventBus {
 let _singleton: McpEventBus | null = null;
 
 export function getMcpEventBus(): McpEventBus {
-  if (!_singleton) {
-    _singleton = createMcpEventBus();
-  }
+  _singleton ??= createMcpEventBus();
   return _singleton;
 }
 

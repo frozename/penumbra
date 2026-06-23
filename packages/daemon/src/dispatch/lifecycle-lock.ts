@@ -5,7 +5,7 @@ export interface LockHolder {
 
 export class LifecycleLock {
   private holder: LockHolder | null = null;
-  private waiters: Array<() => void> = [];
+  private waiters: (() => void)[] = [];
   readonly ttlMs: number;
 
   constructor(ttlMs: number) {

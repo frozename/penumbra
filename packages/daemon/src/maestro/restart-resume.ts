@@ -1,10 +1,11 @@
-import type { Database } from "bun:sqlite";
 import type {
   MaestroSessionRecord,
   MaestroSessionWriter,
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
 import { enqueueGhStatusSyncOnDb } from "@penumbra/core";
 
 interface OpenLeaseRow {
