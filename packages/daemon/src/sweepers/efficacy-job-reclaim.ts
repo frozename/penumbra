@@ -1,5 +1,13 @@
 import type { Services } from "@penumbra/core";
+
 import { sweepStaleJobs } from "@penumbra/core";
+
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export function runEfficacyJobReclaimSweep(opts: {
   services: Services;
@@ -9,7 +17,7 @@ export function runEfficacyJobReclaimSweep(opts: {
   const leaseTtlMs = opts.leaseTtlMs ?? 300_000;
   const reclaimed = sweepStaleJobs(opts.services.db, new Date().toISOString(), { leaseTtlMs });
   for (const jobId of reclaimed) {
-    opts.log?.info?.({ job_id: jobId }, "efficacy-job-reclaim: reclaimed stale job");
+    opts.log?.info({ job_id: jobId }, "efficacy-job-reclaim: reclaimed stale job");
   }
   return reclaimed;
 }
@@ -30,9 +38,11 @@ export function startEfficacyJobReclaimSweeper(opts: {
     try {
       (opts.runSweep ?? runEfficacyJobReclaimSweep)(opts);
     } catch (err) {
-      opts.log?.error?.({ err: String(err) }, "efficacy-job-reclaim: sweep failed");
+      opts.log?.error({ err: String(err) }, "efficacy-job-reclaim: sweep failed");
     }
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  maybeUnref(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }

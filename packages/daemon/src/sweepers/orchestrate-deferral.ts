@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
 import type { TaskEventBus } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
 
 export interface OrchestrateDeferralSweeperOpts {
   db: Database;
@@ -15,11 +15,18 @@ export interface OrchestrateDeferralSweepResult {
 
 const DEFAULT_INTERVAL_MS = 30_000;
 
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
 type DeferredCandidateRow = {
   task_id: string;
   deferred_at: number;
   resume_at_ms: number;
 };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export function runOrchestrateDeferralSweep(
   opts: Pick<OrchestrateDeferralSweeperOpts, "db" | "bus"> & { now?: () => number },
@@ -106,7 +113,7 @@ export function createOrchestrateDeferralSweeper(opts: OrchestrateDeferralSweepe
           // keep sweeper alive after per-tick failures
         }
       }, intervalMs);
-      if (typeof (timer as any).unref === "function") (timer as any).unref();
+      maybeUnref(timer);
     },
 
     stop(): void {

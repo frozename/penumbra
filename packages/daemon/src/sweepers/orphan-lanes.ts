@@ -1,10 +1,18 @@
 import type { Services } from "@penumbra/core";
+
 import { closeLane } from "@penumbra/core";
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_GRACE_MS = 120 * 60_000;
 
 const TERMINAL_HANDOFF_STATUSES = ["completed", "failed", "rejected", "expired"] as const;
+
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export interface RunOrphanLanesSweepOpts {
   graceMs?: number;
@@ -74,7 +82,7 @@ export function runOrphanLanesSweep(
       continue;
 
     const grace_min = Math.round(graceMs / 60_000);
-    const reason = `auto-closed by orphan-lane sweeper: implementer handoff ${row.handoff_status} since ${row.handoff_resolved_at}; lane was not closed within ${grace_min}min grace window`;
+    const reason = `auto-closed by orphan-lane sweeper: implementer handoff ${row.handoff_status} since ${row.handoff_resolved_at ?? "unknown"}; lane was not closed within ${String(grace_min)}min grace window`;
     // Explicitly skip /memory-verify/authorize for sweeper auto-closes.
     // Human reviewer authorization is required for lane_close/dispatch_land provenance.
     // NOTE: There's a small race window between this read and the closeLane UPDATE
@@ -94,7 +102,7 @@ export function runOrphanLanesSweep(
       })();
       lane_ids.push(row.lane_id);
     } catch (err) {
-      (services as any).log?.warn?.(
+      services.log.warn(
         { lane_id: row.lane_id, err: String(err) },
         "orphan-lane sweep close failed",
       );
@@ -123,7 +131,7 @@ export function runOrphanLanesSweep(
       request_id: null,
       origin: null,
       payload_json: { lane_ids, grace_ms: graceMs, scanned: rows.length },
-      payload_summary: `orphan-lane sweep closed ${lane_ids.length} of ${rows.length} candidates`,
+      payload_summary: `orphan-lane sweep closed ${String(lane_ids.length)} of ${String(rows.length)} candidates`,
     });
   }
 
@@ -140,9 +148,11 @@ export function startOrphanLanesSweeper(
     try {
       runOrphanLanesSweep(services, { graceMs });
     } catch (err) {
-      (services as any).log?.warn?.({ err: String(err) }, "orphan-lane sweep failed");
+      services.log.warn({ err: String(err) }, "orphan-lane sweep failed");
     }
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  maybeUnref(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }

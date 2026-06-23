@@ -1,6 +1,8 @@
 import type { Services } from "@penumbra/core";
-import { runPrOrphanSweepForDaemon } from "../services/pr-orphan-sweep.js";
+
 import type { PrSweepResult } from "./pr-orphan-sweeper.js";
+
+import { runPrOrphanSweepForDaemon } from "../services/pr-orphan-sweep.js";
 
 export interface ReconcilerSweepOpts {
   services: Services;
@@ -24,6 +26,13 @@ export interface ReconcilerSweepTickResult {
 const DEFAULT_INTERVAL_MS = 30 * 60_000;
 const DEFAULT_MAX_CLOSE = 20;
 
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
+
 /**
  * One sweep tick: call runPrOrphanSweepForDaemon with dryRun:false, emit a
  * reconciler.sweep.tick dispatch event, and return counts. Catches all errors
@@ -38,7 +47,7 @@ export async function runReconcilerSweepTick(
     (process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE
       ? Number(process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE)
       : DEFAULT_MAX_CLOSE);
-  const dryRun = opts.dryRun ?? (services.settings as any)?.prOrphanSweeperDryRun ?? true;
+  const dryRun = opts.dryRun ?? services.settings.prOrphanSweeperDryRun;
   const runSweep = opts.runSweep ?? runPrOrphanSweepForDaemon;
 
   try {
@@ -72,6 +81,8 @@ export function startReconcilerSweeper(
   const timer = setInterval(() => {
     void runReconcilerSweepTick(opts);
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  maybeUnref(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }

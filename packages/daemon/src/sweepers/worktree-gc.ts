@@ -1,5 +1,13 @@
 import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
+
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
+
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export interface WorktreeGcOpts {
   services: Services;
@@ -106,10 +114,12 @@ export function startWorktreeGcSweeper(
   const effectiveOpts = { ...opts, gracePeriodMs };
 
   const timer = setInterval(() => {
-    runWorktreeGcTick(effectiveOpts, now).catch((err) => {
+    runWorktreeGcTick(effectiveOpts, now).catch((err: unknown) => {
       opts.log?.warn?.({ err: String(err) }, "worktree-gc sweep failed");
     });
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  maybeUnref(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }

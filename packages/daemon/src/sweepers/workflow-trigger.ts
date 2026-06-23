@@ -1,12 +1,20 @@
 import type { Registry, StateMetrics } from "@penumbra/workflows";
+
 import { evaluateStateThresholds } from "@penumbra/workflows";
 
 type WorkflowRegistryLike = {
-  list(): ReadonlyArray<unknown>;
-  findByTrigger(event: unknown): ReadonlyArray<unknown>;
+  list(): readonly unknown[];
+  findByTrigger(event: unknown): readonly unknown[];
   getEntry(name: string): unknown;
-  readonly errors: ReadonlyArray<unknown>;
+  readonly errors: readonly unknown[];
 };
+
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export interface WorkflowTriggerSweeperOpts {
   registry: WorkflowRegistryLike;
@@ -76,10 +84,12 @@ export function startWorkflowTriggerSweeper(
 ): () => void {
   const state = { lastFired: new Map<string, number>() };
   const timer = setInterval(() => {
-    runWorkflowTriggerSweep(opts, state, now).catch((err) => {
+    runWorkflowTriggerSweep(opts, state, now).catch((err: unknown) => {
       opts.log?.warn?.({ err: String(err) }, "workflow-trigger sweep tick failed");
     });
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  maybeUnref(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }

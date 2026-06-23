@@ -1,13 +1,15 @@
 import type { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+
 import {
   buildT2EmbedText,
   resolveGateOutcomeCutoverIso,
-  writeDirectT2Memory,
   type Services,
+  writeDirectT2Memory,
 } from "@penumbra/core";
+import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { checkDbPressure } from "../pressure.js";
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -19,10 +21,17 @@ const MAX_WINDOW_ROWS = 5_000;
 const MAX_T2_LANE_IDS = 20;
 const MAX_SLUG_SIGNATURE_CHARS = 96;
 
+type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
+
 type Log = {
   warn?: (obj: Record<string, unknown>, msg: string) => void;
   info?: (obj: Record<string, unknown>, msg: string) => void;
 };
+
+function maybeUnref(timer: ReturnType<typeof setInterval>): void {
+  const unrefable = timer as UnrefableTimer;
+  if (typeof unrefable.unref === "function") unrefable.unref();
+}
 
 export interface GateQualityDigestSweepDeps {
   services: Services;
@@ -69,7 +78,7 @@ export interface AgentGateRateTrend {
 export async function runGateQualityDigestSweep(
   deps: GateQualityDigestSweepDeps,
 ): Promise<GateQualityDigestSweepResult> {
-  const now = (deps.now ?? (() => new Date()))();
+  const now = (deps.now ?? ((): Date => new Date()))();
   const date = formatDate(now);
   const digestPath = getGateQualityDigestPath(deps.outDir, date);
   if (existsSync(digestPath)) {
@@ -125,10 +134,10 @@ export function startGateQualityDigestSweeper(
     );
   let gateQualityDigestInFlight = false;
 
-  const tick = async () => {
+  const tick = async (): Promise<void> => {
     if (gateQualityDigestInFlight) return;
     if (resolvePressureGuardEnabled(deps.getEnv)) {
-      const check = deps.checkPressure ?? (() => checkDbPressure(deps.services.db));
+      const check = deps.checkPressure ?? ((): boolean => checkDbPressure(deps.services.db));
       if (check()) {
         deps.log?.info?.({}, "gate-quality-digest: deferred due to subscription pressure");
         return;
@@ -148,9 +157,11 @@ export function startGateQualityDigestSweeper(
     void tick();
   }, effectiveIntervalMs);
   void tick();
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
+  maybeUnref(timer);
 
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+  };
 }
 
 function readClosedLanesInWindow(db: Database, now: Date, log?: Log): LaneCloseRow[] {
@@ -192,8 +203,12 @@ function analyzeFailures(rows: LaneCloseRow[]): {
       continue;
     }
     for (const signature of extractFailureSignatures(parsed.value)) {
-      if (!bySignature.has(signature)) bySignature.set(signature, new Set());
-      bySignature.get(signature)!.add(row.lane_id);
+      let laneIds = bySignature.get(signature);
+      if (!laneIds) {
+        laneIds = new Set();
+        bySignature.set(signature, laneIds);
+      }
+      laneIds.add(row.lane_id);
     }
   }
 
@@ -219,7 +234,7 @@ function parseMetadata(raw: string): { ok: true; value: unknown } | { ok: false 
 
 function extractFailureSignatures(value: unknown): string[] {
   const signatures = new Set<string>();
-  const visit = (node: unknown, depth: number) => {
+  const visit = (node: unknown, depth: number): void => {
     if (depth >= MAX_METADATA_DEPTH) return;
     if (Array.isArray(node)) {
       for (const item of node) visit(item, depth + 1);
@@ -244,8 +259,8 @@ function normalizeSignature(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "");
 }
 
 async function writeRecurringFailureMemories(opts: {
@@ -268,9 +283,9 @@ async function writeRecurringFailureMemories(opts: {
     const omitted = failure.laneIds.length - laneIds.length;
     const title = `Recurring gate failure: ${failure.signature}`;
     const body = [
-      `Observed ${failure.count} lanes with this failure signature on ${opts.date}.`,
+      `Observed ${String(failure.count)} lanes with this failure signature on ${opts.date}.`,
       "",
-      `Lane IDs: ${laneIds.join(", ")}${omitted > 0 ? ` (${omitted} more omitted)` : ""}`,
+      `Lane IDs: ${laneIds.join(", ")}${omitted > 0 ? ` (${String(omitted)} more omitted)` : ""}`,
       "",
       "Use this as routing and review context for future gate-outcome analysis.",
     ].join("\n");
@@ -333,11 +348,11 @@ async function writeGateQualityDigest(opts: {
     "",
     "| status | count |",
     "|---|---:|",
-    `| passed | ${byStatus.passed} |`,
-    `| failed | ${byStatus.failed} |`,
-    `| skipped | ${byStatus.skipped} |`,
-    `| review_debt | ${byStatus.review_debt} |`,
-    `| open | ${byStatus.open} |`,
+    `| passed | ${String(byStatus.passed)} |`,
+    `| failed | ${String(byStatus.failed)} |`,
+    `| skipped | ${String(byStatus.skipped)} |`,
+    `| review_debt | ${String(byStatus.review_debt)} |`,
+    `| open | ${String(byStatus.open)} |`,
     "",
     "## Top Failure Signatures",
     "",
@@ -349,11 +364,11 @@ async function writeGateQualityDigest(opts: {
     lines.push("| none | 0 |");
   } else {
     for (const failure of opts.failures.slice(0, 10)) {
-      lines.push(`| ${escapeMarkdownTableCell(failure.signature)} | ${failure.count} |`);
+      lines.push(`| ${escapeMarkdownTableCell(failure.signature)} | ${String(failure.count)} |`);
     }
   }
 
-  lines.push("", `Malformed lane metadata skipped: ${opts.malformedMetadata}`, "");
+  lines.push("", `Malformed lane metadata skipped: ${String(opts.malformedMetadata)}`, "");
   lines.push(
     "## Agent Gate Pass Rate Trends",
     "",
@@ -440,7 +455,7 @@ function formatDate(d: Date): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return `${String(y)}-${m}-${day}`;
 }
 
 function formatPct(value: number): string {
@@ -448,20 +463,22 @@ function formatPct(value: number): string {
 }
 
 function formatDelta(value: number | null): string {
-  if (value == null) return "0.0 pp";
+  if (value === null) return "0.0 pp";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(1)} pp`;
 }
 
 function truncateSlugPart(value: string): string {
-  return value.slice(0, MAX_SLUG_SIGNATURE_CHARS).replace(/-+$/g, "");
+  return value.slice(0, MAX_SLUG_SIGNATURE_CHARS).replaceAll(/-+$/g, "");
 }
 
 function escapeMarkdownTableCell(value: string): string {
   return value
-    .replace(/[\r\n\t]/g, " ")
-    .replace(/[\\`*_{}\[\]<>()#+.!]/g, "")
-    .replace(/\|/g, "\\|")
+    .replaceAll(/[\r\n\t]/g, " ")
+    .replaceAll(/[\\`*_{}<>()#+.!]/g, "")
+    .replaceAll("[", "")
+    .replaceAll("]", "")
+    .replaceAll("|", "\\|")
     .trim();
 }
 
