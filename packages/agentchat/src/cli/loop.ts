@@ -44,6 +44,9 @@ export interface ChatTurnInput {
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
   requestPermission?: DispatchInput["requestPermission"];
+  /** Plumbed from the worker's chain_trust_mode so adapters can short-circuit
+   *  permission gates under "all" without consulting requestPermission. */
+  trust_mode?: DispatchInput["trust_mode"];
   eventContext?: DispatchInput["eventContext"];
   onEvent?: DispatchInput["onEvent"];
   signal?: AbortSignal;
@@ -123,6 +126,7 @@ function buildDispatchInput(
     },
     signal: input.signal ?? new AbortController().signal,
     requestPermission: input.requestPermission,
+    trust_mode: input.trust_mode,
     handoff_id: input.handoff_id,
     executor: input.executor,
     eventContext: input.eventContext,

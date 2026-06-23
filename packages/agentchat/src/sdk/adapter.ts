@@ -23,6 +23,14 @@ export interface DispatchInput {
   };
   signal: AbortSignal;
   requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
+  /**
+   * Dispatch trust mode (per-handoff). Adapters use this to fast-path
+   * permission auto-approval under trust-all without consulting requestPermission
+   * for every nested tool call, and to advertise a permissive permission level
+   * during the ACP handshake when the underlying agent supports that hint.
+   * Absent on synthetic callers that haven't been plumbed (treat as "config").
+   */
+  trust_mode?: "all" | "config";
   handoff_id?: string;
   executor?: WriteToolsExecutor;
   eventContext?: { handoffId: string; workerId?: string };

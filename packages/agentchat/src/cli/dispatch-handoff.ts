@@ -131,6 +131,7 @@ async function runTurnOnce(
       observe: opts.observe,
       onChunk: opts.onChunk,
       requestPermission: opts.requestPermission,
+      trust_mode: opts.trustMode,
       executor: opts.executor,
       eventContext: opts.eventContext,
       onEvent: opts.onEvent,

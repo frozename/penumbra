@@ -336,6 +336,23 @@ export interface StdioAcpOptions {
    * Skipped on warm-connection reuse (the process already absorbed `/model`).
    */
   modelWarmupPrompt?: string;
+  /**
+   * Permission mode advertised to the ACP agent during initialize and
+   * session/new. Mirrors claude-agent-sdk's PermissionMode union. When unset,
+   * the adapter falls back to dispatch-time `input.trust_mode`: `"all"` maps
+   * to `"bypassPermissions"` (auto-approve every exec/shell/git tool call);
+   * any other value leaves the field unset so the agent applies its default.
+   *
+   * Surfaced because the official ACP ClientCapabilities schema has no
+   * permission field — agents that honor a trust hint (e.g. devin's chisel
+   * server, claude-agent-sdk) read it out of the extensibility-reserved
+   * `_meta` block on initialize.clientCapabilities and session/new._meta.
+   * The exact wire shape is also mirrored at the top of `clientCapabilities`
+   * for agents that read a non-spec `permission` field. Operators pin this
+   * per seat (e.g. `permissionMode: "bypassPermissions"` on devin-acp) when
+   * the per-dispatch trust hint is not enough.
+   */
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 }
 
 export interface StdioAcpThoughtCapture {
@@ -370,9 +387,26 @@ interface AcpClientFsCapability {
   writeTextFile?: boolean;
 }
 
+interface AcpClientPermissionCapability {
+  mode?: string;
+}
+
+interface AcpClientCapabilitiesMeta {
+  permissionMode?: string;
+  permission?: AcpClientPermissionCapability;
+}
+
 interface AcpClientCapabilities {
   fs?: AcpClientFsCapability;
   terminal?: boolean;
+  /**
+   * Non-spec top-level hint for ACP servers that read a `permission` field
+   * directly off clientCapabilities. Paired with `_meta.permissionMode` so
+   * spec-compliant readers can pick the hint up through the official
+   * extensibility channel.
+   */
+  permission?: AcpClientPermissionCapability;
+  _meta?: AcpClientCapabilitiesMeta;
 }
 
 interface AcpAuthMethodVar {
@@ -473,6 +507,13 @@ interface ClaudeCodeMeta {
 
 interface SessionParamsMeta {
   claudeCode?: ClaudeCodeMeta;
+  /**
+   * Non-spec trust hint mirrored onto `session/new._meta` for agents whose
+   * ACP server reads the permission level off the session params rather than
+   * (or in addition to) the initialize handshake.
+   */
+  permissionMode?: string;
+  permission?: { mode: string };
 }
 
 interface SessionNewParams {
@@ -559,6 +600,44 @@ function buildMcpServersWithEnv(
     ];
     return { ...server, env: nextEnv } as McpServer;
   });
+}
+
+/**
+ * Resolves the permission mode to advertise during the ACP handshake.
+ * Precedence: explicit `opts.permissionMode` > derived from `input.trust_mode`.
+ * trust_mode === "all" promotes to "bypassPermissions"; trust_mode === "config"
+ * (or unset) returns undefined so the agent's own default applies.
+ */
+export function resolvePermissionMode(
+  opts: Pick<StdioAcpOptions, "permissionMode">,
+  input?: Pick<DispatchInput, "trust_mode">,
+): StdioAcpOptions["permissionMode"] | undefined {
+  if (opts.permissionMode !== undefined) return opts.permissionMode;
+  if (input?.trust_mode === "all") return "bypassPermissions";
+  return undefined;
+}
+
+/**
+ * Builds the initialize.clientCapabilities payload. Exported (via the class
+ * wrapper) so unit tests can pin both fs/terminal and the trust-hint surface
+ * without instantiating the full adapter.
+ */
+export function buildClientCapabilities(
+  opts: StdioAcpOptions,
+  input?: DispatchInput,
+): AcpClientCapabilities {
+  const capabilities: AcpClientCapabilities = {};
+  const fs: AcpClientFsCapability = {};
+  if (opts.fsReadTextFile === true) fs.readTextFile = true;
+  if (opts.fsWriteTextFile === true) fs.writeTextFile = true;
+  if (fs.readTextFile === true || fs.writeTextFile === true) capabilities.fs = fs;
+  if (opts.terminal === true) capabilities.terminal = true;
+  const mode = resolvePermissionMode(opts, input);
+  if (mode !== undefined) {
+    capabilities.permission = { mode };
+    capabilities._meta = { permissionMode: mode, permission: { mode } };
+  }
+  return capabilities;
 }
 
 function buildClaudeCodeMeta(opts: StdioAcpOptions): SessionParamsMeta | undefined {
@@ -786,7 +865,12 @@ async function handlePermissionRequest(
   params: AcpRequestPermissionParams,
 ): Promise<PermissionResult> {
   const options = Array.isArray(params.options) ? params.options : [];
-  if (!ctx.input.requestPermission) {
+  // Trust-all + no callback → pick the most permissive offered option.
+  // Trust-all + callback present → still skip the round-trip: the callback is
+  // a constant `() => "approve"` in fleet operation, so consulting it is pure
+  // overhead and adds a stall point on every nested exec/shell tool call. The
+  // shape mirrors the "no callback" branch below.
+  if (!ctx.input.requestPermission || ctx.input.trust_mode === "all") {
     const chosen = pickPermissionOption(options, [
       (o: AcpPermissionOption): boolean => o.kind === "allow_always",
       (o: AcpPermissionOption): boolean => o.kind === "allow_once",
@@ -1091,14 +1175,8 @@ export class StdioAcpAdapter implements Adapter {
     }
   }
 
-  private buildClientCapabilities(): AcpClientCapabilities {
-    const capabilities: AcpClientCapabilities = {};
-    const fs: AcpClientFsCapability = {};
-    if (this.opts.fsReadTextFile === true) fs.readTextFile = true;
-    if (this.opts.fsWriteTextFile === true) fs.writeTextFile = true;
-    if (fs.readTextFile === true || fs.writeTextFile === true) capabilities.fs = fs;
-    if (this.opts.terminal === true) capabilities.terminal = true;
-    return capabilities;
+  private buildClientCapabilities(input?: DispatchInput): AcpClientCapabilities {
+    return buildClientCapabilities(this.opts, input);
   }
 
   private maybeDepositWarm(args: {
@@ -1286,8 +1364,13 @@ export class StdioAcpAdapter implements Adapter {
       mcpServers: mcpServersWithEnv,
     };
     if (this.opts.model !== undefined) sessionParams.model = this.opts.model;
-    const claudeMeta = buildClaudeCodeMeta(this.opts);
-    if (claudeMeta) sessionParams._meta = claudeMeta;
+    const meta: SessionParamsMeta = buildClaudeCodeMeta(this.opts) ?? {};
+    const mode = resolvePermissionMode(this.opts, input);
+    if (mode !== undefined) {
+      meta.permissionMode = mode;
+      meta.permission = { mode };
+    }
+    if (Object.keys(meta).length > 0) sessionParams._meta = meta;
     const session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
       server,
       client,
@@ -1514,7 +1597,7 @@ export class StdioAcpAdapter implements Adapter {
           "initialize",
           {
             protocolVersion: 1,
-            clientCapabilities: this.buildClientCapabilities(),
+            clientCapabilities: this.buildClientCapabilities(input),
             clientInfo: { name: "penumbra", version: "1.0.0" },
           },
         );
@@ -1795,8 +1878,13 @@ function buildSessionNewParams(
   const mcpServersWithEnv = buildMcpServersWithEnv(opts.mcpServers ?? [], input, mergedEnv);
   const params: SessionNewParams = { cwd, mcpServers: mcpServersWithEnv };
   if (opts.model !== undefined) params.model = opts.model;
-  const claudeMeta = buildClaudeCodeMeta(opts);
-  if (claudeMeta) params._meta = claudeMeta;
+  const meta: SessionParamsMeta = buildClaudeCodeMeta(opts) ?? {};
+  const mode = resolvePermissionMode(opts, input);
+  if (mode !== undefined) {
+    meta.permissionMode = mode;
+    meta.permission = { mode };
+  }
+  if (Object.keys(meta).length > 0) params._meta = meta;
   return params;
 }
 
