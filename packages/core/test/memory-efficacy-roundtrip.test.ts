@@ -193,6 +193,55 @@ test("buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
   rmSync(root, { recursive: true, force: true });
 });
 
+test("buildMemoryEfficacyCache evicts oldest cache rows past the entry cap", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-efficacy-retention-"));
+  const reviewsDir = join(root, ".penumbra", "reviews");
+  for (let day = 1; day <= 5; day += 1) {
+    const reviewDir = join(reviewsDir, `2026-05-0${String(day)}T12-00-00`);
+    mkdirSync(reviewDir, { recursive: true });
+    writeFileSync(
+      join(reviewDir, "synthesis.md"),
+      `# Synthesis\n\n## Severity-ranked findings\n\n1. **High — Retention finding ${String(day)}** (architect).\n`,
+      "utf8",
+    );
+  }
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir,
+    judgeChat: ({ messages }) => {
+      const content = messages[0]?.content ?? "";
+      const batchFindings = content.split("\n").filter((line) => /^[^.]+\./.test(line));
+      return Promise.resolve(
+        JSON.stringify(
+          batchFindings.map((line) => ({
+            findingId: /^([^.]+)\./.exec(line)?.[1] ?? "missing",
+            classification: "recall_miss",
+            reason: "stubbed classification",
+          })),
+        ),
+      );
+    },
+    model: "test",
+    maxCacheEntries: 3,
+  });
+
+  expect(result.classified).toBe(5);
+  const rows = db
+    .query<
+      { finding_text: string; ts: string },
+      []
+    >(`SELECT finding_text, ts FROM memory_efficacy_cache ORDER BY ts ASC`)
+    .all();
+  expect(rows).toEqual([
+    { finding_text: "Retention finding 3 (architect).", ts: "2026-05-03T12:00:00.000Z" },
+    { finding_text: "Retention finding 4 (architect).", ts: "2026-05-04T12:00:00.000Z" },
+    { finding_text: "Retention finding 5 (architect).", ts: "2026-05-05T12:00:00.000Z" },
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("buildMemoryEfficacyCache validates caller concurrency bounds", async () => {
   const db = freshDb();
   const baseOpts = {

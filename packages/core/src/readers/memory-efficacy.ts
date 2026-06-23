@@ -181,6 +181,7 @@ interface ToClassifyEntry {
 
 const OUTER_BATCH_SIZE = 10;
 const OUTER_BATCH_CONCURRENCY = 4;
+const DEFAULT_MAX_CACHE_ENTRIES = 10_000;
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -348,6 +349,34 @@ function resolveConcurrency(requested: number | undefined): number {
   return concurrency;
 }
 
+function resolveMaxCacheEntries(requested: number | undefined): number {
+  const maxCacheEntries = requested ?? DEFAULT_MAX_CACHE_ENTRIES;
+  if (!Number.isInteger(maxCacheEntries) || maxCacheEntries < 1) {
+    throw new Error(
+      `buildMemoryEfficacyCache: maxCacheEntries must be a positive integer, got ${String(requested)}`,
+    );
+  }
+  return maxCacheEntries;
+}
+
+function pruneMemoryEfficacyCache(db: Database, maxCacheEntries: number): void {
+  const row = db
+    .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM memory_efficacy_cache")
+    .get();
+  const deleteCount = (row?.count ?? 0) - maxCacheEntries;
+  if (deleteCount <= 0) return;
+
+  db.prepare(
+    `DELETE FROM memory_efficacy_cache
+     WHERE finding_id IN (
+       SELECT finding_id
+       FROM memory_efficacy_cache
+       ORDER BY ts ASC, classified_at ASC, finding_id ASC
+       LIMIT ?
+     )`,
+  ).run(deleteCount);
+}
+
 /** Build the memory efficacy cache with batched classification and sequential persistence. */
 export async function buildMemoryEfficacyCache(
   db: Database,
@@ -357,14 +386,19 @@ export async function buildMemoryEfficacyCache(
     model: string;
     sinceISO?: string;
     concurrency?: number;
+    maxCacheEntries?: number;
   },
 ): Promise<{ scanned: number; classified: number; skipped: number }> {
   const concurrency = resolveConcurrency(opts.concurrency);
+  const maxCacheEntries = resolveMaxCacheEntries(opts.maxCacheEntries);
   const now = new Date().toISOString();
   const sinceCutoff = new Date(opts.sinceISO ?? "1970-01-01T00:00:00Z").toISOString();
 
   const entries = await listReviewEntries(opts.reviewsDir);
-  if (entries.length === 0) return { scanned: 0, classified: 0, skipped: 0 };
+  if (entries.length === 0) {
+    pruneMemoryEfficacyCache(db, maxCacheEntries);
+    return { scanned: 0, classified: 0, skipped: 0 };
+  }
 
   const { getIdStmt, insertStmt } = prepareCacheStmts(db);
   const { toClassify, scanned, skipped } = await collectPendingFindings(
@@ -376,6 +410,7 @@ export async function buildMemoryEfficacyCache(
 
   const batchResults = await classifyBatches(toClassify, concurrency, opts.judgeChat, opts.model);
   const classified = persistBatchResults(insertStmt, batchResults, opts.model, now);
+  pruneMemoryEfficacyCache(db, maxCacheEntries);
 
   return { scanned, classified, skipped };
 }
