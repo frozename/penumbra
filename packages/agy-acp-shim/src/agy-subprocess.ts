@@ -33,6 +33,13 @@ export function spawnAgy(opts: {
     opts.onLine(line);
   });
 
+  let rlClosed = false;
+  const closeReadline = (): void => {
+    if (rlClosed) return;
+    rlClosed = true;
+    rl.close();
+  };
+
   child.stderr.on("data", (chunk: Buffer) => {
     try {
       process.stderr.write(chunk);
@@ -45,10 +52,12 @@ export function spawnAgy(opts: {
   const exited = new Promise<number | null>((resolve) => {
     child.on("exit", (code) => {
       hasExited = true;
+      closeReadline();
       resolve(code);
     });
     child.on("error", () => {
       hasExited = true;
+      closeReadline();
       resolve(null);
     });
   });
@@ -69,6 +78,7 @@ export function spawnAgy(opts: {
   const kill = (): void => {
     if (hasExited) return;
     signalProcess("SIGTERM");
+    closeReadline();
     const timer = setTimeout(() => {
       signalProcess("SIGKILL");
     }, 2000);
