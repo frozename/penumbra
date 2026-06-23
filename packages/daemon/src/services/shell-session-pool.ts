@@ -101,7 +101,7 @@ function redactCredentials(text: string): string {
 // ESC (0x1B) and BEL (0x07) built at runtime to satisfy no-control-regex
 const ANSI_CSI_RE = new RegExp(`${String.fromCodePoint(0x1b)}\\[[0-9;?]*[a-zA-Z]`, "gu");
 const ANSI_OSC_RE = new RegExp(
-  `${String.fromCodePoint(0x1b)}][^${String.fromCodePoint(0x07)}]*${String.fromCodePoint(0x07)}`,
+  `${String.fromCodePoint(0x1b)}\\][^${String.fromCodePoint(0x07)}]*${String.fromCodePoint(0x07)}`,
   "gu",
 );
 
