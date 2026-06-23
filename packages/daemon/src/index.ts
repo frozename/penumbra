@@ -1,4 +1,3 @@
-export { serve, createDaemonFetchHandler, type ServeOpts, type DaemonHandle } from "./serve.js";
 export {
   loadAgentChatConfig,
   loadAgentRegistry,
@@ -6,3 +5,4 @@ export {
   loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
 } from "./agentchat-config.js";
+export { createDaemonFetchHandler, type DaemonHandle, serve, type ServeOpts } from "./serve.js";

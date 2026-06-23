@@ -1,5 +1,6 @@
-import { writeSync } from "node:fs";
 import type { Logger } from "@penumbra/core";
+
+import { writeSync } from "node:fs";
 
 type FatalKind = "unhandledRejection" | "uncaughtException";
 
@@ -37,7 +38,7 @@ export function installGlobalCrashHandlers(opts: GlobalCrashHandlerOpts): void {
   if (crashHandlersInstalled) return;
   crashHandlersInstalled = true;
 
-  const handleFatal = (kind: FatalKind, rawErr: unknown) => {
+  const handleFatal = (kind: FatalKind, rawErr: unknown): void => {
     const err = normalizeError(rawErr);
     const record: WorkerFatalRecord = {
       event: "worker_fatal",
@@ -69,6 +70,10 @@ export function installGlobalCrashHandlers(opts: GlobalCrashHandlerOpts): void {
     if (shouldExit(kind)) process.exit(1);
   };
 
-  process.on("unhandledRejection", (err) => handleFatal("unhandledRejection", err));
-  process.on("uncaughtException", (err) => handleFatal("uncaughtException", err));
+  process.on("unhandledRejection", (err) => {
+    handleFatal("unhandledRejection", err);
+  });
+  process.on("uncaughtException", (err) => {
+    handleFatal("uncaughtException", err);
+  });
 }

@@ -1,15 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
+
 import {
+  type AgentChatConfig,
   AgentsConfigSchema,
   loadAgentChatConfigFromDir,
   QuotasConfigSchema,
   RoutingConfigSchema,
-  type AgentChatConfig,
 } from "@penumbra/config";
-import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
 import { load as parseYaml } from "js-yaml";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ZodError, type ZodType } from "zod";
 
 const DEFAULT_CONFIG_DIR = join(homedir(), ".config", "penumbra");
@@ -118,8 +119,8 @@ function formatZodIssue(error: ZodError): string {
 }
 
 function redactSensitiveText(text: string): string {
-  return text.replace(
-    /((?:^|[\s;,(])(?:[\w-]+\.)*(?:apiKey|token|secret)(?:\.[\w-]+)*\s*:\s*)([^;,\n]+)/gi,
+  return text.replaceAll(
+    /((?:^|[\s;,(])(?:[\w-]+\.)*(?:apiKey|token|secret)(?:\.[\w-]+)*\s*:\s*)(?:[^;,\n]+)/gi,
     (_match, prefix: string) => `${prefix}<redacted>`,
   );
 }

@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 
 export interface WorkerTokenStoreLike {
   lookup(plaintextToken: string): { token_hash: string; worker_id: string } | null;
@@ -53,7 +53,7 @@ export function createBearerAuth(opts: AuthOpts): (req: Request) => Response | n
 
 export function requireWorkerPrincipalMatch(req: Request, body_worker_id: string): Response | null {
   const principal = getPrincipal(req);
-  if (principal === null || principal.kind !== "worker") {
+  if (principal?.kind !== "worker") {
     return Response.json(
       {
         error: {
