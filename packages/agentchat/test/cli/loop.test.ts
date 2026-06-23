@@ -619,6 +619,19 @@ test("resolveCaptureAttribution falls back to adapter options when subscription 
   });
 });
 
+test("resolveCaptureAttribution keeps Sakana openai-compatible seats in the sakana bucket", () => {
+  expect(
+    resolveCaptureAttribution({
+      subscription_provider: "sakana",
+      subscription_model: "fugu-ultra-20260615",
+      options: { provider: "openai", model: "fugu-ultra" },
+    }),
+  ).toEqual({
+    provider: "sakana",
+    model: "fugu-ultra-20260615",
+  });
+});
+
 test("resolveCaptureAttribution lets subscription fields win over adapter options", () => {
   expect(
     resolveCaptureAttribution({

@@ -25,6 +25,7 @@ export interface CodexRolloutReaderOptions {
 interface FileCursor {
   byte_offset: number;
   mtime_ms: number;
+  model_provider?: string;
 }
 interface CodexRolloutCursor {
   files: Record<string, FileCursor>;
@@ -92,11 +93,18 @@ export class CodexRolloutReader implements UsageReader {
       }
       const slice = readTail(filePath, offset, size - offset);
 
-      const latestRateLimits = findLatestRateLimits(slice);
-      if (latestRateLimits) {
-        allRateLimitSnapshots.push(...this.buildRateLimitSnapshots(latestRateLimits));
+      const scan = scanRolloutSlice(slice);
+      const modelProvider = fileCursor?.model_provider ?? scan.modelProvider;
+      if (scan.latestRateLimits) {
+        allRateLimitSnapshots.push(
+          ...this.buildRateLimitSnapshots(scan.latestRateLimits, modelProvider),
+        );
       }
-      newCursor.files[filePath] = { byte_offset: size, mtime_ms };
+      newCursor.files[filePath] = {
+        byte_offset: size,
+        mtime_ms,
+        ...(modelProvider ? { model_provider: modelProvider } : {}),
+      };
     }
 
     return { cursor: newCursor, usage_deltas: [], rate_limit_snapshots: allRateLimitSnapshots };
@@ -127,14 +135,18 @@ export class CodexRolloutReader implements UsageReader {
     return limit_id;
   }
 
-  private buildRateLimitSnapshots(latestRateLimits: Record<string, unknown>): RateLimitDelta[] {
+  private buildRateLimitSnapshots(
+    latestRateLimits: Record<string, unknown>,
+    modelProvider: string | undefined,
+  ): RateLimitDelta[] {
     const snapshots: RateLimitDelta[] = [];
     const limitId = readString(latestRateLimits, "limit_id") ?? undefined;
+    const provider = modelProvider?.length ? modelProvider : this.canonicalizeProvider(limitId);
     for (const key of ["primary", "secondary"] as const) {
       const windowState = readRecord(latestRateLimits, key);
       if (!windowState) continue;
       snapshots.push({
-        provider: this.canonicalizeProvider(limitId),
+        provider,
         window_label: key,
         used_pct: numberFrom(windowState.used_percent),
         window_minutes: readNumber(windowState, "window_minutes") ?? undefined,
@@ -154,25 +166,50 @@ function normalizeCursor(cursor: unknown): CodexRolloutCursor {
   const files: Record<string, FileCursor> = {};
   for (const [path, value] of Object.entries(cursor.files)) {
     if (!isRecord(value)) continue;
+    const modelProvider = normalizeModelProvider(readString(value, "model_provider"));
     files[path] = {
       byte_offset: numberFrom(value.byte_offset),
       mtime_ms: numberFrom(value.mtime_ms),
+      ...(modelProvider ? { model_provider: modelProvider } : {}),
     };
   }
   return { files };
 }
 
-function findLatestRateLimits(slice: string): Record<string, unknown> | null {
-  let latest: Record<string, unknown> | null = null;
+interface RolloutScanResult {
+  latestRateLimits: Record<string, unknown> | null;
+  modelProvider: string | undefined;
+}
+
+function scanRolloutSlice(slice: string): RolloutScanResult {
+  let latestRateLimits: Record<string, unknown> | null = null;
+  let modelProvider: string | undefined;
   for (const rawLine of slice.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     const obj = parseJsonRecord(line);
-    const payload = obj ? readRecord(obj, "payload") : null;
-    const rateLimits = payload ? readRecord(payload, "rate_limits") : null;
-    if (obj?.type === "event_msg" && payload?.type === "token_count" && rateLimits) {
-      latest = rateLimits;
+    if (!obj) continue;
+    const payload = readRecord(obj, "payload");
+    if (!payload) continue;
+    modelProvider ??= normalizeModelProvider(readString(payload, "model_provider"));
+    const rateLimits = readTokenCountRateLimits(obj, payload);
+    if (rateLimits) {
+      latestRateLimits = rateLimits;
     }
   }
-  return latest;
+  return { latestRateLimits, modelProvider };
+}
+
+function normalizeModelProvider(value: string | null): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed;
+}
+
+function readTokenCountRateLimits(
+  obj: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (obj.type !== "event_msg" || payload.type !== "token_count") return null;
+  return readRecord(payload, "rate_limits");
 }

@@ -52,6 +52,7 @@ import {
   readUsagePollLock,
 } from "../src/usage-readers/poll-lock.js";
 import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/poller.js";
+import { SakanaUsageSynth } from "../src/usage-readers/sakana-usage-synth.js";
 import { runWorkerBoot } from "../src/worker-boot.js";
 import { resolveWorkerId } from "../src/worker-id.js";
 import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
@@ -1827,6 +1828,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
     new ClaudeJsonlReader(),
     new ClaudeStatusLineBridge(),
     new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
+    new SakanaUsageSynth({ client, min_emit_pct: 1 }),
   ];
   const ocConsoleConfig = loadOpencodeConsoleConfig();
   if (ocConsoleConfig) {

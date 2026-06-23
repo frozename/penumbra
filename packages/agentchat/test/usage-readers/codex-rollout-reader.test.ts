@@ -23,13 +23,14 @@ const tokenCountLine = (
   used_pct_secondary: number,
   resets_p = 1777364441,
   resets_s = 1777545224,
+  limitId = "codex",
 ): Record<string, unknown> => ({
   type: "event_msg",
   timestamp: "2026-04-28T12:00:00Z",
   payload: {
     type: "token_count",
     rate_limits: {
-      limit_id: "codex",
+      limit_id: limitId,
       primary: { used_percent: used_pct_primary, window_minutes: 300, resets_at: resets_p },
       secondary: { used_percent: used_pct_secondary, window_minutes: 10080, resets_at: resets_s },
       plan_type: "plus",
@@ -103,6 +104,40 @@ describe("CodexRolloutReader", () => {
     const reader = new CodexRolloutReader({ rootDir: root });
     const r = await reader.read(null);
     expect(r.rate_limit_snapshots.every((s) => s.provider === "openai")).toBe(true);
+  });
+
+  it("prefers rollout model_provider over codex limit_id", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-04-28T12-00-00-sakana-provider.jsonl", [
+      {
+        timestamp: "2026-04-28T12:00:00Z",
+        type: "session_meta",
+        payload: {
+          id: "019ef5a8-2653-7590-9ab7-392408693ac2",
+          model_provider: "sakana",
+          model: "fugu-ultra-20260615",
+        },
+      },
+      tokenCountLine(1.0, 1.0, 1777364441, 1777545224, "codex"),
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(2);
+    expect(r.rate_limit_snapshots.every((s) => s.provider === "sakana")).toBe(true);
+  });
+
+  it('preserves non-codex limit_id values such as "sakana"', async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-04-28T12-00-00-sakana.jsonl", [
+      tokenCountLine(1.0, 2.0, 1777364441, 1777545224, "sakana"),
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots.every((s) => s.provider === "sakana")).toBe(true);
   });
 
   it("skips corrupt lines, continues parsing", async () => {
