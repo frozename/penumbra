@@ -22,7 +22,7 @@ export function runPermissionTtlSweep(services: Services): number {
   // Re-read the rows we attempted to expire; only emit for ones now 'expired'.
   for (const candidate of candidates) {
     const row = services.permissionReader.get(candidate.permission_id);
-    if (!row || row.status !== "expired") continue;
+    if (row?.status !== "expired") continue;
     services.permissionEvents.emit({
       kind: "permission.expired",
       permission_id: row.permission_id,
@@ -70,10 +70,12 @@ export function startPermissionTtlSweeper(services: Services, intervalMs = 30_00
     try {
       runPermissionTtlSweep(services);
     } catch (err) {
-      (services as any).log?.warn?.({ err: String(err) }, "permission-ttl sweep failed");
+      services.log.warn({ err: String(err) }, "permission-ttl sweep failed");
     }
   }, intervalMs);
   // Don't keep the process alive just for this timer.
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+  };
 }

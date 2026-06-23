@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
 import type { NotificationOutboxWriter } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
 
 export interface NotificationSweeperDeps {
   db: Database;
@@ -68,7 +68,7 @@ function formatDraftSummary(rows: NotificationOutboxRow[]): DiscordEmbedsPayload
   }
 
   if (projects.size > 0) {
-    const projectList = [...projects.entries()].map(([p, n]) => `${p}: ${n}`).join(", ");
+    const projectList = [...projects.entries()].map(([p, n]) => `${p}: ${String(n)}`).join(", ");
     fields.push({ name: "projects", value: projectList, inline: false });
   }
 
@@ -180,7 +180,9 @@ export function runNotificationDiscovery(
       } else if (typeof payload.text === "string") {
         summary = payload.text.slice(0, 200);
       }
-    } catch {}
+    } catch {
+      // payload may be non-JSON or non-object; leave summary undefined
+    }
 
     outbox.enqueue({
       project_id: ev.project_id,
@@ -358,48 +360,68 @@ export async function runNotificationDelivery(opts: NotificationSweeperDeps): Pr
   const byCoalesceKey = new Map<string, NotificationOutboxRow[]>();
   for (const row of rows) {
     const key = row.coalesce_key;
-    if (!byCoalesceKey.has(key)) byCoalesceKey.set(key, []);
-    byCoalesceKey.get(key)!.push(row);
+    const bucket = byCoalesceKey.get(key);
+    if (bucket) {
+      bucket.push(row);
+    } else {
+      byCoalesceKey.set(key, [row]);
+    }
   }
 
   let delivered = 0;
   let failed = 0;
 
   for (const [, group] of byCoalesceKey) {
-    if (group.length === 0) continue;
-    const first = group[0]!;
-    const projectId = first.project_id;
-
-    const claimed = group.filter((row) => outbox.markProcessing(row.id, nowMs));
-    if (claimed.length === 0) continue;
-
-    const payload = formatDraftSummary(claimed);
-    try {
-      const result = await postToDiscord(webhookUrl, payload);
-      if (result.ok) {
-        for (const row of claimed) {
-          outbox.markDone(row.id, nowMs);
-        }
-        delivered += claimed.length;
-      } else {
-        failed += claimed.length;
-        markPostFailure(outbox, claimed, nowMs, result.retryable, getEnv);
-        opts.log?.warn?.(
-          { coalesceKey: first.coalesce_key, projectId, count: claimed.length },
-          "notification-sweep: discord post failed",
-        );
-      }
-    } catch (err) {
-      failed += claimed.length;
-      markPostFailure(outbox, claimed, nowMs, true, getEnv, String(err));
-      opts.log?.warn?.(
-        { err: String(err), coalesceKey: first.coalesce_key, projectId, count: claimed.length },
-        "notification-sweep: discord post threw",
-      );
-    }
+    const result = await deliverGroup(group, { webhookUrl, nowMs, outbox, getEnv, log: opts.log });
+    delivered += result.delivered;
+    failed += result.failed;
   }
 
   return { delivered, failed, groups: byCoalesceKey.size };
+}
+
+interface DeliverGroupCtx {
+  webhookUrl: string;
+  nowMs: number;
+  outbox: NotificationOutboxWriter;
+  getEnv: (key: string) => string | undefined;
+  log: NotificationSweeperDeps["log"];
+}
+
+async function deliverGroup(
+  group: NotificationOutboxRow[],
+  ctx: DeliverGroupCtx,
+): Promise<{ delivered: number; failed: number }> {
+  const first = group[0];
+  if (!first) return { delivered: 0, failed: 0 };
+  const projectId = first.project_id;
+
+  const claimed = group.filter((row) => ctx.outbox.markProcessing(row.id, ctx.nowMs));
+  if (claimed.length === 0) return { delivered: 0, failed: 0 };
+
+  const payload = formatDraftSummary(claimed);
+  try {
+    const result = await postToDiscord(ctx.webhookUrl, payload);
+    if (result.ok) {
+      for (const row of claimed) {
+        ctx.outbox.markDone(row.id, ctx.nowMs);
+      }
+      return { delivered: claimed.length, failed: 0 };
+    }
+    markPostFailure(ctx.outbox, claimed, ctx.nowMs, result.retryable, ctx.getEnv);
+    ctx.log?.warn?.(
+      { coalesceKey: first.coalesce_key, projectId, count: claimed.length },
+      "notification-sweep: discord post failed",
+    );
+    return { delivered: 0, failed: claimed.length };
+  } catch (err) {
+    markPostFailure(ctx.outbox, claimed, ctx.nowMs, true, ctx.getEnv, String(err));
+    ctx.log?.warn?.(
+      { err: String(err), coalesceKey: first.coalesce_key, projectId, count: claimed.length },
+      "notification-sweep: discord post threw",
+    );
+    return { delivered: 0, failed: claimed.length };
+  }
 }
 
 function resolveWebhookUrl(
@@ -502,13 +524,13 @@ export function startNotificationSweeper(
     );
 
   const timer = setInterval(() => {
-    void runNotificationSweep(opts).catch((err) => {
+    void runNotificationSweep(opts).catch((err: unknown) => {
       opts.log?.warn?.({ err: String(err) }, "notification-sweep tick failed");
     });
   }, effectiveIntervalMs);
 
-  if (typeof (timer as any).unref === "function") {
-    (timer as any).unref();
-  }
-  return () => clearInterval(timer);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+  };
 }

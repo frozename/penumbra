@@ -1,15 +1,19 @@
 import type { Database } from "bun:sqlite";
-import type { Logger } from "@penumbra/core";
+
+interface SweeperLog {
+  info?: (obj: object, msg: string) => void;
+  warn?: (obj: object, msg: string) => void;
+}
 
 export interface StaleWorkerTokensSweepOpts {
   db: Database;
-  log?: Logger;
+  log?: SweeperLog;
   staleWindowMs: number;
 }
 
 export interface StartStaleWorkerTokensSweeperOpts {
   db: Database;
-  log?: Logger;
+  log?: SweeperLog;
   staleWindowMs?: number;
 }
 
@@ -62,6 +66,8 @@ export function startStaleWorkerTokensSweeper(
       opts.log?.warn?.({ err: String(err) }, "stale-worker-tokens sweep failed");
     }
   }, intervalMs);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
-  return () => clearInterval(timer);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+  };
 }

@@ -1,5 +1,6 @@
-import type { Database } from "bun:sqlite";
 import type { TaskCooldowns, TaskEventBus } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
 import { enqueueGhStatusSyncOnDb } from "@penumbra/core";
 
 export interface TaskLeaseSweeperOpts {
@@ -79,9 +80,7 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
           // keep sweeper alive across transient tick failures
         }
       }, intervalMs);
-      if (typeof (timer as any).unref === "function") {
-        (timer as any).unref();
-      }
+      timer.unref();
     },
 
     stop(): void {
