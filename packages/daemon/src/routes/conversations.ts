@@ -1,4 +1,5 @@
 import type { Services } from "@penumbra/core";
+
 import { json } from "./_helpers.js";
 
 /**
@@ -13,11 +14,11 @@ import { json } from "./_helpers.js";
  * terminal rows, so a late cancel remains visible for forensics even if the
  * handoff has already completed.
  */
-export async function conversationsCancelRoute(
+export function conversationsCancelRoute(
   _req: Request,
   conversation_id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   const ts = services.clock().toISOString();
 
   // 1. Record in DB
@@ -49,10 +50,14 @@ export async function conversationsCancelRoute(
       conversation_id,
     });
     if (eligible.length > 0) {
+      const handoff = eligible.at(-1);
+      if (!handoff) {
+        return json({ ok: true, changed });
+      }
       services.workerControl.emit({
         type: "cancel",
         conversation_id,
-        handoff_id: eligible[eligible.length - 1]!.handoff_id,
+        handoff_id: handoff.handoff_id,
       });
     }
   }

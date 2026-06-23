@@ -5,17 +5,16 @@ import type { Services } from "@penumbra/core";
  * SSE endpoint for real-time progress updates for a specific conversation.
  * Immediately flushes cached tokens for the active hop upon connection.
  */
-import { json } from "./_helpers.js";
-export async function conversationStreamRoute(
+export function conversationStreamRoute(
   _req: Request,
   conversation_id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   let off: (() => void) | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       const encoder = new TextEncoder();
 
       // 1. Flush cached state for the current hop (hop-start + tokens)
@@ -56,7 +55,7 @@ export async function conversationStreamRoute(
         }
       }, 15_000);
     },
-    cancel() {
+    cancel(): void {
       if (keepaliveTimer) clearInterval(keepaliveTimer);
       keepaliveTimer = null;
       try {

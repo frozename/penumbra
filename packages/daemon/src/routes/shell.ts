@@ -1,9 +1,16 @@
-import type { Services } from "@penumbra/core";
-import type { DaemonServices } from "../serve.js";
+import type { HandoffRow, Services } from "@penumbra/core";
+
 import { z } from "zod";
+
+import type { DaemonServices } from "../serve.js";
+import type {
+  InProcessPermissionDecision,
+  InProcessPermissionRequestInput,
+} from "../services/in-process-permission-service.js";
 
 import { json } from "./_helpers.js";
 import { checkWorkerOwnership } from "./fs.js";
+
 const ShellRunInputSchema = z.object({
   handoff_id: z.string().min(1),
   agent_name: z.string().min(1),
@@ -21,6 +28,34 @@ const ShellCloseInputSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const ShellAgentchatConfigSchema = z.looseObject({
+  agents: z
+    .array(
+      z.looseObject({
+        auto_approve_to: z.unknown().optional(),
+        name: z.string(),
+      }),
+    )
+    .optional(),
+});
+
+type ShellRunInput = z.infer<typeof ShellRunInputSchema>;
+type ShellSessionPool = NonNullable<DaemonServices["shellSessionPool"]>;
+type ShellConfig = NonNullable<DaemonServices["shellConfig"]>;
+type PermissionService = {
+  requestPermission(input: InProcessPermissionRequestInput): Promise<InProcessPermissionDecision>;
+};
+type ShellDaemonServices = DaemonServices & {
+  permissionService?: PermissionService;
+};
+
+const TERMINAL_STATUSES = new Set<HandoffRow["status"]>([
+  "completed",
+  "failed",
+  "rejected",
+  "expired",
+]);
+
 const approvedSessions = new Map<string, Set<string>>();
 
 function isApproved(handoffId: string, sessionId: string): boolean {
@@ -28,8 +63,12 @@ function isApproved(handoffId: string, sessionId: string): boolean {
 }
 
 function markApproved(handoffId: string, sessionId: string): void {
-  if (!approvedSessions.has(handoffId)) approvedSessions.set(handoffId, new Set());
-  approvedSessions.get(handoffId)!.add(sessionId);
+  let sessions = approvedSessions.get(handoffId);
+  if (!sessions) {
+    sessions = new Set();
+    approvedSessions.set(handoffId, sessions);
+  }
+  sessions.add(sessionId);
 }
 
 function clearApproved(handoffId: string, sessionId?: string): void {
@@ -40,7 +79,17 @@ function clearApproved(handoffId: string, sessionId?: string): void {
 
   const sessions = approvedSessions.get(handoffId);
   sessions?.delete(sessionId);
-  if (sessions && sessions.size === 0) approvedSessions.delete(handoffId);
+  if (sessions?.size === 0) approvedSessions.delete(handoffId);
+}
+
+function autoApproveTargetsForAgent(agentchatConfig: unknown, agentName: string): unknown {
+  const parsed = ShellAgentchatConfigSchema.safeParse(agentchatConfig);
+  if (!parsed.success) {
+    return undefined;
+  }
+
+  const cfg = parsed.data.agents?.find((agent) => agent.name === agentName);
+  return cfg?.auto_approve_to;
 }
 
 async function requestPermission(
@@ -52,13 +101,17 @@ async function requestPermission(
     context: Record<string, unknown>;
   },
 ): Promise<"approve" | "reject"> {
-  const agentchatConfig = services.agentchatConfig;
-  const permissionService = (services as any).permissionService;
-  const cfg = agentchatConfig?.agents?.find((agent: any) => agent.name === input.agentName);
-  if (input.toolName === "shell_run" && (cfg as any)?.auto_approve_to?.includes("shell_run")) {
+  const shellServices = services as ShellDaemonServices;
+  const permissionService = shellServices.permissionService;
+  const autoApproveTo = autoApproveTargetsForAgent(services.agentchatConfig, input.agentName);
+  if (
+    input.toolName === "shell_run" &&
+    Array.isArray(autoApproveTo) &&
+    autoApproveTo.includes("shell_run")
+  ) {
     return "approve";
   }
-  if (!permissionService?.requestPermission) {
+  if (!permissionService) {
     return "reject";
   }
 
@@ -71,12 +124,195 @@ async function requestPermission(
   return decision.approved ? "approve" : "reject";
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
     return null;
   }
+}
+
+function shellRuntime(services: DaemonServices):
+  | Response
+  | {
+      shellConfig: ShellConfig;
+      shellSessionPool: ShellSessionPool;
+    } {
+  const shellSessionPool = services.shellSessionPool;
+  const shellConfig = services.shellConfig;
+
+  if (!shellSessionPool) {
+    return json({ error: { code: "shell_disabled" } }, 503);
+  }
+
+  if (!shellConfig) {
+    return json(
+      {
+        error: {
+          code: "shell_config_unavailable",
+          message: "service temporarily unavailable",
+        },
+      },
+      503,
+    );
+  }
+
+  return { shellConfig, shellSessionPool };
+}
+
+function runnableHandoff(
+  req: Request,
+  services: DaemonServices,
+  input: Pick<ShellRunInput, "agent_name" | "handoff_id">,
+): HandoffRow | Response {
+  const handoff = services.handoffReader.get(input.handoff_id);
+  if (!handoff) {
+    return json({ error: { code: "handoff_not_found" } }, 404);
+  }
+
+  const ownershipDenied = checkWorkerOwnership(req, handoff.worker_id);
+  if (ownershipDenied !== null) return ownershipDenied;
+
+  if (TERMINAL_STATUSES.has(handoff.status)) {
+    return json({ error: { code: "handoff_terminal", status: handoff.status } }, 409);
+  }
+
+  if (handoff.to_agent !== input.agent_name) {
+    return json({ error: { code: "agent_mismatch", expected: handoff.to_agent } }, 403);
+  }
+
+  return handoff;
+}
+
+async function resolveShellSession(
+  services: DaemonServices,
+  shellSessionPool: ShellSessionPool,
+  handoff: HandoffRow,
+  input: ShellRunInput,
+): Promise<{ isNewSession: boolean; sessionId: string } | Response> {
+  if (input.session_id) {
+    return { isNewSession: false, sessionId: input.session_id };
+  }
+
+  try {
+    const worktree = services.worktreeManager.getWorktree(
+      input.handoff_id,
+      handoff.project_id ?? undefined,
+    );
+    const created = await shellSessionPool.createSession({
+      handoffId: input.handoff_id,
+      cwd: input.cwd ?? worktree?.path ?? process.cwd(),
+      env: input.env ?? {},
+      pty: input.pty ?? false,
+      agentName: input.agent_name,
+    });
+    recordShellEvent(services, {
+      handoff_id: input.handoff_id,
+      kind: "shell.session.open",
+      meta: {
+        session_id: created.sessionId,
+        cwd: input.cwd ?? null,
+        pty: input.pty ?? false,
+      },
+    });
+    return { isNewSession: true, sessionId: created.sessionId };
+  } catch (error) {
+    if (String(error).includes("max sessions")) {
+      return json({ error: { code: "max_sessions_exceeded" } }, 429);
+    }
+    return json({ error: { code: "session_create_failed" } }, 500);
+  }
+}
+
+async function ensureShellPermission(
+  services: DaemonServices,
+  shellSessionPool: ShellSessionPool,
+  input: ShellRunInput,
+  sessionId: string,
+): Promise<Response | null> {
+  if (isApproved(input.handoff_id, sessionId)) {
+    return null;
+  }
+
+  const decision = await requestPermission(services, {
+    handoffId: input.handoff_id,
+    agentName: input.agent_name,
+    toolName: "shell_run",
+    context: {
+      session_id: sessionId,
+      cwd: input.cwd,
+      pty: input.pty ?? false,
+      initial_command: input.command.slice(0, 200),
+    },
+  });
+  if (decision === "approve") {
+    markApproved(input.handoff_id, sessionId);
+    return null;
+  }
+
+  await shellSessionPool.closeSession({
+    handoffId: input.handoff_id,
+    sessionId,
+  });
+  clearApproved(input.handoff_id, sessionId);
+  return json({
+    session_id: sessionId,
+    exit_code: -2,
+    stdout: "",
+    stderr: "permission denied: shell_run",
+    truncated: false,
+  });
+}
+
+function matchedDangerousPatterns(
+  shellConfig: ShellConfig,
+  agentName: string,
+  command: string,
+): string[] {
+  const dangerousPatterns = shellConfig.dangerousCommandsForAgent(agentName);
+  const normalizedCommand = command.replaceAll(/\s+/g, " ");
+  return dangerousPatterns.filter((pattern) => {
+    try {
+      return new RegExp(pattern).test(normalizedCommand);
+    } catch (err) {
+      console.warn(`[shell-run] Malformed dangerous command pattern "${pattern}":`, err);
+      return true;
+    }
+  });
+}
+
+async function ensureDangerousCommandPermission(
+  services: DaemonServices,
+  shellConfig: ShellConfig,
+  input: ShellRunInput,
+  sessionId: string,
+): Promise<Response | null> {
+  const matchedPatterns = matchedDangerousPatterns(shellConfig, input.agent_name, input.command);
+  if (matchedPatterns.length === 0) {
+    return null;
+  }
+
+  const decision = await requestPermission(services, {
+    handoffId: input.handoff_id,
+    agentName: input.agent_name,
+    toolName: "shell_run.dangerous",
+    context: {
+      session_id: sessionId,
+      command: input.command.slice(0, 1024),
+      matched_patterns: matchedPatterns,
+    },
+  });
+  if (decision === "approve") {
+    return null;
+  }
+
+  return json({
+    session_id: sessionId,
+    exit_code: -2,
+    stdout: "",
+    stderr: `permission denied: shell_run.dangerous (matched ${matchedPatterns.join(", ")})`,
+    truncated: false,
+  });
 }
 
 function recordShellEvent(
@@ -99,24 +335,8 @@ function recordShellEvent(
 
 export async function shellRunRoute(req: Request, _services: Services): Promise<Response> {
   const services = _services as DaemonServices;
-  const shellSessionPool = services.shellSessionPool;
-  const shellConfig = services.shellConfig;
-
-  if (!shellSessionPool) {
-    return json({ error: { code: "shell_disabled" } }, 503);
-  }
-
-  if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
-    return json(
-      {
-        error: {
-          code: "shell_config_unavailable",
-          message: "service temporarily unavailable",
-        },
-      },
-      503,
-    );
-  }
+  const runtime = shellRuntime(services);
+  if (runtime instanceof Response) return runtime;
 
   const body = await safeJson(req);
   if (body === null) {
@@ -128,132 +348,49 @@ export async function shellRunRoute(req: Request, _services: Services): Promise<
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }
 
-  const handoff = services.handoffReader.get(parsed.data.handoff_id);
-  if (!handoff) {
-    return json({ error: { code: "handoff_not_found" } }, 404);
-  }
-  const ownershipDenied = checkWorkerOwnership(req, (handoff as any).worker_id);
-  if (ownershipDenied !== null) return ownershipDenied;
-  const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
-  if (TERMINAL_STATUSES.has(handoff.status)) {
-    return json({ error: { code: "handoff_terminal", status: handoff.status } }, 409);
-  }
-  if (handoff.to_agent !== parsed.data.agent_name) {
-    return json({ error: { code: "agent_mismatch", expected: handoff.to_agent } }, 403);
-  }
+  const handoff = runnableHandoff(req, services, parsed.data);
+  if (handoff instanceof Response) return handoff;
 
-  const { handoff_id, agent_name, session_id, command, cwd, env, pty, stdin } = parsed.data;
-  let resolvedSessionId = session_id;
-  const isNewSession = !resolvedSessionId;
+  const session = await resolveShellSession(
+    services,
+    runtime.shellSessionPool,
+    handoff,
+    parsed.data,
+  );
+  if (session instanceof Response) return session;
 
-  if (isNewSession) {
-    try {
-      const created = await shellSessionPool.createSession({
-        handoffId: handoff_id,
-        cwd:
-          cwd ??
-          services.worktreeManager?.getWorktree?.(handoff_id, handoff.project_id ?? undefined)
-            ?.path ??
-          process.cwd(),
-        env: env ?? {},
-        pty: pty ?? false,
-        agentName: agent_name,
-      });
-      resolvedSessionId = created.sessionId;
-      recordShellEvent(services, {
-        handoff_id,
-        kind: "shell.session.open",
-        meta: {
-          session_id: resolvedSessionId,
-          cwd: cwd ?? null,
-          pty: pty ?? false,
-        },
-      });
-    } catch (error) {
-      if (String(error).includes("max sessions")) {
-        return json({ error: { code: "max_sessions_exceeded" } }, 429);
-      }
-      return json({ error: { code: "session_create_failed" } }, 500);
-    }
-  }
+  const permissionDenied = await ensureShellPermission(
+    services,
+    runtime.shellSessionPool,
+    parsed.data,
+    session.sessionId,
+  );
+  if (permissionDenied !== null) return permissionDenied;
 
-  if (!isApproved(handoff_id, resolvedSessionId!)) {
-    const decision = await requestPermission(services, {
-      handoffId: handoff_id,
-      agentName: agent_name,
-      toolName: "shell_run",
-      context: {
-        session_id: resolvedSessionId,
-        cwd,
-        pty: pty ?? false,
-        initial_command: command.slice(0, 200),
-      },
-    });
-    if (decision === "reject") {
-      await shellSessionPool.closeSession({
-        handoffId: handoff_id,
-        sessionId: resolvedSessionId!,
-      });
-      clearApproved(handoff_id, resolvedSessionId!);
-      return json({
-        session_id: resolvedSessionId,
-        exit_code: -2,
-        stdout: "",
-        stderr: "permission denied: shell_run",
-        truncated: false,
-      });
-    }
-    markApproved(handoff_id, resolvedSessionId!);
-  }
-
-  const dangerousPatterns = shellConfig.dangerousCommandsForAgent(agent_name);
-  const normalizedCommand = command.replace(/\s+/g, " ");
-  const matchedPatterns = dangerousPatterns.filter((pattern: string) => {
-    try {
-      return new RegExp(pattern).test(normalizedCommand);
-    } catch (err) {
-      console.warn(`[shell-run] Malformed dangerous command pattern "${pattern}":`, err);
-      return true; // Fail closed
-    }
-  });
-  if (matchedPatterns.length > 0) {
-    const decision = await requestPermission(services, {
-      handoffId: handoff_id,
-      agentName: agent_name,
-      toolName: "shell_run.dangerous",
-      context: {
-        session_id: resolvedSessionId,
-        command: command.slice(0, 1024),
-        matched_patterns: matchedPatterns,
-      },
-    });
-    if (decision === "reject") {
-      return json({
-        session_id: resolvedSessionId,
-        exit_code: -2,
-        stdout: "",
-        stderr: `permission denied: shell_run.dangerous (matched ${matchedPatterns.join(", ")})`,
-        truncated: false,
-      });
-    }
-  }
+  const dangerousPermissionDenied = await ensureDangerousCommandPermission(
+    services,
+    runtime.shellConfig,
+    parsed.data,
+    session.sessionId,
+  );
+  if (dangerousPermissionDenied !== null) return dangerousPermissionDenied;
 
   const startedAt = Date.now();
-  const result = await shellSessionPool.runCommand({
-    handoffId: handoff_id,
-    sessionId: resolvedSessionId!,
-    command,
-    stdin,
-    agentName: agent_name,
+  const result = await runtime.shellSessionPool.runCommand({
+    handoffId: parsed.data.handoff_id,
+    sessionId: session.sessionId,
+    command: parsed.data.command,
+    stdin: parsed.data.stdin,
+    agentName: parsed.data.agent_name,
   });
-  const response = { session_id: resolvedSessionId, ...result };
+  const response = { session_id: session.sessionId, ...result };
   if (result.exit_code !== -2) {
     recordShellEvent(services, {
-      handoff_id,
+      handoff_id: parsed.data.handoff_id,
       kind: "shell.run",
       meta: {
-        session_id: resolvedSessionId,
-        command: command.slice(0, 1024),
+        session_id: session.sessionId,
+        command: parsed.data.command.slice(0, 1024),
         exit_code: result.exit_code,
         duration_ms: Date.now() - startedAt,
         truncated: result.truncated,
@@ -284,10 +421,9 @@ export async function shellCloseRoute(req: Request, _services: Services): Promis
   if (!closeHandoff) {
     return json({ error: { code: "handoff_not_found" } }, 404);
   }
-  const closeOwnershipDenied = checkWorkerOwnership(req, (closeHandoff as any).worker_id);
+  const closeOwnershipDenied = checkWorkerOwnership(req, closeHandoff.worker_id);
   if (closeOwnershipDenied !== null) return closeOwnershipDenied;
-  const TERMINAL_STATUSES_CLOSE = new Set(["completed", "failed", "rejected", "expired"]);
-  if (TERMINAL_STATUSES_CLOSE.has(closeHandoff.status)) {
+  if (TERMINAL_STATUSES.has(closeHandoff.status)) {
     return json({ error: { code: "handoff_terminal", status: closeHandoff.status } }, 409);
   }
 
@@ -304,7 +440,7 @@ export async function shellCloseRoute(req: Request, _services: Services): Promis
   return json(result);
 }
 
-export async function shellListRoute(req: Request, _services: Services): Promise<Response> {
+export function shellListRoute(req: Request, _services: Services): Response {
   const services = _services as DaemonServices;
   const shellSessionPool = services.shellSessionPool;
   if (!shellSessionPool) {
@@ -320,7 +456,7 @@ export async function shellListRoute(req: Request, _services: Services): Promise
   if (!listHandoff) {
     return json({ error: { code: "handoff_not_found" } }, 404);
   }
-  const listOwnershipDenied = checkWorkerOwnership(req, (listHandoff as any).worker_id);
+  const listOwnershipDenied = checkWorkerOwnership(req, listHandoff.worker_id);
   if (listOwnershipDenied !== null) return listOwnershipDenied;
 
   return json({ sessions: shellSessionPool.listSessions(handoffId) });
