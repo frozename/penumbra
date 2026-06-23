@@ -1,5 +1,32 @@
-import type { Database, Statement } from "bun:sqlite";
 import type { Logger } from "@penumbra/core";
+import type { Changes, Database, SQLQueryBindings, Statement } from "bun:sqlite";
+
+type UnknownMethod = (this: object, ...args: unknown[]) => unknown;
+type InstrumentedStatement = Statement<unknown, SQLQueryBindings[]>;
+type SqliteDatabaseRestBindings = SQLQueryBindings[][];
+type TransactionFn<Args extends unknown[], Result> = ((...args: Args) => Result) & {
+  deferred: (...args: Args) => Result;
+  exclusive: (...args: Args) => Result;
+  immediate: (...args: Args) => Result;
+};
+
+const STATEMENT_METHODS_TO_LOG = new Set<PropertyKey>(["all", "get", "run", "values"]);
+
+function getProperty(target: object, prop: string | symbol): unknown {
+  return (target as Record<PropertyKey, unknown>)[prop];
+}
+
+function isUnknownMethod(value: unknown): value is UnknownMethod {
+  return typeof value === "function";
+}
+
+function toInstrumentedStatement(value: unknown): InstrumentedStatement {
+  return value as InstrumentedStatement;
+}
+
+function toSqliteDatabaseRestBindings(bindings: unknown[]): SqliteDatabaseRestBindings {
+  return bindings as SqliteDatabaseRestBindings;
+}
 
 export function wrapDatabaseWithSlowQueryLog(
   db: Database,
@@ -7,32 +34,66 @@ export function wrapDatabaseWithSlowQueryLog(
   log: Logger,
 ): Database {
   return new Proxy(db, {
-    get(target, prop) {
-      const original = (target as any)[prop];
-      if (typeof original === "function") {
-        if (prop === "prepare" || prop === "query") {
-          return function (...args: any[]) {
-            const stmt = original.apply(target, args);
-            const sql = args[0] as string;
-            return wrapStatementWithSlowQueryLog(stmt, sql, thresholdMs, log);
-          };
-        } else if (prop === "exec" || prop === "run") {
-          return function (...args: any[]) {
-            const sql = args[0] as string;
-            const start = performance.now();
-            const res = original.apply(target, args);
-            const durationMs = performance.now() - start;
-            if (durationMs > thresholdMs) {
-              log.warn({ sql: sql.slice(0, 120), durationMs }, "slow query");
-            }
-            return res;
-          };
-        } else if (prop === "transaction") {
-          return function (...args: any[]) {
-            const transaction = original.apply(target, args);
-            return wrapTransactionWithSlowQueryLog(transaction, thresholdMs, log);
-          };
-        }
+    get(target, prop): unknown {
+      if (prop === "prepare") {
+        return function (sql: string, params?: SQLQueryBindings | SQLQueryBindings[]): Statement {
+          const stmt: unknown = target.prepare(sql, params);
+          return wrapStatementWithSlowQueryLog(
+            toInstrumentedStatement(stmt),
+            sql,
+            thresholdMs,
+            log,
+          );
+        };
+      }
+
+      if (prop === "query") {
+        return function (sql: string): Statement {
+          const stmt: unknown = target.query(sql);
+          return wrapStatementWithSlowQueryLog(
+            toInstrumentedStatement(stmt),
+            sql,
+            thresholdMs,
+            log,
+          );
+        };
+      }
+
+      if (prop === "exec") {
+        return function (sql: string, ...bindings: unknown[]): Changes {
+          const start = performance.now();
+          const res = target.run(sql, ...toSqliteDatabaseRestBindings(bindings));
+          const durationMs = performance.now() - start;
+          if (durationMs > thresholdMs) {
+            log.warn({ sql: sql.slice(0, 120), durationMs }, "slow query");
+          }
+          return res;
+        };
+      }
+
+      if (prop === "run") {
+        return function (sql: string, ...bindings: unknown[]): Changes {
+          const start = performance.now();
+          const res = target.run(sql, ...toSqliteDatabaseRestBindings(bindings));
+          const durationMs = performance.now() - start;
+          if (durationMs > thresholdMs) {
+            log.warn({ sql: sql.slice(0, 120), durationMs }, "slow query");
+          }
+          return res;
+        };
+      }
+
+      if (prop === "transaction") {
+        return function <Args extends unknown[], Result>(
+          insideTransaction: (...args: Args) => Result,
+        ): TransactionFn<Args, Result> {
+          const transaction = target.transaction(insideTransaction);
+          return wrapTransactionWithSlowQueryLog(transaction, thresholdMs, log);
+        };
+      }
+
+      const original = getProperty(target, prop);
+      if (isUnknownMethod(original)) {
         return original.bind(target);
       }
       return original;
@@ -40,24 +101,29 @@ export function wrapDatabaseWithSlowQueryLog(
   });
 }
 
-function wrapTransactionWithSlowQueryLog(
-  transaction: Function,
+function wrapTransactionWithSlowQueryLog<Args extends unknown[], Result>(
+  transaction: TransactionFn<Args, Result>,
   thresholdMs: number,
   log: Logger,
-): Function {
+): TransactionFn<Args, Result> {
   const wrapped = wrapTransactionCall(transaction, "transaction", thresholdMs, log);
 
   for (const variant of ["default", "deferred", "immediate", "exclusive"]) {
     const descriptor = Object.getOwnPropertyDescriptor(transaction, variant);
     if (!descriptor) continue;
-    const value = descriptor.value;
-    if (typeof value !== "function") {
+    const value: unknown = descriptor.value;
+    if (!isUnknownMethod(value)) {
       Object.defineProperty(wrapped, variant, descriptor);
       continue;
     }
     Object.defineProperty(wrapped, variant, {
       ...descriptor,
-      value: wrapTransactionCall(value, `transaction.${variant}`, thresholdMs, log),
+      value: wrapTransactionCall(
+        value as (...args: Args) => Result,
+        `transaction.${variant}`,
+        thresholdMs,
+        log,
+      ),
     });
   }
 
@@ -66,16 +132,16 @@ function wrapTransactionWithSlowQueryLog(
     Object.defineProperty(wrapped, "database", databaseDescriptor);
   }
 
-  return wrapped;
+  return wrapped as TransactionFn<Args, Result>;
 }
 
-function wrapTransactionCall(
-  transaction: Function,
+function wrapTransactionCall<Args extends unknown[], Result>(
+  transaction: (...args: Args) => Result,
   sql: string,
   thresholdMs: number,
   log: Logger,
-): Function {
-  return function (this: any, ...transactionArgs: any[]) {
+): (...args: Args) => Result {
+  return function (this: object, ...transactionArgs: Args): Result {
     const start = performance.now();
     const res = transaction.apply(this, transactionArgs);
     const durationMs = performance.now() - start;
@@ -87,32 +153,43 @@ function wrapTransactionCall(
 }
 
 function wrapStatementWithSlowQueryLog(
-  stmt: Statement,
+  stmt: InstrumentedStatement,
   sql: string,
   thresholdMs: number,
   log: Logger,
-): Statement {
+): InstrumentedStatement {
   return new Proxy(stmt, {
-    get(target, prop) {
-      const original = (target as any)[prop];
-      if (
-        typeof original === "function" &&
-        ["run", "get", "all", "values"].includes(prop as string)
-      ) {
-        return function (...args: any[]) {
-          const start = performance.now();
-          const res = original.apply(target, args);
-          const durationMs = performance.now() - start;
-          if (durationMs > thresholdMs) {
-            log.warn({ sql: sql.slice(0, 120), durationMs }, "slow query");
-          }
-          return res;
-        };
+    get(target, prop): unknown {
+      if (STATEMENT_METHODS_TO_LOG.has(prop)) {
+        return wrapStatementMethod(target, prop, sql, thresholdMs, log);
       }
-      if (typeof original === "function") {
+
+      const original = getProperty(target, prop);
+      if (isUnknownMethod(original)) {
         return original.bind(target);
       }
       return original;
     },
   });
+}
+
+function wrapStatementMethod(
+  target: InstrumentedStatement,
+  prop: string | symbol,
+  sql: string,
+  thresholdMs: number,
+  log: Logger,
+): unknown {
+  const original = getProperty(target, prop);
+  if (!isUnknownMethod(original)) return original;
+
+  return function (...params: SQLQueryBindings[]): unknown {
+    const start = performance.now();
+    const res = original.apply(target, params);
+    const durationMs = performance.now() - start;
+    if (durationMs > thresholdMs) {
+      log.warn({ sql: sql.slice(0, 120), durationMs }, "slow query");
+    }
+    return res;
+  };
 }
