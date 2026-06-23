@@ -60,7 +60,7 @@ export class WorkerHealthProbe {
     }
 
     this.timer = setInterval(() => {
-      this.tick().catch((err) => {
+      this.tick().catch((err: unknown) => {
         this.log.error({ err }, "worker health probe tick failed");
       });
     }, this.intervalMs);
@@ -90,7 +90,7 @@ export class WorkerHealthProbe {
 
   recordAck(worker_id: string, probe_id: string): boolean {
     const workerPending = this.pending.get(worker_id);
-    if (!workerPending || !workerPending.delete(probe_id)) {
+    if (!workerPending?.delete(probe_id)) {
       return false;
     }
     this.missCounts.set(worker_id, 0);
@@ -98,49 +98,54 @@ export class WorkerHealthProbe {
     return true;
   }
 
-  private async tick(): Promise<void> {
+  private tick(): Promise<void> {
     const knownWorkerIds = this.services.extraWorkerSupervisor?.getKnownWorkerIds() ?? [];
     const now = this.services.clock().getTime();
     const deadlineMs = now - this.intervalMs * 2;
     this.prune(knownWorkerIds);
     for (const worker_id of knownWorkerIds) {
-      let workerPending = this.pending.get(worker_id);
-      if (!workerPending) {
-        workerPending = new Map<string, number>();
-        this.pending.set(worker_id, workerPending);
-      }
-
-      for (const [probeId, issuedAt] of workerPending) {
-        if (issuedAt > deadlineMs) continue;
-        workerPending.delete(probeId);
-        const misses = (this.missCounts.get(worker_id) ?? 0) + 1;
-        this.missCounts.set(worker_id, misses);
-
-        if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
-          this.recoveredThisStreak.add(worker_id);
-          this.controller.onSignal({
-            kind: "miss_threshold_exceeded",
-            worker_id,
-            probe_id: probeId,
-            misses,
-            probe_interval_ms: this.intervalMs,
-          });
-        }
-      }
-
-      if (workerPending.size === 0) {
-        workerPending = new Map<string, number>();
-        this.pending.set(worker_id, workerPending);
-      }
-
-      const probe_id = `${now}-${this.services.uuid()}-${++this.probeSeq}`;
-      workerPending.set(probe_id, now);
-      this.services.workerControl.emit({
-        type: "ping",
-        worker_id,
-        probe_id,
-      });
+      this.tickWorker(worker_id, now, deadlineMs);
     }
+    return Promise.resolve();
+  }
+
+  private tickWorker(worker_id: string, now: number, deadlineMs: number): void {
+    let workerPending = this.pending.get(worker_id);
+    if (!workerPending) {
+      workerPending = new Map<string, number>();
+      this.pending.set(worker_id, workerPending);
+    }
+
+    for (const [probeId, issuedAt] of workerPending) {
+      if (issuedAt > deadlineMs) continue;
+      workerPending.delete(probeId);
+      const misses = (this.missCounts.get(worker_id) ?? 0) + 1;
+      this.missCounts.set(worker_id, misses);
+
+      if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
+        this.recoveredThisStreak.add(worker_id);
+        void this.controller.onSignal({
+          kind: "miss_threshold_exceeded",
+          worker_id,
+          probe_id: probeId,
+          misses,
+          probe_interval_ms: this.intervalMs,
+        });
+      }
+    }
+
+    if (workerPending.size === 0) {
+      workerPending = new Map<string, number>();
+      this.pending.set(worker_id, workerPending);
+    }
+
+    const probe_id = `${String(now)}-${this.services.uuid()}-${String(++this.probeSeq)}`;
+    workerPending.set(probe_id, now);
+    this.services.workerControl.emit({
+      type: "ping",
+      worker_id,
+      probe_id,
+    });
   }
 }
 
@@ -180,7 +185,7 @@ export function createWorkerHealthController(
   services: WorkerHealthControllerDeps,
 ): WorkerHealthController {
   return {
-    onSignal: async (signal) => {
+    onSignal: async (signal): Promise<void> => {
       const dispatchEvent = {
         handoff_id: "",
         worker_id: signal.worker_id,

@@ -101,9 +101,9 @@ async function defaultExec(
     stdout: "pipe",
     stderr: "pipe",
   });
-  let timedOut = false;
+  const timedOutFlag = { value: false };
   const timeout = setTimeout(() => {
-    timedOut = true;
+    timedOutFlag.value = true;
     proc.kill();
   }, timeoutMs);
   try {
@@ -112,8 +112,8 @@ async function defaultExec(
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    if (timedOut) {
-      const timeoutMessage = `gh ${args.join(" ")} timed out after ${timeoutMs}ms`;
+    if (timedOutFlag.value) {
+      const timeoutMessage = `gh ${args.join(" ")} timed out after ${String(timeoutMs)}ms`;
       const trimmed = stderr.trim();
       return {
         stdout,
@@ -139,7 +139,7 @@ async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
 }
 
 function parseIssueUrlFromOutput(output: string): { number: number; url: string } | null {
-  const match = output.match(/https?:\/\/\S+\/issues\/(\d+)\b/);
+  const match = /https?:\/\/\S+\/issues\/(\d+)\b/.exec(output);
   if (!match) return null;
   const issueNumber = Number(match[1]);
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) return null;
@@ -150,19 +150,42 @@ function parseIssueUrlFromOutput(output: string): { number: number; url: string 
 }
 
 function extractFirstUrl(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s)]+/);
+  const match = /https?:\/\/[^\s)]+/.exec(text);
   return match?.[0] ?? null;
 }
 
 function extractUnknownLabels(stderr: string): string[] {
   const labels = new Set<string>();
   const pattern = /could not add label: '([^']+)' not found/g;
-  for (let match = pattern.exec(stderr); match != null; match = pattern.exec(stderr)) {
+  for (let match = pattern.exec(stderr); match !== null; match = pattern.exec(stderr)) {
     const label = match[1];
-    if (label == null) continue;
-    labels.add(label);
+    if (label !== undefined) labels.add(label);
   }
   return [...labels];
+}
+
+type RawCommentRow = {
+  id?: unknown;
+  user?: { login?: unknown };
+  body?: unknown;
+  created_at?: unknown;
+  html_url?: unknown;
+  url?: unknown;
+};
+
+function parseRawComment(item: unknown): GhIssueComment | null {
+  if (!item || typeof item !== "object") return null;
+  const row = item as RawCommentRow;
+  const rawId = row.id;
+  const id = typeof rawId === "string" ? rawId : typeof rawId === "number" ? String(rawId) : "";
+  return {
+    id,
+    author_login: typeof row.user?.login === "string" ? row.user.login : "",
+    body: typeof row.body === "string" ? row.body : "",
+    created_at: typeof row.created_at === "string" ? row.created_at : "",
+    url:
+      typeof row.html_url === "string" ? row.html_url : typeof row.url === "string" ? row.url : "",
+  };
 }
 
 function parseGhIssueComments(text: string): GhIssueComment[] {
@@ -173,56 +196,69 @@ function parseGhIssueComments(text: string): GhIssueComment[] {
   for (const page of pages) {
     if (!Array.isArray(page)) continue;
     for (const item of page) {
-      if (!item || typeof item !== "object") continue;
-      const row = item as {
-        id?: unknown;
-        user?: { login?: unknown };
-        body?: unknown;
-        created_at?: unknown;
-        html_url?: unknown;
-        url?: unknown;
-      };
-      comments.push({
-        id: String(row.id ?? ""),
-        author_login: typeof row.user?.login === "string" ? row.user.login : "",
-        body: typeof row.body === "string" ? row.body : "",
-        created_at: typeof row.created_at === "string" ? row.created_at : "",
-        url:
-          typeof row.html_url === "string"
-            ? row.html_url
-            : typeof row.url === "string"
-              ? row.url
-              : "",
-      });
+      const comment = parseRawComment(item);
+      if (comment) comments.push(comment);
     }
   }
 
   return comments;
 }
 
+async function ghCreateIssue(
+  exec: GhExec,
+  input: GhCreateIssueInput,
+): Promise<{ number: number; url: string }> {
+  const baseArgs = ["issue", "create", "--repo", input.repo, "--title", input.title];
+  if (input.body !== undefined) {
+    baseArgs.push("--body", input.body);
+  }
+  for (const label of input.labels ?? []) {
+    baseArgs.push("--label", label);
+  }
+  for (const assignee of input.assignees ?? []) {
+    baseArgs.push("--assignee", assignee);
+  }
+  const out = await runCreateIssueWithLabelRetry(exec, baseArgs, input.repo);
+  const parsed = parseIssueUrlFromOutput(out);
+  if (!parsed) {
+    throw new Error(`gh issue create did not print an issue URL: ${out}`);
+  }
+  return parsed;
+}
+
+async function ghCommentIssue(
+  exec: GhExec,
+  repo: string,
+  issueNumber: number,
+  body: string,
+): Promise<{ comment_url: string }> {
+  const text = await runOrThrow(exec, [
+    "issue",
+    "comment",
+    String(issueNumber),
+    "--repo",
+    repo,
+    "--body",
+    body,
+  ]);
+  const comment_url = extractFirstUrl(text);
+  if (!comment_url) {
+    throw new Error(
+      `gh issue comment ${String(issueNumber)} --repo ${repo} did not return a comment URL`,
+    );
+  }
+  return { comment_url };
+}
+
 export function createGhCliClient(
   opts: { exec?: GhExec; repoDir?: string; execTimeoutMs?: number } = {},
 ): GhClient {
-  const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir, opts.execTimeoutMs));
+  const exec: GhExec =
+    opts.exec ??
+    ((args: string[]): Promise<GhExecResult> =>
+      defaultExec(args, opts.repoDir, opts.execTimeoutMs));
   return {
-    async createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
-      const baseArgs = ["issue", "create", "--repo", input.repo, "--title", input.title];
-      if (input.body != null) {
-        baseArgs.push("--body", input.body);
-      }
-      for (const label of input.labels ?? []) {
-        baseArgs.push("--label", label);
-      }
-      for (const assignee of input.assignees ?? []) {
-        baseArgs.push("--assignee", assignee);
-      }
-      const out = await runCreateIssueWithLabelRetry(exec, baseArgs, input.repo);
-      const parsed = parseIssueUrlFromOutput(out);
-      if (!parsed) {
-        throw new Error(`gh issue create did not print an issue URL: ${out}`);
-      }
-      return parsed;
-    },
+    createIssue: (input) => ghCreateIssue(exec, input),
 
     async viewIssue(repo: string, issueNumber: number): Promise<GhIssueView> {
       const text = await runOrThrow(exec, [
@@ -234,7 +270,7 @@ export function createGhCliClient(
         "--json",
         "number,state,stateReason,updatedAt,title,url",
       ]);
-      const parsed = JSON.parse(text) as {
+      const p = JSON.parse(text) as {
         number: number;
         state: string;
         stateReason?: unknown;
@@ -243,12 +279,12 @@ export function createGhCliClient(
         url: string;
       };
       return {
-        number: parsed.number,
-        state: normalizeState(parsed.state),
-        stateReason: normalizeReason(parsed.stateReason),
-        updatedAt: parsed.updatedAt,
-        title: parsed.title,
-        url: parsed.url,
+        number: p.number,
+        state: normalizeState(p.state),
+        stateReason: normalizeReason(p.stateReason),
+        updatedAt: p.updatedAt,
+        title: p.title,
+        url: p.url,
       };
     },
 
@@ -272,28 +308,7 @@ export function createGhCliClient(
       await runOrThrow(exec, ["issue", "reopen", String(issueNumber), "--repo", repo]);
     },
 
-    async commentIssue(
-      repo: string,
-      issueNumber: number,
-      body: string,
-    ): Promise<{ comment_url: string }> {
-      const text = await runOrThrow(exec, [
-        "issue",
-        "comment",
-        String(issueNumber),
-        "--repo",
-        repo,
-        "--body",
-        body,
-      ]);
-      const comment_url = extractFirstUrl(text);
-      if (!comment_url) {
-        throw new Error(
-          `gh issue comment ${issueNumber} --repo ${repo} did not return a comment URL`,
-        );
-      }
-      return { comment_url };
-    },
+    commentIssue: (repo, issueNumber, body) => ghCommentIssue(exec, repo, issueNumber, body),
 
     async listComments(
       repo: string,
@@ -303,7 +318,7 @@ export function createGhCliClient(
       const sinceQuery = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : "";
       const text = await runOrThrow(exec, [
         "api",
-        `repos/${repo}/issues/${issueNumber}/comments${sinceQuery}`,
+        `repos/${repo}/issues/${String(issueNumber)}/comments${sinceQuery}`,
         "--paginate",
         "--slurp",
       ]);
@@ -341,7 +356,7 @@ export function createGhCliClient(
         "--json",
         "number",
       ]);
-      const parsed = JSON.parse(text) as Array<{ number: number }>;
+      const parsed = JSON.parse(text) as { number: number }[];
       return parsed.map((row) => ({ number: row.number }));
     },
 
@@ -379,11 +394,11 @@ function filterIssueCreateLabels(args: string[], labelsToDrop: Set<string>): str
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     const nextArg = args[i + 1];
-    if (arg === "--label" && nextArg != null && labelsToDrop.has(nextArg)) {
+    if (arg === "--label" && nextArg !== undefined && labelsToDrop.has(nextArg)) {
       i += 1;
       continue;
     }
-    if (arg != null) filtered.push(arg);
+    if (arg !== undefined) filtered.push(arg);
   }
   return filtered;
 }

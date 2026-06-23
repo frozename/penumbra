@@ -154,6 +154,6 @@ export class InProcessPermissionService {
       throw new Error(`permission ${permission_id} expired`);
     }
 
-    return promise;
+    return await promise;
   }
 }

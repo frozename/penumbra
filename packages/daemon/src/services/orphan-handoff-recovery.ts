@@ -1,4 +1,4 @@
-import type { Services, HandoffRow } from "@penumbra/core";
+import type { HandoffRow, Services } from "@penumbra/core";
 
 // Post-dispatch.start handoffs only recover when the worker's staleness is
 // this many multiples of the base threshold — deep enough that a transient
@@ -58,10 +58,11 @@ export class OrphanHandoffRecoveryService {
 
   async recoverAll(): Promise<void> {
     if (this.recoveryInFlight) {
-      return this.recoveryInFlight;
+      await this.recoveryInFlight;
+      return;
     }
 
-    this.recoveryInFlight = (async () => {
+    this.recoveryInFlight = Promise.resolve().then((): void => {
       const { _exhaustedRows } = this.runOnce();
       const notifier = getTerminalNotifier(this.services);
       if (notifier) {
@@ -69,7 +70,7 @@ export class OrphanHandoffRecoveryService {
           notifier.notifyTerminalHandoff(row, "worker timeout");
         }
       }
-    })();
+    });
 
     try {
       await this.recoveryInFlight;
@@ -135,16 +136,14 @@ export class OrphanHandoffRecoveryService {
     // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
     const processOrphan = this.services.db.transaction(
       (orphan: HandoffRow, attempt: number, maxAttempts: number, failFastMode: boolean) => {
-        if (
-          this.hasDispatchStarted(orphan.handoff_id) &&
-          !veryStaleWorkers.has(orphan.worker_id!)
-        ) {
+        if (!orphan.worker_id) return "skip";
+        if (this.hasDispatchStarted(orphan.handoff_id) && !veryStaleWorkers.has(orphan.worker_id)) {
           return "skip";
         }
         if (failFastMode || attempt >= maxAttempts) {
           const won = this.services.handoffWriter.failOrphanedDispatchExhausted(
             orphan.handoff_id,
-            orphan.worker_id!,
+            orphan.worker_id,
           );
           if (won) {
             this.services.dispatchEventLog.record({
@@ -164,7 +163,7 @@ export class OrphanHandoffRecoveryService {
         } else {
           const won = this.services.handoffWriter.requeueOrphanedDispatch(
             orphan.handoff_id,
-            orphan.worker_id!,
+            orphan.worker_id,
           );
           if (won) {
             this.services.dispatchEventLog.record({
@@ -189,8 +188,8 @@ export class OrphanHandoffRecoveryService {
     for (const orphan of orphans) {
       if (!orphan.worker_id) continue;
 
-      const maxAttempts = orphan.max_dispatch_attempts ?? 3;
-      const attempt = orphan.dispatch_attempts ?? 1;
+      const maxAttempts = orphan.max_dispatch_attempts;
+      const attempt = orphan.dispatch_attempts;
 
       const result = processOrphan(orphan, attempt, maxAttempts, this.failFastMode);
       if (result === "exhausted") {
@@ -243,19 +242,19 @@ export class OrphanHandoffRecoveryService {
         [string]
       >(`SELECT 1 AS found FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.start' LIMIT 1`)
       .get(handoffId);
-    return row != null;
+    return row !== null;
   }
 
   start(): { stop: () => void } {
     if (this.intervalMs > 0 && !this.timer) {
       this.timer = setInterval(() => {
-        void this.recoverAll().catch((err) => {
+        void this.recoverAll().catch((err: unknown) => {
           this.services.log.error({ err }, "orphan-recovery: runOnce failed");
         });
       }, this.intervalMs);
     }
     return {
-      stop: () => {
+      stop: (): void => {
         if (this.timer) {
           clearInterval(this.timer);
           this.timer = null;

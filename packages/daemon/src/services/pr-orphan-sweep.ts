@@ -1,9 +1,10 @@
 import type { Services } from "@penumbra/core";
+
 import {
   createGitCliClient,
-  runPrOrphanSweep,
-  type GhClient as PrOrphanGhClient,
   type PrSweepResult,
+  runPrOrphanSweep,
+  type GhClient as SweepGhClient,
 } from "../sweepers/pr-orphan-sweeper.js";
 import { createGhCliClient } from "./gh-client.js";
 
@@ -12,11 +13,11 @@ export async function runPrOrphanSweepForDaemon(input: {
   dryRun: boolean;
   maxClose?: number;
 }): Promise<PrSweepResult> {
-  const ghClient = createGhCliClient() as PrOrphanGhClient;
+  const ghClient = createGhCliClient();
   const gitClient = createGitCliClient();
   const { services } = input;
-  return runPrOrphanSweep({
-    ghClient,
+  return await runPrOrphanSweep({
+    ghClient: ghClient as unknown as SweepGhClient,
     gitClient,
     t0Writer: services.t0Writer,
     uuid: services.uuid,
@@ -24,7 +25,7 @@ export async function runPrOrphanSweepForDaemon(input: {
     machineId: services.machineId,
     dryRun: input.dryRun,
     maxClose: input.maxClose,
-    log: services.log as any,
+    log: services.log,
     projectId: null,
   });
 }

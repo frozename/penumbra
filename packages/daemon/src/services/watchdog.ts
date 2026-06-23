@@ -1,4 +1,5 @@
-import type { Services, Watchdog, HandoffRow } from "@penumbra/core";
+import type { HandoffRow, Services, Watchdog } from "@penumbra/core";
+
 import type { OrphanHandoffRecoveryService } from "./orphan-handoff-recovery.js";
 
 interface WatchdogFailureNotification {
@@ -38,7 +39,7 @@ export class WatchdogService implements Watchdog {
     return this.getStaleHeartbeatAges(timeoutMs).map(({ worker_id }) => worker_id);
   }
 
-  getStaleHeartbeatAges(timeoutMs: number): Array<{ worker_id: string; last_seen_age_ms: number }> {
+  getStaleHeartbeatAges(timeoutMs: number): { worker_id: string; last_seen_age_ms: number }[] {
     const now = Date.now();
     const stale = [];
     for (const [worker_id, lastSeen] of this.lastHeartbeats) {
@@ -52,10 +53,9 @@ export class WatchdogService implements Watchdog {
     return this.lastHeartbeats.has(worker_id);
   }
 
-  tick = async (): Promise<void> => {
+  tick = (): Promise<void> => {
     const now = Date.now();
     const tickTs = new Date(now).toISOString();
-
     const snapshot = new Map(this.lastHeartbeats);
     let staleCount = 0;
 
@@ -70,40 +70,7 @@ export class WatchdogService implements Watchdog {
           { worker_id },
           "worker watchdog timeout; processing associated handoffs",
         );
-
-        if (recoveryService) {
-          const { _exhaustedRows } = recoveryService.runOnce(worker_id);
-          for (const row of _exhaustedRows) {
-            this.notifyTerminalHandoff(row, "worker timeout");
-          }
-        } else {
-          // Fallback if no recovery service wired (e.g. some test fixtures)
-          const affectedHandoffs = this.services.db
-            .query<
-              HandoffRow,
-              [string]
-            >("SELECT * FROM handoffs WHERE worker_id=? AND status='dispatched'")
-            .all(worker_id);
-
-          for (const row of affectedHandoffs) {
-            this.services.handoffWriter.markFailed(row.handoff_id, {
-              reason: "worker timeout",
-              ts: tickTs,
-              resolved_by: "watchdog",
-              expected_worker_id: worker_id,
-            });
-            this.services.dispatchEventLog.record({
-              handoff_id: row.handoff_id,
-              worker_id,
-              source: "daemon",
-              kind: "watchdog.auto_fail",
-              ts: tickTs,
-              meta: { worker_id, ms_since_heartbeat: now - lastSeen },
-            });
-            this.notifyTerminalHandoff(row, "worker timeout");
-          }
-        }
-
+        this.processStaleWorker(worker_id, lastSeen, now, tickTs, recoveryService);
         this.lastHeartbeats.delete(worker_id);
       }
     }
@@ -114,7 +81,49 @@ export class WatchdogService implements Watchdog {
       ts: tickTs,
       meta: { workers_checked: snapshot.size, stale_count: staleCount },
     });
+    return Promise.resolve();
   };
+
+  private processStaleWorker(
+    worker_id: string,
+    lastSeen: number,
+    now: number,
+    tickTs: string,
+    recoveryService: OrphanHandoffRecoveryService | undefined,
+  ): void {
+    if (recoveryService) {
+      const { _exhaustedRows } = recoveryService.runOnce(worker_id);
+      for (const row of _exhaustedRows) {
+        this.notifyTerminalHandoff(row, "worker timeout");
+      }
+      return;
+    }
+    // Fallback if no recovery service wired (e.g. some test fixtures)
+    const affectedHandoffs = this.services.db
+      .query<
+        HandoffRow,
+        [string]
+      >("SELECT * FROM handoffs WHERE worker_id=? AND status='dispatched'")
+      .all(worker_id);
+
+    for (const row of affectedHandoffs) {
+      this.services.handoffWriter.markFailed(row.handoff_id, {
+        reason: "worker timeout",
+        ts: tickTs,
+        resolved_by: "watchdog",
+        expected_worker_id: worker_id,
+      });
+      this.services.dispatchEventLog.record({
+        handoff_id: row.handoff_id,
+        worker_id,
+        source: "daemon",
+        kind: "watchdog.auto_fail",
+        ts: tickTs,
+        meta: { worker_id, ms_since_heartbeat: now - lastSeen },
+      });
+      this.notifyTerminalHandoff(row, "worker timeout");
+    }
+  }
 
   notifyTerminalHandoff(
     row: Pick<
@@ -147,6 +156,8 @@ export class WatchdogService implements Watchdog {
 
     try {
       notificationEvents.emit(event);
-    } catch {}
+    } catch {
+      // Notification bus errors must not propagate and kill the watchdog tick.
+    }
   }
 }

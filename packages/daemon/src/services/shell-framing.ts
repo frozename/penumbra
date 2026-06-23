@@ -18,7 +18,7 @@ export function buildFramedCommand(input: BuildFramedCommandInput): BuildFramedC
   const commandLines = [`echo "${startMarker}"`, `{ ${input.userCommand}; } 2>&3`];
 
   if (input.stdin !== undefined) {
-    commandLines[1] = `${commandLines[1]} <<${stdinMarker}\n${input.stdin}${input.stdin.endsWith("\n") ? "" : "\n"}${stdinMarker}`;
+    commandLines[1] = `${commandLines[1] ?? ""} <<${stdinMarker}\n${input.stdin}${input.stdin.endsWith("\n") ? "" : "\n"}${stdinMarker}`;
   }
 
   commandLines.push(`echo "${endMarker} exit:$?"`);
@@ -74,12 +74,12 @@ export function parseFramedOutput(input: ParseFramedOutputInput): ParseFramedOut
 
   const stdout = framedOutput.slice(0, endIdx);
   const tail = framedOutput.slice(endIdx + input.endMarker.length);
-  const exitMatch = tail.match(/exit:(-?\d+)/);
+  const exitMatch = /exit:(-?\d+)/.exec(tail);
 
   return {
     stdout,
     stderr: input.stderr,
-    exitCode: exitMatch ? Number.parseInt(exitMatch[1]!, 10) : -1,
+    exitCode: exitMatch ? Number.parseInt(exitMatch[1] ?? "-1", 10) : -1,
     complete: true,
   };
 }
