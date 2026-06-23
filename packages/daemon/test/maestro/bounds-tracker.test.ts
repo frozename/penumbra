@@ -1,19 +1,22 @@
-import { beforeEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import {
+  type BoundsAxis,
   loadSqliteVec,
+  type MaestroSessionRecord,
   MaestroSessionWriter,
   migrate,
-  type BoundsAxis,
-  type MaestroSessionRecord,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
 import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
 import { rollupCostForChain } from "../../src/maestro/cost-rollup.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // ignore: platform-specific sqlite setup
+  }
 }
 
 function setupDb(): Database {
@@ -160,7 +163,7 @@ let nowMs = 0;
 beforeEach(() => {
   db = setupDb();
   nowMs = 0;
-  sessions = new MaestroSessionWriter({ db, now: () => nowMs });
+  sessions = new MaestroSessionWriter({ db, now: (): number => nowMs });
 });
 
 test("wall-clock 79% does not warn or hard-kill", () => {
@@ -172,13 +175,17 @@ test("wall-clock 79% does not warn or hard-kill", () => {
   });
 
   const softWarns: MaestroSessionRecord[] = [];
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: (session) => softWarns.push(session),
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (session): void => {
+      softWarns.push(session);
+    },
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 7_900;
@@ -201,9 +208,11 @@ test("wall-clock 80% warns and stamps soft_warned_at", () => {
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: (session) => softWarns.push(session),
-    onHardKill: () => {},
+    now: (): number => nowMs,
+    onSoftWarn: (session): void => {
+      softWarns.push(session);
+    },
+    onHardKill: (): void => undefined,
   });
 
   nowMs = 8_000;
@@ -228,9 +237,11 @@ test("soft warning is one-shot even when another axis crosses 80% later", () => 
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: (session) => softWarns.push(session),
-    onHardKill: () => {},
+    now: (): number => nowMs,
+    onSoftWarn: (session): void => {
+      softWarns.push(session);
+    },
+    onHardKill: (): void => undefined,
   });
 
   nowMs = 8_000;
@@ -252,13 +263,15 @@ test("wall-clock 100% triggers hard-kill with wall_clock axis", () => {
     wallClockBudgetMs: 10_000,
   });
 
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: () => {},
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (): void => undefined,
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 10_001;
@@ -280,13 +293,15 @@ test("wall-clock and cost both at 100% picks wall_clock deterministically", () =
   });
   insertUsageUpdate(db, { eventId: "u-5", handoffId: "h-root-5", costUsd: 1.0 });
 
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: () => {},
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (): void => undefined,
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 10_001;
@@ -307,13 +322,15 @@ test("cost 100% only triggers hard-kill with cost axis", () => {
   });
   insertUsageUpdate(db, { eventId: "u-6", handoffId: "h-root-6", costUsd: 1.0 });
 
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: () => {},
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (): void => undefined,
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 100;
@@ -334,14 +351,16 @@ test("hard-kill payload uses the refreshed cost snapshot after bumping consumed 
     subDispatchBudget: 3,
   });
 
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
+    now: (): number => nowMs,
     rollupCostForChain: () => 81,
-    onSoftWarn: () => {},
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    onSoftWarn: (): void => undefined,
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 400_000;
@@ -367,10 +386,12 @@ test("soft warning payload uses the refreshed cost snapshot after bumping consum
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
+    now: (): number => nowMs,
     rollupCostForChain: () => 45,
-    onSoftWarn: (session) => softWarns.push(session),
-    onHardKill: () => {},
+    onSoftWarn: (session): void => {
+      softWarns.push(session);
+    },
+    onHardKill: (): void => undefined,
   });
 
   nowMs = 400_000;
@@ -393,13 +414,15 @@ test("sub-dispatches 100% triggers hard-kill with sub_dispatches axis", () => {
   sessions.incrementSubDispatch("task-7");
   sessions.incrementSubDispatch("task-7");
 
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: () => {},
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (): void => undefined,
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 100;
@@ -432,13 +455,17 @@ test("terminated sessions are ignored on next tick", () => {
   sessions.terminate("task-9", "completed");
 
   const softWarns: MaestroSessionRecord[] = [];
-  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const hardKills: { session: MaestroSessionRecord; axis: BoundsAxis }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
-    onSoftWarn: (session) => softWarns.push(session),
-    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+    now: (): number => nowMs,
+    onSoftWarn: (session): void => {
+      softWarns.push(session);
+    },
+    onHardKill: (session, axis): void => {
+      hardKills.push({ session, axis });
+    },
   });
 
   nowMs = 12_000;
@@ -456,17 +483,19 @@ test("each tick logs session count", () => {
     wallClockBudgetMs: 10_000,
   });
 
-  const logs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const logs: { obj: Record<string, unknown>; msg: string }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
+    now: (): number => nowMs,
     log: {
-      info: (obj, msg) => logs.push({ obj, msg }),
-      warn: () => {},
+      info: (obj, msg): void => {
+        logs.push({ obj, msg });
+      },
+      warn: (): void => undefined,
     },
-    onSoftWarn: () => {},
-    onHardKill: () => {},
+    onSoftWarn: (): void => undefined,
+    onHardKill: (): void => undefined,
   });
 
   tracker.tick();
@@ -484,23 +513,27 @@ test("soft warning failures are logged and do not crash the tick loop", () => {
     wallClockBudgetMs: 10_000,
   });
 
-  const logs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const logs: { obj: Record<string, unknown>; msg: string }[] = [];
   const tracker = createBoundsTracker({
     db,
     sessions,
-    now: () => nowMs,
+    now: (): number => nowMs,
     log: {
-      info: () => {},
-      warn: (obj, msg) => logs.push({ obj, msg }),
+      info: (): void => undefined,
+      warn: (obj, msg): void => {
+        logs.push({ obj, msg });
+      },
     },
-    onSoftWarn: () => {
+    onSoftWarn: (): void => {
       throw new Error("inject blew up");
     },
-    onHardKill: () => {},
+    onHardKill: (): void => undefined,
   });
 
   nowMs = 8_000;
-  expect(() => tracker.tick()).not.toThrow();
+  expect(() => {
+    tracker.tick();
+  }).not.toThrow();
   expect(logs).toHaveLength(1);
   expect(logs[0]?.msg).toBe("maestro bounds-tracker soft warning failed");
   expect(logs[0]?.obj).toMatchObject({ task_id: "task-11", err: "inject blew up" });

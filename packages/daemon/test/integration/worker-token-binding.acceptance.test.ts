@@ -1,9 +1,41 @@
 import { expect } from "bun:test";
-import { makeTempDaemon } from "../helpers.js";
+
 import { registerWorkerForTest } from "../../test-utils.js";
+import { makeTempDaemon } from "../helpers.js";
 import { serviceTest } from "../helpers/service-gates.js";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+interface WorkerTokenRow {
+  revoked_at: number | null;
+}
+
+interface WorkerSeenRow {
+  last_seen_at: number;
+}
+
+interface ErrorBody {
+  error?: { code: string };
+}
+
+interface HandoffWorkerRow {
+  worker_id: string;
+}
+
+interface HandoffStatusRow {
+  status: string;
+}
+
+interface ReconcileOrphansResponse {
+  requeued: number;
+  exhausted: number;
+  requeuedRowIds: string[];
+  exhaustedRowIds: string[];
+}
+
+function parseResponseJson<T>(res: Response): Promise<T> {
+  return res.json() as Promise<T>;
+}
 
 serviceTest("Scenario 1: cold boot, register W-A returns a token", async () => {
   const d = makeTempDaemon();
@@ -18,10 +50,10 @@ serviceTest("Scenario 1: cold boot, register W-A returns a token", async () => {
     expect(worker_id).toBe("W-A");
 
     const row = d.services.db
-      .query(`SELECT revoked_at FROM worker_tokens WHERE worker_id = 'W-A'`)
-      .get() as any;
+      .query<WorkerTokenRow, []>(`SELECT revoked_at FROM worker_tokens WHERE worker_id = 'W-A'`)
+      .get();
     expect(row).toBeDefined();
-    expect(row.revoked_at).toBeNull();
+    expect(row!.revoked_at).toBeNull();
   } finally {
     d.stop();
   }
@@ -38,12 +70,13 @@ serviceTest(
         worker_id: "W-A",
       });
 
-      const getSeen = () =>
-        (
-          d.services.db
-            .query(`SELECT last_seen_at FROM worker_tokens WHERE worker_id = 'W-A'`)
-            .get() as any
-        ).last_seen_at;
+      const getSeen = (): number =>
+        d.services.db
+          .query<
+            WorkerSeenRow,
+            []
+          >(`SELECT last_seen_at FROM worker_tokens WHERE worker_id = 'W-A'`)
+          .get()!.last_seen_at;
       const tIssue = getSeen();
 
       await sleep(10); // ensure time bumps
@@ -58,7 +91,7 @@ serviceTest(
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await parseResponseJson<{ ok: boolean }>(res);
       expect(body).toEqual({ ok: true });
 
       const tBumped = getSeen();
@@ -90,7 +123,7 @@ serviceTest(
       });
 
       expect(res.status).toBe(403);
-      const body = (await res.json()) as any;
+      const body = await parseResponseJson<ErrorBody>(res);
       expect(body.error?.code).toBe("worker_id_mismatch");
     } finally {
       d.stop();
@@ -113,7 +146,7 @@ serviceTest(
       });
 
       expect(res.status).toBe(403);
-      const body = (await res.json()) as any;
+      const body = await parseResponseJson<ErrorBody>(res);
       expect(body.error?.code).toBe("worker_token_required");
     } finally {
       d.stop();
@@ -122,7 +155,7 @@ serviceTest(
 );
 
 serviceTest(
-  "Scenario 5: claim collision �h W-A claims, W-B cannot steal under its own token",
+  "Scenario 5: claim collision — W-A claims, W-B cannot steal under its own token",
   async () => {
     const d = makeTempDaemon();
     try {
@@ -168,9 +201,9 @@ serviceTest(
       });
       expect(resB.status).toBe(409);
 
-      const workerId = (
-        d.services.db.query(`SELECT worker_id FROM handoffs WHERE handoff_id = 'h-1'`).get() as any
-      ).worker_id;
+      const workerId = d.services.db
+        .query<HandoffWorkerRow, []>(`SELECT worker_id FROM handoffs WHERE handoff_id = 'h-1'`)
+        .get()!.worker_id;
       expect(workerId).toBe("W-A");
     } finally {
       d.stop();
@@ -206,9 +239,9 @@ serviceTest(
         body: JSON.stringify({}),
       });
       expect(resA.status).toBe(200);
-      const statusA = (
-        d.services.db.query(`SELECT status FROM handoffs WHERE handoff_id = 'h-2'`).get() as any
-      ).status;
+      const statusA = d.services.db
+        .query<HandoffStatusRow, []>(`SELECT status FROM handoffs WHERE handoff_id = 'h-2'`)
+        .get()!.status;
       expect(statusA).toBe("completed");
 
       // Negative case
@@ -229,9 +262,9 @@ serviceTest(
         body: JSON.stringify({}),
       });
       expect(resB.status).toBe(409);
-      const statusB = (
-        d.services.db.query(`SELECT status FROM handoffs WHERE handoff_id = 'h-3'`).get() as any
-      ).status;
+      const statusB = d.services.db
+        .query<HandoffStatusRow, []>(`SELECT status FROM handoffs WHERE handoff_id = 'h-3'`)
+        .get()!.status;
       expect(statusB).toBe("dispatched");
     } finally {
       d.stop();
@@ -318,7 +351,7 @@ serviceTest(
       });
 
       expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
+      const body = await parseResponseJson<ReconcileOrphansResponse>(res);
 
       // Token binding does not break the GH #122 orphan-recovery envelope:
       // response shape is intact and the seeded orphan was actioned.
@@ -328,9 +361,9 @@ serviceTest(
       expect(Array.isArray(body.exhaustedRowIds)).toBe(true);
       expect(body.requeued + body.exhausted).toBeGreaterThan(0);
 
-      const status = (
-        d.services.db.query(`SELECT status FROM handoffs WHERE handoff_id = 'h-X'`).get() as any
-      ).status;
+      const status = d.services.db
+        .query<HandoffStatusRow, []>(`SELECT status FROM handoffs WHERE handoff_id = 'h-X'`)
+        .get()!.status;
       expect(status).not.toBe("dispatched");
     } finally {
       d.stop();

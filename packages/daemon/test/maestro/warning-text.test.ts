@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
 import type { BoundsConsumed } from "@penumbra/core";
+
+import { expect, test } from "bun:test";
+
 import { formatBudgetWarning } from "../../src/maestro/warning-text.js";
 
 const BASE_BUDGETS = {
@@ -23,17 +25,12 @@ const BASE_CONSUMED: BoundsConsumed = {
 test("renders the exact budget warning text from spec", () => {
   const output = formatBudgetWarning(BASE_CONSUMED, BASE_BUDGETS);
   expect(output).toBe(
-    `BUDGET WARNING — wrap up now.
-Wall-clock: 24 / 30 min (80%)
-Cost: $1.60 / $2.00 (80%)
-Sub-dispatches: 8 / 10 (80%)
-
-You have ~20% remaining on at least one axis. Call task.complete with what you have, or task.fail with a reason. If you call chain_start now and it returns 429 BudgetExceeded, you must call task.fail.`,
+    `BUDGET WARNING — wrap up now.\nWall-clock: 24 / 30 min (80%)\nCost: $1.60 / $2.00 (80%)\nSub-dispatches: 8 / 10 (80%)\n\nYou have ~20% remaining on at least one axis. Call task.complete with what you have, or task.fail with a reason. If you call chain_start now and it returns 429 BudgetExceeded, you must call task.fail.`,
   );
 });
 
 test("formats cost cents as dollars with two decimal places", () => {
-  const cases: Array<{ cents: number; expected: string }> = [
+  const cases: { cents: number; expected: string }[] = [
     { cents: 0, expected: "$0.00" },
     { cents: 1, expected: "$0.01" },
     { cents: 99, expected: "$0.99" },

@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { loadSqliteVec, MaestroSessionWriter, migrate } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
 
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-  } catch {}
+  } catch {
+    // ignore: platform-specific sqlite setup
+  }
 }
 
 function setupDb(): Database {
@@ -89,7 +92,7 @@ describe("bounds tracker long-lived kind", () => {
 
   beforeEach(() => {
     db = setupDb();
-    sessions = new MaestroSessionWriter({ db, now: () => nowMs });
+    sessions = new MaestroSessionWriter({ db, now: (): number => nowMs });
   });
 
   test("soft warning and hard kill carry long_lived_tick kind", () => {
@@ -103,15 +106,19 @@ describe("bounds tracker long-lived kind", () => {
       sub_dispatch_budget: 10,
     });
 
-    const softWarns: Array<{ task_id: string; kind: string }> = [];
-    const hardKills: Array<{ task_id: string; axis: string; kind: string }> = [];
+    const softWarns: { task_id: string; kind: string }[] = [];
+    const hardKills: { task_id: string; axis: string; kind: string }[] = [];
     const tracker = createBoundsTracker({
       db,
       sessions,
       kind: "long_lived_tick",
-      now: () => nowMs,
-      onSoftWarn: (session, kind) => softWarns.push({ task_id: session.task_id, kind }),
-      onHardKill: (session, axis, kind) => hardKills.push({ task_id: session.task_id, axis, kind }),
+      now: (): number => nowMs,
+      onSoftWarn: (session, kind): void => {
+        softWarns.push({ task_id: session.task_id, kind });
+      },
+      onHardKill: (session, axis, kind): void => {
+        hardKills.push({ task_id: session.task_id, axis, kind });
+      },
     });
 
     nowMs = 800;

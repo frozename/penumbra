@@ -1,19 +1,20 @@
 import { expect, it } from "bun:test";
+
 import {
-  FirecrawlAdapter,
   createResearchAdapter,
-  normalizeFirecrawlSearchResponse,
-  type FirecrawlTransport,
-  type FirecrawlSearchResponse,
+  FirecrawlAdapter,
   type FirecrawlScrapeResponse,
+  type FirecrawlSearchResponse,
+  type FirecrawlTransport,
+  normalizeFirecrawlSearchResponse,
 } from "../../src/research/firecrawl-adapter.js";
 
 function stubFirecrawl401(): FirecrawlTransport {
   return {
-    async search(): Promise<FirecrawlSearchResponse> {
+    search(): Promise<FirecrawlSearchResponse> {
       throw Object.assign(new Error("Unauthorized"), { status: 401 });
     },
-    async scrape(): Promise<FirecrawlScrapeResponse> {
+    scrape(): Promise<FirecrawlScrapeResponse> {
       throw Object.assign(new Error("Unauthorized"), { status: 401 });
     },
   };
@@ -21,8 +22,8 @@ function stubFirecrawl401(): FirecrawlTransport {
 
 function stubFirecrawlWithBilling(opts: { billed_usd: number }): FirecrawlTransport {
   return {
-    async search(): Promise<FirecrawlSearchResponse> {
-      return {
+    search(): Promise<FirecrawlSearchResponse> {
+      return Promise.resolve({
         data: [
           {
             url: "https://example.com/result",
@@ -32,20 +33,27 @@ function stubFirecrawlWithBilling(opts: { billed_usd: number }): FirecrawlTransp
           },
         ],
         source_billed_usd: opts.billed_usd,
-      };
+      });
     },
-    async scrape(): Promise<FirecrawlScrapeResponse> {
-      return {
+    scrape(): Promise<FirecrawlScrapeResponse> {
+      return Promise.resolve({
         data: { url: "https://example.com", title: "Test page", markdown: "Test markdown" },
         source_billed_usd: opts.billed_usd,
-      };
+      });
     },
   };
 }
 
 it("domain re-verification rejects URL resolving to disallowed domain after redirect", async () => {
   const adapter = new FirecrawlAdapter({ allowedDomains: ["trusted.com"] });
-  await expect(adapter.scrape({ url: "https://evil.com/redirect" })).rejects.toMatch(/domain/i);
+  let caughtMessage = "";
+  try {
+    await adapter.scrape({ url: "https://evil.com/redirect" });
+    caughtMessage = "no error thrown";
+  } catch (e) {
+    caughtMessage = String(e);
+  }
+  expect(caughtMessage).toMatch(/domain/i);
 });
 
 it("firecrawl 401 falls back to webfetch adapter", async () => {
@@ -62,17 +70,17 @@ it("source_billed_usd captured from firecrawl provider response", async () => {
 
 function stubFirecrawlMulti(): FirecrawlTransport {
   return {
-    async search(): Promise<FirecrawlSearchResponse> {
-      return {
+    search(): Promise<FirecrawlSearchResponse> {
+      return Promise.resolve({
         data: [
           { url: "https://allowed.com/result", title: "Allowed" },
           { url: "https://evil.com/result", title: "Evil" },
           { url: "https://sub.allowed.com/result", title: "Sub Allowed" },
         ],
-      };
+      });
     },
-    async scrape(): Promise<FirecrawlScrapeResponse> {
-      return { data: {} };
+    scrape(): Promise<FirecrawlScrapeResponse> {
+      return Promise.resolve({ data: {} });
     },
   };
 }
@@ -114,18 +122,23 @@ it("FirecrawlWithFallbackAdapter forwards allowed_domains to fallback after 401"
   expect(results2[0].source_provider).toBe("webfetch");
 });
 
-function stubCapturing() {
-  let lastSearchArgs: Parameters<FirecrawlTransport["search"]>[0] | undefined;
+type SearchArgs = Parameters<FirecrawlTransport["search"]>[0];
+
+function stubCapturing(): {
+  transport: FirecrawlTransport;
+  getLastArgs: () => SearchArgs | undefined;
+} {
+  let lastSearchArgs: SearchArgs | undefined;
   const transport: FirecrawlTransport = {
-    search: async (args) => {
+    search: (args): Promise<FirecrawlSearchResponse> => {
       lastSearchArgs = args;
-      return { data: [], source_billed_usd: undefined };
+      return Promise.resolve({ data: [], source_billed_usd: undefined });
     },
-    scrape: async () => {
+    scrape(): Promise<FirecrawlScrapeResponse> {
       throw new Error("stub: scrape not implemented");
     },
   };
-  return { transport, getLastArgs: () => lastSearchArgs };
+  return { transport, getLastArgs: (): SearchArgs | undefined => lastSearchArgs };
 }
 
 it("search with allowed_domains sends includeDomains and keeps query bare", async () => {

@@ -1,20 +1,25 @@
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import type { AgentDescriptor, ChainStartRequest } from "@penumbra/core";
+
 import {
   loadSqliteVec,
   MaestroSessionWriter,
   migrate,
+  routeAgent,
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+
 import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
-} catch {}
+} catch {
+  // ignore: platform-specific sqlite setup
+}
 
 const DEFAULT_BOUNDS = {
   wall_clock_ms: 1_800_000,
@@ -44,18 +49,17 @@ function setupDb(): Database {
 }
 
 async function waitFor(assertion: () => void | Promise<void>, timeoutMs = 1000): Promise<void> {
-  const started = Date.now();
-  while (true) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     try {
       await assertion();
       return;
-    } catch (error) {
-      if (Date.now() - started >= timeoutMs) {
-        throw error;
-      }
+    } catch {
+      // assertion failed; retry after sleep
       await Bun.sleep(20);
     }
   }
+  throw new Error(`waitFor timed out after ${String(timeoutMs)}ms`);
 }
 
 afterEach(() => {
@@ -63,13 +67,22 @@ afterEach(() => {
   return Bun.sleep(5);
 });
 
-function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
+type ReactorResult = {
+  db: Database;
+  bus: TaskEventBus;
+  sessions: MaestroSessionWriter;
+  taskWriter: TaskWriter;
+  chainStartCalls: ChainStartRequest[];
+  reactor: { start: () => void; stop: () => void };
+};
+
+function makeReactor(routeAgentImpl?: typeof routeAgent): ReactorResult {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) =>
+    resolveAgent: (name): AgentDescriptor | undefined =>
       name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined,
   });
 
@@ -79,15 +92,17 @@ function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
     bus,
     sessions,
     taskWriter,
-    chainStart: async (req) => {
+    chainStart: (
+      req: ChainStartRequest,
+    ): Promise<{ handoff_id: string; conversation_id: string }> => {
       chainStartCalls.push(req);
-      return { handoff_id: "handoff-1", conversation_id: "conv-1" };
+      return Promise.resolve({ handoff_id: "handoff-1", conversation_id: "conv-1" });
     },
-    resolveAgent: (name) =>
+    resolveAgent: (name): AgentDescriptor | undefined =>
       name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined,
     defaults: DEFAULT_BOUNDS,
     routeAgent: routeAgentImpl,
-  } as any);
+  });
 
   return { db, bus, sessions, taskWriter, chainStartCalls, reactor };
 }
@@ -95,7 +110,7 @@ function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
 test("spawns the only allowed agent without querying rankAgents", async () => {
   const routeAgentMock = mock(() => {
     throw new Error("rankAgents should not run for a single allowed agent");
-  });
+  }) as unknown as typeof routeAgent;
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
@@ -131,7 +146,7 @@ test("spawns the highest-ranked allowed agent when rankAgents returns an overlap
         { agent_name: AGENT_A.name, score: 0.5 },
       ],
     },
-  }));
+  })) as unknown as typeof routeAgent;
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
@@ -159,8 +174,8 @@ test("spawns the highest-ranked allowed agent when rankAgents returns an overlap
 test("falls back to the first allowed agent when rankAgents throws", async () => {
   const routeAgentMock = mock(() => {
     throw new Error("rank lookup failed");
-  });
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+  }) as unknown as typeof routeAgent;
+  const warnSpy = spyOn(console, "warn").mockImplementation((): void => undefined);
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
@@ -194,8 +209,8 @@ test("falls back to the first allowed agent when rankAgents has no overlap", asy
       window: { from: null, to: "2026-05-05T12:00:00.000Z" },
       candidates: [{ agent_name: "agent-c", score: 0.9 }],
     },
-  }));
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+  })) as unknown as typeof routeAgent;
+  const warnSpy = spyOn(console, "warn").mockImplementation((): void => undefined);
   const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
