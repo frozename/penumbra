@@ -1,6 +1,7 @@
+import { getLane, type Services, validateBasis, verifyMemory } from "@penumbra/core";
 import { z } from "zod";
+
 import { json } from "./_helpers.js";
-import { getLane, type Services, verifyMemory, validateBasis } from "@penumbra/core";
 
 const BasisSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -37,7 +38,7 @@ const RequestSchema = z.object({
 });
 
 function validationError(
-  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+  issues: readonly { path: readonly PropertyKey[]; message: string }[],
 ): Response {
   return json(
     {
@@ -64,6 +65,24 @@ function shortSummary(basis: z.infer<typeof BasisSchema>): string {
   }
 }
 
+function extractMetaMemoryIds(metaJson: string): string[] {
+  try {
+    const meta = JSON.parse(metaJson) as Record<string, unknown>;
+    const ids: string[] = [];
+    const one = meta.memory_id;
+    if (typeof one === "string" && one.trim().length > 0) ids.push(one);
+    const many = meta.memory_ids;
+    if (Array.isArray(many)) {
+      for (const id of many) {
+        if (typeof id === "string" && id.trim().length > 0) ids.push(id);
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
 function dispatchLandRecalledMemoryIds(services: Services, handoffId: string): string[] {
   const rows = services.db
     .query<{ meta_json: string | null }, [string]>(
@@ -75,18 +94,8 @@ function dispatchLandRecalledMemoryIds(services: Services, handoffId: string): s
   const ids = new Set<string>();
   for (const row of rows) {
     if (!row.meta_json) continue;
-    try {
-      const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
-      const one = meta.memory_id;
-      if (typeof one === "string" && one.trim().length > 0) ids.add(one);
-      const many = meta.memory_ids;
-      if (Array.isArray(many)) {
-        for (const id of many) {
-          if (typeof id === "string" && id.trim().length > 0) ids.add(id);
-        }
-      }
-    } catch {
-      continue;
+    for (const id of extractMetaMemoryIds(row.meta_json)) {
+      ids.add(id);
     }
   }
   return [...ids];
@@ -118,18 +127,17 @@ export async function memoryVerifyAuthorizeRoute(
   }
 
   let missingLaneId: string | null = null;
-  const memoryIds =
-    basis.kind === "lane_close"
-      ? (() => {
-          const laneId = basis.lane_id;
-          const lane = getLane(services.db, laneId);
-          if (!lane) {
-            missingLaneId = laneId;
-            return null;
-          }
-          return lane.recalled_memory_ids;
-        })()
-      : dispatchLandRecalledMemoryIds(services, parsed.data.handoff_id);
+  let memoryIds: string[] | null;
+  if (basis.kind === "lane_close") {
+    const laneId = basis.lane_id;
+    const lane = getLane(services.db, laneId);
+    if (!lane) {
+      missingLaneId = laneId;
+    }
+    memoryIds = lane?.recalled_memory_ids ?? null;
+  } else {
+    memoryIds = dispatchLandRecalledMemoryIds(services, parsed.data.handoff_id);
+  }
   if (memoryIds === null) {
     return json({
       ok: true,

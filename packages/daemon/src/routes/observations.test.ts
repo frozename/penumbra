@@ -1,14 +1,17 @@
+import type { Services } from "@penumbra/core";
+
 import { expect, test } from "bun:test";
+
 import { observationsRoute } from "./observations.js";
 
-function makeServices(write: () => string) {
+function makeServices(write: () => string): Services {
   return {
     machineId: { get: () => "machine-1" },
     clock: () => new Date("2026-04-23T12:00:00Z"),
     uuid: () => "uuid-1",
     redactor: { redact: (value: unknown) => value },
     t0Writer: { write },
-  } as any;
+  } as unknown as Services;
 }
 
 function makeReq(overrides: Record<string, unknown> = {}): Request {

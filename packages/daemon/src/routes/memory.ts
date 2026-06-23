@@ -1,32 +1,34 @@
-import { z } from "zod";
-import { randomUUID } from "node:crypto";
 import type { Services } from "@penumbra/core";
+
 import {
-  parseWikiLinks,
-  writeDirectT2Memory,
-  SearchRequestSchema,
-  TimelineRequestSchema,
-  GetObservationsRequestSchema,
-  getMemoryVerificationEvents,
+  BasisSchema,
+  buildCorpus,
+  buildT2EmbedText,
   CorpusBuildRequestSchema,
   CorpusQueryRequestSchema,
-  search,
-  timeline,
-  getObservations,
-  buildCorpus,
-  queryCorpus,
-  listCorpora,
-  recallStatus,
-  verifyMemory,
-  getMemoryEfficacyRecent,
   enqueueMemoryEfficacyJob,
   getJobStatus,
+  getMemoryEfficacyRecent,
+  getMemoryVerificationEvents,
+  getObservations,
+  GetObservationsRequestSchema,
+  listCorpora,
   listRecentJobs,
-  BasisSchema,
-  validateBasis,
+  parseWikiLinks,
+  queryCorpus,
+  recallStatus,
   SafeProjectIdSchema,
+  search,
+  SearchRequestSchema,
+  timeline,
+  TimelineRequestSchema,
+  validateBasis,
+  verifyMemory,
+  writeDirectT2Memory,
 } from "@penumbra/core";
-import { buildT2EmbedText } from "@penumbra/core";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+
 import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
 
@@ -82,11 +84,53 @@ function ensureDirectWriteCycleId(db: Services["db"]): string {
   return DIRECT_WRITE_CYCLE_ID;
 }
 
+function buildWikiLinkTargets(
+  db: Services["db"],
+  statements: MemoryWritePreparedStatements,
+  parsedLinks: string[],
+  wroteProjectId: string | null,
+): Map<string, string> {
+  const uniqueLinks = [...new Set(parsedLinks)];
+  const rawLinks = resolveSlugsInTransaction(db, statements, uniqueLinks);
+  const targetBySlug = new Map<string, string>();
+  for (const row of rawLinks) {
+    if (row.project_id === wroteProjectId && !targetBySlug.has(row.slug)) {
+      targetBySlug.set(row.slug, row.memory_id);
+    }
+  }
+  return targetBySlug;
+}
+
+function applyWikiLinks(
+  statements: MemoryWritePreparedStatements,
+  parsedLinks: string[],
+  targetBySlug: Map<string, string>,
+  wroteMemoryId: string,
+  directCycleId: string,
+  now: number,
+): void {
+  for (const slug of parsedLinks) {
+    const linked = targetBySlug.get(slug);
+    if (linked) {
+      statements.upsertResolvedLink.run(randomUUID(), wroteMemoryId, linked, now, directCycleId);
+    } else {
+      statements.upsertUnresolvedLink.run(
+        randomUUID(),
+        wroteMemoryId,
+        now,
+        directCycleId,
+        JSON.stringify({ raw_slug: slug }),
+        slug,
+      );
+    }
+  }
+}
+
 function resolveSlugsInTransaction(
   db: Services["db"],
   statements: MemoryWritePreparedStatements,
   slugs: string[],
-): Array<{ memory_id: string; slug: string; project_id: string | null }> {
+): { memory_id: string; slug: string; project_id: string | null }[] {
   if (slugs.length === 0) return [];
   let stmt = statements.resolveSlugByCount.get(slugs.length);
   if (!stmt) {
@@ -96,14 +140,14 @@ function resolveSlugsInTransaction(
     `);
     statements.resolveSlugByCount.set(slugs.length, stmt);
   }
-  return stmt.all(...slugs) as Array<{
+  return stmt.all(...slugs) as {
     memory_id: string;
     slug: string;
     project_id: string | null;
-  }>;
+  }[];
 }
 
-async function readJson(req: Request): Promise<unknown | { _err: Response }> {
+async function readJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -117,7 +161,7 @@ async function readJson(req: Request): Promise<unknown | { _err: Response }> {
 }
 export const EFFICACY_RUNNER_HEARTBEAT_STALE_MS = 60_000;
 function validationError(parsed: {
-  error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> };
+  error: { issues: readonly { path: readonly PropertyKey[]; message: string }[] };
 }): Response {
   return json(
     {
@@ -188,7 +232,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
 
   const data = parsed.data;
   const embedding = (await services.embedder.embed([buildT2EmbedText(data.title, data.body)]))[0];
-  if (embedding == null) {
+  if (embedding === undefined) {
     return json({ error: { code: "embed_failed", message: "embedding returned no vector" } }, 500);
   }
   const statements = getMemoryWritePreparedStatements(services.db);
@@ -226,32 +270,13 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
     }
     if (parsedLinks.length > 0) {
       const now = Date.now();
-      const uniqueLinks = [...new Set(parsedLinks)];
-      const rawLinks = resolveSlugsInTransaction(services.db, statements, uniqueLinks);
-      const targetBySlug = new Map<string, string>();
-      for (const row of rawLinks) {
-        if (row.project_id === wroteProjectId) {
-          if (!targetBySlug.has(row.slug)) {
-            targetBySlug.set(row.slug, row.memory_id);
-          }
-        }
-      }
-
-      for (const slug of parsedLinks) {
-        const linked = targetBySlug.get(slug);
-        if (linked) {
-          upsertResolvedLink.run(randomUUID(), wrote.memory_id, linked, now, directCycleId);
-        } else {
-          upsertUnresolvedLink.run(
-            randomUUID(),
-            wrote.memory_id,
-            now,
-            directCycleId,
-            JSON.stringify({ raw_slug: slug }),
-            slug,
-          );
-        }
-      }
+      const targetBySlug = buildWikiLinkTargets(
+        services.db,
+        statements,
+        parsedLinks,
+        wroteProjectId,
+      );
+      applyWikiLinks(statements, parsedLinks, targetBySlug, wrote.memory_id, directCycleId, now);
     }
 
     return wrote;
@@ -327,10 +352,7 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
   });
 }
 
-export async function memoryVerificationEventsRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export function memoryVerificationEventsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   const memoryId = parts[2];
@@ -387,17 +409,17 @@ export async function memoryCorpusQueryRoute(req: Request, services: Services): 
   return json({ hits });
 }
 
-export async function memoryCorpusListRoute(_req: Request, services: Services): Promise<Response> {
+export function memoryCorpusListRoute(_req: Request, services: Services): Response {
   const corpora = listCorpora(services.db);
   return json({ corpora });
 }
 
-export async function memoryStatusRoute(_req: Request, services: Services): Promise<Response> {
+export function memoryStatusRoute(_req: Request, services: Services): Response {
   return json(recallStatus(services.db));
 }
 
 const EfficacyRecentSchema = z.object({
-  since: z.string().datetime({ offset: true }).optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   include_raw: z.boolean().optional(),
 });
@@ -420,7 +442,7 @@ export async function memoryEfficacyRecentRoute(
 }
 
 const EfficacyRebuildSchema = z.object({
-  since: z.string().datetime({ offset: true }).optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
   source: z.enum(["maestro", "cli", "http"]).optional(),
 });
 
@@ -449,7 +471,7 @@ export async function memoryEfficacyRebuildRoute(
   return json({ job_id: enqueued.job_id, status: "queued" }, 202);
 }
 
-export async function memoryEfficacyJobRoute(req: Request, services: Services): Promise<Response> {
+export function memoryEfficacyJobRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const jobId = url.pathname.split("/").pop();
   if (!jobId) return json({ error: "job_id_required" }, 400);
@@ -458,7 +480,7 @@ export async function memoryEfficacyJobRoute(req: Request, services: Services): 
   return json(status);
 }
 
-export async function memoryEfficacyJobsRoute(req: Request, services: Services): Promise<Response> {
+export function memoryEfficacyJobsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const limit = url.searchParams.get("limit");
   const status = url.searchParams.get("status");

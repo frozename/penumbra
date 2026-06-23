@@ -1,6 +1,7 @@
-import { z } from "zod";
-import { closeSync, fstatSync, openSync, readSync, statSync, type Stats } from "node:fs";
 import { extractSessionCandidates, type Services } from "@penumbra/core";
+import { closeSync, fstatSync, openSync, readSync, type Stats, statSync } from "node:fs";
+import { z } from "zod";
+
 import { resolveT2ExtractionJudge } from "../workers/t2-promotion.js";
 import { bodyJson, json } from "./_helpers.js";
 
@@ -169,9 +170,15 @@ function readFileHeadTail(path: string, maxBytes: number, tailBytes: number): st
     if (fd !== null) {
       try {
         closeSync(fd);
-      } catch {}
+      } catch (_: unknown) {
+        void _;
+      }
     }
   }
+}
+
+function pushTextLines(rows: string[], role: string, text: string[]): void {
+  for (const item of text) rows.push(`${role}: ${item}`);
 }
 
 function parseClaudeTranscript(raw: string): string {
@@ -192,7 +199,7 @@ function parseClaudeTranscript(raw: string): string {
     const message = readMessageField(entry, ["message"]) ?? entry;
     const content = readMessageField(message, ["content"]);
     const text = extractTextBlocks(content).map(scrubTranscriptMarkup).filter(Boolean);
-    for (const item of text) rows.push(`${role}: ${item}`);
+    pushTextLines(rows, role, text);
 
     if (text.length > 0) continue;
 
@@ -206,7 +213,7 @@ function parseClaudeTranscript(raw: string): string {
 
 function parseJsonLine(line: string): Record<string, unknown> | null {
   try {
-    const value = JSON.parse(line);
+    const value = JSON.parse(line) as unknown;
     return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -298,7 +305,7 @@ function extractPayloadText(payload: unknown): string {
 function extractResponseText(response: unknown): string | null {
   if (typeof response === "string") return response;
   if (Array.isArray(response) && response.length > 0) {
-    const first = response[0];
+    const first = (response as unknown[])[0];
     if (first && typeof first === "object")
       return readString((first as Record<string, unknown>).text);
   }
@@ -321,7 +328,7 @@ function readString(value: unknown): string | null {
 function scrubTranscriptMarkup(content: string): string {
   if (!content) return "";
   return content
-    .replace(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }

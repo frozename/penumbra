@@ -1,5 +1,7 @@
 import type { Services } from "@penumbra/core";
+
 import { normalize, T0EventInputSchema } from "@penumbra/core";
+
 import { json } from "./_helpers.js";
 export async function observationsRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -60,7 +62,7 @@ export async function observationsRoute(req: Request, services: Services): Promi
   }
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {

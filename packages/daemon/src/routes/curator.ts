@@ -1,8 +1,10 @@
-import { z } from "zod";
-import type { Database } from "bun:sqlite";
 import type { Services } from "@penumbra/core";
-import { json } from "./_helpers.js";
+import type { Database } from "bun:sqlite";
+
+import { z } from "zod";
+
 import { getPrincipal } from "../auth.js";
+import { json } from "./_helpers.js";
 
 function requireAdminPrincipal(req: Request, _services: Services): Response | null {
   const principal = getPrincipal(req);
@@ -86,10 +88,7 @@ const AddBodySchema = z.object({
   proposed_by: z.string().optional(),
 });
 
-export async function curatorPatternsListRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export function curatorPatternsListRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = ListQuerySchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
@@ -117,11 +116,11 @@ export async function curatorPatternsAddRoute(req: Request, services: Services):
   return json(insertCuratorPattern(services.db, parsed.data));
 }
 
-export async function curatorPatternsApproveRoute(
+export function curatorPatternsApproveRoute(
   req: Request,
   services: Services,
   pattern_id: string,
-): Promise<Response> {
+): Response {
   const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 
@@ -130,11 +129,11 @@ export async function curatorPatternsApproveRoute(
   return json(result);
 }
 
-export async function curatorPatternsDisableRoute(
+export function curatorPatternsDisableRoute(
   req: Request,
   services: Services,
   pattern_id: string,
-): Promise<Response> {
+): Response {
   const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 

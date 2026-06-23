@@ -1,16 +1,16 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
+import { z } from "zod";
+
 import { listPendingDreamActionsQuery } from "../dreaming/digest.js";
+import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
 import { json } from "./_helpers.js";
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
-export async function dreamingPendingActionsRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export function dreamingPendingActionsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     limit: url.searchParams.get("limit") ?? undefined,
@@ -21,16 +21,14 @@ export async function dreamingPendingActionsRoute(
   return json(listPendingDreamActionsQuery(services.db, parsed.data));
 }
 
-import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
-
-export async function dreamingHealthRoute(req: Request, services: Services): Promise<Response> {
+export function dreamingHealthRoute(req: Request, services: Services): Response {
   const db = services.db;
   const now = Date.now();
-  const uptimeMs = now - (services.clock?.().getTime() || now);
+  const uptimeMs = now - services.clock().getTime();
 
   const currentRunning = db
     .prepare(
-      'SELECT cycle_id, started_at, phases_run FROM dream_cycles WHERE outcome = \"running\" ORDER BY started_at DESC LIMIT 1',
+      'SELECT cycle_id, started_at, phases_run FROM dream_cycles WHERE outcome = "running" ORDER BY started_at DESC LIMIT 1',
     )
     .get() as { cycle_id: string; started_at: number; phases_run: string } | null;
 
@@ -38,7 +36,7 @@ export async function dreamingHealthRoute(req: Request, services: Services): Pro
     ? {
         cycle_id: currentRunning.cycle_id,
         started_at: currentRunning.started_at,
-        phases_completed: JSON.parse(currentRunning.phases_run || "[]"),
+        phases_completed: JSON.parse(currentRunning.phases_run || "[]") as unknown,
       }
     : null;
 
@@ -53,7 +51,7 @@ export async function dreamingHealthRoute(req: Request, services: Services): Pro
   const cycles_crashed_24h = (
     db
       .prepare(
-        'SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ? AND outcome = \"crashed\"',
+        'SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ? AND outcome = "crashed"',
       )
       .get(yesterdayMs) as { c: number }
   ).c;
@@ -74,25 +72,33 @@ export async function dreamingHealthRoute(req: Request, services: Services): Pro
   });
 }
 
+interface ParsedError {
+  status: number | undefined;
+  code: string | undefined;
+  message: string;
+}
+
+function parseStructuredError(err: unknown): ParsedError {
+  const obj = typeof err === "object" && err !== null ? (err as Record<string, unknown>) : null;
+  return {
+    status: typeof obj?.status === "number" ? obj.status : undefined,
+    code: typeof obj?.code === "string" ? obj.code : undefined,
+    message: err instanceof Error ? err.message : typeof err === "string" ? err : "unknown_error",
+  };
+}
+
 export async function dreamingRevertRoute(req: Request, services: Services): Promise<Response> {
   const body = (await req.json()) as { action_id?: string; cascade?: "none" | "force" };
   if (!body.action_id) return json({ error: "missing action_id" }, 400);
   try {
-    revertDreamAction(services.db, body.action_id, body.cascade || "none");
+    revertDreamAction(services.db, body.action_id, body.cascade ?? "none");
     return json({ ok: true });
-  } catch (err: any) {
-    const status =
-      typeof err === "object" && err !== null && "status" in err && typeof err.status === "number"
-        ? err.status
-        : undefined;
-    const code =
-      typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-        ? err.code
-        : undefined;
-    if (err.message && err.message.includes("has_dependents")) {
-      return json({ error: "has_dependents", details: err.message }, 409);
+  } catch (err: unknown) {
+    const { status, code, message } = parseStructuredError(err);
+    if (message.includes("has_dependents")) {
+      return json({ error: "has_dependents", details: message }, 409);
     }
-    return json({ error: err.message, ...(code ? { code } : {}) }, status ?? 500);
+    return json({ error: message, ...(code ? { code } : {}) }, status ?? 500);
   }
 }
 
@@ -103,22 +109,7 @@ export async function dreamingApplyRoute(req: Request, services: Services): Prom
     applyDreamAction(services.db, body.action_id);
     return json({ ok: true });
   } catch (err: unknown) {
-    const status =
-      typeof err === "object" &&
-      err !== null &&
-      "status" in err &&
-      typeof (err as { status?: unknown }).status === "number"
-        ? ((err as { status: number }).status as number)
-        : 500;
-    const code =
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      typeof (err as { code?: unknown }).code === "string"
-        ? ((err as { code: string }).code as string)
-        : undefined;
-    const message =
-      err instanceof Error ? err.message : typeof err === "string" ? err : "unknown_error";
-    return json({ error: message, ...(code ? { code } : {}) }, status);
+    const { status, code, message } = parseStructuredError(err);
+    return json({ error: message, ...(code ? { code } : {}) }, status ?? 500);
   }
 }
