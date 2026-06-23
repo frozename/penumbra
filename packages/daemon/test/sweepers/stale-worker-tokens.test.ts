@@ -177,7 +177,7 @@ test("startStaleWorkerTokensSweeper returns a stop function that clears the inte
     const stop = startStaleWorkerTokensSweeper(
       {
         db,
-        log: { warn: logWarn } as { warn: (..._: unknown[]) => void },
+        log: { warn: logWarn },
         staleWindowMs: DEFAULT_STALE_WINDOW_MS,
       },
       DEFAULT_INTERVAL_MS,

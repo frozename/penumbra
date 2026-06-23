@@ -1,4 +1,12 @@
+import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { type DaemonHandle, serve } from "../src/serve.js";
+
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -6,12 +14,6 @@ try {
 } catch {
   // already loaded in this process
 }
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { TestEmbedder } from "@penumbra/core/testing";
-import { serve, type DaemonHandle } from "../src/serve.js";
 
 export interface TempDaemon {
   services: Services;
@@ -34,9 +36,9 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-04-23T12:00:00Z"),
-    uuid: (() => {
+    uuid: ((): (() => string) => {
       let n = 0;
-      return () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+      return (): string => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`;
     })(),
   });
   const token = opts.token ?? "test-token";
@@ -45,11 +47,11 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
     services,
     handle,
     token,
-    url: `http://localhost:${handle.port}`,
+    url: `http://localhost:${String(handle.port)}`,
     dir,
-    stop() {
+    stop(): void {
       services.supervisor.stopAll();
-      handle.stop();
+      void handle.stop();
       db.close();
       rmSync(dir, { recursive: true, force: true });
     },
