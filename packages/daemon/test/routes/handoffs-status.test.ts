@@ -80,11 +80,7 @@ test("handoffsStatusRoute returns lean shape for completed handoff", async () =>
     resolved_at: "2026-04-28T00:00:30Z",
     worker_id: "worker-c",
   });
-  const res = await handoffsStatusRoute(
-    new Request("http://x/handoffs/h-1/status"),
-    "h-1",
-    services,
-  );
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/h-1/status"), "h-1", services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as HandoffStatusResponse;
   expect(body).toEqual({
@@ -127,7 +123,7 @@ test("handoffsStatusRoute includes reliability recommendation without handoff me
   services.handoffWriter.claimDispatch("h-status-audit", "worker-1");
   services.handoffWriter.markCompleted("h-status-audit", { ts: "2026-04-28T00:00:10Z" });
 
-  const res = await handoffsStatusRoute(
+  const res = handoffsStatusRoute(
     new Request("http://x/handoffs/h-status-audit/status"),
     "h-status-audit",
     services,
@@ -151,11 +147,7 @@ test("handoffsStatusRoute extracts first-line error_summary for failed handoff",
     resolution_reason:
       "codex: exit code 1\n2026-04-28T01:00 ERROR connect: 401\n[stack trace 1500 chars...]",
   });
-  const res = await handoffsStatusRoute(
-    new Request("http://x/handoffs/h-2/status"),
-    "h-2",
-    services,
-  );
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/h-2/status"), "h-2", services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as HandoffStatusResponse;
   expect(body.status).toBe("failed");
@@ -169,11 +161,7 @@ test("handoffsStatusRoute caps error_summary at 200 chars", async () => {
     status: "failed",
     resolution_reason: "a".repeat(500),
   });
-  const res = await handoffsStatusRoute(
-    new Request("http://x/handoffs/h-3/status"),
-    "h-3",
-    services,
-  );
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/h-3/status"), "h-3", services);
   const body = (await res.json()) as HandoffStatusResponse;
   expect(
     body.error_summary === null || body.error_summary === undefined ? 0 : body.error_summary.length,
@@ -187,11 +175,7 @@ test("handoffsStatusRoute returns null latency when not yet resolved", async () 
     status: "dispatched",
     resolved_at: undefined,
   });
-  const res = await handoffsStatusRoute(
-    new Request("http://x/handoffs/h-4/status"),
-    "h-4",
-    services,
-  );
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/h-4/status"), "h-4", services);
   const body = (await res.json()) as HandoffStatusResponse;
   expect(body.status).toBe("dispatched");
   expect(body.resolved_at).toBeNull();
@@ -205,7 +189,7 @@ test("handoffsStatusRoute ignores approval timestamps for active handoffs", asyn
     status: "dispatched",
     resolved_at: "2026-04-28T00:00:01Z",
   });
-  const res = await handoffsStatusRoute(
+  const res = handoffsStatusRoute(
     new Request("http://x/handoffs/h-approval-ts/status"),
     "h-approval-ts",
     services,
@@ -216,12 +200,8 @@ test("handoffsStatusRoute ignores approval timestamps for active handoffs", asyn
   expect(body.latency_seconds).toBeNull();
 });
 
-test("handoffsStatusRoute returns 404 for unknown handoff_id", async () => {
+test("handoffsStatusRoute returns 404 for unknown handoff_id", () => {
   const services = tempServices();
-  const res = await handoffsStatusRoute(
-    new Request("http://x/handoffs/nope/status"),
-    "nope",
-    services,
-  );
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/nope/status"), "nope", services);
   expect(res.status).toBe(404);
 });

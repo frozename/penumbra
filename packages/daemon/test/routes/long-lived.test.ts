@@ -100,7 +100,7 @@ test("GET /long-lived lists reconciled agents", async () => {
   const services = tempServices();
   seedAgent(services);
 
-  const res = await longLivedListRoute(new Request("http://x/long-lived"), services);
+  const res = longLivedListRoute(new Request("http://x/long-lived"), services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     agents: { id: string; display_name: string; status: string }[];
@@ -192,7 +192,7 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
     )
     .run("home-mgmt", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1600);
 
-  const res = await longLivedGetRoute(
+  const res = longLivedGetRoute(
     new Request("http://x/long-lived/home-mgmt"),
     "home-mgmt",
     services,
@@ -226,7 +226,7 @@ test("POST /long-lived/reconcile-orphans reconciles orphaned ticks", async () =>
     )
     .run("tick-orphan", "home-mgmt", "conv-abc", "cron", 1000);
 
-  const res = await longLivedReconcileOrphansRoute(
+  const res = longLivedReconcileOrphansRoute(
     new Request("http://x/long-lived/reconcile-orphans"),
     services,
   );
@@ -257,7 +257,7 @@ test("POST /long-lived/reconcile-orphans uses the injected clock", async () => {
     )
     .run("tick-orphan-clock", "home-mgmt", "conv-clock", "cron", 1000);
 
-  const res = await longLivedReconcileOrphansRoute(
+  const res = longLivedReconcileOrphansRoute(
     new Request("http://x/long-lived/reconcile-orphans"),
     services,
   );
@@ -350,7 +350,7 @@ test("operator long-lived routes are reachable and respond", async () => {
       1500,
     );
 
-  const pauseRes = await longLivedPauseRoute(
+  const pauseRes = longLivedPauseRoute(
     new Request("http://x/long-lived/home-mgmt/pause"),
     "home-mgmt",
     services,
@@ -358,7 +358,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   expect(pauseRes.status).toBe(200);
   expect(await pauseRes.json()).toMatchObject({ id: "home-mgmt", status: "paused" });
 
-  const resumeRes = await longLivedResumeRoute(
+  const resumeRes = longLivedResumeRoute(
     new Request("http://x/long-lived/home-mgmt/resume"),
     "home-mgmt",
     services,
@@ -366,7 +366,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   expect(resumeRes.status).toBe(200);
   expect(await resumeRes.json()).toMatchObject({ id: "home-mgmt", status: "active" });
 
-  const stateGetRes = await longLivedStateGetRoute(
+  const stateGetRes = longLivedStateGetRoute(
     new Request("http://x/long-lived/home-mgmt/state"),
     "home-mgmt",
     services,
@@ -385,7 +385,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   expect(stateSetRes.status).toBe(200);
   expect(await stateSetRes.json()).toEqual({ ok: true });
 
-  const pendingActionsRes = await longLivedPendingActionsRoute(
+  const pendingActionsRes = longLivedPendingActionsRoute(
     new Request("http://x/long-lived/home-mgmt/pending-actions?status=pending"),
     "home-mgmt",
     services,
@@ -520,7 +520,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   expect(injectGoalRes.status).toBe(200);
   expect(await injectGoalRes.json()).toEqual({ ok: true });
 
-  const retireRes = await longLivedRetireRoute(
+  const retireRes = longLivedRetireRoute(
     new Request("http://x/long-lived/home-mgmt/retire"),
     "home-mgmt",
     services,
@@ -528,7 +528,7 @@ test("operator long-lived routes are reachable and respond", async () => {
   expect(retireRes.status).toBe(200);
   expect(await retireRes.json()).toMatchObject({ id: "home-mgmt", status: "retired" });
 
-  const auditRes = await longLivedAuditRoute(
+  const auditRes = longLivedAuditRoute(
     new Request("http://x/long-lived/home-mgmt/audit"),
     "home-mgmt",
     services,
@@ -538,7 +538,7 @@ test("operator long-lived routes are reachable and respond", async () => {
     "home-mgmt",
   );
 
-  const ticksRes = await longLivedTicksRoute(
+  const ticksRes = longLivedTicksRoute(
     new Request("http://x/long-lived/home-mgmt/ticks"),
     "home-mgmt",
     services,
@@ -659,7 +659,7 @@ test("POST /long-lived/:id/tick triggers a manual reactor tick", async () => {
   seedAgent(services);
   services.longLivedReactor = makeReactor();
 
-  const res = await longLivedTickRoute(
+  const res = longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
       method: "POST",
     }),
@@ -677,7 +677,7 @@ test("POST /long-lived/:id/tick returns not_found and not_active correctly", asy
     manualTick: (): ManualTickResult => ({ outcome: "should-not-run" }),
   });
 
-  const missingRes = await longLivedTickRoute(
+  const missingRes = longLivedTickRoute(
     new Request("http://x/long-lived/missing/tick", {
       method: "POST",
     }),
@@ -690,7 +690,7 @@ test("POST /long-lived/:id/tick returns not_found and not_active correctly", asy
   seedAgent(services);
   services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
 
-  const pausedRes = await longLivedTickRoute(
+  const pausedRes = longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
       method: "POST",
     }),
@@ -706,7 +706,7 @@ test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () 
   seedAgent(services);
   services.longLivedReactor = makeReactor();
 
-  const first = await longLivedTickRoute(
+  const first = longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
       method: "POST",
     }),
@@ -715,7 +715,7 @@ test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () 
   );
   expect(first.status).toBe(200);
 
-  const second = await longLivedTickRoute(
+  const second = longLivedTickRoute(
     new Request("http://x/long-lived/home-mgmt/tick", {
       method: "POST",
     }),
@@ -770,7 +770,7 @@ test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less
 test("operator routes return 404 for unknown agent ids", async () => {
   const services = tempServices();
 
-  const pauseRes = await longLivedPauseRoute(
+  const pauseRes = longLivedPauseRoute(
     new Request("http://x/long-lived/missing/pause"),
     "missing",
     services,
@@ -778,7 +778,7 @@ test("operator routes return 404 for unknown agent ids", async () => {
   expect(pauseRes.status).toBe(404);
   expect(await pauseRes.json()).toEqual({ error: { code: "agent_not_found" } });
 
-  const resumeRes = await longLivedResumeRoute(
+  const resumeRes = longLivedResumeRoute(
     new Request("http://x/long-lived/missing/resume"),
     "missing",
     services,
@@ -786,7 +786,7 @@ test("operator routes return 404 for unknown agent ids", async () => {
   expect(resumeRes.status).toBe(404);
   expect(await resumeRes.json()).toEqual({ error: { code: "agent_not_found" } });
 
-  const retireRes = await longLivedRetireRoute(
+  const retireRes = longLivedRetireRoute(
     new Request("http://x/long-lived/missing/retire"),
     "missing",
     services,
@@ -794,7 +794,7 @@ test("operator routes return 404 for unknown agent ids", async () => {
   expect(retireRes.status).toBe(404);
   expect(await retireRes.json()).toEqual({ error: { code: "agent_not_found" } });
 
-  const stateGetRes = await longLivedStateGetRoute(
+  const stateGetRes = longLivedStateGetRoute(
     new Request("http://x/long-lived/missing/state"),
     "missing",
     services,
@@ -852,7 +852,7 @@ test("operator routes return 409 for invalid state transitions", async () => {
   seedAgent(services);
   services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
 
-  const pauseRes = await longLivedPauseRoute(
+  const pauseRes = longLivedPauseRoute(
     new Request("http://x/long-lived/home-mgmt/pause"),
     "home-mgmt",
     services,
@@ -864,7 +864,7 @@ test("operator routes return 409 for invalid state transitions", async () => {
 
   services.db.query("UPDATE long_lived_agents SET status='active' WHERE id='home-mgmt'").run();
 
-  const resumeRes = await longLivedResumeRoute(
+  const resumeRes = longLivedResumeRoute(
     new Request("http://x/long-lived/home-mgmt/resume"),
     "home-mgmt",
     services,
@@ -951,7 +951,7 @@ test("GET /long-lived/:id/state surfaces corrupt working_memory as 500", async (
     .query("UPDATE long_lived_agents SET working_memory_json=? WHERE id='home-mgmt'")
     .run(JSON.stringify({ version: 99, broken: true }));
 
-  const res = await longLivedStateGetRoute(
+  const res = longLivedStateGetRoute(
     new Request("http://x/long-lived/home-mgmt/state"),
     "home-mgmt",
     services,

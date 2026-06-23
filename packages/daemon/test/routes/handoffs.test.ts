@@ -395,28 +395,28 @@ test("GET /handoffs/pending returns pending handoffs", async () => {
     services,
   );
 
-  const res = await handoffsListPendingRoute(new Request("http://x/handoffs/pending"), services);
+  const res = handoffsListPendingRoute(new Request("http://x/handoffs/pending"), services);
   expect(res.status).toBe(200);
   const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0]!.status).toBe("pending");
 });
 
-test("GET /handoffs/latest returns 400 if conversation_id is missing", async () => {
+test("GET /handoffs/latest returns 400 if conversation_id is missing", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest`), services);
+  const res = handoffsLatestRoute(new Request(`http://x/handoffs/latest`), services);
   expect(res.status).toBe(400);
 });
 
-test("GET /handoffs/latest returns 404 if no handoffs exist for conversation", async () => {
+test("GET /handoffs/latest returns 404 if no handoffs exist for conversation", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsLatestRoute(
+  const res = handoffsLatestRoute(
     new Request(`http://x/handoffs/latest?conversation_id=c-latest-404`),
     services,
   );
@@ -460,7 +460,7 @@ test("GET /handoffs/latest returns the most recent handoff for a conversation", 
     chain_trust_mode: null,
   });
 
-  const res = await handoffsLatestRoute(
+  const res = handoffsLatestRoute(
     new Request(`http://x/handoffs/latest?conversation_id=c-latest-200`),
     services,
   );
@@ -621,10 +621,7 @@ test("GET /handoffs?status=approved returns only approved rows", async () => {
     services,
   );
 
-  const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs?status=approved`),
-    services,
-  );
+  const res = handoffsListPendingRoute(new Request(`http://x/handoffs?status=approved`), services);
   expect(res.status).toBe(200);
   const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
@@ -687,7 +684,7 @@ test("GET /handoffs?status=approved&project_id filters by project_id", async () 
     services,
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=proj-a"),
     services,
   );
@@ -1024,7 +1021,7 @@ test("GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
     services,
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=__null__"),
     services,
   );
@@ -1081,7 +1078,7 @@ test("GET /handoffs?status=approved&project_scope=global returns only null-scope
     services,
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_scope=global"),
     services,
   );
@@ -1150,7 +1147,7 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
     services,
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=__null__"),
     services,
   );
@@ -1167,7 +1164,7 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
 });
 
 test("GET /handoffs?status=approved&project_id=proj-a&project_scope=global returns 400", async () => {
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=proj-a&project_scope=global"),
     makeServices(new Database(":memory:")),
   );
@@ -1185,7 +1182,7 @@ test("GET /handoffs?status=approved rejects unknown project_id when registry exi
     new Map([["proj-a", { project_id: "proj-a", root_path: "/tmp/proj-a" }]]),
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=proj-b"),
     services,
   );
@@ -1201,7 +1198,7 @@ test("GET /handoffs?status=approved accepts unknown project_id when registry is 
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=approved&project_id=proj-b"),
     services,
   );
@@ -1252,7 +1249,7 @@ test("GET /handoffs?status=pending,approved returns both", async () => {
     services,
   );
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request(`http://x/handoffs?status=pending,approved`),
     services,
   );
@@ -1280,21 +1277,18 @@ test("GET /handoffs without status param defaults to pending (back-compat)", asy
     services,
   );
 
-  const res = await handoffsListPendingRoute(new Request(`http://x/handoffs`), services);
+  const res = handoffsListPendingRoute(new Request(`http://x/handoffs`), services);
   const body = await readJsonAs<ListBody>(res);
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0]!.status).toBe("pending");
 });
 
-test("GET /handoffs?status=garbage returns 400", async () => {
+test("GET /handoffs?status=garbage returns 400", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsListPendingRoute(
-    new Request(`http://x/handoffs?status=garbage`),
-    services,
-  );
+  const res = handoffsListPendingRoute(new Request(`http://x/handoffs?status=garbage`), services);
   expect(res.status).toBe(400);
 });
 
@@ -1311,7 +1305,7 @@ test("GET /handoffs?status=completed&since returns completed count since timesta
   insert.run("old-resolved", "2026-04-25T18:00:00.000Z", "2026-04-25T18:30:00.000Z");
   insert.run("legacy-recent", "2026-04-25T19:15:00.000Z", null);
 
-  const res = await handoffsListPendingRoute(
+  const res = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=completed&since=2026-04-25T19%3A00%3A00.000Z"),
     services,
   );
@@ -2055,7 +2049,7 @@ test("GET /handoffs/<id> returns the handoff row", async () => {
     ),
   );
 
-  const res = await handoffsGetRoute(
+  const res = handoffsGetRoute(
     new Request(`http://x/handoffs/${create.handoff_id}`),
     create.handoff_id,
     services,
@@ -2071,7 +2065,7 @@ test("GET /handoffs/<id> returns 404 for unknown id", async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsGetRoute(new Request("http://x/handoffs/h-nope"), "h-nope", services);
+  const res = handoffsGetRoute(new Request("http://x/handoffs/h-nope"), "h-nope", services);
   expect(res.status).toBe(404);
   const body = await readJsonAs<GetErrorBody>(res);
   expect(body.error.code).toBe("not_found");
@@ -2093,7 +2087,7 @@ test("GET /handoffs?status=completed&since= returns same count for UTC and offse
   );
 
   // 1 minute before the handoff — expressed as plain UTC
-  const resUtc = await handoffsListPendingRoute(
+  const resUtc = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=completed&since=2026-04-25T19%3A59%3A00Z"),
     services,
   );
@@ -2101,7 +2095,7 @@ test("GET /handoffs?status=completed&since= returns same count for UTC and offse
   const utcBody = await readJsonAs<DoneBody>(resUtc);
 
   // Same instant expressed with a +05:00 offset (string form looks like a later date)
-  const resOffset = await handoffsListPendingRoute(
+  const resOffset = handoffsListPendingRoute(
     new Request("http://x/handoffs?status=completed&since=2026-04-26T00%3A59%3A00%2B05%3A00"),
     services,
   );

@@ -72,10 +72,7 @@ test("GET /handoffs returns use_worktree as boolean|null, never integer", async 
   `,
   ).run("h-worktree-null", null);
 
-  const res = await handoffsListPendingRoute(
-    new Request("http://x/handoffs?status=pending"),
-    services,
-  );
+  const res = handoffsListPendingRoute(new Request("http://x/handoffs?status=pending"), services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     handoffs: { handoff_id: string; use_worktree: unknown }[];
@@ -116,10 +113,7 @@ test("GET /handoffs?status=pending coerces use_worktree via listByStatus path", 
   ).run();
 
   // Hit with explicit status= param (routes through listByStatus, not listPending)
-  const res = await handoffsListPendingRoute(
-    new Request("http://x/handoffs?status=pending"),
-    services,
-  );
+  const res = handoffsListPendingRoute(new Request("http://x/handoffs?status=pending"), services);
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     handoffs: { handoff_id: string; use_worktree: unknown }[];

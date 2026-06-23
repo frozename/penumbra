@@ -93,7 +93,7 @@ function requireBody(res: Response): ReadableStream<Uint8Array> {
 
 test("GET /handoffs/events delivers approved-handoff events to subscribers", async () => {
   const services = tempServices();
-  const res = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const res = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toContain("text/event-stream");
 
@@ -121,15 +121,15 @@ test("GET /handoffs/events does not replay events emitted before connect", async
     services,
   );
 
-  const res = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const res = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
   const events = await readSseEvents(requireBody(res), 1, 200);
   expect(events.length).toBe(0);
 });
 
 test("GET /handoffs/events fans out to multiple subscribers", async () => {
   const services = tempServices();
-  const r1 = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
-  const r2 = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const r1 = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const r2 = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
 
   const create = await createHandoff(services);
   await handoffsApproveRoute(
@@ -149,8 +149,8 @@ test("GET /handoffs/events fans out to multiple subscribers", async () => {
 test("GET /handoffs/events: cancelling the stream unsubscribes from the bus; later emits are not delivered to that subscriber", async () => {
   const services = tempServices();
   // Two subscribers: A will be cancelled mid-flight; B is the control that receives both events.
-  const resA = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
-  const resB = await handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const resA = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const resB = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
 
   // Emit event 1 — both subscribers see it.
   const c1 = await createHandoff(services);

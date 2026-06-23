@@ -2710,7 +2710,7 @@ test("GET /chains/history returns chain-terminated events for a conversation", a
     payload_summary: "terminated",
   });
 
-  const res = await chainsHistoryRoute(
+  const res = chainsHistoryRoute(
     new Request("http://x/chains/history?conversation_id=c1"),
     services,
   );
@@ -2722,22 +2722,22 @@ test("GET /chains/history returns chain-terminated events for a conversation", a
   expect(body.history[0]?.conversation_id).toBe("c1");
 });
 
-test("GET /chains/history returns 400 if conversation_id is missing", async () => {
+test("GET /chains/history returns 400 if conversation_id is missing", () => {
   const services = tempServices();
-  const res = await chainsHistoryRoute(new Request("http://x/chains/history"), services);
+  const res = chainsHistoryRoute(new Request("http://x/chains/history"), services);
   expect(res.status).toBe(400);
 });
 
 test("GET /chains/agents returns [] when no registry is loaded", async () => {
   const services = tempServices({ agentRegistry: null });
-  const res = await chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ agents: [] });
 });
 
 test("GET /chains/agents preserves registry order and shape", async () => {
   const services = tempServices({ agentRegistry: ["planner", "executor", "reviewer"] });
-  const res = await chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     agents: [{ name: "planner" }, { name: "executor" }, { name: "reviewer" }],
@@ -2763,7 +2763,7 @@ test("GET /chains/responses returns agent responses for a conversation", async (
     payload_json: { response: "hello from executor" },
   });
 
-  const resFinal = await chainsResponsesRoute(
+  const resFinal = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1"),
     services,
   );
@@ -2773,7 +2773,7 @@ test("GET /chains/responses returns agent responses for a conversation", async (
   expect(bodyFinal.responses[0]?.agent).toBe("executor");
   expect(bodyFinal.responses[0]?.text).toBe("hello from executor");
 
-  const resAll = await chainsResponsesRoute(
+  const resAll = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1&which=all"),
     services,
   );
@@ -2797,7 +2797,7 @@ test("GET /chains/responses returns agent name from user_id for production agent
     payload_json: { response: "hello from planner" },
   });
 
-  const res = await chainsResponsesRoute(
+  const res = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1"),
     services,
   );
@@ -2812,7 +2812,7 @@ test("GET /chains/responses returns 404 only for unknown conversations and prese
   const services = tempServices();
   writeConversationMarker(services, "known-empty");
 
-  const knownRes = await chainsResponsesRoute(
+  const knownRes = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=known-empty&which=all"),
     services,
   );
@@ -2820,7 +2820,7 @@ test("GET /chains/responses returns 404 only for unknown conversations and prese
   const knownBody = await knownRes.json();
   expect(knownBody).toEqual({ responses: [] });
 
-  const missingRes = await chainsResponsesRoute(
+  const missingRes = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=missing-conv&which=all"),
     services,
   );
@@ -2848,7 +2848,7 @@ test("GET /chains/responses decodes multiline responses and surfaces error paylo
     payload_json: { error: "adapter crashed" },
   });
 
-  const res = await chainsResponsesRoute(
+  const res = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1&which=all"),
     services,
   );
@@ -2879,7 +2879,7 @@ test("GET /chains/responses handles malformed payload_json rows without 500ing",
     );
   `);
 
-  const res = await chainsResponsesRoute(
+  const res = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1"),
     services,
   );
@@ -2922,7 +2922,7 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
     payload_json: { response: "third" },
   });
 
-  const resFinal = await chainsResponsesRoute(
+  const resFinal = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1"),
     services,
   );
@@ -2932,7 +2932,7 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
     { agent: "reviewer", text: "third", ts: "2026-04-26T12:00:00Z" },
   ]);
 
-  const resAll = await chainsResponsesRoute(
+  const resAll = chainsResponsesRoute(
     new Request("http://x/chains/responses?conversation_id=c1&which=all"),
     services,
   );
@@ -2945,9 +2945,9 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
   ]);
 });
 
-test("GET /chains/responses returns 400 if conversation_id is missing", async () => {
+test("GET /chains/responses returns 400 if conversation_id is missing", () => {
   const services = tempServices();
-  const res = await chainsResponsesRoute(new Request("http://x/chains/responses"), services);
+  const res = chainsResponsesRoute(new Request("http://x/chains/responses"), services);
   expect(res.status).toBe(400);
 });
 
@@ -2964,7 +2964,7 @@ test("GET /chains/messages returns all events for a conversation chronologically
   `);
 
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
-  const res = await chainsMessagesRoute(
+  const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1"),
     services,
   );
@@ -2990,7 +2990,7 @@ test("GET /chains/messages filters by types array", async () => {
   `);
 
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
-  const res = await chainsMessagesRoute(
+  const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1&types=agent-response"),
     services,
   );
@@ -3012,7 +3012,7 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
   `);
 
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
-  const res = await chainsMessagesRoute(
+  const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1"),
     services,
   );
@@ -3025,14 +3025,14 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
 test("GET /chains/messages returns 400 if conversation_id is missing", async () => {
   const services = tempServices();
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
-  const res = await chainsMessagesRoute(new Request("http://x/chains/messages"), services);
+  const res = chainsMessagesRoute(new Request("http://x/chains/messages"), services);
   expect(res.status).toBe(400);
 });
 
 test("GET /chains/messages returns empty events array for unknown conversation_id", async () => {
   const services = tempServices();
   const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
-  const res = await chainsMessagesRoute(
+  const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=unknown-id"),
     services,
   );
