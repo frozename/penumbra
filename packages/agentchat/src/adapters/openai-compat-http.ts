@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
+import type { CapturePort } from "../worker/capture-port.js";
 
 import { resolveAdapterApiKey } from "./secret.js";
 
@@ -18,6 +19,7 @@ export interface OpenAiCompatHttpOptions {
   extraBody?: Record<string, unknown>;
   caPath?: string; // path to a PEM file with extra trusted CAs (for self-signed servers)
   systemPrompt?: string; // prepended as a {role: 'system'} message
+  capturePort?: CapturePort;
 }
 
 // Bun's fetch supports a non-standard `tls` option for custom CA bundles.
@@ -28,24 +30,43 @@ type FetchInitWithTls = RequestInit & {
   tls?: { ca?: string };
 };
 
+interface OpenAiUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
 interface OpenAiChatCompletionResponse {
   choices?: { message?: { content?: string; reasoning_content?: string } }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: OpenAiUsage;
   model?: string;
 }
 
 interface OpenAiStreamChunk {
   choices?: { delta?: { content?: string; reasoning_content?: string } }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: OpenAiUsage;
   model?: string;
+}
+
+interface UsageMetrics {
+  tokensIn?: number;
+  tokensOut?: number;
+  tokensInput?: number;
+  tokensCacheRead?: number;
+  tokensCacheWrite?: number;
+  used?: number;
 }
 
 interface StreamAccumulator {
   contentText: string;
   reasoningText: string;
   lastModel: string | undefined;
-  lastTokensIn: number | undefined;
-  lastTokensOut: number | undefined;
+  lastUsage: UsageMetrics | undefined;
 }
 
 export class OpenAiCompatHttpAdapter implements Adapter {
@@ -72,12 +93,13 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     const msg = data.choices?.[0]?.message;
     const text =
       msg?.content && msg.content.length > 0 ? msg.content : (msg?.reasoning_content ?? "");
+    const usageMetrics = extractUsageMetrics(data.usage);
+    this.emitUsage(usageMetrics);
     return {
       text,
       meta: {
         model: data.model ?? this.opts.model,
-        tokens_in: data.usage?.prompt_tokens,
-        tokens_out: data.usage?.completion_tokens,
+        ...metaFromMetrics(usageMetrics),
         raw_response: data,
       },
     };
@@ -95,24 +117,38 @@ export class OpenAiCompatHttpAdapter implements Adapter {
       contentText: "",
       reasoningText: "",
       lastModel: undefined,
-      lastTokensIn: undefined,
-      lastTokensOut: undefined,
+      lastUsage: undefined,
     };
 
     yield* this.consumeSseStream(res.body, acc);
 
     const finalText = acc.contentText.length > 0 ? acc.contentText : acc.reasoningText;
+    this.emitUsage(acc.lastUsage);
     yield {
       type: "done",
       result: {
         text: finalText,
         meta: {
           model: acc.lastModel ?? this.opts.model,
-          tokens_in: acc.lastTokensIn,
-          tokens_out: acc.lastTokensOut,
+          ...metaFromMetrics(acc.lastUsage),
         },
       },
     };
+  }
+
+  private emitUsage(metrics: UsageMetrics | undefined): void {
+    if (metrics?.used === undefined) return;
+    this.opts.capturePort?.emit({
+      kind: "usage_update",
+      used: metrics.used,
+      ...(metrics.tokensInput !== undefined ? { tokens_input: metrics.tokensInput } : {}),
+      ...(metrics.tokensCacheRead !== undefined
+        ? { tokens_cache_read: metrics.tokensCacheRead }
+        : {}),
+      ...(metrics.tokensCacheWrite !== undefined
+        ? { tokens_cache_write: metrics.tokensCacheWrite }
+        : {}),
+    });
   }
 
   private buildRequestBody(input: DispatchInput, stream: boolean): Record<string, unknown> {
@@ -198,8 +234,57 @@ function* applyChunk(chunk: OpenAiStreamChunk, acc: StreamAccumulator): Generato
     acc.reasoningText += delta.reasoning_content;
     yield { type: "delta", text: delta.reasoning_content };
   }
-  if (chunk.usage?.prompt_tokens !== undefined) acc.lastTokensIn = chunk.usage.prompt_tokens;
-  if (chunk.usage?.completion_tokens !== undefined)
-    acc.lastTokensOut = chunk.usage.completion_tokens;
+  if (chunk.usage) acc.lastUsage = extractUsageMetrics(chunk.usage);
   if (chunk.model) acc.lastModel = chunk.model;
+}
+
+function finiteNumber(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function firstFinite(...values: (number | undefined)[]): number | undefined {
+  for (const value of values) {
+    const n = finiteNumber(value);
+    if (n !== undefined) return n;
+  }
+  return undefined;
+}
+
+function extractUsageMetrics(usage: OpenAiUsage | undefined): UsageMetrics | undefined {
+  if (!usage) return undefined;
+  const tokensIn = finiteNumber(usage.prompt_tokens);
+  const tokensOut = finiteNumber(usage.completion_tokens);
+  const details = usage.prompt_tokens_details;
+  const tokensCacheRead = firstFinite(details?.cache_read_input_tokens, details?.cached_tokens);
+  const tokensCacheWrite = finiteNumber(details?.cache_creation_input_tokens);
+  const tokensInput =
+    tokensIn === undefined ? undefined : Math.max(0, tokensIn - (tokensCacheRead ?? 0));
+  const total = finiteNumber(usage.total_tokens);
+  const used =
+    total ??
+    (tokensIn !== undefined || tokensOut !== undefined
+      ? (tokensIn ?? 0) + (tokensOut ?? 0)
+      : undefined);
+  return {
+    tokensIn,
+    tokensOut,
+    tokensInput,
+    tokensCacheRead: tokensCacheRead ?? 0,
+    tokensCacheWrite: tokensCacheWrite ?? 0,
+    used,
+  };
+}
+
+function metaFromMetrics(metrics: UsageMetrics | undefined): NonNullable<DispatchOutput["meta"]> {
+  return {
+    ...(metrics?.tokensIn !== undefined ? { tokens_in: metrics.tokensIn } : {}),
+    ...(metrics?.tokensOut !== undefined ? { tokens_out: metrics.tokensOut } : {}),
+    ...(metrics?.tokensInput !== undefined ? { tokens_input: metrics.tokensInput } : {}),
+    ...(metrics?.tokensCacheRead !== undefined
+      ? { tokens_cache_read: metrics.tokensCacheRead }
+      : {}),
+    ...(metrics?.tokensCacheWrite !== undefined
+      ? { tokens_cache_write: metrics.tokensCacheWrite }
+      : {}),
+  };
 }

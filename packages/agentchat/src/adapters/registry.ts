@@ -57,6 +57,7 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
       extraBody: opts.extraBody,
       caPath: opts.caPath,
       systemPrompt: opts.systemPrompt,
+      capturePort: opts.capturePort,
     });
   },
   "claude-cli": (o) => {

@@ -43,6 +43,9 @@ export interface DispatchOutput {
     model?: string;
     tokens_in?: number;
     tokens_out?: number;
+    tokens_input?: number;
+    tokens_cache_read?: number;
+    tokens_cache_write?: number;
     raw_response?: unknown;
     framework_overhead_ms?: number;
     classifier_declined?: true;

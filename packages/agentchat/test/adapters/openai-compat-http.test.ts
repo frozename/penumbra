@@ -66,7 +66,15 @@ test("dispatch POSTs to baseUrl/v1/chat/completions and returns text + usage", a
       return Promise.resolve(
         jsonResponse({
           choices: [{ message: { role: "assistant", content: "hi back" } }],
-          usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 2,
+            total_tokens: 12,
+            prompt_tokens_details: {
+              cached_tokens: 3,
+              cache_creation_input_tokens: 2,
+            },
+          },
         }),
       );
     }),
@@ -84,8 +92,11 @@ test("dispatch POSTs to baseUrl/v1/chat/completions and returns text + usage", a
     signal: new AbortController().signal,
   });
   expect(out.text).toBe("hi back");
-  expect(out.meta?.tokens_in).toBe(4);
+  expect(out.meta?.tokens_in).toBe(10);
   expect(out.meta?.tokens_out).toBe(2);
+  expect(out.meta?.tokens_input).toBe(7);
+  expect(out.meta?.tokens_cache_read).toBe(3);
+  expect(out.meta?.tokens_cache_write).toBe(2);
   expect(calls[0]?.url).toBe("http://example/v1/chat/completions");
   expect(calls[0]?.body.messages?.[0]).toEqual({ role: "user", content: "hi" });
 });
@@ -236,7 +247,7 @@ test("dispatchStream sends stream:true and yields delta events from SSE chunks t
   const sseBody = [
     'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
     'data: {"choices":[{"delta":{"content":"lo "}}]}\n\n',
-    'data: {"choices":[{"delta":{"content":"world"}}],"usage":{"prompt_tokens":3,"completion_tokens":5},"model":"m1"}\n\n',
+    'data: {"choices":[{"delta":{"content":"world"}}],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cache_read_input_tokens":4,"cache_creation_input_tokens":1}},"model":"m1"}\n\n',
     "data: [DONE]\n\n",
   ].join("");
   global.fetch = asFetchFn(
@@ -274,8 +285,11 @@ test("dispatchStream sends stream:true and yields delta events from SSE chunks t
     throw new Error("expected done event");
   }
   expect(done.result.text).toBe("hello world");
-  expect(done.result.meta?.tokens_in).toBe(3);
+  expect(done.result.meta?.tokens_in).toBe(12);
   expect(done.result.meta?.tokens_out).toBe(5);
+  expect(done.result.meta?.tokens_input).toBe(8);
+  expect(done.result.meta?.tokens_cache_read).toBe(4);
+  expect(done.result.meta?.tokens_cache_write).toBe(1);
 });
 
 test("dispatchStream falls back to reasoning_content deltas when content is empty", async () => {

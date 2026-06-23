@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { recentCost } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, mock, test } from "bun:test";
 
 import type { AgentChatConfig } from "../../src/config/types.js";
 import type { Adapter, DispatchEvent, DispatchInput } from "../../src/sdk/adapter.js";
@@ -8,10 +10,13 @@ import { registerAdapter } from "../../src/adapters/registry.js";
 import { resolveCaptureAttribution, runChatTurn } from "../../src/cli/loop.js";
 
 interface ObservedEvent {
+  ts?: string;
   event_type?: string;
+  lane?: string;
   provider?: string | null;
   model?: string | null;
   session_id?: string;
+  cost_usd?: number | null;
   triggered_by_event_id?: string;
   payload_json?: {
     prompt?: string;
@@ -21,6 +26,10 @@ interface ObservedEvent {
     provider?: string;
     model?: string;
     source_kind?: string;
+    tokens_cache_read?: number;
+    tokens_cache_write?: number;
+    tokens_input?: number;
+    used?: number;
   };
 }
 
@@ -57,6 +66,55 @@ const fakeObserve = (_event: unknown): Promise<{ event_id: string }> => {
   return Promise.resolve({ event_id: `evt-${String(eventCounter)}` });
 };
 
+type MockFetchInput = string | URL;
+const asFetchFn = (m: ReturnType<typeof mock>): typeof fetch => m as unknown as typeof fetch;
+
+function makeCostDb(): Database {
+  const db = new Database(":memory:");
+  db.run(`
+    CREATE TABLE t0_events (
+      event_id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      ingest_ts TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_detail TEXT,
+      project_id TEXT,
+      user_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      session_id TEXT,
+      event_type TEXT NOT NULL,
+      lane TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      cost_usd REAL,
+      latency_ms INTEGER,
+      request_id TEXT,
+      payload_json TEXT NOT NULL,
+      payload_summary TEXT
+    );
+  `);
+  return db;
+}
+
+function insertObservedUsage(db: Database, event: ObservedEvent): void {
+  db.prepare(
+    `
+    INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
+    VALUES ('usage-1', ?, ?, 'agentchat', 'u', 'm', 'usage-update', ?, ?, ?, ?, ?)
+  `,
+  ).run(
+    event.ts ?? "2026-06-23T00:00:00.000Z",
+    event.ts ?? "2026-06-23T00:00:00.000Z",
+    event.lane ?? "cli-subscription",
+    event.provider ?? null,
+    event.model ?? null,
+    event.cost_usd ?? null,
+    JSON.stringify(event.payload_json ?? {}),
+  );
+}
+
 test("runChatTurn dispatches the planner, observes prompt/response, and returns text + event_ids", async () => {
   registerAdapter("mock-echo", () => ({
     kind: "mock-echo",
@@ -90,6 +148,82 @@ test("runChatTurn dispatches the planner, observes prompt/response, and returns 
   expect(observed[1]!.event_type).toBe("agent-response");
   expect(observed[1]!.payload_json?.response).toBe("echo: hello world");
   expect(observed[1]!.triggered_by_event_id).toBe("e-1");
+});
+
+test("runChatTurn records openai-compatible prompt-cache usage for cost cache-hit reporting", async () => {
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = asFetchFn(
+      mock((_url: MockFetchInput) =>
+        Promise.resolve(
+          new Response(
+            [
+              'data: {"choices":[{"delta":{"content":"cached answer"}}]}\n\n',
+              'data: {"choices":[],"model":"gpt-cache","usage":{"prompt_tokens":100,"completion_tokens":4,"prompt_tokens_details":{"cached_tokens":25}}}\n\n',
+              "data: [DONE]\n\n",
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+      ),
+    );
+
+    const openAiCfg: AgentChatConfig = {
+      agents: [
+        {
+          name: "wire-seat",
+          adapter: "openai-compat-http",
+          options: { baseUrl: "http://example/v1", apiKey: "tk", model: "gpt-cache" },
+          subscription_provider: "openai",
+          subscription_model: "gpt-cache",
+          roles: ["planner"],
+        },
+      ],
+      default_roles: { planner: "wire-seat" },
+    };
+    const observed: ObservedEvent[] = [];
+    const result = await runChatTurn({
+      config: openAiCfg,
+      initialAgent: "wire-seat",
+      userMessage: "use cache",
+      conversation: { id: "c-cache", project_id: null },
+      observe: (event: unknown): Promise<{ event_id: string }> => {
+        observed.push(event as ObservedEvent);
+        return Promise.resolve({ event_id: `e-${String(observed.length)}` });
+      },
+      handoff_id: "h-cache",
+    });
+
+    expect(result.text).toBe("cached answer");
+    const usage = observed.find((event) => event.event_type === "usage-update");
+    expect(usage).toBeDefined();
+    expect(usage!.payload_json).toMatchObject({
+      handoff_id: "h-cache",
+      used: 104,
+      tokens_cache_read: 25,
+      tokens_cache_write: 0,
+      tokens_input: 75,
+      source_kind: "acp-wire",
+    });
+
+    const db = makeCostDb();
+    try {
+      insertObservedUsage(db, usage!);
+      const cost = recentCost(db, { since: "2026-06-23T00:00:00.000Z" }, () => new Date());
+      const row = cost.by_provider_model.find(
+        (item) => item.provider === "openai" && item.model === "gpt-cache",
+      );
+      expect(row).toMatchObject({
+        tokens_cache_read: 25,
+        tokens_cache_write: 0,
+        cache_read_pct: 0.25,
+      });
+    } finally {
+      db.close();
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("runChatTurn captures an adapter throw as an agent-response error event and returns a turn with .error set", async () => {

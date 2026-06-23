@@ -39,8 +39,16 @@ interface RegularNotificationEvent {
   output?: unknown;
   used?: number;
   size?: number;
+  tokens_input?: number;
+  tokens_cache_read?: number;
+  tokens_cache_write?: number;
   cost?: { amount: number; currency: string };
 }
+
+type UsageTokenPayload = Pick<
+  RegularNotificationEvent,
+  "tokens_cache_read" | "tokens_cache_write" | "tokens_input"
+>;
 
 export type NotificationEvent =
   | RegularNotificationEvent
@@ -91,6 +99,24 @@ function readErrorBody(err: unknown): unknown {
   if (typeof err !== "object" || err === null) return undefined;
   const candidate = (err as { body?: unknown }).body;
   return candidate;
+}
+
+function assignFiniteUsageToken(
+  payload: UsageTokenPayload,
+  key: keyof UsageTokenPayload,
+  value: number | undefined,
+): void {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    payload[key] = value;
+  }
+}
+
+function usageTokenPayload(ev: RegularNotificationEvent): UsageTokenPayload {
+  const payload: UsageTokenPayload = {};
+  assignFiniteUsageToken(payload, "tokens_input", ev.tokens_input);
+  assignFiniteUsageToken(payload, "tokens_cache_read", ev.tokens_cache_read);
+  assignFiniteUsageToken(payload, "tokens_cache_write", ev.tokens_cache_write);
+  return payload;
 }
 
 export class CapturePort {
@@ -217,6 +243,7 @@ export class CapturePort {
       handoff_id: this.opts.handoffId,
       used: ev.used,
       size: ev.size,
+      ...usageTokenPayload(ev),
       currency: ev.cost?.currency ?? null,
       raw_cost: ev.cost ?? null,
       source_kind: "acp-wire",
