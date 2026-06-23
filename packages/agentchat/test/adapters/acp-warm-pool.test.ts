@@ -19,11 +19,16 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-function handle(opts: { writable?: boolean; exited?: Promise<number | null> } = {}): MockAcpHandle {
+function handle(
+  opts: { writable?: boolean; stdoutDestroyed?: boolean; exited?: Promise<number | null> } = {},
+): MockAcpHandle {
   const stdin = new PassThrough();
+  const stdout = new PassThrough();
   if (opts.writable === false) stdin.end();
+  if (opts.stdoutDestroyed === true) stdout.destroy();
   return makeMockAcpHandle({
     stdin,
+    stdout,
     exited:
       opts.exited ??
       new Promise<number | null>(() => {
@@ -135,6 +140,28 @@ describe("AcpWarmPool", () => {
     });
     expect(pool.acquire("h2", key, "spec-a")).toBeNull();
     expect(notWritable.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("evicts entries whose stdout is already closed but still reuses healthy stdout", () => {
+    const pool = createAcpWarmPool();
+    const closedStdout = handle({ stdoutDestroyed: true });
+    pool.deposit(key, {
+      handle: closedStdout,
+      client,
+      sessionId: "closed-stdout",
+      specHash: "spec-a",
+    });
+
+    expect(pool.acquire("h1", key, "spec-a")).toBeNull();
+    expect(closedStdout.kill).toHaveBeenCalledTimes(1);
+
+    const healthy = handle();
+    expect(healthy.stdout.readable).toBe(true);
+    expect(healthy.stdout.destroyed).toBe(false);
+    pool.deposit(key, { handle: healthy, client, sessionId: "healthy", specHash: "spec-a" });
+
+    expect(pool.acquire("h2", key, "spec-a")?.sessionId).toBe("healthy");
+    expect(healthy.kill).not.toHaveBeenCalled();
   });
 
   test("evicts oldest idle entry when maxEntries is full but returns null when all entries are held", () => {

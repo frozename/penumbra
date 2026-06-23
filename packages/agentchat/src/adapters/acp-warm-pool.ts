@@ -232,11 +232,16 @@ class AcpWarmPoolImpl implements AcpWarmPool {
       exitCode?: number | null;
       signalCode?: NodeJS.Signals | null;
     };
+    const stdout = handle.stdout as StdioAcpHandle["stdout"] & { closed?: boolean };
     return (
       !entry.tornDown &&
       (handle.exitCode === null || handle.exitCode === undefined) &&
       (handle.signalCode === null || handle.signalCode === undefined) &&
-      handle.stdin.writable
+      handle.stdin.writable &&
+      Boolean(stdout) &&
+      stdout.readable &&
+      !stdout.destroyed &&
+      !stdout.closed
     );
   }
 
