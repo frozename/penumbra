@@ -6,6 +6,10 @@ export interface DispatchEventsRetentionOpts {
   batchSize?: number;
 }
 
+export interface DispatchEventsRetentionWorker {
+  tick(): Promise<void>;
+}
+
 /**
  * Prunes old rows from dispatch_events, which is high-volume operational
  * telemetry (~95% heartbeat/lifecycle rows) with no rollup and previously no
@@ -15,7 +19,9 @@ export interface DispatchEventsRetentionOpts {
  * event loop. Keyed on the table's INTEGER PRIMARY KEY (id) for a cheap
  * LIMIT-able subquery.
  */
-export function createDispatchEventsRetentionWorker(opts: DispatchEventsRetentionOpts) {
+export function createDispatchEventsRetentionWorker(
+  opts: DispatchEventsRetentionOpts,
+): DispatchEventsRetentionWorker {
   return {
     async tick(): Promise<void> {
       try {
@@ -38,7 +44,7 @@ export function createDispatchEventsRetentionWorker(opts: DispatchEventsRetentio
         });
 
         let totalPruned = 0;
-        while (true) {
+        for (;;) {
           const changes = deleteBatch(threshold, batchSize);
           if (changes === 0) break;
           totalPruned += changes;

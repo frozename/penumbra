@@ -1,9 +1,11 @@
+import type { Logger } from "@penumbra/core";
+
 import { existsSync, mkdirSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join, resolve as pathResolve } from "node:path";
-import { type Logger } from "@penumbra/core";
-import type { ExtraWorkerConfig } from "./config.js";
+
 import type { OrphanHandoffRecoveryService } from "../services/orphan-handoff-recovery.js";
+import type { ExtraWorkerConfig } from "./config.js";
 
 const STABLE_WORKER_LIFETIME_MS = 120_000;
 const BASE_RESTART_DELAY_MS = 1_000;
@@ -55,7 +57,7 @@ export type ReconcileSummary = {
   restarted: string[];
   stopped: string[];
   skipped: string[];
-  errors: Array<{ worker_id: string; message: string }>;
+  errors: { worker_id: string; message: string }[];
 };
 
 export interface ExtraWorkerSupervisorOptions {
@@ -68,6 +70,31 @@ export interface ExtraWorkerSupervisorOptions {
   orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
 }
 
+// SDK gap: Bun.spawn returns a Bun-specific Subprocess type that isn't part of
+// the @types/bun shape we depend on here. The structural ExtraWorkerSubprocess
+// captures only the surface we actually use; the single `as unknown as`
+// crosses that documented gap once, inside this typed factory.
+type BunSpawn = (
+  args: string[],
+  options: {
+    stdout: "pipe";
+    stderr: "pipe";
+    env: Record<string, string | undefined>;
+  },
+) => unknown;
+
+function defaultSpawn(
+  args: string[],
+  options: {
+    stdout: "pipe";
+    stderr: "pipe";
+    env: Record<string, string | undefined>;
+  },
+): ExtraWorkerSubprocess {
+  const spawn = Bun.spawn as unknown as BunSpawn;
+  return spawn(args, options) as ExtraWorkerSubprocess;
+}
+
 export class ExtraWorkerSupervisor {
   private extras: ExtraWorkerConfig[];
   private readonly storageRoot: string;
@@ -78,7 +105,7 @@ export class ExtraWorkerSupervisor {
   private readonly onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
   private readonly orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
   private logDirEnsured = false;
-  private readonly states: Map<string, ExtraWorkerProcessState> = new Map();
+  private readonly states = new Map<string, ExtraWorkerProcessState>();
   private reconcileGate = Promise.resolve();
   private lifecycleInFlight = false;
   private started = false;
@@ -88,22 +115,20 @@ export class ExtraWorkerSupervisor {
     this.extras = opts.extras;
     this.storageRoot = opts.storageRoot;
     this.log = opts.log;
-    this.spawnWorkerProcess =
-      opts.spawn ??
-      ((args, options) => Bun.spawn(args as any, options) as unknown as ExtraWorkerSubprocess);
+    this.spawnWorkerProcess = opts.spawn ?? defaultSpawn;
     this.logDir = join(this.storageRoot, "workers");
     this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
     this.onConfigChange = opts.onConfigChange;
     this.orphanHandoffRecovery = opts.orphanHandoffRecovery;
   }
 
-  async start(): Promise<void> {
-    if (this.stopped) return;
-    if (this.started) return;
+  start(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    if (this.started) return Promise.resolve();
     if (process.env.PENUMBRA_EXTRA_WORKERS_ENABLED === "0") {
       this.log.warn("extra workers disabled by PENUMBRA_EXTRA_WORKERS_ENABLED=0");
       this.started = true;
-      return;
+      return Promise.resolve();
     }
 
     this.started = true;
@@ -121,6 +146,7 @@ export class ExtraWorkerSupervisor {
         );
       }
     }
+    return Promise.resolve();
   }
 
   async stop(): Promise<void> {
@@ -184,6 +210,49 @@ export class ExtraWorkerSupervisor {
     return run;
   }
 
+  private trySpawnNew(nextExtra: ExtraWorkerConfig, summary: ReconcileSummary): void {
+    try {
+      this.spawnExtraWorker(nextExtra);
+      summary.started.push(nextExtra.id);
+    } catch (err: unknown) {
+      summary.skipped.push(nextExtra.id);
+      summary.errors.push({
+        worker_id: nextExtra.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async tryRestartChanged(
+    nextExtra: ExtraWorkerConfig,
+    summary: ReconcileSummary,
+  ): Promise<void> {
+    try {
+      await this.restartWorker(nextExtra);
+      summary.restarted.push(nextExtra.id);
+    } catch (err: unknown) {
+      summary.skipped.push(nextExtra.id);
+      summary.errors.push({
+        worker_id: nextExtra.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private syncWorkerOrPlanRestart(
+    nextExtra: ExtraWorkerConfig,
+    current: ExtraWorkerConfig | undefined,
+    summary: ReconcileSummary,
+  ): boolean {
+    const existingState = this.states.get(nextExtra.id);
+    const alreadyRunning = existingState?.proc !== null && existingState?.proc !== undefined;
+    if (!current || !alreadyRunning) {
+      this.trySpawnNew(nextExtra, summary);
+      return false;
+    }
+    return this.isWorkerChanged(current, nextExtra);
+  }
+
   private async reconcileUnlocked(nextExtras: ExtraWorkerConfig[]): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = {
       started: [],
@@ -198,34 +267,8 @@ export class ExtraWorkerSupervisor {
     const nextById = new Map(nextExtras.map((extra) => [extra.id, extra]));
 
     for (const [id, nextExtra] of nextById) {
-      const current = currentById.get(id);
-      const alreadyRunning = this.states.get(id)?.proc != null;
-      if (!current || !alreadyRunning) {
-        try {
-          this.spawnExtraWorker(nextExtra);
-          summary.started.push(id);
-        } catch (err: unknown) {
-          summary.skipped.push(id);
-          summary.errors.push({
-            worker_id: id,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-        continue;
-      }
-
-      if (this.isWorkerChanged(current, nextExtra)) {
-        try {
-          await this.restartWorker(nextExtra);
-          summary.restarted.push(id);
-        } catch (err: unknown) {
-          summary.skipped.push(id);
-          summary.errors.push({
-            worker_id: id,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      const needsRestart = this.syncWorkerOrPlanRestart(nextExtra, currentById.get(id), summary);
+      if (needsRestart) await this.tryRestartChanged(nextExtra, summary);
     }
 
     for (const [id, state] of this.states) {
@@ -234,9 +277,7 @@ export class ExtraWorkerSupervisor {
         clearTimeout(state.restartTimer);
         state.restartTimer = null;
       }
-      if (state.proc) {
-        await this.stopWorker(state);
-      }
+      if (state.proc) await this.stopWorker(state);
       this.states.delete(id);
       summary.stopped.push(id);
     }
@@ -299,7 +340,7 @@ export class ExtraWorkerSupervisor {
     state.proc = null;
     state.alive = false;
     if (proc.exitCode !== null) {
-      await proc.exited.catch(() => {});
+      await proc.exited.catch(() => undefined);
       state.pid = null;
       return;
     }
@@ -315,14 +356,18 @@ export class ExtraWorkerSupervisor {
     } catch {
       /* already exited */
     }
-    await proc.exited.catch(() => {});
+    await proc.exited.catch(() => undefined);
     state.pid = null;
   }
 
   private async stopAfterWait(proc: ExtraWorkerSubprocess, timeoutMs: number): Promise<boolean> {
     const finished = await Promise.race([
       proc.exited.then(() => true).catch(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
+      }),
     ]);
     return finished;
   }
@@ -331,16 +376,84 @@ export class ExtraWorkerSupervisor {
     return this.stopAfterWait(proc, timeoutMs);
   }
 
+  private getOrInitWorkerState(workerId: string): ExtraWorkerProcessState {
+    return (
+      this.states.get(workerId) ?? {
+        pid: null,
+        restartCount: 0,
+        lastStartedAt: 0,
+        restartTimer: null,
+        alive: false,
+        proc: null,
+      }
+    );
+  }
+
+  private wireWorkerProcessLifecycle(
+    extra: ExtraWorkerConfig,
+    proc: ExtraWorkerSubprocess,
+    state: ExtraWorkerProcessState,
+    logPath: string,
+  ): void {
+    this.pipeStreamToLog(proc.stdout, logPath).catch((err: unknown) => {
+      this.log.error(
+        {
+          event: "extra_worker_log_pipe_failed",
+          worker_id: extra.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "extra worker log pipe failed",
+      );
+    });
+    this.pipeStreamToLog(proc.stderr, logPath).catch((err: unknown) => {
+      this.log.error(
+        {
+          event: "extra_worker_log_pipe_failed",
+          worker_id: extra.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "extra worker log pipe failed",
+      );
+    });
+
+    const describeError = (value: unknown): string | undefined => {
+      if (value === undefined) return undefined;
+      if (value instanceof Error) return value.message;
+      if (typeof value === "string") return value;
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return "[unserializable]";
+      }
+    };
+
+    const handleExit = (exitErr: unknown): void => {
+      this.onProcessExit(extra, proc, state).catch((handlerErr: unknown) => {
+        this.log.error(
+          {
+            event: "extra_worker_exit_handler_failed",
+            worker_id: extra.id,
+            error: describeError(handlerErr),
+            exit_error: describeError(exitErr),
+          },
+          "extra worker exit handler failed",
+        );
+      });
+    };
+
+    void proc.exited.then(
+      () => {
+        handleExit(undefined);
+      },
+      (err: unknown) => {
+        handleExit(err);
+      },
+    );
+  }
+
   private spawnExtraWorker(extra: ExtraWorkerConfig): void {
     const logPath = join(this.logDir, `${extra.id}.log`);
-    const state = this.states.get(extra.id) ?? {
-      pid: null,
-      restartCount: 0,
-      lastStartedAt: 0,
-      restartTimer: null,
-      alive: false,
-      proc: null,
-    };
+    const state = this.getOrInitWorkerState(extra.id);
     const args = [
       "bun",
       this.workerEntryPath,
@@ -378,66 +491,21 @@ export class ExtraWorkerSupervisor {
       mkdirSync(this.logDir, { recursive: true });
       this.logDirEnsured = true;
     }
-    this.pipeStreamToLog(proc.stdout, logPath).catch((err) => {
-      this.log.error(
-        {
-          event: "extra_worker_log_pipe_failed",
-          worker_id: extra.id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "extra worker log pipe failed",
-      );
-    });
-    this.pipeStreamToLog(proc.stderr, logPath).catch((err) => {
-      this.log.error(
-        {
-          event: "extra_worker_log_pipe_failed",
-          worker_id: extra.id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        "extra worker log pipe failed",
-      );
-    });
 
-    void proc.exited
-      .then(() => {
-        void this.onProcessExit(extra, proc, state).catch((err) => {
-          this.log.error(
-            {
-              event: "extra_worker_exit_handler_failed",
-              worker_id: extra.id,
-              error: err instanceof Error ? err.message : String(err),
-            },
-            "extra worker exit handler failed",
-          );
-        });
-      })
-      .catch((err) => {
-        void this.onProcessExit(extra, proc, state).catch((exitErr) => {
-          this.log.error(
-            {
-              event: "extra_worker_exit_handler_failed",
-              worker_id: extra.id,
-              error: exitErr instanceof Error ? exitErr.message : String(exitErr),
-              exit_error: err instanceof Error ? err.message : String(err),
-            },
-            "extra worker exit handler failed",
-          );
-        });
-      });
+    this.wireWorkerProcessLifecycle(extra, proc, state, logPath);
   }
 
-  private async onProcessExit(
+  private onProcessExit(
     extra: ExtraWorkerConfig,
     proc: ExtraWorkerSubprocess,
     state: ExtraWorkerProcessState,
   ): Promise<void> {
-    if (state.proc !== proc) return;
+    if (state.proc !== proc) return Promise.resolve();
     state.alive = false;
 
-    if (this.stopped) return;
-    const failed = proc.exitCode !== 0 || proc.signalCode != null;
-    if (!failed) return;
+    if (this.stopped) return Promise.resolve();
+    const failed = proc.exitCode !== 0 || proc.signalCode !== null;
+    if (!failed) return Promise.resolve();
 
     if (Date.now() - state.lastStartedAt >= STABLE_WORKER_LIFETIME_MS) {
       state.restartCount = 0;
@@ -456,8 +524,9 @@ export class ExtraWorkerSupervisor {
     );
 
     if (this.orphanHandoffRecovery) {
-      await this.orphanHandoffRecovery.recoverForWorker(extra.id);
+      this.orphanHandoffRecovery.recoverForWorker(extra.id);
     }
+    return Promise.resolve();
   }
 
   private scheduleExtraWorkerRestart(
@@ -484,9 +553,7 @@ export class ExtraWorkerSupervisor {
           },
           "extra worker failed to spawn during restart",
         );
-        if (!this.stopped) {
-          this.scheduleExtraWorkerRestart(extra, state);
-        }
+        this.scheduleExtraWorkerRestart(extra, state);
       }
     }, delay);
 
@@ -499,13 +566,15 @@ export class ExtraWorkerSupervisor {
   ): Promise<void> {
     if (!stream) return;
     const reader = stream.getReader();
-    while (true) {
+    for (;;) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      if (!chunk.value || chunk.value.length === 0) continue;
+      if (chunk.value.length === 0) continue;
       try {
         await appendFile(path, chunk.value);
-      } catch {}
+      } catch {
+        // log writes are best-effort; failures are intentionally swallowed
+      }
     }
   }
 

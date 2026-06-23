@@ -1,10 +1,11 @@
 // Handoff sweeper worker - periodic TTL-based handoff cleanup.
 // The memory-verify auto-fire path that previously lived here was removed in 2026-05-18.
 import type { Services } from "@penumbra/core";
+
 import {
+  MIN_DISPATCHED_TTL_MS,
   resolveDispatchedTtlMs,
   resolvePendingTtlMs,
-  MIN_DISPATCHED_TTL_MS,
 } from "./handoff-sweeper-thresholds.js";
 
 export interface HandoffSweeperOpts {
@@ -13,25 +14,30 @@ export interface HandoffSweeperOpts {
   dispatchedTtlMs?: number;
 }
 
+export interface HandoffSweeperWorker {
+  tick(): Promise<void>;
+}
+
 type CandidateRow = { handoff_id: string; ts: string; chain_task_type: string | null };
 
-export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
+function parseEnvInt(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function createHandoffSweeperWorker(opts: HandoffSweeperOpts): HandoffSweeperWorker {
   return {
-    async tick(): Promise<void> {
+    tick(): Promise<void> {
       try {
         const pendingTtlMs =
           opts.pendingTtlMs ??
-          (process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS
-            ? parseInt(process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS, 10)
-            : resolvePendingTtlMs());
+          parseEnvInt(process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS) ??
+          resolvePendingTtlMs();
 
         // null = use per-task-class thresholds; number = flat global override.
         const globalDispatchedOverride: number | null =
-          opts.dispatchedTtlMs != null
-            ? opts.dispatchedTtlMs
-            : process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS
-              ? parseInt(process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS, 10)
-              : null;
+          opts.dispatchedTtlMs ?? parseEnvInt(process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS);
 
         const now = new Date(opts.services.clock());
         const nowIso = now.toISOString();
@@ -49,7 +55,7 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
           `);
           return stmt.run(
             nowIso,
-            `expired by sweeper after ${pendingTtlMs}ms in pending`,
+            `expired by sweeper after ${String(pendingTtlMs)}ms in pending`,
             pendingThreshold,
           ).changes;
         });
@@ -67,11 +73,11 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
           >(`SELECT handoff_id, ts, chain_task_type FROM handoffs WHERE status = 'dispatched' AND ts < ?`)
           .all(sqlCutoff);
 
-        const toExpire: Array<{
+        const toExpire: {
           handoff_id: string;
           ttlMs: number;
           chain_task_type: string | null;
-        }> = [];
+        }[] = [];
         for (const row of candidates) {
           const effectiveTtlMs =
             globalDispatchedOverride ?? resolveDispatchedTtlMs(row.chain_task_type);
@@ -98,7 +104,7 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
             const threshold = new Date(now.getTime() - ttlMs).toISOString();
             changes += stmt.run(
               nowIso,
-              `expired by sweeper after ${ttlMs}ms in dispatched${suffix}`,
+              `expired by sweeper after ${String(ttlMs)}ms in dispatched${suffix}`,
               handoff_id,
               threshold,
             ).changes;
@@ -113,6 +119,7 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
       } catch (err) {
         opts.services.log.error({ err }, "handoff sweeper: failed to sweep handoffs");
       }
+      return Promise.resolve();
     },
   };
 }

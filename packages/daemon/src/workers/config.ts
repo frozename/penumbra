@@ -1,10 +1,11 @@
-import { readFileSync, existsSync } from "node:fs";
+import type { Logger } from "@penumbra/core";
+
+import { load as yamlLoad } from "js-yaml";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { load as yamlLoad } from "js-yaml";
 import { z } from "zod";
-import type { Logger } from "@penumbra/core";
 
 const { resolveOperatorConfigPath } = createRequire(import.meta.url)(
   "../../../config/src/files/operator-paths.js",
@@ -22,7 +23,7 @@ export const ExtraWorkerSchema = z
   .superRefine((extra, ctx) => {
     if ((extra.isolation === "hard" || extra.isolation === "sticky") && !extra.project_id) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["isolation"],
         message: `isolation=${extra.isolation} requires project_id`,
       });
@@ -70,37 +71,73 @@ function readPrimaryWorkerId(): string | undefined {
   return raw.trim() || undefined;
 }
 
-export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): ExtraWorkersConfig {
-  const path = resolveOperatorConfigPath("workers.yaml", process.env);
-  let raw: string;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readWorkersConfigFile(path: string): string | null {
   try {
-    raw = readFileSync(path, "utf8");
+    return readFileSync(path, "utf8");
   } catch (error: unknown) {
     if (
       error instanceof Error &&
       "code" in error &&
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
-      return { extras: [] };
+      return null;
     }
-    throw new ExtraWorkersConfigError(error instanceof Error ? error.message : String(error), path);
+    throw new ExtraWorkersConfigError(errorMessage(error), path);
   }
+}
 
-  let parsed: unknown;
+function parseWorkersConfigYaml(raw: string, path: string): unknown {
   try {
-    parsed = yamlLoad(raw);
+    return yamlLoad(raw);
   } catch (error: unknown) {
-    throw new ExtraWorkersConfigError(error instanceof Error ? error.message : String(error), path);
+    throw new ExtraWorkersConfigError(errorMessage(error), path);
   }
+}
 
-  let file: { extras: Array<z.infer<typeof ExtraWorkerSchema>> };
+type ParsedWorkersConfigFile = { extras: z.infer<typeof ExtraWorkerSchema>[] };
+
+function validateWorkersConfig(parsed: unknown, path: string): ParsedWorkersConfigFile {
   try {
-    file = ExtraWorkersConfigFileSchema.parse(parsed) as {
-      extras: Array<z.infer<typeof ExtraWorkerSchema>>;
-    };
+    return ExtraWorkersConfigFileSchema.parse(parsed);
   } catch (error: unknown) {
-    throw new ExtraWorkersConfigError(error instanceof Error ? error.message : String(error), path);
+    throw new ExtraWorkersConfigError(errorMessage(error), path);
   }
+}
+
+function logUnknownProject(opts: ExtraWorkersConfigOptions, resolved: ExtraWorkerConfig): void {
+  const warning = {
+    event: "extra_worker_unknown_project",
+    worker_id: resolved.id,
+    project_id: resolved.project_id,
+  };
+  if (opts.log) {
+    opts.log.warn(warning, "extra worker references unknown project_id and will be skipped");
+  } else {
+    console.warn(warning);
+  }
+}
+
+function resolveExtraWorker(extra: z.infer<typeof ExtraWorkerSchema>): ExtraWorkerConfig {
+  return {
+    id: extra.id,
+    concurrency: extra.concurrency ?? 4,
+    isolation: extra.isolation ?? (extra.project_id !== undefined ? "sticky" : "shared"),
+    project_id: extra.project_id,
+  };
+}
+
+export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): ExtraWorkersConfig {
+  const path = resolveOperatorConfigPath("workers.yaml", process.env);
+  const raw = readWorkersConfigFile(path);
+  if (raw === null) return { extras: [] };
+
+  const parsed = parseWorkersConfigYaml(raw, path);
+  const file = validateWorkersConfig(parsed, path);
+
   const primaryWorkerId = readPrimaryWorkerId();
   const seen = new Set<string>();
   const extras: ExtraWorkerConfig[] = [];
@@ -118,24 +155,13 @@ export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): Ex
       );
     }
 
-    const resolved: ExtraWorkerConfig = {
-      id: extra.id,
-      concurrency: extra.concurrency ?? 4,
-      isolation: extra.isolation ?? (extra.project_id != null ? "sticky" : "shared"),
-      project_id: extra.project_id,
-    };
+    const resolved = resolveExtraWorker(extra);
 
-    if (resolved.project_id != null && opts.projectRegistry?.has(resolved.project_id) === false) {
-      const warning = {
-        event: "extra_worker_unknown_project",
-        worker_id: resolved.id,
-        project_id: resolved.project_id,
-      };
-      if (opts.log) {
-        opts.log.warn(warning, "extra worker references unknown project_id and will be skipped");
-      } else {
-        console.warn(warning);
-      }
+    if (
+      resolved.project_id !== undefined &&
+      opts.projectRegistry?.has(resolved.project_id) === false
+    ) {
+      logUnknownProject(opts, resolved);
       continue;
     }
 

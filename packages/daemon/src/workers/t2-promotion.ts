@@ -1,7 +1,8 @@
-import type { Services } from "@penumbra/core";
-import { T2Promotion, type T2MemoryExtraction, type Embedder } from "@penumbra/core";
-import { buildT2EmbedText } from "@penumbra/core";
 import type { AgentChatConfig } from "@penumbra/config";
+import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
+
+import { buildT2EmbedText, T2Promotion } from "@penumbra/core";
+
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
   createJudgePool,
@@ -55,11 +56,18 @@ export interface PromotionWorkerOpts {
   minEvents?: number;
 }
 
+type ChunkedJudgeLogFn = (...a: unknown[]) => void;
+
+export interface ChunkedJudgeLogger {
+  info?: ChunkedJudgeLogFn;
+  warn?: ChunkedJudgeLogFn;
+}
+
 export interface ChunkedJudgeOpts {
   judge: (transcript: string) => Promise<T2MemoryExtraction[]>;
   /** Soft character budget per chunk. Defaults to 80_000 chars (~20k tokens). */
   maxCharsPerChunk?: number;
-  log?: { info?: (...a: any[]) => void; warn?: (...a: any[]) => void };
+  log?: ChunkedJudgeLogger;
   /**
    * Optional embedder used to collapse semantically near-duplicate memories
    * after the title-match dedupe pass. When omitted, only title-match dedupe
@@ -72,7 +80,19 @@ export interface ChunkedJudgeOpts {
 
 type T2ExtractionJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
-export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
+export interface T2PromotionWorker {
+  tick(): Promise<void>;
+}
+
+interface JudgeChoice {
+  message?: { content?: string };
+}
+
+interface JudgeResponse {
+  choices?: JudgeChoice[];
+}
+
+export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionWorker {
   // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
   // and no override passed in), short-circuit to a no-op worker. The previous
   // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
@@ -89,8 +109,9 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
       "no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)",
     );
     return {
-      async tick(): Promise<void> {
+      tick(): Promise<void> {
         // No-op: judge unconfigured. Restart the daemon after setting the env var to enable.
+        return Promise.resolve();
       },
     };
   }
@@ -109,6 +130,26 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   });
 
   const minEvents = opts.minEvents ?? 5;
+
+  const handleRollupError = (err: unknown, rollupId: string, remaining: number): boolean => {
+    if (isJudgeUnreachable(err)) {
+      opts.services.log.warn(
+        { err: err instanceof Error ? err.message : String(err), remaining },
+        "t2 promotion: LLM judge unreachable — skipping remaining rollups this cycle",
+      );
+      return true;
+    }
+    opts.services.log.warn({ rollupId, err }, "t2 promotion: failed to promote rollup, skipping");
+    return false;
+  };
+
+  const promoteOne = async (rollupId: string): Promise<void> => {
+    const count = await t2.promoteRollup(rollupId);
+    if (count > 0) {
+      opts.services.log.info({ rollupId, count }, "t2 promotion: promoted session to memories");
+    }
+  };
+
   // Cycle-scoped circuit breaker: once we see a connection failure on the first
   // rollup of a tick, skip the rest of the rollups in that tick (no point
   // hammering an unreachable judge N times in a row). Resets every tick.
@@ -116,33 +157,14 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
     async tick(): Promise<void> {
       if (activePool) activePool.resetTickHealth();
       const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);
-      let judgeUnreachable = false;
-      for (const rollupId of rollups) {
-        if (judgeUnreachable) break;
+      for (let i = 0; i < rollups.length; i++) {
+        const rollupId = rollups[i];
+        if (!rollupId) continue;
         try {
-          const count = await t2.promoteRollup(rollupId);
-          if (count > 0) {
-            opts.services.log.info(
-              { rollupId, count },
-              "t2 promotion: promoted session to memories",
-            );
-          }
+          await promoteOne(rollupId);
         } catch (err) {
-          if (isJudgeUnreachable(err)) {
-            opts.services.log.warn(
-              {
-                err: err instanceof Error ? err.message : String(err),
-                remaining: rollups.length - rollups.indexOf(rollupId) - 1,
-              },
-              "t2 promotion: LLM judge unreachable — skipping remaining rollups this cycle",
-            );
-            judgeUnreachable = true;
-            continue;
-          }
-          opts.services.log.warn(
-            { rollupId, err },
-            "t2 promotion: failed to promote rollup, skipping",
-          );
+          const unreachable = handleRollupError(err, rollupId, rollups.length - i - 1);
+          if (unreachable) break;
         }
       }
     },
@@ -156,49 +178,114 @@ export function resolveT2ExtractionJudge(
   return createJudgePoolFromAgentchat(services, onPool) ?? createDefaultLLMJudge(services);
 }
 
-export function wrapJudgeWithChunking(
+function isContextOverflow(msg: string): boolean {
+  return /exceed_context_size_error|exceeds the available context size/i.test(msg);
+}
+
+function halveChunk(chunk: string): [string, string] {
+  const events = splitTranscriptOnEventBoundaries(chunk);
+  if (events.length > 1) {
+    const mid = Math.floor(events.length / 2);
+    return [events.slice(0, mid).join("\n\n"), events.slice(mid).join("\n\n")];
+  }
+  const mid = Math.floor(chunk.length / 2);
+  return [chunk.slice(0, mid), chunk.slice(mid)];
+}
+
+function createJudgeWithRetry(
   opts: ChunkedJudgeOpts,
-): (transcript: string) => Promise<T2MemoryExtraction[]> {
-  const envVal = parseInt(process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK || "", 10);
-  const defaultMax = !isNaN(envVal) && envVal > 0 ? envVal : 80_000;
-  const maxChars = opts.maxCharsPerChunk ?? defaultMax;
+): (chunk: string, depth: number) => Promise<T2MemoryExtraction[]> {
+  const retryAfterOverflow = async (
+    chunk: string,
+    depth: number,
+    msg: string,
+    recurse: (chunk: string, depth: number) => Promise<T2MemoryExtraction[]>,
+  ): Promise<T2MemoryExtraction[]> => {
+    if (chunk.length < 4000 || depth >= 5) {
+      opts.log?.warn?.(
+        { err: msg, depth, chunkLength: chunk.length },
+        "t2 promotion: context overflow retry exhausted; dropping chunk",
+      );
+      return [];
+    }
+    opts.log?.warn?.(
+      { depth, chunkLength: chunk.length },
+      "t2 promotion: context overflow; halving and retrying",
+    );
+    const [first, second] = halveChunk(chunk);
+    const m1 = await recurse(first, depth + 1);
+    const m2 = await recurse(second, depth + 1);
+    return [...m1, ...m2];
+  };
 
   const judgeWithRetry = async (chunk: string, depth: number): Promise<T2MemoryExtraction[]> => {
     try {
       return await opts.judge(chunk);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/exceed_context_size_error|exceeds the available context size/i.test(msg)) {
-        if (chunk.length < 4000 || depth >= 5) {
-          opts.log?.warn?.(
-            { err: msg, depth, chunkLength: chunk.length },
-            "t2 promotion: context overflow retry exhausted; dropping chunk",
-          );
-          return [];
-        }
-
-        opts.log?.warn?.(
-          { depth, chunkLength: chunk.length },
-          "t2 promotion: context overflow; halving and retrying",
-        );
-
-        const events = splitTranscriptOnEventBoundaries(chunk);
-        let halves: string[];
-        if (events.length > 1) {
-          const mid = Math.floor(events.length / 2);
-          halves = [events.slice(0, mid).join("\n\n"), events.slice(mid).join("\n\n")];
-        } else {
-          const mid = Math.floor(chunk.length / 2);
-          halves = [chunk.slice(0, mid), chunk.slice(mid)];
-        }
-
-        const m1 = await judgeWithRetry(halves[0]!, depth + 1);
-        const m2 = await judgeWithRetry(halves[1]!, depth + 1);
-        return [...m1, ...m2];
-      }
-      throw err;
+      if (!isContextOverflow(msg)) throw err;
+      return await retryAfterOverflow(chunk, depth, msg, judgeWithRetry);
     }
   };
+  return judgeWithRetry;
+}
+
+function packEventsIntoChunks(events: string[], maxChars: number): string[] {
+  const chunks: string[] = [];
+  let buf: string[] = [];
+  let bufLen = 0;
+  const flush = (): void => {
+    if (bufLen > 0) {
+      chunks.push(buf.join("\n\n"));
+      buf = [];
+      bufLen = 0;
+    }
+  };
+  for (const ev of events) {
+    if (ev.length > maxChars) {
+      flush();
+      let start = 0;
+      while (start < ev.length) {
+        chunks.push(ev.slice(start, start + maxChars));
+        start += maxChars;
+      }
+      continue;
+    }
+    if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) flush();
+    buf.push(ev);
+    bufLen += ev.length + 2;
+  }
+  flush();
+  return chunks;
+}
+
+async function judgeAcrossChunks(
+  chunks: string[],
+  judgeWithRetry: (chunk: string, depth: number) => Promise<T2MemoryExtraction[]>,
+  log: ChunkedJudgeLogger | undefined,
+): Promise<T2MemoryExtraction[]> {
+  const out: T2MemoryExtraction[] = [];
+  for (const chunk of chunks) {
+    try {
+      const memories = await judgeWithRetry(chunk, 0);
+      for (const memory of memories) out.push(memory);
+    } catch (err) {
+      log?.warn?.(
+        { err: err instanceof Error ? err.message : String(err) },
+        "t2 promotion: chunk judge failed; continuing",
+      );
+    }
+  }
+  return out;
+}
+
+export function wrapJudgeWithChunking(
+  opts: ChunkedJudgeOpts,
+): (transcript: string) => Promise<T2MemoryExtraction[]> {
+  const envVal = parseInt(process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK ?? "", 10);
+  const defaultMax = !isNaN(envVal) && envVal > 0 ? envVal : 80_000;
+  const maxChars = opts.maxCharsPerChunk ?? defaultMax;
+  const judgeWithRetry = createJudgeWithRetry(opts);
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
     let finalMemories: T2MemoryExtraction[];
@@ -207,51 +294,12 @@ export function wrapJudgeWithChunking(
       finalMemories = await judgeWithRetry(transcript, 0);
     } else {
       const events = splitTranscriptOnEventBoundaries(transcript);
-      const chunks: string[] = [];
-      let buf: string[] = [];
-      let bufLen = 0;
-      for (const ev of events) {
-        if (ev.length > maxChars) {
-          if (bufLen > 0) {
-            chunks.push(buf.join("\n\n"));
-            buf = [];
-            bufLen = 0;
-          }
-          let start = 0;
-          while (start < ev.length) {
-            chunks.push(ev.slice(start, start + maxChars));
-            start += maxChars;
-          }
-          continue;
-        }
-
-        if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
-          chunks.push(buf.join("\n\n"));
-          buf = [];
-          bufLen = 0;
-        }
-        buf.push(ev);
-        bufLen += ev.length + 2;
-      }
-      if (buf.length > 0) chunks.push(buf.join("\n\n"));
-
+      const chunks = packEventsIntoChunks(events, maxChars);
       opts.log?.info?.(
         { chunks: chunks.length, totalChars: transcript.length, maxChars },
         "t2 promotion: transcript chunked",
       );
-
-      finalMemories = [];
-      for (const chunk of chunks) {
-        try {
-          const memories = await judgeWithRetry(chunk, 0);
-          for (const memory of memories) finalMemories.push(memory);
-        } catch (err) {
-          opts.log?.warn?.(
-            { err: err instanceof Error ? err.message : String(err) },
-            "t2 promotion: chunk judge failed; continuing",
-          );
-        }
-      }
+      finalMemories = await judgeAcrossChunks(chunks, judgeWithRetry, opts.log);
     }
 
     const titleDeduped = dedupeByTitle(finalMemories);
@@ -279,25 +327,43 @@ export function wrapJudgeWithChunking(
  * ... ``` (or ``` ... ```) wrapper if present so JSON.parse can succeed.
  * Returns the input unchanged if no fence is detected.
  */
+// Backreference-based capture group flagged by regexp/no-unused-capturing-group;
+// rewritten as two alternations with explicit end tags to avoid the warning.
+const REASONING_TAGS_PATTERN = /<think>[\s\S]*?<\/think>\s*|<reasoning>[\s\S]*?<\/reasoning>\s*/gi;
+
 function stripReasoningTags(content: string): string {
-  return content.replace(/<(think|reasoning)>[\s\S]*?<\/\1>\s*/gi, "");
+  return content.replaceAll(REASONING_TAGS_PATTERN, "");
 }
+
+// Constructed from String.fromCharCode so the regex literal does not contain
+// a raw control byte (no-control-regex).  is the ANSI ESC byte.
+const ANSI_CSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*[A-Za-z]`, "g");
+const ANSI_CSI_FALLBACK_PATTERN = /(?:^|\s)\[[0-9;]+[A-Za-z]/g;
+// Outer json fence; \s+ on the trailing whitespace + bounded inner span keep the
+// matcher away from polynomial backtracking flagged by
+// regexp/no-super-linear-backtracking. exec is used instead of String#match for
+// @typescript-eslint/prefer-regexp-exec compliance.
+const JSON_FENCE_PATTERN = /^```(?:json|JSON)?\n?([\s\S]*?)\n?```$/;
+const NON_ANSWER_PATTERN = /^(?:none|null|n\/?a|nothing|empty)\.?$/i;
 
 export function stripJsonFence(content: string): string {
   const detagged = stripReasoningTags(content).trim();
   // Models sometimes emit a single-word non-answer ("none", "null", "n/a")
   // when they decide nothing should be extracted. Coerce to the empty-array
   // shape so the caller can parse + validate uniformly instead of failing.
-  if (/^(none|null|n\/?a|nothing|empty)\.?$/i.test(detagged)) {
+  if (NON_ANSWER_PATTERN.test(detagged)) {
     return '{"memories":[]}';
   }
   // Strip ANSI CSI sequences before brace extraction so the JSON span matcher
   // sees clean braces even when a judge emits terminal control codes.
   const stripped = detagged
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/(?:^|\s)\[[0-9;]+[A-Za-z]/g, " ");
-  const fenced = stripped.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
-  if (fenced) return fenced[1]!.trim();
+    .replaceAll(ANSI_CSI_PATTERN, "")
+    .replaceAll(ANSI_CSI_FALLBACK_PATTERN, " ");
+  const fenced = JSON_FENCE_PATTERN.exec(stripped);
+  if (fenced) {
+    const inner = fenced[1];
+    if (inner !== undefined) return inner.trim();
+  }
   // Fallback: when transcripts contain prompt-injected wrappers
   // (e.g. claude-mem's "wrap responses in <summary>...</summary>" instruction)
   // the model dutifully wraps the JSON in arbitrary tags. Extract the
@@ -337,6 +403,38 @@ function dedupeByTitle(memories: T2MemoryExtraction[]): T2MemoryExtraction[] {
   return out;
 }
 
+interface ClusterState {
+  reps: number[];
+  clusterOf: number[];
+}
+
+function findClusterAssignment(
+  state: ClusterState,
+  vectors: Float32Array[],
+  norms: number[],
+  i: number,
+  threshold: number,
+): number {
+  const vi = vectors[i];
+  const ni = norms[i];
+  if (!vi || ni === undefined) return -1;
+  for (const r of state.reps) {
+    const vr = vectors[r];
+    const nr = norms[r];
+    if (!vr || nr === undefined) continue;
+    if (cosineSim(vi, vr, ni, nr) >= threshold) return r;
+  }
+  return -1;
+}
+
+function reassignCluster(state: ClusterState, oldRep: number, newRep: number): void {
+  const idx = state.reps.indexOf(oldRep);
+  if (idx !== -1) state.reps[idx] = newRep;
+  for (let k = 0; k < state.clusterOf.length; k++) {
+    if (state.clusterOf[k] === oldRep) state.clusterOf[k] = newRep;
+  }
+}
+
 async function dedupeBySemanticSimilarity(
   memories: T2MemoryExtraction[],
   embedder: Embedder,
@@ -344,46 +442,36 @@ async function dedupeBySemanticSimilarity(
 ): Promise<T2MemoryExtraction[]> {
   const vectors = await embedder.embed(memories.map((m) => buildT2EmbedText(m.title, m.body)));
   // Index in `memories` of the surviving representative for each cluster.
-  const reps: number[] = [];
-  // Per-input mapping to its cluster's rep index.
-  const clusterOf: number[] = new Array(memories.length).fill(-1);
+  // clusterOf: per-input mapping to its cluster's rep index.
+  const state: ClusterState = {
+    reps: [],
+    clusterOf: Array.from<number>({ length: memories.length }).fill(-1),
+  };
   const norms = vectors.map((v) => l2norm(v));
 
   for (let i = 0; i < memories.length; i++) {
-    const vi = vectors[i]!;
-    const ni = norms[i]!;
-    let assigned = -1;
-    for (const r of reps) {
-      const sim = cosineSim(vi, vectors[r]!, ni, norms[r]!);
-      if (sim >= threshold) {
-        assigned = r;
-        break;
-      }
-    }
+    const assigned = findClusterAssignment(state, vectors, norms, i, threshold);
     if (assigned === -1) {
-      reps.push(i);
-      clusterOf[i] = i;
-    } else {
-      clusterOf[i] = assigned;
-      // Within a cluster, keep the longer body as the representative.
-      if (memories[i]!.body.length > memories[assigned]!.body.length) {
-        const idx = reps.indexOf(assigned);
-        reps[idx] = i;
-        for (let k = 0; k < clusterOf.length; k++) {
-          if (clusterOf[k] === assigned) clusterOf[k] = i;
-        }
-      }
+      state.reps.push(i);
+      state.clusterOf[i] = i;
+      continue;
+    }
+    state.clusterOf[i] = assigned;
+    const current = memories[i];
+    const winner = memories[assigned];
+    if (current && winner && current.body.length > winner.body.length) {
+      reassignCluster(state, assigned, i);
     }
   }
 
   // Preserve original order of representatives.
-  const repSet = new Set(reps);
+  const repSet = new Set(state.reps);
   return memories.filter((_, i) => repSet.has(i));
 }
 
 function l2norm(v: Float32Array): number {
   let s = 0;
-  for (let i = 0; i < v.length; i++) s += v[i]! * v[i]!;
+  for (const value of v) s += value * value;
   return Math.sqrt(s);
 }
 
@@ -391,7 +479,12 @@ function cosineSim(a: Float32Array, b: Float32Array, na: number, nb: number): nu
   if (na === 0 || nb === 0) return 0;
   const len = Math.min(a.length, b.length);
   let dot = 0;
-  for (let i = 0; i < len; i++) dot += a[i]! * b[i]!;
+  for (let i = 0; i < len; i++) {
+    const av = a[i];
+    const bv = b[i];
+    if (av === undefined || bv === undefined) continue;
+    dot += av * bv;
+  }
   return dot / (na * nb);
 }
 
@@ -412,16 +505,16 @@ export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
   if (!Array.isArray(extractions)) {
     return [];
   }
-  return extractions;
+  return extractions as T2MemoryExtraction[];
 }
 
 export function createDefaultLLMJudge(
   services: Services,
 ): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
-  const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
+  const url = process.env.PENUMBRA_SIRIUS_BASE_URL ?? process.env.SIRIUS_URL;
   if (!url) return null;
-  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || "gpt-4o";
-  const token = process.env.PENUMBRA_SIRIUS_TOKEN || "";
+  const model = process.env.PENUMBRA_JUDGE_MODEL ?? process.env.PENUMBRA_SIRIUS_MODEL ?? "gpt-4o";
+  const token = process.env.PENUMBRA_SIRIUS_TOKEN ?? "";
   services.log.info({ url, model, hasToken: Boolean(token) }, "t2 promotion: LLM judge configured");
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
@@ -445,16 +538,16 @@ export function createDefaultLLMJudge(
       });
 
       if (!res.ok) {
-        throw new Error(`Sirius returned ${res.status}: ${await res.text()}`);
+        throw new Error(`Sirius returned ${String(res.status)}: ${await res.text()}`);
       }
 
-      const json = (await res.json()) as any;
-      const content = json.choices[0]?.message?.content;
+      const json = (await res.json()) as JudgeResponse;
+      const content = json.choices?.[0]?.message?.content;
       if (!content) return [];
       return parseJudgeResponse(content);
-    } catch (err: any) {
-      if (err.name === "TimeoutError") {
-        const msg = `judge default timed out after ${timeoutMs}ms`;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        const msg = `judge default timed out after ${String(timeoutMs)}ms`;
         services.log.error({ err: msg }, "LLM judge failed");
         throw new Error(msg);
       }
@@ -464,14 +557,28 @@ export function createDefaultLLMJudge(
   };
 }
 
-function createJudgePoolFromAgentchat(
-  services: Services,
-  onPool: (pool: JudgePool) => void,
-): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
-  const configDir = resolveAgentChatConfigPath();
-  let cfg: AgentChatConfig;
+interface EligibleAgentOptions {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  caPath?: string;
+}
+
+function extractAgentOptions(
+  options: Record<string, unknown> | undefined,
+): EligibleAgentOptions | null {
+  if (!options) return null;
+  const baseUrl = options.baseUrl;
+  if (typeof baseUrl !== "string" || baseUrl.length === 0) return null;
+  const apiKey = typeof options.apiKey === "string" ? options.apiKey : "";
+  const model = typeof options.model === "string" ? options.model : "local";
+  const caPath = typeof options.caPath === "string" ? options.caPath : undefined;
+  return { baseUrl, apiKey, model, caPath };
+}
+
+function loadAgentChatConfigSafe(services: Services, configDir: string): AgentChatConfig | null {
   try {
-    cfg = loadAgentChatConfig();
+    return loadAgentChatConfig();
   } catch (err) {
     services.log.warn(
       { err, configDir },
@@ -479,25 +586,26 @@ function createJudgePoolFromAgentchat(
     );
     return null;
   }
+}
+
+function createJudgePoolFromAgentchat(
+  services: Services,
+  onPool: (pool: JudgePool) => void,
+): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
+  const configDir = resolveAgentChatConfigPath();
+  const cfg = loadAgentChatConfigSafe(services, configDir);
+  if (!cfg) return null;
 
   const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
-  const eligible = (cfg.agents ?? []).filter(
-    (agent) =>
-      agent.adapter === "openai-compat-http" &&
-      Array.isArray(agent.roles) &&
-      agent.roles.includes(roleTag) &&
-      typeof agent.options?.baseUrl === "string" &&
-      agent.options.baseUrl.length > 0,
-  );
-  if (eligible.length === 0) return null;
-
-  const judges: JudgeEntry[] = eligible.map((agent) => ({
-    name: agent.name,
-    baseUrl: agent.options.baseUrl as string,
-    apiKey: (agent.options.apiKey as string) ?? "",
-    model: (agent.options.model as string) ?? "local",
-    caPath: agent.options.caPath as string | undefined,
-  }));
+  const judges: JudgeEntry[] = [];
+  for (const agent of cfg.agents) {
+    if (agent.adapter !== "openai-compat-http") continue;
+    if (!Array.isArray(agent.roles) || !agent.roles.includes(roleTag)) continue;
+    const opts = extractAgentOptions(agent.options);
+    if (!opts) continue;
+    judges.push({ name: agent.name, ...opts });
+  }
+  if (judges.length === 0) return null;
 
   const pool = createJudgePool({
     judges,
@@ -510,5 +618,5 @@ function createJudgePoolFromAgentchat(
     { count: judges.length, names: judges.map((j) => j.name) },
     "t2 promotion: judge pool configured",
   );
-  return async (transcript: string) => pool.invoke(transcript);
+  return async (transcript: string): Promise<T2MemoryExtraction[]> => await pool.invoke(transcript);
 }

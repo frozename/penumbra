@@ -7,7 +7,11 @@ export interface RetentionWorkerOpts {
   promoteOrphanEvents?: boolean;
 }
 
-export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
+export interface T0RetentionWorker {
+  tick(): Promise<void>;
+}
+
+export function createT0RetentionWorker(opts: RetentionWorkerOpts): T0RetentionWorker {
   let lastEnv: string | undefined;
   let cachedCondition: string | undefined;
 
@@ -44,7 +48,7 @@ export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
           return stmt.run(thresh, limit).changes;
         });
 
-        while (true) {
+        for (;;) {
           const changes = deleteBatch(threshold, batchSize);
           if (changes === 0) break;
           totalPruned += changes;

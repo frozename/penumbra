@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
 import type { T2MemoryExtraction } from "@penumbra/core";
+
+import { readFileSync } from "node:fs";
 
 export interface JudgeEntry {
   name: string;
@@ -9,9 +10,17 @@ export interface JudgeEntry {
   caPath?: string;
 }
 
+type JudgeLogFn = (...a: unknown[]) => void;
+
+export interface JudgePoolLogger {
+  info: JudgeLogFn;
+  warn: JudgeLogFn;
+  error?: JudgeLogFn;
+}
+
 export interface JudgePoolOpts {
   judges: JudgeEntry[];
-  log: { info: (...a: any[]) => void; warn: (...a: any[]) => void; error?: (...a: any[]) => void };
+  log: JudgePoolLogger;
   fetch?: typeof fetch;
   timeoutMs?: number;
   maxTokens?: number;
@@ -28,6 +37,18 @@ export interface JudgePool {
 
 type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean; caPem?: string };
 
+interface JudgeChoice {
+  message?: { content?: string };
+}
+
+interface JudgeResponse {
+  choices?: JudgeChoice[];
+}
+
+interface JudgeFetchInit extends RequestInit {
+  tls?: { ca: string };
+}
+
 export function getJudgeTimeoutMs(): number {
   let envTimeout = parseInt(process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS ?? "", 10);
   if (isNaN(envTimeout) || envTimeout <= 0) {
@@ -36,16 +57,12 @@ export function getJudgeTimeoutMs(): number {
   return envTimeout;
 }
 
-export function createJudgePool(opts: JudgePoolOpts): JudgePool {
-  const fetchImpl = opts.fetch ?? fetch;
-  const timeoutMs = opts.timeoutMs ?? getJudgeTimeoutMs();
+function buildJudgeUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
+}
 
-  // Bumped from 4096 → 8192: granite-8b's reasoning_content + JSON output
-  // sometimes overflows 4096, causing mid-array truncation ("Expected ']'").
-  // 8192 leaves headroom for verbose multi-extraction responses while still
-  // bounding cost on the slower judges.
-  const maxTokens = opts.maxTokens ?? 16384;
-  const unhealthyAfter = opts.unhealthyAfter ?? 2;
+function loadJudgeStates(opts: JudgePoolOpts): JudgeState[] {
   const judges: JudgeState[] = [];
   for (const judge of opts.judges) {
     try {
@@ -66,6 +83,20 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       );
     }
   }
+  return judges;
+}
+
+export function createJudgePool(opts: JudgePoolOpts): JudgePool {
+  const fetchImpl = opts.fetch ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? getJudgeTimeoutMs();
+
+  // Bumped from 4096 → 8192: granite-8b's reasoning_content + JSON output
+  // sometimes overflows 4096, causing mid-array truncation ("Expected ']'").
+  // 8192 leaves headroom for verbose multi-extraction responses while still
+  // bounding cost on the slower judges.
+  const maxTokens = opts.maxTokens ?? 16384;
+  const unhealthyAfter = opts.unhealthyAfter ?? 2;
+  const judges = loadJudgeStates(opts);
   if (judges.length === 0) {
     throw new Error("no_judges_available");
   }
@@ -84,11 +115,8 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     // Agentchat convention: options.baseUrl is the full OpenAI-compat base
     // path (typically ending in "/v1"). Append /chat/completions to that.
     // Tolerate baseUrls without /v1 by adding it when missing.
-    const trimmed = judge.baseUrl.replace(/\/+$/, "");
-    const url = trimmed.endsWith("/v1")
-      ? `${trimmed}/chat/completions`
-      : `${trimmed}/v1/chat/completions`;
-    const init: any = {
+    const url = buildJudgeUrl(judge.baseUrl);
+    const init: JudgeFetchInit = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -104,51 +132,55 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     let res: Response;
     try {
       res = await fetchImpl(url, init);
-    } catch (err: any) {
-      if (err.name === "TimeoutError") {
-        throw new Error(`judge ${judge.name} timed out after ${timeoutMs}ms`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new Error(`judge ${judge.name} timed out after ${String(timeoutMs)}ms`);
       }
       throw err;
     }
     if (!res.ok) {
-      throw new Error(`judge ${judge.name} returned ${res.status}: ${await res.text()}`);
+      throw new Error(`judge ${judge.name} returned ${String(res.status)}: ${await res.text()}`);
     }
-    const json = (await res.json()) as any;
-    const content = json.choices[0]?.message?.content;
+    const json = (await res.json()) as JudgeResponse;
+    const content = json.choices?.[0]?.message?.content;
     if (!content) return [];
     return opts.parseResponse(content);
+  }
+
+  async function tryEachJudge(prompt: string): Promise<T2MemoryExtraction[]> {
+    let lastError: unknown;
+    const startIdx = nextIndex;
+    for (let attempts = 0; attempts < judges.length; attempts++) {
+      const idx = (startIdx + attempts) % judges.length;
+      const judge = judges[idx];
+      if (!judge || judge.unhealthy) continue;
+      try {
+        const result = await invokeJudge(judge, prompt);
+        nextIndex = (idx + 1) % judges.length;
+        return result;
+      } catch (err) {
+        lastError = err;
+        markFailure(judge);
+        opts.log.warn(
+          { judge: judge.name, err: err instanceof Error ? err.message : String(err) },
+          "t2 promotion: judge failed",
+        );
+      }
+    }
+    if (judges.every((judge) => judge.unhealthy)) {
+      throw new Error("all judges unhealthy this tick");
+    }
+    throw lastError instanceof Error ? lastError : new Error("judge invocation failed");
   }
 
   return {
     async invoke(transcript: string): Promise<T2MemoryExtraction[]> {
       if (judges.length === 0) throw new Error("all judges unhealthy this tick");
       const prompt = opts.promptBuilder(transcript);
-      let lastError: unknown;
       // Snapshot the starting index for this invoke so failures don't disrupt
       // round-robin traversal of the remaining judges. nextIndex is advanced
       // ONLY on the success path, immediately before returning.
-      const startIdx = nextIndex;
-      for (let attempts = 0; attempts < judges.length; attempts++) {
-        const idx = (startIdx + attempts) % judges.length;
-        const judge = judges[idx]!;
-        if (judge.unhealthy) continue;
-        try {
-          const result = await invokeJudge(judge, prompt);
-          nextIndex = (idx + 1) % judges.length;
-          return result;
-        } catch (err) {
-          lastError = err;
-          markFailure(judge);
-          opts.log.warn(
-            { judge: judge.name, err: err instanceof Error ? err.message : String(err) },
-            "t2 promotion: judge failed",
-          );
-        }
-      }
-      if (judges.every((judge) => judge.unhealthy)) {
-        throw new Error("all judges unhealthy this tick");
-      }
-      throw lastError instanceof Error ? lastError : new Error("judge invocation failed");
+      return await tryEachJudge(prompt);
     },
     resetTickHealth(): void {
       for (const judge of judges) {

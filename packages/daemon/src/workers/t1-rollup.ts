@@ -1,5 +1,4 @@
-import type { Services } from "@penumbra/core";
-import { T1Rollup, ContextFileWriter } from "@penumbra/core";
+import { ContextFileWriter, type Services, T1Rollup } from "@penumbra/core";
 
 export interface RollupWorkerOpts {
   services: Services;
@@ -8,7 +7,11 @@ export interface RollupWorkerOpts {
   overwriteOnReroll?: boolean;
 }
 
-export function createRollupWorker(opts: RollupWorkerOpts) {
+export interface RollupWorker {
+  tick(): Promise<void>;
+}
+
+export function createRollupWorker(opts: RollupWorkerOpts): RollupWorker {
   const t1 = new T1Rollup({
     db: opts.services.db,
     embedder: opts.services.embedder,
