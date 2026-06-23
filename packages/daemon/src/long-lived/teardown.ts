@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { createLogger } from "@penumbra/core";
-import { AgentPerformanceWriter } from "@penumbra/core";
+
+import { AgentPerformanceWriter, createLogger } from "@penumbra/core";
 
 export type TickOutcome = "success" | "failed" | "bound_exceeded";
 
@@ -21,9 +21,9 @@ function isTransientRateLimit(error?: string): boolean {
     /rate.?limit/i.test(error) ||
     /hit your limit/i.test(error) ||
     /\bquota\b/i.test(error) ||
-    /\b429\b/i.test(error) ||
-    /-32603/i.test(error) ||
-    /resets?\s+\d+\s*(am|pm)/i.test(error)
+    /\b429\b/.test(error) ||
+    error.includes("-32603") ||
+    /resets?\s+\d+\s*(?:am|pm)/i.test(error)
   );
 }
 
@@ -43,7 +43,7 @@ export function handleTickTeardown(db: Database, input: TeardownInput): void {
       smoke_pass: null,
       reviewer_findings: null,
       maestro_score: null,
-      cost_usd: input.cost_cents != null ? input.cost_cents / 100 : null,
+      cost_usd: input.cost_cents !== undefined ? input.cost_cents / 100 : null,
       tokens_used: null,
       latency_ms: null,
       source: "manual_seed",

@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
 import type { NotificationOutboxKind } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
 
 export interface PendingExpiryResult {
   expired: number;
@@ -61,12 +61,12 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
       if (agent) {
         projectId = agent.project_id;
         const workingMemory = JSON.parse(agent.working_memory_json) as {
-          recent_decisions?: Array<{
+          recent_decisions?: {
             pending_action_id: string;
             decision: "approved" | "rejected" | "expired";
             reason?: string;
             decided_at: number;
-          }>;
+          }[];
           updated_at?: number;
         };
 
@@ -85,8 +85,9 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
         );
       }
 
-      if ("dispatchEventLog" in opts && opts.dispatchEventLog) {
-        opts.dispatchEventLog.record({
+      const dispatchEventLog = opts.dispatchEventLog;
+      if (dispatchEventLog) {
+        dispatchEventLog.record({
           handoff_id: `pending_action_${row.id}`,
           worker_id: null,
           source: "daemon",
@@ -102,8 +103,9 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
         });
       }
 
-      if ("notificationOutbox" in opts && opts.notificationOutbox) {
-        opts.notificationOutbox.enqueue({
+      const notificationOutbox = opts.notificationOutbox;
+      if (notificationOutbox) {
+        notificationOutbox.enqueue({
           project_id: projectId,
           kind: "pending_action_expired",
           reference_id: row.id,

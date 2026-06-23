@@ -1,12 +1,24 @@
-import type { Database } from "bun:sqlite";
 import type { AgentConfig } from "@penumbra/agentchat/config/types";
 import type { WorkingMemory } from "@penumbra/core/long-lived/types";
+import type { Database } from "bun:sqlite";
 
 const FORCED_TOOLS = [
   "penumbra:long_lived_self_state_get",
   "penumbra:long_lived_self_state_set",
   "penumbra:long_lived_self_pending_actions",
 ];
+
+type LongLivedAgentConfig = AgentConfig & {
+  long_lived: true;
+  long_lived_config: NonNullable<AgentConfig["long_lived_config"]>;
+};
+
+type AgentConfigWithDisplayName = AgentConfig & { display_name?: unknown };
+type ReconcileLists = {
+  inserted: string[];
+  updated: string[];
+  retired: string[];
+};
 
 function emptyWorkingMemory(now: number): WorkingMemory {
   return {
@@ -25,6 +37,148 @@ function effectiveAllowlist(declared: readonly string[]): string[] {
   return Array.from(set).sort();
 }
 
+function isLongLivedAgentConfig(agent: AgentConfig): agent is LongLivedAgentConfig {
+  return agent.long_lived === true && agent.long_lived_config !== undefined;
+}
+
+function displayName(agent: AgentConfig): string {
+  const raw = (agent as AgentConfigWithDisplayName).display_name;
+  return typeof raw === "string" ? raw : agent.name;
+}
+
+function upsertAgent(
+  db: Database,
+  agent: LongLivedAgentConfig,
+  input: {
+    now: number;
+    dbIds: Set<string>;
+    dbStatusById: Map<string, string>;
+    lists: ReconcileLists;
+  },
+): void {
+  const cfg = agent.long_lived_config;
+  const allowlist = JSON.stringify(effectiveAllowlist(cfg.mcp_allowlist));
+  const globs = JSON.stringify(cfg.action_tiers?.approval_required_globs ?? []);
+  const overrides = JSON.stringify(cfg.action_tiers?.cooldown_overrides ?? {});
+  const subs = JSON.stringify(cfg.subscriptions);
+  const snapshotTool = cfg.snapshot_tool ?? null;
+  const requireSnapshot = cfg.require_snapshot ? 1 : 0;
+  const projectId = cfg.project_id ?? null;
+
+  if (!input.dbIds.has(agent.name)) {
+    insertAgent(db, agent, {
+      now: input.now,
+      allowlist,
+      globs,
+      overrides,
+      subs,
+      snapshotTool,
+      requireSnapshot,
+      projectId,
+    });
+    input.lists.inserted.push(agent.name);
+    return;
+  }
+
+  updateAgent(db, agent, {
+    now: input.now,
+    allowlist,
+    globs,
+    overrides,
+    subs,
+    snapshotTool,
+    requireSnapshot,
+    projectId,
+  });
+  if (input.dbStatusById.get(agent.name) === "retired") {
+    db.query(
+      "UPDATE long_lived_agents SET status='active', consecutive_failures=0, degraded_reason=NULL, retired_at=NULL, updated_at=? WHERE id=?",
+    ).run(input.now, agent.name);
+  }
+  input.lists.updated.push(agent.name);
+}
+
+function insertAgent(
+  db: Database,
+  agent: LongLivedAgentConfig,
+  input: AgentPersistenceInput,
+): void {
+  const cfg = agent.long_lived_config;
+  db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, status, project_id, consecutive_failures, circuit_breaker_threshold,
+      schedule_cron, subscriptions_json, mcp_allowlist_json, snapshot_tool, require_snapshot,
+      approval_required_globs_json, cooldown_overrides_json,
+      bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches,
+      working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, 'active', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    agent.name,
+    displayName(agent),
+    input.projectId,
+    cfg.circuit_breaker_threshold,
+    cfg.schedule_cron ?? null,
+    input.subs,
+    input.allowlist,
+    input.snapshotTool,
+    input.requireSnapshot,
+    input.globs,
+    input.overrides,
+    cfg.bounds.wall_clock_ms,
+    cfg.bounds.cost_cents,
+    cfg.bounds.max_sub_dispatches,
+    JSON.stringify(emptyWorkingMemory(input.now)),
+    cfg.standing_brief,
+    input.now,
+    input.now,
+  );
+}
+
+type AgentPersistenceInput = {
+  now: number;
+  allowlist: string;
+  globs: string;
+  overrides: string;
+  subs: string;
+  snapshotTool: string | null;
+  requireSnapshot: number;
+  projectId: string | null;
+};
+
+function updateAgent(
+  db: Database,
+  agent: LongLivedAgentConfig,
+  input: AgentPersistenceInput,
+): void {
+  const cfg = agent.long_lived_config;
+  db.query(
+    `UPDATE long_lived_agents SET
+      display_name = ?, project_id = ?, schedule_cron = ?, subscriptions_json = ?, mcp_allowlist_json = ?,
+      snapshot_tool = ?, require_snapshot = ?,
+      approval_required_globs_json = ?, cooldown_overrides_json = ?,
+      bounds_wall_clock_ms = ?, bounds_cost_cents = ?, bounds_max_sub_dispatches = ?,
+      circuit_breaker_threshold = ?, standing_brief = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(
+    displayName(agent),
+    input.projectId,
+    cfg.schedule_cron ?? null,
+    input.subs,
+    input.allowlist,
+    input.snapshotTool,
+    input.requireSnapshot,
+    input.globs,
+    input.overrides,
+    cfg.bounds.wall_clock_ms,
+    cfg.bounds.cost_cents,
+    cfg.bounds.max_sub_dispatches,
+    cfg.circuit_breaker_threshold,
+    cfg.standing_brief,
+    input.now,
+    agent.name,
+  );
+}
+
 export interface ReconcileResult {
   inserted: string[];
   updated: string[];
@@ -36,9 +190,7 @@ export function reconcileLongLivedAgents(
   agents: readonly AgentConfig[],
   opts: { now: number },
 ): ReconcileResult {
-  const yamlLongLived = agents.filter(
-    (a) => a.long_lived === true && a.long_lived_config !== undefined,
-  );
+  const yamlLongLived = agents.filter(isLongLivedAgentConfig);
   const yamlIds = new Set(yamlLongLived.map((a) => a.name));
 
   const dbRows = db
@@ -47,84 +199,10 @@ export function reconcileLongLivedAgents(
   const dbStatusById = new Map(dbRows.map((r) => [r.id, r.status]));
   const dbIds = new Set(dbRows.map((r) => r.id));
 
-  const inserted: string[] = [];
-  const updated: string[] = [];
-  const retired: string[] = [];
+  const lists: ReconcileLists = { inserted: [], updated: [], retired: [] };
 
   for (const a of yamlLongLived) {
-    const cfg = a.long_lived_config!;
-    const allowlist = JSON.stringify(effectiveAllowlist(cfg.mcp_allowlist));
-    const globs = JSON.stringify(cfg.action_tiers?.approval_required_globs ?? []);
-    const overrides = JSON.stringify(cfg.action_tiers?.cooldown_overrides ?? {});
-    const subs = JSON.stringify(cfg.subscriptions ?? []);
-    const snapshotTool = cfg.snapshot_tool ?? null;
-    const requireSnapshot = cfg.require_snapshot ? 1 : 0;
-    const projectId = (cfg as { project_id?: string | null }).project_id ?? null;
-
-    if (!dbIds.has(a.name)) {
-      db.query(
-        `INSERT INTO long_lived_agents (
-        id, display_name, status, project_id, consecutive_failures, circuit_breaker_threshold,
-        schedule_cron, subscriptions_json, mcp_allowlist_json, snapshot_tool, require_snapshot,
-        approval_required_globs_json, cooldown_overrides_json,
-        bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches,
-        working_memory_json, standing_brief, created_at, updated_at
-      ) VALUES (?, ?, 'active', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        a.name,
-        (a as any).display_name ?? a.name,
-        projectId,
-        cfg.circuit_breaker_threshold ?? 3,
-        cfg.schedule_cron ?? null,
-        subs,
-        allowlist,
-        snapshotTool,
-        requireSnapshot,
-        globs,
-        overrides,
-        cfg.bounds.wall_clock_ms,
-        cfg.bounds.cost_cents,
-        cfg.bounds.max_sub_dispatches,
-        JSON.stringify(emptyWorkingMemory(opts.now)),
-        cfg.standing_brief,
-        opts.now,
-        opts.now,
-      );
-      inserted.push(a.name);
-    } else {
-      db.query(
-        `UPDATE long_lived_agents SET
-        display_name = ?, project_id = ?, schedule_cron = ?, subscriptions_json = ?, mcp_allowlist_json = ?,
-        snapshot_tool = ?, require_snapshot = ?,
-        approval_required_globs_json = ?, cooldown_overrides_json = ?,
-        bounds_wall_clock_ms = ?, bounds_cost_cents = ?, bounds_max_sub_dispatches = ?,
-        circuit_breaker_threshold = ?, standing_brief = ?, updated_at = ?
-       WHERE id = ?`,
-      ).run(
-        (a as any).display_name ?? a.name,
-        projectId,
-        cfg.schedule_cron ?? null,
-        subs,
-        allowlist,
-        snapshotTool,
-        requireSnapshot,
-        globs,
-        overrides,
-        cfg.bounds.wall_clock_ms,
-        cfg.bounds.cost_cents,
-        cfg.bounds.max_sub_dispatches,
-        cfg.circuit_breaker_threshold ?? 3,
-        cfg.standing_brief,
-        opts.now,
-        a.name,
-      );
-      if (dbStatusById.get(a.name) === "retired") {
-        db.query(
-          "UPDATE long_lived_agents SET status='active', consecutive_failures=0, degraded_reason=NULL, retired_at=NULL, updated_at=? WHERE id=?",
-        ).run(opts.now, a.name);
-      }
-      updated.push(a.name);
-    }
+    upsertAgent(db, a, { now: opts.now, dbIds, dbStatusById, lists });
   }
 
   for (const r of dbRows) {
@@ -132,9 +210,9 @@ export function reconcileLongLivedAgents(
       db.query(
         "UPDATE long_lived_agents SET status='retired', retired_at=?, updated_at=? WHERE id=?",
       ).run(opts.now, opts.now, r.id);
-      retired.push(r.id);
+      lists.retired.push(r.id);
     }
   }
 
-  return { inserted, updated, retired };
+  return lists;
 }

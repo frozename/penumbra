@@ -6,11 +6,13 @@ function getArg(args: unknown, key: string): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const v = (args as Record<string, unknown>)[key];
   if (typeof v === "string") return v;
-  if (v != null) return String(v);
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") {
+    return String(v);
+  }
   return undefined;
 }
 
-export function registerTargetExtractor(tool: string, fn: Extractor) {
+export function registerTargetExtractor(tool: string, fn: Extractor): void {
   extractors.set(tool, fn);
 }
 

@@ -7,5 +7,5 @@ export function verifyRunningIdentity(db: Database, agent_id: string, tick_id: s
       [string, string]
     >("SELECT id FROM long_lived_ticks WHERE id = ? AND agent_id = ? AND completed_at IS NULL")
     .get(tick_id, agent_id);
-  return row != null;
+  return row !== null;
 }

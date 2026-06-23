@@ -27,7 +27,9 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
   const { agent, tick } = input;
   const wm = agent.working_memory;
   const goalsBlock = wm.pending_goals.length
-    ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join("\n")
+    ? wm.pending_goals
+        .map((g: unknown, i: number) => `  ${String(i + 1)}. ${JSON.stringify(g)}`)
+        .join("\n")
     : "  (none)";
 
   const hasHaTools = agent.mcp_allowlist.some((t) => t.startsWith("ha:") || t.startsWith("ha."));
@@ -113,7 +115,7 @@ Required protocol:
    open_threads, watches, observations.
 4. End the session.
 
-Tick budget: ${agent.bounds.wall_clock_ms}ms wall clock, ${agent.bounds.cost_cents}¢, ${agent.bounds.max_sub_dispatches} sub-dispatches.`;
+Tick budget: ${String(agent.bounds.wall_clock_ms)}ms wall clock, ${String(agent.bounds.cost_cents)}¢, ${String(agent.bounds.max_sub_dispatches)} sub-dispatches.`;
 
   const unavailable = agent.unavailable_servers ?? [];
   if (unavailable.length > 0) {

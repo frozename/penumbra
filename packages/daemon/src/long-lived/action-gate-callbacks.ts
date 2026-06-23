@@ -1,6 +1,8 @@
-import { randomUUID } from "node:crypto";
-import type { Database } from "bun:sqlite";
 import type { McpPoolLike } from "@penumbra/core";
+import type { Database } from "bun:sqlite";
+
+import { randomUUID } from "node:crypto";
+
 import { globToRegExp } from "./action-gate.js";
 
 export interface ActionGateCallbacksDeps {
@@ -15,6 +17,72 @@ export interface ActionGateCallbacksDeps {
 export interface ActionGateCallbacks {
   executeTool: (tool: string, args: unknown, _meta?: Record<string, unknown>) => Promise<unknown>;
   takeSnapshot: (agent_id: string) => Promise<string>;
+}
+
+type SnapshotFailureReason =
+  | "bad_allowlist"
+  | "no_snapshot_tool_configured"
+  | "invalid_snapshot_tool"
+  | "snapshot_tool_not_in_allowlist"
+  | "no_pool";
+
+type LogActionGateSnapshotSkip = (obj: unknown, msg: string) => void;
+
+function parseStringArrayJson(raw: string): string[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error("not_array");
+  }
+  return parsed.filter((entry): entry is string => typeof entry === "string");
+}
+
+function extractSnapshotId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+  const record = result as Record<string, unknown>;
+  const snapshotId = record.snapshot_id;
+  if (typeof snapshotId === "string") {
+    return snapshotId;
+  }
+  const id = record.id;
+  return typeof id === "string" ? id : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function snapshotSkipSentinel(reason: SnapshotFailureReason): string {
+  if (reason === "snapshot_tool_not_in_allowlist") {
+    return "snapshot_skipped_not_in_allowlist";
+  }
+  return `snapshot_skipped_${reason}`;
+}
+
+function rejectOrSkipSnapshot(input: {
+  requireSnapshot: boolean;
+  thrownReason: string;
+  skipReason: SnapshotFailureReason;
+  agentId: string;
+  logError?: LogActionGateSnapshotSkip;
+}): string {
+  if (input.requireSnapshot) {
+    throw new Error(input.thrownReason);
+  }
+  input.logError?.(
+    { agent_id: input.agentId, tier2_fail_open: true, reason: input.skipReason },
+    "action-gate-snapshot-skipped",
+  );
+  return snapshotSkipSentinel(input.skipReason);
+}
+
+function parseSnapshotTool(snapshotTool: string): { server: string; toolName: string } | undefined {
+  const colon = snapshotTool.indexOf(":");
+  if (colon <= 0) {
+    return undefined;
+  }
+  return { server: snapshotTool.slice(0, colon), toolName: snapshotTool.slice(colon + 1) };
 }
 
 /**
@@ -37,7 +105,7 @@ export interface ActionGateCallbacks {
 export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionGateCallbacks {
   const logError = deps.log.error ?? deps.log.warn;
   return {
-    executeTool: async (tool, args, _meta) => {
+    executeTool: async (tool, args, _meta): Promise<unknown> => {
       const colon = tool.indexOf(":");
       if (colon <= 0) {
         throw new Error("invalid_tool_id");
@@ -48,11 +116,11 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
         throw new Error("mcp_pool_unavailable");
       }
       if (_meta) {
-        return (deps.mcpPool.callTool as any)(server, toolName, args, { _meta });
+        return await deps.mcpPool.callTool(server, toolName, args, { _meta });
       }
-      return deps.mcpPool.callTool(server, toolName, args);
+      return await deps.mcpPool.callTool(server, toolName, args);
     },
-    takeSnapshot: async (agent_id) => {
+    takeSnapshot: async (agent_id): Promise<string> => {
       const row = deps.db
         .query<
           { mcp_allowlist_json: string; snapshot_tool: string | null; require_snapshot: number },
@@ -63,62 +131,63 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
       const requireSnapshot = row.require_snapshot === 1;
       let allowlist: string[];
       try {
-        allowlist = JSON.parse(row.mcp_allowlist_json);
-        if (!Array.isArray(allowlist)) throw new Error("not_array");
+        allowlist = parseStringArrayJson(row.mcp_allowlist_json);
       } catch {
-        if (requireSnapshot) throw new Error("bad_allowlist");
-        logError?.(
-          { agent_id, tier2_fail_open: true, reason: "bad_allowlist" },
-          "action-gate-snapshot-skipped",
-        );
-        return "snapshot_skipped_bad_allowlist";
+        return rejectOrSkipSnapshot({
+          requireSnapshot,
+          thrownReason: "bad_allowlist",
+          skipReason: "bad_allowlist",
+          agentId: agent_id,
+          logError,
+        });
       }
       const snapshotTool = row.snapshot_tool?.trim() ?? "";
       if (!snapshotTool) {
-        if (requireSnapshot) throw new Error("snapshot_tool_not_configured");
-        logError?.(
-          { agent_id, tier2_fail_open: true, reason: "no_snapshot_tool_configured" },
-          "action-gate-snapshot-skipped",
-        );
-        return "snapshot_skipped_no_snapshot_tool_configured";
+        return rejectOrSkipSnapshot({
+          requireSnapshot,
+          thrownReason: "snapshot_tool_not_configured",
+          skipReason: "no_snapshot_tool_configured",
+          agentId: agent_id,
+          logError,
+        });
       }
-      const colon = snapshotTool.indexOf(":");
-      const server = colon > 0 ? snapshotTool.slice(0, colon) : "";
-      const toolName = colon > 0 ? snapshotTool.slice(colon + 1) : "";
-      if (!server || !toolName) {
-        if (requireSnapshot) throw new Error("invalid_snapshot_tool");
-        logError?.(
-          { agent_id, tier2_fail_open: true, reason: "invalid_snapshot_tool" },
-          "action-gate-snapshot-skipped",
-        );
-        return "snapshot_skipped_invalid_snapshot_tool";
+      const parsedTool = parseSnapshotTool(snapshotTool);
+      if (!parsedTool?.toolName) {
+        return rejectOrSkipSnapshot({
+          requireSnapshot,
+          thrownReason: "invalid_snapshot_tool",
+          skipReason: "invalid_snapshot_tool",
+          agentId: agent_id,
+          logError,
+        });
       }
-      const stringEntries = allowlist.filter((e): e is string => typeof e === "string");
-      const matchers = stringEntries.map((glob) => globToRegExp(glob));
+      const matchers = allowlist.map((glob) => globToRegExp(glob));
       const canSnapshot = matchers.some((re) => re.test(snapshotTool));
       if (!canSnapshot) {
-        if (requireSnapshot) throw new Error("snapshot_tool_not_in_allowlist");
-        logError?.(
-          { agent_id, tier2_fail_open: true, reason: "snapshot_tool_not_in_allowlist" },
-          "action-gate-snapshot-skipped",
-        );
-        return "snapshot_skipped_not_in_allowlist";
+        return rejectOrSkipSnapshot({
+          requireSnapshot,
+          thrownReason: "snapshot_tool_not_in_allowlist",
+          skipReason: "snapshot_tool_not_in_allowlist",
+          agentId: agent_id,
+          logError,
+        });
       }
       if (!deps.mcpPool) {
-        if (requireSnapshot) throw new Error("mcp_pool_unavailable");
-        logError?.(
-          { agent_id, tier2_fail_open: true, reason: "no_pool" },
-          "action-gate-snapshot-skipped",
-        );
-        return "snapshot_skipped_no_pool";
+        return rejectOrSkipSnapshot({
+          requireSnapshot,
+          thrownReason: "mcp_pool_unavailable",
+          skipReason: "no_pool",
+          agentId: agent_id,
+          logError,
+        });
       }
       try {
-        const result = await deps.mcpPool.callTool(server, toolName, {});
-        const extracted = (result as any)?.snapshot_id ?? (result as any)?.id;
+        const result = await deps.mcpPool.callTool(parsedTool.server, parsedTool.toolName, {});
+        const extracted = extractSnapshotId(result);
         return typeof extracted === "string" ? extracted : `snapshot-${randomUUID()}`;
       } catch (err) {
         deps.log.warn?.(
-          { agent_id, err: String((err as Error)?.message ?? err) },
+          { agent_id, err: errorMessage(err) },
           "action-gate-takeSnapshot-call-failed",
         );
         throw err;

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { randomUUID } from "crypto";
+
+import { randomUUID } from "node:crypto";
 
 export const PENDING_CHAIN_SENTINEL = "pending";
 
@@ -66,7 +67,7 @@ export function reconcileOrphanTickRows(db: Database, now: number): number {
      WHERE completed_at IS NULL`,
     )
     .run(now, "orphan row detected at worker boot");
-  return Number(result.changes ?? 0);
+  return result.changes;
 }
 
 type GateDecision =
@@ -75,6 +76,57 @@ type GateDecision =
   | { kind: "concurrency_skip"; tickId: string }
   | { kind: "debounced" }
   | { kind: "spawn"; tickId: string; startedAt: number };
+
+function hasActiveTick(input: {
+  lastChain: { chain_id: string | null } | null;
+  lastChainId: string | null;
+  isChainActive: (chain_id: string) => boolean;
+  lastTickStartedAt: number | null;
+  startedAt: number;
+  debounceWindowMs: number;
+}): boolean {
+  const inFlightUnresolved =
+    input.lastChain !== null &&
+    (input.lastChainId === null || input.lastChainId === PENDING_CHAIN_SENTINEL);
+  const inFlightResolvedActive =
+    input.lastChainId !== null &&
+    input.lastChainId !== PENDING_CHAIN_SENTINEL &&
+    input.isChainActive(input.lastChainId);
+  const recentTickActive =
+    input.lastTickStartedAt !== null &&
+    input.startedAt - input.lastTickStartedAt < input.debounceWindowMs;
+  return inFlightUnresolved || inFlightResolvedActive || recentTickActive;
+}
+
+function shouldDebounceEvent(input: {
+  attempt: TickAttempt;
+  lastEventFireAt: Map<string, number>;
+  startedAt: number;
+  debounceWindowMs: number;
+}): boolean {
+  if (input.attempt.trigger_kind !== "event" || !input.attempt.debounce_key) {
+    return false;
+  }
+  const key = `${input.attempt.agent_id}::${input.attempt.debounce_key}`;
+  const lastAt = input.lastEventFireAt.get(key) ?? -Infinity;
+  if (input.startedAt - lastAt >= input.debounceWindowMs) {
+    input.lastEventFireAt.set(key, input.startedAt);
+    return false;
+  }
+  return true;
+}
+
+function recoverInactiveTick(db: Database, lastChainId: string | null, startedAt: number): void {
+  if (lastChainId === null || lastChainId === PENDING_CHAIN_SENTINEL) {
+    return;
+  }
+  db.query(
+    `UPDATE long_lived_ticks
+     SET completed_at = ?, outcome = 'orphan_recovered',
+         error_summary = ?
+     WHERE chain_id = ? AND completed_at IS NULL`,
+  ).run(startedAt, "chain reported inactive at next tick attempt", lastChainId);
+}
 
 export function createTickGate(deps: TickGateDeps): TickGate {
   const debounceWindowMs = deps.debounceWindowMs ?? 1000;
@@ -112,17 +164,16 @@ export function createTickGate(deps: TickGateDeps): TickGate {
       .get(a.agent_id);
 
     const lastChainId = lastChain?.chain_id ?? null;
-    const inFlightUnresolved =
-      lastChain !== null && (lastChainId === null || lastChainId === PENDING_CHAIN_SENTINEL);
-    const inFlightResolvedActive =
-      lastChainId !== null &&
-      lastChainId !== PENDING_CHAIN_SENTINEL &&
-      deps.isChainActive(lastChainId);
-    const recentTickActive =
-      agent.last_tick_started_at !== null &&
-      startedAt - agent.last_tick_started_at < debounceWindowMs;
-
-    if (inFlightUnresolved || inFlightResolvedActive || recentTickActive) {
+    if (
+      hasActiveTick({
+        lastChain,
+        lastChainId,
+        isChainActive: deps.isChainActive,
+        lastTickStartedAt: agent.last_tick_started_at,
+        startedAt,
+        debounceWindowMs,
+      })
+    ) {
       const tickId = randomUUID();
       insertTerminalTick(deps.db, {
         tickId,
@@ -135,22 +186,10 @@ export function createTickGate(deps: TickGateDeps): TickGate {
       return { kind: "concurrency_skip", tickId };
     }
 
-    if (lastChainId !== null && lastChainId !== PENDING_CHAIN_SENTINEL) {
-      deps.db
-        .query(
-          `UPDATE long_lived_ticks
-           SET completed_at = ?, outcome = 'orphan_recovered',
-               error_summary = ?
-           WHERE chain_id = ? AND completed_at IS NULL`,
-        )
-        .run(startedAt, "chain reported inactive at next tick attempt", lastChainId);
-    }
+    recoverInactiveTick(deps.db, lastChainId, startedAt);
 
-    if (a.trigger_kind === "event" && a.debounce_key) {
-      const key = `${a.agent_id}::${a.debounce_key}`;
-      const lastAt = lastEventFireAt.get(key) ?? -Infinity;
-      if (startedAt - lastAt < debounceWindowMs) return { kind: "debounced" };
-      lastEventFireAt.set(key, startedAt);
+    if (shouldDebounceEvent({ attempt: a, lastEventFireAt, startedAt, debounceWindowMs })) {
+      return { kind: "debounced" };
     }
 
     const tickId = randomUUID();

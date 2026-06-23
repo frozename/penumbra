@@ -20,7 +20,7 @@ export function createCronScheduler(): CronScheduler {
 
   return {
     register(schedule: string, callback: () => void): string {
-      const id = `cron-${++nextId}`;
+      const id = `cron-${String(++nextId)}`;
       const job = new Cron(schedule, callback);
       jobs.set(id, { id, schedule, callback, job });
       return id;
