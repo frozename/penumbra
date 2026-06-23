@@ -1,12 +1,20 @@
 export { buildDreamingConfig, type DreamConfig, type JudgePoolConfig } from "./config.js";
-export { runDreamCycle, startDreamingCron, type DreamCycleDeps } from "./cycle.js";
+export { type DreamCycleDeps, runDreamCycle, startDreamingCron } from "./cycle.js";
 export {
-  StubJudgePool,
-  createTestJudgePool,
-  makeFakeJudgePool,
+  type DreamActionRow,
+  type ListPendingDreamActionsOpts,
+  listPendingDreamActionsQuery,
+  type ListPendingDreamActionsResult,
+  startDailyDigestCron,
+  writeDailyDigest,
+} from "./digest.js";
+export {
   createJudgePool,
+  createTestJudgePool,
   type JudgePool,
   type JudgeVote,
+  makeFakeJudgePool,
+  StubJudgePool,
 } from "./judge-pool.js";
 export {
   computeRetireScore,
@@ -14,13 +22,4 @@ export {
   type RetireScore,
   type VaguenessJudge,
 } from "./quality-signal.js";
-export {
-  listPendingDreamActionsQuery,
-  writeDailyDigest,
-  startDailyDigestCron,
-  type DreamActionRow,
-  type ListPendingDreamActionsOpts,
-  type ListPendingDreamActionsResult,
-} from "./digest.js";
-
-export { runReembedPhase, revertDreamAction } from "./reembed.js";
+export { revertDreamAction, runReembedPhase } from "./reembed.js";

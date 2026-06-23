@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -60,8 +61,8 @@ export function listPendingDreamActionsQuery(
 
   let oldest_pending_age_hours = 0;
   if (actions.length > 0) {
-    const oldestMs = actions[0]!.cycle_started_at;
-    if (oldestMs != null) {
+    const oldestMs = actions[0]?.cycle_started_at ?? null;
+    if (oldestMs !== null) {
       oldest_pending_age_hours = (Date.now() - oldestMs) / (1000 * 60 * 60);
     }
   }
@@ -102,7 +103,7 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
   const lines: string[] = [
     `# Dream Digest — ${dateStr}`,
     "",
-    `**Pending actions today: ${actions.length}**`,
+    `**Pending actions today: ${String(actions.length)}**`,
     "",
   ];
 
@@ -110,16 +111,7 @@ export async function writeDailyDigest(db: Database, outDir: string): Promise<st
     lines.push("| Phase | Type | Confidence | Status | Untrusted | Targets |");
     lines.push("|-------|------|-----------|--------|-----------|---------|");
     for (const a of actions) {
-      const trustTag = a.untrusted_source ? " **[UNTRUSTED]**" : "";
-      let targets: string[] = [];
-      try {
-        targets = JSON.parse(a.target_ids);
-      } catch {
-        // malformed target_ids
-      }
-      lines.push(
-        `| ${a.phase} | ${a.action_type}${trustTag} | ${a.confidence.toFixed(2)} | ${a.status} | ${a.untrusted_source ? "yes" : "no"} | ${targets.join(", ")} |`,
-      );
+      lines.push(buildDigestRow(a));
     }
     lines.push("");
   }
@@ -138,7 +130,7 @@ export function startDailyDigestCron(deps: {
   const DAY_MS = 24 * 60 * 60 * 1000;
   let stopped = false;
 
-  const run = async () => {
+  const run = async (): Promise<void> => {
     if (stopped) return;
     try {
       await writeDailyDigest(deps.db, deps.outDir);
@@ -147,13 +139,32 @@ export function startDailyDigestCron(deps: {
     }
   };
 
-  const timer = setInterval(run, DAY_MS);
-  if (typeof (timer as any).unref === "function") (timer as any).unref();
+  const timer = setInterval(() => {
+    void run();
+  }, DAY_MS);
+  const timerRef = timer as unknown as { unref?: () => void };
+  if (typeof timerRef.unref === "function") {
+    timerRef.unref();
+  }
 
   return () => {
     stopped = true;
     clearInterval(timer);
   };
+}
+
+function buildDigestRow(a: DreamActionRow): string {
+  const trustTag = a.untrusted_source ? " **[UNTRUSTED]**" : "";
+  let targets: string[] = [];
+  try {
+    const parsed = JSON.parse(a.target_ids) as unknown;
+    if (Array.isArray(parsed)) {
+      targets = (parsed as unknown[]).filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    // malformed target_ids
+  }
+  return `| ${a.phase} | ${a.action_type}${trustTag} | ${a.confidence.toFixed(2)} | ${a.status} | ${a.untrusted_source ? "yes" : "no"} | ${targets.join(", ")} |`;
 }
 
 function getTodayStartMs(): number {
@@ -165,5 +176,5 @@ function formatDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return `${String(y)}-${m}-${day}`;
 }

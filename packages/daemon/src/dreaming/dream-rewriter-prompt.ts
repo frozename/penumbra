@@ -1,8 +1,4 @@
-import {
-  FEW_SHOT_EXAMPLES,
-  SYSTEM_PROMPT,
-  type RewriteResponse,
-} from "./dream-rewriter-prompt-content.js";
+import { FEW_SHOT_EXAMPLES, SYSTEM_PROMPT } from "./dream-rewriter-prompt-content.js";
 
 export interface RewritePromptInput {
   title: string;
@@ -28,7 +24,7 @@ const BASE_PROMPT_MESSAGES = Object.freeze([
 
 export function buildDreamQueryRewritePrompt(
   input: RewritePromptInput,
-): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+): { role: "system" | "user" | "assistant"; content: string }[] {
   return [
     ...BASE_PROMPT_MESSAGES,
     {

@@ -70,7 +70,7 @@ export interface DreamConfig {
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
 }
 
-// Local typed view of the dreaming slice of EnvConfig. TODO(config-refactor F16):
+// Local typed view of the dreaming slice of EnvConfig (config-refactor F16):
 // remove this assertion once @penumbra/config's EnvSchema preserves per-key types
 // via a single `z.object({…})` declaration (currently the schema is assembled at
 // runtime from ENV_REGISTRY, which loses inference).
@@ -125,11 +125,7 @@ interface DreamingEnvSlice {
 
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
   const env = bundle.env as unknown as DreamingEnvSlice;
-  const t2PromotionMinEventsRaw =
-    env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS ??
-    (process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS !== undefined
-      ? Number(process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS)
-      : undefined);
+  const t2PromotionMinEventsRaw = env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
   const skipPhases = new Set(
     env.PENUMBRA_DREAMING_SKIP_PHASES.split(",")
       .map((p) => p.trim())

@@ -21,15 +21,14 @@ export function findSimilarityClusters(
       parent.set(i, i);
       return i;
     }
-    if (parent.get(i) === i) {
-      return i;
-    }
-    const root = find(parent.get(i)!);
+    const parentVal = parent.get(i);
+    if (parentVal === i || parentVal === undefined) return i;
+    const root = find(parentVal);
     parent.set(i, root);
     return root;
   }
 
-  function union(i: string, j: string) {
+  function union(i: string, j: string): void {
     const rootI = find(i);
     const rootJ = find(j);
     if (rootI !== rootJ) {
@@ -51,7 +50,8 @@ export function findSimilarityClusters(
     if (!clusters.has(root)) {
       clusters.set(root, []);
     }
-    clusters.get(root)!.push(key);
+    const clusterArr = clusters.get(root);
+    if (clusterArr !== undefined) clusterArr.push(key);
   }
 
   return Array.from(clusters.values())

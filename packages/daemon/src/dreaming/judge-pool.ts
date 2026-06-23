@@ -19,12 +19,12 @@ export interface JudgePool {
 }
 
 export class StubJudgePool implements JudgePool {
-  async judge(_args: { body: string; kind: string }): Promise<{
+  judge(_args: { body: string; kind: string }): Promise<{
     confidence: number;
     verdict: "yes" | "no" | "unsure";
     rationale?: string;
   }> {
-    return { confidence: 0.5, verdict: "unsure", rationale: "stub-pool" };
+    return Promise.resolve({ confidence: 0.5, verdict: "unsure", rationale: "stub-pool" });
   }
 }
 
@@ -34,12 +34,14 @@ export function createTestJudgePool(): JudgePool {
 
 export function makeFakeJudgePool(votes: JudgeVote[]): JudgePool {
   return {
-    async judge(_args) {
+    judge(
+      _args,
+    ): Promise<{ confidence: number; verdict: "yes" | "no" | "unsure"; rationale?: string }> {
       const v = votes[0] ?? { promote: false, confidence: 0.5 };
-      return { confidence: v.confidence, verdict: v.promote ? "yes" : "no" };
+      return Promise.resolve({ confidence: v.confidence, verdict: v.promote ? "yes" : "no" });
     },
-    async judgeAll(_args) {
-      return votes;
+    judgeAll(_args): Promise<JudgeVote[]> {
+      return Promise.resolve(votes);
     },
   };
 }

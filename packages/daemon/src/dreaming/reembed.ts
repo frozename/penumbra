@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { retireNonDirectMemory } from "@penumbra/core";
-import { buildT2EmbedText } from "@penumbra/core";
+
+import { buildT2EmbedText, retireNonDirectMemory } from "@penumbra/core";
+
 import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps } from "./cycle.js";
 
@@ -18,7 +19,7 @@ export async function runReembedPhase(
   if (!isTrueEnv(process.env.PENUMBRA_T2_REEMBED_ENABLED)) return { deferred: false, processed: 0 };
   if (!deps.onReembed) return { deferred: false, processed: 0 };
 
-  const currentModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION || "v1";
+  const currentModelVersion = process.env.PENUMBRA_EMBEDDING_MODEL_VERSION ?? "v1";
 
   const staleMemories = db
     .prepare(
@@ -27,12 +28,12 @@ export async function runReembedPhase(
        WHERE embedding_model_version IS NULL OR embedding_model_version != ?
        LIMIT ?`,
     )
-    .all(currentModelVersion, config.reembedBatchSize) as Array<{
+    .all(currentModelVersion, config.reembedBatchSize) as {
     memory_id: string;
     title: string;
     body: string;
     embedding_model_version: string | null;
-  }>;
+  }[];
 
   if (staleMemories.length === 0) return { deferred: false, processed: 0 };
 
@@ -53,7 +54,7 @@ export async function runReembedPhase(
         crypto.randomUUID(),
         mem.memory_id,
         vecRow.embedding,
-        mem.embedding_model_version || "unknown",
+        mem.embedding_model_version ?? "unknown",
         Date.now(),
         cycleId,
       );
@@ -159,13 +160,10 @@ function safeParseJson(value: string): unknown {
   }
 }
 
-function parseDreamActionPayload<T extends Record<string, unknown>>(
-  raw: string | null,
-  actionId: string,
-): T {
+function parseDreamActionPayload(raw: string | null, actionId: string): Record<string, unknown> {
   const parsed = safeParseJson(raw ?? "{}");
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    return parsed as T;
+    return parsed as Record<string, unknown>;
   }
   throw new DreamActionApplyError(
     "invalid_payload_json",
@@ -235,6 +233,152 @@ export function applyDreamAction(db: Database, actionId: string): void {
   })();
 }
 
+function revertDependents(db: Database, actionId: string, cascade: "none" | "force"): void {
+  const deps = db
+    .prepare(
+      'SELECT action_id FROM dream_actions WHERE payload_json LIKE ? AND status="auto_applied" AND reverted_by IS NULL',
+    )
+    .all('%"source_action_id":"' + actionId + '"%') as { action_id: string }[];
+
+  if (deps.length === 0) return;
+
+  const ids = deps.map((d) => d.action_id);
+  if (cascade === "none") {
+    throw new Error("has_dependents: " + ids.join(","));
+  }
+  for (const depId of ids) {
+    revertDreamAction(db, depId, "force");
+  }
+}
+
+function revertP7(db: Database, action: DreamActionRow, actionId: string): void {
+  const targetIds = parseTargetIds(action.target_ids);
+  const memoryId = targetIds[0];
+  if (!memoryId) throw new Error("Expected exactly 1 target memory for P7 action");
+
+  const snapshot = db
+    .prepare(
+      "SELECT embedding, embedding_model_version FROM t2_vec_history " +
+        "WHERE memory_id = ? AND snapshotted_at <= ? " +
+        "ORDER BY snapshotted_at DESC LIMIT 1",
+    )
+    .get(memoryId, action.decided_at ?? Date.now()) as {
+    embedding: Uint8Array;
+    embedding_model_version: string;
+  } | null;
+
+  if (!snapshot)
+    throw new Error(
+      "No vector snapshot found for memory " + memoryId + " before action " + actionId,
+    );
+
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE t2_vec SET embedding = ? WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)",
+    ).run(snapshot.embedding, memoryId);
+    db.prepare("UPDATE t2_memories SET embedding_model_version = ? WHERE memory_id = ?").run(
+      snapshot.embedding_model_version === "unknown" ? null : snapshot.embedding_model_version,
+      memoryId,
+    );
+    markDreamActionReverted(db, actionId, action.status);
+  })();
+}
+
+function revertP1(db: Database, action: DreamActionRow, actionId: string): void {
+  const targetIds = parseTargetIds(action.target_ids);
+  const rollupId = targetIds[0];
+  if (!rollupId) throw new Error("P1 revert: missing rollup ID");
+
+  const raw = parseDreamActionPayload(action.payload_json, actionId);
+  const t2MemoryId = typeof raw.t2_memory_id === "string" ? raw.t2_memory_id : undefined;
+  if (!t2MemoryId) throw new Error("p1_revert_missing_t2_memory_id");
+
+  db.transaction(() => {
+    db.prepare("UPDATE t1_rollups SET t2_promoted_at = NULL WHERE rollup_id = ?").run(rollupId);
+    // P1 revert intentionally bypasses the direct-origin guard to restore the original
+    // rollup artifact state even when the promoted target was direct.
+    db.prepare("UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?").run(
+      Date.now(),
+      t2MemoryId,
+    );
+    markDreamActionReverted(db, actionId, action.status);
+  })();
+}
+
+function revertP2(db: Database, action: DreamActionRow, actionId: string): void {
+  const targetIds = parseTargetIds(action.target_ids);
+  const srcId = targetIds[0];
+  const dstId = targetIds[1];
+  if (!srcId || !dstId) throw new Error("P2 revert: missing source or destination ID");
+
+  const raw = parseDreamActionPayload(action.payload_json, actionId);
+  const linkType = typeof raw.link_type === "string" ? raw.link_type : "semantic_near";
+
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE memory_links SET retired_at = ? WHERE src_id = ? AND dst_id = ? AND link_type = ?",
+    ).run(Date.now(), srcId, dstId, linkType);
+    markDreamActionReverted(db, actionId, action.status);
+  })();
+}
+
+function revertMemoryRetire(db: Database, action: DreamActionRow, actionId: string): void {
+  const targetIds = parseTargetIds(action.target_ids);
+  const memoryId = targetIds[0];
+  if (!memoryId) throw new Error("Revert retire: missing memory ID");
+
+  db.transaction(() => {
+    db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
+    markDreamActionReverted(db, actionId, action.status);
+  })();
+}
+
+function revertP6(db: Database, action: DreamActionRow, actionId: string): void {
+  const targetIds = parseTargetIds(action.target_ids);
+  const projectId = targetIds[0];
+  if (!projectId) throw new Error("P6 revert: missing project ID");
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM project_briefs WHERE project_id = ? AND generated_at <= ?").run(
+      projectId,
+      action.decided_at,
+    );
+    markDreamActionReverted(db, actionId, action.status);
+  })();
+}
+
+function applyPhaseRevert(db: Database, action: DreamActionRow, actionId: string): void {
+  if (action.phase === "P7") {
+    revertP7(db, action, actionId);
+    return;
+  }
+  if (action.phase === "P1" && action.action_type === "promote_t1") {
+    revertP1(db, action, actionId);
+    return;
+  }
+  if (action.phase === "P2" && action.action_type === "link") {
+    revertP2(db, action, actionId);
+    return;
+  }
+  if (action.phase === "P3" && action.action_type === "retire") {
+    revertMemoryRetire(db, action, actionId);
+    return;
+  }
+  if (action.action_type === "ephemera_retire") {
+    revertMemoryRetire(db, action, actionId);
+    return;
+  }
+  if (action.action_type === "cluster_retire") {
+    revertMemoryRetire(db, action, actionId);
+    return;
+  }
+  if (action.phase === "P6") {
+    revertP6(db, action, actionId);
+    return;
+  }
+  markDreamActionReverted(db, actionId, action.status);
+}
+
 export function revertDreamAction(
   db: Database,
   actionId: string,
@@ -243,133 +387,14 @@ export function revertDreamAction(
   const action = getDreamAction(db, actionId);
 
   if (!action) throw new Error("Action not found: " + actionId);
-  if (action.reverted_by != null) return;
-  const canCompensateState = action.status === "auto_applied" || action.status === "applied";
+  if (action.reverted_by !== null) return;
 
-  const deps = db
-    .prepare(
-      'SELECT action_id FROM dream_actions WHERE payload_json LIKE ? AND status="auto_applied" AND reverted_by IS NULL',
-    )
-    .all('%"source_action_id":"' + actionId + '"%') as { action_id: string }[];
+  revertDependents(db, actionId, cascade);
 
-  if (deps.length > 0) {
-    const ids = deps.map((d) => d.action_id);
-    if (cascade === "none") {
-      throw new Error("has_dependents: " + ids.join(","));
-    } else if (cascade === "force") {
-      for (const depId of ids) {
-        revertDreamAction(db, depId, "force");
-      }
-    }
-  }
-
-  if (action.phase === "P7" && canCompensateState) {
-    const targetIds = parseTargetIds(action.target_ids);
-    if (targetIds.length !== 1)
-      throw new Error("Expected exactly 1 target memory for P7 action, got " + targetIds.length);
-
-    const memoryId = targetIds[0] as string;
-
-    const snapshot = db
-      .prepare(
-        "SELECT embedding, embedding_model_version FROM t2_vec_history " +
-          "WHERE memory_id = ? AND snapshotted_at <= ? " +
-          "ORDER BY snapshotted_at DESC LIMIT 1",
-      )
-      .get(memoryId, action.decided_at || Date.now()) as {
-      embedding: Uint8Array;
-      embedding_model_version: string;
-    } | null;
-
-    if (!snapshot)
-      throw new Error(
-        "No vector snapshot found for memory " + memoryId + " before action " + actionId,
-      );
-
-    db.transaction(() => {
-      db.prepare(
-        "UPDATE t2_vec SET embedding = ? WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)",
-      ).run(snapshot.embedding, memoryId);
-
-      db.prepare("UPDATE t2_memories SET embedding_model_version = ? WHERE memory_id = ?").run(
-        snapshot.embedding_model_version === "unknown" ? null : snapshot.embedding_model_version,
-        memoryId,
-      );
-
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.phase === "P1" && action.action_type === "promote_t1" && canCompensateState) {
-    const targetIds = parseTargetIds(action.target_ids);
-    const rollupId = targetIds[0] as string;
-    const payload = parseDreamActionPayload<{ t2_memory_id?: string }>(
-      action.payload_json,
-      actionId,
-    );
-
-    let t2MemoryId = payload.t2_memory_id;
-    if (!t2MemoryId) {
-      throw new Error("p1_revert_missing_t2_memory_id");
-    }
-
-    db.transaction(() => {
-      db.prepare("UPDATE t1_rollups SET t2_promoted_at = NULL WHERE rollup_id = ?").run(rollupId);
-      if (t2MemoryId) {
-        // Exception: P1 revert intentionally restores the original rollout artifact state
-        // even when the promoted target was direct, so this path must retire without
-        // using the direct-origin guard.
-        db.prepare("UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?").run(
-          Date.now(),
-          t2MemoryId,
-        );
-      }
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.phase === "P2" && action.action_type === "link" && canCompensateState) {
-    const targetIds = parseTargetIds(action.target_ids);
-    const srcId = targetIds[0] as string;
-    const dstId = targetIds[1] as string;
-    const payload = parseDreamActionPayload<{ link_type?: string }>(action.payload_json, actionId);
-    const linkType = payload.link_type ?? "semantic_near";
-
-    db.transaction(() => {
-      db.prepare(
-        "UPDATE memory_links SET retired_at = ? WHERE src_id = ? AND dst_id = ? AND link_type = ?",
-      ).run(Date.now(), srcId, dstId, linkType);
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.phase === "P3" && action.action_type === "retire" && canCompensateState) {
-    const targetIds = parseTargetIds(action.target_ids);
-    const memoryId = targetIds[0] as string;
-
-    db.transaction(() => {
-      db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.action_type === "ephemera_retire" && canCompensateState) {
-    const memoryId = parseTargetIds(action.target_ids)[0] as string;
-    db.transaction(() => {
-      db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.action_type === "cluster_retire" && canCompensateState) {
-    const memoryId = parseTargetIds(action.target_ids)[0] as string;
-    db.transaction(() => {
-      db.prepare("UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?").run(memoryId);
-      markDreamActionReverted(db, actionId, action.status);
-    })();
-  } else if (action.phase === "P6" && canCompensateState) {
-    const targetIds = parseTargetIds(action.target_ids);
-    const projectId = targetIds[0] as string;
-
-    db.transaction(() => {
-      db.prepare("DELETE FROM project_briefs WHERE project_id = ? AND generated_at <= ?").run(
-        projectId,
-        action.decided_at,
-      );
-      markDreamActionReverted(db, actionId, action.status);
-    })();
+  const canCompensate = action.status === "auto_applied" || action.status === "applied";
+  if (canCompensate) {
+    applyPhaseRevert(db, action, actionId);
   } else {
-    // Soft stamp — queued actions and unknown phases: no state rollback
     markDreamActionReverted(db, actionId, action.status);
   }
 }

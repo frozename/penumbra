@@ -1,5 +1,6 @@
-import type { Database } from "bun:sqlite";
 import type { ConfigBundle } from "@penumbra/config";
+import type { Database } from "bun:sqlite";
+
 import type { DreamConfig } from "./config.js";
 
 export interface DreamRuntimeConfigResolution {
