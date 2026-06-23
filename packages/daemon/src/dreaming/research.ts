@@ -8,23 +8,14 @@ import type {
   ContentQualityJudge,
   ContentQualityVerdict,
 } from "./curator/content-quality-judge.js";
-import type { DreamCostMeter } from "./cycle.js";
+import type { DreamCostMeter, ProjectRegistryEntry } from "./cycle.js";
 
 import { isDomainAllowed } from "../research/firecrawl-adapter.js";
 import { buildJudgePromptBlock, sanitizeResearchMarkdown } from "../research/sanitization.js";
 
-interface DreamingProjectConfig {
-  research_provider?: string;
-  allowed_domains?: string[];
-}
-
-interface ResearchProject {
-  dreaming?: DreamingProjectConfig;
-}
-
 export interface ResearchDeps {
-  getResearchAdapter?: (project: ResearchProject) => WebResearchAdapter | null;
-  projectRegistry?: { get(id: string): ResearchProject | undefined };
+  getResearchAdapter?: (project: ProjectRegistryEntry) => WebResearchAdapter | null;
+  projectRegistry?: { get(id: string): ProjectRegistryEntry | undefined };
   contentQualityJudge?: ContentQualityJudge;
   costMeter?: DreamCostMeter;
   phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
@@ -269,7 +260,7 @@ function resolveActionContext(
   parsed: ParsedAction,
 ): ActionContext | null {
   const project = deps.projectRegistry?.get(parsed.project_id);
-  const dreamingConfig = project?.dreaming ?? {};
+  const dreamingConfig = (project?.dreaming ?? {}) as { allowed_domains?: string[] };
   const adapter = project ? (deps.getResearchAdapter?.(project) ?? null) : null;
   if (!adapter) return null;
   const resolvedUrl = parsed.urlFromPayload ?? parsed.query;

@@ -236,7 +236,7 @@ export async function runDreamCycle(
     await runCycleP7(db, ctx, deps, config);
     runCycleP8(db, ctx);
 
-    await finalizeCycle(db, ctx, config);
+    finalizeCycle(db, ctx, config);
     return ctx.cycleId;
   } finally {
     delete deps.costMeter;
@@ -461,7 +461,7 @@ function phaseEnd(db: Database, ctx: CycleCtx, phase: string, startMs: number): 
   ctx.log?.info({ phase, cycleId: ctx.cycleId, durationMs }, "dream-cycle phase end");
 }
 
-async function finalizeCycle(db: Database, ctx: CycleCtx, config: DreamConfig): Promise<void> {
+function finalizeCycle(db: Database, ctx: CycleCtx, config: DreamConfig): void {
   if (!config.curatorEnabled) {
     db.prepare(
       `UPDATE dream_cycles SET outcome='completed', ended_at=?, phases_run=? WHERE cycle_id=?`,
@@ -470,11 +470,11 @@ async function finalizeCycle(db: Database, ctx: CycleCtx, config: DreamConfig): 
   }
   try {
     const pc1Start = phaseStart(ctx, "PC1");
-    await runPC1Phase(db, ctx.cycleId, config, {});
+    runPC1Phase(db, ctx.cycleId, config, {});
     phaseEnd(db, ctx, "PC1", pc1Start);
 
     const pc2Start = phaseStart(ctx, "PC2");
-    await runPC2Phase(db, ctx.cycleId, config, {});
+    runPC2Phase(db, ctx.cycleId, config, {});
     phaseEnd(db, ctx, "PC2", pc2Start);
 
     db.prepare(

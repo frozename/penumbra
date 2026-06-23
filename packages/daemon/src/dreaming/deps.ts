@@ -4,7 +4,7 @@ import { type DispatchEventInput, type Logger, readSubscriptionPressure } from "
 import { randomUUID } from "node:crypto";
 
 import type { DreamConfig } from "./config.js";
-import type { DreamCycleDeps } from "./cycle.js";
+import type { DreamCycleDeps, ProjectRegistryEntry } from "./cycle.js";
 
 import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
@@ -18,13 +18,9 @@ interface DreamingResearchConfig {
   allowed_domains?: string[];
 }
 
-interface ResearchProjectShape {
-  dreaming?: DreamingResearchConfig;
-}
-
 interface ProjectRegistryLike {
-  get(id: string): unknown;
-  list(): unknown[];
+  get(id: string): ProjectRegistryEntry | undefined;
+  list(): ProjectRegistryEntry[];
 }
 
 export function buildDreamCycleDeps(
@@ -78,9 +74,9 @@ export function buildDreamCycleDeps(
 
   const deps: DreamCycleDeps = {
     projectRegistry: services.projectRegistry,
-    getResearchAdapter: (project: unknown) => {
-      const dreaming = (project as ResearchProjectShape).dreaming;
-      const provider = dreaming?.research_provider;
+    getResearchAdapter: (project: ProjectRegistryEntry) => {
+      const dreaming = (project.dreaming ?? {}) as DreamingResearchConfig;
+      const provider = dreaming.research_provider;
       if (!provider || provider === "off") return null;
       return createResearchAdapter({
         provider,
