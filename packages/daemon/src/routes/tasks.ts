@@ -1,35 +1,37 @@
+import { getAgentDescriptor } from "@penumbra/agentchat";
+import {
+  CancelTaskInputSchema,
+  CompleteTaskInputSchema,
+  EmitCapExceeded,
+  FailTaskInputSchema,
+  FileTaskInputSchema,
+  getGithubRepo,
+  HeartbeatTaskInputSchema,
+  InvalidTaskStatus,
+  LeaseConflict,
+  LeaseInvalid,
+  MissingReviewVerdict,
+  OrchestrateAgentNotMaestroCapable,
+  OrchestrateRecursionForbidden,
+  OrchestrateRequiresAllowAgents,
+  ReviewParentInvalidState,
+  type Services,
+  TaskDraftPromotedPayloadSchema,
+  type TaskInclude,
+  TaskKindSchema,
+  TaskNotFound,
+  TaskStatusSchema,
+  TaskWriter,
+  UnexpectedReviewVerdict,
+} from "@penumbra/core";
 import { z } from "zod";
+
+import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
+
 // Deep import (core/src, not the @penumbra/core barrel): the barrel's built .d.ts
 // lags newly-added exports, so the daemon typecheck wouldn't see this function.
 import { getTaskDraftPromotionInfo } from "../../../core/src/readers/task-draft.js";
-import {
-  FileTaskInputSchema,
-  TaskStatusSchema,
-  TaskKindSchema,
-  CompleteTaskInputSchema,
-  HeartbeatTaskInputSchema,
-  FailTaskInputSchema,
-  CancelTaskInputSchema,
-  TaskWriter,
-  TaskNotFound,
-  InvalidTaskStatus,
-  LeaseInvalid,
-  LeaseConflict,
-  MissingReviewVerdict,
-  UnexpectedReviewVerdict,
-  ReviewParentInvalidState,
-  type TaskInclude,
-  EmitCapExceeded,
-  type Services,
-  TaskDraftPromotedPayloadSchema,
-  getGithubRepo,
-  OrchestrateAgentNotMaestroCapable,
-  OrchestrateRequiresAllowAgents,
-  OrchestrateRecursionForbidden,
-} from "@penumbra/core";
-import { getAgentDescriptor } from "@penumbra/agentchat";
 import { getPrincipal } from "../auth.js";
-import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
 import { bodyJson, json } from "./_helpers.js";
 const TaskIncludeSchema = z.enum(["lease", "events", "descendants"]);
 
@@ -170,150 +172,137 @@ function parseIncludeParam(url: URL): TaskInclude[] | Response {
 // enqueue the route-specific extras below (verdict / dispatch-failure comments,
 // issue creation, manual link/push).
 
-export async function tasksFileRoute(
-  req: Request,
-  writer: TaskWriter,
-  services: Pick<
-    Services,
-    | "db"
-    | "projectRegistry"
-    | "taskDraftReader"
-    | "t0Writer"
-    | "uuid"
-    | "clock"
-    | "machineId"
-    | "log"
-    | "agentchatConfig"
-  >,
-  ghSync?: GhTaskSyncService,
-): Promise<Response> {
-  const raw = await bodyJson(req);
-  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
+type TaskFileServices = Pick<
+  Services,
+  | "db"
+  | "projectRegistry"
+  | "taskDraftReader"
+  | "t0Writer"
+  | "uuid"
+  | "clock"
+  | "machineId"
+  | "log"
+  | "agentchatConfig"
+>;
+type FileTaskInput = z.infer<typeof FileTaskInputSchema>;
 
-  const parsed = FileTaskInputSchema.safeParse(raw);
-  if (!parsed.success) return invalidInput(parsed.error.issues);
-
-  const originHeader = req.headers.get("x-penumbra-origin");
-  const input = originHeader ? { ...parsed.data, origin: originHeader } : parsed.data;
-  const origin = input.origin;
-  if (typeof origin === "string" && origin.startsWith("draft:") && !DRAFT_ORIGIN_RE.test(origin)) {
-    return invalidInput([
-      { message: "origin: draft:<uuid> requires a valid UUID suffix", path: ["origin"] },
-    ]);
+function resolveAutoPromoteAllowAgents(
+  input: FileTaskInput,
+  services: TaskFileServices,
+): { allowAgents: string[] } | { error: Response } {
+  const existing = input.eligibility?.allow_agents?.length
+    ? input.eligibility.allow_agents
+    : undefined;
+  if (existing) return { allowAgents: existing };
+  const cfg = services.agentchatConfig;
+  const capable = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) =>
+    cfg
+      ? getAgentDescriptor(name, cfg as Parameters<typeof getAgentDescriptor>[1])
+          ?.maestro_capable === true
+      : false,
+  );
+  const dropped = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) => !capable.includes(name));
+  if (dropped.length > 0) {
+    services.log.warn(
+      { dropped_agents: dropped },
+      "task_file: dropped non-maestro-capable default orchestrate auto-promote agents",
+    );
   }
-  const isRefinerPromotion = typeof origin === "string" && DRAFT_ORIGIN_RE.test(origin);
-  let inputForFile = input;
-  if (isRefinerPromotion) {
-    const draftId = origin.slice("draft:".length).toLowerCase();
-    const info = getTaskDraftPromotionInfo(services.db, draftId);
-    if (!info.exists) {
-      return invalidInput([{ message: "origin draft not found", path: ["origin"] }]);
-    }
-    if (info.already_promoted) {
-      return json({ task_id: null, error: "draft already promoted" }, 409);
-    }
-    const autoPromote =
-      info.auto_ok === true &&
-      info.filed_by_agent !== null &&
-      TRUSTED_PROMOTERS.has(info.filed_by_agent);
-    if (autoPromote) {
-      let allowAgents = input.eligibility?.allow_agents?.length
-        ? input.eligibility.allow_agents
-        : undefined;
-      if (!allowAgents) {
-        const cfg = services.agentchatConfig;
-        const capable = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) =>
-          cfg
-            ? getAgentDescriptor(name, cfg as Parameters<typeof getAgentDescriptor>[1])
-                ?.maestro_capable === true
-            : false,
-        );
-        const dropped = DEFAULT_ORCHESTRATE_ALLOW_AGENTS.filter((name) => !capable.includes(name));
-        if (dropped.length > 0) {
-          services.log?.warn?.(
-            { dropped_agents: dropped },
-            "task_file: dropped non-maestro-capable default orchestrate auto-promote agents",
-          );
-        }
-        if (capable.length === 0) {
-          return invalidInput([
-            {
-              message:
-                "trusted refiner auto-promote default allow_agents resolved to no maestro-capable agents",
-              path: ["eligibility", "allow_agents"],
-              dropped_agents: dropped,
-            },
-          ]);
-        }
-        allowAgents = capable;
-      }
-      inputForFile = {
-        ...input,
-        kind: "orchestrate",
-        eligibility: { ...(input.eligibility ?? {}), allow_agents: allowAgents },
-      };
-    }
+  if (capable.length === 0) {
+    return {
+      error: invalidInput([
+        {
+          message:
+            "trusted refiner auto-promote default allow_agents resolved to no maestro-capable agents",
+          path: ["eligibility", "allow_agents"],
+          dropped_agents: dropped,
+        },
+      ]),
+    };
   }
-  const inputWithDefaults =
-    isRefinerPromotion && !inputForFile.gh_create
-      ? {
-          ...inputForFile,
-          gh_create: { labels: ["task-draft", "refiner-promoted"] },
-        }
-      : inputForFile;
+  return { allowAgents: capable };
+}
 
-  let task_id = "";
+function processRefinerPromotionInput(
+  input: FileTaskInput,
+  draftId: string,
+  services: TaskFileServices,
+): { inputForFile: FileTaskInput } | { error: Response } {
+  const info = getTaskDraftPromotionInfo(services.db, draftId);
+  if (!info.exists) {
+    return { error: invalidInput([{ message: "origin draft not found", path: ["origin"] }]) };
+  }
+  if (info.already_promoted) {
+    return { error: json({ task_id: null, error: "draft already promoted" }, 409) };
+  }
+  const autoPromote =
+    info.auto_ok && info.filed_by_agent !== null && TRUSTED_PROMOTERS.has(info.filed_by_agent);
+  if (!autoPromote) return { inputForFile: input };
+
+  const resolved = resolveAutoPromoteAllowAgents(input, services);
+  if ("error" in resolved) return resolved;
+  return {
+    inputForFile: {
+      ...input,
+      kind: "orchestrate",
+      eligibility: { ...(input.eligibility ?? {}), allow_agents: resolved.allowAgents },
+    },
+  };
+}
+
+function emitTaskDraftPromotedEvent(
+  draftId: string,
+  task_id: string,
+  input: FileTaskInput,
+  services: TaskFileServices,
+): void {
   try {
-    const result = writer.file(inputWithDefaults);
-    task_id = result.task_id;
+    const payload = TaskDraftPromotedPayloadSchema.parse({
+      draft_id: draftId,
+      task_ids: [task_id],
+    });
+    const now = services.clock().toISOString();
+    services.t0Writer.write({
+      event_id: services.uuid(),
+      ts: now,
+      ingest_ts: now,
+      source: "daemon",
+      source_detail: "task_file:refiner_promoted",
+      project_id: input.project_id ?? null,
+      user_id: services.machineId.get(),
+      machine_id: services.machineId.get(),
+      session_id: null,
+      event_type: "task_draft_promoted",
+      lane: "unknown",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: payload,
+      payload_summary: null,
+      origin: null,
+    });
   } catch (err) {
-    return mapTaskError(err);
+    services.log.warn(
+      { err: String(err), task_id, draft_id: draftId },
+      "task_file: failed to emit task_draft_promoted",
+    );
   }
+}
 
-  if (isRefinerPromotion) {
-    const draftId = origin.slice("draft:".length).toLowerCase();
-    try {
-      const payload = TaskDraftPromotedPayloadSchema.parse({
-        draft_id: draftId,
-        task_ids: [task_id],
-      });
-      const now = services.clock().toISOString();
-      services.t0Writer.write({
-        event_id: services.uuid(),
-        ts: now,
-        ingest_ts: now,
-        source: "daemon",
-        source_detail: "task_file:refiner_promoted",
-        project_id: input.project_id ?? null,
-        user_id: services.machineId.get(),
-        machine_id: services.machineId.get(),
-        session_id: null,
-        event_type: "task_draft_promoted",
-        lane: "unknown",
-        provider: null,
-        model: null,
-        tokens_in: null,
-        tokens_out: null,
-        cost_usd: null,
-        latency_ms: null,
-        request_id: null,
-        payload_json: payload,
-        payload_summary: null,
-        origin: null,
-      });
-    } catch (err) {
-      services.log?.warn?.(
-        { err: String(err), task_id, draft_id: draftId },
-        "task_file: failed to emit task_draft_promoted",
-      );
-    }
-  }
-
-  if (!inputWithDefaults.gh_create) {
-    return json({ task_id }, 201);
-  }
-
-  let effectiveRepo = inputWithDefaults.gh_create.repo ?? null;
+function handleGhCreate(
+  inputWithDefaults: FileTaskInput,
+  task_id: string,
+  writer: TaskWriter,
+  services: TaskFileServices,
+  ghSync: GhTaskSyncService | undefined,
+): Response {
+  const ghCreate = inputWithDefaults.gh_create;
+  if (!ghCreate) return json({ task_id }, 201);
+  let effectiveRepo = ghCreate.repo ?? null;
   if (!effectiveRepo) {
     const projectId = inputWithDefaults.project_id ?? null;
     if (projectId) {
@@ -337,7 +326,6 @@ export async function tasksFileRoute(
       201,
     );
   }
-
   if (!ghSync) {
     writer.setGhCreateStatus(task_id, "failed", "github sync service unavailable");
     return json(
@@ -345,16 +333,14 @@ export async function tasksFileRoute(
       201,
     );
   }
-
-  const issueTitle = inputWithDefaults.gh_create.title ?? conciseTitle(inputWithDefaults.prompt);
-  const issueBody = inputWithDefaults.gh_create.body ?? inputWithDefaults.prompt;
-
+  const issueTitle = ghCreate.title ?? conciseTitle(inputWithDefaults.prompt);
+  const issueBody = ghCreate.body ?? inputWithDefaults.prompt;
   ghSync.enqueueTaskGhCreate(task_id, {
     repo: effectiveRepo,
     title: issueTitle,
     body: issueBody,
-    labels: inputWithDefaults.gh_create.labels,
-    assignees: inputWithDefaults.gh_create.assignees,
+    labels: ghCreate.labels,
+    assignees: ghCreate.assignees,
   });
   return json(
     {
@@ -366,7 +352,77 @@ export async function tasksFileRoute(
   );
 }
 
-export async function tasksListRoute(req: Request, writer: TaskWriter): Promise<Response> {
+type ResolvedFileInput = {
+  inputWithDefaults: FileTaskInput;
+  draftId: string | null;
+  originalInput: FileTaskInput;
+};
+
+function resolveFileTaskInput(
+  parsedInput: FileTaskInput,
+  origin: string | null | undefined,
+  services: TaskFileServices,
+): ResolvedFileInput | { error: Response } {
+  if (typeof origin === "string" && origin.startsWith("draft:") && !DRAFT_ORIGIN_RE.test(origin)) {
+    return {
+      error: invalidInput([
+        { message: "origin: draft:<uuid> requires a valid UUID suffix", path: ["origin"] },
+      ]),
+    };
+  }
+  const isRefinerPromotion = typeof origin === "string" && DRAFT_ORIGIN_RE.test(origin);
+  let inputForFile = parsedInput;
+  let draftId: string | null = null;
+  if (isRefinerPromotion) {
+    draftId = origin.slice("draft:".length).toLowerCase();
+    const refined = processRefinerPromotionInput(parsedInput, draftId, services);
+    if ("error" in refined) return refined;
+    inputForFile = refined.inputForFile;
+  }
+  const inputWithDefaults: FileTaskInput =
+    isRefinerPromotion && !inputForFile.gh_create
+      ? {
+          ...inputForFile,
+          gh_create: { labels: ["task-draft", "refiner-promoted"] },
+        }
+      : inputForFile;
+  return { inputWithDefaults, draftId, originalInput: parsedInput };
+}
+
+export async function tasksFileRoute(
+  req: Request,
+  writer: TaskWriter,
+  services: TaskFileServices,
+  ghSync?: GhTaskSyncService,
+): Promise<Response> {
+  const raw = await bodyJson(req);
+  if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
+
+  const parsed = FileTaskInputSchema.safeParse(raw);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+
+  const originHeader = req.headers.get("x-penumbra-origin");
+  const input = originHeader ? { ...parsed.data, origin: originHeader } : parsed.data;
+  const resolved = resolveFileTaskInput(input, input.origin, services);
+  if ("error" in resolved) return resolved.error;
+  const { inputWithDefaults, draftId, originalInput } = resolved;
+
+  let task_id = "";
+  try {
+    const result = writer.file(inputWithDefaults);
+    task_id = result.task_id;
+  } catch (err) {
+    return mapTaskError(err);
+  }
+
+  if (draftId !== null) {
+    emitTaskDraftPromotedEvent(draftId, task_id, originalInput, services);
+  }
+
+  return handleGhCreate(inputWithDefaults, task_id, writer, services, ghSync);
+}
+
+export function tasksListRoute(req: Request, writer: TaskWriter): Response {
   const url = new URL(req.url);
   const parsed = ListTasksQuerySchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
@@ -387,11 +443,7 @@ export async function tasksListRoute(req: Request, writer: TaskWriter): Promise<
   }
 }
 
-export async function tasksGetRoute(
-  req: Request,
-  task_id: string,
-  writer: TaskWriter,
-): Promise<Response> {
+export function tasksGetRoute(req: Request, task_id: string, writer: TaskWriter): Response {
   const url = new URL(req.url);
   const include = parseIncludeParam(url);
   if (include instanceof Response) return include;
@@ -451,11 +503,7 @@ export async function tasksLinkGhRoute(
   }
 }
 
-export async function tasksUnlinkGhRoute(
-  _req: Request,
-  task_id: string,
-  writer: TaskWriter,
-): Promise<Response> {
+export function tasksUnlinkGhRoute(_req: Request, task_id: string, writer: TaskWriter): Response {
   try {
     writer.unlinkGhIssue(task_id);
     return json({ ok: true });
@@ -514,7 +562,6 @@ export async function tasksLeaseRoute(
   try {
     const leased = await writer.next(parsed.data);
     if (!leased) {
-      // TODO(task 4.1): distinguish NotPreferred from empty queue when writer exposes it.
       return noContent();
     }
     return json(leased);
@@ -542,6 +589,50 @@ export async function tasksHeartbeatRoute(
   }
 }
 
+type CompletePrincipal = NonNullable<ReturnType<typeof getPrincipal>>;
+
+function validateCompletePrincipal(
+  principal: ReturnType<typeof getPrincipal>,
+  hasLeaseId: boolean,
+): { principal: CompletePrincipal } | { error: Response } {
+  if (!principal) {
+    return {
+      error: json(
+        {
+          error: "unauthorized",
+          message: "this route requires a bearer principal",
+        },
+        401,
+      ),
+    };
+  }
+  if (principal.kind === "worker" && !hasLeaseId) {
+    return {
+      error: json(
+        {
+          error: "worker_token_required",
+          message: "this route requires a lease_id for worker-token principals",
+        },
+        403,
+      ),
+    };
+  }
+  return { principal };
+}
+
+function maybeQueueVerdictComment(
+  ghSync: GhTaskSyncService | undefined,
+  writer: TaskWriter,
+  task_id: string,
+  review_verdict: z.infer<typeof CompleteTaskRequestSchema>["review_verdict"],
+): void {
+  if (!ghSync || !review_verdict) return;
+  const task = writer.get(task_id);
+  if (task.gh_issue_repo && task.gh_issue_number) {
+    ghSync.queueVerdictComment(task_id, review_verdict);
+  }
+}
+
 export async function tasksCompleteRoute(
   req: Request,
   task_id: string,
@@ -554,25 +645,9 @@ export async function tasksCompleteRoute(
   const parsed = CompleteTaskRequestSchema.safeParse(raw);
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
-  const principal = getPrincipal(req);
-  if (!principal) {
-    return json(
-      {
-        error: "unauthorized",
-        message: "this route requires a bearer principal",
-      },
-      401,
-    );
-  }
-  if (principal?.kind === "worker" && parsed.data.lease_id === undefined) {
-    return json(
-      {
-        error: "worker_token_required",
-        message: "this route requires a lease_id for worker-token principals",
-      },
-      403,
-    );
-  }
+  const auth = validateCompletePrincipal(getPrincipal(req), parsed.data.lease_id !== undefined);
+  if ("error" in auth) return auth.error;
+  const principal = auth.principal;
 
   try {
     // Positive allowlist: only the shared (operator/maestro) principal may
@@ -584,14 +659,17 @@ export async function tasksCompleteRoute(
       );
       return json(result);
     }
-
-    const result = writer.complete({ task_id, ...parsed.data, lease_id: parsed.data.lease_id! });
-    if (ghSync && parsed.data.review_verdict) {
-      const task = writer.get(task_id);
-      if (task.gh_issue_repo && task.gh_issue_number) {
-        ghSync.queueVerdictComment(task_id, parsed.data.review_verdict);
-      }
+    if (parsed.data.lease_id === undefined) {
+      return json(
+        {
+          error: "lease_id_required",
+          message: "complete requires lease_id for this principal",
+        },
+        400,
+      );
     }
+    const result = writer.complete({ task_id, ...parsed.data, lease_id: parsed.data.lease_id });
+    maybeQueueVerdictComment(ghSync, writer, task_id, parsed.data.review_verdict);
     return json(result);
   } catch (err) {
     return mapTaskError(err);
@@ -660,16 +738,16 @@ function principalActor(principal: NonNullable<ReturnType<typeof getPrincipal>>)
 }
 
 function buildGhIssueUrl(repo: string, issue_number: number): string {
-  return `https://github.com/${repo}/issues/${issue_number}`;
+  return `https://github.com/${repo}/issues/${String(issue_number)}`;
 }
 
 export function conciseTitle(prompt: string): string {
-  const collapsed = prompt.replace(/\s+/g, " ").trim();
+  const collapsed = prompt.replaceAll(/\s+/g, " ").trim();
   if (!collapsed) return "task";
 
-  const sentenceMatch = collapsed.match(/^(.+?[.!?])(?:\s|$)/);
-  if (sentenceMatch) {
-    const sentence = sentenceMatch[1]!.trim();
+  const sentenceMatch = /^(.+?[.!?])(?:\s|$)/.exec(collapsed);
+  if (sentenceMatch?.[1] !== undefined) {
+    const sentence = sentenceMatch[1].trim();
     if (sentence.length <= 100) return sentence;
   }
 

@@ -1,5 +1,7 @@
-import { z } from "zod";
 import type { Services } from "@penumbra/core";
+
+import { z } from "zod";
+
 import { json } from "./_helpers.js";
 
 const TaskDraftPendingQuerySchema = z
@@ -17,7 +19,7 @@ const TaskDraftPendingEscalationsQuerySchema = z
   })
   .strict();
 
-export async function taskDraftsPendingRoute(req: Request, services: Services): Promise<Response> {
+export function taskDraftsPendingRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = TaskDraftPendingQuerySchema.safeParse({
     latest_event_type: url.searchParams.get("latest_event_type"),
@@ -40,10 +42,7 @@ export async function taskDraftsPendingRoute(req: Request, services: Services): 
   return json({ drafts });
 }
 
-export async function taskDraftsPendingEscalationsRoute(
-  req: Request,
-  services: Services,
-): Promise<Response> {
+export function taskDraftsPendingEscalationsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = TaskDraftPendingEscalationsQuerySchema.safeParse({
     project_id: url.searchParams.get("project_id"),

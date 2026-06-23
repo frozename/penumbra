@@ -1,6 +1,9 @@
 import type { Services } from "@penumbra/core";
+
 import { ConversationStreamEventSchema } from "@penumbra/core";
+
 import { json } from "./_helpers.js";
+
 const DEFAULT_TERMINAL_PROGRESS_CAP = 50;
 const TERMINAL_PROGRESS_CAP_TTL_MS = 60 * 60 * 1000;
 const NON_TERMINAL_HANDOFF_STATUSES = new Set(["pending", "approved", "redirected", "dispatched"]);
@@ -64,7 +67,7 @@ export async function handoffsProgressRoute(
   return json({ ok: true });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -84,7 +87,7 @@ function checkTerminalProgressCap(handoff_id: string, nowTs: number): Response |
       {
         error: {
           code: "progress_cap_exceeded",
-          message: `terminal handoff ${handoff_id} exceeded the progress cap of ${cap}`,
+          message: `terminal handoff ${handoff_id} exceeded the progress cap of ${String(cap)}`,
         },
       },
       429,

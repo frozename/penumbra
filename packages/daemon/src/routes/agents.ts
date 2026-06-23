@@ -1,34 +1,36 @@
-import { z } from "zod";
-import type { Services } from "@penumbra/core";
+import { WORKLOADS } from "@penumbra/config";
 import {
-  AgentPerformanceMarkdownParseInputSchema,
-  AgentPerformanceRowSchema,
   AgentPerformanceCaptureFromDispatchSchema,
   AgentPerformanceCaptureFromReconcilerSchema,
-  AgentRankInputSchema,
+  AgentPerformanceMarkdownParseInputSchema,
+  AgentPerformanceRowSchema,
   AgentPerformanceWriter,
-  ImportMarkdownResultSchema,
-  RecordOperatorAgentPerformanceInputSchema,
+  AgentRankInputSchema,
+  AgentRecommendInputSchema,
+  type AgentTaskType,
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
+  ImportMarkdownResultSchema,
+  inferAgentTaskTypeForRole,
   parseAgentPerformanceMarkdownRows,
   readFleetLatency,
+  readSubscriptionPressure,
   recordOperatorAgentPerformance,
+  RecordOperatorAgentPerformanceInputSchema,
   renderAgentPerformanceMarkdown,
   routeAgent,
+  type Services,
 } from "@penumbra/core";
-import { readSubscriptionPressure } from "@penumbra/core";
-import { AgentRecommendInputSchema, inferAgentTaskTypeForRole } from "@penumbra/core";
-import { WORKLOADS } from "@penumbra/config";
-import { getPrincipal } from "../auth.js";
+import { z } from "zod";
 
+import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
 type Workload = (typeof WORKLOADS)[number];
 type AgentRecommendDeprecationLogger = { info: (message: string) => void };
 const taskTypeDeprecationLogged = new Set<AgentRecommendDeprecationLogger>();
 
 export type AgentRoutePressureSnapshot = {
-  snapshots: Array<{
+  snapshots: {
     provider: string;
     window_label: string;
     model: string | null;
@@ -36,18 +38,18 @@ export type AgentRoutePressureSnapshot = {
     resets_at: number | null;
     observed_at: string;
     source_kind: string;
-  }>;
+  }[];
   warnings?: unknown[];
 };
 
 export type AgentRouteAgentchatConfig = {
-  agents: Array<{
+  agents: {
     name: string;
     roles: string[];
     subscription_provider?: string;
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
-  }>;
+  }[];
 };
 
 export type AgentRouteForInput = {
@@ -106,7 +108,7 @@ function readOptionalWorkloadQueryValue(value: string | null): {
   value: Workload | undefined;
   error?: string;
 } {
-  if (value == null || value.length === 0) return { value: undefined };
+  if (value === null || value.length === 0) return { value: undefined };
   if ((WORKLOADS as readonly string[]).includes(value)) return { value: value as Workload };
   return { value: undefined, error: `Invalid input: expected one of ${WORKLOADS.join(", ")}` };
 }
@@ -118,13 +120,14 @@ function resolveWorkloadCandidateRegistry(
   if (workload === undefined) return null;
   const cfg = services.agentchatConfig as
     | {
-        agents?: Array<{ name: string; roles?: string[] }>;
+        agents?: { name: string; roles?: string[] }[];
         workloads?: Partial<
           Record<Workload, { eligible_roles?: string[]; eligible_agents?: string[] }>
         >;
       }
     | undefined;
-  const workloadCfg = cfg?.workloads?.[workload];
+  const workloads = cfg?.workloads;
+  const workloadCfg = workloads ? workloads[workload] : undefined;
   if (!workloadCfg) return null;
 
   const candidates = new Set<string>(workloadCfg.eligible_agents ?? []);
@@ -154,6 +157,78 @@ function isOverPressure(provider: string, pressureSnapshot?: AgentRoutePressureS
   );
 }
 
+type AgentchatAgent = AgentRouteAgentchatConfig["agents"][number];
+type Recommendation = AgentRouteForReturn["recommendation"];
+type AgentRouteForReturn = {
+  recommendation: {
+    agent_name: string;
+    success_rate: number;
+    samples: number;
+  };
+};
+
+function classifyAgentRejection(
+  agent: AgentchatAgent,
+  input: AgentRouteForInput,
+  recommendations: Recommendation[],
+  minSamples: number,
+): AgentRouteRejected | null {
+  if (!agent.roles.includes(input.role)) {
+    return { agent: agent.name, reason: "no_role_match" };
+  }
+  const provider = resolveProvider(agent);
+  if (provider && isOverPressure(provider, input.pressureSnapshot)) {
+    return { agent: agent.name, reason: "under_pressure", details: provider };
+  }
+  const recommendation = recommendations.find((rec) => rec.agent_name === agent.name);
+  if (!recommendation || recommendation.samples < minSamples) {
+    return {
+      agent: agent.name,
+      reason: "below_min_samples",
+      details: String(recommendation?.samples ?? 0),
+    };
+  }
+  return null;
+}
+
+function tryExploration(
+  input: AgentRouteForInput,
+  taskType: ReturnType<typeof inferAgentTaskTypeForRole>,
+  byAgent: Map<string, AgentchatAgent>,
+  recommendations: Recommendation[],
+  rejected: AgentRouteRejected[],
+): AgentRouteForOutput | null {
+  const single = routeAgent({
+    db: input.db,
+    detail: "single",
+    role: input.role,
+    taskType,
+    windowDays: input.windowDays,
+    agentKind: input.agentKind,
+    agentchatConfig: input.agentchatRoles,
+    roleExplorationPolicy: "unsampled-first",
+    defaultRoles: input.defaultRoles,
+    applyPressure: input.pressureSnapshot,
+  });
+  if (single.detail !== "single") {
+    throw new Error("unexpected routeAgent detail for computeRouteForRole exploration");
+  }
+  if (!single.route) return null;
+  const route = single.route;
+  const rec = recommendations.find((candidate) => candidate.agent_name === route.agent);
+  const agent = byAgent.get(route.agent);
+  return {
+    chosen: {
+      agent: route.agent,
+      success_rate: rec?.success_rate ?? 0,
+      samples: rec?.samples ?? 0,
+      roles: agent?.roles ?? [],
+    },
+    rejected,
+    reason: `chose ${route.agent} via unsampled-first exploration`,
+  };
+}
+
 export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOutput {
   const minSamples = input.minSamples ?? 3;
   const taskType = inferAgentTaskTypeForRole("", input.role);
@@ -170,36 +245,16 @@ export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOut
   const recommendations = routeSummary.recommendations;
 
   const byAgent = new Map(input.agentchatRoles.agents.map((agent) => [agent.name, agent] as const));
-  const rejected: AgentRouteRejected[] = [];
   const roleMatches = input.agentchatRoles.agents.filter((agent) =>
     agent.roles.includes(input.role),
   );
-  const rankedRoleMatches = recommendations.filter(
-    (rec) => byAgent.has(rec.agent_name) && byAgent.get(rec.agent_name)!.roles.includes(input.role),
-  );
-
-  for (const agent of input.agentchatRoles.agents) {
-    if (!agent.roles.includes(input.role)) {
-      rejected.push({ agent: agent.name, reason: "no_role_match" });
-      continue;
-    }
-
-    const provider = resolveProvider(agent);
-    if (provider && isOverPressure(provider, input.pressureSnapshot)) {
-      rejected.push({ agent: agent.name, reason: "under_pressure", details: provider });
-      continue;
-    }
-
-    const recommendation = recommendations.find((rec) => rec.agent_name === agent.name);
-    if (!recommendation || recommendation.samples < minSamples) {
-      rejected.push({
-        agent: agent.name,
-        reason: "below_min_samples",
-        details: String(recommendation?.samples ?? 0),
-      });
-      continue;
-    }
-  }
+  const rankedRoleMatches = recommendations.filter((rec) => {
+    const matched = byAgent.get(rec.agent_name);
+    return matched?.roles.includes(input.role) ?? false;
+  });
+  const rejected: AgentRouteRejected[] = input.agentchatRoles.agents
+    .map((agent) => classifyAgentRejection(agent, input, recommendations, minSamples))
+    .filter((row): row is AgentRouteRejected => row !== null);
 
   const eligible = rankedRoleMatches.filter((rec) => {
     const agent = byAgent.get(rec.agent_name);
@@ -210,70 +265,39 @@ export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOut
   });
 
   const chosenRec = eligible[0] ?? null;
-  const chosen = chosenRec
-    ? {
-        agent: chosenRec.agent_name,
-        success_rate: chosenRec.success_rate,
-        samples: chosenRec.samples,
-        roles: byAgent.get(chosenRec.agent_name)?.roles ?? [],
-      }
-    : null;
-
-  if (!chosen) {
+  if (!chosenRec) {
     const roleExplorationPolicy = input.roleExplorationPolicy ?? "unsampled-first";
     if (roleExplorationPolicy === "unsampled-first") {
-      const single = routeAgent({
-        db: input.db,
-        detail: "single",
-        role: input.role,
-        taskType,
-        windowDays: input.windowDays,
-        agentKind: input.agentKind,
-        agentchatConfig: input.agentchatRoles,
-        roleExplorationPolicy,
-        defaultRoles: input.defaultRoles,
-        applyPressure: input.pressureSnapshot,
-      });
-      if (single.detail !== "single") {
-        throw new Error("unexpected routeAgent detail for computeRouteForRole exploration");
-      }
-      if (single.route) {
-        const route = single.route;
-        const rec = recommendations.find((candidate) => candidate.agent_name === route.agent);
-        const agent = byAgent.get(route.agent);
-        return {
-          chosen: {
-            agent: route.agent,
-            success_rate: rec?.success_rate ?? 0,
-            samples: rec?.samples ?? 0,
-            roles: agent?.roles ?? [],
-          },
-          rejected,
-          reason: `chose ${route.agent} via unsampled-first exploration`,
-        };
-      }
+      const explored = tryExploration(input, taskType, byAgent, recommendations, rejected);
+      if (explored) return explored;
     }
-
     const filteredOut = roleMatches.length - eligible.length;
     return {
       chosen: null,
       rejected,
-      reason: `no eligible agent — ${filteredOut} filtered out by role, ${rejected.filter((r) => r.reason === "under_pressure").length} by pressure, ${rejected.filter((r) => r.reason === "below_min_samples").length} by min_samples`,
+      reason: `no eligible agent — ${String(filteredOut)} filtered out by role, ${String(rejected.filter((r) => r.reason === "under_pressure").length)} by pressure, ${String(rejected.filter((r) => r.reason === "below_min_samples").length)} by min_samples`,
     };
   }
+
+  const chosen: AgentRouteChosen = {
+    agent: chosenRec.agent_name,
+    success_rate: chosenRec.success_rate,
+    samples: chosenRec.samples,
+    roles: byAgent.get(chosenRec.agent_name)?.roles ?? [],
+  };
 
   for (const rec of eligible.slice(1)) {
     rejected.push({
       agent: rec.agent_name,
       reason: "lower_success_rate",
-      details: `${rec.success_rate}`,
+      details: String(rec.success_rate),
     });
   }
 
   return {
     chosen,
     rejected,
-    reason: `chose ${chosen.agent} (success_rate ${chosen.success_rate}, ${chosen.samples} samples) over ${Math.max(0, eligible.length - 1)} other role-matching agents`,
+    reason: `chose ${chosen.agent} (success_rate ${String(chosen.success_rate)}, ${String(chosen.samples)} samples) over ${String(Math.max(0, eligible.length - 1))} other role-matching agents`,
   };
 }
 
@@ -406,10 +430,7 @@ export async function agentsPerformanceImportMarkdownRoute(
   }
 }
 
-export async function agentsPerformanceMarkdownRoute(
-  _req: Request,
-  services: Services,
-): Promise<Response> {
+export function agentsPerformanceMarkdownRoute(_req: Request, services: Services): Response {
   try {
     const rows = services.db
       .query<
@@ -427,7 +448,7 @@ export async function agentsPerformanceMarkdownRoute(
   }
 }
 
-export async function agentsRankRoute(req: Request, services: Services): Promise<Response> {
+export function agentsRankRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = AgentRankInputSchema.safeParse({
     task_type: url.searchParams.get("task_type") ?? undefined,
@@ -454,7 +475,7 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
   return json(out.candidates);
 }
 
-export async function agentsFleetLatencyRoute(req: Request, services: Services): Promise<Response> {
+export function agentsFleetLatencyRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = FleetLatencyQuerySchema.safeParse({
     window_hours: url.searchParams.get("window_hours") ?? undefined,
@@ -469,9 +490,20 @@ export async function agentsFleetLatencyRoute(req: Request, services: Services):
   );
 }
 
-export async function agentsRecommendRoute(req: Request, services: Services): Promise<Response> {
-  const url = new URL(req.url);
-  const workloadField = readOptionalWorkloadQueryValue(url.searchParams.get("workload"));
+function logTaskTypeDeprecation(services: Services): void {
+  const logger = (typeof (services.log as { info?: unknown }).info === "function"
+    ? services.log
+    : console) as unknown as AgentRecommendDeprecationLogger;
+  if (!taskTypeDeprecationLogged.has(logger)) {
+    logger.info("agent_recommend: task_type is deprecated; prefer 'workload' instead");
+    taskTypeDeprecationLogged.add(logger);
+  }
+}
+
+function validateRecommendInputs(
+  workloadField: { value: Workload | undefined; error?: string },
+  taskType: string | undefined,
+): Response | null {
   if (workloadField.error) {
     return json(
       {
@@ -483,7 +515,6 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
       400,
     );
   }
-  const taskType = url.searchParams.get("task_type") ?? undefined;
   if (
     workloadField.value !== undefined &&
     taskType !== undefined &&
@@ -499,14 +530,17 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
       400,
     );
   }
+  return null;
+}
+
+export function agentsRecommendRoute(req: Request, services: Services): Response {
+  const url = new URL(req.url);
+  const workloadField = readOptionalWorkloadQueryValue(url.searchParams.get("workload"));
+  const taskType = url.searchParams.get("task_type") ?? undefined;
+  const validation = validateRecommendInputs(workloadField, taskType);
+  if (validation) return validation;
   if (workloadField.value === undefined && taskType !== undefined) {
-    const logger = (services.log && typeof (services.log as { info?: unknown }).info === "function"
-      ? services.log
-      : console) as unknown as AgentRecommendDeprecationLogger;
-    if (!taskTypeDeprecationLogged.has(logger)) {
-      logger.info("agent_recommend: task_type is deprecated; prefer 'workload' instead");
-      taskTypeDeprecationLogged.add(logger);
-    }
+    logTaskTypeDeprecation(services);
   }
   const resolvedTaskType = workloadField.value ?? taskType;
   const parsed = AgentRecommendInputSchema.safeParse({
@@ -524,7 +558,7 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
   const out = routeAgent({
     db: services.db,
     detail: "summary",
-    taskType: parsed.data.task_type as any,
+    taskType: parsed.data.task_type as AgentTaskType,
     riskClass: parsed.data.risk_class,
     windowDays: parsed.data.window_days,
     agentKind: parsed.data.agent_kind,
@@ -536,7 +570,7 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
   return json(out.recommendations);
 }
 
-export async function agentsRouteForRoute(req: Request, services: Services): Promise<Response> {
+export function agentsRouteForRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const parsed = AgentRouteForQuerySchema.safeParse({
     role: url.searchParams.get("role") ?? undefined,

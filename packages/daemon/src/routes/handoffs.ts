@@ -1,26 +1,25 @@
-import { getPrincipal } from "../auth.js";
-import { z } from "zod";
-import type { Services } from "@penumbra/core";
-import type { DaemonServices } from "../serve.js";
 import {
-  CreateHandoffRequestSchema,
   ApproveHandoffRequestSchema,
-  HandoffStatusSchema,
   classifyDispatchReliability,
+  CreateHandoffRequestSchema,
+  type HandoffStatus,
+  HandoffStatusSchema,
+  type Services,
 } from "@penumbra/core";
-import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
-import { resolveSingleRoute } from "./role-routing.js";
-import { requireWorkerPrincipalMatch } from "../auth.js";
+import { z } from "zod";
+
+import type { DaemonServices } from "../serve.js";
 import type { ExtraWorkerConfig } from "../workers/config.js";
 
+import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
+import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { json } from "./_helpers.js";
-function readWorktreeChangedSnapshot(
-  events: Array<{ kind: string; meta: unknown }>,
-): boolean | null {
+import { resolveSingleRoute } from "./role-routing.js";
+function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === "object" && "worktree_changed" in meta) {
@@ -31,7 +30,7 @@ function readWorktreeChangedSnapshot(
 }
 
 function readDispatchEndCommittedFromEvents(
-  events: Array<{ kind: string; meta: unknown }>,
+  events: { kind: string; meta: unknown }[],
 ): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
@@ -49,7 +48,7 @@ function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_rev
   row: T,
 ): T {
   const b = (v: unknown): boolean | null =>
-    v === 1 ? true : v === 0 ? false : v == null ? null : (v as boolean);
+    v === 1 ? true : v === 0 ? false : v === null || v === undefined ? null : (v as boolean);
   return {
     ...row,
     use_worktree: b(row.use_worktree),
@@ -98,7 +97,7 @@ function workerCanClaimProject(
 ): boolean {
   return !(
     authz?.isolation === "hard" &&
-    authz.project_id != null &&
+    authz.project_id !== undefined &&
     project_id !== authz.project_id
   );
 }
@@ -134,7 +133,7 @@ function workerHasWarmClaimAdvantage(
 ): boolean {
   if (!agentUsesWarmPool(services, handoff.to_agent)) return false;
   const authz = services.workerAuthz?.get(worker_id);
-  if (handoff.project_id === null) return authz?.project_id == null;
+  if (handoff.project_id === null) return authz?.project_id === undefined;
   return authz?.project_id === handoff.project_id;
 }
 
@@ -372,7 +371,7 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   });
 }
 
-async function safeJson(req: Request): Promise<unknown | null> {
+async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
   } catch {
@@ -380,16 +379,12 @@ async function safeJson(req: Request): Promise<unknown | null> {
   }
 }
 
-export async function handoffsListPendingRoute(
-  req: Request,
-  services: DaemonServices,
-): Promise<Response> {
-  const url = new URL(req.url);
-  const conv = url.searchParams.get("conversation_id") ?? undefined;
-  const statusParam = url.searchParams.get("status");
-  const sinceParam = url.searchParams.get("since");
-  const projectIdParam = url.searchParams.get("project_id");
-  const projectScopeParam = url.searchParams.get("project_scope");
+type WorkerAuthz = { project_id?: string; isolation: ExtraWorkerConfig["isolation"] };
+
+function validateProjectScopeQuery(
+  projectIdParam: string | null,
+  projectScopeParam: string | null,
+): Response | null {
   if (projectIdParam !== null && projectScopeParam !== null) {
     return json(
       {
@@ -412,101 +407,174 @@ export async function handoffsListPendingRoute(
       400,
     );
   }
+  return null;
+}
+
+function resolveProjectIdFromParams(
+  projectIdParam: string | null,
+  projectScopeParam: string | null,
+  services: DaemonServices,
+): { project_id: string | null | undefined; error?: Response } {
+  let project_id: string | null | undefined;
+  if (projectIdParam !== null) {
+    if (projectIdParam.trim() === "") {
+      return {
+        project_id,
+        error: json(
+          { error: { code: "validation_error", message: "project_id must not be empty" } },
+          400,
+        ),
+      };
+    }
+    if (projectIdParam === NULL_PROJECT_ID_SENTINEL) {
+      services.log.warn(
+        { event: "deprecated_null_sentinel", recommend: "project_scope=global" },
+        "deprecated null project_id sentinel; prefer project_scope=global",
+      );
+      project_id = null;
+    } else {
+      project_id = projectIdParam;
+    }
+    if (
+      services.projectRegistry &&
+      project_id !== null &&
+      !services.projectRegistry.has(project_id)
+    ) {
+      return { project_id, error: json({ error: { code: "unknown_project", project_id } }, 400) };
+    }
+  } else if (projectScopeParam === "global") {
+    project_id = null;
+  }
+  return { project_id };
+}
+
+function applyAuthzProjectScope(
+  project_id: string | null | undefined,
+  authz: WorkerAuthz | undefined,
+): { project_id: string | null | undefined; error?: Response } {
+  if (authz?.isolation !== "hard") return { project_id };
+  if (authz.project_id === undefined) {
+    return {
+      project_id,
+      error: json(
+        {
+          error: {
+            code: "project_mismatch",
+            message: "hard-isolated worker missing configured project_id",
+          },
+        },
+        403,
+      ),
+    };
+  }
+  if (project_id === undefined) {
+    return { project_id: authz.project_id };
+  }
+  if (project_id !== authz.project_id) {
+    return {
+      project_id,
+      error: json(
+        {
+          error: {
+            code: "project_mismatch",
+            message: `handoff list scope ${String(project_id)} does not match worker scope ${authz.project_id}`,
+            project_id: authz.project_id,
+          },
+        },
+        403,
+      ),
+    };
+  }
+  return { project_id };
+}
+
+function parseStatusListParam(statusParam: string): { statuses?: string[]; error?: Response } {
+  const statuses = statusParam
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (statuses.length === 0) {
+    return {
+      error: json({ error: { code: "validation_error", message: "status is empty" } }, 400),
+    };
+  }
+  for (const s of statuses) {
+    if (!VALID_STATUSES.has(s)) {
+      return {
+        error: json({ error: { code: "validation_error", message: `unknown status: ${s}` } }, 400),
+      };
+    }
+  }
+  return { statuses };
+}
+
+function handoffsListPendingWithStatus(
+  statusParam: string,
+  sinceParam: string | null,
+  conv: string | undefined,
+  authz: WorkerAuthz | undefined,
+  projectIdParam: string | null,
+  projectScopeParam: string | null,
+  services: DaemonServices,
+): Response {
+  const resolved = resolveProjectIdFromParams(projectIdParam, projectScopeParam, services);
+  if (resolved.error) return resolved.error;
+  const scoped = applyAuthzProjectScope(resolved.project_id, authz);
+  if (scoped.error) return scoped.error;
+  const project_id = scoped.project_id;
+
+  const parsed = parseStatusListParam(statusParam);
+  if (parsed.error) return parsed.error;
+  const statuses = parsed.statuses ?? [];
+
+  if (statuses.length === 1 && statuses[0] === "completed" && sinceParam !== null) {
+    if (!sinceParam || Number.isNaN(Date.parse(sinceParam))) {
+      return json(
+        { error: { code: "validation_error", message: "since must be an ISO timestamp" } },
+        400,
+      );
+    }
+    const sinceUtc = new Date(sinceParam).toISOString();
+    const done = services.handoffReader.countCompletedSince({
+      since: sinceUtc,
+      conversation_id: conv,
+    });
+    return json({ done });
+  }
+  const handoffs = services.handoffReader
+    .listByStatus({
+      statuses: statuses as HandoffStatus[],
+      conversation_id: conv,
+      project_id,
+    })
+    .map(coerceHandoffBooleans);
+  return json({ handoffs });
+}
+
+export function handoffsListPendingRoute(req: Request, services: DaemonServices): Response {
+  const url = new URL(req.url);
+  const conv = url.searchParams.get("conversation_id") ?? undefined;
+  const statusParam = url.searchParams.get("status");
+  const sinceParam = url.searchParams.get("since");
+  const projectIdParam = url.searchParams.get("project_id");
+  const projectScopeParam = url.searchParams.get("project_scope");
+  const scopeError = validateProjectScopeQuery(projectIdParam, projectScopeParam);
+  if (scopeError) return scopeError;
 
   const principal = getPrincipal(req);
   const authz =
     principal?.kind === "worker" ? services.workerAuthz?.get(principal.worker_id) : undefined;
 
   if (statusParam !== null) {
-    let project_id: string | null | undefined;
-    if (projectIdParam !== null) {
-      if (projectIdParam.trim() === "") {
-        return json(
-          { error: { code: "validation_error", message: "project_id must not be empty" } },
-          400,
-        );
-      }
-      if (projectIdParam === NULL_PROJECT_ID_SENTINEL) {
-        services.log.warn(
-          { event: "deprecated_null_sentinel", recommend: "project_scope=global" },
-          "deprecated null project_id sentinel; prefer project_scope=global",
-        );
-        project_id = null;
-      } else {
-        project_id = projectIdParam;
-      }
-      if (
-        services.projectRegistry &&
-        project_id !== null &&
-        !services.projectRegistry.has(project_id)
-      ) {
-        return json({ error: { code: "unknown_project", project_id } }, 400);
-      }
-    } else if (projectScopeParam === "global") {
-      project_id = null;
-    }
-
-    if (authz?.isolation === "hard") {
-      if (authz.project_id === undefined) {
-        return json(
-          {
-            error: {
-              code: "project_mismatch",
-              message: "hard-isolated worker missing configured project_id",
-            },
-          },
-          403,
-        );
-      }
-      if (project_id === undefined) {
-        project_id = authz.project_id;
-      } else if (project_id !== authz.project_id) {
-        return json(
-          {
-            error: {
-              code: "project_mismatch",
-              message: `handoff list scope ${String(project_id)} does not match worker scope ${authz.project_id}`,
-              project_id: authz.project_id,
-            },
-          },
-          403,
-        );
-      }
-    }
-
-    const statuses = statusParam
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (statuses.length === 0)
-      return json({ error: { code: "validation_error", message: "status is empty" } }, 400);
-    for (const s of statuses) {
-      if (!VALID_STATUSES.has(s as any)) {
-        return json({ error: { code: "validation_error", message: `unknown status: ${s}` } }, 400);
-      }
-    }
-    if (statuses.length === 1 && statuses[0] === "completed" && sinceParam !== null) {
-      if (!sinceParam || Number.isNaN(Date.parse(sinceParam))) {
-        return json(
-          { error: { code: "validation_error", message: "since must be an ISO timestamp" } },
-          400,
-        );
-      }
-      const sinceUtc = new Date(sinceParam).toISOString();
-      const done = services.handoffReader.countCompletedSince({
-        since: sinceUtc,
-        conversation_id: conv,
-      });
-      return json({ done });
-    }
-    const handoffs = services.handoffReader
-      .listByStatus({
-        statuses: statuses as any,
-        conversation_id: conv,
-        project_id,
-      })
-      .map(coerceHandoffBooleans);
-    return json({ handoffs });
+    return handoffsListPendingWithStatus(
+      statusParam,
+      sinceParam,
+      conv,
+      authz,
+      projectIdParam,
+      projectScopeParam,
+      services,
+    );
   }
 
   // No status param: back-compat — pending only
@@ -516,7 +584,7 @@ export async function handoffsListPendingRoute(
   return json({ handoffs });
 }
 
-export async function handoffsLatestRoute(req: Request, services: Services): Promise<Response> {
+export function handoffsLatestRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
   const conversation_id = url.searchParams.get("conversation_id");
   if (!conversation_id) {
@@ -603,6 +671,91 @@ export async function handoffsApproveRoute(
   }
 }
 
+function enforceClaimSpreadCap(
+  services: DaemonServices,
+  handoff: {
+    dispatch_kind?: string | null;
+    workflow_run_id?: string | null;
+    project_id: string | null;
+    to_agent: string;
+  },
+  worker_id: string,
+  handoff_id: string,
+): { decision: ClaimSpreadDecision | null; response?: Response } {
+  const decision = resolveClaimSpreadDecision(services, handoff, worker_id);
+  if (
+    decision &&
+    countWorkflowGroupClaimsForWorker(services, decision.workflow_run_id, worker_id) >=
+      decision.max_per_worker
+  ) {
+    return { decision, response: claimSpreadCapResponse(handoff_id, decision) };
+  }
+  return { decision };
+}
+
+function recordClaimDispatchEvent(
+  services: DaemonServices,
+  handoff_id: string,
+  worker_id: string,
+): void {
+  const claimedRoot = services.db
+    .query<
+      { root_handoff_id: string | null },
+      [string]
+    >(`SELECT root_handoff_id FROM handoffs WHERE handoff_id = ?`)
+    .get(handoff_id);
+  if (!claimedRoot) return;
+  const perRootTop3 = services.db
+    .query<{ root_handoff_id: string; in_flight_count: number }, []>(
+      `SELECT root_handoff_id, COUNT(*) AS in_flight_count
+       FROM handoffs
+       WHERE status='dispatched'
+       GROUP BY root_handoff_id
+       ORDER BY in_flight_count DESC, root_handoff_id ASC
+       LIMIT 3`,
+    )
+    .all();
+  services.dispatchEventLog.record({
+    handoff_id,
+    worker_id,
+    source: "daemon",
+    kind: "claim",
+    ts: services.clock().toISOString(),
+    meta: {
+      root_handoff_id: claimedRoot.root_handoff_id ?? handoff_id,
+      per_root_top3: perRootTop3,
+    },
+  });
+}
+
+function buildClaimConflictResponse(
+  services: DaemonServices,
+  handoff_id: string,
+  worker_id: string,
+  spreadDecision: ClaimSpreadDecision | null,
+): Response {
+  const after = services.handoffReader.get(handoff_id);
+  if (
+    spreadDecision &&
+    after &&
+    (after.status === "approved" || after.status === "redirected") &&
+    countWorkflowGroupClaimsForWorker(services, spreadDecision.workflow_run_id, worker_id) >=
+      spreadDecision.max_per_worker
+  ) {
+    return claimSpreadCapResponse(handoff_id, spreadDecision);
+  }
+  return json(
+    {
+      error: {
+        code: "conflict",
+        message: `handoff ${handoff_id} cannot be claimed (status=${after?.status ?? "unknown"})`,
+      },
+      current_status: after?.status ?? null,
+    },
+    409,
+  );
+}
+
 export async function handoffsClaimRoute(
   req: Request,
   handoff_id: string,
@@ -642,7 +795,7 @@ export async function handoffsClaimRoute(
   const authz = services.workerAuthz?.get(body.data.worker_id);
   if (
     authz?.isolation === "hard" &&
-    authz.project_id != null &&
+    authz.project_id !== undefined &&
     cur.project_id !== authz.project_id
   ) {
     return json(
@@ -657,78 +810,67 @@ export async function handoffsClaimRoute(
     );
   }
 
-  const spreadDecision = resolveClaimSpreadDecision(services, cur, body.data.worker_id);
-  if (
-    spreadDecision &&
-    countWorkflowGroupClaimsForWorker(
-      services,
-      spreadDecision.workflow_run_id,
-      body.data.worker_id,
-    ) >= spreadDecision.max_per_worker
-  ) {
-    return claimSpreadCapResponse(handoff_id, spreadDecision);
-  }
+  const cap = enforceClaimSpreadCap(services, cur, body.data.worker_id, handoff_id);
+  if (cap.response) return cap.response;
+  const spreadDecision = cap.decision;
 
   const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id, {
     workflow_run_id: spreadDecision?.workflow_run_id,
     maxWorkflowSiblingsPerWorker: spreadDecision?.max_per_worker,
   });
   if (!won) {
-    const after = services.handoffReader.get(handoff_id);
-    if (
-      spreadDecision &&
-      after &&
-      (after.status === "approved" || after.status === "redirected") &&
-      countWorkflowGroupClaimsForWorker(
-        services,
-        spreadDecision.workflow_run_id,
-        body.data.worker_id,
-      ) >= spreadDecision.max_per_worker
-    ) {
-      return claimSpreadCapResponse(handoff_id, spreadDecision);
-    }
-    return json(
-      {
-        error: {
-          code: "conflict",
-          message: `handoff ${handoff_id} cannot be claimed (status=${after?.status ?? "unknown"})`,
-        },
-        current_status: after?.status ?? null,
-      },
-      409,
-    );
+    return buildClaimConflictResponse(services, handoff_id, body.data.worker_id, spreadDecision);
   }
 
-  const claimedRoot = services.db
-    .query<
-      { root_handoff_id: string | null },
-      [string]
-    >(`SELECT root_handoff_id FROM handoffs WHERE handoff_id = ?`)
-    .get(handoff_id);
-  if (claimedRoot) {
-    const perRootTop3 = services.db
-      .query<{ root_handoff_id: string; in_flight_count: number }, []>(
-        `SELECT root_handoff_id, COUNT(*) AS in_flight_count
-       FROM handoffs
-       WHERE status='dispatched'
-       GROUP BY root_handoff_id
-       ORDER BY in_flight_count DESC, root_handoff_id ASC
-       LIMIT 3`,
-      )
-      .all();
-    services.dispatchEventLog.record({
+  recordClaimDispatchEvent(services, handoff_id, body.data.worker_id);
+  return json({ handoff_id, status: "dispatched" });
+}
+
+type ResolvedExpectedWorker =
+  | { kind: "ok"; expected_worker_id: string | undefined }
+  | { kind: "mismatch" };
+
+function resolveExpectedWorkerForCompletion(
+  req: Request,
+  body: ReturnType<ReturnType<typeof z.object>["safeParse"]>,
+): ResolvedExpectedWorker {
+  const principal = getPrincipal(req);
+  if (principal?.kind === "worker") {
+    if (
+      body.success &&
+      (body.data as { worker_id?: string }).worker_id !== undefined &&
+      (body.data as { worker_id?: string }).worker_id !== principal.worker_id
+    ) {
+      return { kind: "mismatch" };
+    }
+    return { kind: "ok", expected_worker_id: principal.worker_id };
+  }
+  return {
+    kind: "ok",
+    expected_worker_id: body.success ? (body.data as { worker_id?: string }).worker_id : undefined,
+  };
+}
+
+function completeCancelFallback(services: Services, handoff_id: string): Response {
+  const cancelledAtIso = services.clock().toISOString();
+  services.handoffWriter.markFailed(handoff_id, {
+    reason: "cancelled",
+    resolved_by: "cancel",
+    ts: cancelledAtIso,
+  });
+  const cancelled = services.handoffReader.get(handoff_id);
+  if (cancelled) {
+    maybeTeardownLongLivedTick({
+      services,
       handoff_id,
-      worker_id: body.data.worker_id,
-      source: "daemon",
-      kind: "claim" as any,
-      ts: services.clock().toISOString(),
-      meta: {
-        root_handoff_id: claimedRoot.root_handoff_id ?? handoff_id,
-        per_root_top3: perRootTop3,
-      },
+      dispatch_kind: cancelled.dispatch_kind,
+      long_lived_tick_id: cancelled.long_lived_tick_id,
+      outcome: "failed",
+      error: "cancelled",
+      resolved_at_iso: cancelledAtIso,
     });
   }
-  return json({ handoff_id, status: "dispatched" });
+  return json({ handoff_id, status: "failed", reason: "cancelled" });
 }
 
 export async function handoffsCompleteRoute(
@@ -740,33 +882,23 @@ export async function handoffsCompleteRoute(
   const raw = await safeJson(_req);
   const body = z.object({ worker_id: z.string().optional() }).safeParse(raw);
 
-  const principal = getPrincipal(_req);
-  let expected_worker_id: string | undefined;
-  if (principal?.kind === "worker") {
-    if (
-      body.success &&
-      body.data.worker_id !== undefined &&
-      body.data.worker_id !== principal.worker_id
-    ) {
-      return json(
-        {
-          error: {
-            code: "worker_id_mismatch",
-            message: "body worker_id disagrees with credential",
-          },
+  const resolved = resolveExpectedWorkerForCompletion(_req, body);
+  if (resolved.kind === "mismatch") {
+    return json(
+      {
+        error: {
+          code: "worker_id_mismatch",
+          message: "body worker_id disagrees with credential",
         },
-        403,
-      );
-    }
-    expected_worker_id = principal.worker_id;
-  } else {
-    expected_worker_id = body.success ? body.data.worker_id : undefined;
+      },
+      403,
+    );
   }
 
   const completedAtIso = services.clock().toISOString();
   const won = services.handoffWriter.markCompleted(handoff_id, {
     ts: completedAtIso,
-    expected_worker_id,
+    expected_worker_id: resolved.expected_worker_id,
   });
   if (won) {
     const completed = services.handoffReader.get(handoff_id);
@@ -789,25 +921,7 @@ export async function handoffsCompleteRoute(
       404,
     );
   if (cur.status === "dispatched" && cur.cancel_requested_at !== null) {
-    const cancelledAtIso = services.clock().toISOString();
-    services.handoffWriter.markFailed(handoff_id, {
-      reason: "cancelled",
-      resolved_by: "cancel",
-      ts: cancelledAtIso,
-    });
-    const cancelled = services.handoffReader.get(handoff_id);
-    if (cancelled) {
-      maybeTeardownLongLivedTick({
-        services,
-        handoff_id,
-        dispatch_kind: cancelled.dispatch_kind,
-        long_lived_tick_id: cancelled.long_lived_tick_id,
-        outcome: "failed",
-        error: "cancelled",
-        resolved_at_iso: cancelledAtIso,
-      });
-    }
-    return json({ handoff_id, status: "failed", reason: "cancelled" });
+    return completeCancelFallback(services, handoff_id);
   }
   return json(
     {
@@ -821,11 +935,7 @@ export async function handoffsCompleteRoute(
   );
 }
 
-export async function handoffsGetRoute(
-  _req: Request,
-  handoff_id: string,
-  services: Services,
-): Promise<Response> {
+export function handoffsGetRoute(_req: Request, handoff_id: string, services: Services): Response {
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
     return json({ error: { code: "not_found", message: `handoff ${handoff_id} not found` } }, 404);
@@ -833,11 +943,11 @@ export async function handoffsGetRoute(
   return json({ handoff });
 }
 
-export async function handoffsStatusRoute(
+export function handoffsStatusRoute(
   _req: Request,
   handoff_id: string,
   services: Services,
-): Promise<Response> {
+): Response {
   const row = services.handoffReader.get(handoff_id);
   if (!row) {
     return json({ error: { code: "not_found", message: `handoff not found: ${handoff_id}` } }, 404);

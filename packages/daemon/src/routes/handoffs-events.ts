@@ -1,14 +1,13 @@
 import type { Services } from "@penumbra/core";
 
-import { json } from "./_helpers.js";
-export async function handoffsEventsRoute(_req: Request, services: Services): Promise<Response> {
+export function handoffsEventsRoute(_req: Request, services: Services): Response {
   // Hold the unsubscribe in the underlying-source closure so cancel() can reach
   // it without going through `this` (which is not the controller).
   let off: (() => void) | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller: ReadableStreamDefaultController<Uint8Array>): void {
       const encoder = new TextEncoder();
       off = services.handoffEvents.subscribe((row) => {
         try {
@@ -39,7 +38,7 @@ export async function handoffsEventsRoute(_req: Request, services: Services): Pr
         }
       }, 15_000);
     },
-    cancel() {
+    cancel(): void {
       if (keepaliveTimer) clearInterval(keepaliveTimer);
       keepaliveTimer = null;
       try {

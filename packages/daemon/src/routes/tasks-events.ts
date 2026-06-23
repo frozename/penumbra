@@ -1,8 +1,10 @@
-import { z } from "zod";
-import type { Services } from "@penumbra/core";
-import type { TaskEvent } from "@penumbra/core";
+import type { Services, TaskEvent } from "@penumbra/core";
+
 import { TaskEventBus, TaskEventKindSchema } from "@penumbra/core";
+import { z } from "zod";
+
 import { json } from "./_helpers.js";
+
 interface TaskEventDbRow {
   task_id: string;
   at: number;
@@ -47,11 +49,7 @@ function hydrateTaskEvent(row: TaskEventDbRow): TaskEvent {
   };
 }
 
-export async function tasksEventsRoute(
-  req: Request,
-  services: Services,
-  bus: TaskEventBus,
-): Promise<Response> {
+export function tasksEventsRoute(req: Request, services: Services, bus: TaskEventBus): Response {
   const url = new URL(req.url);
   const query = TaskEventsQuerySchema.safeParse({
     since: url.searchParams.get("since") ?? undefined,
@@ -70,7 +68,7 @@ export async function tasksEventsRoute(
 
   let shutdown: (() => Promise<void>) | null = null;
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller: ReadableStreamDefaultController<Uint8Array>): void {
       const encoder = new TextEncoder();
       const iterator = bus.subscribe(predicate);
       let keepalive: ReturnType<typeof setInterval> | null = null;
@@ -86,7 +84,7 @@ export async function tasksEventsRoute(
         }
       };
 
-      const close = async () => {
+      const close = async (): Promise<void> => {
         if (closed) return;
         closed = true;
         if (keepalive) clearInterval(keepalive);
@@ -121,7 +119,7 @@ export async function tasksEventsRoute(
 
       write(": ok\n\n");
 
-      void (async () => {
+      void (async (): Promise<void> => {
         try {
           for await (const event of iterator) {
             if (!write(`data: ${JSON.stringify(event)}\n\n`)) {
@@ -139,7 +137,7 @@ export async function tasksEventsRoute(
         }
       }, 30_000);
     },
-    cancel() {
+    cancel(): void {
       if (shutdown) {
         void shutdown();
       }
