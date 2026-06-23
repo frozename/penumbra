@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { MaestroSessionWriter } from "../maestro/writer.js";
 import type { RouteAgentFn } from "./rank-bridge.js";
 
+import { safeParseJSON } from "../utils/json.js";
 import { type AgentRankRow, pickPreferred } from "./auction.js";
 import { type AgentDescriptor, isEligible, TIER_ORDER } from "./eligibility.js";
 import { enforceEmitCaps } from "./emit-caps.js";
@@ -112,8 +113,8 @@ interface FailTaskRow {
 
 function parseDenyAgents(eligibilityJson: string | undefined): string[] {
   if (!eligibilityJson) return [];
-  const parsed = JSON.parse(eligibilityJson) as { deny_agents?: unknown };
-  return Array.isArray(parsed.deny_agents)
+  const parsed = safeParseJSON<{ deny_agents?: unknown }>(eligibilityJson);
+  return parsed && Array.isArray(parsed.deny_agents)
     ? parsed.deny_agents.filter((value): value is string => typeof value === "string")
     : [];
 }
@@ -547,10 +548,10 @@ export class TaskWriter {
       .get(candidate.id);
 
     if (existingAuctioned?.payload_json) {
-      const payload = JSON.parse(existingAuctioned.payload_json) as {
-        preferred_agent?: string | null;
-      };
-      const preferredAgent = payload.preferred_agent ?? null;
+      const payload = safeParseJSON<{ preferred_agent?: string | null }>(
+        existingAuctioned.payload_json,
+      );
+      const preferredAgent = payload?.preferred_agent ?? null;
       return preferredAgent && preferredAgent !== input.agent_id ? "skip" : { rankings: null };
     }
 
@@ -1713,7 +1714,7 @@ export class TaskWriter {
         at: r.at,
         kind: r.kind as TaskEventKind,
         actor: r.actor,
-        payload: r.payload_json ? (JSON.parse(r.payload_json) as unknown) : null,
+        payload: safeParseJSON<unknown>(r.payload_json),
       }));
     }
 
@@ -1849,13 +1850,9 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     priority: row.priority as TaskRecord["priority"],
     prompt: row.prompt,
     acceptance_criteria: row.acceptance_criteria,
-    expected_artifacts: row.expected_artifacts
-      ? (JSON.parse(row.expected_artifacts) as ExpectedArtifact[])
-      : null,
-    eligibility: JSON.parse(row.eligibility) as Eligibility,
-    review_eligibility: row.review_eligibility
-      ? (JSON.parse(row.review_eligibility) as Eligibility)
-      : null,
+    expected_artifacts: safeParseJSON<ExpectedArtifact[]>(row.expected_artifacts),
+    eligibility: safeParseJSON<Eligibility>(row.eligibility) ?? {},
+    review_eligibility: safeParseJSON<Eligibility>(row.review_eligibility),
     requires_review: row.requires_review === 1,
     bounds_wall_clock_ms: row.bounds_wall_clock_ms,
     bounds_cost_cents: row.bounds_cost_cents,
@@ -1864,9 +1861,7 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     branch_base: row.branch_base,
     status: row.status as TaskStatus,
     result_summary: row.result_summary,
-    result_artifacts: row.result_artifacts
-      ? (JSON.parse(row.result_artifacts) as ExpectedArtifact[])
-      : null,
+    result_artifacts: safeParseJSON<ExpectedArtifact[]>(row.result_artifacts),
     failure_reason: row.failure_reason,
     chain_id: row.chain_id,
     origin: row.origin,

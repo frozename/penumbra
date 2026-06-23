@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { safeParseJSON } from "../utils/json.js";
 import { trimWorkingMemoryThreadNotes } from "./thread-notes-trim.js";
 import { type WorkingMemory, WorkingMemorySchema } from "./types.js";
 
@@ -17,12 +18,22 @@ interface UpdateContext {
   running_tick_id?: string;
 }
 
-function parseWorkingMemory(value: string): WorkingMemory | null {
-  try {
-    return WorkingMemorySchema.parse(JSON.parse(value));
-  } catch {
-    return null;
-  }
+function emptyWorkingMemory(): WorkingMemory {
+  return {
+    version: 1,
+    updated_at: 0,
+    pending_goals: [],
+    open_threads: [],
+    watches: [],
+    recent_decisions: [],
+  };
+}
+
+function parseWorkingMemory(value: string | null | undefined): WorkingMemory | null {
+  const parsed = safeParseJSON<unknown>(value);
+  if (parsed === null) return null;
+  const result = WorkingMemorySchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 function goalAppendedAfterTick(goal: Goal, tickStartedAt: number): boolean {
@@ -59,7 +70,7 @@ export function readLongLivedAgentWorkingMemory(db: Database, agent_id: string):
     >("SELECT working_memory_json FROM long_lived_agents WHERE id = ?")
     .get(agent_id);
   if (!row) throw new Error("agent_not_found");
-  return WorkingMemorySchema.parse(JSON.parse(row.working_memory_json));
+  return parseWorkingMemory(row.working_memory_json) ?? emptyWorkingMemory();
 }
 
 export interface LongLivedAgentStateUpdate {

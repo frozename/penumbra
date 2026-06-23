@@ -490,6 +490,7 @@ export {
   UnexpectedReviewVerdict,
 } from "./tasks/writer.js";
 export { type Clock, systemClock } from "./utils/clock.js";
+export { safeParseJSON } from "./utils/json.js";
 export { systemUuid, type Uuid } from "./utils/uuid.js";
 export type {
   BuildRegistryOpts,

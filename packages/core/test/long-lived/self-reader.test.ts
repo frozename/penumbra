@@ -77,6 +77,19 @@ describe("long-lived self reader/writer helpers", () => {
     expect(() => readLongLivedAgentWorkingMemory(db, "missing")).toThrow(/agent_not_found/);
   });
 
+  it("returns empty working memory instead of throwing on a corrupt row", () => {
+    const db = new Database(":memory:");
+    seed(db);
+    db.query("UPDATE long_lived_agents SET working_memory_json = ? WHERE id='a'").run("{not json");
+    let wm!: WorkingMemory;
+    expect(() => {
+      wm = readLongLivedAgentWorkingMemory(db, "a");
+    }).not.toThrow();
+    expect(wm.version).toBe(1);
+    expect(wm.pending_goals).toEqual([]);
+    expect(wm.open_threads).toEqual([]);
+  });
+
   it("updates working memory and intent summary independently", () => {
     const db = new Database(":memory:");
     seed(db);
