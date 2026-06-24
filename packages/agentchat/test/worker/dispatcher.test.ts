@@ -288,7 +288,7 @@ test("aborts dispatch when durable dispatch.start delivery fails (HTTP 500)", as
   }
 });
 
-test("dispatch.start barrier failure terminates the lifecycle (emits dispatch.end + complete)", async () => {
+test("dispatch.start barrier failure terminates the lifecycle (emits dispatch.end + markFailed)", async () => {
   const events: DispatchEventInput[] = [];
   const onClaimRetryable = mock();
   const d = deps({
@@ -312,19 +312,24 @@ test("dispatch.start barrier failure terminates the lifecycle (emits dispatch.en
   expect(endEvent).toBeDefined();
   expect(endEvent?.meta?.status).toBe("error");
   expect(endEvent?.meta?.error_summary).toContain("dispatch_start_barrier_failed");
-  // And complete() is called so the row goes terminal (not stuck claimed).
-  expect(d.complete).toHaveBeenCalledTimes(1);
-  expect(d.complete).toHaveBeenCalledWith("h-barrier-terminal");
-  // complete() succeeded in this test, so the retryable fallback is not used.
+  // markFailed() — not complete() — is called so the row is durably failed,
+  // not silently masked as a successful completion.
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+  expect(d.markFailed).toHaveBeenCalledWith(
+    "h-barrier-terminal",
+    expect.stringContaining("dispatch_start_barrier_failed"),
+  );
+  // markFailed() succeeded, so the retryable fallback is not used.
   expect(onClaimRetryable).not.toHaveBeenCalled();
 });
 
-test("dispatch.start barrier failure + complete failure falls back to onClaimRetryable", async () => {
+test("dispatch.start barrier failure + markFailed failure falls back to onClaimRetryable", async () => {
   const events: DispatchEventInput[] = [];
   const onClaimRetryable = mock();
   const d = deps({
     dispatchStartBarrier: () => Promise.reject(new Error("daemon unreachable")),
-    complete: mock().mockRejectedValue(new Error("complete also fails")),
+    markFailed: mock().mockRejectedValue(new Error("markFailed also fails")),
     onEvent: (event) => events.push(event),
     onClaimRetryable,
     workerId: "w-barrier-fallback",
@@ -339,7 +344,8 @@ test("dispatch.start barrier failure + complete failure falls back to onClaimRet
     (event) => event.kind === "dispatch.end" && event.handoff_id === "h-barrier-fallback",
   );
   expect(endEvent?.meta?.status).toBe("error");
-  expect(d.complete).toHaveBeenCalledTimes(1);
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
   // Worker forgets dedup state so SSE/poll can re-surface the row.
   expect(onClaimRetryable).toHaveBeenCalledTimes(1);
   expect(onClaimRetryable).toHaveBeenCalledWith("h-barrier-fallback");
