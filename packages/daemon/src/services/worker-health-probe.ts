@@ -123,14 +123,23 @@ export class WorkerHealthProbe {
       this.missCounts.set(worker_id, misses);
 
       if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
-        this.recoveredThisStreak.add(worker_id);
-        void this.controller.onSignal({
+        const signal: WorkerHealthSignal = {
           kind: "miss_threshold_exceeded",
           worker_id,
           probe_id: probeId,
           misses,
           probe_interval_ms: this.intervalMs,
-        });
+        };
+        Promise.resolve(this.controller.onSignal(signal))
+          .then(() => {
+            this.recoveredThisStreak.add(worker_id);
+          })
+          .catch((err: unknown) => {
+            this.log.error(
+              { err, worker_id, probe_id: probeId },
+              "worker health onSignal rejected",
+            );
+          });
       }
     }
 

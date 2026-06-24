@@ -436,3 +436,60 @@ test("default worker health controller evicts wedged worker before orphan recove
     "recover:worker-a",
   ]);
 });
+
+test("async onSignal rejection is logged and allows re-signal on next tick", async () => {
+  vi.useFakeTimers();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+
+  const errorLogs: Array<{ err: Error; worker_id: string }> = [];
+  const log = makeLogStub();
+  log.error = ((obj: { err: unknown; worker_id?: string }) => {
+    errorLogs.push({
+      err: obj.err as Error,
+      worker_id: (obj as { worker_id: string }).worker_id ?? "",
+    });
+  }) as unknown as ProbeLog["error"];
+
+  let signalCount = 0;
+  let shouldFail = true;
+  const controller: WorkerHealthController = {
+    onSignal: async (): Promise<void> => {
+      signalCount++;
+      if (shouldFail) {
+        shouldFail = false;
+        throw new Error("simulated eviction failure");
+      }
+    },
+  };
+
+  const { services } = buildServices();
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    controller,
+    log,
+  });
+
+  probe.start();
+  advance(500);
+  await flushPending();
+
+  // First signal reached threshold then rejected — log.error must have been called.
+  expect(signalCount).toBe(1);
+  expect(errorLogs).toHaveLength(1);
+  expect(errorLogs[0].err.message).toBe("simulated eviction failure");
+  expect(errorLogs[0].worker_id).toBe("worker-a");
+
+  // Because recoveredThisStreak was NOT set on failure, the next tick re-signals.
+  advance(200);
+  await flushPending();
+  expect(signalCount).toBe(2);
+
+  // After a successful signal, recoveredThisStreak IS set — no more signals.
+  advance(500);
+  await flushPending();
+  expect(signalCount).toBe(2);
+});
