@@ -411,6 +411,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
               message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
               task_type: "plan_refine",
               use_worktree: false,
+              task_class: "TRIVIAL",
             });
             const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
             wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
@@ -500,6 +501,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
           task_type: "plan_refine",
           use_worktree: false,
+          task_class: "TRIVIAL",
         });
         const wait = await ctx.awaitChain(dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,

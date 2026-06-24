@@ -97,6 +97,7 @@ type DispatchInput = {
   agent: string;
   message: string;
   task_type?: string;
+  task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
 };
 type DispatchResult = { conversation_id: string; handoff_id: string };
@@ -325,6 +326,10 @@ test("happy path: two personas complete, synthesizer runs, and synthesis is writ
     expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
     expect(result.synthesizer_status).toBe("completed");
     expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch.mock.calls[0]?.[0]?.use_worktree).toBe(false);
+    expect(dispatch.mock.calls[0]?.[0]?.task_class).toBe("TRIVIAL");
+    expect(dispatch.mock.calls[2]?.[0]?.use_worktree).toBe(false);
+    expect(dispatch.mock.calls[2]?.[0]?.task_class).toBe("TRIVIAL");
     const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
     const fm = parseSynthesisFrontmatter(synthContent);
     expect(fm).not.toBeNull();

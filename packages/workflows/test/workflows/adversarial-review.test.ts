@@ -145,6 +145,7 @@ type DispatchInputReview = {
   agent: string;
   message: string;
   task_type?: string;
+  task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
 };
 type DispatchResultReview = { conversation_id: string; handoff_id: string };
@@ -606,8 +607,10 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(dispatch).toHaveBeenCalledTimes(3);
     expect(dispatchCalls).toHaveLength(3);
     expect(dispatchCalls[0]?.use_worktree).toBe(false);
+    expect(dispatchCalls[0]?.task_class).toBe("TRIVIAL");
     expect(dispatchCalls[0]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
     expect(dispatchCalls[2]?.use_worktree).toBe(false);
+    expect(dispatchCalls[2]?.task_class).toBe("TRIVIAL");
     expect(dispatchCalls[2]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
     await stat(join(result.out_dir, "security.json"));
     await stat(join(result.out_dir, "security.md"));

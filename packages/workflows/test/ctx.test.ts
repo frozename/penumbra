@@ -45,6 +45,35 @@ test("dispatch returns ids from chain.start payload", async () => {
   expect(captured?.task_type).toBe("implementer");
 });
 
+test("dispatch forwards task_class to chain.start requests", async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "conv-1", handoff_id: "hand-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    },
+  });
+
+  await ctx.dispatch({
+    agent: "codex",
+    message: "summarize this",
+    task_type: "review_adversarial",
+    task_class: "TRIVIAL",
+  });
+
+  expect(captured?.task_class).toBe("TRIVIAL");
+});
+
 test("dispatch threads deps.project into chainStart req.project_id", async () => {
   let captured: ChainStartRequest | null = null;
   const ctx = buildWorkflowCtx({

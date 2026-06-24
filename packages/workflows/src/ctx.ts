@@ -1,4 +1,4 @@
-import type { ChainStartRequest, Services } from "@penumbra/core";
+import type { ChainStartRequest, Services, TaskClass } from "@penumbra/core";
 
 import { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
@@ -18,6 +18,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     agent: string;
     message: string;
     task_type?: string;
+    task_class?: TaskClass;
     parent_handoff_id?: string;
     use_worktree?: boolean;
     branch_base?: string;
@@ -213,6 +214,7 @@ function buildChainStartRequest<TArgs>(
   const parentHandoff = input.parent_handoff_id ?? deps.parentHandoffId;
   if (parentHandoff) req.parent_handoff_id = parentHandoff;
   if (input.use_worktree !== undefined) req.use_worktree = input.use_worktree;
+  if (input.task_class !== undefined) req.task_class = input.task_class;
   if (input.branch_base) req.branch_base = input.branch_base;
   if (input.workflowRunId) req.workflow_run_id = input.workflowRunId;
   const effectiveProjectId = input.project_id ?? deps.project;
