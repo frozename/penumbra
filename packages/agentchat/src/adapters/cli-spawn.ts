@@ -36,6 +36,45 @@ export interface CapacityError {
   raw: string;
 }
 
+const CLI_SPAWN_OUTPUT_MAX_BYTES = 16_777_216;
+const CLI_SPAWN_OUTPUT_CAPACITY_WARNING =
+  "cli-spawn output cap exceeded; terminating child and retaining tail output";
+
+interface OutputCapHit {
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+function makeCappedTextAccumulator(
+  maxBytes: number,
+  onCapHit?: (text: string) => void,
+): { append: (text: string) => boolean; getText: () => string; isCapped: () => boolean } {
+  let text = "";
+  let bytes = 0;
+  let capHit = false;
+  const append = (chunk: string): boolean => {
+    if (capHit || !chunk) return capHit;
+    const chunkBytes = Buffer.byteLength(chunk);
+    if (bytes + chunkBytes <= maxBytes) {
+      text += chunk;
+      bytes += chunkBytes;
+      return false;
+    }
+    const combined = Buffer.concat([Buffer.from(text, "utf8"), Buffer.from(chunk, "utf8")]);
+    const tail = combined.subarray(Math.max(0, combined.length - maxBytes));
+    text = tail.toString("utf8");
+    bytes = tail.length;
+    capHit = true;
+    onCapHit?.(text);
+    return true;
+  };
+  return {
+    append,
+    getText: () => text,
+    isCapped: () => capHit,
+  };
+}
+
 export function detectCapacityError(stderr: string): CapacityError | null {
   if (!stderr) return null;
   for (const p of CAPACITY_PATTERNS) {
@@ -133,19 +172,29 @@ async function writePrompt(
   });
 }
 
-async function readStreamText(stream: NodeJS.ReadableStream | null | undefined): Promise<string> {
+interface ReadStreamTextOpts {
+  maxBytes?: number;
+  onCapHit?: (text: string) => void;
+}
+
+async function readStreamText(
+  stream: NodeJS.ReadableStream | null | undefined,
+  opts: ReadStreamTextOpts = {},
+): Promise<string> {
   if (!stream) return "";
-  let text = "";
+  const cap = makeCappedTextAccumulator(opts.maxBytes ?? CLI_SPAWN_OUTPUT_MAX_BYTES, opts.onCapHit);
   const decoder = new TextDecoder("utf-8", { fatal: false });
   for await (const chunk of stream) {
-    if (typeof chunk === "string") {
-      text += chunk;
-      continue;
+    const text = decodeStreamChunk(decoder, chunk);
+    cap.append(text);
+    if (cap.isCapped()) {
+      break;
     }
-    text += decoder.decode(chunk, { stream: true });
   }
-  text += decoder.decode();
-  return text;
+  if (!cap.isCapped()) {
+    cap.append(decoder.decode());
+  }
+  return cap.getText();
 }
 
 function waitForProcessExit(proc: ChildProcess): Promise<ProcessExit> {
@@ -297,16 +346,25 @@ async function* streamStdoutDeltas(
   proc: ChildProcess,
   opts: SpawnOpts,
   ctrl: AbortController2,
+  onCapHit?: (text: string) => void,
 ): AsyncGenerator<{ chunk: string }> {
   // Stateful decoder handles multi-byte chars split across chunk boundaries.
   const decoder = new TextDecoder("utf-8", { fatal: false });
+  const cap = makeCappedTextAccumulator(CLI_SPAWN_OUTPUT_MAX_BYTES, onCapHit);
   for await (const chunk of proc.stdout ?? []) {
     const text = decodeStreamChunk(decoder, chunk);
-    if (text) yield { chunk: text };
+    if (text) {
+      cap.append(text);
+      if (cap.isCapped()) return;
+      yield { chunk: text };
+    }
     if (checkAborted(opts) || ctrl.timedOut) return;
   }
   const tail = decoder.decode();
-  if (tail) yield { chunk: tail };
+  if (!cap.isCapped()) {
+    cap.append(tail);
+    if (tail && !cap.isCapped()) yield { chunk: tail };
+  }
 }
 
 async function handleStreamLoopError(
@@ -361,19 +419,28 @@ async function handleWatchdogExit(
   );
 }
 
+function outputCapWarning(cap: OutputCapHit, command: string): string {
+  return `${command}: output cap exceeded on ${cap.stream}; retained ${cap.text.length} byte tail`;
+}
+
 async function* finalizeStreamExit(
   ctx: SpawnContext,
   opts: SpawnOpts,
   stderrPromise: Promise<string>,
   collected: string,
+  outputCap?: OutputCapHit,
 ): AsyncGenerator<DispatchEvent> {
+  const cap = outputCap?.text ? outputCap : undefined;
   const [stderr, exit] = await Promise.all([stderrPromise, awaitExitOrThrow(ctx)]);
-  emitExitResolved(opts, ctx, exit);
+  emitExitResolved(opts, ctx, exit, cap ? "output_capacity" : undefined);
   notifyCapacity(opts, stderr);
 
   const finalText = applyStripPatterns(collected, opts.strip_patterns);
-  validateExitSuccess(opts, exit, stderr, finalText);
+  validateExitSuccess(opts, exit, stderr, finalText, cap);
   yield { type: "done", result: { text: finalText } };
+  if (cap) {
+    throw new Error(outputCapWarning(cap, opts.command));
+  }
   ensureExitCodeOk(opts, exit, stderr);
 }
 
@@ -382,8 +449,9 @@ function validateExitSuccess(
   exit: ProcessExit,
   stderr: string,
   finalText: string,
+  outputCap?: OutputCapHit | null,
 ): void {
-  if (exit.signal) {
+  if (exit.signal && !outputCap) {
     throw new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ""}`);
   }
   if (exit.code === 0 && !finalText.trim() && stderr.trim()) {
@@ -401,9 +469,14 @@ async function* runStreamStdout(
   ctx: SpawnContext,
   opts: SpawnOpts,
   stderrPromise: Promise<string>,
+  outputCap?: OutputCapHit,
+  onOutputCap?: (stream: "stdout" | "stderr", text: string) => void,
 ): AsyncGenerator<{ delta: string }> {
   try {
-    for await (const delta of streamStdoutDeltas(ctx.proc, opts, ctx.ctrl)) {
+    for await (const delta of streamStdoutDeltas(ctx.proc, opts, ctx.ctrl, (text) => {
+      if (!onOutputCap) return;
+      onOutputCap("stdout", text);
+    })) {
       yield { delta: delta.chunk };
     }
   } catch (loopErr) {
@@ -421,6 +494,31 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
 
   const ctx = startSpawn(opts);
   const { proc, ctrl } = ctx;
+  const outputCap: OutputCapHit = {
+    stream: "stdout",
+    text: "",
+  };
+
+  const onOutputCap = (stream: "stdout" | "stderr", text: string): void => {
+    if (outputCap.text) return;
+    outputCap.stream = stream;
+    outputCap.text = text;
+    emit(opts, "proc.kill.sent", {
+      pid: proc.pid,
+      signal: "SIGKILL",
+      reason: "output_capacity",
+      stream,
+    });
+    opts.log?.debug?.(
+      {
+        command: opts.command,
+        stream,
+        max_bytes: CLI_SPAWN_OUTPUT_MAX_BYTES,
+      },
+      CLI_SPAWN_OUTPUT_CAPACITY_WARNING,
+    );
+    killProcessTree(proc, "SIGKILL");
+  };
 
   if (opts.pass_via !== "argv") {
     await writePrompt(proc.stdin, opts.prompt);
@@ -432,7 +530,9 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
   }, dispatchTimeoutMs);
 
   // Start collecting stderr in parallel so it doesn't block stdout consumption.
-  const stderrPromise = readStreamText(proc.stderr);
+  const stderrPromise = readStreamText(proc.stderr, {
+    onCapHit: (text) => onOutputCap("stderr", text),
+  });
   stderrPromise.catch(() => {
     /* stderr drain errors are surfaced via the exit handling path */
   });
@@ -440,7 +540,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
   let collected = "";
 
   try {
-    for await (const out of runStreamStdout(ctx, opts, stderrPromise)) {
+    for await (const out of runStreamStdout(ctx, opts, stderrPromise, outputCap, onOutputCap)) {
       collected += out.delta;
       yield { type: "delta", text: out.delta };
     }
@@ -456,7 +556,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
       return;
     }
 
-    yield* finalizeStreamExit(ctx, opts, stderrPromise, collected);
+    yield* finalizeStreamExit(ctx, opts, stderrPromise, collected, outputCap);
   } finally {
     teardownSpawn(opts, ctx);
   }
@@ -466,17 +566,45 @@ interface NonStreamResult {
   rawText: string;
   stderr: string;
   exit: ProcessExit;
+  outputCap?: OutputCapHit;
 }
 
-async function readChildOutputs(ctx: SpawnContext, opts: SpawnOpts): Promise<NonStreamResult> {
+async function readChildOutputs(
+  ctx: SpawnContext,
+  opts: SpawnOpts,
+  onOutputCap?: (stream: "stdout" | "stderr", text: string) => void,
+): Promise<NonStreamResult> {
+  const outputCap: OutputCapHit = {
+    stream: "stdout",
+    text: "",
+  };
   const [rawText, stderr, exit] = await Promise.all([
-    readStreamText(ctx.proc.stdout),
-    readStreamText(ctx.proc.stderr),
+    readStreamText(ctx.proc.stdout, {
+      onCapHit: (text) => {
+        if (outputCap.text) return;
+        outputCap.stream = "stdout";
+        outputCap.text = text;
+        onOutputCap?.("stdout", text);
+      },
+    }),
+    readStreamText(ctx.proc.stderr, {
+      onCapHit: (text) => {
+        if (outputCap.text) return;
+        outputCap.stream = "stderr";
+        outputCap.text = text;
+        onOutputCap?.("stderr", text);
+      },
+    }),
     awaitExitOrThrow(ctx),
   ]);
-  emitExitResolved(opts, ctx, exit);
+  emitExitResolved(opts, ctx, exit, outputCap.text ? "output_capacity" : undefined);
   notifyCapacity(opts, stderr);
-  return { rawText, stderr, exit };
+  return {
+    rawText,
+    stderr,
+    exit,
+    ...(outputCap.text ? { outputCap } : {}),
+  };
 }
 
 function buildSpawnError(opts: SpawnOpts, exit: ProcessExit, stderr: string): Error {
@@ -496,6 +624,30 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   );
   const ctx = startSpawn(opts);
   const { proc, ctrl } = ctx;
+  const outputCap: OutputCapHit = {
+    stream: "stdout",
+    text: "",
+  };
+  const onOutputCap = (stream: "stdout" | "stderr", text: string): void => {
+    if (outputCap.text) return;
+    outputCap.stream = stream;
+    outputCap.text = text;
+    emit(opts, "proc.kill.sent", {
+      pid: proc.pid,
+      signal: "SIGKILL",
+      reason: "output_capacity",
+      stream,
+    });
+    opts.log?.debug?.(
+      {
+        command: opts.command,
+        stream,
+        max_bytes: CLI_SPAWN_OUTPUT_MAX_BYTES,
+      },
+      CLI_SPAWN_OUTPUT_CAPACITY_WARNING,
+    );
+    killProcessTree(proc, "SIGKILL");
+  };
 
   if (opts.pass_via !== "argv") {
     await writePrompt(proc.stdin, opts.prompt);
@@ -525,11 +677,14 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   });
 
   try {
-    const result = await Promise.race([readChildOutputs(ctx, opts), watchdog]);
+    const result = await Promise.race([readChildOutputs(ctx, opts, onOutputCap), watchdog]);
     if (checkAborted(opts)) {
       throw new Error(`${opts.command}: aborted`);
     }
     captureStdoutThoughts(opts, result.rawText);
+    if (result.outputCap) {
+      throw new Error(outputCapWarning(result.outputCap, opts.command));
+    }
     if (result.exit.signal || result.exit.code !== 0) {
       throw buildSpawnError(opts, result.exit, result.stderr);
     }

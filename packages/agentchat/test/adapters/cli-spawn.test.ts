@@ -233,6 +233,80 @@ test("spawnCliAdapter emits proc.kill.sent on abort", async () => {
   ).toBe(true);
 });
 
+test("spawnCliAdapter kills child and surfaces output-cap warning when stdout exceeds cap", async () => {
+  const events: DispatchEventInput[] = [];
+  const warnings: string[] = [];
+  const err = await expectRejection(
+    spawnCliAdapter({
+      command: "node",
+      args: [
+        "-e",
+        "const chunk = 'x'.repeat(1024 * 1024); for (let i = 0; i < 25; i++) process.stdout.write(chunk);",
+      ],
+      prompt: "",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-cap", workerId: "w-cli" },
+      onEvent: (event) => events.push(event),
+      log: {
+        debug: (_fields: Record<string, unknown>, message: string): void => {
+          warnings.push(message);
+        },
+      },
+    }),
+    /output cap exceeded/i,
+  );
+  expect(err).toBeInstanceOf(Error);
+  expect(warnings.some((message) => message.includes("output cap exceeded"))).toBe(true);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "proc.kill.sent" &&
+        event.meta?.reason === "output_capacity" &&
+        event.meta?.stream === "stdout",
+    ),
+  ).toBe(true);
+});
+
+test("spawnCliAdapterStream kills child and surfaces truncated tail after output-cap overflow", async () => {
+  const events: DispatchEventInput[] = [];
+  const stream = spawnCliAdapterStream({
+    command: "node",
+    args: [
+      "-e",
+      "const chunk = 'x'.repeat(1024 * 1024); for (let i = 0; i < 25; i++) process.stdout.write(chunk);",
+    ],
+    prompt: "",
+    signal: new AbortController().signal,
+    pass_via: "argv",
+    eventContext: { handoffId: "h-cap-stream", workerId: "w-cli" },
+    onEvent: (event) => events.push(event),
+  });
+
+  const seen: DispatchEvent[] = [];
+  let thrown: unknown;
+  try {
+    for await (const event of stream) {
+      seen.push(event);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+
+  const done = seen.find((event) => event.type === "done");
+  expect(done).toBeDefined();
+  expect(typeof done).toBe("object");
+  expect((done as Extract<DispatchEvent, { type: "done" }>).result.text.length).toBeLessThanOrEqual(
+    16_777_216,
+  );
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/output cap exceeded/i);
+  expect(
+    events.some(
+      (event) => event.kind === "proc.kill.sent" && event.meta?.reason === "output_capacity",
+    ),
+  ).toBe(true);
+});
+
 test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout before throwing", async () => {
   const events: DispatchEventInput[] = [];
   const stream = spawnCliAdapterStream({
