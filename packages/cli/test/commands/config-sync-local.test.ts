@@ -59,6 +59,34 @@ describe("penumbra config sync-local", () => {
     expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
   });
 
+  test("uses slashless model name for seat slug and keeps full model id in options", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+
+    await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [{ name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true }],
+        models: [
+          {
+            id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+            node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "local-lfm2-5-8b-a1b-moq-http",
+    );
+    expect(seat).toBeDefined();
+    expect(seat!.options?.model).toBe("LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf");
+  });
+
   test("apply upserts generated seats, preserves hand tuned fields, and uses keychain secrets", async () => {
     const dir = await makeTempDir();
     writeAgents(dir, [
@@ -156,6 +184,69 @@ describe("penumbra config sync-local", () => {
         .agents.map((agent) => agent.name)
         .sort(),
     ).toEqual(["local-hand-authored-http", "local-new-model-http"]);
+  });
+
+  test("skips models already covered by a hand-authored same-model seat and prunes generator-owned duplicates", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-lfm2-5-8b-a1b-moq-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        roles: ["executor", "reviewer"],
+        tags: ["curated"],
+        description: "Hand-authored local seat",
+        quirks: ["manual"],
+        options: {
+          baseUrl: "http://hand-authored.local",
+          model: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+        },
+      },
+      {
+        name: "local-lfm2-5-8b-a1b-moq-moq-4-25-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        options: {
+          baseUrl: "http://generated.local",
+          model: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+        },
+        provenance: { source: "llamactl-sync-local" },
+      },
+    ]);
+
+    await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [{ name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true }],
+        models: [
+          {
+            id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+            node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
+          },
+          {
+            id: "new-model.gguf",
+            node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    const agents = readAgents(dir).agents;
+    expect(agents.map((agent) => agent.name).sort()).toEqual([
+      "local-lfm2-5-8b-a1b-moq-http",
+      "local-new-model-http",
+    ]);
+    const handAuthored = agents.find((agent) => agent.name === "local-lfm2-5-8b-a1b-moq-http");
+    expect(handAuthored?.roles).toEqual(["executor", "reviewer"]);
+    expect(handAuthored?.tags).toEqual(["curated"]);
+    expect(handAuthored?.description).toBe("Hand-authored local seat");
+    expect(handAuthored?.quirks).toEqual(["manual"]);
+    expect(handAuthored?.options?.baseUrl).toBe("http://hand-authored.local");
+    expect(handAuthored?.provenance).toBeUndefined();
   });
 
   test("apply is idempotent", async () => {

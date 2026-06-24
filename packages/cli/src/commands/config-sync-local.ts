@@ -53,16 +53,39 @@ function resolveConfigDir(env: Record<string, string | undefined>): string {
 }
 
 function slugifySeatPart(value: string): string {
-  return value
-    .replace(/\.[^.]+$/, "")
+  return stripModelFileExtension(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
 }
 
+function stripModelFileExtension(id: string): string {
+  const lower = id.toLowerCase();
+  if (
+    lower.endsWith(".gguf") ||
+    lower.endsWith(".ggml") ||
+    lower.endsWith(".safetensors") ||
+    lower.endsWith(".onnx") ||
+    lower.endsWith(".bin") ||
+    lower.endsWith(".pt") ||
+    lower.endsWith(".pth") ||
+    lower.endsWith(".ckpt")
+  ) {
+    return id.slice(0, id.lastIndexOf("."));
+  }
+  return id;
+}
+
+function modelSeatIdSource(modelId: string): string {
+  const slash = modelId.lastIndexOf("/");
+  if (slash < 0) return modelId;
+  if (slash === modelId.length - 1) return modelId.slice(0, -1);
+  return modelId.slice(0, slash);
+}
+
 function generatedSeatForModel(model: LlamactlModelInventory): GeneratedSeat {
-  const slug = slugifySeatPart(model.id) || "model";
+  const slug = slugifySeatPart(modelSeatIdSource(model.id)) || "model";
   const nodeName = model.node?.name ?? model.owned_by ?? "local";
   return {
     name: `local-${slug}-http`,
@@ -157,7 +180,17 @@ function buildSyncedAgentsConfig(
   current: AgentsConfig,
   inventory: LlamactlInventory,
 ): { config: AgentsConfig; upserts: string[]; prunes: string[] } {
-  const generated = inventory.models.map(generatedSeatForModel);
+  const handAuthoredModels = new Set(
+    current.agents.flatMap((agent) => {
+      const model = agent.options?.model;
+      if (typeof model !== "string") return [];
+      return isGeneratorOwned(agent) ? [] : [model];
+    }),
+  );
+
+  const generated = inventory.models
+    .filter((model) => !handAuthoredModels.has(model.id))
+    .map(generatedSeatForModel);
   const generatedNames = new Set(generated.map((seat) => seat.name));
   const upserts: string[] = [];
   const byName = new Map(current.agents.map((agent) => [agent.name, agent] as const));
