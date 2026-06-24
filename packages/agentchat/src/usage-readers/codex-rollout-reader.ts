@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
+import type { RateLimitDelta, UsageReader, UsageReaderDelta, UsageReaderResult } from "./index.js";
 
 import {
   isRecord,
@@ -78,6 +78,7 @@ export class CodexRolloutReader implements UsageReader {
 
     const files = this.listRolloutFiles();
     const allRateLimitSnapshots: RateLimitDelta[] = [];
+    const allUsageDeltas: UsageReaderDelta[] = [];
     const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
 
     for (const filePath of files) {
@@ -100,6 +101,21 @@ export class CodexRolloutReader implements UsageReader {
           ...this.buildRateLimitSnapshots(scan.latestRateLimits, modelProvider),
         );
       }
+      if (scan.rawUsage.length > 0) {
+        const provider = modelProvider ?? this.canonicalizeProvider(undefined);
+        for (const entry of scan.rawUsage) {
+          allUsageDeltas.push({
+            provider,
+            model: entry.model,
+            tokens_input: entry.tokens_input,
+            tokens_output: entry.tokens_output,
+            tokens_cache_read: entry.tokens_cache_read,
+            cost_usd: null,
+            window_start: entry.timestamp,
+            window_end: entry.timestamp,
+          });
+        }
+      }
       newCursor.files[filePath] = {
         byte_offset: size,
         mtime_ms,
@@ -107,7 +123,11 @@ export class CodexRolloutReader implements UsageReader {
       };
     }
 
-    return { cursor: newCursor, usage_deltas: [], rate_limit_snapshots: allRateLimitSnapshots };
+    return {
+      cursor: newCursor,
+      usage_deltas: allUsageDeltas,
+      rate_limit_snapshots: allRateLimitSnapshots,
+    };
   }
 
   private listRolloutFiles(): string[] {
@@ -176,14 +196,25 @@ function normalizeCursor(cursor: unknown): CodexRolloutCursor {
   return { files };
 }
 
+interface RawUsageEntry {
+  timestamp: string;
+  model: string | null;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+}
+
 interface RolloutScanResult {
   latestRateLimits: Record<string, unknown> | null;
   modelProvider: string | undefined;
+  rawUsage: RawUsageEntry[];
 }
 
 function scanRolloutSlice(slice: string): RolloutScanResult {
   let latestRateLimits: Record<string, unknown> | null = null;
   let modelProvider: string | undefined;
+  let currentModel: string | null = null;
+  const rawUsage: RawUsageEntry[] = [];
   for (const rawLine of slice.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
@@ -192,12 +223,28 @@ function scanRolloutSlice(slice: string): RolloutScanResult {
     const payload = readRecord(obj, "payload");
     if (!payload) continue;
     modelProvider ??= normalizeModelProvider(readString(payload, "model_provider"));
+    const sessionModel = readString(payload, "model");
+    if (sessionModel) currentModel = sessionModel;
     const rateLimits = readTokenCountRateLimits(obj, payload);
     if (rateLimits) {
       latestRateLimits = rateLimits;
     }
+    const lastTokenUsage = readLastTokenUsage(obj, payload);
+    if (lastTokenUsage) {
+      const input = numberFrom(lastTokenUsage.input_tokens);
+      const cached = numberFrom(lastTokenUsage.cached_input_tokens);
+      const output = numberFrom(lastTokenUsage.output_tokens);
+      const timestamp = readString(obj, "timestamp") ?? new Date().toISOString();
+      rawUsage.push({
+        timestamp,
+        model: currentModel,
+        tokens_input: Math.max(0, input - cached),
+        tokens_output: output,
+        tokens_cache_read: cached,
+      });
+    }
   }
-  return { latestRateLimits, modelProvider };
+  return { latestRateLimits, modelProvider, rawUsage };
 }
 
 function normalizeModelProvider(value: string | null): string | undefined {
@@ -212,4 +259,20 @@ function readTokenCountRateLimits(
 ): Record<string, unknown> | null {
   if (obj.type !== "event_msg" || payload.type !== "token_count") return null;
   return readRecord(payload, "rate_limits");
+}
+
+function readLastTokenUsage(
+  obj: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): { input_tokens: unknown; cached_input_tokens: unknown; output_tokens: unknown } | null {
+  if (obj.type !== "event_msg" || payload.type !== "token_count") return null;
+  const info = readRecord(payload, "info");
+  if (!info) return null;
+  const last = readRecord(info, "last_token_usage");
+  if (!last) return null;
+  return {
+    input_tokens: last.input_tokens,
+    cached_input_tokens: last.cached_input_tokens,
+    output_tokens: last.output_tokens,
+  };
 }

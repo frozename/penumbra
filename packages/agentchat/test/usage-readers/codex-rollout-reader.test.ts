@@ -236,4 +236,83 @@ describe("CodexRolloutReader", () => {
     const secondary = r.rate_limit_snapshots.find((s) => s.window_label === "secondary");
     expect(secondary?.window_minutes).toBe(10080);
   });
+
+  it("captures prompt-cache tokens from payload.info.last_token_usage", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-04-28T12-00-00-cache.jsonl", [
+      {
+        timestamp: "2026-04-28T12:00:00Z",
+        type: "session_meta",
+        payload: {
+          id: "019ef5a8-2653-7590-9ab7-392408693ac2",
+          model_provider: "openai",
+          model: "gpt-5-codex",
+        },
+      },
+      {
+        timestamp: "2026-04-28T12:00:05Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 70,
+              output_tokens: 30,
+              total_tokens: 130,
+            },
+            total_token_usage: {
+              input_tokens: 500,
+              cached_input_tokens: 350,
+              output_tokens: 150,
+              total_tokens: 650,
+            },
+            model_context_window: 200000,
+          },
+          rate_limits: null,
+        },
+      },
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.usage_deltas).toHaveLength(1);
+    const d = r.usage_deltas[0]!;
+    expect(d.tokens_cache_read).toBe(70);
+    expect(d.tokens_input).toBe(100 - 70);
+    expect(d.tokens_output).toBe(30);
+    expect(d.tokens_cache_write).toBeUndefined();
+    expect(d.model).toBe("gpt-5-codex");
+    expect(d.provider).toBe("openai");
+    expect(d.cost_usd).toBeNull();
+  });
+
+  it("payload.info:null emits no usage_delta but rate-limit parsing still works on the same event", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-04-28T12-00-00-info-null.jsonl", [
+      {
+        timestamp: "2026-04-28T12:00:00Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: null,
+          rate_limits: {
+            limit_id: "codex",
+            primary: { used_percent: 4.0, window_minutes: 300, resets_at: 1777364441 },
+            secondary: { used_percent: 40.0, window_minutes: 10080, resets_at: 1777545224 },
+            plan_type: "plus",
+          },
+        },
+      },
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.usage_deltas).toHaveLength(0);
+    expect(r.rate_limit_snapshots).toHaveLength(2);
+    expect(r.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(4.0);
+    expect(r.rate_limit_snapshots.find((s) => s.window_label === "secondary")?.used_pct).toBe(40.0);
+  });
 });
