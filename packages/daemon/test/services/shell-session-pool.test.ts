@@ -183,6 +183,80 @@ describe("ShellSessionPool", () => {
     await localPool.shutdown();
   });
 
+  it("bounds the live capture buffer for high-volume output (does not buffer unbounded)", async () => {
+    const cfg = makeConfig({ outputByteLimit: 1024 });
+    const localPool = new ShellSessionPool({ config: cfg, uuid: (): string => "sess-live" });
+    const { sessionId } = await localPool.createSession({
+      handoffId: "h-1",
+      cwd: "/tmp",
+      env: {},
+      pty: false,
+    });
+
+    const internal = localPool as unknown as {
+      handoffs: Map<string, Map<string, { stdoutBuffer: string }>>;
+    };
+
+    try {
+      const runPromise = localPool.runCommand({
+        handoffId: "h-1",
+        sessionId,
+        command: "yes a | head -c 2000000; sleep 1",
+      });
+
+      let maxLiveLen = 0;
+      const start = Date.now();
+      while (Date.now() - start < 1500) {
+        const liveState = internal.handoffs.get("h-1")?.get(sessionId);
+        if (liveState) {
+          maxLiveLen = Math.max(maxLiveLen, liveState.stdoutBuffer.length);
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      }
+
+      const result = await runPromise;
+
+      expect(maxLiveLen).toBeLessThan(64 * 1024);
+      expect(result.exit_code).toBe(0);
+      expect(result.truncated).toBe(true);
+      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(1024);
+    } finally {
+      await localPool.shutdown();
+    }
+  });
+
+  it("parses commands after residual output already fills the live buffer", async () => {
+    const cfg = makeConfig({ maxCommandDurationMs: 800, outputByteLimit: 1024 });
+    const localPool = new ShellSessionPool({ config: cfg, uuid: (): string => "sess-residual" });
+    const { sessionId } = await localPool.createSession({
+      handoffId: "h-1",
+      cwd: "/tmp",
+      env: {},
+      pty: false,
+    });
+
+    const internal = localPool as unknown as {
+      handoffs: Map<string, Map<string, { stdoutBuffer: string }>>;
+    };
+    const liveState = internal.handoffs.get("h-1")?.get(sessionId);
+    expect(liveState).toBeDefined();
+    liveState!.stdoutBuffer = "r".repeat(17 * 1024);
+
+    try {
+      const result = await localPool.runCommand({
+        handoffId: "h-1",
+        sessionId,
+        command: "yes a | head -c 2000000",
+      });
+
+      expect(result.exit_code).toBe(0);
+      expect(result.truncated).toBe(true);
+      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(1024);
+    } finally {
+      await localPool.shutdown();
+    }
+  });
+
   it("redacts api keys, github tokens, discord webhooks, and bearer tokens from stdout", async () => {
     const { sessionId } = await pool.createSession({
       handoffId: "h-1",

@@ -76,6 +76,8 @@ interface SessionState {
   replacing: boolean;
   stdoutBuffer: string;
   stderrBuffer: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
   waiters: Set<() => void>;
 }
 
@@ -88,6 +90,7 @@ const REDACTION_PATTERNS: RegExp[] = [
 
 const COMMAND_TIMED_OUT = "COMMAND_TIMED_OUT" as const;
 const COMMAND_CANCELLED = "COMMAND_CANCELLED" as const;
+const LIVE_CAPTURE_MARKER_CONTEXT_BYTES = 8192;
 const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "expired", "cancelled"]);
 
 function redactCredentials(text: string): string {
@@ -109,13 +112,76 @@ function stripAnsiEscapes(text: string): string {
   return text.replaceAll(ANSI_CSI_RE, "").replaceAll(ANSI_OSC_RE, "");
 }
 
+function normalizeByteLimit(limit: number): number {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return 0;
+  }
+  return Math.floor(limit);
+}
+
+function sliceUtf8Prefix(text: string, limit: number): string {
+  const byteLimit = normalizeByteLimit(limit);
+  if (Buffer.byteLength(text, "utf8") <= byteLimit) {
+    return text;
+  }
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= byteLimit) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return text.slice(0, low);
+}
+
+function sliceUtf8Suffix(text: string, limit: number): string {
+  const byteLimit = normalizeByteLimit(limit);
+  if (Buffer.byteLength(text, "utf8") <= byteLimit) {
+    return text;
+  }
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(text.length - mid), "utf8") <= byteLimit) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return text.slice(text.length - low);
+}
+
+function boundLiveCaptureBuffer(
+  text: string,
+  outputByteLimit: number,
+): { text: string; truncated: boolean } {
+  const headLimit = normalizeByteLimit(outputByteLimit) + LIVE_CAPTURE_MARKER_CONTEXT_BYTES;
+  const tailLimit = LIVE_CAPTURE_MARKER_CONTEXT_BYTES;
+  const maxBufferBytes = headLimit + tailLimit;
+  if (Buffer.byteLength(text, "utf8") <= maxBufferBytes) {
+    return { text, truncated: false };
+  }
+
+  return {
+    text: `${sliceUtf8Prefix(text, headLimit)}${sliceUtf8Suffix(text, tailLimit)}`,
+    truncated: true,
+  };
+}
+
 function truncateToByteLimit(text: string, limit: number): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, "utf8") <= limit) {
+  const byteLimit = normalizeByteLimit(limit);
+  if (Buffer.byteLength(text, "utf8") <= byteLimit) {
     return { text, truncated: false };
   }
 
   let end = text.length;
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > limit) {
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > byteLimit) {
     end -= 1;
   }
   return { text: text.slice(0, end), truncated: true };
@@ -180,6 +246,8 @@ export class ShellSessionPool {
       replacing: false,
       stdoutBuffer: "",
       stderrBuffer: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
       waiters: new Set(),
     };
 
@@ -282,6 +350,8 @@ export class ShellSessionPool {
       state.agentName = input.agentName;
     }
 
+    this.resetBuffers(state);
+
     const commandId = this.deps.uuid();
     const { snippet, startMarker, endMarker } = buildFramedCommand({
       commandId,
@@ -354,6 +424,7 @@ export class ShellSessionPool {
       return { exit_code: -1, stdout: "", stderr: "session ended", truncated: false };
     }
 
+    const liveTruncated = state.stdoutTruncated || state.stderrTruncated;
     this.resetBuffers(state);
 
     const agentName = input.agentName ?? state.agentName ?? "";
@@ -376,7 +447,7 @@ export class ShellSessionPool {
       exit_code: result.exitCode,
       stdout: truncatedStdout.text,
       stderr: truncatedStderr.text,
-      truncated: truncatedStdout.truncated || truncatedStderr.truncated,
+      truncated: liveTruncated || truncatedStdout.truncated || truncatedStderr.truncated,
     };
   }
 
@@ -449,9 +520,23 @@ export class ShellSessionPool {
 
   private appendToBuffer(state: SessionState, target: "stdout" | "stderr", chunk: string): void {
     if (target === "stdout") {
-      state.stdoutBuffer += chunk;
+      const bounded = boundLiveCaptureBuffer(
+        `${state.stdoutBuffer}${chunk}`,
+        this.deps.config.outputByteLimit,
+      );
+      state.stdoutBuffer = bounded.text;
+      if (bounded.truncated) {
+        state.stdoutTruncated = true;
+      }
     } else {
-      state.stderrBuffer += chunk;
+      const bounded = boundLiveCaptureBuffer(
+        `${state.stderrBuffer}${chunk}`,
+        this.deps.config.outputByteLimit,
+      );
+      state.stderrBuffer = bounded.text;
+      if (bounded.truncated) {
+        state.stderrTruncated = true;
+      }
     }
   }
 
@@ -487,6 +572,8 @@ export class ShellSessionPool {
   private resetBuffers(state: SessionState): void {
     state.stdoutBuffer = "";
     state.stderrBuffer = "";
+    state.stdoutTruncated = false;
+    state.stderrTruncated = false;
   }
 
   private spawnShell(
