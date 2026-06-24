@@ -41,6 +41,9 @@ interface PendingRequest {
 
 type WireHandler = (params: unknown) => unknown;
 
+const MAX_HEADER_BYTES = 8 * 1024;
+const MAX_CONTENT_LENGTH = 16 * 1024 * 1024;
+
 interface JsonRpcInbound {
   id?: string | number | null;
   method?: string;
@@ -73,6 +76,7 @@ export class StdioAcpClient {
   // For content-length framing
   private buffer: Buffer = Buffer.alloc(0);
   private contentLength: number | null = null;
+  private framingBroken = false;
 
   constructor(private readonly options: StdioAcpClientOptions) {
     this.framing = options.framing ?? "newline";
@@ -81,6 +85,7 @@ export class StdioAcpClient {
       this.attachNewlineReader();
     } else {
       this.options.stdout.on("data", (chunk: Buffer) => {
+        if (this.framingBroken) return;
         this.buffer = Buffer.concat([this.buffer, chunk]);
         this.processBuffer();
       });
@@ -153,10 +158,17 @@ export class StdioAcpClient {
   }
 
   private tryReadOneFramedMessage(): boolean {
+    if (this.framingBroken) return false;
     if (this.contentLength === null) {
       const headerEnd = this.buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) return false;
+      if (headerEnd === -1) {
+        if (this.buffer.length > MAX_HEADER_BYTES) {
+          this.breakFraming(`header exceeds ${String(MAX_HEADER_BYTES)} bytes without terminator`);
+        }
+        return false;
+      }
       this.consumeHeader(headerEnd);
+      if (this.framingBroken) return false;
     }
 
     if (this.contentLength === null) return false;
@@ -179,12 +191,27 @@ export class StdioAcpClient {
   }
 
   private consumeHeader(headerEnd: number): void {
+    if (headerEnd > MAX_HEADER_BYTES) {
+      this.breakFraming(`header (${String(headerEnd)} bytes) exceeds cap`);
+      return;
+    }
     const headerStr = this.buffer.toString("utf8", 0, headerEnd);
     const match = /Content-Length:\s*(\d+)/i.exec(headerStr);
     if (match) {
       const contentLengthText = match[1];
       if (contentLengthText !== undefined) {
-        this.contentLength = parseInt(contentLengthText, 10);
+        const parsed = parseInt(contentLengthText, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          this.breakFraming(`invalid Content-Length: ${contentLengthText}`);
+          return;
+        }
+        if (parsed > MAX_CONTENT_LENGTH) {
+          this.breakFraming(
+            `Content-Length ${String(parsed)} exceeds cap ${String(MAX_CONTENT_LENGTH)}`,
+          );
+          return;
+        }
+        this.contentLength = parsed;
       } else {
         console.error("stdio-acp-client: invalid Content-Length header");
       }
@@ -193,6 +220,19 @@ export class StdioAcpClient {
       // Try to recover by dropping header
     }
     this.buffer = this.buffer.subarray(headerEnd + 4);
+  }
+
+  private breakFraming(reason: string): void {
+    if (this.framingBroken) return;
+    this.framingBroken = true;
+    console.error(`stdio-acp-client: framing breach — ${reason}; closing transport`);
+    this.buffer = Buffer.alloc(0);
+    this.contentLength = null;
+    try {
+      this.options.stdout.destroy();
+    } catch {
+      // best-effort
+    }
   }
 
   private writeMessage(message: object): void {

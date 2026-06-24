@@ -150,6 +150,77 @@ describe("StdioAcpClient", () => {
       expect(result).toBe("split-ok");
     });
 
+    it("rejects oversized Content-Length and closes the transport", async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout, framing: "content-length" });
+
+      const destroySpy = mock(stdout.destroy.bind(stdout));
+      stdout.destroy = destroySpy as typeof stdout.destroy;
+
+      const reqPromise = client.request("test/oversize", {});
+      const settled: { rejected: boolean; error?: unknown } = { rejected: false };
+      reqPromise.catch((err: unknown) => {
+        settled.rejected = true;
+        settled.error = err;
+      });
+
+      const consoleErrorSpy = mock();
+      const originalError = console.error;
+      console.error = consoleErrorSpy;
+
+      try {
+        // 1 GiB content-length — way above the cap. No body needed; the cap
+        // must trip the moment Content-Length is parsed.
+        const oversized = 1024 * 1024 * 1024;
+        stdout.write(`Content-Length: ${String(oversized)}\r\n\r\n`);
+
+        await new Promise((r) => setTimeout(r, 20));
+
+        expect(destroySpy).toHaveBeenCalled();
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        expect(settled.rejected).toBe(true);
+        expect(String(settled.error)).toMatch(/transport closed/);
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    it("rejects oversized header (no header terminator) and closes the transport", async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout, framing: "content-length" });
+
+      const destroySpy = mock(stdout.destroy.bind(stdout));
+      stdout.destroy = destroySpy as typeof stdout.destroy;
+
+      const reqPromise = client.request("test/oversize-header", {});
+      const settled: { rejected: boolean; error?: unknown } = { rejected: false };
+      reqPromise.catch((err: unknown) => {
+        settled.rejected = true;
+        settled.error = err;
+      });
+
+      const consoleErrorSpy = mock();
+      const originalError = console.error;
+      console.error = consoleErrorSpy;
+
+      try {
+        // Garbage header with no \r\n\r\n terminator, larger than the header cap.
+        const junk = "X".repeat(64 * 1024); // 64KB > 8KB cap
+        stdout.write(junk);
+
+        await new Promise((r) => setTimeout(r, 20));
+
+        expect(destroySpy).toHaveBeenCalled();
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        expect(settled.rejected).toBe(true);
+        expect(String(settled.error)).toMatch(/transport closed/);
+      } finally {
+        console.error = originalError;
+      }
+    });
+
     it("handles malformed JSON cleanly and recovers", async () => {
       const stdin = new PassThrough();
       const stdout = new PassThrough();
