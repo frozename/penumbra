@@ -237,8 +237,17 @@ async function emitOneSink(
         repoRoot: opts.repoRoot,
       });
       warnings.push(...r.warnings);
-      if (r.path) artifacts.push(r.path);
-      return {};
+      if (r.path) {
+        artifacts.push(r.path);
+        return {};
+      }
+      if (sink.optional) return {};
+      return {
+        requiredFailure: {
+          kind: "file",
+          reason: r.warnings[r.warnings.length - 1] ?? "file sink failed",
+        },
+      };
     }
     case "clipboard": {
       const r = await emitClipboardOutput({ body });
@@ -248,8 +257,17 @@ async function emitOneSink(
     case "next-session-prompt": {
       const r = await emitNextSessionPromptOutput({ body, storageRoot });
       warnings.push(...r.warnings);
-      if (r.path) artifacts.push(r.path);
-      return {};
+      if (r.path) {
+        artifacts.push(r.path);
+        return {};
+      }
+      if (sink.optional) return {};
+      return {
+        requiredFailure: {
+          kind: "next-session-prompt",
+          reason: r.warnings[r.warnings.length - 1] ?? "next-session-prompt failed",
+        },
+      };
     }
     case "session-reminder": {
       const r = emitSessionReminder({ text: body });

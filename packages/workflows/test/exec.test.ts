@@ -272,6 +272,34 @@ test("optional observation sink failure → outcome=success", async () => {
   }
 });
 
+test("required file sink blocked outside repo root → outcome=run_error", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const repoRoot = join(tmp, "repo");
+    const spec: WorkflowSpec = {
+      name: "file-required-fail",
+      description: "f",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "file", path: join(tmp, "outside.md") }],
+      run: { kind: "markdown-template", template: "body" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+      repoRoot,
+    });
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("required output sink");
+    expect(result.errorMessage).toContain("file");
+    expect(result.warnings.some((w) => w.includes("outside the allowed root"))).toBe(true);
+    expect(result.artifacts).toEqual([]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("captureCtx wires capture and writes t0 + workflow_stats rows", async () => {
   if (process.platform === "darwin") {
     try {
