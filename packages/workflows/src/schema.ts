@@ -89,7 +89,7 @@ export const OutputSinkSchema = z.discriminatedUnion("kind", [
     task_type: z.string().optional(),
   }),
   z.object({ kind: z.literal("session-reminder") }),
-  z.object({ kind: z.literal("observation") }),
+  z.object({ kind: z.literal("observation"), optional: z.boolean().optional() }),
   z.object({
     kind: z.literal("task"),
     prompt: z.string().min(1),
@@ -101,6 +101,7 @@ export const OutputSinkSchema = z.discriminatedUnion("kind", [
     review_eligibility: EligibilitySchema.optional(),
     priority: TaskPrioritySchema.optional(),
     requires_review: z.boolean().optional(),
+    optional: z.boolean().optional(),
   }),
 ]);
 

@@ -156,14 +156,78 @@ type OutputCtx = {
   start: number;
 };
 
+type SinkOutcome = { requiredFailure?: { kind: string; reason: string } };
+
+async function handleObservationSink(
+  sink: Extract<WorkflowSpec["output"][number], { kind: "observation" }>,
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+): Promise<SinkOutcome> {
+  const { body, storageRoot, spec, opts, start } = octx;
+  const r = await emitObservationOutput({
+    body,
+    storageRoot,
+    workflowName: spec.name,
+    project: opts.observationCtx?.projectId ?? opts.captureCtx?.project ?? null,
+    sessionId: opts.observationCtx?.sessionId ?? null,
+    ts: new Date(start).toISOString(),
+  });
+  warnings.push(...r.warnings);
+  if (r.eventId) {
+    artifacts.push(`observation:${r.eventId}`);
+    return {};
+  }
+  if (sink.optional) return {};
+  return {
+    requiredFailure: {
+      kind: "observation",
+      reason: r.warnings[r.warnings.length - 1] ?? "observation sink failed",
+    },
+  };
+}
+
+async function handleTaskSink(
+  sink: Extract<WorkflowSpec["output"][number], { kind: "task" }>,
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+): Promise<SinkOutcome> {
+  const { storageRoot, spec, tplCtx } = octx;
+  const r = await taskOutput(sink, {
+    storageRoot,
+    workflow: {
+      name: spec.name,
+      origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined,
+    },
+    now: tplCtx.now,
+    project: tplCtx.project,
+    sessionStart: tplCtx.sessionStart,
+    tz: tplCtx.tz,
+    filePath: tplCtx.filePath,
+  });
+  warnings.push(...r.warnings);
+  if (r.taskId) {
+    artifacts.push(`task:${r.taskId}`);
+    return {};
+  }
+  if (sink.optional) return {};
+  return {
+    requiredFailure: {
+      kind: "task",
+      reason: r.warnings[r.warnings.length - 1] ?? "task sink failed",
+    },
+  };
+}
+
 async function emitOneSink(
   sink: WorkflowSpec["output"][number],
   octx: OutputCtx,
   artifacts: string[],
   warnings: string[],
   sessionReminderTexts: string[],
-): Promise<void> {
-  const { body, storageRoot, spec, tplCtx, opts, start } = octx;
+): Promise<SinkOutcome> {
+  const { body, storageRoot, tplCtx, opts } = octx;
   switch (sink.kind) {
     case "file": {
       const r = await emitFileOutput({
@@ -174,57 +238,31 @@ async function emitOneSink(
       });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
-      return;
+      return {};
     }
     case "clipboard": {
       const r = await emitClipboardOutput({ body });
       warnings.push(...r.warnings);
-      return;
+      return {};
     }
     case "next-session-prompt": {
       const r = await emitNextSessionPromptOutput({ body, storageRoot });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
-      return;
+      return {};
     }
     case "session-reminder": {
       const r = emitSessionReminder({ text: body });
       if (r.text) sessionReminderTexts.push(r.text);
-      return;
+      return {};
     }
-    case "observation": {
-      const r = await emitObservationOutput({
-        body,
-        storageRoot,
-        workflowName: spec.name,
-        project: opts.observationCtx?.projectId ?? opts.captureCtx?.project ?? null,
-        sessionId: opts.observationCtx?.sessionId ?? null,
-        ts: new Date(start).toISOString(),
-      });
-      warnings.push(...r.warnings);
-      if (r.eventId) artifacts.push(`observation:${r.eventId}`);
-      return;
-    }
-    case "task": {
-      const r = await taskOutput(sink, {
-        storageRoot,
-        workflow: {
-          name: spec.name,
-          origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined,
-        },
-        now: tplCtx.now,
-        project: tplCtx.project,
-        sessionStart: tplCtx.sessionStart,
-        tz: tplCtx.tz,
-        filePath: tplCtx.filePath,
-      });
-      warnings.push(...r.warnings);
-      if (r.taskId) artifacts.push(`task:${r.taskId}`);
-      return;
-    }
+    case "observation":
+      return await handleObservationSink(sink, octx, artifacts, warnings);
+    case "task":
+      return await handleTaskSink(sink, octx, artifacts, warnings);
     case "commit":
     case "dispatch":
-      return;
+      return {};
   }
 }
 
@@ -301,24 +339,52 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     return result;
   }
 
-  const sessionReminderTexts: string[] = [];
   const octx: OutputCtx = { body, storageRoot, spec, tplCtx, opts, start };
-  for (const sink of spec.output) {
-    await emitOneSink(sink, octx, artifacts, warnings, sessionReminderTexts);
-  }
+  const sinkRun = await runOutputSinks(spec, octx, artifacts, warnings);
+  const sessionReminder = sinkRun.sessionReminderTexts.length
+    ? sinkRun.sessionReminderTexts.join("\n\n")
+    : undefined;
+  const gateEvidenceOut = Object.keys(gateEvidence).length ? gateEvidence : undefined;
 
-  const result: ExecuteResult = {
-    outcome: "success",
+  const baseResult = {
     composedPrompt,
     runResult,
     artifacts,
     warnings,
     latencyMs: Date.now() - start,
-    gateEvidence: Object.keys(gateEvidence).length ? gateEvidence : undefined,
-    sessionReminder: sessionReminderTexts.length ? sessionReminderTexts.join("\n\n") : undefined,
+    gateEvidence: gateEvidenceOut,
+    sessionReminder,
   };
+  const result: ExecuteResult =
+    sinkRun.requiredFailures.length > 0
+      ? {
+          ...baseResult,
+          outcome: "run_error",
+          errorMessage: `required output sink(s) failed — ${sinkRun.requiredFailures
+            .map((f) => `${f.kind}: ${f.reason}`)
+            .join("; ")}`,
+        }
+      : { ...baseResult, outcome: "success" };
   await runCapture(opts, result, recallSourceNames, itemCount);
   return result;
+}
+
+async function runOutputSinks(
+  spec: WorkflowSpec,
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+): Promise<{
+  sessionReminderTexts: string[];
+  requiredFailures: { kind: string; reason: string }[];
+}> {
+  const sessionReminderTexts: string[] = [];
+  const requiredFailures: { kind: string; reason: string }[] = [];
+  for (const sink of spec.output) {
+    const sinkResult = await emitOneSink(sink, octx, artifacts, warnings, sessionReminderTexts);
+    if (sinkResult.requiredFailure) requiredFailures.push(sinkResult.requiredFailure);
+  }
+  return { sessionReminderTexts, requiredFailures };
 }
 
 async function runCapture(

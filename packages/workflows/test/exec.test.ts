@@ -179,6 +179,99 @@ test("spec listing unsatisfiable process_gate → outcome=run_error (fail-closed
   }
 });
 
+test("required task sink failure → outcome=run_error (daemon unreachable)", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const spec: WorkflowSpec = {
+      name: "task-required-fail",
+      description: "t",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "task", prompt: "do thing" }],
+      run: { kind: "markdown-template", template: "body" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("required output sink");
+    expect(result.warnings.some((w) => w.includes("daemon port/token not found"))).toBe(true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("optional task sink failure → outcome=success with warning preserved", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const spec: WorkflowSpec = {
+      name: "task-optional-fail",
+      description: "t",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "task", prompt: "do thing", optional: true }],
+      run: { kind: "markdown-template", template: "body" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+    expect(result.outcome).toBe("success");
+    expect(result.warnings.some((w) => w.includes("daemon port/token not found"))).toBe(true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("required observation sink failure → outcome=run_error", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const spec: WorkflowSpec = {
+      name: "obs-required-fail",
+      description: "o",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "observation" }],
+      run: { kind: "markdown-template", template: "body" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("required output sink");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("optional observation sink failure → outcome=success", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const spec: WorkflowSpec = {
+      name: "obs-optional-fail",
+      description: "o",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "observation", optional: true }],
+      run: { kind: "markdown-template", template: "body" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+    expect(result.outcome).toBe("success");
+    expect(result.warnings.some((w) => w.includes("daemon port/token not found"))).toBe(true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("captureCtx wires capture and writes t0 + workflow_stats rows", async () => {
   if (process.platform === "darwin") {
     try {
