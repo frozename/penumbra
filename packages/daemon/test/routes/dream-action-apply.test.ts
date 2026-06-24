@@ -260,4 +260,55 @@ describe("dream action apply route", () => {
       cleanup();
     }
   });
+
+  test("returns 400 and does not cascade when revert cascade is invalid", async () => {
+    const { services, cleanup } = createTestServices();
+    try {
+      const cycleId = "cycle-invalid-cascade";
+      const parentActionId = "action-parent";
+      const dependentActionId = "action-dependent";
+
+      seedCycle(services, cycleId);
+      services.db
+        .prepare(
+          `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+           VALUES(?, ?, 'P3', 'retire', 1.0, 'auto_applied', '["memory-parent"]', '{}')`,
+        )
+        .run(parentActionId, cycleId);
+      services.db
+        .prepare(
+          `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+           VALUES(?, ?, 'P7', 'reembed', 1.0, 'auto_applied', '["memory-dependent"]', ?)`,
+        )
+        .run(dependentActionId, cycleId, JSON.stringify({ source_action_id: parentActionId }));
+
+      const handler = createDaemonFetchHandler({ services, token: "tok" });
+      const revertRes = await handler(
+        new Request("http://x/dreaming/revert", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ action_id: parentActionId, cascade: "forcex" }),
+        }),
+      );
+
+      expect(revertRes.status).toBe(400);
+
+      const parentAfter = services.db
+        .prepare("SELECT status, reverted_by FROM dream_actions WHERE action_id = ?")
+        .get(parentActionId) as { status: string; reverted_by: string | null };
+      expect(parentAfter.status).toBe("auto_applied");
+      expect(parentAfter.reverted_by).toBeNull();
+
+      const dependentAfter = services.db
+        .prepare("SELECT status, reverted_by FROM dream_actions WHERE action_id = ?")
+        .get(dependentActionId) as { status: string; reverted_by: string | null };
+      expect(dependentAfter.status).toBe("auto_applied");
+      expect(dependentAfter.reverted_by).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
 });

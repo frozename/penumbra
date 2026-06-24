@@ -4,10 +4,14 @@ import { z } from "zod";
 
 import { listPendingDreamActionsQuery } from "../dreaming/digest.js";
 import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
-import { json } from "./_helpers.js";
+import { bodyJson, json } from "./_helpers.js";
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+const RevertBodySchema = z.object({
+  action_id: z.string().min(1),
+  cascade: z.enum(["none", "force"]).default("none"),
 });
 
 export function dreamingPendingActionsRoute(req: Request, services: Services): Response {
@@ -88,10 +92,12 @@ function parseStructuredError(err: unknown): ParsedError {
 }
 
 export async function dreamingRevertRoute(req: Request, services: Services): Promise<Response> {
-  const body = (await req.json()) as { action_id?: string; cascade?: "none" | "force" };
-  if (!body.action_id) return json({ error: "missing action_id" }, 400);
+  const parsed = RevertBodySchema.safeParse(await bodyJson(req));
+  if (!parsed.success) {
+    return json({ error: { code: "validation_error", message: "invalid body" } }, 400);
+  }
   try {
-    revertDreamAction(services.db, body.action_id, body.cascade ?? "none");
+    revertDreamAction(services.db, parsed.data.action_id, parsed.data.cascade);
     return json({ ok: true });
   } catch (err: unknown) {
     const { status, code, message } = parseStructuredError(err);
