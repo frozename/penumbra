@@ -146,22 +146,31 @@ function aliasForServedModel(id: string): string {
 }
 
 function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
-  const byStableIdentity = new Map<string, ServedModelEntry>();
+  const byExactIdentity = new Map<string, ServedModelEntry>();
   for (const entry of entries) {
-    const stableKey =
-      entry.owned_by !== undefined && entry.created !== undefined
-        ? `${entry.owned_by}\0${String(entry.created)}`
-        : entry.id;
-    const existing = byStableIdentity.get(stableKey);
-    if (!existing) {
-      byStableIdentity.set(stableKey, entry);
+    const exactKey = `${entry.owned_by ?? ""}\0${entry.created ?? ""}\0${entry.id}`;
+    if (!byExactIdentity.has(exactKey)) {
+      byExactIdentity.set(exactKey, entry);
+    }
+  }
+
+  const byAlias = new Map<string, ServedModelEntry[]>();
+  for (const entry of byExactIdentity.values()) {
+    const aliasKey = `${entry.owned_by ?? ""}\0${entry.created ?? ""}\0${aliasForServedModel(entry.id)}`;
+    const existing = byAlias.get(aliasKey);
+    if (existing) {
+      existing.push(entry);
       continue;
     }
-    const existingIsAlias = !existing.id.includes("/");
-    const entryIsAlias = !entry.id.includes("/");
-    if (!existingIsAlias && entryIsAlias) byStableIdentity.set(stableKey, entry);
+    byAlias.set(aliasKey, [entry]);
   }
-  return [...byStableIdentity.values()];
+
+  const deduped: ServedModelEntry[] = [];
+  for (const entriesInAliasGroup of byAlias.values()) {
+    const alias = entriesInAliasGroup.find((entry) => !entry.id.includes("/"));
+    deduped.push(alias ?? entriesInAliasGroup[0]);
+  }
+  return deduped;
 }
 
 function appendModels(
@@ -171,7 +180,7 @@ function appendModels(
   return dedupeServedModels(entries).map((entry) => {
     const node = nodes.find((candidate) => candidate.name === entry.owned_by) ?? nodes[0];
     return {
-      id: aliasForServedModel(entry.id),
+      id: entry.id.includes("/") ? entry.id : aliasForServedModel(entry.id),
       ...(entry.owned_by ? { owned_by: entry.owned_by } : {}),
       ...(entry.created !== undefined ? { created: entry.created } : {}),
       ...(node ? { node } : {}),
