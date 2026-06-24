@@ -19,4 +19,21 @@ describe("dispatch event contract", () => {
 
     expect(parsed.success).toBe(true);
   });
+
+  it("accepts recorded agent heartbeat events", () => {
+    const parsed = DispatchEventsListResponseSchema.safeParse({
+      events: [
+        {
+          handoff_id: "h-heartbeat",
+          worker_id: "w-1",
+          source: "worker",
+          kind: "agent.heartbeat",
+          ts: "2026-06-12T12:00:00.000Z",
+          meta: null,
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
 });

@@ -19,6 +19,7 @@ export const DispatchEventKindSchema = z.enum([
   "proc.exited.resolved",
   "cancel.received",
   "cancel.dispatched",
+  "agent.heartbeat",
   "heartbeat.sent",
   "heartbeat.received",
   "watchdog.tick",

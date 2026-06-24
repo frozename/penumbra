@@ -3,8 +3,7 @@ import type { Database } from "bun:sqlite";
 
 import type { DispatchEventBus } from "../dispatch/event-bus.js";
 
-// The API contract owns the shared wire-event union; core adds one internal-only lifecycle event.
-export type DispatchEventKind = ApiDispatchEventKind | "agent.heartbeat";
+export type DispatchEventKind = ApiDispatchEventKind;
 
 export interface DispatchEventInput {
   handoff_id: string;

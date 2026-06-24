@@ -11,13 +11,11 @@ import { z } from "zod";
 import { json } from "./_helpers.js";
 
 // Every DispatchEventKind the POST route accepts and records. DERIVED from the
-// api-contract schema (the single source of truth) plus the core-only
-// "agent.heartbeat", so it can never silently drift again. The previous copy
-// was hand-maintained and omitted "acp.session.reuse" and "agent.heartbeat":
-// because BatchSchema below 400-rejects a whole batch on any unknown kind, every
-// worker batch carrying those events was dropped at ingestion and never
-// recorded — which pinned fleet_latency's acp_session_reuse_rate at 0 even when
-// warm-pool reuse actually fired, and silently lost heartbeat events. Adding a
+// api-contract schema (the single source of truth), with an explicit heartbeat
+// guard for older package-level imports. The previous copy was hand-maintained
+// and omitted "acp.session.reuse" and "agent.heartbeat": because BatchSchema
+// below 400-rejects a whole batch on any unknown kind, every worker batch
+// carrying those events was dropped at ingestion and never recorded. Adding a
 // kind to the api-contract enum now auto-extends this list.
 const KIND_VALUES = [
   ...DispatchEventKindSchema.options,
