@@ -33,7 +33,13 @@ export function resolveAgent(
   field: AgentField,
   taskType: string,
   ctx: WorkflowCtx,
-  opts: { excludeAgents?: string[] } = {},
+  // tool_free: caller asserts the role contract is text-only (no penumbra
+  // MCP tool calls, no commit/worktree). Forwarded to pickFromPool → routeAgent
+  // so a fast HTTP seat outranks an equivalent slow-to-start ACP seat. Default
+  // unset (false) keeps every existing caller byte-identical. ONLY set by
+  // callers that have positively confirmed text-only behavior; routing a
+  // tool-needing role to an HTTP seat breaks it.
+  opts: { excludeAgents?: string[]; tool_free?: boolean } = {},
 ): string {
   if (field.kind === "single") return field.agent;
 
@@ -44,5 +50,5 @@ export function resolveAgent(
   if (!db) return pool[0]!;
 
   const pressure = readSubscriptionPressure(db);
-  return pickFromPool(pool, db, ctx.config as any, pressure, taskType as any);
+  return pickFromPool(pool, db, ctx.config as any, pressure, taskType as any, opts.tool_free);
 }

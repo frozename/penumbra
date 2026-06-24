@@ -71,6 +71,13 @@ export function pickFromPool(
   agentchatConfig: AgentchatConfig | null | undefined,
   pressure: PressureSnapshot | null | undefined,
   taskType: AgentTaskType,
+  // Caller-asserted "this dispatch will not call penumbra MCP tools" hint.
+  // Forwarded verbatim to routeAgent so the scorer can mildly penalize ACP
+  // candidates relative to HTTP candidates. Unset/false leaves scoring
+  // byte-identical to today (inert default). Only set by callers that have
+  // positively confirmed the role contract is text-only — routing a
+  // tool-needing role to an HTTP seat breaks it.
+  tool_free?: boolean,
 ): string {
   const [firstAgent, secondAgent] = pool;
   if (firstAgent === undefined) throw new Error("pickFromPool: pool must not be empty");
@@ -95,6 +102,7 @@ export function pickFromPool(
     includeNeutral: true,
     applyPressure: pressure ?? undefined,
     agentchatConfig: localConfig,
+    tool_free,
   });
 
   if (out.detail !== "rank") return firstAgent;

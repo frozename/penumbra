@@ -357,7 +357,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       hint: `available personas: ${personaKeys.join(", ")}`,
     };
   }
-  const synthAgent = resolveAgent(synthesizer.preferred_agent, "plan_refine", ctx);
+  // tool_free:true — plan-refine synthesizer dispatch is pure text generation:
+  // it receives N planner outputs inlined in the prompt and emits a merged plan
+  // as response_text. No penumbra MCP tools, no worktree, no commit.
+  const synthAgent = resolveAgent(synthesizer.preferred_agent, "plan_refine", ctx, {
+    tool_free: true,
+  });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
   if (!outDirResolution.ok) {
@@ -403,7 +408,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       try {
         let dispatch: { conversation_id: string; handoff_id: string };
         let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
-        const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx);
+        // tool_free:true — planner persona dispatch is pure text generation:
+        // it receives topic + spec inlined in the prompt and emits a phased
+        // plan as response_text. No penumbra MCP tools, no worktree, no commit.
+        const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx, {
+          tool_free: true,
+        });
         while (true) {
           try {
             dispatch = await ctx.dispatch({

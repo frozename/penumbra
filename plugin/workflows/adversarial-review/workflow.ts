@@ -735,7 +735,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       hint: `available personas: ${personaKeys.join(", ")}`,
     };
   }
-  const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx);
+  // tool_free:true — adversarial-review synthesizer dispatch is pure text
+  // generation: it receives N reviewer outputs inlined in the prompt and emits
+  // a merged synthesis as response_text. No penumbra MCP tools, no worktree,
+  // no commit.
+  const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+    tool_free: true,
+  });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
   if (!outDirResolution.ok) {
@@ -792,7 +798,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           final_agent: string | null;
           response_text: string | null;
         };
-        const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx);
+        // tool_free:true — reviewer persona dispatch is pure text generation:
+        // it receives the diff inlined in the prompt and emits a markdown
+        // review with a trailing JSON findings block. No penumbra MCP tools,
+        // no worktree, no commit.
+        const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
+          tool_free: true,
+        });
         while (true) {
           try {
             dispatch = await ctx.dispatch({
@@ -919,6 +931,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       if (synthFailover || synthesizer.preferred_agent.kind !== "pool") return null;
       const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
         excludeAgents: [failedAgent],
+        tool_free: true,
       });
       return nextAgent !== failedAgent ? nextAgent : null;
     };

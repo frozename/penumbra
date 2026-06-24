@@ -173,4 +173,108 @@ describe("resolveAgent", () => {
       "a",
     );
   });
+
+  test("tool_free:true reaches the scorer and demotes an ACP twin in favor of an equivalent HTTP twin", () => {
+    // Two agents with identical performance histories so the only score
+    // differentiator is the adapter-aware penalty wired through tool_free.
+    // "acp-twin" carries an ACP adapter; "http-twin" carries an HTTP adapter.
+    const db = freshDb();
+    writePerf(db, "acp-twin");
+    writePerf(db, "http-twin");
+    const ctxWithAdapters = ctx({
+      config: {
+        role_routing: { headroom_weighting: false },
+        agents: [
+          {
+            name: "acp-twin",
+            roles: [],
+            pricing_mode: "subscription",
+            subscription_provider: "anthropic",
+            adapter: "stdio-acp",
+          },
+          {
+            name: "http-twin",
+            roles: [],
+            pricing_mode: "subscription",
+            subscription_provider: "openai",
+            adapter: "openai-compat-http",
+          },
+        ],
+      },
+      db: () => db,
+    });
+
+    // tool_free unset is the inert baseline. With identical performance the
+    // scorer ties; pickFromPool's pickPreferred breaks the tie deterministically
+    // and "acp-twin" wins by declaration order (no penalty).
+    expect(
+      resolveAgent(
+        { kind: "pool", agents: ["acp-twin", "http-twin"] },
+        "review_adversarial",
+        ctxWithAdapters,
+      ),
+    ).toBe("acp-twin");
+
+    // tool_free:true flips the winner: the ACP candidate gets the 0.85 penalty
+    // and the HTTP twin overtakes it. Confirms the flag flows resolveAgent →
+    // pickFromPool → routeAgent and the scorer's adapter check fires.
+    expect(
+      resolveAgent(
+        { kind: "pool", agents: ["acp-twin", "http-twin"] },
+        "review_adversarial",
+        ctxWithAdapters,
+        { tool_free: true },
+      ),
+    ).toBe("http-twin");
+  });
+
+  test("tool_free unset (the default for tool-needing callers) leaves the ACP candidate eligible to win", () => {
+    // Mirrors the inert-default contract from the routeAgent test layer: a
+    // caller that does NOT opt into tool_free must see ACP candidates compete
+    // on baseline merit, with no transport penalty. Guards against the wiring
+    // accidentally defaulting to true and breaking tool-needing roles.
+    const db = freshDb();
+    writePerf(db, "acp-twin");
+    writePerf(db, "http-twin");
+    const ctxWithAdapters = ctx({
+      config: {
+        role_routing: { headroom_weighting: false },
+        agents: [
+          {
+            name: "acp-twin",
+            roles: [],
+            pricing_mode: "subscription",
+            subscription_provider: "anthropic",
+            adapter: "stdio-acp",
+          },
+          {
+            name: "http-twin",
+            roles: [],
+            pricing_mode: "subscription",
+            subscription_provider: "openai",
+            adapter: "openai-compat-http",
+          },
+        ],
+      },
+      db: () => db,
+    });
+
+    // No tool_free → ACP keeps parity and wins on declaration-order tiebreak.
+    expect(
+      resolveAgent(
+        { kind: "pool", agents: ["acp-twin", "http-twin"] },
+        "review_adversarial",
+        ctxWithAdapters,
+      ),
+    ).toBe("acp-twin");
+    // Explicit false is also inert.
+    expect(
+      resolveAgent(
+        { kind: "pool", agents: ["acp-twin", "http-twin"] },
+        "review_adversarial",
+        ctxWithAdapters,
+        { tool_free: false },
+      ),
+    ).toBe("acp-twin");
+  });
 });
