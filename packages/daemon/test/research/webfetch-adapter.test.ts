@@ -296,4 +296,7 @@ it("isInternalOrMetadataHost flags expected ranges and passes public hosts", () 
   expect(isInternalOrMetadataHost("172.15.0.1")).toBe(false);
   expect(isInternalOrMetadataHost("172.32.0.1")).toBe(false);
   expect(isInternalOrMetadataHost("169.253.0.1")).toBe(false);
+  expect(isInternalOrMetadataHost("::ffff:127.0.0.1")).toBe(true);
+  expect(isInternalOrMetadataHost("::ffff:169.254.169.254")).toBe(true);
+  expect(isInternalOrMetadataHost("::ffff:10.0.0.5")).toBe(true);
 });

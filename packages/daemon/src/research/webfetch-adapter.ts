@@ -33,6 +33,11 @@ function isInternalIpv4(h: string): boolean {
   return false;
 }
 
+function parseMappedIpv4(hostname: string): string | null {
+  const m = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(hostname);
+  return m?.[1] ?? null;
+}
+
 function isInternalIpv6(h: string): boolean {
   if (h === "::1") return true;
   if (h.startsWith("fe80:") || h.startsWith("fe80::")) return true;
@@ -49,6 +54,10 @@ function isInternalHostname(h: string): boolean {
 export function isInternalOrMetadataHost(hostname: string): boolean {
   if (!hostname) return true;
   const h = hostname.toLowerCase().replaceAll(/^\[|\]$/g, "");
+  const mappedIpv4 = parseMappedIpv4(h);
+  if (mappedIpv4) {
+    return isInternalIpv4(mappedIpv4);
+  }
   return isInternalHostname(h) || isInternalIpv6(h) || isInternalIpv4(h);
 }
 
