@@ -33,6 +33,12 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
   ) => Promise<DispatchHandoffResult>;
   postProgress: (handoff_id: string, payload: Record<string, unknown>) => Promise<void>;
   complete: (handoff_id: string) => Promise<void>;
+  /**
+   * Marks a handoff durably failed with an error summary. Invoked instead of
+   * complete() when a dispatch ends in error so the row stays recoverable
+   * (retry / sweep) instead of being masked as a successful completion.
+   */
+  markFailed: (handoff_id: string, reason: string) => Promise<void>;
   log: Logger;
   concurrency: number;
   /**
@@ -776,6 +782,10 @@ async function finalizeDispatch(
     ts: new Date().toISOString(),
     meta: buildDispatchEndMeta(ctx),
   });
+  if (ctx.outcome.status === "error") {
+    await failDispatch(deps, handoff, ctx);
+    return;
+  }
   try {
     await deps.complete(handoff.handoff_id);
   } catch (err: unknown) {
@@ -787,6 +797,30 @@ async function finalizeDispatch(
       return;
     }
     deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "completeHandoff failed");
+  }
+}
+
+// An errored dispatch must NOT be marked completed: that durably masks the
+// failure and suppresses retry/recovery (sweepers, re-dispatch). Route it
+// through markFailed with the error summary instead. Idempotent against an
+// already-terminal row (e.g. dispatchHandoff already failed it) via 409.
+async function failDispatch(
+  deps: WorkerDispatcherDeps,
+  handoff: DispatcherHandoff,
+  ctx: DispatchLifecycleContext,
+): Promise<void> {
+  const reason = ctx.outcome.errorText ?? "dispatch error";
+  try {
+    await deps.markFailed(handoff.handoff_id, reason);
+  } catch (err: unknown) {
+    if (err instanceof PenumbraHttpError && err.status === 409) {
+      deps.log.debug(
+        { handoff_id: handoff.handoff_id, err: String(err) },
+        "markFailed conflict (likely already terminal)",
+      );
+      return;
+    }
+    deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "markFailed failed");
   }
 }
 

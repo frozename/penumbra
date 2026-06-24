@@ -104,6 +104,7 @@ function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
     }),
     postProgress: mock().mockResolvedValue(undefined),
     complete: mock().mockResolvedValue(undefined),
+    markFailed: mock().mockResolvedValue(undefined),
     log: asLogger({ info: mock(), warn: mock(), debug: mock() }),
     concurrency: 4,
     ...over,
@@ -524,6 +525,74 @@ test("emits dispatch.end status=error when dispatch reports terminal error", asy
       agent: "executor",
     }),
   );
+});
+
+test("terminal-error dispatch is marked failed, not completed", async () => {
+  const d = deps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "error",
+      text: "",
+      agent: "executor",
+    }),
+    markFailed: mock().mockResolvedValue(undefined),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-error-fail"));
+  await dispatcher.idle();
+
+  // The defect: complete() was called on an errored dispatch, durably masking
+  // the failure. The corrected behavior routes it through markFailed() so the
+  // row stays recoverable.
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+  expect(mockCalls<[string, string]>(d.markFailed)[0]?.[0]).toBe("h-error-fail");
+});
+
+test("thrown dispatch is marked failed with the error summary, not completed", async () => {
+  const d = deps({
+    dispatch: mock().mockRejectedValue(new Error("adapter exploded")),
+    markFailed: mock().mockResolvedValue(undefined),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-thrown"));
+  await dispatcher.idle();
+
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+  const [id, reason] = mockCalls<[string, string]>(d.markFailed)[0] ?? ["", ""];
+  expect(id).toBe("h-thrown");
+  expect(reason).toBe("adapter exploded");
+});
+
+test("markFailed conflict (already terminal) is swallowed; complete is never called", async () => {
+  const d = deps({
+    dispatch: mock().mockRejectedValue(new Error("adapter exploded")),
+    markFailed: mock().mockRejectedValue(
+      new PenumbraHttpError("conflict", 409, "/handoffs/h-thrown-409/fail"),
+    ),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-thrown-409"));
+  await dispatcher.idle();
+
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+});
+
+test("successful dispatch still completes (regression guard for the error routing)", async () => {
+  const d = deps({ markFailed: mock().mockResolvedValue(undefined) });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-ok"));
+  await dispatcher.idle();
+
+  expect(d.complete).toHaveBeenCalledTimes(1);
+  expect(d.complete).toHaveBeenCalledWith("h-ok");
+  expect(d.markFailed).not.toHaveBeenCalled();
 });
 
 test("missing cli binary fails only the handoff and does not surface an unhandled rejection", async () => {

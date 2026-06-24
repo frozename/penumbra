@@ -65,7 +65,12 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       claim: (id) => client.claimHandoff(id, "e2e-worker"),
       postProgress: (id, payload: Parameters<typeof client.postProgress>[1]) =>
         client.postProgress(id, payload),
-      complete: (id) => client.completeHandoff(id),
+      complete: async (id): Promise<void> => {
+        await client.completeHandoff(id);
+      },
+      markFailed: async (id, reason): Promise<void> => {
+        await client.markFailed(id, reason);
+      },
       dispatch: async (h: Parameters<typeof dispatchHandoff>[0]["handoff"], onChunk, signal) => {
         return await dispatchHandoff({
           handoff: h,

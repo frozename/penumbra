@@ -107,6 +107,7 @@ function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
     }),
     postProgress: mock().mockResolvedValue(undefined),
     complete: mock().mockResolvedValue(undefined),
+    markFailed: mock().mockResolvedValue(undefined),
     log: makeLog(),
     concurrency: 1,
     onDispatchEvent: mock(),

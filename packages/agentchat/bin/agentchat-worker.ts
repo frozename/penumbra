@@ -1727,6 +1727,9 @@ const dispatcher = createWorkerDispatcher({
   complete: async (id): Promise<void> => {
     await client.completeHandoff(id, workerId);
   },
+  markFailed: async (id, reason): Promise<void> => {
+    await client.markFailed(id, reason, workerId);
+  },
   autocommitOnChainEnd: async (rawHandoff): Promise<void> => {
     const handoff = rawHandoff as HandoffRow;
     const wt = worktreeManager.getWorktree(handoff.handoff_id);

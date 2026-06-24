@@ -94,6 +94,9 @@ serviceTest(
         complete: async (cid) => {
           await workerClient.completeHandoff(cid);
         },
+        markFailed: async (hid, reason): Promise<void> => {
+          await workerClient.markFailed(hid, reason);
+        },
         dispatch: async (h: HandoffRow): Promise<DispatchHandoffResult> => {
           const result = await dispatchHandoff({
             handoff: h,

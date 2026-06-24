@@ -114,6 +114,9 @@ serviceTest(
       complete: async (id) => {
         await client.completeHandoff(id);
       },
+      markFailed: async (id, reason): Promise<void> => {
+        await client.markFailed(id, reason);
+      },
       dispatch: async (h: HandoffRow): Promise<DispatchHandoffResult> => {
         const transcript: { agent: string; text: string }[] = [];
         const { handoffs } = await client.listHandoffs({

@@ -66,6 +66,7 @@ function makeDeps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDep
     ),
     postProgress: mock(() => Promise.resolve()),
     complete: mock(() => Promise.resolve()),
+    markFailed: mock(() => Promise.resolve()),
     log: asLogger({ info: mock(), warn: mock(), debug: mock() }),
     concurrency: 4,
     ...over,
