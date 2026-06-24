@@ -91,6 +91,9 @@ export interface AgentRoutingConfig {
     subscription_provider?: string;
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
+    // Adapter identifier (e.g. "stdio-acp", "claude-acp", "openai-compat-http").
+    // Propagated to the scorer for tool_free-aware ranking.
+    adapter?: string;
   }[];
   default_roles: Record<string, string>;
   role_exploration_policy?: "unsampled-first" | "ranked-first";

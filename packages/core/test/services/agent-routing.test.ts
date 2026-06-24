@@ -1338,3 +1338,101 @@ describe("routing bias (usage steering)", () => {
     expect(out.route).not.toBeNull();
   });
 });
+
+describe("tool_free adapter-aware penalty", () => {
+  let db: Database;
+
+  const seed = (agent: string, n: number, outcome: "merged" | "failed"): void => {
+    new AgentPerformanceWriter(db).upsert({
+      performance_id: `${agent}-${String(n)}`,
+      ts: `2026-06-13T10:0${String(n)}:00.000Z`,
+      handoff_id: `h-${agent}-${String(n)}`,
+      conversation_id: `c-${agent}-${String(n)}`,
+      project_id: "proj",
+      agent_name: agent,
+      task_type: "implement_substantial",
+      outcome,
+      gate_outcome: outcome === "merged" ? "passed" : null,
+      rounds: 1,
+      smoke_pass: outcome === "merged" ? "y" : "n",
+      reviewer_findings: 0,
+      maestro_score: outcome === "merged" ? 5 : 0,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+  };
+
+  // Two agents with identical performance histories so any score delta isolates
+  // the adapter-aware penalty as the only differentiator.
+  const seedTwins = (): void => {
+    for (const agent of ["acp-twin", "http-twin"]) {
+      seed(agent, 1, "merged");
+      seed(agent, 2, "failed");
+      seed(agent, 3, "failed");
+    }
+  };
+
+  const AGENTS = [
+    {
+      name: "acp-twin",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-a",
+      adapter: "stdio-acp",
+    },
+    {
+      name: "http-twin",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-b",
+      adapter: "openai-compat-http",
+    },
+  ];
+
+  const rankInput = (tool_free?: boolean): RouteAgentInput => ({
+    db,
+    detail: "rank",
+    taskType: "implement_substantial",
+    agentchatConfig: { agents: AGENTS },
+    tool_free,
+    now: NOW,
+  });
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedTwins();
+  });
+
+  test("INERT DEFAULT: tool_free unset leaves output byte-identical to no tool_free", () => {
+    // Adapter field is present on the config and tool_free is unset on both
+    // sides — must be a no-op. Guards against a dead control flipping on
+    // unaware callers.
+    const without = routeAgent(rankInput(undefined));
+    const withFalse = routeAgent(rankInput(false));
+    expect(without).toEqual(withFalse);
+  });
+
+  test("tool_free:true penalizes the ACP candidate relative to an equivalent HTTP candidate", () => {
+    const base = routeAgent(rankInput(undefined));
+    const acpBase = rankCandidates(base).find((c) => c.agent_name === "acp-twin");
+    const httpBase = rankCandidates(base).find((c) => c.agent_name === "http-twin");
+    if (!acpBase || !httpBase) throw new Error("missing baseline candidates");
+    // Equal histories => equal baseline scores; isolates the penalty.
+    expect(acpBase.score).toBeCloseTo(httpBase.score, 6);
+
+    const out = routeAgent(rankInput(true));
+    const acp = rankCandidates(out).find((c) => c.agent_name === "acp-twin");
+    const http = rankCandidates(out).find((c) => c.agent_name === "http-twin");
+    if (!acp || !http) throw new Error("missing tool_free candidates");
+    // ACP score must drop below the HTTP score under tool_free:true.
+    expect(acp.score).toBeLessThan(http.score);
+    // HTTP score must be unaffected (no adapter penalty).
+    expect(http.score).toBeCloseTo(httpBase.score, 6);
+  });
+});

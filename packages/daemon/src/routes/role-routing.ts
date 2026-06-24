@@ -55,6 +55,9 @@ export function resolveSingleRoute(
     taskType: resolvedTaskType,
     agentRegistry: services.agentRegistry,
     agentchatConfig: {
+      // agentRouting.agents already carries adapter via
+      // loadAgentRoutingFromConfig, so the scorer can apply the tool-free
+      // penalty for callers that set tool_free:true on RouteAgentInput.
       agents: agentRouting.agents,
       role_routing: agentRoutingWithRoleRouting.role_routing,
     },

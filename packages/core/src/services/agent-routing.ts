@@ -143,6 +143,11 @@ type AgentRouteAgentchatConfig = {
     subscription_provider?: string;
     api_provider?: string;
     pricing_mode?: "api" | "subscription";
+    // Adapter identifier from agentchat config (e.g. "stdio-acp", "claude-acp",
+    // "openai-compat-http"). Optional so unaware callers stay compatible; the
+    // tool-free penalty only fires when both adapter is populated AND
+    // RouteAgentInput.tool_free === true.
+    adapter?: string;
   }[];
   role_routing?: {
     headroom_weighting?: boolean;
@@ -199,6 +204,20 @@ export interface RouteAgentInput {
   // When warm_pool_reuse_weighting is enabled, agents with higher rates receive a
   // mild multiplicative score preference. Absent means no adjustment.
   warmPoolReuseRates?: Record<string, number>;
+  // Caller-asserted "no penumbra-tool calls expected" hint. When true, the
+  // scorer applies a modest multiplicative penalty to ACP-adapter candidates
+  // so a fast HTTP seat outranks an equivalent (but much slower at startup)
+  // ACP seat for pure text-generation tasks. The penalty composes with the
+  // latency term; it is NOT a hard filter. Unset/false leaves scoring
+  // byte-identical to today (inert by default, fail-safe).
+  //
+  // Wiring seam: the natural caller is the workflow synthesizer/persona
+  // text-dispatch path (plugin/workflows/_shared/pool-resolver.ts →
+  // packages/core/src/tasks/pick-from-pool.ts). Set tool_free:true there for
+  // synthesizer-style roles whose role contract is text-only. Do NOT derive
+  // tool_free from use_worktree: a no-worktree task can still need non-file
+  // MCP tools, so that proxy is unsafe.
+  tool_free?: boolean;
   now?: Date;
 }
 
@@ -357,6 +376,14 @@ const LATENCY_MIN_SUCCESS_FLOOR = 0.2;
  * signal — a 5% lift cannot overcome a meaningfully worse outcome record.
  */
 const WARM_POOL_REUSE_MAX_BOOST = 0.05;
+/**
+ * Multiplicative score factor applied to ACP-adapter candidates when the
+ * caller asserts tool_free:true. Modest by design: a nudge that composes with
+ * the latency term to break ties in favor of fast HTTP seats for pure text
+ * tasks, never a hard filter. A clearly stronger ACP agent (better outcome
+ * history) still wins.
+ */
+const TOOL_FREE_ACP_PENALTY = 0.85;
 const DEFAULT_RANK_WINDOW_DAYS = 30;
 /** Fraction trimmed from each tail before averaging exec_ms (outlier guard). */
 const EXEC_WINSOR_TRIM_FRAC = 0.1;
@@ -853,6 +880,29 @@ function applyWarmPoolFactor(
   return clamp01(Math.round(score * reuseFactor * 10000) / 10000);
 }
 
+// Adapter is "ACP-shaped" when its identifier contains "acp" — covers
+// stdio-acp, claude-acp, claude-acp-fallback, codex-acp, opencode-acp, etc.
+// Substring match is correct: HTTP adapters never include "acp" in their name
+// (openai-compat-http, anthropic-http, etc.). Lowercased to be tolerant of
+// config-source casing without normalizing the stored value.
+function isAcpAdapter(adapter: string | undefined): boolean {
+  if (!adapter) return false;
+  return adapter.toLowerCase().includes("acp");
+}
+
+function applyToolFreeFactor(
+  score: number,
+  summary: CandidateSummary,
+  input: RouteAgentInput,
+): number {
+  // Early return MUST be the unset/false path — guarantees byte-identical
+  // behavior for callers that never opt in.
+  if (input.tool_free !== true) return score;
+  const agentConf = input.agentchatConfig?.agents.find((a) => a.name === summary.agent_name);
+  if (!agentConf || !isAcpAdapter(agentConf.adapter)) return score;
+  return clamp01(Math.round(score * TOOL_FREE_ACP_PENALTY * 10000) / 10000);
+}
+
 function applyBiasFactor(
   score: number,
   summary: CandidateSummary,
@@ -921,6 +971,7 @@ function rankSummary(
   });
   score = applyPressureFactor(score, summary, ctx.input);
   score = applyWarmPoolFactor(score, summary, ctx.input);
+  score = applyToolFreeFactor(score, summary, ctx.input);
   const biased = applyBiasFactor(score, summary, ctx.input);
   return { candidate: summaryToCandidate(summary, biased.score), biasExclude: biased.biasExclude };
 }
