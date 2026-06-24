@@ -1,3 +1,6 @@
+import { resolve4, resolve6 } from "node:dns/promises";
+import { isIP } from "node:net";
+
 import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
 
 function htmlToMarkdown(html: string): string {
@@ -16,9 +19,7 @@ function isHostnameAllowed(hostname: string, allowedDomains: string[]): boolean 
 // Fail-closed: block hosts that resolve to internal/metadata addresses regardless of
 // the configured allowlist. Matches RFC1918, loopback, link-local (incl. cloud
 // metadata 169.254.169.254), IPv6 loopback/link-local/unique-local, and common
-// metadata hostnames. The check is hostname-only and does not perform DNS
-// resolution, so a public DNS name that resolves to an internal IP can still
-// slip through — pair with an allowlist for full coverage.
+// metadata hostnames.
 function isInternalIpv4(h: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})$/.exec(h);
   if (!m) return false;
@@ -61,11 +62,49 @@ export function isInternalOrMetadataHost(hostname: string): boolean {
   return isInternalHostname(h) || isInternalIpv6(h) || isInternalIpv4(h);
 }
 
+type HostResolver = (hostname: string) => Promise<string[]>;
+
+function isNoDnsRecordsError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    (err.code === "ENODATA" || err.code === "ENOTFOUND" || err.code === "ENODOMAIN")
+  );
+}
+
+async function defaultResolveHostAddresses(hostname: string): Promise<string[]> {
+  const h = hostname.toLowerCase().replaceAll(/^\[|\]$/g, "");
+  if (isIP(h) !== 0) return [h];
+
+  const [ipv4, ipv6] = await Promise.allSettled([resolve4(hostname), resolve6(hostname)]);
+  const addresses: string[] = [];
+  const errors: unknown[] = [];
+
+  for (const result of [ipv4, ipv6]) {
+    if (result.status === "fulfilled") {
+      addresses.push(...result.value);
+    } else if (!isNoDnsRecordsError(result.reason)) {
+      errors.push(result.reason);
+    }
+  }
+
+  if (errors.length > 0) {
+    const detail = errors
+      .map((err) => (err instanceof Error ? err.message : String(err)))
+      .join("; ");
+    throw new Error(detail);
+  }
+
+  return addresses;
+}
+
 export class WebFetchAdapter implements WebResearchAdapter {
   private allowedDomains: string[] | undefined;
+  private resolveHostAddresses: HostResolver;
 
-  constructor(opts: { allowedDomains?: string[] } = {}) {
+  constructor(opts: { allowedDomains?: string[]; resolveHostAddresses?: HostResolver } = {}) {
     this.allowedDomains = opts.allowedDomains;
+    this.resolveHostAddresses = opts.resolveHostAddresses ?? defaultResolveHostAddresses;
   }
 
   // Returns a search-engine URL as a navigation hint; no network call.
@@ -97,7 +136,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     ]);
   }
 
-  private checkHost(hostname: string): void {
+  private async checkHost(hostname: string): Promise<void> {
     if (isInternalOrMetadataHost(hostname)) {
       throw new Error(`internal host blocked: ${hostname}`);
     }
@@ -106,9 +145,24 @@ export class WebFetchAdapter implements WebResearchAdapter {
         throw new Error(`domain not allowed: ${hostname}`);
       }
     }
+    let addresses: string[];
+    try {
+      addresses = await this.resolveHostAddresses(hostname);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`host resolution failed: ${hostname}: ${detail}`);
+    }
+    if (addresses.length === 0) {
+      throw new Error(`host resolution failed: ${hostname}: no addresses`);
+    }
+    for (const address of addresses) {
+      if (isInternalOrMetadataHost(address)) {
+        throw new Error(`resolved internal host blocked: ${hostname} -> ${address}`);
+      }
+    }
   }
 
-  private resolveRedirect(res: Response, currentUrl: string): string | null {
+  private async resolveRedirect(res: Response, currentUrl: string): Promise<string | null> {
     const loc = res.headers.get("location");
     if (!loc) return null;
     let nextUrl: URL;
@@ -117,7 +171,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     } catch {
       throw new Error(`invalid redirect URL: ${loc}`);
     }
-    this.checkHost(nextUrl.hostname);
+    await this.checkHost(nextUrl.hostname);
     return nextUrl.toString();
   }
 
@@ -128,7 +182,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     } catch {
       throw new Error(`invalid URL: ${args.url}`);
     }
-    this.checkHost(new URL(currentUrl).hostname);
+    await this.checkHost(new URL(currentUrl).hostname);
 
     // Manual redirect following: re-check each redirect target against the
     // private-host blocker AND the allowlist. Without this, a 302 to a cloud
@@ -138,7 +192,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     for (let hops = 0; hops <= maxRedirects; hops++) {
       res = await fetch(currentUrl, { redirect: "manual" });
       if (res.status < 300 || res.status >= 400) break;
-      const next = this.resolveRedirect(res, currentUrl);
+      const next = await this.resolveRedirect(res, currentUrl);
       if (next === null) break;
       currentUrl = next;
     }

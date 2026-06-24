@@ -40,6 +40,7 @@ async function expectRejectsToMatch(promise: Promise<unknown>, pattern: RegExp):
 }
 
 type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>;
+type HostResolver = (hostname: string) => Promise<string[]>;
 
 function installFetch(fn: FetchFn): void {
   globalThis.fetch = fn as unknown as typeof fetch;
@@ -139,6 +140,40 @@ it("allows scrape of public host when no allowlist is set", async () => {
   const adapter = new WebFetchAdapter();
   const result = await adapter.scrape({ url: "https://example.com/" });
   expect(result.markdown).toContain("ok");
+});
+
+it("blocks public hostname resolving to internal address and allows public resolution", async () => {
+  const fetchedUrls: string[] = [];
+  installFetch((url) => {
+    fetchedUrls.push(urlOf(url));
+    return Promise.resolve(
+      new Response("<html><body>resolved ok</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+  });
+
+  const resolveHostAddresses: HostResolver = (hostname) => {
+    if (hostname === "rebind.example") return Promise.resolve(["93.184.216.34", "10.0.0.5"]);
+    if (hostname === "public.example") return Promise.resolve(["93.184.216.34"]);
+    return Promise.resolve([]);
+  };
+  const adapter = new WebFetchAdapter({
+    resolveHostAddresses,
+  } as ConstructorParameters<typeof WebFetchAdapter>[0] & {
+    resolveHostAddresses: HostResolver;
+  });
+
+  await expectRejectsToMatch(
+    adapter.scrape({ url: "https://rebind.example/page" }),
+    /resolved internal host blocked/i,
+  );
+  expect(fetchedUrls).toEqual([]);
+
+  const result = await adapter.scrape({ url: "https://public.example/page" });
+  expect(result.markdown).toContain("resolved ok");
+  expect(fetchedUrls).toEqual(["https://public.example/page"]);
 });
 
 it("createResearchAdapter wires allowedDomains into webfetch adapter", async () => {
