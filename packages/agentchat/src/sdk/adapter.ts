@@ -50,6 +50,7 @@ export interface DispatchOutput {
     framework_overhead_ms?: number;
     classifier_declined?: true;
     decline_reason?: "provider_safety_refusal";
+    reasoning_content?: string;
   };
 }
 

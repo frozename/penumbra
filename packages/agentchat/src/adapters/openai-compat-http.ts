@@ -48,7 +48,7 @@ interface OpenAiChatCompletionResponse {
 }
 
 interface OpenAiStreamChoice {
-  delta?: { content?: string; reasoning_content?: string };
+  delta?: { content?: string | null; reasoning_content?: string | null };
   finish_reason?: string | null;
 }
 
@@ -137,6 +137,14 @@ export class OpenAiCompatHttpAdapter implements Adapter {
       throw new Error("openai-compat-http: streaming response ended without a finish signal");
     }
     this.emitUsage(acc.lastUsage);
+    // Surface reasoning_content separately when we also assembled real content
+    // — otherwise downstream callers would lose the thinking trace entirely.
+    // When content was empty we already returned reasoningText as the body, so
+    // omit the duplicate channel in that case.
+    const reasoningSidecar =
+      acc.contentText.length > 0 && acc.reasoningText.length > 0
+        ? { reasoning_content: acc.reasoningText }
+        : {};
     yield {
       type: "done",
       result: {
@@ -144,6 +152,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
         meta: {
           model: acc.lastModel ?? this.opts.model,
           ...metaFromMetrics(acc.lastUsage),
+          ...reasoningSidecar,
         },
       },
     };
@@ -324,7 +333,11 @@ function isOpenAiStreamChoice(value: unknown): value is OpenAiStreamChoice {
 
 function isOpenAiStreamDelta(value: unknown): value is OpenAiStreamChoice["delta"] {
   if (!isRecord(value)) return false;
-  return optionalString(value.content) && optionalString(value.reasoning_content);
+  // Real reasoning-model providers (deepseek, etc.) emit {role:"assistant",
+  // content:null, reasoning_content:"..."} while thinking, then later
+  // {content:"answer", reasoning_content:null}. Treat null the same as
+  // undefined so we don't reject these legitimate chunks as non-chat payloads.
+  return nullableOptionalString(value.content) && nullableOptionalString(value.reasoning_content);
 }
 
 function isOpenAiUsage(value: unknown): value is OpenAiUsage {
@@ -362,6 +375,10 @@ function optionalNumber(value: unknown): boolean {
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function nullableOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
 }
 
 function finiteNumber(value: number | undefined): number | undefined {

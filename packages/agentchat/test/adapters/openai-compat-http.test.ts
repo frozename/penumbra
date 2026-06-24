@@ -539,6 +539,81 @@ test("dispatchStream throws when a non-DONE SSE payload is not a chat chunk", as
   );
 });
 
+test("dispatchStream tolerates a reasoning_content-then-content stream and captures both", async () => {
+  // Deepseek-shape: reasoning_content deltas first, then content deltas, then a
+  // final usage chunk with finish_reason:stop and [DONE]. The adapter must
+  // assemble the content text and not error on the reasoning-only chunks.
+  const sseBody = [
+    'data: {"choices":[{"delta":{"reasoning_content":"We need to "}}]}\n\n',
+    'data: {"choices":[{"delta":{"reasoning_content":"think first."}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"Prompt caching is "}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"a discount on spend."}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":15,"completion_tokens_details":{"reasoning_tokens":6}}}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(new Response(sseBody, { headers: { "content-type": "text/event-stream" } })),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  const events = await drainStream(
+    adapter.dispatchStream({
+      prompt: "p",
+      conversation: { id: "c", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    }),
+  );
+  const done = events.find((e): e is Extract<DispatchEvent, { type: "done" }> => e.type === "done");
+  if (!done) {
+    throw new Error("expected done event");
+  }
+  expect(done.result.text).toBe("Prompt caching is a discount on spend.");
+  expect(done.result.meta?.reasoning_content).toBe("We need to think first.");
+  expect(done.result.meta?.tokens_out).toBe(15);
+});
+
+test("dispatchStream tolerates a delta whose content field is null (deepseek wire shape)", async () => {
+  // Real deepseek-style chunks send {role:"assistant", content:null,
+  // reasoning_content:"..."} while thinking. The adapter must not reject these
+  // as non-chat-chunk payloads — that was the 8fd684a3 over-rejection bug.
+  const sseBody = [
+    'data: {"choices":[{"delta":{"role":"assistant","content":null,"reasoning_content":"hmm"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"answer","reasoning_content":null}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(new Response(sseBody, { headers: { "content-type": "text/event-stream" } })),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  const events = await drainStream(
+    adapter.dispatchStream({
+      prompt: "p",
+      conversation: { id: "c", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    }),
+  );
+  const done = events.find((e): e is Extract<DispatchEvent, { type: "done" }> => e.type === "done");
+  if (!done) {
+    throw new Error("expected done event");
+  }
+  expect(done.result.text).toBe("answer");
+  expect(done.result.meta?.reasoning_content).toBe("hmm");
+});
+
 test("dispatchStream accepts an OpenAI usage-only stream chunk", async () => {
   global.fetch = asFetchFn(
     mock(() =>
