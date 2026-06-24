@@ -31,6 +31,12 @@ export interface RpcServer {
   start(): void;
 }
 
+function rpcErrorCode(err: unknown): number {
+  if (typeof err !== "object" || err === null || !("code" in err)) return -32000;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "number" && Number.isFinite(code) ? code : -32000;
+}
+
 /** Encodes a JSON-RPC message as newline-delimited JSON (stdio-acp default). */
 export function encodeMessage(msg: object): string {
   return JSON.stringify(msg) + "\n";
@@ -119,7 +125,7 @@ export function createRpcServer(handlers: RpcHandlers): RpcServer {
             const resp: RpcResponse = {
               jsonrpc: "2.0",
               id: req.id ?? null,
-              error: { code: -32000, message },
+              error: { code: rpcErrorCode(err), message },
             };
             write(resp);
           },

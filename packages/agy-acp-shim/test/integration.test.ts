@@ -26,7 +26,7 @@ interface JsonRpcResponse {
 }
 
 describe("rpc error handling", () => {
-  it("returns a JSON-RPC error for session/cancel with an unknown session", async () => {
+  it("preserves the numeric JSON-RPC error code from a handler rejection", async () => {
     const shim = spawn(process.execPath, [SHIM_ENTRY], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, AGY_BINARY },
@@ -60,7 +60,7 @@ describe("rpc error handling", () => {
     expect(resp).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
-      error: { code: -32000, message: "not_a_session" },
+      error: { code: -32002, message: "not_a_session" },
     });
 
     shim.kill("SIGTERM");
