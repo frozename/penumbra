@@ -46,6 +46,7 @@ function writePerf(
     failure_class: string | null;
     rounds: number;
     latency_ms: number;
+    exec_ms: number;
     ts: string;
     id_suffix: string;
   }> = {},
@@ -68,6 +69,7 @@ function writePerf(
     cost_usd: null,
     tokens_used: 100,
     latency_ms: overrides.latency_ms ?? 10_000,
+    exec_ms: overrides.exec_ms ?? null,
     source: "test",
     notes: null,
     metadata_json: "{}",
@@ -260,5 +262,42 @@ describe("pickFromPool", () => {
     }
 
     expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("a");
+  });
+
+  test("forces latency_weighting true and prefers the faster seat when exec_ms spread is material", () => {
+    const db = freshDb();
+    // Both agents: identical outcome/rounds/smoke/reviewer performance.
+    // Caller config explicitly leaves latency_weighting at false.
+    // "a" is slow (300 s exec), "b" is fast (1 s exec).
+    // gate_outcome set to "passed" so success_rate = 1 >= LATENCY_MIN_SUCCESS_FLOOR.
+    writePerf(db, "a", "implement_small", {
+      rounds: 1,
+      latency_ms: 10_000,
+      exec_ms: 300_000,
+    });
+    writePerf(db, "b", "implement_small", {
+      rounds: 1,
+      latency_ms: 10_000,
+      exec_ms: 1_000,
+    });
+    db.query(
+      `UPDATE agent_performance SET gate_outcome='passed' WHERE agent_name IN ('a','b')`,
+    ).run();
+
+    const callerConfig: AgentchatConfig = {
+      role_routing: { headroom_weighting: false, latency_weighting: false },
+      agents: [
+        { name: "a", roles: [], pricing_mode: "subscription", subscription_provider: "anthropic" },
+        { name: "b", roles: [], pricing_mode: "subscription", subscription_provider: "openai" },
+      ],
+    };
+
+    // pickFromPool must force latency_weighting: true internally — "b" (faster)
+    // should beat "a" (slower) despite identical outcome/rounds scores.
+    // Without the override, both score identically and "a" wins alphabetically.
+    expect(pickFromPool(["a", "b"], db, callerConfig, undefined, "implement_small")).toBe("b");
+
+    // Caller config must not be mutated.
+    expect(callerConfig.role_routing?.latency_weighting).toBe(false);
   });
 });

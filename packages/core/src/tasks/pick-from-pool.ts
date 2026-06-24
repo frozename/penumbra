@@ -82,6 +82,7 @@ export function pickFromPool(
         role_routing: {
           ...agentchatConfig.role_routing,
           headroom_weighting: true,
+          latency_weighting: true,
         },
       }
     : undefined;
