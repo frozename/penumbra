@@ -168,7 +168,8 @@ function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
   const deduped: ServedModelEntry[] = [];
   for (const entriesInAliasGroup of byAlias.values()) {
     const alias = entriesInAliasGroup.find((entry) => !entry.id.includes("/"));
-    deduped.push(alias ?? entriesInAliasGroup[0]);
+    const chosen = alias ?? entriesInAliasGroup[0];
+    if (chosen) deduped.push(chosen);
   }
   return deduped;
 }
