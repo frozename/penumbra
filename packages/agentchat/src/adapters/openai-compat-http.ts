@@ -47,8 +47,13 @@ interface OpenAiChatCompletionResponse {
   model?: string;
 }
 
+interface OpenAiStreamChoice {
+  delta?: { content?: string; reasoning_content?: string };
+  finish_reason?: string | null;
+}
+
 interface OpenAiStreamChunk {
-  choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+  choices: OpenAiStreamChoice[];
   usage?: OpenAiUsage;
   model?: string;
 }
@@ -67,6 +72,7 @@ interface StreamAccumulator {
   reasoningText: string;
   lastModel: string | undefined;
   lastUsage: UsageMetrics | undefined;
+  sawFinishSignal: boolean;
 }
 
 export class OpenAiCompatHttpAdapter implements Adapter {
@@ -118,11 +124,18 @@ export class OpenAiCompatHttpAdapter implements Adapter {
       reasoningText: "",
       lastModel: undefined,
       lastUsage: undefined,
+      sawFinishSignal: false,
     };
 
     yield* this.consumeSseStream(res.body, acc);
 
     const finalText = acc.contentText.length > 0 ? acc.contentText : acc.reasoningText;
+    if (finalText.length === 0) {
+      throw new Error("openai-compat-http: streaming response ended with no content");
+    }
+    if (!acc.sawFinishSignal) {
+      throw new Error("openai-compat-http: streaming response ended without a finish signal");
+    }
     this.emitUsage(acc.lastUsage);
     yield {
       type: "done",
@@ -195,10 +208,12 @@ export class OpenAiCompatHttpAdapter implements Adapter {
         while ((sep = buffer.indexOf("\n\n")) !== -1) {
           const event = buffer.slice(0, sep);
           buffer = buffer.slice(sep + 2);
-          for (const evt of parseSseEvent(event)) {
-            yield* applyChunk(evt, acc);
-          }
+          yield* applySseEvent(event, acc);
         }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim().length > 0) {
+        yield* applySseEvent(buffer, acc);
       }
     } finally {
       try {
@@ -210,23 +225,56 @@ export class OpenAiCompatHttpAdapter implements Adapter {
   }
 }
 
-function parseSseEvent(event: string): OpenAiStreamChunk[] {
-  const chunks: OpenAiStreamChunk[] = [];
-  for (const line of event.split("\n")) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (payload === "[DONE]" || payload === "") continue;
-    try {
-      chunks.push(JSON.parse(payload) as OpenAiStreamChunk);
-    } catch {
-      // skip malformed events
-    }
+function* applySseEvent(event: string, acc: StreamAccumulator): Generator<DispatchEvent> {
+  const parsed = parseSseEvent(event);
+  if (!parsed) return;
+  if (parsed.done) {
+    acc.sawFinishSignal = true;
+    return;
   }
-  return chunks;
+  yield* applyChunk(parsed.chunk, acc);
+}
+
+type SseParseResult = { done: true } | { chunk: OpenAiStreamChunk; done: false };
+
+type JsonRecord = Record<string, unknown>;
+
+function parseSseEvent(event: string): SseParseResult | undefined {
+  const payload = event
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n")
+    .trim();
+  if (payload.length === 0) return undefined;
+  if (payload === "[DONE]") return { done: true };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload) as unknown;
+  } catch {
+    throw new Error("openai-compat-http: streaming SSE payload is not valid JSON");
+  }
+
+  const providerError = extractProviderError(parsed);
+  if (providerError) {
+    throw new Error(`openai-compat-http: streaming provider error: ${providerError}`);
+  }
+  if (!isOpenAiStreamChunk(parsed)) {
+    throw new Error("openai-compat-http: streaming SSE payload is not a chat chunk");
+  }
+  return { chunk: parsed, done: false };
 }
 
 function* applyChunk(chunk: OpenAiStreamChunk, acc: StreamAccumulator): Generator<DispatchEvent> {
-  const delta = chunk.choices?.[0]?.delta;
+  const delta = chunk.choices[0]?.delta;
+  if (
+    chunk.choices.some(
+      (choice) => choice.finish_reason !== undefined && choice.finish_reason !== null,
+    )
+  ) {
+    acc.sawFinishSignal = true;
+  }
   if (delta?.content) {
     acc.contentText += delta.content;
     yield { type: "delta", text: delta.content };
@@ -236,6 +284,84 @@ function* applyChunk(chunk: OpenAiStreamChunk, acc: StreamAccumulator): Generato
   }
   if (chunk.usage) acc.lastUsage = extractUsageMetrics(chunk.usage);
   if (chunk.model) acc.lastModel = chunk.model;
+}
+
+function extractProviderError(value: unknown): string | undefined {
+  if (!isRecord(value) || !("error" in value)) return undefined;
+  return stringifyErrorDetail(value.error);
+}
+
+function stringifyErrorDetail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (isRecord(value)) {
+    const message = value.message;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  const json = JSON.stringify(value);
+  return json && json.length > 0 ? json : "provider returned an error payload";
+}
+
+function isOpenAiStreamChunk(value: unknown): value is OpenAiStreamChunk {
+  if (!isRecord(value)) return false;
+  const choices = value.choices;
+  if (!Array.isArray(choices)) return false;
+  if (choices.length === 0 && value.usage === undefined) return false;
+  if (!choices.every(isOpenAiStreamChoice)) return false;
+  if (value.usage !== undefined && !isOpenAiUsage(value.usage)) return false;
+  return value.model === undefined || typeof value.model === "string";
+}
+
+function isOpenAiStreamChoice(value: unknown): value is OpenAiStreamChoice {
+  if (!isRecord(value)) return false;
+  const hasDelta = "delta" in value;
+  const hasFinishReason = "finish_reason" in value;
+  if (!hasDelta && !hasFinishReason) return false;
+  if (hasDelta && !isOpenAiStreamDelta(value.delta)) return false;
+  return (
+    !hasFinishReason || value.finish_reason === null || typeof value.finish_reason === "string"
+  );
+}
+
+function isOpenAiStreamDelta(value: unknown): value is OpenAiStreamChoice["delta"] {
+  if (!isRecord(value)) return false;
+  return optionalString(value.content) && optionalString(value.reasoning_content);
+}
+
+function isOpenAiUsage(value: unknown): value is OpenAiUsage {
+  if (!isRecord(value)) return false;
+  if (!optionalNumber(value.prompt_tokens)) return false;
+  if (!optionalNumber(value.completion_tokens)) return false;
+  if (!optionalNumber(value.total_tokens)) return false;
+  if (
+    value.prompt_tokens_details !== undefined &&
+    !isOpenAiUsageDetails(value.prompt_tokens_details)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isOpenAiUsageDetails(
+  value: unknown,
+): value is NonNullable<OpenAiUsage["prompt_tokens_details"]> {
+  if (!isRecord(value)) return false;
+  return (
+    optionalNumber(value.cached_tokens) &&
+    optionalNumber(value.cache_read_input_tokens) &&
+    optionalNumber(value.cache_creation_input_tokens)
+  );
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalNumber(value: unknown): boolean {
+  return value === undefined || typeof value === "number";
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function finiteNumber(value: number | undefined): number | undefined {

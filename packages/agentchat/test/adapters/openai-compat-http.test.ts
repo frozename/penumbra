@@ -46,6 +46,20 @@ async function expectRejectionMatching(p: Promise<unknown>, pattern: RegExp): Pr
   expect(caught.message).toMatch(pattern);
 }
 
+function sseResponse(events: string[]): Response {
+  return new Response(events.join(""), {
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+async function drainStream(events: AsyncIterable<DispatchEvent>): Promise<DispatchEvent[]> {
+  const collected: DispatchEvent[] = [];
+  for await (const ev of events) {
+    collected.push(ev);
+  }
+  return collected;
+}
+
 let originalFetch: typeof fetch;
 beforeEach(() => {
   originalFetch = global.fetch;
@@ -348,4 +362,213 @@ test("dispatch raises on non-2xx", async () => {
     }),
     /HTTP 500/,
   );
+});
+
+test("dispatchStream throws when an SSE error payload arrives mid-stream", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"par"}}]}\n\n',
+          'data: {"error":{"message":"model overloaded","type":"server_error"}}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /model overloaded/,
+  );
+});
+
+test("dispatchStream throws when the first SSE payload is an error object", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse(['data: {"error":{"message":"bad api key"}}\n\n', "data: [DONE]\n\n"]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /bad api key/,
+  );
+});
+
+test("dispatchStream throws on a bare-string SSE error payload", async () => {
+  global.fetch = asFetchFn(
+    mock(() => Promise.resolve(sseResponse(['data: {"error":"rate limited"}\n\n']))),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /rate limited/,
+  );
+});
+
+test("dispatchStream throws when the stream ends with no content and no finish signal", async () => {
+  global.fetch = asFetchFn(
+    mock(() => Promise.resolve(sseResponse(['data: {"choices":[{"delta":{}}]}\n\n']))),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /no content|incomplete|finish/i,
+  );
+});
+
+test("dispatchStream throws when the stream ends with content but no finish signal", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(sseResponse(['data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'])),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /finish|incomplete/i,
+  );
+});
+
+test("dispatchStream throws when the stream ends with no content despite finish_reason", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse([
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /no content/i,
+  );
+});
+
+test("dispatchStream throws when a non-DONE SSE payload is not a chat chunk", async () => {
+  global.fetch = asFetchFn(
+    mock(() => Promise.resolve(sseResponse(["data: {}\n\n", "data: [DONE]\n\n"]))),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /chat chunk/i,
+  );
+});
+
+test("dispatchStream accepts an OpenAI usage-only stream chunk", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse([
+          'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":0}}\n\n',
+          'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+  const events = await drainStream(
+    adapter.dispatchStream({
+      prompt: "p",
+      conversation: { id: "c", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    }),
+  );
+  const done = events.find((e): e is Extract<DispatchEvent, { type: "done" }> => e.type === "done");
+  if (!done) {
+    throw new Error("expected done event");
+  }
+  expect(done.result.text).toBe("ok");
+  expect(done.result.meta?.tokens_in).toBe(8);
+  expect(done.result.meta?.tokens_out).toBe(0);
 });
