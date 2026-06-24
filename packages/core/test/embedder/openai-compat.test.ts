@@ -49,6 +49,76 @@ test("POSTs to /v1/embeddings and parses the OpenAI-compat response", async () =
   }
 });
 
+test("assertLive passes after a real embeddings round-trip with the configured dimension", async () => {
+  const restoreFetch = mockFetch(async (url, init) => {
+    const req = new Request(url, init);
+    expect(new URL(req.url).pathname).toBe("/v1/embeddings");
+    expect(req.headers.get("authorization")).toBe("Bearer test-token");
+    const body = (await req.json()) as { input: string[]; model: string };
+    expect(body.input).toEqual(["penumbra embedder liveness probe"]);
+    expect(body.model).toBe("bge-m3");
+    return Response.json({
+      data: [
+        {
+          embedding: Array.from({ length: 1024 }, (_, i) => i / 1024),
+          index: 0,
+          object: "embedding",
+        },
+      ],
+    });
+  });
+
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "test-token",
+      model: "bge-m3",
+      dim: 1024,
+    });
+    expect(await e.assertLive()).toBe(true);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("assertLive fails when the liveness embedding has the wrong dimension", async () => {
+  const restoreFetch = mockFetch(() =>
+    Promise.resolve(
+      Response.json({
+        data: [{ embedding: [0, 1, 2], index: 0, object: "embedding" }],
+      }),
+    ),
+  );
+
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "t",
+      model: "m",
+      dim: 4,
+    });
+    expect(await e.assertLive()).toBe(false);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("assertLive fails gracefully when the embeddings endpoint does not respond", async () => {
+  const restoreFetch = mockFetch(() => Promise.reject(new Error("offline")));
+
+  try {
+    const e = new OpenAICompatEmbedder({
+      baseUrl: "http://embedder.test",
+      token: "t",
+      model: "m",
+      dim: 4,
+    });
+    expect(await e.assertLive()).toBe(false);
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("omits Authorization header when token is not configured", async () => {
   const restoreFetch = mockFetch((url, init) => {
     const req = new Request(url, init);

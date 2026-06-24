@@ -72,6 +72,41 @@ function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload));
 }
 
+function neverResolvingFetchUntilAbort(): ReturnType<typeof mock> {
+  return mock((_url: MockFetchInput, init?: RequestInit) => {
+    const signal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      if (!signal) return;
+      const rejectAbort = (): void => {
+        const reason = signal.reason;
+        reject(reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
+      };
+      if (signal.aborted) {
+        rejectAbort();
+        return;
+      }
+      signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+  });
+}
+
+async function expectRejectsBeforeWatchdog(
+  promise: Promise<unknown>,
+  watchdogMs: number,
+): Promise<Error> {
+  const result = await Promise.race<unknown>([
+    promise.catch((err: unknown) => err),
+    new Promise((resolve) => setTimeout(() => resolve("watchdog"), watchdogMs)),
+  ]);
+  if (result === "watchdog") {
+    throw new Error("request did not reject before watchdog");
+  }
+  if (!(result instanceof Error)) {
+    throw new Error("expected promise to reject with an Error");
+  }
+  return result;
+}
+
 test("dispatch POSTs to baseUrl/v1/chat/completions and returns text + usage", async () => {
   const calls: { url: string; body: ChatBody }[] = [];
   global.fetch = asFetchFn(
@@ -113,6 +148,68 @@ test("dispatch POSTs to baseUrl/v1/chat/completions and returns text + usage", a
   expect(out.meta?.tokens_cache_write).toBe(2);
   expect(calls[0]?.url).toBe("http://example/v1/chat/completions");
   expect(calls[0]?.body.messages?.[0]).toEqual({ role: "user", content: "hi" });
+});
+
+test("dispatch aborts a slow fetch after requestTimeoutMs", async () => {
+  global.fetch = asFetchFn(neverResolvingFetchUntilAbort());
+  const cleanup = new AbortController();
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+    requestTimeoutMs: 20,
+  });
+  try {
+    const err = await expectRejectsBeforeWatchdog(
+      adapter.dispatch({
+        prompt: "hi",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: cleanup.signal,
+      }),
+      200,
+    );
+    expect(err.message).toMatch(/openai-compat-http request timed out after 20ms/);
+  } finally {
+    cleanup.abort(new Error("test cleanup"));
+  }
+});
+
+test("dispatch treats absent or non-positive requestTimeoutMs as unbounded", async () => {
+  const capturedSignals: (AbortSignal | undefined)[] = [];
+  global.fetch = asFetchFn(
+    mock((_url: MockFetchInput, init?: RequestInit) => {
+      capturedSignals.push(init?.signal ?? undefined);
+      return Promise.resolve(jsonResponse({ choices: [{ message: { content: "ok" } }] }));
+    }),
+  );
+
+  const absentSignal = new AbortController();
+  await new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  }).dispatch({
+    prompt: "p",
+    conversation: { id: "c", project_id: null },
+    config: {},
+    signal: absentSignal.signal,
+  });
+
+  const zeroSignal = new AbortController();
+  await new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+    requestTimeoutMs: 0,
+  }).dispatch({
+    prompt: "p",
+    conversation: { id: "c", project_id: null },
+    config: {},
+    signal: zeroSignal.signal,
+  });
+
+  expect(capturedSignals).toEqual([absentSignal.signal, zeroSignal.signal]);
 });
 
 test("dispatch falls back to reasoning_content when content is empty", async () => {
@@ -304,6 +401,33 @@ test("dispatchStream sends stream:true and yields delta events from SSE chunks t
   expect(done.result.meta?.tokens_input).toBe(8);
   expect(done.result.meta?.tokens_cache_read).toBe(4);
   expect(done.result.meta?.tokens_cache_write).toBe(1);
+});
+
+test("dispatchStream aborts a slow fetch after requestTimeoutMs", async () => {
+  global.fetch = asFetchFn(neverResolvingFetchUntilAbort());
+  const cleanup = new AbortController();
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+    requestTimeoutMs: 20,
+  });
+  try {
+    const err = await expectRejectsBeforeWatchdog(
+      drainStream(
+        adapter.dispatchStream({
+          prompt: "p",
+          conversation: { id: "c", project_id: null },
+          config: {},
+          signal: cleanup.signal,
+        }),
+      ),
+      200,
+    );
+    expect(err.message).toMatch(/openai-compat-http request timed out after 20ms/);
+  } finally {
+    cleanup.abort(new Error("test cleanup"));
+  }
 });
 
 test("dispatchStream falls back to reasoning_content deltas when content is empty", async () => {

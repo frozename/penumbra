@@ -1,8 +1,55 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { AgentChatConfig } from "../src/config/types.js";
 
+import { buildAdapter } from "../src/adapters/registry.js";
 import { getAgentDescriptor } from "../src/registry.js";
+
+type FetchFn = typeof fetch;
+const asFetchFn = (m: ReturnType<typeof mock>): FetchFn => m as unknown as FetchFn;
+
+let originalFetch: typeof fetch;
+beforeEach(() => {
+  originalFetch = global.fetch;
+});
+afterEach(() => {
+  global.fetch = originalFetch;
+});
+
+function neverResolvingFetchUntilAbort(): ReturnType<typeof mock> {
+  return mock((_url: string | URL, init?: RequestInit) => {
+    const signal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      if (!signal) return;
+      const rejectAbort = (): void => {
+        const reason = signal.reason;
+        reject(reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
+      };
+      if (signal.aborted) {
+        rejectAbort();
+        return;
+      }
+      signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+  });
+}
+
+async function expectRejectsBeforeWatchdog(
+  promise: Promise<unknown>,
+  watchdogMs: number,
+): Promise<Error> {
+  const result = await Promise.race<unknown>([
+    promise.catch((err: unknown) => err),
+    new Promise((resolve) => setTimeout(() => resolve("watchdog"), watchdogMs)),
+  ]);
+  if (result === "watchdog") {
+    throw new Error("request did not reject before watchdog");
+  }
+  if (!(result instanceof Error)) {
+    throw new Error("expected promise to reject with an Error");
+  }
+  return result;
+}
 
 const cfg: AgentChatConfig = {
   agents: [
@@ -88,5 +135,33 @@ describe("getAgentDescriptor", () => {
 
   test("returns undefined for unknown agent", () => {
     expect(getAgentDescriptor("unknown", cfg)).toBeUndefined();
+  });
+});
+
+describe("buildAdapter", () => {
+  test("forwards requestTimeoutMs to openai-compat-http adapter construction", async () => {
+    global.fetch = asFetchFn(neverResolvingFetchUntilAbort());
+    const cleanup = new AbortController();
+    const adapter = buildAdapter("openai-compat-http", {
+      baseUrl: "http://example/v1",
+      apiKey: "tk",
+      model: "m",
+      requestTimeoutMs: 20,
+    });
+
+    try {
+      const err = await expectRejectsBeforeWatchdog(
+        adapter.dispatch({
+          prompt: "p",
+          conversation: { id: "c", project_id: null },
+          config: {},
+          signal: cleanup.signal,
+        }),
+        200,
+      );
+      expect(err.message).toMatch(/openai-compat-http request timed out after 20ms/);
+    } finally {
+      cleanup.abort(new Error("test cleanup"));
+    }
   });
 });

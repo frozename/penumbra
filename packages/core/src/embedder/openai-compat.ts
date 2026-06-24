@@ -10,6 +10,9 @@ export interface RemoteEmbedderOpts {
   authScheme?: string;
 }
 
+const DEFAULT_LIVENESS_TIMEOUT_MS = 2_000;
+const LIVENESS_PROBE_TEXT = "penumbra embedder liveness probe";
+
 /**
  * Remote embedder backed by an OpenAI-compatible HTTP /v1/embeddings endpoint.
  *
@@ -40,6 +43,25 @@ export class OpenAICompatEmbedder implements Embedder {
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
+    return await this.requestEmbeddings(texts);
+  }
+
+  async assertLive(timeoutMs = DEFAULT_LIVENESS_TIMEOUT_MS): Promise<boolean> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      ctrl.abort();
+    }, timeoutMs);
+    try {
+      await this.requestEmbeddings([LIVENESS_PROBE_TEXT], ctrl.signal);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async requestEmbeddings(texts: string[], signal?: AbortSignal): Promise<Float32Array[]> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
     };
@@ -51,6 +73,7 @@ export class OpenAICompatEmbedder implements Embedder {
       method: "POST",
       headers,
       body: JSON.stringify({ input: texts, model: this.model }),
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) {
       throw new Error(`openai-compatible embeddings: HTTP ${String(res.status)}`);

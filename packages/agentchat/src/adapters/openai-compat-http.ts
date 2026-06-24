@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { CapturePort } from "../worker/capture-port.js";
 
+import { createDispatchAbortSignal, type DispatchAbortHandle } from "./dispatch-abort.js";
 import { resolveAdapterApiKey } from "./secret.js";
 
 export interface OpenAiCompatHttpOptions {
@@ -19,6 +20,7 @@ export interface OpenAiCompatHttpOptions {
   extraBody?: Record<string, unknown>;
   caPath?: string; // path to a PEM file with extra trusted CAs (for self-signed servers)
   systemPrompt?: string; // prepended as a {role: 'system'} message
+  requestTimeoutMs?: number;
   capturePort?: CapturePort;
 }
 
@@ -92,70 +94,86 @@ export class OpenAiCompatHttpAdapter implements Adapter {
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
     const url = `${this.opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const body = this.buildRequestBody(input, false);
-    const init = this.buildRequestInit(body, input.signal);
-    const res = await fetch(url, init);
-    if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
-    const data = (await res.json()) as OpenAiChatCompletionResponse;
-    const msg = data.choices?.[0]?.message;
-    const text =
-      msg?.content && msg.content.length > 0 ? msg.content : (msg?.reasoning_content ?? "");
-    const usageMetrics = extractUsageMetrics(data.usage);
-    this.emitUsage(usageMetrics);
-    return {
-      text,
-      meta: {
-        model: data.model ?? this.opts.model,
-        ...metaFromMetrics(usageMetrics),
-        raw_response: data,
-      },
-    };
+    const requestAbort = this.createRequestAbort(input.signal);
+    try {
+      const init = this.buildRequestInit(body, requestAbort.signal);
+      const res = await fetch(url, init);
+      if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
+      const data = (await res.json()) as OpenAiChatCompletionResponse;
+      const msg = data.choices?.[0]?.message;
+      const text =
+        msg?.content && msg.content.length > 0 ? msg.content : (msg?.reasoning_content ?? "");
+      const usageMetrics = extractUsageMetrics(data.usage);
+      this.emitUsage(usageMetrics);
+      return {
+        text,
+        meta: {
+          model: data.model ?? this.opts.model,
+          ...metaFromMetrics(usageMetrics),
+          raw_response: data,
+        },
+      };
+    } catch (err) {
+      this.throwTimeoutIfMatched(requestAbort);
+      throw err;
+    } finally {
+      requestAbort.cleanup();
+    }
   }
 
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const url = `${this.opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const body = this.buildRequestBody(input, true);
-    const init = this.buildRequestInit(body, input.signal);
-    const res = await fetch(url, init);
-    if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
-    if (!res.body) throw new Error("openai-compat-http: streaming response has no body");
+    const requestAbort = this.createRequestAbort(input.signal);
+    try {
+      const init = this.buildRequestInit(body, requestAbort.signal);
+      const res = await fetch(url, init);
+      if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
+      if (!res.body) throw new Error("openai-compat-http: streaming response has no body");
 
-    const acc: StreamAccumulator = {
-      contentText: "",
-      reasoningText: "",
-      lastModel: undefined,
-      lastUsage: undefined,
-      sawFinishSignal: false,
-    };
+      const acc: StreamAccumulator = {
+        contentText: "",
+        reasoningText: "",
+        lastModel: undefined,
+        lastUsage: undefined,
+        sawFinishSignal: false,
+      };
 
-    yield* this.consumeSseStream(res.body, acc);
+      yield* this.consumeSseStream(res.body, acc);
 
-    const finalText = acc.contentText.length > 0 ? acc.contentText : acc.reasoningText;
-    if (finalText.length === 0) {
-      throw new Error("openai-compat-http: streaming response ended with no content");
-    }
-    if (!acc.sawFinishSignal) {
-      throw new Error("openai-compat-http: streaming response ended without a finish signal");
-    }
-    this.emitUsage(acc.lastUsage);
-    // Surface reasoning_content separately when we also assembled real content
-    // — otherwise downstream callers would lose the thinking trace entirely.
-    // When content was empty we already returned reasoningText as the body, so
-    // omit the duplicate channel in that case.
-    const reasoningSidecar =
-      acc.contentText.length > 0 && acc.reasoningText.length > 0
-        ? { reasoning_content: acc.reasoningText }
-        : {};
-    yield {
-      type: "done",
-      result: {
-        text: finalText,
-        meta: {
-          model: acc.lastModel ?? this.opts.model,
-          ...metaFromMetrics(acc.lastUsage),
-          ...reasoningSidecar,
+      const finalText = acc.contentText.length > 0 ? acc.contentText : acc.reasoningText;
+      if (finalText.length === 0) {
+        throw new Error("openai-compat-http: streaming response ended with no content");
+      }
+      if (!acc.sawFinishSignal) {
+        throw new Error("openai-compat-http: streaming response ended without a finish signal");
+      }
+      this.emitUsage(acc.lastUsage);
+      // Surface reasoning_content separately when we also assembled real content
+      // — otherwise downstream callers would lose the thinking trace entirely.
+      // When content was empty we already returned reasoningText as the body, so
+      // omit the duplicate channel in that case.
+      const reasoningSidecar =
+        acc.contentText.length > 0 && acc.reasoningText.length > 0
+          ? { reasoning_content: acc.reasoningText }
+          : {};
+      yield {
+        type: "done",
+        result: {
+          text: finalText,
+          meta: {
+            model: acc.lastModel ?? this.opts.model,
+            ...metaFromMetrics(acc.lastUsage),
+            ...reasoningSidecar,
+          },
         },
-      },
-    };
+      };
+    } catch (err) {
+      this.throwTimeoutIfMatched(requestAbort);
+      throw err;
+    } finally {
+      requestAbort.cleanup();
+    }
   }
 
   private emitUsage(metrics: UsageMetrics | undefined): void {
@@ -198,6 +216,20 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     };
     if (this.caPem) init.tls = { ca: this.caPem };
     return init;
+  }
+
+  private createRequestAbort(parent: AbortSignal): DispatchAbortHandle {
+    return createDispatchAbortSignal(
+      parent,
+      this.opts.requestTimeoutMs ?? 0,
+      (timeout) => new Error(`openai-compat-http request timed out after ${timeout.toString()}ms`),
+    );
+  }
+
+  private throwTimeoutIfMatched(requestAbort: DispatchAbortHandle): never | void {
+    if (requestAbort.timeoutError && requestAbort.signal.aborted) {
+      throw requestAbort.timeoutError;
+    }
   }
 
   private async *consumeSseStream(

@@ -6,6 +6,7 @@ import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } fro
 
 import { AcpClient, type AcpClientOptions } from "./acp-client.js";
 import { startAcpServer } from "./acp-server.js";
+import { createDispatchAbortSignal, type DispatchAbortHandle } from "./dispatch-abort.js";
 import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
@@ -109,52 +110,6 @@ interface OpencodeAcpDeps {
   createClient: (opts: AcpClientOptions) => AcpClientLike;
 }
 
-interface DispatchAbortHandle {
-  signal: AbortSignal;
-  readonly timeoutError: Error | null;
-  cleanup: () => void;
-}
-
-function createDispatchAbortSignal(parent: AbortSignal, timeoutMs: number): DispatchAbortHandle {
-  const controller = new AbortController();
-  const state: { timeoutError: Error | null } = { timeoutError: null };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const abortWith = (reason?: unknown): void => {
-    if (!controller.signal.aborted) controller.abort(reason);
-  };
-
-  const onParentAbort = (): void => {
-    abortWith(parent.reason);
-  };
-
-  if (parent.aborted) {
-    onParentAbort();
-  } else {
-    parent.addEventListener("abort", onParentAbort, { once: true });
-  }
-
-  if (timeoutMs > 0) {
-    timer = setTimeout(() => {
-      const err = new Error(`opencode-acp request timed out after ${timeoutMs.toString()}ms`);
-      err.name = "AbortError";
-      state.timeoutError = err;
-      abortWith(err);
-    }, timeoutMs);
-  }
-
-  return {
-    signal: controller.signal,
-    get timeoutError(): Error | null {
-      return state.timeoutError;
-    },
-    cleanup(): void {
-      if (timer) clearTimeout(timer);
-      parent.removeEventListener("abort", onParentAbort);
-    },
-  };
-}
-
 interface OpencodeWireEvent {
   type?: unknown;
   properties?: OpencodeWireEventProps;
@@ -235,7 +190,11 @@ export class OpencodeAcpAdapter implements Adapter {
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    const requestAbort = createDispatchAbortSignal(input.signal, requestTimeoutMs);
+    const requestAbort = createDispatchAbortSignal(
+      input.signal,
+      requestTimeoutMs,
+      (timeout) => new Error(`opencode-acp request timed out after ${timeout.toString()}ms`),
+    );
     const lifecycle: { server: AcpServerHandle | null; xdgCleanup: (() => Promise<void>) | null } =
       {
         server: null,
