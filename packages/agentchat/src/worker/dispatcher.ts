@@ -31,7 +31,11 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
     onChunk: (delta: string) => void,
     signal: AbortSignal,
   ) => Promise<DispatchHandoffResult>;
-  postProgress: (handoff_id: string, payload: Record<string, unknown>) => Promise<void>;
+  postProgress: (
+    handoff_id: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   complete: (handoff_id: string) => Promise<void>;
   /**
    * Marks a handoff durably failed with an error summary. Invoked instead of
@@ -105,7 +109,11 @@ export interface WorkerDispatcher<H extends DispatcherHandoff = DispatcherHandof
   /** Aborts all active dispatches and clears state. */
   stop(): void;
   /** @internal Test-only diagnostics. Not part of the runtime contract. */
-  __internals(): { claimRetryStateSize: number };
+  __internals(): {
+    claimRetryStateSize: number;
+    progressBufferBytes: number;
+    progressBufferedChunks: number;
+  };
 }
 
 interface SnapshotResult {
@@ -120,7 +128,10 @@ interface ClaimRetryEntry {
 }
 
 interface ProgressState {
-  buffer: string;
+  bufferParts: string[];
+  bufferBytes: number;
+  bufferedChunks: number;
+  truncated: boolean;
   seq: number;
   inflightProgress: Promise<void> | null;
   batchTimer: ReturnType<typeof setTimeout> | null;
@@ -159,9 +170,82 @@ const CLAIM_BACKOFF_CAP_MS = 30_000;
 const CLAIM_BACKOFF_BASE_MS = 1_000;
 const PROGRESS_BATCH_MS = 100;
 const PROGRESS_COOLDOWN_MS = 100;
+const PROGRESS_POST_TIMEOUT_MS = 5_000;
+const PROGRESS_BUFFER_MAX_BYTES = 16_384;
+const PROGRESS_BUFFER_MAX_CHUNKS = 64;
+const PROGRESS_BUFFER_TRUNCATION_MARKER = "[... truncated progress ...]\n";
 
 function defaultDelay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function progressBufferText(progress: ProgressState): string {
+  return progress.bufferParts.join("");
+}
+
+function progressBufferAppend(progress: ProgressState, delta: string): void {
+  progress.bufferParts.push(delta);
+  progress.bufferBytes += delta.length;
+  progress.bufferedChunks += 1;
+  progress.truncated = false;
+  while (
+    progress.bufferedChunks > PROGRESS_BUFFER_MAX_CHUNKS ||
+    progress.bufferBytes > PROGRESS_BUFFER_MAX_BYTES
+  ) {
+    const removed = progress.bufferParts.shift();
+    if (removed === undefined) {
+      break;
+    }
+    progress.bufferBytes -= removed.length;
+    progress.bufferedChunks -= 1;
+    progress.truncated = true;
+  }
+  while (progress.truncated && progress.bufferParts.length >= PROGRESS_BUFFER_MAX_CHUNKS) {
+    const removed = progress.bufferParts.shift();
+    if (removed === undefined) {
+      break;
+    }
+    progress.bufferBytes -= removed.length;
+    progress.bufferedChunks -= 1;
+  }
+  if (progress.truncated && progress.bufferParts[0] !== PROGRESS_BUFFER_TRUNCATION_MARKER) {
+    progress.bufferParts.unshift(PROGRESS_BUFFER_TRUNCATION_MARKER);
+    progress.bufferBytes += PROGRESS_BUFFER_TRUNCATION_MARKER.length;
+    progress.bufferedChunks += 1;
+  }
+}
+
+function progressBufferDrain(progress: ProgressState): string {
+  const text = progressBufferText(progress);
+  progress.bufferParts = [];
+  progress.bufferBytes = 0;
+  progress.bufferedChunks = 0;
+  progress.truncated = false;
+  return text;
+}
+
+function createProgressTimeoutSignal(timeoutMs: number): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  if (typeof AbortSignal.timeout === "function") {
+    return {
+      signal: AbortSignal.timeout(timeoutMs),
+      cleanup: (): void => {
+        return undefined;
+      },
+    };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: (): void => {
+      clearTimeout(timer);
+    },
+  };
 }
 
 function makeSemaphore(initial: number): Semaphore {
@@ -412,11 +496,10 @@ function makeProgressFlusher(
   abort: AbortController,
 ): () => void {
   const flush = (): void => {
-    if (progress.inflightProgress !== null || progress.buffer.length === 0) {
+    if (progress.inflightProgress !== null || progress.bufferParts.length === 0) {
       return;
     }
-    const delta = progress.buffer;
-    progress.buffer = "";
+    const delta = progressBufferDrain(progress);
     progress.seq += 1;
     const currentSeq = progress.seq;
     progress.inflightProgress = runProgressFlight(
@@ -441,14 +524,26 @@ async function runProgressFlight(
   delta: string,
   currentSeq: number,
 ): Promise<void> {
+  const { signal, cleanup } = createProgressTimeoutSignal(PROGRESS_POST_TIMEOUT_MS);
   try {
-    await deps.postProgress(handoff.handoff_id, {
-      type: "token",
-      handoff_id: handoff.handoff_id,
-      seq: currentSeq,
-      delta,
-    });
+    await deps.postProgress(
+      handoff.handoff_id,
+      {
+        type: "token",
+        handoff_id: handoff.handoff_id,
+        seq: currentSeq,
+        delta,
+      },
+      signal,
+    );
   } catch (err: unknown) {
+    if (signal.aborted) {
+      deps.log.warn(
+        { handoff_id: handoff.handoff_id, seq: currentSeq },
+        "postProgress timed out; aborting hop",
+      );
+      abort.abort();
+    }
     const status = err instanceof PenumbraHttpError ? err.status : null;
     if (status === 410) {
       deps.log.warn(
@@ -460,10 +555,11 @@ async function runProgressFlight(
       deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, "postProgress failed");
     }
   } finally {
+    cleanup();
     // Min interval between flights to avoid overwhelming the daemon.
     await defaultDelay(PROGRESS_COOLDOWN_MS);
     progress.inflightProgress = null;
-    if (progress.buffer.length > 0) {
+    if (progress.bufferParts.length > 0) {
       flush();
     }
   }
@@ -620,15 +716,15 @@ async function flushTailProgress(
   if (progress.inflightProgress !== null) {
     await progress.inflightProgress;
   }
-  if (progress.buffer.length > 0) {
+  if (progress.bufferParts.length > 0) {
+    const delta = progressBufferDrain(progress);
     progress.seq += 1;
     await deps.postProgress(handoff.handoff_id, {
       type: "token",
       handoff_id: handoff.handoff_id,
       seq: progress.seq,
-      delta: progress.buffer,
+      delta,
     });
-    progress.buffer = "";
   }
 }
 
@@ -664,7 +760,7 @@ async function runDispatchBody(
     status: "in_progress",
   });
   const onChunk = (delta: string): void => {
-    ctx.progress.buffer += delta;
+    progressBufferAppend(ctx.progress, delta);
     if (ctx.progress.inflightProgress === null && ctx.progress.batchTimer === null) {
       ctx.progress.batchTimer = setTimeout(() => {
         ctx.progress.batchTimer = null;
@@ -871,6 +967,7 @@ interface DispatcherState {
   pendingCancelsByHandoff: Set<string>;
   pendingCancelsByConv: Set<string>;
   inflight: Set<Promise<void>>;
+  currentProgress: ProgressState | null;
   delay: (ms: number) => Promise<void>;
 }
 
@@ -905,10 +1002,20 @@ async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Pr
       dispatchStart: Date.now(),
       snapshot: { captured: null },
       outcome: { status: "ok", result: null, errorText: null },
-      progress: { buffer: "", seq: 0, inflightProgress: null, batchTimer: null },
+      progress: {
+        bufferParts: [],
+        bufferBytes: 0,
+        bufferedChunks: 0,
+        truncated: false,
+        seq: 0,
+        inflightProgress: null,
+        batchTimer: null,
+      },
     };
+    state.currentProgress = ctx.progress;
     await runDispatchLifecycle(state.deps, handoff, ctx);
   } finally {
+    state.currentProgress = null;
     state.activeAborts.delete(handoff.conversation_id);
     state.semaphore.release();
     releaseLock();
@@ -988,6 +1095,7 @@ export function createWorkerDispatcher<H extends DispatcherHandoff = DispatcherH
     pendingCancelsByHandoff: new Set(),
     pendingCancelsByConv: new Set(),
     inflight: new Set(),
+    currentProgress: null,
     delay: deps.delay ?? defaultDelay,
   };
   return {
@@ -1015,8 +1123,10 @@ export function createWorkerDispatcher<H extends DispatcherHandoff = DispatcherH
       state.pendingCancelsByConv.clear();
       state.claimRetryState.clear();
     },
-    __internals: (): { claimRetryStateSize: number } => ({
+    __internals: () => ({
       claimRetryStateSize: state.claimRetryState.size,
+      progressBufferBytes: state.currentProgress?.bufferBytes ?? 0,
+      progressBufferedChunks: state.currentProgress?.bufferedChunks ?? 0,
     }),
   };
 }

@@ -1006,6 +1006,46 @@ test("token batching: multiple rapid chunks are coalesced into fewer POSTs", asy
   expect(progressCount).toBeGreaterThanOrEqual(1);
 });
 
+test("slow postProgress keeps the buffered token queue bounded", async () => {
+  const releaseFirst = Promise.withResolvers<undefined>();
+  const firstSeen = Promise.withResolvers<undefined>();
+  const d = deps({
+    postProgress: mock().mockImplementation(
+      async (_handoffId: string, payload: ProgressPayload) => {
+        if (payload.type === "token") {
+          firstSeen.resolve();
+          await releaseFirst.promise;
+        }
+      },
+    ),
+    dispatch: mock().mockImplementation(async (_h: unknown, onChunk: (delta: string) => void) => {
+      onChunk("seed");
+      await firstSeen.promise;
+      for (let i = 0; i < 200; i++) {
+        onChunk(`chunk-${String(i).padStart(3, "0")}-xxxxxxxxxxxxxxxx`);
+      }
+      return { next: null, terminatedReason: "no_mention" as const, text: "done", agent: "x" };
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  const handlePromise = dispatcher.handle(baseHandoff("h-bounded"));
+  await firstSeen.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const internals = dispatcher.__internals() as {
+    claimRetryStateSize: number;
+    progressBufferBytes?: number;
+    progressBufferedChunks?: number;
+    progressBufferText?: unknown;
+  };
+  expect(internals.progressBufferBytes ?? 0).toBeLessThanOrEqual(16_384);
+  expect(internals.progressBufferedChunks ?? 0).toBeLessThanOrEqual(64);
+  releaseFirst.resolve();
+  await handlePromise;
+  await dispatcher.idle();
+  expect(d.postProgress).toHaveBeenCalled();
+});
+
 test("claimGraceMs > 0 delays BEFORE claim (cross-project affinity grace)", async () => {
   const order: string[] = [];
   const delay = mock().mockImplementation((ms: number) => {
