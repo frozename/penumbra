@@ -1120,9 +1120,10 @@ switch (cmd) {
     {
       const sub = process.argv[3];
       if (sub === "--help" || sub === "-h" || sub === undefined) {
-        emit("usage: penumbra config <show|split>");
+        emit("usage: penumbra config <show|split|sync-local>");
         emit("  show  [--json]");
         emit("  split (--source <path> | --source-dir <dir>) --dest <dir> [--force] [--dry-run]");
+        emit("  sync-local [--apply | --dry-run]");
         process.exit(0);
       }
       if (sub === "show") {
@@ -1140,7 +1141,17 @@ switch (cmd) {
         const dryRun = process.argv.includes("--dry-run");
         process.exit(await runConfigSplit({ source, sourceDir, dest, force, dryRun }));
       }
-      console.error("Usage: penumbra config <show|split>");
+      if (sub === "sync-local") {
+        const { runConfigSyncLocal } = await import("../src/commands/config-sync-local.js");
+        const result = await runConfigSyncLocal({
+          apply: process.argv.includes("--apply"),
+          dryRun: process.argv.includes("--dry-run"),
+        });
+        for (const line of result.stdout) emit(line);
+        for (const line of result.stderr) console.error(line);
+        process.exit(result.exitCode);
+      }
+      console.error("Usage: penumbra config <show|split|sync-local>");
       process.exit(2);
     }
     break;

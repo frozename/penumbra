@@ -293,6 +293,14 @@ export type LongLivedConfigWithPrecomputedAllowlist = LongLivedConfig & {
   mcp_allowlist_sdk_patterns: string[];
 };
 
+export const AgentProvenanceSchema = z
+  .object({
+    source: z.string().min(1),
+    managed_fields: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type AgentProvenance = z.infer<typeof AgentProvenanceSchema>;
+
 export const AgentConfigSchema = z
   .object({
     name: z.string().min(1),
@@ -321,6 +329,7 @@ export const AgentConfigSchema = z
     description: z.string().optional(),
     tags: z.array(z.string().min(1)).optional(),
     quirks: z.array(z.string().min(1)).optional(),
+    provenance: AgentProvenanceSchema.optional(),
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
   })

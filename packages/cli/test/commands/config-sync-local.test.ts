@@ -1,0 +1,265 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import YAML from "yaml";
+
+import { AgentsConfigSchema } from "../../../config/src/index.js";
+import { runConfigSyncLocal } from "../../src/commands/config-sync-local.js";
+
+let tempDirs: string[] = [];
+
+beforeEach(() => {
+  tempDirs = [];
+});
+
+afterEach(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+async function makeTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "penumbra-config-sync-local-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeAgents(dir: string, agents: unknown[]): void {
+  writeFileSync(join(dir, "agents.yaml"), YAML.stringify({ agents }), "utf8");
+}
+
+function readAgents(dir: string): ReturnType<typeof AgentsConfigSchema.parse> {
+  return AgentsConfigSchema.parse(YAML.parse(readFileSync(join(dir, "agents.yaml"), "utf8")));
+}
+
+describe("penumbra config sync-local", () => {
+  test("dry run plans local seat upserts without writing", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const before = readFileSync(join(dir, "agents.yaml"), "utf8");
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      dryRun: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+        models: [
+          {
+            id: "granite-4.1-3b-Q8_0.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("would upsert local-granite-4-1-3b-q8-0-http");
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
+  });
+
+  test("apply upserts generated seats, preserves hand tuned fields, and uses keychain secrets", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-granite-4-1-3b-q8-0-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        roles: ["reviewer"],
+        tags: ["curated"],
+        quirks: ["keep me"],
+        options: {
+          baseUrl: "http://old",
+          model: "old-model",
+          maxTokens: 4096,
+          extraBody: { temperature: 0 },
+        },
+      },
+    ]);
+    const reloads: string[] = [];
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+        models: [
+          {
+            id: "granite-4.1-3b-Q8_0.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => {
+        reloads.push("reload");
+        return { ok: true };
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reloads).toEqual(["reload"]);
+    const seat = readAgents(dir).agents[0]!;
+    expect(seat.roles).toEqual(["reviewer"]);
+    expect(seat.tags).toEqual(["curated"]);
+    expect(seat.quirks).toEqual(["keep me"]);
+    expect(seat.options).toMatchObject({
+      baseUrl: "https://mac-mini.local:7945",
+      model: "granite-4.1-3b-Q8_0.gguf",
+      maxTokens: 4096,
+      extraBody: { temperature: 0 },
+      apiKeyKeychain: "llamactl/mac-mini",
+    });
+    expect(JSON.stringify(seat)).not.toContain("ll_agt_");
+    expect(seat.provenance).toBeUndefined();
+  });
+
+  test("prunes only vanished generator-owned seats and keeps hand-authored seats", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-vanished-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        options: { baseUrl: "http://old", model: "vanished" },
+        provenance: { source: "llamactl-sync-local" },
+      },
+      {
+        name: "local-hand-authored-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        options: { baseUrl: "http://old", model: "vanished" },
+      },
+    ]);
+
+    await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [],
+        models: [
+          {
+            id: "new-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(
+      readAgents(dir)
+        .agents.map((agent) => agent.name)
+        .sort(),
+    ).toEqual(["local-hand-authored-http", "local-new-model-http"]);
+  });
+
+  test("apply is idempotent", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const opts = {
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok" as const,
+        messages: [],
+        nodes: [],
+        models: [
+          {
+            id: "new-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    };
+
+    await runConfigSyncLocal(opts);
+    const once = readFileSync(join(dir, "agents.yaml"), "utf8");
+    await runConfigSyncLocal(opts);
+
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(once);
+  });
+
+  test("empty inventory exits cleanly without modifying agents.yaml", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const before = readFileSync(join(dir, "agents.yaml"), "utf8");
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "unavailable",
+        messages: ["llamactl unavailable"],
+        nodes: [],
+        models: [],
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("llamactl unavailable");
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
+  });
+
+  test("aborts without writing when schema validation fails", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const before = readFileSync(join(dir, "agents.yaml"), "utf8");
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [],
+        models: [
+          {
+            id: "new-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      validateAgentsConfig: () => {
+        throw new Error("schema fail");
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("schema fail");
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
+  });
+
+  test("does not pull llamactl into config-load path", () => {
+    const loadSource = readFileSync("packages/config/src/files/load.ts", "utf8");
+    expect(loadSource).not.toContain("llamactl");
+    expect(loadSource).not.toContain("sync-local");
+  });
+
+  test("cli subcommand resolves deployed split dir from PENUMBRA_CONFIG_DIR", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+
+    const proc = Bun.spawn(["bun", "packages/cli/bin/penumbra.ts", "config", "sync-local"], {
+      env: {
+        ...process.env,
+        PENUMBRA_CONFIG_DIR: dir,
+        PENUMBRA_LLAMACTL_PROXY_BASE_URL: "http://127.0.0.1:9",
+        DEV_STORAGE: join(dir, "missing-dev-storage"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("no local models discovered");
+    expect(existsSync(join(dir, "agents.yaml"))).toBe(true);
+  });
+});

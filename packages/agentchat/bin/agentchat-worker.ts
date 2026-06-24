@@ -1,12 +1,8 @@
 #!/usr/bin/env bun
 import type { AgentOptions, AgentPool } from "@penumbra/config";
 
-import {
-  defaultProjectRegistryPath,
-  fetchLlamactlServedModels,
-  loadProjectRegistry,
-  SettingsDefaults,
-} from "@penumbra/core";
+import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
+import { fetchServedModels } from "../../core/src/index.js";
 import {
   createLogger,
   type DispatchEventInput,
@@ -1291,7 +1287,7 @@ async function probeLocalAnalyzerSeat(agentName: string): Promise<boolean> {
   if (!seat) return false;
 
   try {
-    const servedModels = await fetchLlamactlServedModels(seat.baseUrl, { timeoutMs: 5_000 });
+    const servedModels = await fetchServedModels(seat.baseUrl, { timeoutMs: 5_000 });
     return servedModels.has(seat.model);
   } catch {
     return false;

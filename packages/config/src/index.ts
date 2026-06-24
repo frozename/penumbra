@@ -20,6 +20,8 @@ export {
   AgentConfigSchema,
   type AgentOptions,
   AgentOptionsSchema,
+  type AgentProvenance,
+  AgentProvenanceSchema,
   type AgentsConfig,
   AgentsConfigSchema,
   allowedKeysFor,

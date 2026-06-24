@@ -382,11 +382,20 @@ export {
   type DispatchEventRow,
 } from "./services/dispatch-event-log.js";
 export {
-  fetchLlamactlServedModels,
-  type FetchLlamactlServedModelsOpts,
-  type LlamactlFetch,
-  llamactlModelsUrl,
-} from "./services/llamactl-client.js";
+  fetchServedModelEntries,
+  fetchServedModels,
+  type FetchServedModelsOpts,
+  type ServedModelEntry,
+  type ServedModelsFetch,
+  servedModelsUrl,
+} from "./services/served-models-client.js";
+export {
+  collectLlamactlInventory,
+  type CollectLlamactlInventoryOpts,
+  type LlamactlInventory,
+  type LlamactlModelInventory,
+  type LlamactlNodeInventory,
+} from "./services/llamactl-inventory.js";
 export {
   refineDispatchPrompt,
   type RefineDispatchPromptOpts,

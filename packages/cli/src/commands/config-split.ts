@@ -3,7 +3,14 @@ import type { AgentPool } from "@penumbra/config";
 
 import { AgentChatConfigSchema } from "@penumbra/agentchat/config/types";
 import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -165,7 +172,7 @@ function splitLegacyConfig(legacy: ParsedAgentChatConfig): SplitLegacyConfigResu
   return { agents, routing, quotas };
 }
 
-type ConfigSplitTarget = readonly [
+export type ConfigSplitTarget = readonly [
   string,
   (
     | ReturnType<typeof AgentsConfigSchema.parse>
@@ -228,7 +235,7 @@ function executeConfigSplitDryRun(
   }
 }
 
-function executeConfigSplitWrite(
+export function executeConfigSplitWrite(
   targets: readonly ConfigSplitTarget[],
   copyTargets: ConfigSplitCopyTarget[],
   dest: string,
@@ -237,7 +244,10 @@ function executeConfigSplitWrite(
     mkdirSync(dest, { recursive: true });
     for (const [name, value] of targets) {
       const serialized = stringifyYaml(sortValue(value));
-      writeFileSync(join(dest, name), serialized, "utf8");
+      const target = join(dest, name);
+      const temp = join(dest, `.${name}.${String(process.pid)}.tmp`);
+      writeFileSync(temp, serialized, "utf8");
+      renameSync(temp, target);
     }
     for (const target of copyTargets) {
       copyFileSync(target.sourcePath, target.destPath);

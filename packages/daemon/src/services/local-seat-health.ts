@@ -1,8 +1,8 @@
 import {
-  fetchLlamactlServedModels,
-  type LlamactlFetch,
+  fetchServedModels,
   type LocalSeatHealthLike,
-} from "@penumbra/core";
+  type ServedModelsFetch,
+} from "../../../core/src/index.js";
 
 export interface LocalSeatHealthAgent {
   name: string;
@@ -17,7 +17,7 @@ export interface LocalSeatHealthService extends LocalSeatHealthLike {
 
 export interface CreateLocalSeatHealthServiceOpts {
   agents: () => readonly LocalSeatHealthAgent[];
-  fetch?: LlamactlFetch;
+  fetch?: ServedModelsFetch;
   now?: () => number;
   ttlMs?: number;
   probeTimeoutMs?: number;
@@ -97,7 +97,7 @@ export function createLocalSeatHealthService(
 
   const refreshSeat = async (seat: LocalOpenAiCompatSeat, checkedAtMs: number): Promise<void> => {
     try {
-      const servedModels = await fetchLlamactlServedModels(seat.baseUrl, {
+      const servedModels = await fetchServedModels(seat.baseUrl, {
         fetch: opts.fetch,
         timeoutMs: probeTimeoutMs,
       });

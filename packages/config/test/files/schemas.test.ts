@@ -120,6 +120,46 @@ describe("AgentsConfigSchema", () => {
     ).toThrow(/enabledd/);
   });
 
+  test("accepts strict agent provenance metadata", () => {
+    const parsed = AgentsConfigSchema.parse({
+      agents: [
+        {
+          name: "local-granite-http",
+          adapter: "openai-compat-http",
+          api_provider: "local",
+          options: {
+            baseUrl: "https://mac-mini.local:7945",
+            model: "granite-4.1-3b-Q8_0.gguf",
+            apiKeyKeychain: "llamactl/mac-mini",
+          },
+          provenance: {
+            source: "llamactl-sync-local",
+            managed_fields: ["options.baseUrl", "options.model"],
+          },
+        },
+      ],
+    });
+
+    expect(parsed.agents[0]?.provenance?.source).toBe("llamactl-sync-local");
+  });
+
+  test("rejects unknown keys inside agent provenance metadata", () => {
+    expect(() =>
+      AgentsConfigSchema.parse({
+        agents: [
+          {
+            name: "local-granite-http",
+            adapter: "openai-compat-http",
+            provenance: {
+              source: "llamactl-sync-local",
+              surprise: true,
+            },
+          },
+        ],
+      }),
+    ).toThrow(/surprise/);
+  });
+
   test("rejects duplicate agent names (would silently collapse in routing scorer)", () => {
     const result = AgentsConfigSchema.safeParse({
       agents: [
