@@ -753,6 +753,18 @@ test("resolveCaptureAttribution falls back to adapter options when subscription 
   });
 });
 
+test("resolveCaptureAttribution uses deepseek api_provider for api-mode usage rows", () => {
+  expect(
+    resolveCaptureAttribution({
+      api_provider: "deepseek",
+      options: { model: "deepseek-v4-flash" },
+    }),
+  ).toEqual({
+    provider: "deepseek",
+    model: "deepseek-v4-flash",
+  });
+});
+
 test("resolveCaptureAttribution keeps Sakana openai-compatible seats in the sakana bucket", () => {
   expect(
     resolveCaptureAttribution({

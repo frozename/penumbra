@@ -361,13 +361,16 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 }
 
 export function resolveCaptureAttribution(
-  cfg: Pick<AgentCfg, "options" | "subscription_model" | "subscription_provider">,
+  cfg: Pick<AgentCfg, "api_provider" | "options" | "subscription_model" | "subscription_provider">,
 ): { provider: string | null; model: string | null } {
   const adapterOptions: Record<string, unknown> = cfg.options ?? {};
   const providerOpt = adapterOptions.provider;
   const modelOpt = adapterOptions.model;
+  const apiProvider = cfg.api_provider === "deepseek" ? cfg.api_provider : null;
   const provider =
-    cfg.subscription_provider ?? (typeof providerOpt === "string" ? providerOpt : null);
+    cfg.subscription_provider ??
+    apiProvider ??
+    (typeof providerOpt === "string" ? providerOpt : null);
   const model = cfg.subscription_model ?? (typeof modelOpt === "string" ? modelOpt : null);
   return { provider, model };
 }
