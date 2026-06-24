@@ -1,5 +1,6 @@
 import type { HandoffRow, Services } from "@penumbra/core";
 
+import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonServices } from "../serve.js";
@@ -194,14 +195,32 @@ async function resolveShellSession(
     return { isNewSession: false, sessionId: input.session_id };
   }
 
+  const worktree = services.worktreeManager.getWorktree(
+    input.handoff_id,
+    handoff.project_id ?? undefined,
+  );
+
+  let resolvedCwd: string;
+  if (input.cwd !== undefined) {
+    if (!worktree) {
+      return json({ error: { code: "cwd_outside_worktree" } }, 400);
+    }
+    try {
+      resolvedCwd = await resolveInsideWorktree(input.cwd, worktree.path);
+    } catch (err) {
+      if (err instanceof FsPathError) {
+        return json({ error: { code: "cwd_outside_worktree" } }, 400);
+      }
+      throw err;
+    }
+  } else {
+    resolvedCwd = worktree?.path ?? process.cwd();
+  }
+
   try {
-    const worktree = services.worktreeManager.getWorktree(
-      input.handoff_id,
-      handoff.project_id ?? undefined,
-    );
     const created = await shellSessionPool.createSession({
       handoffId: input.handoff_id,
-      cwd: input.cwd ?? worktree?.path ?? process.cwd(),
+      cwd: resolvedCwd,
       env: input.env ?? {},
       pty: input.pty ?? false,
       agentName: input.agent_name,

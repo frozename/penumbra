@@ -2,6 +2,9 @@ import { applySchema, buildServices, loadSqliteVec, type Services } from "@penum
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { createDaemonFetchHandler } from "../../src/serve.js";
 import {
@@ -131,6 +134,7 @@ interface StartTestDaemonOpts {
   shellMaxSessions?: number;
   requireShellPermission?: boolean;
   handoffs?: { handoff_id: string; to_agent: string; status?: string }[];
+  worktreePathByHandoff?: Record<string, string>;
 }
 
 interface PermissionTarget {
@@ -261,6 +265,15 @@ function startTestDaemon(opts: StartTestDaemonOpts): TestDaemonHandle {
       `INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
        VALUES (?, '2026-05-20T00:00:00Z', 'conv-test', 'maestro', ?, 'task', ?)`,
     ).run(h.handoff_id, h.to_agent, h.status ?? "dispatched");
+  }
+  if (opts.worktreePathByHandoff) {
+    const map = opts.worktreePathByHandoff;
+    (services as unknown as { worktreeManager: unknown }).worktreeManager = {
+      getWorktree: (handoffId: string): { path: string } | null => {
+        const p = map[handoffId];
+        return p ? { path: p } : null;
+      },
+    };
   }
   return {
     url: "http://x",
@@ -459,6 +472,62 @@ describe("shell routes", () => {
     const body = await readJsonAs<ShellErrorBody>(post);
     expect(body.error.code).toBe("shell_config_unavailable");
     expect(body.error.message).toBe("service temporarily unavailable");
+  });
+
+  it("POST /shell/run rejects a cwd that resolves outside the handoff worktree", async () => {
+    const wt = fs.mkdtempSync(path.join(os.tmpdir(), "shell-cwd-wt-"));
+    try {
+      const { url, token, fetch } = startTestDaemon({
+        shellEnabled: true,
+        handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+        worktreePathByHandoff: { "h-1": wt },
+      });
+      const outside = os.tmpdir();
+      const post = await fetch(`${url}/shell/run`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          handoff_id: "h-1",
+          agent_name: "a",
+          cwd: outside,
+          command: "pwd",
+        }),
+      });
+      expect(post.status).toBe(400);
+      const body = await readJsonAs<ShellErrorBody>(post);
+      expect(body.error.code).toBe("cwd_outside_worktree");
+    } finally {
+      fs.rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /shell/run accepts a cwd inside the handoff worktree", async () => {
+    const wt = fs.mkdtempSync(path.join(os.tmpdir(), "shell-cwd-wt-"));
+    try {
+      const sub = path.join(wt, "sub");
+      fs.mkdirSync(sub);
+      const { url, token, fetch } = startTestDaemon({
+        shellEnabled: true,
+        handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+        worktreePathByHandoff: { "h-1": wt },
+      });
+      const post = await fetch(`${url}/shell/run`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          handoff_id: "h-1",
+          agent_name: "a",
+          cwd: sub,
+          command: "pwd",
+        }),
+      });
+      expect(post.status).toBe(200);
+      const json = await readJsonAs<ShellRunOk>(post);
+      expect(json.exit_code).toBe(0);
+      expect(fs.realpathSync(json.stdout.trim())).toBe(fs.realpathSync(sub));
+    } finally {
+      fs.rmSync(wt, { recursive: true, force: true });
+    }
   });
 
   it("POST /shell/run returns 503 shell_config_unavailable when shellConfig is truthy but malformed", async () => {
