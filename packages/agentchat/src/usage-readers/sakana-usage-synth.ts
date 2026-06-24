@@ -2,9 +2,10 @@ import type { QuotaStatusResponse } from "../penumbra-client.js";
 import type { RateLimitDelta, UsageReader, UsageReaderResult } from "./index.js";
 
 const DAILY_MS = 24 * 60 * 60 * 1000;
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const DEFAULT_MAX_PLAUSIBLE_PCT = 300;
-const SAKANA_WINDOW = { label: "daily", minutes: 1440, quotaWindow: "24h" as const };
+const SAKANA_WINDOW = { label: "rolling-5h", minutes: 300, quotaWindow: "5h" as const };
 
 interface SakanaUsageSynthCursor {
   last_emitted_minute: Record<string, number>;
@@ -82,7 +83,7 @@ export class SakanaUsageSynth implements UsageReader {
   private async fetchDailyStatus(nowMs: number): Promise<QuotaStatusResponse | null> {
     try {
       return await this.client.fetchQuotaStatus({
-        since: new Date(nowMs - DAILY_MS).toISOString(),
+        since: new Date(nowMs - FIVE_HOUR_MS).toISOString(),
         window: SAKANA_WINDOW.quotaWindow,
       });
     } catch {
@@ -95,9 +96,15 @@ export class SakanaUsageSynth implements UsageReader {
     minuteBucket: number,
     nextCursor: SakanaUsageSynthCursor,
   ): RateLimitDelta | null {
-    if (row.provider !== "sakana" || row.model || row.quota_tokens === null) return null;
+    if (row.provider !== "sakana" || row.model) return null;
     const quota = row.quota_tokens;
-    if (!Number.isFinite(row.used_tokens) || !Number.isFinite(quota) || quota <= 0) return null;
+    if (
+      quota === null ||
+      !Number.isFinite(row.used_tokens) ||
+      !Number.isFinite(quota) ||
+      quota <= 0
+    )
+      return null;
     const dedupeKey = SAKANA_WINDOW.label;
     if (nextCursor.last_emitted_minute[dedupeKey] === minuteBucket) return null;
     const rawUsedPct = (row.used_tokens / quota) * 100;

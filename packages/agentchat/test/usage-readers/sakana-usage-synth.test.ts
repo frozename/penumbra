@@ -34,7 +34,7 @@ function sakanaQuotaRow(args: {
 }
 
 describe("SakanaUsageSynth", () => {
-  it("emits one provider-level daily snapshot from 24h quota status", async () => {
+  it("emits one provider-level rolling-5h snapshot from 5h quota status", async () => {
     const calls: FetchQuotaArgs[] = [];
     const reader = new SakanaUsageSynth({
       client: {
@@ -68,20 +68,20 @@ describe("SakanaUsageSynth", () => {
     const out = await reader.read(null);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.window).toBe("24h");
-    expect(calls[0]?.since).toBe("2026-06-22T12:34:30.000Z");
+    expect(calls[0]?.window).toBe("5h");
+    expect(calls[0]?.since).toBe("2026-06-23T07:34:30.000Z");
     expect(out.usage_deltas).toHaveLength(0);
     expect(out.rate_limit_snapshots).toEqual([
       {
         provider: "sakana",
-        window_label: "daily",
+        window_label: "rolling-5h",
         used_pct: 25,
-        window_minutes: 1440,
+        window_minutes: 300,
       },
     ]);
   });
 
-  it("emits no snapshot when quota_tokens_per_24h is absent", async () => {
+  it("emits no snapshot when quota_tokens_per_5h is absent", async () => {
     const reader = new SakanaUsageSynth({
       client: {
         fetchQuotaStatus(): Promise<QuotaStatusResponse> {
@@ -141,7 +141,7 @@ describe("SakanaUsageSynth", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]?.meta).toMatchObject({
       provider: "sakana",
-      window_label: "daily",
+      window_label: "rolling-5h",
       raw_used_pct: 400,
     });
   });
