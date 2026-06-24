@@ -107,21 +107,23 @@ export function createRpcServer(handlers: RpcHandlers): RpcServer {
         return;
       }
 
-      handler(req.params ?? {}).then(
-        (result) => {
-          const resp: RpcResponse = { jsonrpc: "2.0", id: req.id ?? null, result };
-          write(resp);
-        },
-        (err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          const resp: RpcResponse = {
-            jsonrpc: "2.0",
-            id: req.id ?? null,
-            error: { code: -32000, message },
-          };
-          write(resp);
-        },
-      );
+      Promise.resolve()
+        .then(() => handler(req.params ?? {}))
+        .then(
+          (result) => {
+            const resp: RpcResponse = { jsonrpc: "2.0", id: req.id ?? null, result };
+            write(resp);
+          },
+          (err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            const resp: RpcResponse = {
+              jsonrpc: "2.0",
+              id: req.id ?? null,
+              error: { code: -32000, message },
+            };
+            write(resp);
+          },
+        );
     });
   };
 

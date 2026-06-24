@@ -25,6 +25,48 @@ interface JsonRpcResponse {
   };
 }
 
+describe("rpc error handling", () => {
+  it("returns a JSON-RPC error for session/cancel with an unknown session", async () => {
+    const shim = spawn(process.execPath, [SHIM_ENTRY], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, AGY_BINARY },
+    });
+
+    const rl = createInterface({ input: shim.stdout, terminal: false });
+    const readNext = (): Promise<JsonRpcResponse> =>
+      new Promise((res, rej) => {
+        const timeout = setTimeout(() => {
+          rl.off("line", handler);
+          rej(new Error("timed out waiting for shim response"));
+        }, 1_000);
+        const handler = (line: string): void => {
+          clearTimeout(timeout);
+          rl.off("line", handler);
+          res(JSON.parse(line) as JsonRpcResponse);
+        };
+        rl.once("line", handler);
+      });
+
+    shim.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/cancel",
+        params: { sessionId: "ghost" },
+      }) + "\n",
+    );
+
+    const resp = await readNext();
+    expect(resp).toMatchObject({
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32000, message: "not_a_session" },
+    });
+
+    shim.kill("SIGTERM");
+  });
+});
+
 describe("integration (requires local agy binary)", () => {
   it.skipIf(!AGY_PRESENT)(
     "full ACP round-trip: initialize → session/new → session/prompt → assert pong",
