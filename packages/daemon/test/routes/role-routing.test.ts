@@ -226,4 +226,52 @@ describe("resolveSingleRoute", () => {
       taskType: "review_adversarial",
     });
   });
+
+  test("excludes unhealthy seats reported by the local seat health service", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+
+    const svc = services(db);
+    svc.localSeatHealth = {
+      getUnhealthyAgents: () => new Set(["alpha"]),
+    };
+
+    expect(resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial")).toEqual({
+      agent: "beta",
+      role: "reviewer",
+      taskType: "review_adversarial",
+    });
+  });
+
+  test("local seat health read failures degrade to normal routing", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+
+    const svc = services(db);
+    svc.localSeatHealth = {
+      getUnhealthyAgents: () => {
+        throw new Error("health unavailable");
+      },
+    };
+
+    expect(resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial")).toEqual({
+      agent: "alpha",
+      role: "reviewer",
+      taskType: "review_adversarial",
+    });
+  });
+
+  test("does not gate any agent when no local seat health service is wired (gate off)", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+
+    const svc = services(db);
+    expect(svc.localSeatHealth).toBeUndefined();
+
+    expect(resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial")).toEqual({
+      agent: "alpha",
+      role: "reviewer",
+      taskType: "review_adversarial",
+    });
+  });
 });

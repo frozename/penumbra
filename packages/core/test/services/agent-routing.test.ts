@@ -914,6 +914,77 @@ describe("routeAgent", () => {
     });
   });
 
+  test("single mode excludes unhealthy agents and selects a failover", () => {
+    const out = routeAgent({
+      db,
+      detail: "single",
+      role: "reviewer",
+      taskType: "implement_substantial",
+      agentRegistry: ["reviewer", "reviewer-failover"],
+      agentchatConfig: {
+        agents: [
+          { name: "reviewer", roles: ["reviewer"], api_provider: "local" },
+          { name: "reviewer-failover", roles: ["reviewer"], api_provider: "cloud" },
+        ],
+      },
+      roleExplorationPolicy: "ranked-first",
+      unhealthyAgents: new Set(["reviewer"]),
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toEqual({
+      agent: "reviewer-failover",
+      role: "reviewer",
+      taskType: "implement_substantial",
+    });
+  });
+
+  test("single mode admits a healthy local agent when it is not in the unhealthy set", () => {
+    const out = routeAgent({
+      db,
+      detail: "single",
+      role: "reviewer",
+      taskType: "implement_substantial",
+      agentRegistry: ["reviewer", "reviewer-failover"],
+      agentchatConfig: {
+        agents: [
+          { name: "reviewer", roles: ["reviewer"], api_provider: "local" },
+          { name: "reviewer-failover", roles: ["reviewer"], api_provider: "cloud" },
+        ],
+      },
+      roleExplorationPolicy: "ranked-first",
+      unhealthyAgents: new Set(),
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toEqual({
+      agent: "reviewer",
+      role: "reviewer",
+      taskType: "implement_substantial",
+    });
+  });
+
+  test("rank mode removes unhealthy candidates", () => {
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      agentRegistry: ["reviewer", "reviewer-failover"],
+      unhealthyAgents: new Set(["reviewer"]),
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("rank");
+    if (out.detail !== "rank") return;
+    expect(out.candidates.candidates.map((candidate) => candidate.agent_name)).not.toContain(
+      "reviewer",
+    );
+  });
+
   test("minSamples=0 keeps zero-sample candidates out of the way without filtering them away", () => {
     const out = routeAgent({
       db,

@@ -200,6 +200,7 @@ export interface RouteAgentInput {
   // User-driven routing-bias steers (usage steering). Injected by the caller
   // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
   activeBiases?: RoutingBias[];
+  unhealthyAgents?: ReadonlySet<string>;
   // Per-agent ACP warm-pool session reuse rates from fleet-latency. Values in [0,1].
   // When warm_pool_reuse_weighting is enabled, agents with higher rates receive a
   // mild multiplicative score preference. Absent means no adjustment.
@@ -816,11 +817,21 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
       : null;
   const registryAgents = input.agentRegistry ?? null;
 
-  if (roleAgents === null && registryAgents === null) return null;
-  if (roleAgents === null) return registryAgents;
-  if (registryAgents === null) return roleAgents;
-  const registrySet = new Set(registryAgents);
-  return roleAgents.filter((name) => registrySet.has(name));
+  let allowed: string[] | null;
+  if (roleAgents === null && registryAgents === null) {
+    allowed = null;
+  } else if (roleAgents === null) {
+    allowed = registryAgents;
+  } else if (registryAgents === null) {
+    allowed = roleAgents;
+  } else {
+    const registrySet = new Set(registryAgents);
+    allowed = roleAgents.filter((name) => registrySet.has(name));
+  }
+  if (!input.unhealthyAgents || input.unhealthyAgents.size === 0 || allowed === null) {
+    return allowed;
+  }
+  return allowed.filter((name) => !input.unhealthyAgents?.has(name));
 }
 
 function queryRows(
@@ -1014,6 +1025,7 @@ function buildRank(
       ? new Date(input.since).toISOString()
       : new Date(now.getTime() - DEFAULT_RANK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = queryRows(db, taskType, agentKind, sinceIso, allowedAgents);
+  const unhealthyAgents = input.unhealthyAgents ?? new Set<string>();
   const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const visibleRows = input.includeNeutral
     ? rows
@@ -1021,6 +1033,7 @@ function buildRank(
   const byAgent = groupRowsByAgent(visibleRows);
   const summaries = Array.from(byAgent.entries())
     .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows, gateOutcomeCutover))
+    .filter((c) => !unhealthyAgents.has(c.agent_name))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
   const costs = input.includeCost
     ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v !== null)

@@ -15,6 +15,10 @@ export const RoleRoutingConfigSchema = z
     headroom_weighting: z.boolean().optional(),
     latency_weighting: z.boolean().optional(),
     warm_pool_reuse_weighting: z.boolean().optional(),
+    // Opt-in: gate local openai-compat seats by live backend health (probe
+    // /v1/models). Off by default; when unset, routing is unchanged and the
+    // daemon never probes, so penumbra works with no local-model server present.
+    local_seat_health_gate: z.boolean().optional(),
   })
   .strict()
   .default({ exploration_policy: "unsampled-first" });

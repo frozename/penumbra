@@ -211,6 +211,10 @@ export interface WorkflowDirsLike {
   workflowsDir: string;
 }
 
+export interface LocalSeatHealthLike {
+  getUnhealthyAgents(): ReadonlySet<string>;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -261,6 +265,7 @@ export interface Services {
     agents?: {
       name: string;
       roles: string[];
+      adapter?: string;
       options?: Record<string, unknown>;
       subscription_provider?: string;
       subscription_model?: string;
@@ -280,6 +285,7 @@ export interface Services {
   taskWriter?: TaskWriter;
   workerManager?: WorkerManagerLike;
   workflowDirs?: WorkflowDirsLike;
+  localSeatHealth?: LocalSeatHealthLike;
   longLivedReactor?: LongLivedReactorLike;
   mcpPool?: McpPoolLike;
   actionGate?: ActionGateLike;

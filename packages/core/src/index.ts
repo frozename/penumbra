@@ -340,6 +340,7 @@ export {
   type AgentRoutingConfig,
   buildServices,
   type BuildServicesOpts,
+  type LocalSeatHealthLike,
   type Services,
   type Watchdog,
   type WorkflowRunInfo,
@@ -380,6 +381,12 @@ export {
   DispatchEventLog,
   type DispatchEventRow,
 } from "./services/dispatch-event-log.js";
+export {
+  fetchLlamactlServedModels,
+  type FetchLlamactlServedModelsOpts,
+  type LlamactlFetch,
+  llamactlModelsUrl,
+} from "./services/llamactl-client.js";
 export {
   refineDispatchPrompt,
   type RefineDispatchPromptOpts,

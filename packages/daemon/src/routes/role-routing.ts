@@ -13,6 +13,7 @@ type AgentRoutingWithRoleRouting = AgentRoutingConfig & {
   role_routing?: {
     headroom_weighting?: boolean;
     latency_weighting?: boolean;
+    local_seat_health_gate?: boolean;
     exploration_policy?: string;
   };
 };
@@ -47,6 +48,12 @@ export function resolveSingleRoute(
   } catch {
     // degrade gracefully
   }
+  let unhealthyAgents: ReadonlySet<string> | undefined;
+  try {
+    unhealthyAgents = services.localSeatHealth?.getUnhealthyAgents();
+  } catch {
+    // degrade gracefully
+  }
   const out = routeAgent({
     db: services.db,
     detail: "single",
@@ -65,6 +72,7 @@ export function resolveSingleRoute(
     defaultRoles: agentRouting.default_roles,
     applyPressure: pressure,
     activeBiases,
+    unhealthyAgents,
     now: services.clock(),
   });
   return out.detail === "single" ? out.route : null;

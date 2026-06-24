@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 import type { AgentOptions, AgentPool } from "@penumbra/config";
 
-import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
+import {
+  defaultProjectRegistryPath,
+  fetchLlamactlServedModels,
+  loadProjectRegistry,
+  SettingsDefaults,
+} from "@penumbra/core";
 import {
   createLogger,
   type DispatchEventInput,
@@ -1278,38 +1283,16 @@ function isLocalAnalyzerAgent(agentName: string): boolean {
   }
 }
 
-function modelsUrlFor(baseUrl: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
-  return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
-}
-
 const analyzerHealthCache = new Map<string, { checkedAtMs: number; healthy: boolean }>();
 const ANALYZER_HEALTH_TTL_MS = 20_000;
 
 async function probeLocalAnalyzerSeat(agentName: string): Promise<boolean> {
   const seat = openAiCompatSeat(agentName);
   if (!seat) return false;
-  const headers: Record<string, string> = {};
-  try {
-    const apiKey = resolveAdapterApiKey({
-      apiKey: seat.options.apiKey as string | undefined,
-      apiKeyEnv: seat.options.apiKeyEnv as string | undefined,
-      apiKeyKeychain: seat.options.apiKeyKeychain as string | undefined,
-      apiKeyFile: seat.options.apiKeyFile as string | undefined,
-    });
-    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-  } catch {
-    // Local anonymous endpoints are common; missing credentials should not block the probe attempt.
-  }
 
   try {
-    const res = await fetch(modelsUrlFor(seat.baseUrl), {
-      headers,
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) return false;
-    const body = (await res.json()) as { data?: { id?: unknown }[] };
-    return (body.data ?? []).some((model) => model.id === seat.model);
+    const servedModels = await fetchLlamactlServedModels(seat.baseUrl, { timeoutMs: 5_000 });
+    return servedModels.has(seat.model);
   } catch {
     return false;
   }

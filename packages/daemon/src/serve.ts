@@ -237,6 +237,7 @@ import {
   worktreesInspectRoute,
   worktreesListRoute,
 } from "./routes/worktrees.js";
+import { createLocalSeatHealthService } from "./services/local-seat-health.js";
 import { OrphanHandoffRecoveryService } from "./services/orphan-handoff-recovery.js";
 import { WatchdogService } from "./services/watchdog.js";
 import { createWorkerHealthController, WorkerHealthProbe } from "./services/worker-health-probe.js";
@@ -1101,6 +1102,7 @@ interface CronWorkers {
   dispatchEventsRetention: CronTickWorker;
   sweeper: CronTickWorker;
   watchdog: CronTickWorker;
+  localSeatHealth?: CronTickWorker;
 }
 
 function registerCronWorkers(services: Services, workers: CronWorkers): void {
@@ -1135,6 +1137,14 @@ function registerCronWorkers(services: Services, workers: CronWorkers): void {
     intervalMs: 15_000,
     tick: (): Promise<void> => workers.watchdog.tick(),
   });
+  const localSeatHealth = workers.localSeatHealth;
+  if (localSeatHealth) {
+    supervisor.register({
+      name: "local-seat-health",
+      intervalMs: 20_000,
+      tick: (): Promise<void> => localSeatHealth.tick(),
+    });
+  }
   void supervisor.startAll();
 }
 
@@ -2002,6 +2012,23 @@ export function serve(opts: ServeOpts): DaemonHandle {
     );
   }
   const { probeRef, extraWorkerSupervisor } = setupExtraWorkerSupervisor(opts, daemonServices);
+  // Opt-in local-seat health-gating (default off). When enabled via routing.yaml
+  // role_routing.local_seat_health_gate, the daemon probes local openai-compat
+  // backends and excludes down/unknown seats from routing. When off, the service
+  // is never constructed and routing behaves exactly as before — penumbra needs
+  // no local-model server present.
+  const localSeatHealthEnabled =
+    (opts.services.agentRouting as { role_routing?: { local_seat_health_gate?: boolean } } | null)
+      ?.role_routing?.local_seat_health_gate === true;
+  const localSeatHealth = localSeatHealthEnabled
+    ? createLocalSeatHealthService({
+        agents: () => opts.services.agentchatConfig?.agents ?? [],
+      })
+    : undefined;
+  if (localSeatHealth) {
+    daemonServices.localSeatHealth = localSeatHealth;
+    void localSeatHealth.refresh();
+  }
 
   // Signal ownership stays with CLI/embedding callers; log-only handlers here
   // would suppress the default SIGTERM/SIGINT process termination.
@@ -2046,7 +2073,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskCooldowns: collaborators.taskCooldowns,
     taskEvents: collaborators.taskEvents,
   });
-  registerCronWorkers(opts.services, { ...cronWorkers, watchdog });
+  registerCronWorkers(opts.services, { ...cronWorkers, watchdog, localSeatHealth });
   efficacyJobRunner.start();
   const dreamingStops = setupDreamingCron(opts.services, runtimeDreamConfig);
   const { server, port } = startHttpServer({
