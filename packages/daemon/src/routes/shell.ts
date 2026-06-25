@@ -214,7 +214,10 @@ async function resolveShellSession(
       throw err;
     }
   } else {
-    resolvedCwd = worktree?.path ?? process.cwd();
+    if (!worktree) {
+      return json({ error: { code: "no_worktree" } }, 400);
+    }
+    resolvedCwd = worktree.path;
   }
 
   try {

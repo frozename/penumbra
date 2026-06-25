@@ -1,6 +1,8 @@
 import { resolve4, resolve6 } from "node:dns/promises";
 import { isIP } from "node:net";
 
+import { Agent, fetch as undiciFetch } from "undici";
+
 import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
 
 function htmlToMarkdown(html: string): string {
@@ -64,6 +66,16 @@ export function isInternalOrMetadataHost(hostname: string): boolean {
 
 type HostResolver = (hostname: string) => Promise<string[]>;
 
+// PinnedFetch: a fetch wrapper that MUST connect to one of the supplied
+// pre-validated addresses. The default impl uses undici with a custom
+// connect.lookup so the TCP connection cannot be redirected by a second
+// system DNS resolution (DNS rebinding defence).
+export type PinnedFetch = (
+  url: string,
+  init: RequestInit,
+  pinnedAddresses: string[],
+) => Promise<Response>;
+
 function isNoDnsRecordsError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -98,13 +110,44 @@ async function defaultResolveHostAddresses(hostname: string): Promise<string[]> 
   return addresses;
 }
 
+function defaultPinnedFetch(
+  url: string,
+  init: RequestInit,
+  pinnedAddresses: string[],
+): Promise<Response> {
+  const pinnedAddress = pinnedAddresses[0];
+  if (!pinnedAddress) {
+    return Promise.reject(new Error("internal: no validated address to pin"));
+  }
+  const family = isIP(pinnedAddress) === 6 ? 6 : 4;
+  const agent = new Agent({
+    connect: {
+      lookup: (_hostname, _opts, cb) => {
+        cb(null, pinnedAddress, family);
+      },
+    },
+  });
+  const undiciInit = { ...init, dispatcher: agent } as Parameters<typeof undiciFetch>[1];
+  return undiciFetch(url, undiciInit).finally(() => {
+    void agent.close().catch(() => {});
+  }) as unknown as Promise<Response>;
+}
+
 export class WebFetchAdapter implements WebResearchAdapter {
   private allowedDomains: string[] | undefined;
   private resolveHostAddresses: HostResolver;
+  private pinnedFetch: PinnedFetch;
 
-  constructor(opts: { allowedDomains?: string[]; resolveHostAddresses?: HostResolver } = {}) {
+  constructor(
+    opts: {
+      allowedDomains?: string[];
+      resolveHostAddresses?: HostResolver;
+      pinnedFetch?: PinnedFetch;
+    } = {},
+  ) {
     this.allowedDomains = opts.allowedDomains;
     this.resolveHostAddresses = opts.resolveHostAddresses ?? defaultResolveHostAddresses;
+    this.pinnedFetch = opts.pinnedFetch ?? defaultPinnedFetch;
   }
 
   // Returns a search-engine URL as a navigation hint; no network call.
@@ -136,7 +179,7 @@ export class WebFetchAdapter implements WebResearchAdapter {
     ]);
   }
 
-  private async checkHost(hostname: string): Promise<void> {
+  private async checkHost(hostname: string): Promise<string[]> {
     if (isInternalOrMetadataHost(hostname)) {
       throw new Error(`internal host blocked: ${hostname}`);
     }
@@ -160,9 +203,13 @@ export class WebFetchAdapter implements WebResearchAdapter {
         throw new Error(`resolved internal host blocked: ${hostname} -> ${address}`);
       }
     }
+    return addresses;
   }
 
-  private async resolveRedirect(res: Response, currentUrl: string): Promise<string | null> {
+  private async resolveRedirect(
+    res: Response,
+    currentUrl: string,
+  ): Promise<{ url: string; addresses: string[] } | null> {
     const loc = res.headers.get("location");
     if (!loc) return null;
     let nextUrl: URL;
@@ -171,8 +218,8 @@ export class WebFetchAdapter implements WebResearchAdapter {
     } catch {
       throw new Error(`invalid redirect URL: ${loc}`);
     }
-    await this.checkHost(nextUrl.hostname);
-    return nextUrl.toString();
+    const addresses = await this.checkHost(nextUrl.hostname);
+    return { url: nextUrl.toString(), addresses };
   }
 
   async scrape(args: { url: string }): Promise<WebResearchResult> {
@@ -182,19 +229,23 @@ export class WebFetchAdapter implements WebResearchAdapter {
     } catch {
       throw new Error(`invalid URL: ${args.url}`);
     }
-    await this.checkHost(new URL(currentUrl).hostname);
+    let pinnedAddresses = await this.checkHost(new URL(currentUrl).hostname);
 
     // Manual redirect following: re-check each redirect target against the
     // private-host blocker AND the allowlist. Without this, a 302 to a cloud
     // metadata IP or non-allowlisted host bypasses scrape-time validation.
+    // Each request is dispatched via pinnedFetch with the pre-resolved
+    // addresses so the actual TCP connection cannot be diverted by a second
+    // DNS lookup at fetch time (DNS rebinding defence).
     const maxRedirects = 5;
     let res: Response | undefined;
     for (let hops = 0; hops <= maxRedirects; hops++) {
-      res = await fetch(currentUrl, { redirect: "manual" });
+      res = await this.pinnedFetch(currentUrl, { redirect: "manual" }, pinnedAddresses);
       if (res.status < 300 || res.status >= 400) break;
       const next = await this.resolveRedirect(res, currentUrl);
       if (next === null) break;
-      currentUrl = next;
+      currentUrl = next.url;
+      pinnedAddresses = next.addresses;
     }
     if (!res) throw new Error(`fetch failed: ${args.url}`);
     if (res.status >= 300 && res.status < 400) {

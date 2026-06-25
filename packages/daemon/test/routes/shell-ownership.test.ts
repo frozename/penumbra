@@ -108,6 +108,11 @@ function makeSetup(): Setup {
 
   services.shellSessionPool = pool;
   services.shellConfig = makeShellConfig();
+  // Hand every handoff a worktree at process.cwd() so the shell route's
+  // no_worktree fail-closed guard does not trip in tests that don't supply a cwd.
+  (services as unknown as { worktreeManager: unknown }).worktreeManager = {
+    getWorktree: (): { path: string } | null => ({ path: process.cwd() }),
+  };
   const shellServices = services as ShellRouteServices;
   shellServices.agentchatConfig = {
     agents: [{ name: "claude-acp-sonnet", roles: [], auto_approve_to: ["shell_run"] }],

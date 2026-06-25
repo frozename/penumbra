@@ -266,13 +266,20 @@ function startTestDaemon(opts: StartTestDaemonOpts): TestDaemonHandle {
        VALUES (?, '2026-05-20T00:00:00Z', 'conv-test', 'maestro', ?, 'task', ?)`,
     ).run(h.handoff_id, h.to_agent, h.status ?? "dispatched");
   }
-  if (opts.worktreePathByHandoff) {
-    const map = opts.worktreePathByHandoff;
+  const worktreeOverride = opts.worktreePathByHandoff;
+  if (worktreeOverride !== undefined) {
     (services as unknown as { worktreeManager: unknown }).worktreeManager = {
       getWorktree: (handoffId: string): { path: string } | null => {
-        const p = map[handoffId];
+        const p = worktreeOverride[handoffId];
         return p ? { path: p } : null;
       },
+    };
+  } else {
+    // Default: hand every handoff a worktree at process.cwd() so tests that don't
+    // care about cwd resolution still satisfy the fail-closed no_worktree guard
+    // in shellRunRoute. Tests that want to exercise the null path pass {} explicitly.
+    (services as unknown as { worktreeManager: unknown }).worktreeManager = {
+      getWorktree: (): { path: string } | null => ({ path: process.cwd() }),
     };
   }
   return {
@@ -499,6 +506,26 @@ describe("shell routes", () => {
     } finally {
       fs.rmSync(wt, { recursive: true, force: true });
     }
+  });
+
+  it("POST /shell/run returns 400 no_worktree when no worktree is registered and no cwd is provided", async () => {
+    const { url, token, fetch } = startTestDaemon({
+      shellEnabled: true,
+      handoffs: [{ handoff_id: "h-1", to_agent: "a" }],
+      worktreePathByHandoff: {}, // installs a worktreeManager whose getWorktree returns null
+    });
+    const post = await fetch(`${url}/shell/run`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        handoff_id: "h-1",
+        agent_name: "a",
+        command: "pwd",
+      }),
+    });
+    expect(post.status).toBe(400);
+    const body = await readJsonAs<ShellErrorBody>(post);
+    expect(body.error.code).toBe("no_worktree");
   });
 
   it("POST /shell/run accepts a cwd inside the handoff worktree", async () => {
