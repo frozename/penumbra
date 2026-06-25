@@ -696,12 +696,10 @@ describe("routeAgent", () => {
 
     expect(out.detail).toBe("summary");
     if (out.detail !== "summary") return;
-    expect(out.recommendations.map((row) => row.agent_name)).toEqual([
-      "beta",
-      "alpha",
-      "reviewer",
-      "gamma",
-    ]);
+    // gamma's only row is `no_changes` (neutral). The summary path now
+    // excludes neutral outcomes from the denominator to match the in-memory
+    // rank path; a neutral-only agent drops out of the ranked pool.
+    expect(out.recommendations.map((row) => row.agent_name)).toEqual(["beta", "alpha", "reviewer"]);
     expect(out.recommendations[0]!.avg_latency_seconds).toBe(30);
     expect(out.recommendations[1]!.avg_latency_seconds).toBe(60);
   });

@@ -44,13 +44,17 @@ export function aggregateHandoffUsage(
   type Row = { sum_cost: number | null; sum_tokens: number | null; n_with_cost: number };
   const row = db
     .prepare<Row, [string]>(
+      // usage-update events carry per-turn delta usage, not running totals
+      // — taking MAX within a (provider, model) group loses every turn except
+      // the largest. SUM aggregates the deltas correctly across multiple
+      // turns of the same dispatch.
       `
     WITH per_group AS (
       SELECT
         provider,
         model,
-        MAX(cost_usd) AS group_cost,
-        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS group_tokens
+        SUM(cost_usd) AS group_cost,
+        SUM(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS group_tokens
       FROM t0_events
       WHERE event_type = 'usage-update'
         AND json_extract(payload_json, '$.handoff_id') = ?

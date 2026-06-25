@@ -96,8 +96,11 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.agent_name).toBe("claude");
     expect(row.task_type).toBe("implement_substantial");
     expect(row.outcome).toBe("pr_opened");
-    expect(row.cost_usd).toBe(0.25);
-    expect(row.tokens_used).toBe(250);
+    // Two usage-update events @ (0.1, 100) and (0.25, 250) sum to (0.35, 350)
+    // because per-(provider, model) aggregation now sums deltas instead of
+    // taking the max single event.
+    expect(row.cost_usd).toBeCloseTo(0.35, 10);
+    expect(row.tokens_used).toBe(350);
     expect(row.latency_ms).toBe(120000);
     expect(JSON.parse(row.metadata_json)).toEqual({ pr_url: "https://example.test/pull/1" });
   });
@@ -116,8 +119,8 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.outcome).toBe("failed");
     expect(row.source).toBe("worker");
     expect(row.notes).toBe("error");
-    expect(row.cost_usd).toBe(0.25);
-    expect(row.tokens_used).toBe(250);
+    expect(row.cost_usd).toBeCloseTo(0.35, 10);
+    expect(row.tokens_used).toBe(350);
     expect(JSON.parse(row.metadata_json)).toEqual({
       reason: "error",
       silent_failure: false,

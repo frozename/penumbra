@@ -336,6 +336,12 @@ export const SUCCESS_OUTCOME_VALUES = [
   "merged_with_concerns",
   "completed_with_output",
 ] as const;
+// Single source for outcomes that should NOT count toward success_rate
+// denominators. The SQL summary path (buildRecommendations) and the in-memory
+// rank path (rowOutcomeBucket + the visibleRows filter in buildRank) must
+// derive from this array — change it here, never inline, or the two paths
+// diverge on which seats appear in the ranked pool.
+export const NEUTRAL_OUTCOME_VALUES = ["no_changes", "bypassed"] as const;
 export const GATE_OUTCOME_PASS_VALUES = ["passed", "skipped"] as const;
 
 function sqlInList(values: readonly string[]): string {
@@ -438,20 +444,8 @@ function rowOutcomeScore(row: PerformanceRow): number {
 
 function rowOutcomeBucket(row: PerformanceRow): "success" | "failure" | "neutral" {
   if (isSuccessOutcome(row.outcome)) return "success";
-  switch (row.outcome) {
-    case "partial":
-    case "rejected":
-    case "failed":
-    case "typecheck_failed":
-    case "test_failed":
-    case "pr_creation_failed":
-      return "failure";
-    case "no_changes":
-    case "bypassed":
-      return "neutral";
-    default:
-      return "failure";
-  }
+  if ((NEUTRAL_OUTCOME_VALUES as readonly string[]).includes(row.outcome)) return "neutral";
+  return "failure";
 }
 
 function smokeValue(smoke: string | null): number {
@@ -1124,9 +1118,14 @@ function buildRecommendations(
         $classifierDeclineCutover: string;
       }
     >(
+      // Neutral outcomes (NEUTRAL_OUTCOME_VALUES) are excluded from the
+      // summary aggregation so this path's denominator matches the in-memory
+      // rank path's `nonNeutral = successes + failures`. Without this,
+      // success_rate diverges between the two paths for the same data.
       `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, SUM(CASE WHEN gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) THEN 1 ELSE 0 END) AS gate_pass_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = $taskType AND ts >= $cutoff AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = $agentKind
+       AND outcome NOT IN (${sqlInList(NEUTRAL_OUTCOME_VALUES)})
        AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < $classifierDeclineCutover)
      GROUP BY agent_name
      ORDER BY (CAST(SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,

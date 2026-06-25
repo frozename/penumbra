@@ -493,6 +493,10 @@ export function readAgentGateOutcomeSplits(db: Database, now: Date): AgentGateOu
 
 function readAgentGateRates(db: Database, start: Date, end: Date): AgentGateRateTrend[] {
   const cutover = resolveGateOutcomeCutoverIso();
+  // Legacy-NULL rows (pre-cutover with no gate_outcome) are excluded from
+  // both samples and gate_passes. They predate verdict stamping, so crediting
+  // them as automatic passes inflated the apparent pass rate. Post-cutover
+  // NULL stays in the denominator as a real "no-verdict" signal.
   const rows = db
     .query<
       { agent_name: string; task_type: string; samples: number; gate_passes: number },
@@ -503,15 +507,15 @@ function readAgentGateRates(db: Database, start: Date, end: Date): AgentGateRate
               COUNT(*) AS samples,
               SUM(CASE
                     WHEN gate_outcome IN ('passed', 'skipped') THEN 1
-                    WHEN ts < ? AND gate_outcome IS NULL THEN 1
                     ELSE 0
                   END) AS gate_passes
        FROM agent_performance
        WHERE ts >= ? AND ts < ?
+         AND (gate_outcome IS NOT NULL OR ts >= ?)
        GROUP BY agent_name, task_type
        ORDER BY agent_name ASC, task_type ASC`,
     )
-    .all(cutover, start.toISOString(), end.toISOString());
+    .all(start.toISOString(), end.toISOString(), cutover);
   return rows.map((row) => ({
     agent_name: row.agent_name,
     task_type: row.task_type,
