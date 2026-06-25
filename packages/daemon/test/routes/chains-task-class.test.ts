@@ -3,7 +3,11 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, test } from "bun:test";
 
-import { chainsStartRoute } from "../../src/routes/chains.js";
+import {
+  __resetLegacyNoTaskClassUseWorktreeCounterForTest,
+  chainsStartRoute,
+  getLegacyNoTaskClassUseWorktreeCounter,
+} from "../../src/routes/chains.js";
 
 try {
   if (process.platform === "darwin")
@@ -75,6 +79,64 @@ test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(
     expect(body.task_class).toBe(task_class);
   },
 );
+
+test("counter increments for use_worktree=true (default) dispatches that omit task_class", async () => {
+  __resetLegacyNoTaskClassUseWorktreeCounterForTest();
+  const services = tempServices();
+  expect(getLegacyNoTaskClassUseWorktreeCounter()).toBe(0);
+
+  await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "hi" }),
+    }),
+    services,
+  );
+  expect(getLegacyNoTaskClassUseWorktreeCounter()).toBe(1);
+
+  await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "hi", use_worktree: true }),
+    }),
+    services,
+  );
+  expect(getLegacyNoTaskClassUseWorktreeCounter()).toBe(2);
+});
+
+test("counter does NOT increment for use_worktree=false dispatches without task_class", async () => {
+  __resetLegacyNoTaskClassUseWorktreeCounterForTest();
+  const services = tempServices();
+
+  await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "hi", use_worktree: false }),
+    }),
+    services,
+  );
+
+  expect(getLegacyNoTaskClassUseWorktreeCounter()).toBe(0);
+});
+
+test("counter does NOT increment when task_class is provided", async () => {
+  __resetLegacyNoTaskClassUseWorktreeCounterForTest();
+  const services = tempServices();
+
+  await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "STANDARD",
+      }),
+    }),
+    services,
+  );
+
+  expect(getLegacyNoTaskClassUseWorktreeCounter()).toBe(0);
+});
 
 test("POST /chains/start rejects malformed task_class", async () => {
   const services = tempServices();

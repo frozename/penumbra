@@ -76,4 +76,29 @@ describe("stampAgentPerformanceGateOutcomeForHandoff", () => {
     stampAgentPerformanceGateOutcomeForHandoff(db, "h4", "skipped");
     expect(getGateOutcome("h4")).toBe("passed");
   });
+
+  it("emits a structured warn when the UPDATE matches zero rows", () => {
+    const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+    const result = stampAgentPerformanceGateOutcomeForHandoff(db, "missing-handoff", "passed", {
+      warn: (obj, msg) => warns.push({ obj, msg }),
+    });
+    expect(result).toBeNull();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.obj).toEqual({
+      event: "gate_stamp.no_perf_row",
+      handoff_id: "missing-handoff",
+      gate_status: "passed",
+    });
+    expect(warns[0]!.msg).toContain("zero agent_performance rows");
+  });
+
+  it("does not warn when the UPDATE matches an existing row", () => {
+    seedPerformance("h-warn-ok", null);
+    const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+    stampAgentPerformanceGateOutcomeForHandoff(db, "h-warn-ok", "passed", {
+      warn: (obj, msg) => warns.push({ obj, msg }),
+    });
+    expect(warns).toHaveLength(0);
+    expect(getGateOutcome("h-warn-ok")).toBe("passed");
+  });
 });

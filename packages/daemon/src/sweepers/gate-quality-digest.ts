@@ -75,6 +75,20 @@ export interface AgentGateRateTrend {
   samples: number;
 }
 
+// Per-seat split of the gate_outcome column over the analysis window. NULL is
+// surfaced as its own bucket so the NULL-vs-review_debt composition is visible
+// per agent (the scorer treats NULL specially; this is observability only and
+// does not promote NULL to passed).
+export interface AgentGateOutcomeSplit {
+  agent_name: string;
+  passed: number;
+  failed: number;
+  skipped: number;
+  review_debt: number;
+  null_outcome: number;
+  total: number;
+}
+
 export async function runGateQualityDigestSweep(
   deps: GateQualityDigestSweepDeps,
 ): Promise<GateQualityDigestSweepResult> {
@@ -111,6 +125,7 @@ export async function runGateQualityDigestSweep(
     failures: analysis.failures,
     malformedMetadata: analysis.malformedMetadata,
     trends: readAgentGateTrends(db, now),
+    seatSplits: readAgentGateOutcomeSplits(db, now),
   });
 
   return {
@@ -336,6 +351,7 @@ async function writeGateQualityDigest(opts: {
   failures: FailureSummary[];
   malformedMetadata: number;
   trends: AgentGateRateTrend[];
+  seatSplits: AgentGateOutcomeSplit[];
 }): Promise<string> {
   const filepath = opts.digestPath;
   const date = opts.date;
@@ -386,6 +402,23 @@ async function writeGateQualityDigest(opts: {
   }
   lines.push("");
 
+  lines.push(
+    "## Per-Seat Gate Outcome Split",
+    "",
+    "| agent | passed | failed | skipped | review_debt | null | total |",
+    "|---|---:|---:|---:|---:|---:|---:|",
+  );
+  if (opts.seatSplits.length === 0) {
+    lines.push("| none | 0 | 0 | 0 | 0 | 0 | 0 |");
+  } else {
+    for (const split of opts.seatSplits) {
+      lines.push(
+        `| ${escapeMarkdownTableCell(split.agent_name)} | ${String(split.passed)} | ${String(split.failed)} | ${String(split.skipped)} | ${String(split.review_debt)} | ${String(split.null_outcome)} | ${String(split.total)} |`,
+      );
+    }
+  }
+  lines.push("");
+
   await mkdir(opts.outDir, { recursive: true });
   if (existsSync(filepath)) return filepath;
   await writeFile(filepath, lines.join("\n"), "utf8");
@@ -418,6 +451,44 @@ function readAgentGateTrends(db: Database, now: Date): AgentGateRateTrend[] {
     .sort(
       (a, b) => a.agent_name.localeCompare(b.agent_name) || a.task_type.localeCompare(b.task_type),
     );
+}
+
+export function readAgentGateOutcomeSplits(db: Database, now: Date): AgentGateOutcomeSplit[] {
+  const end = now;
+  const start = new Date(end.getTime() - ANALYSIS_WINDOW_MS);
+  const rows = db
+    .query<
+      {
+        agent_name: string;
+        passed: number;
+        failed: number;
+        skipped: number;
+        review_debt: number;
+        null_outcome: number;
+      },
+      [string, string]
+    >(
+      `SELECT agent_name,
+              SUM(CASE WHEN gate_outcome = 'passed' THEN 1 ELSE 0 END) AS passed,
+              SUM(CASE WHEN gate_outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN gate_outcome = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+              SUM(CASE WHEN gate_outcome = 'review_debt' THEN 1 ELSE 0 END) AS review_debt,
+              SUM(CASE WHEN gate_outcome IS NULL THEN 1 ELSE 0 END) AS null_outcome
+       FROM agent_performance
+       WHERE ts >= ? AND ts < ?
+       GROUP BY agent_name
+       ORDER BY agent_name ASC`,
+    )
+    .all(start.toISOString(), end.toISOString());
+  return rows.map((row) => ({
+    agent_name: row.agent_name,
+    passed: row.passed,
+    failed: row.failed,
+    skipped: row.skipped,
+    review_debt: row.review_debt,
+    null_outcome: row.null_outcome,
+    total: row.passed + row.failed + row.skipped + row.review_debt + row.null_outcome,
+  }));
 }
 
 function readAgentGateRates(db: Database, start: Date, end: Date): AgentGateRateTrend[] {

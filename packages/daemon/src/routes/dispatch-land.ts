@@ -898,7 +898,7 @@ function captureLandAgentPerformance(
       },
     });
     if (stampPassedGateOutcome) {
-      stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed");
+      stampAgentPerformanceGateOutcomeForHandoff(services.db, handoff_id, "passed", services.log);
     }
   } catch (err) {
     services.log.warn(

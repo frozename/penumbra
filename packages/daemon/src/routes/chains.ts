@@ -148,6 +148,23 @@ function renderProjectBriefInjectedText(briefMd: string): string | null {
   return ["## Project brief", "", brief].join("\n");
 }
 
+// F3c counter: process-local count of use_worktree dispatches that omitted
+// task_class. Module-scoped state is the cheapest seam that's still readable
+// from tests; intentionally NOT persisted (instrumentation, not enforcement).
+let legacyNoTaskClassUseWorktreeCounter = 0;
+
+function incrementLegacyNoTaskClassUseWorktreeCounter(): void {
+  legacyNoTaskClassUseWorktreeCounter += 1;
+}
+
+export function getLegacyNoTaskClassUseWorktreeCounter(): number {
+  return legacyNoTaskClassUseWorktreeCounter;
+}
+
+export function __resetLegacyNoTaskClassUseWorktreeCounterForTest(): void {
+  legacyNoTaskClassUseWorktreeCounter = 0;
+}
+
 type LongLivedTickExemptionResult =
   | { ok: true; tick: { id: string; agent_id: string } }
   | { ok: false; reason: string };
@@ -439,8 +456,20 @@ export async function chainStartFromInput(
   });
   if (conflictResponse) return conflictResponse;
   if (normalizedInput.task_class === undefined) {
+    // F3c observability seam (counter-only, NO enforcement): task_class is
+    // optional; its absence means no lane ever opens, which is the dominant
+    // NULL gate_outcome cause. Count worktree-using legacy dispatches so the
+    // miss is visible, but do NOT infer a default and do NOT reject — pure
+    // instrumentation. use_worktree defaults to true upstream (~line 1188);
+    // mirror that here so this counter tracks the same surface area.
+    const useWorktreeEffective = normalizedInput.use_worktree !== false;
+    if (useWorktreeEffective) incrementLegacyNoTaskClassUseWorktreeCounter();
     services.log.debug(
-      { event: "dispatch.legacy_no_task_class" },
+      {
+        event: "dispatch.legacy_no_task_class",
+        use_worktree: useWorktreeEffective,
+        cumulative_use_worktree_misses: getLegacyNoTaskClassUseWorktreeCounter(),
+      },
       "chain-start legacy dispatch without task_class",
     );
   }

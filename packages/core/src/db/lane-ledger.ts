@@ -61,12 +61,21 @@ type StatementWithAll<T> = {
   all: (...params: string[]) => T[];
 };
 
+export type StampGateOutcomeLog = {
+  warn?: (obj: Record<string, unknown>, msg: string) => void;
+};
+
 export function stampAgentPerformanceGateOutcomeForHandoff(
   db: Database,
   handoffId: string,
   gate_status: ClosedLaneGateStatus,
+  log?: StampGateOutcomeLog,
 ): string | null {
-  db.prepare(
+  // Capture the UPDATE row count so a zero-row stamp (close fired before the
+  // worker agent_performance capture landed) is observable instead of silently
+  // dropping the verdict. Warn-only by design: do NOT add an insert-if-absent
+  // write path here; preserving the sticky-CASE monotonicity is load-bearing.
+  const stmt = db.prepare(
     `UPDATE agent_performance
      SET gate_outcome = CASE
        WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
@@ -74,7 +83,14 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
        ELSE ?
      END
      WHERE handoff_id = ?`,
-  ).run(gate_status, gate_status, gate_status, handoffId);
+  );
+  const result = stmt.run(gate_status, gate_status, gate_status, handoffId) as { changes: number };
+  if (result.changes === 0) {
+    log?.warn?.(
+      { event: "gate_stamp.no_perf_row", handoff_id: handoffId, gate_status },
+      "gate stamp matched zero agent_performance rows",
+    );
+  }
   const row = db
     .query<
       { gate_outcome: string | null },

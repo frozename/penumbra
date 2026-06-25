@@ -6,7 +6,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentGateRateTrend } from "../../src/sweepers/gate-quality-digest.js";
+import {
+  type AgentGateOutcomeSplit,
+  type AgentGateRateTrend,
+  readAgentGateOutcomeSplits,
+} from "../../src/sweepers/gate-quality-digest.js";
 
 try {
   if (process.platform === "darwin") {
@@ -276,6 +280,100 @@ describe("gate-quality-digest sweeper", () => {
     };
     expect(trend.deltaPoints).toBeNull();
   });
+
+  it("computes per-seat gate_outcome split (NULL, review_debt, passed/failed/skipped) per agent", () => {
+    // Seed three seats spanning all five buckets. NULL stays its own bucket
+    // — the per-seat report makes the NULL-vs-review_debt composition visible
+    // without auto-promoting NULL to passed (observability only).
+    seedSplitPerformance("alpha", [
+      { gate_outcome: "passed" },
+      { gate_outcome: "passed" },
+      { gate_outcome: null },
+      { gate_outcome: "review_debt" },
+    ]);
+    seedSplitPerformance("beta", [
+      { gate_outcome: "failed" },
+      { gate_outcome: "skipped" },
+      { gate_outcome: null },
+      { gate_outcome: null },
+    ]);
+    // gamma row falls OUTSIDE the 24h window — must not contribute.
+    db.run(
+      `INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+        outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
+        cost_usd, tokens_used, latency_ms, exec_ms, framework_overhead_ms, source,
+        agent_kind, metadata_json
+      ) VALUES (
+        'perf-gamma-old', '2026-06-11T00:00:00.000Z', 'h-gamma-old', 'conv', 'proj',
+        'gamma', 'implement_small', 'merged', 'passed', 1, 'yes', 0, NULL,
+        NULL, NULL, 1000, 900, 100, 'test', 'cli', '{}'
+      )`,
+    );
+
+    const splits = readAgentGateOutcomeSplits(db, NOW);
+    expect(splits).toEqual<AgentGateOutcomeSplit[]>([
+      {
+        agent_name: "alpha",
+        passed: 2,
+        failed: 0,
+        skipped: 0,
+        review_debt: 1,
+        null_outcome: 1,
+        total: 4,
+      },
+      {
+        agent_name: "beta",
+        passed: 0,
+        failed: 1,
+        skipped: 1,
+        review_debt: 0,
+        null_outcome: 2,
+        total: 4,
+      },
+    ]);
+  });
+
+  it("renders the per-seat split section in the digest markdown", async () => {
+    seedSplitPerformance("alpha", [
+      { gate_outcome: "passed" },
+      { gate_outcome: null },
+      { gate_outcome: "review_debt" },
+    ]);
+
+    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const result = await runGateQualityDigestSweep({ services, outDir: dir, now: () => NOW });
+    const digest = readFileSync(result.digestPath, "utf8");
+
+    expect(digest).toContain("## Per-Seat Gate Outcome Split");
+    expect(digest).toContain("| agent | passed | failed | skipped | review_debt | null | total |");
+    expect(digest).toContain("| alpha | 1 | 0 | 0 | 1 | 1 | 3 |");
+  });
+
+  function seedSplitPerformance(agentName: string, rows: { gate_outcome: string | null }[]): void {
+    let n = 0;
+    for (const row of rows) {
+      n += 1;
+      db.run(
+        `INSERT INTO agent_performance (
+          performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+          outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
+          cost_usd, tokens_used, latency_ms, exec_ms, framework_overhead_ms, source,
+          agent_kind, metadata_json
+        ) VALUES (
+          ?, '2026-06-13T00:30:00.000Z', ?, 'conv', 'proj',
+          ?, 'implement_small', 'merged', ?, 1, 'yes', 0, NULL,
+          NULL, NULL, 1000, 900, 100, 'test', 'cli', '{}'
+        )`,
+        [
+          `perf-split-${agentName}-${String(n)}`,
+          `h-split-${agentName}-${String(n)}`,
+          agentName,
+          row.gate_outcome,
+        ],
+      );
+    }
+  }
 
   function seedLanes(): void {
     db.run(`

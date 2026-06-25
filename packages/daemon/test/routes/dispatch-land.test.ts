@@ -2080,6 +2080,79 @@ describe("dispatchLandRoute", () => {
     ]);
   });
 
+  test("successful land stamps passed gate_outcome lane-independently when no lane was ever opened", async () => {
+    // Pins F1: stampPassedGateOutcome fires for a clean land even when there
+    // is no open or closed lane for this handoff. The lane gate is one source
+    // of gate_outcome; dispatch-land is the other (rolls forward a clean,
+    // non-failed verdict). Do NOT collapse these — the force/audit-accept
+    // branch intentionally stays NULL (fail-closed: unverified force-lands
+    // are never credited as passing).
+    const svc = services();
+    seedHandoff(svc, "h-no-lane", "c-no-lane");
+    writeVerdictEvent(svc, {
+      eventId: "v-no-lane",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-no-lane",
+      conversationId: "c-no-lane",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+
+    const res = await dispatchLandRoute(
+      new Request("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-no-lane",
+          commit_message: "feat: no-lane land",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse") return { code: 0, stdout: "sha-no-lane\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+
+    const openLanes = svc.db
+      .query<
+        { n: number },
+        [string]
+      >(`SELECT COUNT(*) AS n FROM lane_ledger WHERE implementer_handoff = ?`)
+      .get("h-no-lane");
+    expect(openLanes?.n).toBe(0);
+
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-no-lane");
+    expect(perf).toEqual({ outcome: "merged", gate_outcome: "passed" });
+  });
+
   test("successful land stamps passed gate_outcome when the lane is still open", async () => {
     const svc = services();
     seedHandoff(svc, "h-open-lane", "c-open-lane");
