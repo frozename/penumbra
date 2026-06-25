@@ -460,6 +460,10 @@ export function agentsRankRoute(req: Request, services: Services): Response {
   });
   if (!parsed.success)
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
+  const agentchatConfig =
+    services.agentchatConfig !== undefined
+      ? { agents: services.agentchatConfig.agents ?? [] }
+      : undefined;
   const out = routeAgent({
     db: services.db,
     detail: "rank",
@@ -469,6 +473,7 @@ export function agentsRankRoute(req: Request, services: Services): Response {
     agentKind: parsed.data.agent_kind,
     includeNeutral: parsed.data.include_neutral,
     includeCost: parsed.data.include_cost,
+    agentchatConfig,
     now: services.clock(),
   });
   if (out.detail !== "rank") throw new Error("unexpected routeAgent detail for agentsRankRoute");

@@ -235,6 +235,59 @@ describe("agent routes", () => {
     expect(body.candidates[0].agent_name).toBe("claude");
   });
 
+  it("filters rank output to configured agent names when agentchatConfig is present", async () => {
+    services.agentchatConfig = {
+      agents: [{ name: "claude", roles: ["executor"] }],
+    };
+    await agentsPerformanceReconcilerRoute(
+      new Request("http://x/agents/performance/reconciler", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoff_id: "h1", result: { status: "pr_opened" } }),
+      }),
+      services,
+    );
+    db.prepare(
+      `
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
+        notes, agent_kind, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      "perf-phantom",
+      "2026-04-30T12:00:00Z",
+      "h-phantom",
+      null,
+      null,
+      "penumbra",
+      "implement_substantial",
+      "merged",
+      1,
+      "y",
+      0,
+      5,
+      0.4,
+      10,
+      1000,
+      "worker",
+      null,
+      "coding",
+      "{}",
+    );
+
+    const res = agentsRankRoute(
+      new Request("http://x/agents/rank?task_type=implement_substantial"),
+      services,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RankResponse;
+    const rankedAgents = body.candidates.map((candidate) => candidate.agent_name);
+    expect(rankedAgents).toContain("claude");
+    expect(rankedAgents).not.toContain("penumbra");
+  });
+
   it("returns rank output for long-lived rows only when requested", async () => {
     db.prepare(
       `
