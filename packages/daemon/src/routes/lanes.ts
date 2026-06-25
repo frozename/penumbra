@@ -18,6 +18,13 @@ import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { json } from "./_helpers.js";
+
+const closeLaneWithLog = closeLane as (
+  db: Parameters<typeof closeLane>[0],
+  lane_id: string,
+  fields: Parameters<typeof closeLane>[2],
+  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
+) => void;
 const OpenLaneBodySchema = z.object({
   lane_id: z.string().min(1),
   implementer_handoff: z.string().min(1),
@@ -316,13 +323,18 @@ function commitLaneClose(
     // The live-bus override events publish AFTER the commit — event delivery
     // is not rollbackable and must not fire for a rolled-back close.
     services.db.transaction(() => {
-      closeLane(services.db, body.lane_id, {
-        ts_closed,
-        gate_status: body.gate_status,
-        reviewer_handoff: body.reviewer_handoff ?? null,
-        override_reason: body.override_reason ?? null,
-        metadata: body.metadata ?? undefined,
-      });
+      closeLaneWithLog(
+        services.db,
+        body.lane_id,
+        {
+          ts_closed,
+          gate_status: body.gate_status,
+          reviewer_handoff: body.reviewer_handoff ?? null,
+          override_reason: body.override_reason ?? null,
+          metadata: body.metadata ?? undefined,
+        },
+        services.log,
+      );
     })();
     return null;
   } catch (err) {

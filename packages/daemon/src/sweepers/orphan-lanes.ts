@@ -2,6 +2,13 @@ import type { Services } from "@penumbra/core";
 
 import { closeLane } from "@penumbra/core";
 
+const closeLaneWithLog = closeLane as (
+  db: Parameters<typeof closeLane>[0],
+  lane_id: string,
+  fields: Parameters<typeof closeLane>[2],
+  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
+) => void;
+
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_GRACE_MS = 120 * 60_000;
 
@@ -90,15 +97,20 @@ export function runOrphanLanesSweep(
     // vice versa). Tolerated for v1 — sweep runs every 5min and the daemon is single-process.
     try {
       services.db.transaction(() => {
-        closeLane(services.db, row.lane_id, {
-          ts_closed: now_iso,
-          gate_status: row.task_class === "TRIVIAL" ? "skipped" : "review_debt",
-          reviewer_handoff: row.reviewer_handoff,
-          override_reason: reason,
-          metadata: {
-            notes: `orphan-lane sweep on ${now_iso}; implementer ${row.implementer_handoff} ${row.handoff_status}`,
+        closeLaneWithLog(
+          services.db,
+          row.lane_id,
+          {
+            ts_closed: now_iso,
+            gate_status: row.task_class === "TRIVIAL" ? "skipped" : "review_debt",
+            reviewer_handoff: row.reviewer_handoff,
+            override_reason: reason,
+            metadata: {
+              notes: `orphan-lane sweep on ${now_iso}; implementer ${row.implementer_handoff} ${row.handoff_status}`,
+            },
           },
-        });
+          services.log,
+        );
       })();
       lane_ids.push(row.lane_id);
     } catch (err) {

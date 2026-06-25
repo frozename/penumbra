@@ -87,6 +87,7 @@ describe("stampAgentPerformanceGateOutcomeForHandoff", () => {
     expect(warns[0]!.obj).toEqual({
       event: "gate_stamp.no_perf_row",
       handoff_id: "missing-handoff",
+      lane_id: undefined,
       gate_status: "passed",
     });
     expect(warns[0]!.msg).toContain("zero agent_performance rows");
@@ -100,5 +101,22 @@ describe("stampAgentPerformanceGateOutcomeForHandoff", () => {
     });
     expect(warns).toHaveLength(0);
     expect(getGateOutcome("h-warn-ok")).toBe("passed");
+  });
+
+  it("warns when a passed gate_outcome is suppressed to a weaker non-terminal", () => {
+    seedPerformance("h-pass-suppressed", "passed");
+    const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+    stampAgentPerformanceGateOutcomeForHandoff(db, "h-pass-suppressed", "skipped", {
+      warn: (obj, msg) => warns.push({ obj, msg }),
+    });
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.obj).toEqual({
+      event: "gate_stamp.suppressed_downgrade",
+      handoff_id: "h-pass-suppressed",
+      lane_id: undefined,
+      gate_status: "skipped",
+    });
+    expect(warns[0]!.msg).toContain("suppressed downgrade");
+    expect(getGateOutcome("h-pass-suppressed")).toBe("passed");
   });
 });

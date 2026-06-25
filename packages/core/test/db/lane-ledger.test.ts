@@ -8,6 +8,7 @@ import {
   getLane,
   insertLane,
   recentLanes,
+  stampAgentPerformanceGateOutcomeForHandoff,
 } from "../../src/db/lane-ledger.js";
 
 const CREATE_LANE_LEDGER_SQL = `
@@ -246,6 +247,155 @@ describe("lane-ledger dao", () => {
     expect(failed?.gate_outcome).toBe("failed");
   });
 
+  it("lets a terminal lane close override a prior optimistic passed gate_outcome", () => {
+    insertLane(db, {
+      lane_id: "lane-perf-review-debt",
+      ts_opened: "2026-05-12T10:26:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "handoff-perf-review-debt",
+      gate_status: "open",
+    });
+    db.run(
+      `INSERT INTO agent_performance (
+         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+         outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd,
+         tokens_used, latency_ms, source, notes, metadata_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "perf-handoff-perf-review-debt",
+        "2026-05-12T10:26:01.000Z",
+        "handoff-perf-review-debt",
+        "conv",
+        "proj",
+        "agent",
+        "implement_small",
+        "merged",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "worker",
+        null,
+        "{}",
+      ],
+    );
+    stampAgentPerformanceGateOutcomeForHandoff(db, "handoff-perf-review-debt", "passed");
+
+    closeLane(db, "lane-perf-review-debt", {
+      ts_closed: "2026-05-12T10:27:00.000Z",
+      gate_status: "review_debt",
+    });
+
+    const row = db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("handoff-perf-review-debt");
+    expect(row?.gate_outcome).toBe("review_debt");
+  });
+
+  it("warns and preserves passed when a close is suppressed by monotonicity", () => {
+    insertLane(db, {
+      lane_id: "lane-perf-suppressed",
+      ts_opened: "2026-05-12T10:28:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-perf-suppressed",
+      gate_status: "open",
+    });
+    db.run(
+      `INSERT INTO agent_performance (
+         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+         outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd,
+         tokens_used, latency_ms, source, notes, metadata_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "perf-handoff-perf-suppressed",
+        "2026-05-12T10:28:01.000Z",
+        "handoff-perf-suppressed",
+        "conv",
+        "proj",
+        "agent",
+        "implement_small",
+        "merged",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "worker",
+        null,
+        "{}",
+      ],
+    );
+    stampAgentPerformanceGateOutcomeForHandoff(db, "handoff-perf-suppressed", "passed");
+
+    const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+    closeLane(
+      db,
+      "lane-perf-suppressed",
+      {
+        ts_closed: "2026-05-12T10:29:00.000Z",
+        gate_status: "skipped",
+      },
+      {
+        warn: (obj, msg) => warns.push({ obj, msg }),
+      },
+    );
+
+    const row = db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("handoff-perf-suppressed");
+    expect(row?.gate_outcome).toBe("passed");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.obj).toEqual({
+      event: "gate_stamp.suppressed_downgrade",
+      handoff_id: "handoff-perf-suppressed",
+      lane_id: "lane-perf-suppressed",
+      gate_status: "skipped",
+    });
+  });
+
+  it("warns with lane_id context when close stamps against a missing agent_performance row", () => {
+    insertLane(db, {
+      lane_id: "lane-missing-perf",
+      ts_opened: "2026-05-12T10:31:00.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "handoff-missing-perf",
+      gate_status: "open",
+    });
+
+    const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+    closeLane(
+      db,
+      "lane-missing-perf",
+      {
+        ts_closed: "2026-05-12T10:32:00.000Z",
+        gate_status: "failed",
+      },
+      {
+        warn: (obj, msg) => warns.push({ obj, msg }),
+      },
+    );
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.obj).toEqual({
+      event: "gate_stamp.no_perf_row",
+      handoff_id: "handoff-missing-perf",
+      lane_id: "lane-missing-perf",
+      gate_status: "failed",
+    });
+    expect(warns[0]!.msg).toContain("zero agent_performance rows");
+  });
+
   it("throws on double-close", () => {
     insertLane(db, {
       lane_id: "lane-4",
@@ -317,6 +467,24 @@ describe("lane-ledger dao", () => {
 
   it("returns null for unknown lanes", () => {
     expect(getLane(db, "missing")).toBeNull();
+  });
+
+  it("rejects invalid stored gate_status values", () => {
+    db.run(
+      `INSERT INTO lane_ledger (
+        lane_id, ts_opened, task_class, implementer_handoff, gate_status
+      ) VALUES (?, ?, ?, ?, ?)`,
+      [
+        "lane-bad",
+        "2026-05-12T10:30:00.000Z",
+        "STANDARD",
+        "handoff-bad",
+        "definitely-not-a-status",
+      ],
+    );
+    expect(() => {
+      getLane(db, "lane-bad");
+    }).toThrow();
   });
 
   it("preserves recalled_memory_ids as json", () => {

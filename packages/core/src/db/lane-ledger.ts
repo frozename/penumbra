@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 
 import type { LaneCloseMetadata } from "../schemas/lane-close-metadata.js";
 
@@ -6,6 +7,7 @@ import { type TaskClass, TaskClassSchema } from "../schemas/task-class.js";
 
 export type LaneGateStatus = "open" | "passed" | "failed" | "skipped" | "review_debt";
 export type ClosedLaneGateStatus = Exclude<LaneGateStatus, "open">;
+export const LaneGateStatusSchema = z.enum(["open", "passed", "failed", "skipped", "review_debt"]);
 
 export interface LaneRow {
   lane_id: string;
@@ -70,7 +72,24 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
   handoffId: string,
   gate_status: ClosedLaneGateStatus,
   log?: StampGateOutcomeLog,
+  lane_id?: string,
+  allowTerminalClose = false,
 ): string | null {
+  const current = db
+    .query<
+      { gate_outcome: string | null },
+      [string]
+    >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+    .get(handoffId);
+  const suppressesStickyPassed =
+    current?.gate_outcome === "passed" &&
+    (allowTerminalClose ? gate_status === "skipped" : gate_status !== "passed");
+  if (suppressesStickyPassed) {
+    log?.warn?.(
+      { event: "gate_stamp.suppressed_downgrade", handoff_id: handoffId, lane_id, gate_status },
+      "gate stamp suppressed downgrade of sticky passed",
+    );
+  }
   // Capture the UPDATE row count so a zero-row stamp (close fired before the
   // worker agent_performance capture landed) is observable instead of silently
   // dropping the verdict. Warn-only by design: do NOT add an insert-if-absent
@@ -78,7 +97,9 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
   const stmt = db.prepare(
     `UPDATE agent_performance
      SET gate_outcome = CASE
-       WHEN gate_outcome = 'passed' AND ? != 'passed' THEN gate_outcome
+       WHEN gate_outcome = 'passed' AND ?${
+         allowTerminalClose ? " = 'skipped'" : " != 'passed'"
+       } THEN gate_outcome
        WHEN gate_outcome IN ('failed', 'review_debt') AND ? IN ('skipped', 'passed') THEN gate_outcome
        ELSE ?
      END
@@ -87,7 +108,7 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
   const result = stmt.run(gate_status, gate_status, gate_status, handoffId) as { changes: number };
   if (result.changes === 0) {
     log?.warn?.(
-      { event: "gate_stamp.no_perf_row", handoff_id: handoffId, gate_status },
+      { event: "gate_stamp.no_perf_row", handoff_id: handoffId, lane_id, gate_status },
       "gate stamp matched zero agent_performance rows",
     );
   }
@@ -104,6 +125,8 @@ export function stampAgentPerformanceGateOutcome(
   db: Database,
   lane_id: string,
   gate_status: ClosedLaneGateStatus,
+  log?: StampGateOutcomeLog,
+  allowTerminalClose = false,
 ): void {
   const row = db
     .query<
@@ -114,7 +137,14 @@ export function stampAgentPerformanceGateOutcome(
   if (row === null) {
     throw new Error(`not found: lane ${lane_id}`);
   }
-  stampAgentPerformanceGateOutcomeForHandoff(db, row.implementer_handoff, gate_status);
+  stampAgentPerformanceGateOutcomeForHandoff(
+    db,
+    row.implementer_handoff,
+    gate_status,
+    log,
+    lane_id,
+    allowTerminalClose,
+  );
 }
 
 function parseLaneRow(row: {
@@ -137,7 +167,7 @@ function parseLaneRow(row: {
     task_class: TaskClassSchema.parse(row.task_class),
     implementer_handoff: row.implementer_handoff,
     reviewer_handoff: row.reviewer_handoff,
-    gate_status: row.gate_status as LaneGateStatus,
+    gate_status: LaneGateStatusSchema.parse(row.gate_status),
     recalled_memory_ids: JSON.parse(row.recalled_memory_ids || "[]") as string[],
     recalled_query: row.recalled_query,
     override_reason: row.override_reason,
@@ -165,7 +195,12 @@ export function insertLane(db: Database, row: InsertLaneInput): void {
   );
 }
 
-export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput): void {
+export function closeLane(
+  db: Database,
+  lane_id: string,
+  fields: CloseLaneInput,
+  log?: StampGateOutcomeLog,
+): void {
   if (!CLOSED_STATUSES.has(fields.gate_status)) {
     throw new Error(`invalid lane gate_status: ${fields.gate_status}`);
   }
@@ -198,7 +233,7 @@ export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput)
     }
     throw new Error(`not found: lane ${lane_id}`);
   }
-  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status);
+  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status, log, true);
 }
 
 export function getLane(db: Database, lane_id: string): LaneRow | null {
