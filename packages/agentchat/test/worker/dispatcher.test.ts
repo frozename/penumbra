@@ -149,6 +149,24 @@ test("progress events are emitted in order", async () => {
   expect(calls[calls.length - 1]).toBe("chain-end");
 });
 
+test("failed dispatch clears pending progress batch timer", async () => {
+  const d = deps({
+    dispatch: mock().mockImplementation((_h: unknown, onChunk: (delta: string) => void) => {
+      onChunk("orphaned progress");
+      throw new Error("adapter exploded");
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-progress-fail"));
+  await dispatcher.idle();
+  await Bun.sleep(150);
+
+  const calls = mockCalls<[string, ProgressPayload]>(d.postProgress);
+  const tokenCalls = calls.filter(([, payload]) => payload.type === "token");
+  expect(tokenCalls).toHaveLength(0);
+});
+
 test("emits dispatch_start after claim and before hop-start progress", async () => {
   const order: string[] = [];
   const events: DiscordNotificationEvent[] = [];

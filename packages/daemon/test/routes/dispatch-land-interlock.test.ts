@@ -501,4 +501,40 @@ describe("dispatch-land lifecycle interlock", () => {
     releaseW1();
     expect(lock.isHeld()).toBe(false);
   });
+
+  test("release hands queued waiter ownership before a same-tick acquire can double-grant", async () => {
+    const lock = new LifecycleLock(300_000);
+    const releaseH0 = await lock.acquire("h0");
+
+    let w1Granted = false;
+    const w1Lease = lock.acquire("w1").then((release) => {
+      w1Granted = true;
+      return release;
+    });
+
+    releaseH0();
+
+    let w2Granted = false;
+    const w2Lease = lock.acquire("w2").then((release) => {
+      w2Granted = true;
+      return release;
+    });
+
+    expect(lock.getHolder()?.handoff_id).toBe("w1");
+    expect(w2Granted).toBe(false);
+
+    const releaseW1 = await w1Lease;
+    expect(w1Granted).toBe(true);
+    expect(w2Granted).toBe(false);
+    expect(lock.getHolder()?.handoff_id).toBe("w1");
+
+    releaseW1();
+
+    const releaseW2 = await w2Lease;
+    expect(w2Granted).toBe(true);
+    expect(lock.getHolder()?.handoff_id).toBe("w2");
+
+    releaseW2();
+    expect(lock.isHeld()).toBe(false);
+  });
 });

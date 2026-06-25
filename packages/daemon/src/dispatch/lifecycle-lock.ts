@@ -5,7 +5,7 @@ export interface LockHolder {
 
 export class LifecycleLock {
   private holder: LockHolder | null = null;
-  private waiters: (() => void)[] = [];
+  private waiters: { handoffId: string; resolve: (holder: LockHolder | null) => void }[] = [];
   readonly ttlMs: number;
 
   constructor(ttlMs: number) {
@@ -33,18 +33,20 @@ export class LifecycleLock {
     this.reclaimIfExpired();
     if (this.holder === null) {
       this.holder = { handoff_id: handoffId, acquired_at: Date.now() };
-      return this._makeRelease();
+      return this._makeRelease(this.holder);
     }
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
+    const granted = await new Promise<LockHolder | null>((resolve) => {
+      this.waiters.push({ handoffId, resolve });
     });
+    if (granted !== null && this.holder === granted) {
+      return this._makeRelease(granted);
+    }
     this.holder = { handoff_id: handoffId, acquired_at: Date.now() };
-    return this._makeRelease();
+    return this._makeRelease(this.holder);
   }
 
-  private _makeRelease(): () => void {
+  private _makeRelease(grantedHolder: LockHolder | null): () => void {
     let released = false;
-    const grantedHolder = this.holder;
     return () => {
       if (released) return;
       // A release from a holder that was since TTL-evicted (and replaced by a new
@@ -59,14 +61,17 @@ export class LifecycleLock {
 
   private _drain(): void {
     const next = this.waiters.shift();
-    if (next) next();
+    if (!next) return;
+    const holder = { handoff_id: next.handoffId, acquired_at: Date.now() };
+    this.holder = holder;
+    next.resolve(holder);
   }
 
   reset(): void {
     this.holder = null;
     const waiters = [...this.waiters];
     this.waiters.length = 0;
-    for (const w of waiters) w();
+    for (const w of waiters) w.resolve(null);
   }
 }
 

@@ -208,6 +208,54 @@ test("ensureRunning restarts when the spec changes", async () => {
   await pool.shutdown();
 });
 
+test("ensureRunning kills a replaced non-running subprocess", async () => {
+  const first = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { protocolVersion: "2025-03-26", capabilities: {} },
+      });
+    } else if (req.method === "tools/list") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { tools: [{ name: "echo", description: "echoes its args" }] },
+      });
+    }
+  });
+  const second = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { protocolVersion: "2025-03-26", capabilities: {} },
+      });
+    } else if (req.method === "tools/list") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { tools: [{ name: "echo", description: "echoes its args" }] },
+      });
+    }
+  });
+  const firstKill = mock(() => true);
+  const secondKill = mock(() => true);
+  Object.assign(first.proc, { kill: firstKill });
+  Object.assign(second.proc, { kill: secondKill });
+  const spawnChildProcess = mock().mockReturnValueOnce(first.proc).mockReturnValueOnce(second.proc);
+  const pool = createMcpPool({ spawnChildProcess: asSpawn(spawnChildProcess) });
+  const spec = { name: "echo", command: "bun", args: ["run", fixture], env: [] };
+
+  await pool.ensureRunning(spec);
+  await pool.ensureRunning(spec);
+
+  expect(spawnChildProcess).toHaveBeenCalledTimes(2);
+  expect(firstKill).toHaveBeenCalledTimes(1);
+  expect(secondKill).not.toHaveBeenCalled();
+  await pool.shutdown();
+});
+
 test("acquire and release update refcounts and last release time", async () => {
   const current = 100;
   const pool = createMcpPool({ now: () => current });

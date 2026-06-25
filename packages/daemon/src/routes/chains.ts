@@ -1107,12 +1107,20 @@ async function maybeRunAutoRecall(
       },
     },
   );
-  const timeoutPromise = new Promise<null>((resolve) =>
-    setTimeout(() => {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    const handle = setTimeout(() => {
       resolve(null);
-    }, AUTO_RECALL_TIMEOUT_MS),
-  );
-  const auto = await Promise.race([autoPromise, timeoutPromise]);
+    }, AUTO_RECALL_TIMEOUT_MS);
+    handle.unref?.();
+    timeoutHandle = handle;
+  });
+  let auto: Awaited<typeof autoPromise> | null;
+  try {
+    auto = await Promise.race([autoPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
   let recalled_memory_ids: string[] = [];
   let recalled_memories: AutoRecallOutcome["recalled_memories"] = [];
   let recalled_query: string | null = null;

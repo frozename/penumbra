@@ -461,8 +461,10 @@ class McpPoolRuntime implements McpPool {
       await existing.initPromise;
       return existing;
     }
-    if (existing?.cleanup) existing.cleanup();
-    if (existing && !this.isRunning(existing)) existing.tornDown = true;
+    if (existing && !this.isRunning(existing)) {
+      this.teardownState(spec.name, existing);
+      existing = undefined;
+    }
     const state =
       existing && this.isRunning(existing) ? existing : this.attachProc(spec.name, spec);
     await this.initializeState(spec, state);

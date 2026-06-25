@@ -498,6 +498,9 @@ function makeProgressFlusher(
   abort: AbortController,
 ): () => void {
   const flush = (): void => {
+    if (abort.signal.aborted) {
+      return;
+    }
     if (progress.inflightProgress !== null || progress.bufferParts.length === 0) {
       return;
     }
@@ -709,10 +712,14 @@ async function flushTailProgress(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
   progress: ProgressState,
+  abort?: AbortController,
 ): Promise<void> {
   if (progress.batchTimer !== null) {
     clearTimeout(progress.batchTimer);
     progress.batchTimer = null;
+  }
+  if (abort?.signal.aborted) {
+    return;
   }
   // Ensure last delta is flushed before hop-end.
   if (progress.inflightProgress !== null) {
@@ -766,6 +773,9 @@ async function runDispatchBody(
     if (ctx.progress.inflightProgress === null && ctx.progress.batchTimer === null) {
       ctx.progress.batchTimer = setTimeout(() => {
         ctx.progress.batchTimer = null;
+        if (ctx.abort.signal.aborted) {
+          return;
+        }
         flush();
       }, PROGRESS_BATCH_MS);
     }
@@ -773,7 +783,7 @@ async function runDispatchBody(
   const result = await deps.dispatch(handoff, onChunk, ctx.abort.signal);
   ctx.outcome.result = result;
   classifyResult(deps, handoff, ctx, result);
-  await flushTailProgress(deps, handoff, ctx.progress);
+  await flushTailProgress(deps, handoff, ctx.progress, ctx.abort);
   await deps.postProgress(handoff.handoff_id, {
     type: "hop-end",
     handoff_id: handoff.handoff_id,
@@ -938,6 +948,10 @@ async function runDispatchLifecycle(
   } catch (err: unknown) {
     handleDispatchException(deps, handoff, ctx, err);
   } finally {
+    if (ctx.progress.batchTimer !== null) {
+      clearTimeout(ctx.progress.batchTimer);
+      ctx.progress.batchTimer = null;
+    }
     await finalizeDispatch(deps, handoff, ctx);
   }
 }

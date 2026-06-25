@@ -421,6 +421,50 @@ test("POST /chains/start does not run DDL on the request path", async () => {
   expect(ddlCalls).toEqual([]);
 });
 
+test("POST /chains/start clears auto-recall timeout when recall wins race", async () => {
+  const services = tempServices({ agentRegistry: ["codex"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+  services.recallReader.recall = (): Promise<[]> => Promise.resolve([]);
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const handles: ReturnType<typeof setTimeout>[] = [];
+  const cleared: ReturnType<typeof setTimeout>[] = [];
+  globalThis.setTimeout = ((callback: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    const handle = originalSetTimeout(callback, timeout, ...args);
+    handles.push(handle);
+    return handle;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
+    if (handle !== undefined) cleared.push(handle);
+    originalClearTimeout(handle);
+  }) as typeof clearTimeout;
+
+  try {
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "codex",
+          message: "hi",
+          project_id: "penumbra",
+          task_class: "STANDARD",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    expect(handles).toHaveLength(1);
+    expect(cleared).toContain(handles[0]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    for (const handle of handles) originalClearTimeout(handle);
+  }
+});
+
 test("POST /chains/start allows missing project_id when daemon hard-mode gate is unset", async () => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   const services = tempServices();
