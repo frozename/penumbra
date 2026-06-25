@@ -457,7 +457,7 @@ describe("QuotasConfigSchema", () => {
           quota_tokens_per_24h: 5000000,
           quota_tokens_per_5h: 1000000,
           pressure_caps: {
-            throttle_at: { warn: null, refuse: 80 },
+            five_hour: { warn: null, refuse: 80 },
           },
         },
       ],
@@ -516,7 +516,7 @@ describe("QuotasConfigSchema", () => {
           name: "google",
           model: "gemini-2.5-pro-preview-06-05",
           quota_usd_per_24h: 80,
-          pressure_caps: { throttle_at: { warn: 70, refuse: 90 } },
+          pressure_caps: { five_hour: { warn: 70, refuse: 90 } },
         },
         {
           name: "opencode-go",
@@ -529,6 +529,19 @@ describe("QuotasConfigSchema", () => {
       ],
     };
     expect(() => QuotasConfigSchema.parse(live)).not.toThrow();
+  });
+
+  test("rejects unknown pressure cap window labels", () => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [
+          {
+            name: "google",
+            pressure_caps: { throttle_at: { warn: 70, refuse: 90 } },
+          },
+        ],
+      }),
+    ).toThrow(/throttle_at/);
   });
 
   test("accepts synthetic_cap and cost_budget fields (legacy compat)", () => {

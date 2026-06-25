@@ -158,6 +158,8 @@ export {
   removeCorpus,
 } from "./readers/corpus.js";
 export {
+  KNOWN_PRESSURE_WINDOW_LABELS,
+  type KnownPressureWindowLabel,
   type ProviderQuota,
   quotaStatus,
   type QuotaStatusInput,

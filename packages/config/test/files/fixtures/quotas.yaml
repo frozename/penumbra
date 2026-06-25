@@ -5,4 +5,4 @@ providers:
     quota_tokens_per_24h: 5000000
     quota_tokens_per_5h: 1000000
     pressure_caps:
-      throttle_at: 80
+      five_hour: 80

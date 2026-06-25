@@ -33,7 +33,12 @@ export {
   resolveLegacyOperatorConfigPath,
   resolveOperatorConfigPath,
 } from "./files/operator-paths.js";
-export { type QuotasConfig, QuotasConfigSchema } from "./files/quotas.js";
+export {
+  KNOWN_PRESSURE_WINDOW_LABELS,
+  type KnownPressureWindowLabel,
+  type QuotasConfig,
+  QuotasConfigSchema,
+} from "./files/quotas.js";
 export { type RoutingConfig, RoutingConfigSchema } from "./files/routing.js";
 export { type Workload, WORKLOADS, WorkloadSchema } from "./files/workload.js";
 export { type ConfigBundle, type ConfigSource, getConfig, resetConfigForTest } from "./load.js";

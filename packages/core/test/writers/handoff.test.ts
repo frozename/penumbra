@@ -733,6 +733,36 @@ test("create() inherits root_handoff_id from parent", () => {
   expect(row?.root_handoff_id).toBe("R");
 });
 
+test("create() falls back to parent id when parent root_handoff_id is null", () => {
+  db.run(
+    `INSERT INTO handoffs
+       (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, parent_handoff_id, root_handoff_id)
+     VALUES
+       ('legacy-parent', 't', 'c', 'a', 'b', 'm', 'pending', NULL, NULL)`,
+  );
+
+  writer.create({
+    handoff_id: "legacy-child",
+    ts: "t",
+    from: "a",
+    to: "b",
+    to_role: null,
+    message: "m",
+    conversation_id: "c",
+    project_id: null,
+    triggered_by_event_id: "e",
+    parent_handoff_id: "legacy-parent",
+  });
+
+  const row = db
+    .query<
+      { root_handoff_id: string | null },
+      [string]
+    >("SELECT root_handoff_id FROM handoffs WHERE handoff_id=?")
+    .get("legacy-child");
+  expect(row?.root_handoff_id).toBe("legacy-parent");
+});
+
 test("create() recursive inheritance — grandchild inherits grandparent root", () => {
   writer.create({
     handoff_id: "R",

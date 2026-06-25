@@ -117,7 +117,7 @@ describe("quotaStatus", () => {
         {
           provider: "sub-prov1",
           quota_usd_per_24h: 20,
-          pressure_caps: { default: { warn: null, refuse: 100 } },
+          pressure_caps: { five_hour: { warn: null, refuse: 100 } },
         },
         {
           provider: "sub-prov2",

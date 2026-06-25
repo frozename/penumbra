@@ -416,6 +416,60 @@ providers:
   }
 });
 
+test("POST /agentchat/reload warns when routing references missing agents", async () => {
+  const services = tempServices();
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLogFn("warn"));
+  const configDir = mkdtempSync(join(tmpdir(), "reload-config-missing-agent-"));
+  writeFileSync(
+    join(configDir, "agents.yaml"),
+    `
+agents:
+  - name: known-agent
+    adapter: mock
+`,
+  );
+  writeFileSync(
+    join(configDir, "routing.yaml"),
+    `
+default_roles:
+  executor: known-agent
+personas:
+  risk:
+    preferred_agent: missing-reviewer
+    bias: risk
+    system_prompt: Check risk.
+workloads:
+  review_adversarial:
+    eligible_roles: [reviewer]
+    synthesizer: known-agent
+`,
+  );
+  writeFileSync(join(configDir, "quotas.yaml"), "providers: []\n");
+
+  process.env.PENUMBRA_CONFIG_DIR = configDir;
+  try {
+    const res = await reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    expect(res.status).toBe(200);
+    expect(warnSpy).toHaveBeenCalledWith(
+      {
+        missing_agents: [
+          {
+            path: "personas.risk.preferred_agent",
+            agent: "missing-reviewer",
+          },
+        ],
+      },
+      "agentchat-routing-references-missing-agents",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
 test("POST /agentchat/reload returns 422 if file missing", async () => {
   const services = tempServices();
   process.env.PENUMBRA_CONFIG_DIR = "/tmp/does-not-exist.yaml";

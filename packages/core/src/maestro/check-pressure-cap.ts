@@ -1,4 +1,5 @@
 import type { SubscriptionPressureCache } from "./subscription-pressure-cache.js";
+import type { KnownPressureWindowLabel } from "../readers/cost-quota.js";
 
 export type CapCheckPass = {
   state: "pass";
@@ -30,7 +31,9 @@ export type CapCheckRefuse = {
 
 export type CapCheckOutcome = CapCheckPass | CapCheckWarn | CapCheckRefuse;
 
-export type WindowCaps = Record<string, { warn: number | null; refuse: number }>;
+export type WindowCaps = Partial<
+  Record<KnownPressureWindowLabel, { warn: number | null; refuse: number }>
+>;
 export type ProviderCaps = { default: WindowCaps; perModel?: Record<string, WindowCaps> };
 
 export interface CheckPressureCapDeps {
@@ -155,7 +158,10 @@ function evaluateSnapshot(
 ): EvaluatedSnapshot {
   const perModelCaps = snapshot.model ? providerEntry.perModel?.[snapshot.model] : undefined;
   const windowCaps = perModelCaps ?? providerEntry.default;
-  const cap = windowCaps[snapshot.window_label] ?? { warn: null, refuse: defaultRefuseCap };
+  const cap = windowCaps[snapshot.window_label as KnownPressureWindowLabel] ?? {
+    warn: null,
+    refuse: defaultRefuseCap,
+  };
   const ageMs = nowMs - new Date(snapshot.observed_at).getTime();
   const ageSeconds = Math.floor(ageMs / 1000);
 

@@ -356,7 +356,7 @@ export class HandoffWriter {
       console.warn("[handoff-writer] orphaned parent fallback: " + handoff_id);
       return handoff_id;
     }
-    return parent.root_handoff_id ?? handoff_id;
+    return parent.root_handoff_id ?? parent_handoff_id;
   }
 
   /** Marks all handoffs in a conversation as cancel-requested. */

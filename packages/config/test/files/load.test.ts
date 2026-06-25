@@ -91,6 +91,23 @@ describe("loadAgentChatConfigFromDir", () => {
     expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/agents\.0\.name/);
   });
 
+  test("rejects mistyped pressure cap window labels", () => {
+    const dir = makeTempDir();
+    writeConfigDir(dir, {
+      quotas: `
+providers:
+  - name: anthropic
+    pressure_caps:
+      five_huor:
+        warn: 80
+        refuse: 95
+`,
+    });
+
+    expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/quotas\.yaml/);
+    expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/providers\.0\.pressure_caps\.five_huor/);
+  });
+
   test("different dirs do not share cached object references", () => {
     const dirA = makeTempDir();
     const dirB = makeTempDir();

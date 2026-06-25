@@ -8,6 +8,17 @@ import {
   type SubscriptionPressureRow,
 } from "./cost.js";
 
+export const KNOWN_PRESSURE_WINDOW_LABELS = [
+  "daily",
+  "five_hour",
+  "seven_day",
+  "thirty_day",
+  "rolling-5h",
+  "primary",
+  "secondary",
+] as const;
+export type KnownPressureWindowLabel = (typeof KNOWN_PRESSURE_WINDOW_LABELS)[number];
+
 export interface ProviderQuota {
   provider: string;
   model?: string;
@@ -15,7 +26,9 @@ export interface ProviderQuota {
   quota_tokens_per_24h?: number;
   quota_tokens_per_5h?: number;
   /** Per-window subscription pressure caps. Consumed by checkPressureCap, not the USD/token quota path. */
-  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
+  pressure_caps?: Partial<
+    Record<KnownPressureWindowLabel, { warn: number | null; refuse: number }>
+  >;
   synthetic_cap?: { max_dispatches: number; window_seconds: number };
 }
 

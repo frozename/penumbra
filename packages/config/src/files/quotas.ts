@@ -35,6 +35,18 @@ const PressureCapWindowSchema = z.union([
     })),
 ]);
 
+export const KNOWN_PRESSURE_WINDOW_LABELS = [
+  "daily",
+  "five_hour",
+  "seven_day",
+  "thirty_day",
+  "rolling-5h",
+  "primary",
+  "secondary",
+] as const;
+export type KnownPressureWindowLabel = (typeof KNOWN_PRESSURE_WINDOW_LABELS)[number];
+const PressureWindowLabelSchema = z.enum(KNOWN_PRESSURE_WINDOW_LABELS);
+
 /**
  * OpenCode-Go exposes no usage API; its rolling/weekly/monthly subscription
  * limits are only readable from the authenticated web console. This block points
@@ -58,7 +70,7 @@ export const ProviderQuotaConfigSchema = z
     quota_usd_per_24h: z.number().positive().optional(),
     quota_tokens_per_24h: z.number().int().positive().optional(),
     quota_tokens_per_5h: z.number().int().positive().optional(),
-    pressure_caps: z.record(z.string().min(1), PressureCapWindowSchema).optional(),
+    pressure_caps: z.partialRecord(PressureWindowLabelSchema, PressureCapWindowSchema).optional(),
     opencode_console: OpenCodeConsoleConfigSchema.optional(),
     synthetic_cap: z
       .object({

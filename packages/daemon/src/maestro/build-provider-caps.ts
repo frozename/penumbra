@@ -1,18 +1,15 @@
-import type { Services } from "@penumbra/core";
-
-type WindowCaps = Record<string, { warn: number | null; refuse: number }>;
-export type ProviderCapsShape = { default: WindowCaps; perModel?: Record<string, WindowCaps> };
+import type { ProviderCaps, Services, WindowCaps } from "@penumbra/core";
 
 type ProviderQuotaWithPressureCaps = {
   provider: string;
   model?: string;
-  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
+  pressure_caps?: WindowCaps;
 };
 
 export function buildProviderCaps(
   providerQuotas: Services["providerQuotas"],
-): Record<string, ProviderCapsShape> {
-  const out: Record<string, ProviderCapsShape> = {};
+): Record<string, ProviderCaps> {
+  const out: Record<string, ProviderCaps> = {};
   for (const quota of providerQuotas as ProviderQuotaWithPressureCaps[]) {
     if (!quota.pressure_caps) continue;
     const entry = (out[quota.provider] ??= { default: {}, perModel: undefined });
