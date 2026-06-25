@@ -360,6 +360,87 @@ test("POST /handoffs honors ranked-first exploration policy for role routing", a
   });
 });
 
+test("F6: POST /handoffs rejects unknown agent with did_you_mean when registry is present", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.agentRegistry = ["gemini", "codex-mini"];
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "claude",
+        to: "penumbra", // phantom seat — must be rejected, not silently materialized
+        message: "go",
+        conversation_id: "c-phantom",
+        triggered_by_event_id: "evt-phantom",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as {
+    error: { code: string; agent: string; did_you_mean: string[] };
+  };
+  expect(body.error.code).toBe("unknown_agent");
+  expect(body.error.agent).toBe("penumbra");
+  expect(Array.isArray(body.error.did_you_mean)).toBe(true);
+
+  // Belt-and-suspenders: no handoff row should have been written for the rejected name.
+  const row = db
+    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM handoffs WHERE to_agent=?")
+    .get("penumbra");
+  expect(row?.n).toBe(0);
+});
+
+test("F6: POST /handoffs accepts a known registry agent unchanged", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.agentRegistry = ["gemini", "codex-mini"];
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "claude",
+        to: "gemini",
+        message: "go",
+        conversation_id: "c-known",
+        triggered_by_event_id: "evt-known",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
+test("F6: POST /handoffs leaves caller through when agentRegistry is unset (config-less path)", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  // agentRegistry intentionally NOT set — F6 must skip validation rather than
+  // wedge during config-reload races or in test fixtures without a registry.
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "claude",
+        to: "whatever-name",
+        message: "go",
+        conversation_id: "c-noreg",
+        triggered_by_event_id: "evt-noreg",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
 test("POST /handoffs returns 400 for invalid body", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

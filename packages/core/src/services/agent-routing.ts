@@ -525,6 +525,13 @@ function accumulateOutcome(
   else if (bucket === "neutral") acc.neutral++;
   else acc.failures++;
 
+  // Verdict contract (shared with the SQL path in buildRecommendations):
+  // any non-null gate_outcome counts as a verdict — INCLUDING 'review_debt'
+  // (work that shipped past the review grace window). review_debt is a
+  // verdict-bearing NON-pass, not a never-attempted lane; excluding it would
+  // hide timed-out reviews from gate coverage. gate_pass narrows to
+  // GATE_OUTCOME_PASS_VALUES. The SQL aggregator MUST mirror this exactly;
+  // the F4 denominator-parity test pins both paths together.
   if (row.gate_outcome !== null) {
     acc.gateVerdictCount++;
     if ((GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome)) {
@@ -725,6 +732,29 @@ function resolveProvider(
 ): string | null {
   if (agent.pricing_mode === "subscription") return agent.subscription_provider ?? null;
   return agent.api_provider ?? agent.subscription_provider ?? null;
+}
+
+// Positive config-membership allowlist (F7). Returns the set of agent_names
+// that may enter the ranked pool, or null when no live registry/config is
+// reachable (config-less test paths and a brief config-reload race must NOT
+// be empty-set'd — the caller skips filtering in the null case).
+//
+// Sources, preferring the most authoritative:
+//   1. input.agentRegistry — the explicit list passed by daemon callers.
+//   2. input.agentchatConfig.agents[].name — derived from the agentchat config.
+//
+// Do NOT key the exclusion on provider===null: a legitimate local/free seat
+// can have no provider and still belong in the pool. The registry presence
+// IS the signal that this is a real, currently-routable agent name.
+function getConfigMembershipAllowlist(input: RouteAgentInput): Set<string> | null {
+  if (input.agentRegistry && input.agentRegistry.length > 0) {
+    return new Set(input.agentRegistry);
+  }
+  const cfgAgents = input.agentchatConfig?.agents;
+  if (cfgAgents && cfgAgents.length > 0) {
+    return new Set(cfgAgents.map((agent) => agent.name));
+  }
+  return null;
 }
 
 function isOverPressure(
@@ -1001,9 +1031,15 @@ function buildRank(
     ? rows
     : rows.filter((row) => rowOutcomeBucket(row) !== "neutral");
   const byAgent = groupRowsByAgent(visibleRows);
+  // F7: positive config-membership allowlist (see buildRecommendations for
+  // the full rationale). Mirrors the bias-exclude filter pattern below: when
+  // a registry is present, drop phantom agent_names; when absent, behave
+  // identically to today.
+  const membership = getConfigMembershipAllowlist(input);
   const summaries = Array.from(byAgent.entries())
     .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
     .filter((c) => !unhealthyAgents.has(c.agent_name))
+    .filter((c) => membership === null || membership.has(c.agent_name))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
   const costs = input.includeCost
     ? summaries.map((s) => s.cost_per_success_usd).filter((v): v is number => v !== null)
@@ -1060,6 +1096,15 @@ function buildRecommendations(
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
   // riskClass is accepted on the input shape for forward-compat; not yet consumed by ranking.
   void input.riskClass;
+  // Verdict contract (shared with the in-memory path in accumulateOutcome):
+  // gate_verdict_count = COUNT(rows with gate_outcome IS NOT NULL). This
+  // INCLUDES 'review_debt' as a verdict-bearing NON-pass: work that shipped
+  // unreviewed past the review grace window is a real signal, not "never
+  // attempted". gate_pass_count narrows that to GATE_OUTCOME_PASS_VALUES.
+  // Do NOT exclude review_debt from the denominator — that would let timed-out
+  // lanes look like never-attempted ones. Both this SQL aggregation and the
+  // in-memory accumulator MUST stay in lockstep; the F4 denominator-parity
+  // test in agent-routing.test.ts pins them together.
   const rows = db
     .query<
       {
@@ -1093,8 +1138,22 @@ function buildRecommendations(
       $classifierDeclineCutover: resolveClassifierDeclineCutoverIso(),
       ...successPredicate.params,
     });
-  const filtered =
+  const allowedFiltered =
     allowedAgents === null ? rows : rows.filter((row) => allowedAgents.includes(row.agent_name));
+  // F7: positive config-membership allowlist. The aggregation GROUP BY
+  // agent_name lets phantom rows (parse artifacts, retired aliases,
+  // provider-null tokens that bypass the pressure gate) into the ranked
+  // pool. When a live agentchat registry is present, restrict ranking to
+  // agent_names known to that registry. Guard on registry presence — the
+  // config-less test paths (and the brief window of a config-reload race)
+  // must NOT be empty-set'd. Do NOT key the exclusion on provider===null:
+  // a legitimate local/free seat can have a null provider and still belong
+  // in the pool.
+  const membership = getConfigMembershipAllowlist(input);
+  const filtered =
+    membership === null
+      ? allowedFiltered
+      : allowedFiltered.filter((row) => membership.has(row.agent_name));
   return filtered.map((r) => ({
     agent_name: r.agent_name,
     task_type: r.task_type,

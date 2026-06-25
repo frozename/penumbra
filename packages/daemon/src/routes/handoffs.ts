@@ -17,6 +17,7 @@ import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js"
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
+import { getNearestAgents } from "./chains.js";
 import { json } from "./_helpers.js";
 import { resolveSingleRoute } from "./role-routing.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
@@ -308,6 +309,44 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;
   const routingTaskType = route?.taskType ?? parsed.data.chain_task_type ?? null;
+
+  // F6: phantom-seat rejection at the chain-HOP write boundary, mirroring the
+  // chain_start rejectUnknownAgent shape so the two write paths agree on what
+  // counts as a valid seat. Without this, agent-name typos and parse artifacts
+  // ("penumbra", stray tokens) silently materialize as handoffs to
+  // unroutable agents.
+  //
+  // Guard: only fires when route is null (the name path — role-routed and
+  // forceExact paths already resolve via the registry-aware router) AND when
+  // services.agentRegistry is populated. A null/empty registry is treated as
+  // "config unavailable" and we let the request through rather than wedge
+  // every hop during a brief config-reload race.
+  const registry = (services as Services & { agentRegistry?: string[] | null }).agentRegistry;
+  if (route === null && registry && registry.length > 0 && !registry.includes(routedAgent)) {
+    const nearest = getNearestAgents(routedAgent, registry);
+    services.log.warn(
+      {
+        event: "handoffs_create.unknown_agent",
+        initial_agent: routedAgent,
+        from: parsed.data.from,
+        conversation_id: parsed.data.conversation_id,
+        registry_size: registry.length,
+        nearest,
+      },
+      "handoff-create unknown agent rejected",
+    );
+    return json(
+      {
+        error: {
+          code: "unknown_agent",
+          agent: routedAgent,
+          did_you_mean: nearest,
+          hint: "use chain.list_agents to enumerate valid agents",
+        },
+      },
+      400,
+    );
+  }
 
   // Single transaction: write t0 'agent-handoff' event AND the handoffs row.
   services.db.transaction(() => {

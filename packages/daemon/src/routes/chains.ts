@@ -256,7 +256,7 @@ function editDistance(a: string, b: string): number {
   return prev[b.length] ?? 0;
 }
 
-function getNearestAgents(initialAgent: string, registry: string[]): string[] {
+export function getNearestAgents(initialAgent: string, registry: string[]): string[] {
   const seen = new Set<string>();
   const lowerInitial = initialAgent.toLowerCase();
   const add = (name: string): void => {

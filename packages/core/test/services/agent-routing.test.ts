@@ -196,6 +196,215 @@ describe("routeAgent", () => {
     expect(low.score).toBeGreaterThan(high.score);
   });
 
+  test("F7: phantom agent_names absent from agentRegistry are dropped (rank + summary)", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "f7-legit-1",
+      ts: "2026-04-30T14:00:00Z",
+      handoff_id: "h-f7-legit-1",
+      conversation_id: "c-f7-legit-1",
+      project_id: "proj",
+      agent_name: "legit-seat",
+      task_type: "review_adversarial",
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "f7-phantom-1",
+      ts: "2026-04-30T14:01:00Z",
+      handoff_id: "h-f7-phantom-1",
+      conversation_id: "c-f7-phantom-1",
+      project_id: "proj",
+      agent_name: "penumbra",
+      task_type: "review_adversarial",
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    // Self-audit: if a future config promotes "penumbra" to a real seat, this
+    // guard trips and the test must be retired/updated rather than silently
+    // passing for the wrong reason.
+    const registry = ["legit-seat"];
+    expect(registry).not.toContain("penumbra");
+
+    const rankWith = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "review_adversarial",
+      since: "2026-04-29T00:00:00Z",
+      agentRegistry: registry,
+      now: NOW,
+    });
+    const rankWithNames = rankCandidates(rankWith).map((c) => c.agent_name);
+    expect(rankWithNames).toContain("legit-seat");
+    expect(rankWithNames).not.toContain("penumbra");
+
+    const summaryWith = routeAgent({
+      db,
+      detail: "summary",
+      taskType: "review_adversarial",
+      windowDays: 30,
+      agentRegistry: registry,
+      now: NOW,
+    });
+    if (summaryWith.detail !== "summary") throw new Error("expected summary");
+    const summaryNames = summaryWith.recommendations.map((r) => r.agent_name);
+    expect(summaryNames).toContain("legit-seat");
+    expect(summaryNames).not.toContain("penumbra");
+
+    // Guard: with NO membership signal, F7 is OFF (config-less test paths and
+    // brief config-reload windows must not empty the pool). Phantom slips
+    // through here — that's intentional, gated by registry presence.
+    const rankWithout = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "review_adversarial",
+      since: "2026-04-29T00:00:00Z",
+      now: NOW,
+    });
+    expect(rankCandidates(rankWithout).map((c) => c.agent_name)).toContain("penumbra");
+  });
+
+  test("F7: agentchatConfig.agents alone drives the allowlist when agentRegistry is absent", () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: "f7c-legit",
+      ts: "2026-04-30T15:00:00Z",
+      handoff_id: "h-f7c-legit",
+      conversation_id: "c-f7c-legit",
+      project_id: "proj",
+      agent_name: "config-seat",
+      task_type: "review_adversarial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed",
+      notes: null,
+      metadata_json: "{}",
+    });
+    writer.upsert({
+      performance_id: "f7c-phantom",
+      ts: "2026-04-30T15:01:00Z",
+      handoff_id: "h-f7c-phantom",
+      conversation_id: "c-f7c-phantom",
+      project_id: "proj",
+      agent_name: "parse-artifact-token",
+      task_type: "review_adversarial",
+      outcome: "merged",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed",
+      notes: null,
+      metadata_json: "{}",
+    });
+
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "review_adversarial",
+      since: "2026-04-29T00:00:00Z",
+      agentchatConfig: {
+        agents: [{ name: "config-seat", roles: ["reviewer"] }],
+      },
+      now: NOW,
+    });
+    const names = rankCandidates(out).map((c) => c.agent_name);
+    expect(names).toContain("config-seat");
+    expect(names).not.toContain("parse-artifact-token");
+  });
+
+  test("F4: gate_verdict denominator counts review_debt (in-memory + SQL parity)", () => {
+    const writer = new AgentPerformanceWriter(db);
+    const rows: { id: string; gate: string | null }[] = [
+      { id: "f4-passed", gate: "passed" },
+      { id: "f4-skipped", gate: "skipped" },
+      { id: "f4-failed", gate: "failed" },
+      { id: "f4-review-debt", gate: "review_debt" },
+      { id: "f4-null", gate: null },
+    ];
+    for (const [i, row] of rows.entries()) {
+      writer.upsert({
+        performance_id: row.id,
+        ts: `2026-04-30T0${String(i)}:00:00Z`,
+        handoff_id: `h-${row.id}`,
+        conversation_id: `c-${row.id}`,
+        project_id: "proj",
+        agent_name: "f4-agent",
+        task_type: "review_adversarial",
+        outcome: row.gate === "passed" || row.gate === "skipped" ? "merged" : "failed",
+        gate_outcome: row.gate,
+        rounds: 1,
+        smoke_pass: "y",
+        reviewer_findings: 0,
+        maestro_score: 3,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "manual_seed",
+        notes: null,
+        metadata_json: "{}",
+      });
+    }
+
+    const rankOut = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "review_adversarial",
+      since: "2026-04-29T00:00:00Z",
+      includeNeutral: true,
+      now: NOW,
+    });
+    const rankAgent = findCandidate(rankOut, "f4-agent");
+    expect(rankAgent.gate_verdict_coverage).toBeCloseTo(4 / 5, 6);
+    expect(rankAgent.gate_pass_rate).toBeCloseTo(2 / 4, 6);
+
+    const summaryOut = routeAgent({
+      db,
+      detail: "summary",
+      taskType: "review_adversarial",
+      windowDays: 30,
+      now: NOW,
+    });
+    if (summaryOut.detail !== "summary") throw new Error("expected summary");
+    const summaryAgent = summaryOut.recommendations.find((r) => r.agent_name === "f4-agent");
+    if (!summaryAgent) throw new Error("f4-agent missing from summary");
+    expect(summaryAgent.gate_verdict_coverage).toBeCloseTo(4 / 5, 6);
+    expect(summaryAgent.gate_pass_rate).toBeCloseTo(2 / 4, 6);
+
+    expect(rankAgent.gate_verdict_coverage).toBeCloseTo(summaryAgent.gate_verdict_coverage, 6);
+    expect(rankAgent.gate_pass_rate).toBeCloseTo(summaryAgent.gate_pass_rate, 6);
+  });
+
   test("classifier-declined rows after cutover are excluded from rank scoring", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
