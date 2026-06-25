@@ -3,6 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { setPrincipalForTest } from "../../src/auth.js";
 import {
   LifecycleLock,
   lifecycleLock,
@@ -13,6 +14,15 @@ import {
   dispatchLandRoute,
   dispatchLandTaskRoute,
 } from "../../src/routes/dispatch-land.js";
+
+// dispatch-land tests bypass the daemon fetch handler, so the auth middleware
+// never runs. Stamp a shared principal on each request so the route's
+// principal guard does not 403 every existing test.
+function landReq(input: string, init?: RequestInit): Request {
+  const req = new Request(input, init);
+  setPrincipalForTest(req, { kind: "shared", via: "config" });
+  return req;
+}
 
 // teardownWorktree is a class instance method; tests stub it by reassignment.
 type TeardownFn = Services["worktreeManager"]["teardownWorktree"];
@@ -204,7 +214,7 @@ describe("dispatch-land lifecycle interlock", () => {
     };
 
     const makeReq = (handoffId: string): Request =>
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: handoffId,
@@ -291,7 +301,7 @@ describe("dispatch-land lifecycle interlock", () => {
     };
 
     const res1 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-rej-1",
@@ -314,7 +324,7 @@ describe("dispatch-land lifecycle interlock", () => {
 
     // Second land with reject_if_held=true → immediate lifecycle_busy
     const res2 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-rej-2",
@@ -363,7 +373,7 @@ describe("dispatch-land lifecycle interlock", () => {
     };
 
     const res1 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-throw-1",
@@ -385,7 +395,7 @@ describe("dispatch-land lifecycle interlock", () => {
 
     // Second land for different handoff succeeds (no wedge)
     const res2 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-throw-2",
@@ -433,7 +443,7 @@ describe("dispatch-land lifecycle interlock", () => {
 
     // First call
     const res1 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({ handoff_id: "h-idem-1", commit_message: "feat: idem", mode: "ff" }),
       }),
@@ -448,7 +458,7 @@ describe("dispatch-land lifecycle interlock", () => {
 
     // Second call for SAME handoff — should get back the original task_id
     const res2 = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({ handoff_id: "h-idem-1", commit_message: "feat: idem retry" }),
       }),

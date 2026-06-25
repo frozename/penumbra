@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 
 import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
+import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 import { createGhCliClient, type GhClient } from "../services/gh-client.js";
 import { json } from "./_helpers.js";
@@ -251,9 +252,17 @@ function readLatestVerdict(services: Services, handoffId: string): Record<string
   return parseJsonRecord(row.payload_json);
 }
 
-function verdictFailed(verdict: Record<string, unknown> | null): boolean {
-  if (!verdict) return true;
+// Split the gate condition: an explicit typecheck/tests "fail" is a HARD
+// failure that must not be auto-landed even when dispatch_audit is
+// trustworthy+accept (only force:true overrides it). A missing/null verdict
+// is UNVERIFIED and can be rescued by the audit-accept override.
+function verdictHardFail(verdict: Record<string, unknown> | null): boolean {
+  if (!verdict) return false;
   return verdict.typecheck === "fail" || verdict.tests === "fail";
+}
+
+function verdictUnverified(verdict: Record<string, unknown> | null): boolean {
+  return verdict === null;
 }
 
 function verdictConflictFiles(verdict: Record<string, unknown> | null): string[] | null {
@@ -417,6 +426,20 @@ export async function dispatchLandRoute(
   services: Services,
   deps?: DispatchLandDeps,
 ): Promise<Response> {
+  const principal = getPrincipal(req);
+  if (principal?.kind !== "shared") {
+    return json(
+      {
+        error: {
+          code: "principal_forbidden",
+          message:
+            "dispatch-land is restricted to shared-bearer principals; worker-token callers are not authorized",
+        },
+      },
+      403,
+    );
+  }
+
   const raw: unknown = await req.json().catch(() => null);
   const parsed = DispatchLandInputSchema.safeParse(raw ?? {});
   if (!parsed.success) {
@@ -437,10 +460,20 @@ export async function dispatchLandRoute(
   const conflictFiles = verdictConflictFiles(verdict);
   const conflictResponse = evaluateLandVerdictConflict(branch, force, conflictFiles);
   if (conflictResponse) return conflictResponse;
-  if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
-    return json({ error: { code: "verdict_unverified", verdict } }, 409);
+  if (!force) {
+    // Hard failure: explicit typecheck/tests=fail. Only force:true can land.
+    // dispatch_audit trustworthiness reflects the run's reliability — it must
+    // not overrule a reviewer-confirmed test/typecheck failure.
+    if (verdictHardFail(verdict)) {
+      return json({ error: { code: "verdict_unverified", verdict } }, 409);
+    }
+    // Unverified (no reviewer verdict on record): allow dispatch_audit to
+    // rescue when the run looks trustworthy + accept.
+    if (verdictUnverified(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
+      return json({ error: { code: "verdict_unverified", verdict } }, 409);
+    }
   }
-  const stampPassedGateOutcome = !force && !verdictFailed(verdict);
+  const stampPassedGateOutcome = !force && !verdictHardFail(verdict) && !verdictUnverified(verdict);
 
   const inflightResponse = findInflightLandTaskResponse(handoff_id);
   if (inflightResponse) return inflightResponse;

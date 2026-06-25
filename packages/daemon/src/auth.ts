@@ -20,6 +20,13 @@ export function getPrincipal(req: Request): Principal | null {
   return principals.get(req) ?? null;
 }
 
+// Tests construct Requests directly (bypassing createBearerAuth) and still need
+// a principal attached for routes that gate on it. Production paths must keep
+// going through createBearerAuth; this is the one tagged escape hatch.
+export function setPrincipalForTest(req: Request, principal: Principal): void {
+  principals.set(req, principal);
+}
+
 export function createBearerAuth(opts: AuthOpts): (req: Request) => Response | null {
   const expected = Buffer.from(`Bearer ${opts.token}`);
   return (req) => {

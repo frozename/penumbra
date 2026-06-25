@@ -15,6 +15,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { setPrincipalForTest } from "../../src/auth.js";
 import {
   __dispatchLandInternalsForTest,
   type DispatchLandDeps,
@@ -22,6 +23,16 @@ import {
   dispatchLandTaskRoute,
 } from "../../src/routes/dispatch-land.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
+
+// dispatch-land tests bypass the daemon fetch handler (they pass mocked deps
+// directly to dispatchLandRoute), so the auth middleware never runs. Stamp a
+// shared principal on each request so the route's principal guard does not
+// 403 every existing test.
+function landReq(input: string, init?: RequestInit): Request {
+  const req = new Request(input, init);
+  setPrincipalForTest(req, { kind: "shared", via: "config" });
+  return req;
+}
 
 // Internal types of DispatchLandDeps are not exported; derive them through
 // the public deps type so this test does not import internal shapes.
@@ -457,7 +468,7 @@ describe("dispatchLandRoute", () => {
     const svc = services();
     const handler = createDaemonFetchHandler({ services: svc, token: "tok" });
     const res = await handler(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         headers: {
           authorization: "Bearer tok",
@@ -493,7 +504,7 @@ describe("dispatchLandRoute", () => {
     const gitCalls: string[] = [];
     let revParseCount = 0;
     const post = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-msg-tip",
@@ -563,7 +574,7 @@ describe("dispatchLandRoute", () => {
     stubProjectRegistry(svc, [["other-project", { root_path: "/tmp/other-repo-path" }]]);
 
     const post = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-project",
@@ -625,7 +636,7 @@ describe("dispatchLandRoute", () => {
 
     let revParseCount = 0;
     const post = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-async-1",
@@ -690,7 +701,7 @@ describe("dispatchLandRoute", () => {
 
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-sha-tip",
@@ -773,7 +784,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-1",
@@ -848,7 +859,7 @@ describe("dispatchLandRoute", () => {
 
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-restamp-1",
@@ -930,7 +941,7 @@ describe("dispatchLandRoute", () => {
     const gitCalls: string[] = [];
     const closed: number[] = [];
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-squash-reland",
@@ -1032,7 +1043,7 @@ describe("dispatchLandRoute", () => {
     expect(realCommit).toMatch(/^[a-f0-9]{40}$/);
 
     const post = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-land-authz",
@@ -1128,7 +1139,7 @@ describe("dispatchLandRoute", () => {
     expect(realCommit).toMatch(/^[a-f0-9]{40}$/);
 
     const post = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-land-authz-throw",
@@ -1185,7 +1196,7 @@ describe("dispatchLandRoute", () => {
     const gitCalls: string[] = [];
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-2",
@@ -1269,7 +1280,7 @@ describe("dispatchLandRoute", () => {
 
     const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-ff-non-main",
@@ -1339,7 +1350,7 @@ describe("dispatchLandRoute", () => {
     const closed: number[] = [];
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-ff-reland",
@@ -1438,7 +1449,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-ff-not-in-main",
@@ -1512,7 +1523,7 @@ describe("dispatchLandRoute", () => {
 
     let called = false;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-3",
@@ -1541,41 +1552,45 @@ describe("dispatchLandRoute", () => {
     expect(body.error.verdict?.tests).toBe("fail");
   });
 
-  test("auto-accepts verdict_unverified gate when dispatch audit is trustworthy + recommends accept", async () => {
+  test("rejects audit-accept gate bypass when reconciler verdict has hard test failure", async () => {
     const svc = services();
-    seedHandoff(svc, "h-audit-accept", "c-audit-accept");
+    seedHandoff(svc, "h-audit-hardfail", "c-audit-hardfail");
     writeVerdictEvent(svc, {
-      eventId: "v-audit-accept",
+      eventId: "v-audit-hardfail",
       ts: "2026-05-08T00:01:00.000Z",
-      handoffId: "h-audit-accept",
-      conversationId: "c-audit-accept",
+      handoffId: "h-audit-hardfail",
+      conversationId: "c-audit-hardfail",
       typecheck: "pass",
       tests: "fail",
     });
 
+    // Seed the full trustworthy-dispatch trail so that, if the route were to
+    // call isAuditTrustedAccept, it would return true. The point of this test
+    // is that on a hard verdict failure, the audit-accept override must NOT
+    // be consulted — force:true is the only path through.
     svc.db
       .query<
         unknown,
         [string, string, string]
       >(`UPDATE handoffs SET status='completed', worker_id=?, resolved_at=? WHERE handoff_id=?`)
-      .run("worker-1", "2026-05-08T00:03:00.000Z", "h-audit-accept");
+      .run("worker-1", "2026-05-08T00:03:00.000Z", "h-audit-hardfail");
     svc.dispatchEventLog.recordBatch([
       {
-        handoff_id: "h-audit-accept",
+        handoff_id: "h-audit-hardfail",
         worker_id: "worker-1",
         source: "worker",
         kind: "dispatch.start",
         ts: "2026-05-08T00:01:10.000Z",
       },
       {
-        handoff_id: "h-audit-accept",
+        handoff_id: "h-audit-hardfail",
         worker_id: "worker-1",
         source: "worker",
         kind: "proc.spawn",
         ts: "2026-05-08T00:01:11.000Z",
       },
       {
-        handoff_id: "h-audit-accept",
+        handoff_id: "h-audit-hardfail",
         worker_id: "worker-1",
         source: "worker",
         kind: "dispatch.end",
@@ -1583,7 +1598,7 @@ describe("dispatchLandRoute", () => {
       },
     ]);
     svc.t0Writer.write({
-      event_id: "resp-audit-accept",
+      event_id: "resp-audit-hardfail",
       ts: "2026-05-08T00:02:20.000Z",
       ingest_ts: "2026-05-08T00:02:20.000Z",
       source: "agentchat",
@@ -1591,7 +1606,100 @@ describe("dispatchLandRoute", () => {
       project_id: null,
       user_id: "codex",
       machine_id: "machine-1",
-      session_id: "c-audit-accept",
+      session_id: "c-audit-hardfail",
+      event_type: "agent-response",
+      lane: "local",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: { response: "done" },
+      payload_summary: "done",
+    });
+
+    let runGitCalled = false;
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-audit-hardfail",
+          commit_message: "feat(core): should not bypass hard fail",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: () => {
+          runGitCalled = true;
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(runGitCalled).toBe(false);
+    const body = await readJsonAs<ErrorEnvelope>(res);
+    expect(body.error.code).toBe("verdict_unverified");
+    expect(body.error.verdict?.tests).toBe("fail");
+  });
+
+  test("auto-accepts missing verdict when dispatch audit is trustworthy + recommends accept", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-audit-unverified", "c-audit-unverified");
+    // Intentionally do NOT call writeVerdictEvent — the verdict is missing
+    // (readLatestVerdict returns null), which is the case the audit-accept
+    // override is supposed to rescue.
+
+    svc.db
+      .query<
+        unknown,
+        [string, string, string]
+      >(`UPDATE handoffs SET status='completed', worker_id=?, resolved_at=? WHERE handoff_id=?`)
+      .run("worker-1", "2026-05-08T00:03:00.000Z", "h-audit-unverified");
+    svc.dispatchEventLog.recordBatch([
+      {
+        handoff_id: "h-audit-unverified",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "dispatch.start",
+        ts: "2026-05-08T00:01:10.000Z",
+      },
+      {
+        handoff_id: "h-audit-unverified",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "proc.spawn",
+        ts: "2026-05-08T00:01:11.000Z",
+      },
+      {
+        handoff_id: "h-audit-unverified",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "dispatch.end",
+        ts: "2026-05-08T00:02:10.000Z",
+      },
+    ]);
+    svc.t0Writer.write({
+      event_id: "resp-audit-unverified",
+      ts: "2026-05-08T00:02:20.000Z",
+      ingest_ts: "2026-05-08T00:02:20.000Z",
+      source: "agentchat",
+      source_detail: "codex",
+      project_id: null,
+      user_id: "codex",
+      machine_id: "machine-1",
+      session_id: "c-audit-unverified",
       event_type: "agent-response",
       lane: "local",
       provider: null,
@@ -1607,11 +1715,11 @@ describe("dispatchLandRoute", () => {
 
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
-          handoff_id: "h-audit-accept",
-          commit_message: "feat(core): audit-accept gate bypass",
+          handoff_id: "h-audit-unverified",
+          commit_message: "feat(core): audit-accept rescues missing verdict",
           mode: "squash",
           delete_branch: false,
         }),
@@ -1647,6 +1755,41 @@ describe("dispatchLandRoute", () => {
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
     expect(body.result.commit_sha).toBe("new-main");
+  });
+
+  test("rejects worker-principal callers with 403 principal_forbidden", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-worker-forbidden", "c-worker-forbidden");
+
+    const req = new Request("http://x/dispatch/land", {
+      method: "POST",
+      body: JSON.stringify({
+        handoff_id: "h-worker-forbidden",
+        commit_message: "feat: should be blocked by authz",
+      }),
+    });
+    setPrincipalForTest(req, {
+      kind: "worker",
+      worker_id: "worker-not-allowed",
+      token_hash: "hash",
+    });
+
+    let runGitCalled = false;
+    const res = await dispatchLandRoute(
+      req,
+      svc,
+      landDeps({
+        runGit: () => {
+          runGitCalled = true;
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(runGitCalled).toBe(false);
+    const body = await readJsonAs<ErrorEnvelope>(res);
+    expect(body.error.code).toBe("principal_forbidden");
   });
 
   test("returns 409 merge_conflict with conflicted files, resets squash state, and allows a second land", async () => {
@@ -1689,7 +1832,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-4",
@@ -1718,7 +1861,7 @@ describe("dispatchLandRoute", () => {
     ]);
 
     const retry = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-4-clean",
@@ -1752,7 +1895,7 @@ describe("dispatchLandRoute", () => {
 
     const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-conflict-cleanup-fails",
@@ -1834,7 +1977,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-squash-noconflict",
@@ -1872,7 +2015,7 @@ describe("dispatchLandRoute", () => {
     let stagedSquashResidue = false;
     let revParseCount = 0;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-hook-fails",
@@ -1987,7 +2130,7 @@ describe("dispatchLandRoute", () => {
 
     let called = false;
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-4b",
@@ -2041,7 +2184,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-wt-1",
@@ -2103,7 +2246,7 @@ describe("dispatchLandRoute", () => {
     );
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-no-lane",
@@ -2176,7 +2319,7 @@ describe("dispatchLandRoute", () => {
     );
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-open-lane",
@@ -2238,7 +2381,7 @@ describe("dispatchLandRoute", () => {
     });
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-wt-2",
@@ -2294,7 +2437,7 @@ describe("dispatchLandRoute", () => {
     );
 
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-wt-3",
@@ -2345,7 +2488,7 @@ describe("dispatchLandRoute", () => {
 
     const closed: number[] = [];
     const res = await dispatchLandRoute(
-      new Request("http://x/dispatch/land", {
+      landReq("http://x/dispatch/land", {
         method: "POST",
         body: JSON.stringify({
           handoff_id: "h-5",
