@@ -143,7 +143,7 @@ test("closes orphan lane whose implementer handoff completed past grace window",
   expect(result.lane_ids).toEqual(["lane-1"]);
 
   const lane = getLane(db, "lane-1");
-  // Non-trivial orphan lanes must not receive success-eligible skipped credit.
+  // Non-trivial orphan lanes must not receive a passing gate-quality stamp.
   expect(lane?.gate_status).toBe("review_debt");
   expect(lane?.override_reason).toContain("orphan-lane sweeper");
   expect(lane?.override_reason).toContain("completed");

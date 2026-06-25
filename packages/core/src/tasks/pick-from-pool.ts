@@ -3,9 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { AgentTaskType } from "../schemas/agent-performance.js";
 
 import {
-  GATE_OUTCOME_PASS_VALUES,
   resolveClassifierDeclineCutoverIso,
-  resolveGateOutcomeCutoverIso,
   routeAgent,
   type RouteAgentInput,
   SUCCESS_OUTCOME_VALUES,
@@ -22,14 +20,10 @@ const RECENT_FAILURE_DEMOTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 type RecentOutcomeRow = {
   outcome: string;
   failure_class: string | null;
-  gate_outcome: string | null;
-  ts: string;
 };
 
-function isSuccess(row: RecentOutcomeRow, gateOutcomeCutover: string): boolean {
-  if (!(SUCCESS_OUTCOME_VALUES as readonly string[]).includes(row.outcome)) return false;
-  if (row.gate_outcome === null) return row.ts < gateOutcomeCutover;
-  return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
+function isSuccess(row: RecentOutcomeRow): boolean {
+  return (SUCCESS_OUTCOME_VALUES as readonly string[]).includes(row.outcome);
 }
 
 function isNeutral(row: RecentOutcomeRow): boolean {
@@ -38,11 +32,10 @@ function isNeutral(row: RecentOutcomeRow): boolean {
 
 function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTaskType): Set<string> {
   const demoted = new Set<string>();
-  const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const classifierDeclineCutover = resolveClassifierDeclineCutoverIso();
   const recencyFloor = new Date(Date.now() - RECENT_FAILURE_DEMOTION_MAX_AGE_MS).toISOString();
   const stmt = db.query<RecentOutcomeRow, [string, string, string, string, number]>(
-    `SELECT outcome, failure_class, gate_outcome, ts
+    `SELECT outcome, failure_class
      FROM agent_performance
      WHERE task_type = ? AND agent_name = ? AND ts >= ?
        AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < ?)
@@ -58,7 +51,7 @@ function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTask
       RECENT_FAILURE_DEMOTION_WINDOW,
     );
     if (rows.length < RECENT_FAILURE_DEMOTION_WINDOW) continue;
-    if (rows.every((row) => !isSuccess(row, gateOutcomeCutover) && !isNeutral(row))) {
+    if (rows.every((row) => !isSuccess(row) && !isNeutral(row))) {
       demoted.add(agent);
     }
   }

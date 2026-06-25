@@ -64,15 +64,8 @@ describe("computeRouteForRole", () => {
       }
     };
 
-    // Anchor fixtures to FIXED ISO timestamps strictly before the gate-outcome
-    // cutover (DEFAULT_GATE_OUTCOME_CUTOVER_ISO = 2026-06-12T00:00:00Z). These
-    // rows carry no gate_outcome (NULL), so they only count as success-eligible
-    // via the legacy `ts < cutover AND gate_outcome IS NULL` predicate. Using
-    // Date.now()-N*day made the recent rows land *after* the cutover once the
-    // wall clock passed 2026-06-12, dropping success_rate to 0 and breaking the
-    // assertions. Fixed pre-cutover timestamps deterministically exercise the
-    // NULL-verdict path.
-    // SEAM: these must also fall inside the routing window (now - windowDays).
+    // Anchor fixtures to fixed ISO timestamps so the route window is
+    // deterministic regardless of the wall clock.
     // The calls below use a wider window because these fixed pre-cutover rows
     // cannot also stay "recent" forever as the wall clock advances.
     const tsBase = "2026-06-05T00:00:00.000Z";
@@ -182,8 +175,8 @@ describe("computeRouteForRole", () => {
         );
       }
     };
-    // Fixed pre-cutover timestamp (see beforeEach note): keeps the NULL-verdict
-    // rows on the legacy success-eligible side of DEFAULT_GATE_OUTCOME_CUTOVER_ISO.
+    // Fixed timestamp; the test uses a wide route window so the row stays visible
+    // regardless of the wall clock.
     makePlannerRows("best-planner", "2026-06-05T02:00:00.000Z", 10, 8);
 
     const out = computeRouteForRole({

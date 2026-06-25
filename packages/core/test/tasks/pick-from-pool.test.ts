@@ -44,6 +44,7 @@ function writePerf(
   overrides: Partial<{
     outcome: "merged" | "pr_opened" | "failed";
     failure_class: string | null;
+    gate_outcome: "passed" | "skipped" | "failed" | "review_debt" | null;
     rounds: number;
     latency_ms: number;
     exec_ms: number;
@@ -62,6 +63,7 @@ function writePerf(
     task_type: taskType,
     outcome: overrides.outcome ?? "merged",
     failure_class: overrides.failure_class,
+    gate_outcome: overrides.gate_outcome,
     rounds: overrides.rounds ?? 1,
     smoke_pass: "y",
     reviewer_findings: 0,
@@ -209,6 +211,28 @@ describe("pickFromPool", () => {
     expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("b");
   });
 
+  test("does not demote agents whose recent successful outcomes lack passing gate outcomes", () => {
+    const db = freshDb();
+    for (let i = 0; i < 3; i += 1) {
+      writePerf(db, "a", "review_adversarial", {
+        outcome: "merged",
+        gate_outcome: i === 0 ? null : "review_debt",
+        rounds: 1,
+        latency_ms: 10_000,
+        ts: recentIso(30 - i),
+        id_suffix: `recent-success-gate-debt-${String(i)}`,
+      });
+    }
+    writePerf(db, "b", "review_adversarial", {
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: 10,
+      latency_ms: 60_000,
+    });
+
+    expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("a");
+  });
+
   test("does not demote agents whose recent failures are classifier declines after cutover", () => {
     const previousCutover = process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
     process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = "2026-06-13T00:00:00.000Z";
@@ -269,7 +293,6 @@ describe("pickFromPool", () => {
     // Both agents: identical outcome/rounds/smoke/reviewer performance.
     // Caller config explicitly leaves latency_weighting at false.
     // "a" is slow (300 s exec), "b" is fast (1 s exec).
-    // gate_outcome set to "passed" so success_rate = 1 >= LATENCY_MIN_SUCCESS_FLOOR.
     writePerf(db, "a", "implement_small", {
       rounds: 1,
       latency_ms: 10_000,

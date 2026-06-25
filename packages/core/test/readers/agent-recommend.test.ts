@@ -324,7 +324,7 @@ describe("agent recommendations", () => {
     expect(out[0]!.samples).toBe(2);
   });
 
-  test("gate outcome success predicate is cutoff-aware and exposes coverage", () => {
+  test("gate outcome metrics are reported separately from success eligibility", () => {
     const writer = new AgentPerformanceWriter(db);
     db.run(`
       INSERT INTO lane_ledger (
@@ -400,22 +400,103 @@ describe("agent recommendations", () => {
 
     expect(out).toHaveLength(4);
     expect(out.map((row) => row.agent_name)).toEqual([
-      "post-skipped",
-      "legacy-null",
       "post-failed",
+      "post-skipped",
       "post-null",
+      "legacy-null",
     ]);
     expect(out.find((row) => row.agent_name === "legacy-null")?.success_rate).toBe(1);
-    expect(out.find((row) => row.agent_name === "post-null")?.success_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-null")?.success_rate).toBe(1);
     expect(out.find((row) => row.agent_name === "post-skipped")?.success_rate).toBe(1);
-    expect(out.find((row) => row.agent_name === "post-failed")?.success_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-failed")?.success_rate).toBe(1);
     expect(out.find((row) => row.agent_name === "legacy-null")?.gate_verdict_coverage).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-failed")?.gate_verdict_coverage).toBe(1);
     expect(out.find((row) => row.agent_name === "post-skipped")?.gate_verdict_coverage).toBe(1);
     expect(out.find((row) => row.agent_name === "legacy-null")?.gate_pass_rate).toBe(0);
+    expect(out.find((row) => row.agent_name === "post-failed")?.gate_pass_rate).toBe(0);
     expect(out.find((row) => row.agent_name === "post-skipped")?.gate_pass_rate).toBe(1);
   });
 
-  test("post-cutover rejected success scores below a no-data agent", () => {
+  test("success eligibility is independent from gate outcome quality", () => {
+    const writer = new AgentPerformanceWriter(db);
+    for (const row of [
+      {
+        performance_id: "post-review-debt-success",
+        ts: "2026-06-12T10:00:00Z",
+        gate_outcome: "review_debt",
+      },
+      {
+        performance_id: "post-null-success",
+        ts: "2026-06-12T10:05:00Z",
+        gate_outcome: null,
+      },
+    ] as const) {
+      writer.upsert({
+        performance_id: row.performance_id,
+        ts: row.ts,
+        handoff_id: `h-${row.performance_id}`,
+        conversation_id: `c-${row.performance_id}`,
+        project_id: "proj",
+        agent_name: "post-cutover-success",
+        task_type: "health_check",
+        outcome: "merged",
+        gate_outcome: row.gate_outcome,
+        rounds: 1,
+        smoke_pass: "y",
+        reviewer_findings: 0,
+        maestro_score: null,
+        cost_usd: null,
+        tokens_used: null,
+        latency_ms: 1000,
+        source: "reconciler",
+        notes: null,
+        metadata_json: "{}",
+      });
+    }
+
+    const predicate = buildSuccessPredicate();
+    const successRows = db
+      .query<{ performance_id: string; success: number }, typeof predicate.params>(
+        `SELECT performance_id, CASE WHEN ${predicate.sql} THEN 1 ELSE 0 END AS success
+           FROM agent_performance
+          WHERE agent_name = 'post-cutover-success'
+          ORDER BY performance_id`,
+      )
+      .all(predicate.params);
+    expect(successRows).toEqual([
+      { performance_id: "post-null-success", success: 1 },
+      { performance_id: "post-review-debt-success", success: 1 },
+    ]);
+
+    const summary = getRecommendationsViaRoute({
+      db,
+      taskType: "health_check",
+      now: new Date("2026-06-13T12:00:00Z"),
+    }).find((row) => row.agent_name === "post-cutover-success");
+    expect(summary).toBeDefined();
+    expect(summary?.success_rate).toBe(1);
+    expect(summary?.gate_verdict_coverage).toBe(0.5);
+    expect(summary?.gate_pass_rate).toBe(0);
+
+    const rank = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "health_check",
+      now: new Date("2026-06-13T12:00:00Z"),
+    });
+    if (rank.detail !== "rank") throw new Error("expected rank output");
+    const candidate = rank.candidates.candidates.find(
+      (row) => row.agent_name === "post-cutover-success",
+    );
+    expect(candidate).toBeDefined();
+    expect(candidate?.successes).toBe(2);
+    expect(candidate?.failures).toBe(0);
+    expect(candidate?.success_rate).toBe(1);
+    expect(candidate?.gate_verdict_coverage).toBe(0.5);
+    expect(candidate?.gate_pass_rate).toBe(0);
+  });
+
+  test("post-cutover failed gate outcome does not suppress successful outcome score", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
       performance_id: "clean",
@@ -495,11 +576,13 @@ describe("agent recommendations", () => {
     expect(clean).toBeDefined();
     expect(rejected).toBeDefined();
     expect(neutral).toBeDefined();
-    expect(clean!.score).toBeGreaterThan(neutral!.score);
-    expect(neutral!.score).toBeGreaterThan(rejected!.score);
+    expect(clean!.success_rate).toBe(1);
+    expect(rejected!.success_rate).toBe(1);
+    expect(rejected!.gate_pass_rate).toBe(0);
+    expect(rejected!.score).toBeGreaterThan(neutral!.score);
   });
 
-  test("success predicate binds the gate cutover by name", () => {
+  test("success predicate matches success outcomes without gate cutover binding", () => {
     const previousCutover = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
     process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = "2026-05-01T00:00:00.000Z";
     try {
@@ -540,10 +623,9 @@ describe("agent recommendations", () => {
       }
 
       const predicate = buildSuccessPredicate();
-      expect(predicate.sql).toContain("$gateOutcomeCutover");
-      expect(predicate.params).toEqual({
-        $gateOutcomeCutover: "2026-05-01T00:00:00.000Z",
-      });
+      expect(predicate.sql).not.toContain("gate_outcome");
+      expect(predicate.sql).not.toContain("$gateOutcomeCutover");
+      expect(predicate.params).toEqual({});
 
       const rows = db
         .query<{ performance_id: string; success: number }, typeof predicate.params>(
@@ -555,7 +637,7 @@ describe("agent recommendations", () => {
         .all(predicate.params);
       expect(rows).toEqual([
         { performance_id: "predicate-legacy-null", success: 1 },
-        { performance_id: "predicate-post-null", success: 0 },
+        { performance_id: "predicate-post-null", success: 1 },
       ]);
     } finally {
       if (previousCutover === undefined) delete process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
@@ -563,7 +645,7 @@ describe("agent recommendations", () => {
     }
   });
 
-  test("gate outcome cutover can be overridden by environment", () => {
+  test("post-cutover null gate outcome does not suppress success eligibility", () => {
     const previousCutover = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
     process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = "2026-05-01T00:00:00.000Z";
     try {
@@ -596,7 +678,9 @@ describe("agent recommendations", () => {
         now: new Date("2026-05-12T13:00:00Z"),
       });
 
-      expect(out[0]?.success_rate).toBe(0);
+      expect(out[0]?.success_rate).toBe(1);
+      expect(out[0]?.gate_verdict_coverage).toBe(0);
+      expect(out[0]?.gate_pass_rate).toBe(0);
     } finally {
       if (previousCutover === undefined) delete process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
       else process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = previousCutover;

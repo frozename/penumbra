@@ -58,7 +58,7 @@ describe("handleTickTeardown ledger write", () => {
     expect(row.notes).toBe("boom");
   });
 
-  it("stamps successful ungated ticks as skipped so post-cutover routing scores them as success", () => {
+  it("stamps successful ungated ticks as skipped gate quality while routing scores outcome success", () => {
     const now = Date.parse("2026-06-16T12:00:00.000Z");
     handleTickTeardown(db, {
       tick_id: "t1",
@@ -81,7 +81,6 @@ describe("handleTickTeardown ledger write", () => {
       detail: "rank",
       agentKind: "long_lived",
       now: new Date("2026-06-16T13:00:00.000Z"),
-      gateOutcomeCutoverIso: "2026-01-01T00:00:00.000Z",
     });
     expect(routed.detail).toBe("rank");
     if (routed.detail !== "rank") return;

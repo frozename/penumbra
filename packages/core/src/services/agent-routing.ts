@@ -294,7 +294,7 @@ export function resolveGateOutcomeCutoverIso(): string {
       resolved === parsed.toISOString()
     ) {
       console.warn(
-        `[agent-routing] PENUMBRA_GATE_OUTCOME_CUTOVER_ISO=${resolved} is earlier than default ${DEFAULT_GATE_OUTCOME_CUTOVER_ISO}; this relaxes the legacy NULL-verdict predicate.`,
+        `[agent-routing] PENUMBRA_GATE_OUTCOME_CUTOVER_ISO=${resolved} is earlier than default ${DEFAULT_GATE_OUTCOME_CUTOVER_ISO}; this relaxes legacy NULL-verdict reporting.`,
       );
     }
     loggedGateOutcomeCutoverIso = resolved;
@@ -326,10 +326,10 @@ export function resolveClassifierDeclineCutoverIso(): string {
   return resolved;
 }
 
-// Single source for success eligibility. The SQL predicate
+// Single source for outcome success eligibility. The SQL predicate
 // (buildSuccessPredicate) and the in-memory checks (isSuccessOutcome,
-// rowPassesGateOutcome) all derive from these arrays — change them here, never
-// inline, or the two scoring paths diverge.
+// rowOutcomeBucket) derive from this array — change it here, never inline, or
+// the two scoring paths diverge. Gate outcomes remain a separate quality axis.
 export const SUCCESS_OUTCOME_VALUES = [
   "merged",
   "pr_opened",
@@ -342,21 +342,13 @@ function sqlInList(values: readonly string[]): string {
   return values.map((v) => `'${v}'`).join(",");
 }
 
-// After auto-lane enforcement, NULL means the lane never produced a terminal
-// gate verdict. `skipped` remains success-eligible because trivial/read-only
-// work records a conscious "gate not run" decision instead of review debt.
-// Trust boundary: the skipped-implies-TRIVIAL invariant is enforced at the
-// gate layer (lanes routes: class-mismatch rejection, lane dedupe, and
-// terminal-verdict protection), not here — scoring trusts gate_outcome as
-// recorded. A lane deliberately closed skipped via override earns success
-// credit; that is an audited operator decision visible in lane_ledger.
 export function buildSuccessPredicate(): {
   sql: string;
-  params: { $gateOutcomeCutover: string };
+  params: Record<string, never>;
 } {
   return {
-    sql: `outcome IN (${sqlInList(SUCCESS_OUTCOME_VALUES)}) AND (gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) OR (ts < $gateOutcomeCutover AND gate_outcome IS NULL))`,
-    params: { $gateOutcomeCutover: resolveGateOutcomeCutoverIso() },
+    sql: `outcome IN (${sqlInList(SUCCESS_OUTCOME_VALUES)})`,
+    params: {},
   };
 }
 
@@ -413,24 +405,13 @@ function isSuccessOutcome(outcome: string): boolean {
   return (SUCCESS_OUTCOME_VALUES as readonly string[]).includes(outcome);
 }
 
-// In-memory mirror of the gate clause in buildSuccessPredicate — both derive
-// from GATE_OUTCOME_PASS_VALUES; keep them in lockstep. The string comparison
-// is intentional because writers stamp canonical ISO-8601 UTC timestamps.
-function rowPassesGateOutcome(row: PerformanceRow, gateOutcomeCutover: string): boolean {
-  if (row.gate_outcome === null) return row.ts < gateOutcomeCutover;
-  return (GATE_OUTCOME_PASS_VALUES as readonly string[]).includes(row.gate_outcome);
-}
-
 function isClassifierDeclineExempt(row: Pick<PerformanceRow, "failure_class" | "ts">): boolean {
   return (
     row.failure_class === "classifier_declined" && row.ts >= resolveClassifierDeclineCutoverIso()
   );
 }
 
-function rowOutcomeScore(row: PerformanceRow, gateOutcomeCutover: string): number {
-  if (isSuccessOutcome(row.outcome) && !rowPassesGateOutcome(row, gateOutcomeCutover)) {
-    return row.ts >= gateOutcomeCutover ? -1 : 0;
-  }
+function rowOutcomeScore(row: PerformanceRow): number {
   switch (row.outcome) {
     case "merged":
     case "pr_opened":
@@ -455,16 +436,9 @@ function rowOutcomeScore(row: PerformanceRow, gateOutcomeCutover: string): numbe
   }
 }
 
-function rowOutcomeBucket(
-  row: PerformanceRow,
-  gateOutcomeCutover: string,
-): "success" | "failure" | "neutral" {
+function rowOutcomeBucket(row: PerformanceRow): "success" | "failure" | "neutral" {
+  if (isSuccessOutcome(row.outcome)) return "success";
   switch (row.outcome) {
-    case "merged":
-    case "pr_opened":
-    case "merged_with_concerns":
-    case "completed_with_output":
-      return rowPassesGateOutcome(row, gateOutcomeCutover) ? "success" : "failure";
     case "partial":
     case "rejected":
     case "failed":
@@ -599,19 +573,15 @@ function accumulateReviewerAndScore(acc: AgentRowAccumulator, row: PerformanceRo
   }
 }
 
-function summarizeAgent(
-  agentName: string,
-  rows: PerformanceRow[],
-  gateOutcomeCutover: string,
-): CandidateSummary {
+function summarizeAgent(agentName: string, rows: PerformanceRow[]): CandidateSummary {
   const firstRow = rows[0];
   const acc = makeAccumulator(firstRow ? firstRow.ts : "");
 
   for (const row of rows) {
     if (row.ts > acc.lastOutcomeAt) acc.lastOutcomeAt = row.ts;
-    const bucket = rowOutcomeBucket(row, gateOutcomeCutover);
+    const bucket = rowOutcomeBucket(row);
     accumulateOutcome(acc, row, bucket);
-    acc.outcomeScoreSum += rowOutcomeScore(row, gateOutcomeCutover);
+    acc.outcomeScoreSum += rowOutcomeScore(row);
     accumulateRounds(acc, row);
     acc.smokeScoreSum += smokeValue(row.smoke_pass);
     accumulateLatencyAndExec(acc, row);
@@ -953,7 +923,8 @@ function summaryToCandidate(
     avg_reviewer_findings: summary.avg_reviewer_findings,
     avg_trust_score: summary.avg_trust_score,
     gate_verdict_coverage: summary.samples > 0 ? summary.gate_verdict_count / summary.samples : 0,
-    gate_pass_rate: summary.samples > 0 ? summary.gate_pass_count / summary.samples : 0,
+    gate_pass_rate:
+      summary.gate_verdict_count > 0 ? summary.gate_pass_count / summary.gate_verdict_count : 0,
     last_outcome_at: summary.last_outcome_at,
     score,
   };
@@ -1026,13 +997,12 @@ function buildRank(
       : new Date(now.getTime() - DEFAULT_RANK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = queryRows(db, taskType, agentKind, sinceIso, allowedAgents);
   const unhealthyAgents = input.unhealthyAgents ?? new Set<string>();
-  const gateOutcomeCutover = resolveGateOutcomeCutoverIso();
   const visibleRows = input.includeNeutral
     ? rows
-    : rows.filter((row) => rowOutcomeBucket(row, gateOutcomeCutover) !== "neutral");
+    : rows.filter((row) => rowOutcomeBucket(row) !== "neutral");
   const byAgent = groupRowsByAgent(visibleRows);
   const summaries = Array.from(byAgent.entries())
-    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows, gateOutcomeCutover))
+    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
     .filter((c) => !unhealthyAgents.has(c.agent_name))
     .filter((c) => c.samples >= (input.minSamples ?? 1));
   const costs = input.includeCost
@@ -1106,7 +1076,6 @@ function buildRecommendations(
         $taskType: string;
         $cutoff: string;
         $agentKind: string;
-        $gateOutcomeCutover: string;
         $classifierDeclineCutover: string;
       }
     >(
@@ -1132,7 +1101,7 @@ function buildRecommendations(
     samples: r.samples,
     success_rate: r.samples > 0 ? r.successes / r.samples : 0,
     gate_verdict_coverage: r.samples > 0 ? r.gate_outcome_count / r.samples : 0,
-    gate_pass_rate: r.samples > 0 ? r.gate_pass_count / r.samples : 0,
+    gate_pass_rate: r.gate_outcome_count > 0 ? r.gate_pass_count / r.gate_outcome_count : 0,
     avg_latency_seconds: r.avg_latency_ms !== null ? r.avg_latency_ms / 1000 : null,
     last_observed_at: r.last_observed_at,
   }));

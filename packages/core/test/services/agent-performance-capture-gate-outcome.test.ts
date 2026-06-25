@@ -169,7 +169,7 @@ describe("agent performance gate outcome wiring", () => {
     expect(persisted?.gate_outcome).toBe("passed");
   });
 
-  it("excludes failed gate outcomes from recommendation successes", () => {
+  it("keeps failed gate outcomes separate from recommendation successes", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
       performance_id: "p1",
@@ -199,10 +199,12 @@ describe("agent performance gate outcome wiring", () => {
       now: new Date("2026-05-12T13:00:00Z"),
     });
 
-    expect(out[0]?.success_rate).toBe(0);
+    expect(out[0]?.success_rate).toBe(1);
+    expect(out[0]?.gate_verdict_coverage).toBe(1);
+    expect(out[0]?.gate_pass_rate).toBe(0);
   });
 
-  it("counts null gate outcomes as successes for backwards compatibility", () => {
+  it("keeps null gate outcomes separate from recommendation successes", () => {
     const writer = new AgentPerformanceWriter(db);
     writer.upsert({
       performance_id: "p2",

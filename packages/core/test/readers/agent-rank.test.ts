@@ -150,7 +150,7 @@ describe("routeAgent rank mode", () => {
     expect(candidate!.score).toBeGreaterThan(0.5);
   });
 
-  it("applies the gate outcome cutover when summarizing rank candidates", () => {
+  it("keeps gate outcome quality separate from rank success summaries", () => {
     const isolatedDb = new Database(":memory:");
     loadSqliteVec(isolatedDb);
     migrate(isolatedDb, { embeddingDim: 384 });
@@ -206,13 +206,17 @@ describe("routeAgent rank mode", () => {
       now: new Date("2026-06-13T12:00:00.000Z"),
     });
 
-    expect(out.candidates.map((c) => c.agent_name)).toEqual(["post-passed-gate", "post-null-gate"]);
+    expect(out.candidates.map((c) => c.agent_name)).toEqual(["post-null-gate", "post-passed-gate"]);
     expect(out.candidates.find((c) => c.agent_name === "post-passed-gate")?.successes).toBe(1);
-    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.successes).toBe(0);
-    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.failures).toBe(1);
-    expect(out.candidates.find((c) => c.agent_name === "post-passed-gate")!.score).toBeGreaterThan(
-      out.candidates.find((c) => c.agent_name === "post-null-gate")!.score,
-    );
+    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.successes).toBe(1);
+    expect(out.candidates.find((c) => c.agent_name === "post-null-gate")?.failures).toBe(0);
+    expect(
+      out.candidates.find((c) => c.agent_name === "post-null-gate")?.gate_verdict_coverage,
+    ).toBe(0);
+    expect(
+      out.candidates.find((c) => c.agent_name === "post-passed-gate")?.gate_verdict_coverage,
+    ).toBe(1);
+    expect(out.candidates.find((c) => c.agent_name === "post-passed-gate")?.gate_pass_rate).toBe(1);
   });
 
   it("keeps historic manual_seed rows in the default rank window", () => {
