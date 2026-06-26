@@ -10,7 +10,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
-import { runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+import { type BranchLandStatus, runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
 
 try {
   if (process.platform === "darwin") {
@@ -53,6 +53,7 @@ function makeServices(
       listWorktrees: () => worktreeHandles,
       discoverOrphanWorktrees: () => Promise.resolve(orphanHandles),
       teardownWorktree: teardownSpy,
+      mainRepoDir: "/tmp/main-repo",
     },
   } as unknown as Services;
 }
@@ -96,6 +97,11 @@ const GRACE_MS = 2 * 60 * 60_000; // 2h
 const NOW = new Date("2026-05-19T10:00:00.000Z");
 const NOW_FN = (): Date => NOW;
 
+// Default stub: assume every probed branch is landed so existing scenarios
+// exercise the post-guard teardown path. Tests that want to exercise the
+// guard pass an explicit stub.
+const ALWAYS_LANDED = (): Promise<BranchLandStatus> => Promise.resolve("landed");
+
 describe("runWorktreeGcTick", () => {
   test("completed worktree resolved within grace is NOT removed", async () => {
     const db = setupDb();
@@ -109,7 +115,10 @@ describe("runWorktreeGcTick", () => {
       return Promise.resolve();
     });
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual([]);
     expect(result.removed).toEqual([]);
@@ -128,7 +137,10 @@ describe("runWorktreeGcTick", () => {
       return Promise.resolve();
     });
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual(["h-old"]);
     expect(result.removed).toEqual(["h-old"]);
@@ -150,7 +162,10 @@ describe("runWorktreeGcTick", () => {
         return Promise.resolve();
       });
 
-      const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+      const result = await runWorktreeGcTick(
+        { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+        NOW_FN,
+      );
 
       expect(result.candidates).toEqual(["h-deferred"]);
       expect(result.removed).toEqual([]);
@@ -173,7 +188,10 @@ describe("runWorktreeGcTick", () => {
       return Promise.resolve();
     });
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual([]);
     expect(teardownCalls).toEqual([]);
@@ -190,7 +208,10 @@ describe("runWorktreeGcTick", () => {
       return Promise.resolve();
     });
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.removed).toContain("h-expired");
     expect(teardownCalls).toContain("h-expired");
@@ -203,7 +224,10 @@ describe("runWorktreeGcTick", () => {
 
     const svc = makeServices(db, [makeHandle("h-ev")], () => Promise.resolve());
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.removed).toContain("h-ev");
 
@@ -240,7 +264,10 @@ describe("runWorktreeGcTick", () => {
       [makeOrphan("h-orphan-old")],
     );
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual(["h-orphan-old"]);
     expect(result.removed).toEqual(["h-orphan-old"]);
@@ -264,7 +291,10 @@ describe("runWorktreeGcTick", () => {
       [makeOrphan("h-orphan-recent")],
     );
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual([]);
     expect(result.removed).toEqual([]);
@@ -286,10 +316,165 @@ describe("runWorktreeGcTick", () => {
       [makeOrphan("h-orphan-live")],
     );
 
-    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
 
     expect(result.candidates).toEqual([]);
     expect(result.removed).toEqual([]);
     expect(teardownCalls).toEqual([]);
+  });
+
+  test("unlanded branch is deferred, emits worktree.gc.unlanded_skipped event, and is NOT removed", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-unlanded", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const probedBranches: string[] = [];
+    const svc = makeServices(db, [makeHandle("h-unlanded")], (id) => {
+      teardownCalls.push(id);
+      return Promise.resolve();
+    });
+
+    const result = await runWorktreeGcTick(
+      {
+        services: svc,
+        gracePeriodMs: GRACE_MS,
+        branchLandedCheck: (branch) => {
+          probedBranches.push(branch);
+          return Promise.resolve("unlanded");
+        },
+      },
+      NOW_FN,
+    );
+
+    expect(probedBranches).toEqual(["agent/h-unlanded"]);
+    expect(result.candidates).toEqual(["h-unlanded"]);
+    expect(result.removed).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(result.deferred).toEqual(["h-unlanded"]);
+    expect(result.unlanded_skipped).toEqual(["h-unlanded"]);
+    expect(teardownCalls).toEqual([]);
+
+    const row = db
+      .query<{ kind: string; meta_json: string }, [string]>(
+        `SELECT kind, meta_json FROM dispatch_events
+         WHERE handoff_id = ? AND kind = 'worktree.gc.unlanded_skipped'`,
+      )
+      .get("h-unlanded");
+
+    expect(row).toBeDefined();
+    expect(row?.kind).toBe("worktree.gc.unlanded_skipped");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.handoff_id).toBe("h-unlanded");
+    expect(meta.branch).toBe("agent/h-unlanded");
+    expect(meta.land_status).toBe("unlanded");
+
+    // No worktree.gc event for the unlanded candidate.
+    const reapRow = db
+      .query<
+        { kind: string },
+        [string]
+      >(`SELECT kind FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-unlanded");
+    expect(reapRow).toBeNull();
+  });
+
+  test("landed branch IS removed and emits worktree.gc with land_status=landed", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-landed", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(db, [makeHandle("h-landed")], (id) => {
+      teardownCalls.push(id);
+      return Promise.resolve();
+    });
+
+    const result = await runWorktreeGcTick(
+      {
+        services: svc,
+        gracePeriodMs: GRACE_MS,
+        branchLandedCheck: () => Promise.resolve("landed"),
+      },
+      NOW_FN,
+    );
+
+    expect(result.removed).toEqual(["h-landed"]);
+    expect(result.deferred).toEqual([]);
+    expect(result.unlanded_skipped).toEqual([]);
+    expect(teardownCalls).toEqual(["h-landed"]);
+
+    const row = db
+      .query<
+        { meta_json: string },
+        [string]
+      >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-landed");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.land_status).toBe("landed");
+  });
+
+  test("missing branch ref IS removed (orphan with no ref)", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-noref", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(db, [makeHandle("h-noref")], (id) => {
+      teardownCalls.push(id);
+      return Promise.resolve();
+    });
+
+    const result = await runWorktreeGcTick(
+      {
+        services: svc,
+        gracePeriodMs: GRACE_MS,
+        branchLandedCheck: () => Promise.resolve("missing"),
+      },
+      NOW_FN,
+    );
+
+    expect(result.removed).toEqual(["h-noref"]);
+    expect(result.unlanded_skipped).toEqual([]);
+    expect(teardownCalls).toEqual(["h-noref"]);
+  });
+
+  test("branchLandedCheck error result is treated as unlanded (fail-safe defer)", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-probe-err", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(db, [makeHandle("h-probe-err")], (id) => {
+      teardownCalls.push(id);
+      return Promise.resolve();
+    });
+
+    const result = await runWorktreeGcTick(
+      {
+        services: svc,
+        gracePeriodMs: GRACE_MS,
+        branchLandedCheck: () => Promise.resolve("error"),
+      },
+      NOW_FN,
+    );
+
+    expect(result.removed).toEqual([]);
+    expect(result.deferred).toEqual(["h-probe-err"]);
+    expect(result.unlanded_skipped).toEqual(["h-probe-err"]);
+    expect(teardownCalls).toEqual([]);
+
+    const row = db
+      .query<{ meta_json: string }, [string]>(
+        `SELECT meta_json FROM dispatch_events
+         WHERE handoff_id = ? AND kind = 'worktree.gc.unlanded_skipped'`,
+      )
+      .get("h-probe-err");
+    expect(row).toBeDefined();
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.land_status).toBe("error");
   });
 });

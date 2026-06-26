@@ -1,6 +1,11 @@
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
 import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
 
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
+
+const execFile = promisify(execFileCb);
 
 type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
 
@@ -9,10 +14,23 @@ function maybeUnref(timer: ReturnType<typeof setInterval>): void {
   if (typeof unrefable.unref === "function") unrefable.unref();
 }
 
+export type BranchLandStatus = "landed" | "unlanded" | "missing" | "error";
+
 export interface WorktreeGcOpts {
   services: Services;
   /** How old (ms) a terminal worktree must be before GC. Default 2h. */
   gracePeriodMs?: number;
+  /**
+   * Probe whether `branch` is safe to reap from the home repo's perspective.
+   *   - "landed":   branch is an ancestor of main; commits are preserved.
+   *   - "missing":  branch ref no longer exists; nothing to preserve.
+   *   - "unlanded": branch has commits not in main; reap would lose work.
+   *   - "error":    probe itself failed; treat as unlanded (fail-safe).
+   * Defaults to a git-based probe against the home repo when omitted.
+   */
+  branchLandedCheck?: (branch: string) => Promise<BranchLandStatus>;
+  /** Override main branch name probed by the default check. Defaults to "main". */
+  mainBranch?: string;
   log?: {
     warn?: (obj: unknown, msg?: string) => void;
     debug?: (obj: unknown, msg?: string) => void;
@@ -24,9 +42,37 @@ export interface WorktreeGcTickResult {
   removed: string[];
   failed: string[];
   deferred: string[];
+  unlanded_skipped: string[];
 }
 
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
+
+function buildDefaultBranchLandedCheck(
+  mainRepoDir: string,
+  mainBranch: string,
+): (branch: string) => Promise<BranchLandStatus> {
+  return async (branch: string): Promise<BranchLandStatus> => {
+    try {
+      await execFile("git", ["-C", mainRepoDir, "rev-parse", "--verify", "--quiet", branch]);
+    } catch (err) {
+      const code = (err as { code?: number | string | null }).code;
+      // git rev-parse --verify --quiet exits 1 when the ref doesn't exist;
+      // any other failure shape is unexpected and must defer.
+      if (code === 1) return "missing";
+      return "error";
+    }
+    try {
+      await execFile("git", ["-C", mainRepoDir, "merge-base", "--is-ancestor", branch, mainBranch]);
+      return "landed";
+    } catch (err) {
+      const code = (err as { code?: number | string | null }).code;
+      // is-ancestor exits 1 when not an ancestor; that's a clean "unlanded".
+      // Anything else (128 missing ref, spawn failure, etc.) is an error.
+      if (code === 1) return "unlanded";
+      return "error";
+    }
+  };
+}
 
 /**
  * One GC tick: remove worktrees whose handoff is terminal and resolved
@@ -39,6 +85,10 @@ export async function runWorktreeGcTick(
 ): Promise<WorktreeGcTickResult> {
   const { services } = opts;
   const gracePeriodMs = opts.gracePeriodMs ?? DEFAULT_GRACE_PERIOD_MS;
+  const mainBranch = opts.mainBranch ?? "main";
+  const branchLandedCheck =
+    opts.branchLandedCheck ??
+    buildDefaultBranchLandedCheck(services.worktreeManager.mainRepoDir, mainBranch);
   const nowMs = now().getTime();
 
   const handles = services.worktreeManager.listWorktrees();
@@ -54,6 +104,7 @@ export async function runWorktreeGcTick(
   const removed: string[] = [];
   const failed: string[] = [];
   const deferred: string[] = [];
+  const unlanded_skipped: string[] = [];
 
   for (const candidate of gcCandidates) {
     try {
@@ -62,6 +113,37 @@ export async function runWorktreeGcTick(
         opts.log?.debug?.(
           { handoff_id: candidate.handoff_id },
           "worktree-gc teardown deferred while lifecycle lock is held",
+        );
+        continue;
+      }
+
+      const landStatus = await branchLandedCheck(candidate.branch);
+      if (landStatus === "unlanded" || landStatus === "error") {
+        deferred.push(candidate.handoff_id);
+        unlanded_skipped.push(candidate.handoff_id);
+        const ts = now().toISOString();
+        services.db
+          .query<unknown, [string, string, string]>(
+            `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+             VALUES (?, NULL, 'sweeper', 'worktree.gc.unlanded_skipped', ?, ?)`,
+          )
+          .run(
+            candidate.handoff_id,
+            ts,
+            JSON.stringify({
+              handoff_id: candidate.handoff_id,
+              branch: candidate.branch,
+              status: candidate.status,
+              land_status: landStatus,
+            }),
+          );
+        opts.log?.warn?.(
+          {
+            handoff_id: candidate.handoff_id,
+            branch: candidate.branch,
+            land_status: landStatus,
+          },
+          "worktree-gc skipped unlanded branch",
         );
         continue;
       }
@@ -83,6 +165,7 @@ export async function runWorktreeGcTick(
             status: candidate.status,
             age_ms: candidate.age_ms,
             reason: candidate.reason,
+            land_status: landStatus,
           }),
         );
 
@@ -96,7 +179,7 @@ export async function runWorktreeGcTick(
     }
   }
 
-  return { candidates, removed, failed, deferred };
+  return { candidates, removed, failed, deferred, unlanded_skipped };
 }
 
 /** Schedules the GC sweep on a recurring interval. Returns a cancel function. */
