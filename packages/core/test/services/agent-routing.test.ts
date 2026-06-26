@@ -1206,6 +1206,93 @@ describe("routeAgent", () => {
     if (out.detail !== "rank") return;
     expect(out.candidates.candidates).toEqual([]);
   });
+
+  test("C6: NEUTRAL_OUTCOME_VALUES denominator parity — summary and rank agree on success_rate and gate_verdict_coverage when a no_changes row is present", () => {
+    // Both paths must derive their denominators from the same NEUTRAL_OUTCOME_VALUES
+    // constant. The SQL summary path excludes neutral rows via
+    //   AND outcome NOT IN (NEUTRAL_OUTCOME_VALUES)
+    // The in-memory rank path drops them through visibleRows when includeNeutral
+    // is false. Fixture: one merged+passed, one failed+failed, one no_changes with
+    // gate_outcome NULL. With the fix, both paths see samples=2 (verdict-bearing
+    // only), successes=1, gate_outcome_count=2 → success_rate=0.5,
+    // gate_verdict_coverage=1.0. Under the pre-fix SQL (no NEUTRAL filter), the
+    // summary path would count the neutral row in samples and diverge from rank:
+    // success_rate would be 1/3 ≈ 0.333 and gate_verdict_coverage 2/3 ≈ 0.667.
+    const writer = new AgentPerformanceWriter(db);
+    const baseRow = {
+      project_id: "proj",
+      agent_name: "neutral-parity",
+      task_type: "implement_substantial" as const,
+      rounds: 1,
+      smoke_pass: "y" as const,
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed" as const,
+      notes: null,
+      metadata_json: "{}",
+    };
+    writer.upsert({
+      ...baseRow,
+      performance_id: "neutral-parity-merged",
+      ts: "2026-04-30T10:00:00Z",
+      handoff_id: "h-neutral-parity-merged",
+      conversation_id: "c-neutral-parity-merged",
+      outcome: "merged",
+      gate_outcome: "passed",
+    });
+    writer.upsert({
+      ...baseRow,
+      performance_id: "neutral-parity-failed",
+      ts: "2026-04-30T11:00:00Z",
+      handoff_id: "h-neutral-parity-failed",
+      conversation_id: "c-neutral-parity-failed",
+      outcome: "failed",
+      gate_outcome: "failed",
+    });
+    writer.upsert({
+      ...baseRow,
+      performance_id: "neutral-parity-no-changes",
+      ts: "2026-04-30T12:00:00Z",
+      handoff_id: "h-neutral-parity-no-changes",
+      conversation_id: "c-neutral-parity-no-changes",
+      outcome: "no_changes",
+      gate_outcome: null,
+    });
+
+    const rankOut = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      since: "2026-04-29T00:00:00Z",
+      includeNeutral: false,
+      now: NOW,
+    });
+    const rankAgent = findCandidate(rankOut, "neutral-parity");
+
+    const summaryOut = routeAgent({
+      db,
+      detail: "summary",
+      taskType: "implement_substantial",
+      windowDays: 30,
+      includeNeutral: false,
+      now: NOW,
+    });
+    if (summaryOut.detail !== "summary") throw new Error("expected summary");
+    const summaryAgent = summaryOut.recommendations.find((r) => r.agent_name === "neutral-parity");
+    if (!summaryAgent) throw new Error("neutral-parity missing from summary");
+
+    expect(rankAgent.samples).toBe(2);
+    expect(rankAgent.success_rate).toBeCloseTo(0.5, 6);
+    expect(rankAgent.gate_verdict_coverage).toBeCloseTo(1.0, 6);
+    expect(summaryAgent.samples).toBe(2);
+    expect(summaryAgent.success_rate).toBeCloseTo(0.5, 6);
+    expect(summaryAgent.gate_verdict_coverage).toBeCloseTo(1.0, 6);
+    expect(summaryAgent.success_rate).toBeCloseTo(rankAgent.success_rate, 6);
+    expect(summaryAgent.gate_verdict_coverage).toBeCloseTo(rankAgent.gate_verdict_coverage, 6);
+  });
 });
 
 describe("latency_weighting routing", () => {

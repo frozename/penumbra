@@ -350,6 +350,95 @@ describe("gate-quality-digest sweeper", () => {
     expect(digest).toContain("| alpha | 1 | 0 | 0 | 1 | 1 | 3 |");
   });
 
+  it("C15: pre-cutover NULL-gate rows are excluded from both samples and gate_passes; post-cutover NULL stays in the denominator", async () => {
+    // Push the cutover into the analysis window so a single seat can hold a
+    // pre-cutover NULL, a post-cutover NULL, and an explicit pass. Window =
+    // [2026-06-12T03:00, 2026-06-13T03:00). Cutover at 2026-06-13T00:00 splits
+    // the window: pre = before midnight, post = after.
+    //
+    // Fix semantics: pre-cutover NULL rows predate verdict stamping and must
+    // not be credited as automatic passes — they are dropped from both the
+    // numerator AND the denominator (the `gate_outcome IS NOT NULL OR ts >= ?`
+    // WHERE clause). Post-cutover NULL stays in samples but not gate_passes
+    // (a real "no-verdict" signal). The legacy SQL counted pre-cutover NULL
+    // in both samples and gate_passes via
+    //   WHEN ts < cutover AND gate_outcome IS NULL THEN 1
+    // which inflated the apparent pass rate.
+    //
+    // Seed:
+    //   pre-cutover NULL  (2026-06-12T12:00) → excluded
+    //   post-cutover NULL (2026-06-13T01:00) → samples only
+    //   post-cutover pass (2026-06-13T02:00) → samples + gate_passes
+    // Expected: samples=2, gate_passes=1, rate=50.0%.
+    // Under legacy SQL: samples=3, gate_passes=2, rate=66.7%.
+    const previousCutover = process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+    process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = "2026-06-13T00:00:00.000Z";
+    try {
+      seedTrendRow(
+        "trend-seat",
+        "implement_small",
+        "perf-trend-pre-null",
+        "2026-06-12T12:00:00.000Z",
+        null,
+      );
+      seedTrendRow(
+        "trend-seat",
+        "implement_small",
+        "perf-trend-post-null",
+        "2026-06-13T01:00:00.000Z",
+        null,
+      );
+      seedTrendRow(
+        "trend-seat",
+        "implement_small",
+        "perf-trend-post-pass",
+        "2026-06-13T02:00:00.000Z",
+        "passed",
+      );
+
+      const { runGateQualityDigestSweep } =
+        await import("../../src/sweepers/gate-quality-digest.js");
+      const result = await runGateQualityDigestSweep({
+        services,
+        outDir: dir,
+        now: () => NOW,
+      });
+      const digest = readFileSync(result.digestPath, "utf8");
+
+      // escapeMarkdownTableCell strips underscores, so implement_small → implementsmall.
+      expect(digest).toContain("| trend-seat | implementsmall | 50.0% | 0.0 pp |");
+      // Legacy SQL would have produced 66.7% by crediting the pre-cutover NULL row.
+      expect(digest).not.toContain("| trend-seat | implementsmall | 66.7%");
+    } finally {
+      if (previousCutover === undefined) {
+        delete process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO;
+      } else {
+        process.env.PENUMBRA_GATE_OUTCOME_CUTOVER_ISO = previousCutover;
+      }
+    }
+  });
+
+  function seedTrendRow(
+    agentName: string,
+    taskType: string,
+    performanceId: string,
+    ts: string,
+    gateOutcome: string | null,
+  ): void {
+    db.run(
+      `INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+        outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
+        cost_usd, tokens_used, latency_ms, exec_ms, framework_overhead_ms, source,
+        agent_kind, metadata_json
+      ) VALUES (
+        ?, ?, ?, 'conv', 'proj', ?, ?, 'merged', ?, 1, 'yes', 0, NULL,
+        NULL, NULL, 1000, 900, 100, 'test', 'cli', '{}'
+      )`,
+      [performanceId, ts, `h-${performanceId}`, agentName, taskType, gateOutcome],
+    );
+  }
+
   function seedSplitPerformance(agentName: string, rows: { gate_outcome: string | null }[]): void {
     let n = 0;
     for (const row of rows) {
