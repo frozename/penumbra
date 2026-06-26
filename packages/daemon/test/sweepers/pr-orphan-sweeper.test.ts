@@ -85,8 +85,9 @@ function pr(
   };
 }
 
-test("superseded and stale agent PRs are closed with correct actions and t0 events", async () => {
+test("superseded agent PRs are closed and unlanded stale agent PRs are labeled", async () => {
   const closed: { number: number; comment: string; deleteBranch: boolean }[] = [];
+  const labeled: { number: number; labels: string[] }[] = [];
   const { deps, events } = makeDeps({
     ghClient: {
       listOpenPullRequests: () =>
@@ -120,6 +121,10 @@ test("superseded and stale agent PRs are closed with correct actions and t0 even
         closed.push(input);
         return Promise.resolve();
       },
+      labelPullRequest: (input) => {
+        labeled.push({ number: input.number, labels: input.labels });
+        return Promise.resolve();
+      },
     },
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-1"),
@@ -131,11 +136,12 @@ test("superseded and stale agent PRs are closed with correct actions and t0 even
 
   expect(result.scanned).toBe(3);
   expect(result.superseded).toBe(1);
-  expect(result.stale).toBe(1);
+  expect(result.stale).toBe(0);
+  expect(result.stale_unlanded).toBe(1);
   expect(result.errored).toBe(0);
   expect(result.actions.map((a) => [a.pr_number, a.action, a.reason])).toEqual([
     [10, "closed_and_deleted", "superseded"],
-    [11, "closed", "stale"],
+    [11, "labeled_stale_unlanded", "stale_unlanded"],
   ]);
   expect(closed).toEqual([
     {
@@ -143,13 +149,12 @@ test("superseded and stale agent PRs are closed with correct actions and t0 even
       deleteBranch: true,
       comment: "Superseded: head commit sha-sup is reachable from main as main-sha-1. Closing.",
     },
-    {
-      number: 11,
-      deleteBranch: false,
-      comment: "Stale: no activity for 10 days; closing as abandoned. Reopen if needed.",
-    },
   ]);
-  expect(events.map((e) => e.payload_json.action)).toEqual(["closed_and_deleted", "closed"]);
+  expect(labeled).toEqual([{ number: 11, labels: ["stale-unlanded"] }]);
+  expect(events.map((e) => e.payload_json.action)).toEqual([
+    "closed_and_deleted",
+    "labeled_stale_unlanded",
+  ]);
 });
 
 test("dry-run mode emits events and report actions but does not close PRs", async () => {
@@ -186,8 +191,62 @@ test("dry-run mode emits events and report actions but does not close PRs", asyn
   const result = await runPrOrphanSweep(deps);
 
   expect(closed).toEqual([]);
-  expect(result.actions.map((a) => a.action)).toEqual(["dry_run_superseded", "dry_run_stale"]);
-  expect(events.map((e) => e.payload_json.action)).toEqual(["dry_run_superseded", "dry_run_stale"]);
+  expect(result.actions.map((a) => a.action)).toEqual([
+    "dry_run_superseded",
+    "dry_run_stale_unlanded",
+  ]);
+  expect(events.map((e) => e.payload_json.action)).toEqual([
+    "dry_run_superseded",
+    "dry_run_stale_unlanded",
+  ]);
+});
+
+test("F16: stale agent PRs whose work is not landed get labeled instead of closed", async () => {
+  const closed: number[] = [];
+  const labeled: { number: number; labels: string[]; comment?: string }[] = [];
+  const { deps, events } = makeDeps({
+    ghClient: {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 70,
+            headRefName: "agent/77777777-7777-7777-7777-777777777777",
+            headRefOid: "sha-stale-unlanded",
+            updatedAt: "2026-04-20T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: (input) => {
+        closed.push(input.number);
+        return Promise.resolve();
+      },
+      labelPullRequest: (input) => {
+        labeled.push(input);
+        return Promise.resolve();
+      },
+    },
+    gitClient: {
+      resolveMainSha: () => Promise.resolve("main-sha-stale"),
+      isAncestorOfMain: () => Promise.resolve(false),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
+    },
+  });
+
+  const result = await runPrOrphanSweep(deps);
+
+  expect(result.scanned).toBe(1);
+  expect(result.stale).toBe(0);
+  expect(result.stale_unlanded).toBe(1);
+  expect(closed).toEqual([]);
+  expect(labeled.length).toBe(1);
+  expect(labeled[0]?.number).toBe(70);
+  expect(labeled[0]?.labels).toEqual(["stale-unlanded"]);
+  expect(labeled[0]?.comment ?? "").toContain("Stale-unlanded");
+  expect(result.actions.map((a) => [a.pr_number, a.action, a.reason])).toEqual([
+    [70, "labeled_stale_unlanded", "stale_unlanded"],
+  ]);
+  expect(events.map((e) => e.payload_json.action)).toEqual(["labeled_stale_unlanded"]);
 });
 
 test("young PRs are not auto-closed even when superseded", async () => {

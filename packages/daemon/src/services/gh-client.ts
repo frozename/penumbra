@@ -28,6 +28,12 @@ export interface GhClosePullRequestInput {
   deleteBranch?: boolean;
 }
 
+export interface GhLabelPullRequestInput {
+  number: number;
+  labels: string[];
+  comment?: string;
+}
+
 export interface GhCreateIssueInput {
   repo: string;
   title: string;
@@ -59,6 +65,7 @@ export interface GhClient {
   listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
+  labelPullRequest?(input: GhLabelPullRequestInput): Promise<void>;
 }
 
 interface GhExecResult {
@@ -365,7 +372,18 @@ export function createGhCliClient(
       if (input.deleteBranch) args.push("--delete-branch");
       await runOrThrow(exec, [...args]);
     },
+
+    labelPullRequest: (input) => ghLabelPullRequest(exec, input),
   };
+}
+
+async function ghLabelPullRequest(exec: GhExec, input: GhLabelPullRequestInput): Promise<void> {
+  const editArgs = ["pr", "edit", String(input.number)];
+  for (const label of input.labels) editArgs.push("--add-label", label);
+  await runOrThrow(exec, editArgs);
+  if (input.comment !== undefined && input.comment.length > 0) {
+    await runOrThrow(exec, ["pr", "comment", String(input.number), "--body", input.comment]);
+  }
 }
 
 async function runCreateIssueWithLabelRetry(

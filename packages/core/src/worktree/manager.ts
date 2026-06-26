@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
+import { isAncestorOf, isThreeDotDiffEmpty } from "./branch-land-probe.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -64,6 +65,7 @@ interface WorktreeManagerOpts {
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
   runner?: WorktreeCommandRunner;
+  mainBranch?: string;
 }
 
 function defaultRunner(
@@ -160,12 +162,14 @@ export class WorktreeManager {
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
   private runner: WorktreeCommandRunner;
+  private mainBranch: string;
 
   constructor(opts?: WorktreeManagerOpts) {
     this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.runner = opts?.runner ?? defaultRunner;
+    this.mainBranch = opts?.mainBranch ?? process.env["PENUMBRA_MAIN_BRANCH"] ?? "main";
     this.rootDir =
       opts?.rootDir ??
       process.env["PENUMBRA_WORKTREE_ROOT"] ??
@@ -587,19 +591,69 @@ export class WorktreeManager {
     }
   }
 
-  private async verifyBranchDeleted(handle: WorktreeHandle, repoRoot: string): Promise<boolean> {
+  private async readBranchSha(branchName: string, repoRoot: string): Promise<string | undefined> {
+    try {
+      const { stdout } = await this.git(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`],
+        { cwd: repoRoot },
+      );
+      const sha = stdout.trim();
+      return sha.length > 0 ? sha : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Fail-closed branch delete guard: only delete an agent branch when the
+  // commit has actually landed on main (ancestor) or its work is already
+  // present there (empty three-dot diff after fetch/rebase). Any probe error
+  // skips the delete so a still-needed branch survives instead of being lost
+  // to a transient git failure or a worktree pruned out from under us.
+  private async verifyBranchDeleted(
+    handle: WorktreeHandle,
+    repoRoot: string,
+  ): Promise<{ deleted: boolean; sha?: string }> {
+    const sha = await this.readBranchSha(handle.branchName, repoRoot);
+    if (sha === undefined) {
+      // Ref already gone: nothing to delete, nothing to preserve.
+      return { deleted: true };
+    }
+
+    let safe = false;
+    try {
+      if (await isAncestorOf(this.runner, repoRoot, sha, this.mainBranch)) {
+        safe = true;
+      } else if (await isThreeDotDiffEmpty(this.runner, repoRoot, sha, this.mainBranch)) {
+        safe = true;
+      }
+    } catch (err) {
+      this.log.warn(
+        { branch: handle.branchName, sha, err: String(err) },
+        "branch-land probe failed; preserving branch (fail-closed)",
+      );
+      return { deleted: false, sha };
+    }
+
+    if (!safe) {
+      this.log.warn(
+        { branch: handle.branchName, sha },
+        "branch carries commits not in main; preserving for inspection",
+      );
+      return { deleted: false, sha };
+    }
+
     try {
       await this.git(["branch", "-D", handle.branchName], { cwd: repoRoot });
     } catch {
-      // branch deletion is verified below
+      // verified below
     }
     try {
       await this.git(["rev-parse", "--verify", "--quiet", `refs/heads/${handle.branchName}`], {
         cwd: repoRoot,
       });
-      return false;
+      return { deleted: false, sha };
     } catch {
-      return true;
+      return { deleted: true, sha };
     }
   }
 
@@ -608,7 +662,7 @@ export class WorktreeManager {
     force?: boolean,
     project_id?: string,
     deleteBranch = true,
-  ): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean }> {
+  ): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean; branchSha?: string }> {
     let handle = this.worktrees.get(handoffId);
     const effectiveProjectId = handle?.projectId ?? project_id;
     const repoRoot = this.repoRootFor(effectiveProjectId);
@@ -630,10 +684,19 @@ export class WorktreeManager {
       throw new Error(`worktree remove reported success but path still exists: ${handle.path}`);
     }
 
-    const branchDeleted = deleteBranch ? await this.verifyBranchDeleted(handle, repoRoot) : false;
+    let branchDeleted = false;
+    let branchSha: string | undefined;
+    if (deleteBranch) {
+      const result = await this.verifyBranchDeleted(handle, repoRoot);
+      branchDeleted = result.deleted;
+      branchSha = result.sha;
+    } else {
+      // Preserve the SHA for observability even when delete is suppressed.
+      branchSha = await this.readBranchSha(handle.branchName, repoRoot);
+    }
 
     this.worktrees.delete(handoffId);
-    return { worktreeRemoved: true, branchDeleted };
+    return { worktreeRemoved: true, branchDeleted, branchSha };
   }
 }
 

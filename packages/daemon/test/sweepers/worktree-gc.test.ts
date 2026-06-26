@@ -31,12 +31,22 @@ function setupDb(): Database {
   return db;
 }
 
+type TeardownReturn = { worktreeRemoved: boolean; branchDeleted: boolean; branchSha?: string };
+type TeardownSpy = (id: string, force?: boolean) => Promise<TeardownReturn | undefined>;
+
 function makeServices(
   db: Database,
   worktreeHandles: WorktreeHandle[],
-  teardownSpy: (id: string, force?: boolean) => Promise<void>,
+  teardownSpy: TeardownSpy,
   orphanHandles: { path: string; handoffId: string }[] = [],
 ): Services {
+  // Default-fill the new wider teardown shape when the spy returns void so the
+  // F21 worktreeRemoved gate behaves as before for existing tests.
+  const wrappedTeardown = async (id: string, force?: boolean): Promise<TeardownReturn> => {
+    const raw = await teardownSpy(id, force);
+    if (raw && typeof raw === "object") return raw;
+    return { worktreeRemoved: true, branchDeleted: true };
+  };
   return {
     db,
     handoffWriter: new HandoffWriter({ db }),
@@ -52,7 +62,7 @@ function makeServices(
     worktreeManager: {
       listWorktrees: () => worktreeHandles,
       discoverOrphanWorktrees: () => Promise.resolve(orphanHandles),
-      teardownWorktree: teardownSpy,
+      teardownWorktree: wrappedTeardown,
       mainRepoDir: "/tmp/main-repo",
     },
   } as unknown as Services;
@@ -440,6 +450,64 @@ describe("runWorktreeGcTick", () => {
     expect(result.removed).toEqual(["h-noref"]);
     expect(result.unlanded_skipped).toEqual([]);
     expect(teardownCalls).toEqual(["h-noref"]);
+  });
+
+  test("F21: no worktree.gc event is emitted when teardown reports worktreeRemoved=false", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-noop", "completed", resolvedAt);
+
+    const teardownCalls: string[] = [];
+    const svc = makeServices(db, [makeHandle("h-noop")], (id) => {
+      teardownCalls.push(id);
+      // Simulate a concurrent sweep / already-gone handle: nothing was removed.
+      return Promise.resolve({ worktreeRemoved: false, branchDeleted: false });
+    });
+
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(teardownCalls).toEqual(["h-noop"]);
+    expect(result.removed).toEqual([]);
+    const row = db
+      .query<
+        { kind: string },
+        [string]
+      >(`SELECT kind FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-noop");
+    expect(row).toBeNull();
+  });
+
+  test("F1+F2: branch SHA from teardown is recorded in worktree.gc dispatch event meta", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-sha", "completed", resolvedAt);
+
+    const svc = makeServices(db, [makeHandle("h-sha")], () =>
+      Promise.resolve({
+        worktreeRemoved: true,
+        branchDeleted: true,
+        branchSha: "deadbeefcafebabedeadbeefcafebabedeadbeef",
+      }),
+    );
+
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.removed).toEqual(["h-sha"]);
+    const row = db
+      .query<
+        { meta_json: string },
+        [string]
+      >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-sha");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.branch_sha).toBe("deadbeefcafebabedeadbeefcafebabedeadbeef");
+    expect(meta.branch_deleted).toBe(true);
   });
 
   test("branchLandedCheck error result is treated as unlanded (fail-safe defer)", async () => {

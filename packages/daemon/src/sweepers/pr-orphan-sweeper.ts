@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { spawn } from "node:child_process";
 
+import { isAncestorOf, isThreeDotDiffEmpty } from "../../../core/src/worktree/branch-land-probe.js";
 import {
   type GhClient as CanonicalGhClient,
   createGhCliClient,
@@ -17,17 +18,22 @@ const SWEEP_BATCH_SIZE = 6;
 
 type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
 
-export type SweepReason = "superseded" | "stale";
+export type SweepReason = "superseded" | "stale" | "stale_unlanded";
 export type SweepActionKind =
   | "closed_and_deleted"
   | "closed"
+  | "labeled_stale_unlanded"
   | "dry_run_superseded"
-  | "dry_run_stale";
+  | "dry_run_stale"
+  | "dry_run_stale_unlanded";
+
+export const STALE_UNLANDED_LABEL = "stale-unlanded";
 
 export type OpenPullRequest = GhOpenPullRequest;
 export type GhClient = Required<
   Pick<CanonicalGhClient, "listOpenPullRequests" | "closePullRequest">
->;
+> &
+  Pick<CanonicalGhClient, "labelPullRequest">;
 
 export interface GitClient {
   resolveMainSha(): Promise<string>;
@@ -72,6 +78,7 @@ export interface PrSweepResult {
   scanned: number;
   superseded: number;
   stale: number;
+  stale_unlanded: number;
   errored: number;
   actions: PrSweepAction[];
 }
@@ -109,6 +116,7 @@ type PrRowResult =
 interface PrSweepCounters {
   superseded: number;
   stale: number;
+  stale_unlanded: number;
 }
 
 interface PrSweepContext {
@@ -153,8 +161,34 @@ function run(file: string, args: string[], cwd: string): Promise<ExecResult> {
   });
 }
 
+// Adapter that converts the local spawn-based `run` (which never throws on a
+// non-zero exit) into the throw-on-fail runner shape the shared core probes
+// expect. Errors carry `.code` and `.stderr` so the helpers can decode the
+// exit-code-1 ancestor-miss as a clean `false`.
+function makeThrowingGitRunner(
+  repoDir: string,
+): (
+  cmd: string,
+  args: string[],
+  opts?: { cwd?: string },
+) => Promise<{ stdout: string; stderr: string }> {
+  return async (cmd, args, opts) => {
+    const res = await run(cmd, args, opts?.cwd ?? repoDir);
+    if (res.code !== 0) {
+      const err = new Error(
+        `${cmd} ${args.join(" ")} exited with code ${String(res.code)}`,
+      ) as Error & { code: number | string | null; stderr: string };
+      err.code = res.code;
+      err.stderr = res.stderr;
+      throw err;
+    }
+    return { stdout: res.stdout, stderr: res.stderr };
+  };
+}
+
 export function createGitCliClient(opts: { repoDir?: string } = {}): GitClient {
   const repoDir = opts.repoDir ?? process.cwd();
+  const throwingRunner = makeThrowingGitRunner(repoDir);
   return {
     async resolveMainSha(): Promise<string> {
       const res = await run("git", ["rev-parse", "main"], repoDir);
@@ -166,13 +200,8 @@ export function createGitCliClient(opts: { repoDir?: string } = {}): GitClient {
       return res.stdout.trim();
     },
 
-    async isAncestorOfMain(headSha: string): Promise<boolean> {
-      const res = await run("git", ["merge-base", "--is-ancestor", headSha, "main"], repoDir);
-      if (res.code === 0) return true;
-      if (res.code === 1) return false;
-      throw new Error(
-        `git merge-base --is-ancestor failed (${String(res.code)}): ${res.stderr.slice(0, 500)}`,
-      );
+    isAncestorOfMain(headSha: string): Promise<boolean> {
+      return isAncestorOf(throwingRunner, repoDir, headSha, "main");
     },
 
     async isObjectReachable(headSha: string): Promise<boolean> {
@@ -191,14 +220,8 @@ export function createGitCliClient(opts: { repoDir?: string } = {}): GitClient {
       }
     },
 
-    async isThreeDotDiffEmptyVsMain(headSha: string): Promise<boolean> {
-      const res = await run("git", ["diff", "--stat", `main...${headSha}`], repoDir);
-      if (res.code !== 0) {
-        throw new Error(
-          `git diff --stat main...${headSha} failed (${String(res.code)}): ${res.stderr.slice(0, 500)}`,
-        );
-      }
-      return res.stdout.trim().length === 0;
+    isThreeDotDiffEmptyVsMain(headSha: string): Promise<boolean> {
+      return isThreeDotDiffEmpty(throwingRunner, repoDir, headSha, "main");
     },
   };
 }
@@ -311,6 +334,37 @@ async function maybeCloseEmptyDiffPr(args: {
   return action;
 }
 
+async function probeStalePrIsLanded(
+  deps: PrOrphanSweeperDeps,
+  row: OpenPullRequest,
+): Promise<boolean> {
+  if (await deps.gitClient.isAncestorOfMain(row.headRefOid)) return true;
+  const hasHeadObject = await deps.gitClient.isObjectReachable(row.headRefOid);
+  if (!hasHeadObject) {
+    await deps.gitClient.fetchHeadRef(row.headRefName);
+  }
+  return await deps.gitClient.isThreeDotDiffEmptyVsMain(row.headRefOid);
+}
+
+async function applyStaleUnlandedLabel(
+  deps: PrOrphanSweeperDeps,
+  row: OpenPullRequest,
+  comment: string,
+): Promise<void> {
+  if (deps.ghClient.labelPullRequest === undefined) {
+    deps.log?.warn?.(
+      { pr_number: row.number, head_ref: row.headRefName },
+      "pr-orphan-sweeper: cannot label stale-unlanded PR (gh client lacks labelPullRequest)",
+    );
+    return;
+  }
+  await deps.ghClient.labelPullRequest({
+    number: row.number,
+    labels: [STALE_UNLANDED_LABEL],
+    comment,
+  });
+}
+
 async function maybeCloseStalePr(args: {
   deps: PrOrphanSweeperDeps;
   row: OpenPullRequest;
@@ -318,6 +372,53 @@ async function maybeCloseStalePr(args: {
   days: number;
 }): Promise<PrSweepAction | null> {
   if (args.days <= STALE_DAYS) return null;
+
+  // Only auto-close stale PRs whose work has actually landed (ancestor of main
+  // or empty three-dot diff). An unlanded stale PR may still hold the only
+  // copy of in-progress work — downgrade to a label so a human can decide.
+  let landed: boolean;
+  try {
+    landed = await probeStalePrIsLanded(args.deps, args.row);
+  } catch (err) {
+    args.deps.log?.warn?.(
+      {
+        err: formatUnknownError(err),
+        pr_number: args.row.number,
+        head_ref: args.row.headRefName,
+      },
+      "pr-orphan-sweeper: stale-PR land probe failed; treating as unlanded",
+    );
+    landed = false;
+  }
+
+  if (!landed) {
+    const comment = `Stale-unlanded: no activity for ${String(args.days)} days and head commit ${args.row.headRefOid} is not in main. Labeling for human review.`;
+    const action: PrSweepAction = {
+      pr_number: args.row.number,
+      action: args.deps.dryRun ? "dry_run_stale_unlanded" : "labeled_stale_unlanded",
+      reason: "stale_unlanded",
+      comment,
+      head_ref: args.row.headRefName,
+      head_sha: args.row.headRefOid,
+      age_days: args.days,
+    };
+    if (!args.deps.dryRun) {
+      try {
+        await applyStaleUnlandedLabel(args.deps, args.row, comment);
+      } catch (err) {
+        args.deps.log?.warn?.(
+          {
+            err: formatUnknownError(err),
+            pr_number: args.row.number,
+            head_ref: args.row.headRefName,
+          },
+          "pr-orphan-sweeper: failed to apply stale-unlanded label",
+        );
+      }
+    }
+    emitSweepEvent(args.deps, args.nowIso, action);
+    return action;
+  }
 
   const comment = `Stale: no activity for ${String(args.days)} days; closing as abandoned. Reopen if needed.`;
   const action: PrSweepAction = {
@@ -366,6 +467,7 @@ async function processPrRow(args: {
 
 function countAction(counters: PrSweepCounters, action: PrSweepAction): void {
   if (action.reason === "superseded") counters.superseded += 1;
+  else if (action.reason === "stale_unlanded") counters.stale_unlanded += 1;
   else counters.stale += 1;
 }
 
@@ -449,20 +551,20 @@ export async function runPrOrphanSweep(deps: PrOrphanSweeperDeps): Promise<PrSwe
   );
   scanned = prs.length;
 
-  const counters: PrSweepCounters = { superseded: 0, stale: 0 };
+  const counters: PrSweepCounters = { superseded: 0, stale: 0, stale_unlanded: 0 };
   const ctx: PrSweepContext = { deps, mainSha, nowIso, nowMs, actions, counters };
   const errored =
     deps.maxClose === undefined
       ? await processPrRowsBatched(ctx, prs)
       : await processPrRowsBounded(ctx, prs, deps.maxClose);
-  const { superseded, stale } = counters;
+  const { superseded, stale, stale_unlanded } = counters;
 
   deps.log?.info?.(
-    { scanned, superseded, stale, errored, dry_run: deps.dryRun },
-    `pr-orphan-sweeper: scanned ${String(scanned)}, superseded ${String(superseded)}, stale ${String(stale)}, errored ${String(errored)}`,
+    { scanned, superseded, stale, stale_unlanded, errored, dry_run: deps.dryRun },
+    `pr-orphan-sweeper: scanned ${String(scanned)}, superseded ${String(superseded)}, stale ${String(stale)}, stale_unlanded ${String(stale_unlanded)}, errored ${String(errored)}`,
   );
 
-  return { scanned, superseded, stale, errored, actions };
+  return { scanned, superseded, stale, stale_unlanded, errored, actions };
 }
 
 export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop: () => void } {

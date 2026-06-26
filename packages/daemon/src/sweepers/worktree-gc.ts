@@ -1,9 +1,15 @@
+import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
+// Pinned to the worktree-local manager source so the new `branchSha` field on
+// teardownWorktree's return type is visible inside symlink_mirror worktrees;
+// the @penumbra/core resolution chain otherwise points back to the home repo.
+import type { WorktreeManager as WorktreeManagerLocal } from "../../../core/src/worktree/manager.js";
 
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
+
+type TeardownResult = Awaited<ReturnType<WorktreeManagerLocal["teardownWorktree"]>>;
 
 const execFile = promisify(execFileCb);
 
@@ -148,7 +154,21 @@ export async function runWorktreeGcTick(
         continue;
       }
 
-      await services.worktreeManager.teardownWorktree(candidate.handoff_id, /*force=*/ true);
+      const teardownResult: TeardownResult = await services.worktreeManager.teardownWorktree(
+        candidate.handoff_id,
+        /*force=*/ true,
+      );
+
+      // In-flight guard: only emit worktree.gc when the teardown actually
+      // removed the worktree. A no-op return (e.g. handle already gone after
+      // a concurrent sweep) would otherwise spawn phantom dispatch events.
+      if (!teardownResult.worktreeRemoved) {
+        opts.log?.debug?.(
+          { handoff_id: candidate.handoff_id, branch: candidate.branch },
+          "worktree-gc teardown reported no-op; skipping dispatch event",
+        );
+        continue;
+      }
 
       const ts = now().toISOString();
       services.db
@@ -162,6 +182,8 @@ export async function runWorktreeGcTick(
           JSON.stringify({
             handoff_id: candidate.handoff_id,
             branch_name: candidate.branch,
+            branch_sha: teardownResult.branchSha,
+            branch_deleted: teardownResult.branchDeleted,
             status: candidate.status,
             age_ms: candidate.age_ms,
             reason: candidate.reason,

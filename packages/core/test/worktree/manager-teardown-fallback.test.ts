@@ -109,7 +109,8 @@ describe("WorktreeManager teardown fallback", () => {
 
     const result = await manager.teardownWorktree(handoffId, false);
 
-    expect(result).toEqual({ worktreeRemoved: true, branchDeleted: true });
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(true);
     expect(fs.existsSync(worktreePath)).toBe(false);
     expect(
       warns.some(({ msg }) => msg === "failed to restore bun.lock before worktree removal"),

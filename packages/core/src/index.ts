@@ -384,21 +384,6 @@ export {
   type DispatchEventRow,
 } from "./services/dispatch-event-log.js";
 export {
-  fetchServedModelEntries,
-  fetchServedModels,
-  type FetchServedModelsOpts,
-  type ServedModelEntry,
-  type ServedModelsFetch,
-  servedModelsUrl,
-} from "./services/served-models-client.js";
-export {
-  collectLlamactlInventory,
-  type CollectLlamactlInventoryOpts,
-  type LlamactlInventory,
-  type LlamactlModelInventory,
-  type LlamactlNodeInventory,
-} from "./services/llamactl-inventory.js";
-export {
   refineDispatchPrompt,
   type RefineDispatchPromptOpts,
   RefineError,
@@ -429,10 +414,25 @@ export {
   resolveJudgeConfig,
 } from "./services/judge-chat.js";
 export {
+  collectLlamactlInventory,
+  type CollectLlamactlInventoryOpts,
+  type LlamactlInventory,
+  type LlamactlModelInventory,
+  type LlamactlNodeInventory,
+} from "./services/llamactl-inventory.js";
+export {
   type Classification,
   classifyFindings,
   type Finding,
 } from "./services/memory-efficacy-classifier.js";
+export {
+  fetchServedModelEntries,
+  fetchServedModels,
+  type FetchServedModelsOpts,
+  type ServedModelEntry,
+  type ServedModelsFetch,
+  servedModelsUrl,
+} from "./services/served-models-client.js";
 export {
   extractStumblesFromSession,
   type ExtractStumblesInput,
@@ -516,14 +516,15 @@ export type {
   RegistryError,
   WorkflowRegistry,
 } from "./workflows/registry-interface.js";
+export { isAncestorOf, isThreeDotDiffEmpty } from "./worktree/branch-land-probe.js";
+export { FsPathError, resolveInsideWorktree };
+
 export {
   selectWorktreeGcCandidates,
   type SelectWorktreeGcCandidatesOpts,
   type WorktreeGcCandidate,
   type WorktreeGcCandidateReason,
 } from "./worktree/gc-candidates.js";
-export { FsPathError, resolveInsideWorktree };
-
 export {
   type OrphanWorktreeHandle,
   type WorktreeCommandRunner,

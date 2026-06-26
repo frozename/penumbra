@@ -192,11 +192,37 @@ describe("WorktreeManager — project parameterization", () => {
 
     const result = await managerB.teardownWorktree(id, false);
 
-    expect(result).toEqual({ worktreeRemoved: true, branchDeleted: true });
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
     expect(fs.existsSync(handle.path)).toBe(false);
     await expectRejectsWith(
       exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`),
     );
+  });
+
+  it("preserves agent branch when it carries commits not in main (fail-closed guard)", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id);
+
+    // Make the agent branch unlanded by adding a commit only present on it.
+    fs.writeFileSync(path.join(handle.path, "agent-only.txt"), "unlanded\n");
+    await exec(`git -C "${handle.path}" add agent-only.txt`);
+    await exec(`git -C "${handle.path}" -c user.email=t@t -c user.name=t commit -m "agent-only"`);
+
+    const result = await manager.teardownWorktree(id, false);
+
+    expect(result.worktreeRemoved).toBe(true);
+    // F1+F2: branch must survive teardown because the work is not in main.
+    expect(result.branchDeleted).toBe(false);
+    expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(fs.existsSync(handle.path)).toBe(false);
+    const branch = await exec(
+      `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
+    );
+    expect(branch.stdout.trim()).toBe(result.branchSha);
+    await exec(`git -C "${homeRepo}" branch -D "agent/${id}"`);
   });
 
   it("honors deleteBranch=false by keeping the agent branch", async () => {
@@ -206,7 +232,9 @@ describe("WorktreeManager — project parameterization", () => {
 
     const result = await manager.teardownWorktree(id, false, undefined, false);
 
-    expect(result).toEqual({ worktreeRemoved: true, branchDeleted: false });
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
     expect(fs.existsSync(handle.path)).toBe(false);
     const branch = await exec(
       `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
