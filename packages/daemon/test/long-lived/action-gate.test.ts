@@ -80,6 +80,51 @@ function expectQueued(result: ActionGateResult): Extract<ActionGateResult, { kin
   return result;
 }
 
+async function queueAndApproveIntegrationInstall(
+  gate: ActionGate,
+  db: Database,
+  args: unknown,
+): Promise<string> {
+  const queued = await gate.handleCall({
+    agent_id: "home",
+    tick_id: "t1",
+    tool: "ha:integration.install",
+    args,
+  });
+  const pendingActionId = expectQueued(queued).pending_action_id;
+  db.query(
+    "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=200 WHERE id=?",
+  ).run(pendingActionId);
+  return pendingActionId;
+}
+
+async function queueAndApproveAutomationSet(
+  gate: ActionGate,
+  db: Database,
+  args: unknown,
+): Promise<string> {
+  db.query("UPDATE long_lived_agents SET approval_required_globs_json=? WHERE id='home'").run(
+    JSON.stringify(["ha:automation.*"]),
+  );
+  const queued = await gate.handleCall({
+    agent_id: "home",
+    tick_id: "t1",
+    tool: "ha:automation.set",
+    args,
+  });
+  const pendingActionId = expectQueued(queued).pending_action_id;
+  db.query(
+    "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=200 WHERE id=?",
+  ).run(pendingActionId);
+  return pendingActionId;
+}
+
+function insertTick(db: Database, id: string, startedAt = 200): void {
+  db.query(
+    "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, 'home', 'injected_goal', ?)",
+  ).run(id, startedAt);
+}
+
 describe("action gate", () => {
   it("rejects tool not in allowlist", async () => {
     const db = setup();
@@ -475,7 +520,7 @@ describe("action gate", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("fail-closed: already-executed pending_action_id cannot replay", async () => {
+  it("fail-closed: already-executed pending_action_id is rejected and cannot replay", async () => {
     const db = setup();
     const exec = mock(executeOk);
     const gate = createActionGate({
@@ -504,7 +549,7 @@ describe("action gate", () => {
       args: { domain: "mqtt" },
       pending_action_id: paId,
     });
-    expect(r2.kind).toBe("queued");
+    expect(expectRejected(r2).error).toBe("already_executing");
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -643,5 +688,344 @@ describe("action gate", () => {
         .get(paId),
     );
     expect(pa.executed_in_tick_id).toBe("t2");
+  });
+
+  it("fail-closed: approved replay with different args re-queues and does NOT execute", async () => {
+    const db = setup();
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+    insertTick(db, "t2");
+
+    const result = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: { domain: "matter" },
+      pending_action_id: paId,
+    });
+
+    expect(result.kind).toBe("queued");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("fail-closed: approved replay with different tool re-queues and does NOT execute", async () => {
+    const db = setup();
+    db.query("UPDATE long_lived_agents SET mcp_allowlist_json=? WHERE id='home'").run(
+      JSON.stringify(["ha:light.*", "ha:automation.set", "ha:integration.*"]),
+    );
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+    insertTick(db, "t2");
+
+    const result = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.remove",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+
+    expect(result.kind).toBe("queued");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("approved replay claims the pending action so only one concurrent caller executes", async () => {
+    const db = setup();
+    let resolveExec: ((value: { ok: true }) => void) | undefined;
+    const exec = mock(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          resolveExec = resolve;
+        }),
+    );
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+    insertTick(db, "t2");
+    insertTick(db, "t3", 201);
+
+    const first = gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+    const second = gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    resolveExec?.({ ok: true });
+    const results = await Promise.all([first, second]);
+    expect(results.filter((result) => result.kind === "executed")).toHaveLength(1);
+    const rejected = results.find((result) => result.kind === "rejected");
+    expect(rejected?.kind).toBe("rejected");
+    if (rejected?.kind === "rejected") expect(rejected.error).toBe("already_executing");
+  });
+
+  it("approved tier-2 replay consumes its pending action so a later replay cannot execute again", async () => {
+    const db = setup();
+    let now = 100;
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => now,
+    });
+    const paId = await queueAndApproveAutomationSet(gate, db, { entity_id: "automation.x" });
+    insertTick(db, "t2");
+
+    const first = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:automation.set",
+      args: { entity_id: "automation.x" },
+      pending_action_id: paId,
+    });
+    expect(first.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(1);
+
+    now = 700_000;
+    insertTick(db, "t3", 700_000);
+    const second = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:automation.set",
+      args: { entity_id: "automation.x" },
+      pending_action_id: paId,
+    });
+
+    expect(expectRejected(second).error).toBe("already_executing");
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("approved replay rolls back its claim when executeTool fails so a later valid replay succeeds", async () => {
+    const db = setup();
+    let claimDuringExecution: string | null | undefined;
+    const exec = mock()
+      .mockImplementationOnce(() => {
+        claimDuringExecution = expectRow(
+          db
+            .query<
+              ExecutedPendingActionRow,
+              [string]
+            >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+            .get(paId),
+        ).executed_in_tick_id;
+        return Promise.reject(new Error("tool blew up"));
+      })
+      .mockImplementationOnce(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+    insertTick(db, "t2");
+    insertTick(db, "t3", 201);
+
+    const failed = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+    expect(expectRejected(failed).error).toBe("tool_failed");
+    expect(claimDuringExecution).toBe("t2");
+    const afterFailure = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(paId),
+    );
+    expect(afterFailure.executed_in_tick_id).toBeNull();
+
+    const retried = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+    expect(retried.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(2);
+    const afterRetry = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(paId),
+    );
+    expect(afterRetry.executed_in_tick_id).toBe("t3");
+  });
+
+  it("approved tier-2 replay rolls back its claim and cooldown when executeTool fails", async () => {
+    const db = setup();
+    let claimDuringExecution: string | null | undefined;
+    const exec = mock()
+      .mockImplementationOnce(() => {
+        claimDuringExecution = expectRow(
+          db
+            .query<
+              ExecutedPendingActionRow,
+              [string]
+            >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+            .get(paId),
+        ).executed_in_tick_id;
+        return Promise.reject(new Error("tool blew up"));
+      })
+      .mockImplementationOnce(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveAutomationSet(gate, db, { entity_id: "automation.x" });
+    insertTick(db, "t2");
+    insertTick(db, "t3", 201);
+
+    const failed = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:automation.set",
+      args: { entity_id: "automation.x" },
+      pending_action_id: paId,
+    });
+    expect(expectRejected(failed).error).toBe("tool_failed");
+    expect(claimDuringExecution).toBe("t2");
+    const afterFailure = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(paId),
+    );
+    expect(afterFailure.executed_in_tick_id).toBeNull();
+    const cooldown = db
+      .query<CooldownRow, []>("SELECT until_at FROM long_lived_cooldowns WHERE agent_id='home'")
+      .get();
+    expect(cooldown).toBeNull();
+
+    const retried = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:automation.set",
+      args: { entity_id: "automation.x" },
+      pending_action_id: paId,
+    });
+    expect(retried.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(2);
+    const afterRetry = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(paId),
+    );
+    expect(afterRetry.executed_in_tick_id).toBe("t3");
+  });
+
+  it("approved replay authorizes a stored action_kind with different casing", async () => {
+    const db = setup();
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const paId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+    db.query(
+      "UPDATE long_lived_pending_actions SET action_kind='HA:Integration.Install' WHERE id=?",
+    ).run(paId);
+    insertTick(db, "t2");
+
+    const result = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: paId,
+    });
+
+    expect(result.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("approved replay accepts structurally equal args regardless of key order and accepts arg-less {}", async () => {
+    const db = setup();
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+    const reorderedPaId = await queueAndApproveIntegrationInstall(gate, db, {
+      domain: "mqtt",
+      config: { host: "broker", port: 1883 },
+    });
+    insertTick(db, "t2");
+
+    const reordered = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: { config: { port: 1883, host: "broker" }, domain: "mqtt" },
+      pending_action_id: reorderedPaId,
+    });
+    expect(reordered.kind).toBe("executed");
+
+    const arglessQueued = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:integration.install",
+      args: {},
+    });
+    const arglessPaId = expectQueued(arglessQueued).pending_action_id;
+    db.query(
+      "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=300 WHERE id=?",
+    ).run(arglessPaId);
+    insertTick(db, "t3", 300);
+
+    const argless = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:integration.install",
+      args: {},
+      pending_action_id: arglessPaId,
+    });
+    expect(argless.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });

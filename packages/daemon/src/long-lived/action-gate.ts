@@ -300,7 +300,7 @@ function queueApproval(
       req.tick_id,
       req.tool,
       target,
-      JSON.stringify(req.args),
+      JSON.stringify(normalizeReplayArgs(req.args)),
       JSON.stringify(effectiveMeta ?? null),
       deps.now() + 7 * 24 * 60 * 60 * 1000,
       deps.now(),
@@ -324,6 +324,65 @@ function markPendingExecuted(deps: ActionGateDeps, tickId: string, pendingAction
   deps.db
     .query("UPDATE long_lived_pending_actions SET executed_in_tick_id=? WHERE id=?")
     .run(tickId, pendingActionId);
+}
+
+function normalizeReplayArgs(args: unknown): unknown {
+  return args === undefined ? {} : args;
+}
+
+function structurallyEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== typeof right) return false;
+  if (left === null || right === null) return false;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    if (left.length !== right.length) return false;
+    return left.every((value, index) => structurallyEqual(value, right[index]));
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord)
+    .filter((key) => leftRecord[key] !== undefined)
+    .sort();
+  const rightKeys = Object.keys(rightRecord)
+    .filter((key) => rightRecord[key] !== undefined)
+    .sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every(
+    (key, index) =>
+      key === rightKeys[index] && structurallyEqual(leftRecord[key], rightRecord[key]),
+  );
+}
+
+function claimPendingReplay(deps: ActionGateDeps, req: ActionGateRequest): boolean {
+  if (!req.pending_action_id) return false;
+  const result = deps.db
+    .query(
+      `UPDATE long_lived_pending_actions
+       SET executed_in_tick_id=?
+       WHERE id=?
+         AND agent_id=?
+         AND status='approved'
+         AND executed_in_tick_id IS NULL`,
+    )
+    .run(req.tick_id, req.pending_action_id, req.agent_id) as { changes: number };
+  return result.changes === 1;
+}
+
+function clearPendingReplayClaim(deps: ActionGateDeps, req: ActionGateRequest): void {
+  if (!req.pending_action_id) return;
+  deps.db
+    .query(
+      `UPDATE long_lived_pending_actions
+       SET executed_in_tick_id=NULL
+       WHERE id=?
+         AND agent_id=?
+         AND executed_in_tick_id=?`,
+    )
+    .run(req.pending_action_id, req.agent_id, req.tick_id);
 }
 
 /**
@@ -382,7 +441,21 @@ async function executeTier2(
   req: ActionGateRequest,
   target: string,
   effectiveMeta: Record<string, unknown> | undefined,
+  replayRequiresClaim: boolean,
 ): Promise<ActionGateResult> {
+  if (replayRequiresClaim && !claimPendingReplay(deps, req)) {
+    audit(deps, {
+      agentId: req.agent_id,
+      tickId: req.tick_id,
+      pendingActionId: req.pending_action_id,
+      tool: req.tool,
+      target,
+      decision: "gate_failed",
+      reason: "already_executing",
+    });
+    return { kind: "rejected", error: "already_executing" };
+  }
+
   const cdMs = cooldownMsFor(req.tool, cooldownOverrides(deps, agent, req));
   const until = deps.now() + cdMs;
 
@@ -391,6 +464,9 @@ async function executeTier2(
   // second transaction so a failed attempt does not burn the slot.
   const reservation = reserveTier2Cooldown(deps, req.agent_id, req.tool, until);
   if (!reservation.reserved) {
+    if (replayRequiresClaim) {
+      clearPendingReplayClaim(deps, req);
+    }
     audit(deps, {
       agentId: req.agent_id,
       tickId: req.tick_id,
@@ -412,6 +488,9 @@ async function executeTier2(
     snapshotId = await deps.takeSnapshot(req.agent_id);
   } catch (err) {
     clearTier2Cooldown(deps, req.agent_id, req.tool);
+    if (replayRequiresClaim) {
+      clearPendingReplayClaim(deps, req);
+    }
     audit(deps, {
       agentId: req.agent_id,
       tickId: req.tick_id,
@@ -427,6 +506,9 @@ async function executeTier2(
   const result = await executeToolOrAudit(deps, req, target, effectiveMeta);
   if (result.kind === "rejected") {
     clearTier2Cooldown(deps, req.agent_id, req.tool);
+    if (replayRequiresClaim) {
+      clearPendingReplayClaim(deps, req);
+    }
     return result;
   }
 
@@ -472,9 +554,26 @@ async function executeTier1(
   req: ActionGateRequest,
   target: string,
   effectiveMeta: Record<string, unknown> | undefined,
+  replayRequiresClaim: boolean,
 ): Promise<ActionGateResult> {
+  if (replayRequiresClaim && !claimPendingReplay(deps, req)) {
+    audit(deps, {
+      agentId: req.agent_id,
+      tickId: req.tick_id,
+      pendingActionId: req.pending_action_id,
+      tool: req.tool,
+      target,
+      decision: "gate_failed",
+      reason: "already_executing",
+    });
+    return { kind: "rejected", error: "already_executing" };
+  }
+
   const result = await executeToolOrAudit(deps, req, target, effectiveMeta);
   if (result.kind === "rejected") {
+    if (replayRequiresClaim) {
+      clearPendingReplayClaim(deps, req);
+    }
     return result;
   }
   audit(deps, {
@@ -493,22 +592,40 @@ async function executeTier1(
 /**
  * Returns true only when the supplied pending_action_id authorizes the
  * tier-3 → tier-1 downgrade for this request. The row must exist, belong to
- * the same agent, be in 'approved' status, and not yet have been executed.
+ * the same agent, be in 'approved' status, and name the same tool and args.
  * Fail-closed: any other case rejects the downgrade so an unrelated or stale
- * pending_action_id cannot silently auto-execute a tier-3 tool.
+ * pending_action_id cannot silently auto-execute a tier-3 tool. The atomic
+ * claim step owns executed_in_tick_id checks so a matching replay that loses
+ * the claim is rejected instead of re-queued.
  */
 function pendingActionAuthorizesReplay(deps: ActionGateDeps, req: ActionGateRequest): boolean {
   if (!req.pending_action_id) return false;
   const row = deps.db
     .query<
-      { agent_id: string; status: string; executed_in_tick_id: string | null },
+      {
+        agent_id: string;
+        status: string;
+        action_kind: string;
+        payload_json: string;
+      },
       [string]
-    >("SELECT agent_id, status, executed_in_tick_id FROM long_lived_pending_actions WHERE id = ?")
+    >(
+      "SELECT agent_id, status, action_kind, payload_json FROM long_lived_pending_actions WHERE id = ?",
+    )
     .get(req.pending_action_id);
   if (!row) return false;
   if (row.agent_id !== req.agent_id) return false;
   if (row.status !== "approved") return false;
-  if (row.executed_in_tick_id !== null) return false;
+  if (row.action_kind.toLowerCase() !== req.tool.toLowerCase()) return false;
+  let approvedArgs: unknown;
+  try {
+    approvedArgs = JSON.parse(row.payload_json) as unknown;
+  } catch {
+    return false;
+  }
+  if (!structurallyEqual(normalizeReplayArgs(approvedArgs), normalizeReplayArgs(req.args))) {
+    return false;
+  }
   return true;
 }
 
@@ -568,9 +685,12 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       });
       // Fail-closed replay: only honor the tier-3 → tier-1 downgrade when the
       // supplied pending_action_id row exists, matches the agent, is approved,
-      // and has not been executed already. A stale or mismatched id falls
+      // and names the same tool and args. A stale or mismatched id falls
       // through to the normal tier-3 queue path.
-      if (req.pending_action_id && pendingActionAuthorizesReplay(deps, req)) {
+      const replayAuthorized = req.pending_action_id
+        ? pendingActionAuthorizesReplay(deps, req)
+        : false;
+      if (replayAuthorized) {
         tier = tier === 3 ? 1 : tier;
         if (baselineTier === 2) tier = 2;
       }
@@ -580,10 +700,10 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       }
 
       if (tier === 2) {
-        return await executeTier2(deps, agent, req, target, effectiveMeta);
+        return await executeTier2(deps, agent, req, target, effectiveMeta, replayAuthorized);
       }
 
-      return await executeTier1(deps, req, target, effectiveMeta);
+      return await executeTier1(deps, req, target, effectiveMeta, replayAuthorized);
     },
   };
 }

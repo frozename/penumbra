@@ -50,8 +50,9 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
   // Accept both `server.tool` (SEP-986 discovery form) and legacy `server:tool`;
   // canonicalize to colon-form for internal action-gate matching.
   const separator = tool.search(/[.:]/);
-  const normalizedTool =
-    separator >= 0 ? `${tool.slice(0, separator)}:${tool.slice(separator + 1)}` : tool;
+  const normalizedTool = (
+    separator >= 0 ? `${tool.slice(0, separator)}:${tool.slice(separator + 1)}` : tool
+  ).toLowerCase();
   const result = await actionGate.handleCall({
     agent_id,
     tick_id,

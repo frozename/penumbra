@@ -180,6 +180,64 @@ test("POST /long-lived/mcp/call normalizes dot and colon tool ids before action 
   });
 });
 
+test("POST /long-lived/mcp/call lowercases tool ids before action gate dispatch", async () => {
+  await withToken("tok", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock<HandleCall>((req) =>
+      Promise.resolve(req.tool === "ha:integration.install" ? queued("pa-1") : executed(req.tool)),
+    );
+    const services = makeServices(db);
+    services.actionGate = { handleCall };
+
+    const upperRes = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          tick_id: "tick-1",
+          tool: "HA:integration.install",
+        }),
+      }),
+      services,
+    );
+    expect(upperRes.status).toBe(200);
+    expect(await upperRes.json()).toEqual({
+      action_status: "queued",
+      pending_action_id: "pa-1",
+      message:
+        "Action requires operator approval. Record an open_thread referencing pending_action_id.",
+    });
+
+    const lowerRes = await longLivedMcpCallRoute(
+      new Request("http://x/long-lived/mcp/call", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          tick_id: "tick-1",
+          tool: "ha:integration.install",
+        }),
+      }),
+      services,
+    );
+    expect(lowerRes.status).toBe(200);
+    expect(await lowerRes.json()).toEqual({
+      action_status: "queued",
+      pending_action_id: "pa-1",
+      message:
+        "Action requires operator approval. Record an open_thread referencing pending_action_id.",
+    });
+    expect(handleCall.mock.calls.map((call) => call[0].tool)).toEqual([
+      "ha:integration.install",
+      "ha:integration.install",
+    ]);
+  });
+});
+
 test("POST /long-lived/mcp/call accepts _meta and forwards it to action gate", async () => {
   await withToken("tok", async () => {
     const db = new Database(":memory:");
