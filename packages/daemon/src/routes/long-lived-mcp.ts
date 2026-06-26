@@ -11,6 +11,7 @@ const Input = z.object({
     .regex(/^[a-z0-9_-]+[.:][a-z0-9_.-]+$/i, "tool must be in <server>:<name> format"),
   args: z.unknown().optional(),
   _meta: z.record(z.string(), z.unknown()).optional(),
+  pending_action_id: z.string().min(1).optional(),
 });
 
 const MAX_BODY_BYTES = 1_048_576;
@@ -36,7 +37,7 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
     return json({ error: "meta_too_large" }, 400);
   }
 
-  const { agent_id, tick_id, tool, args, _meta } = parsed.data;
+  const { agent_id, tick_id, tool, args, _meta, pending_action_id } = parsed.data;
   if (!verifyRunningIdentity(services.db, agent_id, tick_id)) {
     return json({ error: "identity_mismatch" }, 403);
   }
@@ -57,6 +58,7 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
     tool: normalizedTool,
     args: args ?? {},
     _meta,
+    pending_action_id,
   });
 
   if (result.kind === "executed") {

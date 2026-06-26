@@ -240,40 +240,101 @@ describe("runPendingExpiry", () => {
     expect(kinds).toContain("long_lived.action.expired");
   });
 
-  it("per-action body is atomic: rolls back pending-action + audit writes if the working_memory step throws", () => {
+  it("corrupt working_memory_json on one agent does not wedge the sweep — expire still commits + memory resets", () => {
     const db = setup();
     db.query(
       `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'home', 'manual', 100)`,
     ).run();
     db.query(
-      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-atomic', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-corrupt', 'home', 'tick-1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 100)`,
     ).run();
 
-    // Corrupt working_memory_json so the JSON.parse step inside the per-action
-    // body throws. The fixed implementation wraps the body in db.transaction,
-    // so the earlier pending-action UPDATE and audit INSERT must be rolled back.
+    // Corrupt working_memory_json: the defensive parser must treat it as empty
+    // and still commit the expire + audit + memory-decision write.
     db.query(
       `UPDATE long_lived_agents SET working_memory_json='{not-valid-json' WHERE id='home'`,
     ).run();
 
-    expect(() => runPendingExpiry(db, { now: 100 })).toThrow();
+    const result = runPendingExpiry(db, { now: 100 });
+    expect(result.expired).toBe(1);
 
     const pa = db
       .query<
         { status: string; decided_by: string | null },
         []
-      >("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-atomic'")
+      >("SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-corrupt'")
       .get();
     expect(pa).not.toBeNull();
-    expect(pa!.status).toBe("pending");
-    expect(pa!.decided_by).toBeNull();
+    expect(pa!.status).toBe("expired");
+    expect(pa!.decided_by).toBe("auto-expired");
 
     const auditCount = db
       .query<
         { n: number },
         []
-      >("SELECT COUNT(*) AS n FROM long_lived_action_audit WHERE pending_action_id='pa-atomic'")
+      >("SELECT COUNT(*) AS n FROM long_lived_action_audit WHERE pending_action_id='pa-corrupt'")
       .get();
-    expect(auditCount!.n).toBe(0);
+    expect(auditCount!.n).toBe(1);
+
+    const wm = db
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='home'")
+      .get();
+    expect(wm).not.toBeNull();
+    const parsed = JSON.parse(wm!.working_memory_json) as {
+      recent_decisions: { pending_action_id: string; decision: string }[];
+    };
+    expect(parsed.recent_decisions).toEqual([
+      { pending_action_id: "pa-corrupt", decision: "expired", decided_at: 100 },
+    ]);
+  });
+
+  it("a corrupt agent does not block later rows from expiring", () => {
+    const db = setup();
+    // Add a second agent
+    db.query(
+      `INSERT INTO long_lived_agents (
+         id, display_name, status, schedule_cron, mcp_allowlist_json,
+         approval_required_globs_json, cooldown_overrides_json, bounds_wall_clock_ms,
+         bounds_cost_cents, bounds_max_sub_dispatches, circuit_breaker_threshold,
+         working_memory_json, standing_brief, created_at, updated_at
+       ) VALUES (
+         'office', 'office', 'active', NULL, '[]', '[]', '{}', 1000, 1, 0, 3,
+         '{"version":1,"updated_at":0,"pending_goals":[],"open_threads":[],"watches":[],"recent_decisions":[]}',
+         'x', 100, 100
+       )`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-home', 'home', 'manual', 100), ('tick-office', 'office', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at) VALUES ('pa-home', 'home', 'tick-home', 'ha:light.turn_on', 'light.a', '{}', 'pending', 50, 100), ('pa-office', 'office', 'tick-office', 'ha:light.turn_off', 'light.b', '{}', 'pending', 50, 100)`,
+    ).run();
+
+    // Corrupt the FIRST agent's memory. With the defensive parser, expire
+    // still commits for it AND the office row still gets processed.
+    db.query(
+      `UPDATE long_lived_agents SET working_memory_json='{not-valid-json' WHERE id='home'`,
+    ).run();
+
+    const result = runPendingExpiry(db, { now: 100 });
+    expect(result.expired).toBe(2);
+
+    const homeStatus = db
+      .query<
+        { status: string },
+        []
+      >("SELECT status FROM long_lived_pending_actions WHERE id='pa-home'")
+      .get();
+    expect(homeStatus!.status).toBe("expired");
+    const officeStatus = db
+      .query<
+        { status: string },
+        []
+      >("SELECT status FROM long_lived_pending_actions WHERE id='pa-office'")
+      .get();
+    expect(officeStatus!.status).toBe("expired");
   });
 });

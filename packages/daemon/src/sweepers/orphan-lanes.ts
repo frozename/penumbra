@@ -92,11 +92,25 @@ export function runOrphanLanesSweep(
     const reason = `auto-closed by orphan-lane sweeper: implementer handoff ${row.handoff_status} since ${row.handoff_resolved_at ?? "unknown"}; lane was not closed within ${String(grace_min)}min grace window`;
     // Explicitly skip /memory-verify/authorize for sweeper auto-closes.
     // Human reviewer authorization is required for lane_close/dispatch_land provenance.
-    // NOTE: There's a small race window between this read and the closeLane UPDATE
-    // where a reviewer handoff could transition from terminal back to in-flight (or
-    // vice versa). Tolerated for v1 — sweep runs every 5min and the daemon is single-process.
+    // The reviewer non-terminal guard is re-evaluated INSIDE the transaction
+    // (same db.transaction as closeLane) so a reviewer that transitions to
+    // in-flight between the outer SELECT and the write cannot race past the
+    // sweeper. If the reviewer is non-terminal at write time we abort.
     try {
+      let aborted = false;
       services.db.transaction(() => {
+        if (row.reviewer_handoff) {
+          const reviewerNow = services.db
+            .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id = ?`)
+            .get(row.reviewer_handoff);
+          if (
+            reviewerNow &&
+            !(TERMINAL_HANDOFF_STATUSES as readonly string[]).includes(reviewerNow.status)
+          ) {
+            aborted = true;
+            return;
+          }
+        }
         closeLaneWithLog(
           services.db,
           row.lane_id,
@@ -112,7 +126,7 @@ export function runOrphanLanesSweep(
           services.log,
         );
       })();
-      lane_ids.push(row.lane_id);
+      if (!aborted) lane_ids.push(row.lane_id);
     } catch (err) {
       services.log.warn(
         { lane_id: row.lane_id, err: String(err) },

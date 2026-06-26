@@ -349,6 +349,46 @@ test("emits one audit t0 event per sweep cycle covering all closed lane_ids", ()
   expect(event.payload_json.scanned).toBe(2);
 });
 
+test("aborts close when reviewer transitions to in-flight between SELECT and transaction (F26)", () => {
+  // Simulate the race by mutating the reviewer status to 'dispatched' between
+  // the outer SELECT (which observes 'completed') and the transaction's
+  // re-SELECT. The sweep must abort the close so the lane stays open.
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, "h-impl", "completed", PAST_GRACE);
+  insertHandoff(db, "h-reviewer", "completed", PAST_GRACE);
+  openLane(db, "lane-1", "h-impl");
+  setReviewerHandoff(db, "lane-1", "h-reviewer");
+
+  // Wrap services.db.transaction to flip reviewer status mid-transaction.
+  const originalTransaction = services.db.transaction.bind(services.db);
+  let flipped = false;
+  // bun:sqlite Database.transaction returns a callable; wrap once so the
+  // first transaction call from the sweep runs the flip before the body.
+  (services.db as { transaction: typeof services.db.transaction }).transaction = ((
+    fn: (...args: unknown[]) => unknown,
+  ): ((...args: unknown[]) => unknown) => {
+    const callable = originalTransaction(fn);
+    return ((...args: unknown[]): unknown => {
+      if (!flipped) {
+        db.run(`UPDATE handoffs SET status='dispatched', resolved_at=NULL WHERE handoff_id=?`, [
+          "h-reviewer",
+        ]);
+        flipped = true;
+      }
+      return callable(...args);
+    }) as never;
+  }) as never;
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
+  // Outer SELECT saw reviewer=completed and scanned this row, but in-transaction
+  // re-SELECT now sees reviewer=dispatched → abort.
+  expect(result.scanned).toBe(1);
+  expect(result.closed).toBe(0);
+  expect(getLane(db, "lane-1")?.gate_status).toBe("open");
+});
+
 test("orphan-lane sweeper close explicitly skips memory verify authorization", () => {
   const db = setupDb();
   const services = makeServices(db);

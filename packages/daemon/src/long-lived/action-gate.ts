@@ -113,6 +113,28 @@ function parseJsonOr<T>(
   }
 }
 
+const PARSE_FAILED: unique symbol = Symbol("parse_failed");
+type ParseResult<T> = T | typeof PARSE_FAILED;
+
+/**
+ * Strict parse used for security-critical agent config (mcp_allowlist,
+ * approval_required_globs). Returns a tagged failure on unparseable JSON so the
+ * caller can fail closed (reject) instead of degrading to a permissive default.
+ */
+function parseJsonStrict<T>(
+  raw: string,
+  log: Pick<Logger, "warn"> | undefined,
+  context: Record<string, unknown>,
+  label: string,
+): ParseResult<T> {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    log?.warn({ ...context, err }, label);
+    return PARSE_FAILED;
+  }
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -157,21 +179,28 @@ function loadAgentConfig(deps: ActionGateDeps, agentId: string): AgentGateConfig
     .get(agentId);
 }
 
+/**
+ * Returns true when the tool matches the agent's mcp_allowlist. Returns
+ * PARSE_FAILED when the allowlist JSON is unparseable so the caller can
+ * fail closed; under the old fallback-to-[] behavior an unparseable
+ * allowlist degraded to "no tools allowed" which was already restrictive,
+ * but the analogous approval-globs path failed OPEN — both now reject.
+ */
 function isToolAllowed(
   agent: AgentGateConfig,
   req: ActionGateRequest,
   deps: ActionGateDeps,
-): boolean {
-  const allowlist: unknown = parseJsonOr(
+): boolean | typeof PARSE_FAILED {
+  const parsed = parseJsonStrict<unknown>(
     agent.mcp_allowlist_json,
-    [],
     deps.log,
     { agent_id: req.agent_id, tick_id: req.tick_id, tool: req.tool, field: "mcp_allowlist_json" },
     "action-gate-invalid-agent-config",
   );
+  if (parsed === PARSE_FAILED) return PARSE_FAILED;
   return (
-    Array.isArray(allowlist) &&
-    allowlist
+    Array.isArray(parsed) &&
+    parsed
       .filter((entry): entry is string => typeof entry === "string")
       .some((glob) => globToRegExp(glob).test(req.tool))
   );
@@ -207,14 +236,18 @@ function audit(
     );
 }
 
+/**
+ * Returns the approval-required globs. Returns PARSE_FAILED when the JSON is
+ * unparseable so the caller can fail closed (reject) — previously this
+ * degraded to [] which downgraded tier-3 tools to tier-1 auto-execute.
+ */
 function approvalGlobs(
   deps: ActionGateDeps,
   agent: AgentGateConfig,
   req: ActionGateRequest,
-): string[] {
-  return parseJsonOr(
+): string[] | typeof PARSE_FAILED {
+  const parsed = parseJsonStrict<unknown>(
     agent.approval_required_globs_json,
-    [],
     deps.log,
     {
       agent_id: req.agent_id,
@@ -224,6 +257,9 @@ function approvalGlobs(
     },
     "action-gate-invalid-agent-config",
   );
+  if (parsed === PARSE_FAILED) return PARSE_FAILED;
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((entry): entry is string => typeof entry === "string");
 }
 
 function cooldownOverrides(
@@ -290,6 +326,56 @@ function markPendingExecuted(deps: ActionGateDeps, tickId: string, pendingAction
     .run(tickId, pendingActionId);
 }
 
+/**
+ * Atomically checks the current cooldown and, if absent, reserves a new one
+ * to the supplied until_at. Returns { reserved: true } when the caller now
+ * owns the in-flight slot, or { reserved: false, cooldown_until } when a
+ * concurrent caller already holds it. The check and write happen in one
+ * synchronous db.transaction so two concurrent tier-2 calls cannot both
+ * observe an absent cooldown and race past the gate.
+ */
+type CooldownReservation = { reserved: true } | { reserved: false; cooldown_until: number };
+
+function reserveTier2Cooldown(
+  deps: ActionGateDeps,
+  agentId: string,
+  tool: string,
+  until: number,
+): CooldownReservation {
+  const now = deps.now();
+  return deps.db.transaction((): CooldownReservation => {
+    const existing = deps.db
+      .query<
+        { cooldown_until: number },
+        [string, string]
+      >("SELECT until_at AS cooldown_until FROM long_lived_cooldowns WHERE agent_id=? AND action_target=?")
+      .get(agentId, tool);
+    if (existing && existing.cooldown_until > now) {
+      return { reserved: false, cooldown_until: existing.cooldown_until };
+    }
+    deps.db
+      .query(
+        `INSERT OR REPLACE INTO long_lived_cooldowns (agent_id, action_target, until_at, reason, created_at)
+        VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(agentId, tool, until, null, now);
+    return { reserved: true };
+  })();
+}
+
+/**
+ * Clears a cooldown reservation in its own transaction. Used to roll back
+ * the in-flight reservation when executeTool fails so the slot is not
+ * burned by a failed attempt.
+ */
+function clearTier2Cooldown(deps: ActionGateDeps, agentId: string, tool: string): void {
+  deps.db.transaction(() => {
+    deps.db
+      .query("DELETE FROM long_lived_cooldowns WHERE agent_id=? AND action_target=?")
+      .run(agentId, tool);
+  })();
+}
+
 async function executeTier2(
   deps: ActionGateDeps,
   agent: AgentGateConfig,
@@ -298,13 +384,13 @@ async function executeTier2(
   effectiveMeta: Record<string, unknown> | undefined,
 ): Promise<ActionGateResult> {
   const cdMs = cooldownMsFor(req.tool, cooldownOverrides(deps, agent, req));
-  const existing = deps.db
-    .query<
-      { cooldown_until: number },
-      [string, string]
-    >("SELECT until_at AS cooldown_until FROM long_lived_cooldowns WHERE agent_id=? AND action_target=?")
-    .get(req.agent_id, req.tool);
-  if (existing && existing.cooldown_until > deps.now()) {
+  const until = deps.now() + cdMs;
+
+  // Reserve the cooldown BEFORE running executeTool so two concurrent calls
+  // cannot both pass the gate. On tool_failed we clear the reservation in a
+  // second transaction so a failed attempt does not burn the slot.
+  const reservation = reserveTier2Cooldown(deps, req.agent_id, req.tool, until);
+  if (!reservation.reserved) {
     audit(deps, {
       agentId: req.agent_id,
       tickId: req.tick_id,
@@ -317,7 +403,7 @@ async function executeTier2(
     return {
       kind: "rejected",
       error: "cooldown_active",
-      details: { expires: existing.cooldown_until },
+      details: { expires: reservation.cooldown_until },
     };
   }
 
@@ -325,6 +411,7 @@ async function executeTier2(
   try {
     snapshotId = await deps.takeSnapshot(req.agent_id);
   } catch (err) {
+    clearTier2Cooldown(deps, req.agent_id, req.tool);
     audit(deps, {
       agentId: req.agent_id,
       tickId: req.tick_id,
@@ -339,16 +426,10 @@ async function executeTier2(
 
   const result = await executeToolOrAudit(deps, req, target, effectiveMeta);
   if (result.kind === "rejected") {
+    clearTier2Cooldown(deps, req.agent_id, req.tool);
     return result;
   }
 
-  const until = deps.now() + cdMs;
-  deps.db
-    .query(
-      `INSERT OR REPLACE INTO long_lived_cooldowns (agent_id, action_target, until_at, reason, created_at)
-        VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(req.agent_id, req.tool, until, null, deps.now());
   audit(deps, {
     agentId: req.agent_id,
     tickId: req.tick_id,
@@ -409,6 +490,28 @@ async function executeTier1(
   return { kind: "executed", result: result.result, tier: 1 };
 }
 
+/**
+ * Returns true only when the supplied pending_action_id authorizes the
+ * tier-3 → tier-1 downgrade for this request. The row must exist, belong to
+ * the same agent, be in 'approved' status, and not yet have been executed.
+ * Fail-closed: any other case rejects the downgrade so an unrelated or stale
+ * pending_action_id cannot silently auto-execute a tier-3 tool.
+ */
+function pendingActionAuthorizesReplay(deps: ActionGateDeps, req: ActionGateRequest): boolean {
+  if (!req.pending_action_id) return false;
+  const row = deps.db
+    .query<
+      { agent_id: string; status: string; executed_in_tick_id: string | null },
+      [string]
+    >("SELECT agent_id, status, executed_in_tick_id FROM long_lived_pending_actions WHERE id = ?")
+    .get(req.pending_action_id);
+  if (!row) return false;
+  if (row.agent_id !== req.agent_id) return false;
+  if (row.status !== "approved") return false;
+  if (row.executed_in_tick_id !== null) return false;
+  return true;
+}
+
 export function createActionGate(deps: ActionGateDeps): ActionGate {
   return {
     async handleCall(req): Promise<ActionGateResult> {
@@ -418,6 +521,18 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
 
       const target = extractActionTarget(req.tool, req.args);
       const allowed = isToolAllowed(agent, req, deps);
+      if (allowed === PARSE_FAILED) {
+        audit(deps, {
+          agentId: req.agent_id,
+          tickId: req.tick_id,
+          pendingActionId: req.pending_action_id,
+          tool: req.tool,
+          target: "",
+          decision: "gate_failed",
+          reason: "agent_config_corrupt:mcp_allowlist",
+        });
+        return { kind: "rejected", error: "agent_config_corrupt" };
+      }
       if (!allowed) {
         audit(deps, {
           agentId: req.agent_id,
@@ -431,13 +546,31 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
         return { kind: "rejected", error: "not_in_allowlist" };
       }
 
+      const globs = approvalGlobs(deps, agent, req);
+      if (globs === PARSE_FAILED) {
+        audit(deps, {
+          agentId: req.agent_id,
+          tickId: req.tick_id,
+          pendingActionId: req.pending_action_id,
+          tool: req.tool,
+          target,
+          decision: "gate_failed",
+          reason: "agent_config_corrupt:approval_required_globs",
+        });
+        return { kind: "rejected", error: "agent_config_corrupt" };
+      }
+
       const baselineTier = classifyTier({ tool: req.tool, target, agentGlobs: [] });
       let tier = classifyTier({
         tool: req.tool,
         target,
-        agentGlobs: approvalGlobs(deps, agent, req),
+        agentGlobs: globs,
       });
-      if (req.pending_action_id) {
+      // Fail-closed replay: only honor the tier-3 → tier-1 downgrade when the
+      // supplied pending_action_id row exists, matches the agent, is approved,
+      // and has not been executed already. A stale or mismatched id falls
+      // through to the normal tier-3 queue path.
+      if (req.pending_action_id && pendingActionAuthorizesReplay(deps, req)) {
         tier = tier === 3 ? 1 : tier;
         if (baselineTier === 2) tier = 2;
       }

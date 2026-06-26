@@ -1,6 +1,8 @@
 import type { NotificationOutboxKind } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
+import { safeParseJSON } from "@penumbra/core";
+
 export interface PendingExpiryResult {
   expired: number;
 }
@@ -60,7 +62,10 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
       let projectId: string | null = null;
       if (agent) {
         projectId = agent.project_id;
-        const workingMemory = JSON.parse(agent.working_memory_json) as {
+        // Defensive parse: a corrupt working_memory_json on one agent must not
+        // wedge TTL expiry for that row or any later row. Treat unparseable
+        // memory as empty so the expire still commits.
+        const parsedMemory = safeParseJSON<{
           recent_decisions?: {
             pending_action_id: string;
             decision: "approved" | "rejected" | "expired";
@@ -68,7 +73,8 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
             decided_at: number;
           }[];
           updated_at?: number;
-        };
+        }>(agent.working_memory_json);
+        const workingMemory = parsedMemory ?? {};
 
         workingMemory.recent_decisions ??= [];
         workingMemory.recent_decisions.push({
@@ -123,11 +129,20 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
     },
   );
 
+  let expired = 0;
   for (const row of pendingActions) {
-    expirePendingAction(row);
+    try {
+      expirePendingAction(row);
+      expired += 1;
+    } catch {
+      // Per-row safety net: a row-level failure must not block the rest of
+      // the sweep. The inner transaction rolls back any partial writes for
+      // this row; we swallow the error and continue.
+      continue;
+    }
   }
 
-  return { expired: pendingActions.length };
+  return { expired };
 }
 
 export const DEFAULT_PENDING_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;

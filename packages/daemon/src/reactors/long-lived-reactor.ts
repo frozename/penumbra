@@ -173,11 +173,15 @@ function registerLongLivedSweepers(
   sweeperIds.set(
     "__sweeper_pending_expiry__",
     cron.register("0 */1 * * *", () => {
-      runPendingExpiry(deps.db, {
-        now: deps.now(),
-        dispatchEventLog: deps.dispatchEventLog,
-        notificationOutbox: deps.notificationOutbox,
-      });
+      try {
+        runPendingExpiry(deps.db, {
+          now: deps.now(),
+          dispatchEventLog: deps.dispatchEventLog,
+          notificationOutbox: deps.notificationOutbox,
+        });
+      } catch (err) {
+        log.warn({ err: errorMessage(err) }, "long-lived-pending-expiry-sweep-failed");
+      }
     }),
   );
   sweeperIds.set(
