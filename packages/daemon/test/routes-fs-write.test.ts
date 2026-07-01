@@ -86,6 +86,27 @@ describe("worktrees write route", () => {
     expect(body.error.code).toBe("outside_worktree");
   });
 
+  it("does not create directories outside worktree via in-worktree symlink (TOCTOU)", async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "routes-fs-write-outside-"));
+    try {
+      fs.symlinkSync(outsideDir, path.join(tmp, "link"));
+
+      const services = fakeServices({ H1: tmp });
+      const req = new Request("http://x/worktrees/H1/write", {
+        method: "POST",
+        body: JSON.stringify({ path: "link/newdir/file.txt", content: "bad" }),
+      });
+      const res = await worktreesWriteRoute(req, "H1", services);
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("outside_worktree");
+      expect(fs.existsSync(path.join(outsideDir, "newdir"))).toBe(false);
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns 400 when path is missing", async () => {
     const services = fakeServices({ H1: tmp });
     const req = new Request("http://x/worktrees/H1/write", {

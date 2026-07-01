@@ -166,10 +166,31 @@ function resolveWriteTarget(bodyPath: string, worktreePath: string): string | Re
   }
 
   const dir = path.dirname(candidate);
+  const worktreeReal = realpathOrSelf(worktreeAbs);
+
+  // Check the nearest existing ancestor before mkdirSync so an in-worktree
+  // symlink cannot create directories outside the sandbox as a side effect.
+  let existingAncestor = dir;
+  while (!fsNode.existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  if (!isInside(worktreeReal, realpathOrSelf(existingAncestor))) {
+    return json(
+      {
+        error: {
+          code: "outside_worktree",
+          message: `parent directory of "${bodyPath}" resolves outside worktree via symlink`,
+        },
+      },
+      400,
+    );
+  }
+
   fsNode.mkdirSync(dir, { recursive: true });
 
   const realDir = realpathOrSelf(dir);
-  const worktreeReal = realpathOrSelf(worktreeAbs);
   if (!isInside(worktreeReal, realDir)) {
     return json(
       {
