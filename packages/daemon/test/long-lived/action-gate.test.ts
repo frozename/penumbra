@@ -741,6 +741,50 @@ describe("action gate", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it("tier-1 call carrying an unrelated approved pending_action_id does NOT poison that row's executed_in_tick_id [Race-B]", async () => {
+    const db = setup();
+    const exec = mock(executeOk);
+    const gate = createActionGate({
+      db,
+      executeTool: exec,
+      takeSnapshot: mock(() => snapshot("s")),
+      now: () => 100,
+    });
+
+    const approvedPaId = await queueAndApproveIntegrationInstall(gate, db, { domain: "mqtt" });
+
+    insertTick(db, "t2");
+    const tier1 = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t2",
+      tool: "ha:light.toggle",
+      args: { entity_id: "light.kitchen" },
+      pending_action_id: approvedPaId,
+    });
+    expect(tier1.kind).toBe("executed");
+
+    const rowAfterTier1 = expectRow(
+      db
+        .query<
+          ExecutedPendingActionRow,
+          [string]
+        >("SELECT executed_in_tick_id FROM long_lived_pending_actions WHERE id=?")
+        .get(approvedPaId),
+    );
+    expect(rowAfterTier1.executed_in_tick_id).toBeNull();
+
+    insertTick(db, "t3", 201);
+    const replay = await gate.handleCall({
+      agent_id: "home",
+      tick_id: "t3",
+      tool: "ha:integration.install",
+      args: { domain: "mqtt" },
+      pending_action_id: approvedPaId,
+    });
+    expect(replay.kind).toBe("executed");
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
   it("approved replay claims the pending action so only one concurrent caller executes", async () => {
     const db = setup();
     let resolveExec: ((value: { ok: true }) => void) | undefined;

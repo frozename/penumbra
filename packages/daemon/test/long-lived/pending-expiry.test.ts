@@ -208,6 +208,59 @@ describe("runPendingExpiry", () => {
     expect(outboxRows.length).toBe(0);
   });
 
+  it("expiry sweep does not overwrite a concurrently-approved row — status guard prevents race [Race-A]", () => {
+    const db = setup();
+    db.query(
+      `INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'home', 'manual', 100)`,
+    ).run();
+    db.query(
+      `INSERT INTO long_lived_pending_actions (
+         id, agent_id, tick_id, action_kind, action_target, payload_json,
+         status, expires_at, created_at
+       ) VALUES ('pa-race', 'home', 't1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 1)`,
+    ).run();
+
+    const origQuery = (db as unknown as { query: typeof db.query }).query.bind(db);
+    let intercepted = false;
+    (db as unknown as { query: typeof db.query }).query = (sql: string) => {
+      const stmt = origQuery(sql);
+      if (!intercepted && /SET status='expired'/.test(sql)) {
+        intercepted = true;
+        origQuery(
+          "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=80 WHERE id='pa-race'",
+        ).run();
+      }
+      return stmt;
+    };
+
+    const result = runPendingExpiry(db, { now: 100 });
+
+    (db as unknown as { query: typeof db.query }).query = origQuery;
+
+    expect(result.expired).toBe(0);
+
+    const pa = origQuery(
+      "SELECT status, decided_by FROM long_lived_pending_actions WHERE id='pa-race'",
+    ).get() as { status: string; decided_by: string | null } | null;
+    expect(pa).not.toBeNull();
+    expect(pa!.status).toBe("approved");
+    expect(pa!.decided_by).toBe("user");
+
+    const auditRow = origQuery(
+      "SELECT decision FROM long_lived_action_audit WHERE pending_action_id='pa-race'",
+    ).get() as { decision: string } | null;
+    expect(auditRow).toBeNull();
+
+    const wm = origQuery(
+      "SELECT working_memory_json FROM long_lived_agents WHERE id='home'",
+    ).get() as { working_memory_json: string } | null;
+    expect(wm).not.toBeNull();
+    const parsed = JSON.parse(wm!.working_memory_json) as {
+      recent_decisions?: unknown[];
+    };
+    expect((parsed.recent_decisions ?? []).length).toBe(0);
+  });
+
   it("uses project_id from agent in notification outbox entry", () => {
     const db = setup();
     db.prepare(`UPDATE long_lived_agents SET project_id = ? WHERE id = ?`).run(

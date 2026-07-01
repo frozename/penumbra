@@ -41,10 +41,20 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
     .all(now);
 
   const expirePendingAction = db.transaction(
-    (row: { id: string; agent_id: string; action_kind: string; action_target: string }) => {
-      db.query(
-        "UPDATE long_lived_pending_actions SET status='expired', decided_by='auto-expired', decided_at=? WHERE id=?",
-      ).run(now, row.id);
+    (row: {
+      id: string;
+      agent_id: string;
+      action_kind: string;
+      action_target: string;
+    }): boolean => {
+      const updateResult = db
+        .query(
+          "UPDATE long_lived_pending_actions SET status='expired', decided_by='auto-expired', decided_at=? WHERE id=? AND status='pending'",
+        )
+        .run(now, row.id) as { changes: number };
+      if (updateResult.changes === 0) {
+        return false;
+      }
 
       db.query(
         `INSERT INTO long_lived_action_audit (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)
@@ -126,14 +136,18 @@ export function runPendingExpiry(db: Database, opts: PendingExpiryOpts): Pending
           created_at: now,
         });
       }
+
+      return true;
     },
   );
 
   let expired = 0;
   for (const row of pendingActions) {
     try {
-      expirePendingAction(row);
-      expired += 1;
+      const didExpire = expirePendingAction(row);
+      if (didExpire) {
+        expired += 1;
+      }
     } catch {
       // Per-row safety net: a row-level failure must not block the rest of
       // the sweep. The inner transaction rolls back any partial writes for

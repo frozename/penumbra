@@ -317,13 +317,20 @@ function queueApproval(
   return { kind: "queued", pending_action_id: id };
 }
 
-function markPendingExecuted(deps: ActionGateDeps, tickId: string, pendingActionId?: string): void {
+function markPendingExecuted(
+  deps: ActionGateDeps,
+  tickId: string,
+  agentId: string,
+  pendingActionId?: string,
+): void {
   if (!pendingActionId) {
     return;
   }
   deps.db
-    .query("UPDATE long_lived_pending_actions SET executed_in_tick_id=? WHERE id=?")
-    .run(tickId, pendingActionId);
+    .query(
+      "UPDATE long_lived_pending_actions SET executed_in_tick_id=? WHERE id=? AND agent_id=? AND status='approved'",
+    )
+    .run(tickId, pendingActionId, agentId);
 }
 
 function normalizeReplayArgs(args: unknown): unknown {
@@ -523,7 +530,9 @@ async function executeTier2(
       ? `snapshot:${snapshotId}; cooldown_until:${String(until)}`
       : `cooldown_until:${String(until)}`,
   });
-  markPendingExecuted(deps, req.tick_id, req.pending_action_id);
+  if (replayRequiresClaim) {
+    markPendingExecuted(deps, req.tick_id, req.agent_id, req.pending_action_id);
+  }
   return { kind: "executed", result: result.result, tier: 2, snapshot_id: snapshotId };
 }
 
@@ -585,7 +594,9 @@ async function executeTier1(
     decision: "executed",
     reason: "tier_1",
   });
-  markPendingExecuted(deps, req.tick_id, req.pending_action_id);
+  if (replayRequiresClaim) {
+    markPendingExecuted(deps, req.tick_id, req.agent_id, req.pending_action_id);
+  }
   return { kind: "executed", result: result.result, tier: 1 };
 }
 
