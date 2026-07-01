@@ -84,4 +84,61 @@ describe("long_lived_approve_action", () => {
       payload: { action_id: "p1", decision: "approved" },
     });
   });
+
+  it("does not append a duplicate pending_goals entry when approve is called a second time on the same action_id", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    // First call - must succeed
+    const r1 = handleLongLivedApproveAction(
+      db,
+      { emit: () => {}, now: () => 50 },
+      { action_id: "p1" },
+    );
+    expect(r1.ok).toBe(true);
+
+    // Second call on the same (now 'approved') action_id must throw
+    expect(() =>
+      handleLongLivedApproveAction(db, { emit: () => {}, now: () => 60 }, { action_id: "p1" }),
+    ).toThrow("not_pending");
+
+    // Invariant: exactly one pending_goals entry - no duplicate from the second call
+    const agentRow = db
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get()!;
+    const wm = JSON.parse(agentRow.working_memory_json) as { pending_goals: unknown[] };
+    expect(wm.pending_goals).toHaveLength(1);
+  });
+
+  it("throws not_pending and does not overwrite an expired row to approved", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    // Simulate the TTL sweep having fired - row is now expired
+    db.query("UPDATE long_lived_pending_actions SET status='expired' WHERE id='p1'").run();
+
+    // Approve must reject
+    expect(() =>
+      handleLongLivedApproveAction(db, { emit: () => {}, now: () => 50 }, { action_id: "p1" }),
+    ).toThrow("not_pending");
+
+    // Row must remain expired - not overwritten to approved
+    const row = db
+      .query<{ status: string }, []>("SELECT status FROM long_lived_pending_actions WHERE id='p1'")
+      .get()!;
+    expect(row.status).toBe("expired");
+
+    // working_memory must have no pending_goals entries
+    const agentRow = db
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get()!;
+    const wm = JSON.parse(agentRow.working_memory_json) as { pending_goals?: unknown[] };
+    expect(wm.pending_goals ?? []).toHaveLength(0);
+  });
 });

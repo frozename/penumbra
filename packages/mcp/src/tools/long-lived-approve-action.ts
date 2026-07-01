@@ -47,15 +47,16 @@ export function handleLongLivedApproveAction(
   if (!row) {
     throw new Error("not_found");
   }
-  if (row.status !== "pending") {
-    throw new Error("not_pending");
-  }
 
   const now = deps.now();
   db.transaction(() => {
     db.query(
-      "UPDATE long_lived_pending_actions SET status='approved', decided_by=?, decided_at=? WHERE id=?",
+      "UPDATE long_lived_pending_actions SET status='approved', decided_by=?, decided_at=? WHERE id=? AND status='pending'",
     ).run(decided_by ?? "user", now, action_id);
+    const { changes } = db.query<{ changes: number }, []>("SELECT changes() AS changes").get()!;
+    if (changes === 0) {
+      throw new Error("not_pending");
+    }
     db.query(
       `INSERT INTO long_lived_action_audit
       (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)

@@ -79,4 +79,61 @@ describe("long_lived_reject_action", () => {
       decided_at: 50,
     });
   });
+
+  it("does not append a duplicate recent_decisions entry when reject is called a second time on the same action_id", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    // First call - must succeed
+    const r1 = handleLongLivedRejectAction(
+      db,
+      { emit: () => {}, now: () => 50 },
+      { action_id: "p1", reason: "too risky" },
+    );
+    expect(r1.ok).toBe(true);
+
+    // Second call on the same (now 'rejected') action_id must throw
+    expect(() =>
+      handleLongLivedRejectAction(db, { emit: () => {}, now: () => 60 }, { action_id: "p1" }),
+    ).toThrow("not_pending");
+
+    // Invariant: exactly one recent_decisions entry - no duplicate from the second call
+    const agentRow = db
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get()!;
+    const wm = JSON.parse(agentRow.working_memory_json) as { recent_decisions: unknown[] };
+    expect(wm.recent_decisions).toHaveLength(1);
+  });
+
+  it("throws not_pending and does not overwrite an expired row to rejected", () => {
+    const db = new Database(":memory:");
+    seed(db);
+
+    // Simulate the TTL sweep having fired - row is now expired
+    db.query("UPDATE long_lived_pending_actions SET status='expired' WHERE id='p1'").run();
+
+    // Reject must refuse
+    expect(() =>
+      handleLongLivedRejectAction(db, { emit: () => {}, now: () => 50 }, { action_id: "p1" }),
+    ).toThrow("not_pending");
+
+    // Row must remain expired - not overwritten to rejected
+    const row = db
+      .query<{ status: string }, []>("SELECT status FROM long_lived_pending_actions WHERE id='p1'")
+      .get()!;
+    expect(row.status).toBe("expired");
+
+    // working_memory must have no recent_decisions entries
+    const agentRow = db
+      .query<
+        { working_memory_json: string },
+        []
+      >("SELECT working_memory_json FROM long_lived_agents WHERE id='a'")
+      .get()!;
+    const wm = JSON.parse(agentRow.working_memory_json) as { recent_decisions?: unknown[] };
+    expect(wm.recent_decisions ?? []).toHaveLength(0);
+  });
 });
