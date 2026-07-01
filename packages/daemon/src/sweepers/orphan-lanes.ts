@@ -99,17 +99,24 @@ export function runOrphanLanesSweep(
     try {
       let aborted = false;
       services.db.transaction(() => {
-        if (row.reviewer_handoff) {
-          const reviewerNow = services.db
-            .query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id = ?`)
-            .get(row.reviewer_handoff);
-          if (
-            reviewerNow &&
-            !(TERMINAL_HANDOFF_STATUSES as readonly string[]).includes(reviewerNow.status)
-          ) {
-            aborted = true;
-            return;
-          }
+        const liveReviewer = services.db
+          .query<{ reviewer_handoff: string | null; reviewer_status: string | null }, [string]>(
+            `
+              SELECT l.reviewer_handoff, rh.status AS reviewer_status
+              FROM lane_ledger l
+              LEFT JOIN handoffs rh ON l.reviewer_handoff = rh.handoff_id
+              WHERE l.lane_id = ?
+            `,
+          )
+          .get(row.lane_id);
+        const reviewerHandoff = liveReviewer?.reviewer_handoff ?? null;
+        if (
+          reviewerHandoff &&
+          liveReviewer?.reviewer_status &&
+          !(TERMINAL_HANDOFF_STATUSES as readonly string[]).includes(liveReviewer.reviewer_status)
+        ) {
+          aborted = true;
+          return;
         }
         closeLaneWithLog(
           services.db,
@@ -117,7 +124,7 @@ export function runOrphanLanesSweep(
           {
             ts_closed: now_iso,
             gate_status: row.task_class === "TRIVIAL" ? "skipped" : "review_debt",
-            reviewer_handoff: row.reviewer_handoff,
+            reviewer_handoff: reviewerHandoff,
             override_reason: reason,
             metadata: {
               notes: `orphan-lane sweep on ${now_iso}; implementer ${row.implementer_handoff} ${row.handoff_status}`,

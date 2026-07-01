@@ -389,6 +389,38 @@ test("aborts close when reviewer transitions to in-flight between SELECT and tra
   expect(getLane(db, "lane-1")?.gate_status).toBe("open");
 });
 
+test("aborts close when reviewer is assigned after stale outer snapshot saw none", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, "h-impl", "completed", PAST_GRACE);
+  insertHandoff(db, "h-reviewer", "dispatched", null);
+  openLane(db, "lane-1", "h-impl");
+
+  const originalTransaction = services.db.transaction.bind(services.db);
+  let assigned = false;
+  (services.db as { transaction: typeof services.db.transaction }).transaction = ((
+    fn: (...args: unknown[]) => unknown,
+  ): ((...args: unknown[]) => unknown) => {
+    const callable = originalTransaction(fn);
+    return ((...args: unknown[]): unknown => {
+      if (!assigned) {
+        setReviewerHandoff(db, "lane-1", "h-reviewer");
+        assigned = true;
+      }
+      return callable(...args);
+    }) as never;
+  }) as never;
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
+
+  expect(result.scanned).toBe(1);
+  expect(result.closed).toBe(0);
+  const lane = getLane(db, "lane-1");
+  expect(lane?.gate_status).toBe("open");
+  expect(lane?.reviewer_handoff).toBe("h-reviewer");
+});
+
 test("orphan-lane sweeper close explicitly skips memory verify authorization", () => {
   const db = setupDb();
   const services = makeServices(db);

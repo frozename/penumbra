@@ -413,9 +413,10 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   const parsePlanFile = makeParsePlanFile(cache, planParser);
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
   let running = false;
+  let rerunRequested = false;
   let activeEventIterator: AsyncIterableIterator<TaskEvent> | null = null;
 
-  async function tick(): Promise<{ fired: string[] }> {
+  async function runTickBody(): Promise<{ fired: string[] }> {
     const fired: string[] = [];
     const runningPlans = opts.plans.listPlans({ status: "running" });
 
@@ -435,6 +436,26 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
     }
 
     return { fired };
+  }
+
+  async function tick(): Promise<{ fired: string[] }> {
+    if (running) {
+      rerunRequested = true;
+      return { fired: [] };
+    }
+
+    running = true;
+    try {
+      return await runTickBody();
+    } finally {
+      running = false;
+      if (rerunRequested) {
+        rerunRequested = false;
+        void tick().catch((error: unknown) => {
+          opts.log?.warn?.("[plan-runtime] coalesced tick failed", { error: String(error) });
+        });
+      }
+    }
   }
 
   function handleTaskEvent(event: TaskEvent): void {
@@ -492,10 +513,8 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
     start(): void {
       if (intervalHandle) return;
       intervalHandle = setInterval(() => {
-        if (running) return;
-        running = true;
-        void tick().finally(() => {
-          running = false;
+        void tick().catch((error: unknown) => {
+          opts.log?.warn?.("[plan-runtime] interval tick failed", { error: String(error) });
         });
       }, intervalMs);
       intervalHandle.unref();
