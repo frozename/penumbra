@@ -60,6 +60,18 @@ interface PlanRuntimeLog {
   info?: (msg: string, meta?: Record<string, unknown>) => void;
 }
 
+// PlanRuntimeLog declares warn(msg, meta) for historical reasons, but the
+// production logger is pino, whose structured context must be the first arg.
+// This helper is scoped to the live-verified quarantine warning; fixing the
+// other historical warn(msg, meta) sites is a separate follow-up.
+function warnWithContext(
+  log: PlanRuntimeLog | undefined,
+  meta: Record<string, unknown>,
+  msg: string,
+): void {
+  (log?.warn as ((obj: Record<string, unknown>, msg?: string) => void) | undefined)?.(meta, msg);
+}
+
 export interface PlanRuntimeSweeperOpts {
   db: Database;
   plans: PlanWriter;
@@ -76,6 +88,8 @@ const defaultBounds: PlanRuntimeBounds = {
   cost_cents: 50,
   max_sub_dispatches: 3,
 };
+
+const PARSE_FAILURE_QUARANTINE_THRESHOLD = 3;
 
 interface BranchBaseCtx {
   taskMeta: PlanRuntimeParsedTask;
@@ -410,6 +424,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   const now = opts.now ?? Date.now;
   const planParser = opts.planParser ?? parsePlanMetaFile;
   const cache = new Map<string, ParseCacheEntry>();
+  const parseFailureCounts = new Map<string, number>();
   const parsePlanFile = makeParsePlanFile(cache, planParser);
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
   let running = false;
@@ -424,12 +439,41 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
       let parsed: PlanRuntimeParseResult;
       try {
         parsed = await parsePlanFile(plan.file_path);
+        parseFailureCounts.delete(plan.plan_id);
       } catch (error: unknown) {
-        opts.log?.warn?.("[plan-runtime] plan parse failed", {
-          plan_id: plan.plan_id,
-          file_path: plan.file_path,
-          error: String(error),
-        });
+        const isEnoent = (error as NodeJS.ErrnoException)?.code === "ENOENT";
+        const attempts = (parseFailureCounts.get(plan.plan_id) ?? 0) + 1;
+        parseFailureCounts.set(plan.plan_id, attempts);
+
+        if (isEnoent || attempts >= PARSE_FAILURE_QUARANTINE_THRESHOLD) {
+          const reason = isEnoent
+            ? "plan file missing (ENOENT)"
+            : `plan parse failed ${attempts} consecutive times: ${String(error)}`;
+          warnWithContext(
+            opts.log,
+            { plan_id: plan.plan_id, file_path: plan.file_path, error: String(error), reason },
+            "[plan-runtime] quarantining plan after parse failure",
+          );
+          opts.plans.markPlanStatus(plan.plan_id, "failed");
+          opts.db
+            .query<unknown, [string, string, string]>(
+              `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+               VALUES (?, NULL, 'sweeper', 'plan.quarantined', ?, ?)`,
+            )
+            .run(
+              plan.plan_id,
+              new Date(now()).toISOString(),
+              JSON.stringify({ plan_id: plan.plan_id, file_path: plan.file_path, reason }),
+            );
+          parseFailureCounts.delete(plan.plan_id);
+        } else {
+          opts.log?.warn?.("[plan-runtime] plan parse failed", {
+            plan_id: plan.plan_id,
+            file_path: plan.file_path,
+            error: String(error),
+            attempts,
+          });
+        }
         continue;
       }
       await processPlan(opts, plan, parsed, now, fired);

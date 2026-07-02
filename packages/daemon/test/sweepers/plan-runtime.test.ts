@@ -877,3 +877,121 @@ test("omits undefined body text from the dispatched prompt", async () => {
   expect(prompts[0]).toContain("Implement Task 1.1 of plan p1.");
   expect(prompts[0]).not.toContain("undefined");
 });
+
+test("running plan with missing file is quarantined (fail-closed) and not re-parsed on subsequent ticks", async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const taskWriter = makeTaskWriter(db);
+  const missingPath = join(mkdtempSync(join(tmpdir(), "plan-runtime-missing-")), "gone.md");
+  plans.register({
+    plan_id: "p-missing",
+    file_path: missingPath, // never written to disk
+    home_project: "penumbra",
+    tasks: [{ task_meta_id: "1.1", project_id: "penumbra" }],
+  });
+
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: "p-missing", home_project: "penumbra" }, [
+      { ...baseTask, id: "1.1", depends_on: [] },
+    ]),
+  });
+
+  const r1 = await sweeper.tick();
+  expect(r1.fired).toEqual([]);
+  expect(plans.getPlan("p-missing")?.status).toBe("failed");
+  expect(plans.listPlans({ status: "running" })).toEqual([]);
+
+  const countAfterFirst = db
+    .query<
+      { count: number },
+      [string, string]
+    >("SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = ?")
+    .get("p-missing", "plan.quarantined");
+  expect(countAfterFirst?.count).toBe(1);
+
+  // Second tick must not re-parse or re-quarantine - this is the hot-loop pin.
+  const r2 = await sweeper.tick();
+  expect(r2.fired).toEqual([]);
+  const countAfterSecond = db
+    .query<
+      { count: number },
+      [string, string]
+    >("SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = ?")
+    .get("p-missing", "plan.quarantined");
+  expect(countAfterSecond?.count).toBe(1);
+});
+
+test("transient (non-ENOENT) parse errors retry under threshold, then quarantine on the 3rd consecutive failure", async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const taskWriter = makeTaskWriter(db);
+  let parseCalls = 0;
+  plans.register({
+    plan_id: "p-flaky",
+    file_path: makePlanFile("p-flaky.md"), // real file - failure comes from the parser, not readFile
+    home_project: "penumbra",
+    tasks: [{ task_meta_id: "1.1", project_id: "penumbra" }],
+  });
+
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: () => {
+      parseCalls += 1;
+      return Promise.reject(new Error("malformed plan meta"));
+    },
+  });
+
+  await sweeper.tick();
+  expect(plans.getPlan("p-flaky")?.status).toBe("running");
+  await sweeper.tick();
+  expect(plans.getPlan("p-flaky")?.status).toBe("running");
+  await sweeper.tick();
+  expect(plans.getPlan("p-flaky")?.status).toBe("failed");
+  expect(parseCalls).toBe(3);
+
+  const event = db
+    .query<
+      { count: number },
+      [string, string]
+    >("SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = ?")
+    .get("p-flaky", "plan.quarantined");
+  expect(event?.count).toBe(1);
+});
+
+test("quarantine warn passes context as pino's first positional arg (not dropped as an interpolation value)", async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const taskWriter = makeTaskWriter(db);
+  const calls: unknown[][] = [];
+  const missingPath = join(mkdtempSync(join(tmpdir(), "plan-runtime-missing-")), "gone.md");
+  plans.register({
+    plan_id: "p-missing-2",
+    file_path: missingPath,
+    home_project: "penumbra",
+    tasks: [{ task_meta_id: "1.1", project_id: "penumbra" }],
+  });
+
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    // Raw rest-arg capture (not the file's usual (msg, meta) mock shape) so
+    // this test observes real ARGUMENT POSITION, which is what pino cares about.
+    log: { warn: (...args: unknown[]) => calls.push(args) },
+    planParser: fakeParser({ plan_id: "p-missing-2", home_project: "penumbra" }, [
+      { ...baseTask, id: "1.1", depends_on: [] },
+    ]),
+  });
+
+  await sweeper.tick();
+  expect(calls.length).toBeGreaterThan(0);
+  const [firstArg, secondArg] = calls[0]!;
+  expect(typeof firstArg).toBe("object");
+  expect((firstArg as Record<string, unknown>).plan_id).toBe("p-missing-2");
+  expect(typeof secondArg).toBe("string");
+});

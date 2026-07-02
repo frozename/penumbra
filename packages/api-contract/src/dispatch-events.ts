@@ -39,6 +39,7 @@ export const DispatchEventKindSchema = z.enum([
   "shell.run",
   "shell.session.close",
   "worktree.gc",
+  "plan.quarantined",
   "worker.recovery.requeued",
   "worker.recovery.exhausted",
   "lane.override",
