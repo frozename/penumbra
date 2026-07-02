@@ -39,7 +39,7 @@ export interface MergeResult {
   error_code?: "invalid_branch_base" | "invalid_branch" | "invalid_test_package_path";
 }
 
-type CheckStatus = "pass" | "fail" | "skipped";
+type CheckStatus = "pass" | "fail" | "skipped" | "error";
 
 export interface ReconcilerVerdict {
   handoff_id: string;
@@ -258,6 +258,12 @@ function commandErrorInfo(err: unknown): CommandErrorInfo {
     };
   }
   return { exitCode: -1, stdout: "", stderr: "" };
+}
+
+// Empty stdout and stderr means verification never produced a real diagnostic
+// signal; treat it as an environment fault, not dispatched-code failure.
+function isVerificationEnvironmentFailure(info: CommandErrorInfo): boolean {
+  return info.stdout.trim() === "" && info.stderr.trim() === "";
 }
 
 /** Small wrapper so command construction stays type-safe at call sites. */
@@ -849,7 +855,8 @@ function buildVerdictSummary(
   if (pr_url) summaryParts.push("pr-opened");
   if (result.status === "no_changes") summaryParts.push("no-changes");
   if (result.status === "typecheck_failed" || result.status === "test_failed") {
-    summaryParts.push("verification-failed");
+    const isEnvError = state.typecheckStatus === "error" || state.testStatus === "error";
+    summaryParts.push(isEnvError ? "verification-error" : "verification-failed");
   }
   return summaryParts.join(" | ").slice(0, 220);
 }
@@ -1007,7 +1014,7 @@ async function emitInvalidInputResult(
 }
 
 async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
-  const { deps, wt, baseRef, state } = ctx;
+  const { deps, wt, baseRef, state, handoffId } = ctx;
   const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   try {
     // Use the symmetric-difference operator (`A...B`) consistently with the
@@ -1026,7 +1033,11 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
       .filter(Boolean);
     state.changedFiles = new Set(diffFiles);
     state.affectedPackages = resolveAffectedPackages(diffFiles);
-  } catch {
+  } catch (err) {
+    deps.log.warn(
+      { handoffId, baseRef, branch: wt.branchName, err: String(err) },
+      "gatherChangedFiles diff failed; falling back to unscoped full-repo verification",
+    );
     state.affectedPackages = null;
   }
 }
@@ -1186,8 +1197,21 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
     }
     return await runScopedTypecheck(ctx, affectedPackages, timeout);
   } catch (err: unknown) {
-    ctx.state.typecheckStatus = "fail";
     const info = commandErrorInfo(err);
+    if (isVerificationEnvironmentFailure(info)) {
+      ctx.state.typecheckStatus = "error";
+      ctx.deps.log.warn(
+        { handoffId: ctx.handoffId, stage: "typecheck", err: String(err) },
+        "verification environment failed; not attributable to dispatched code",
+      );
+      const result: MergeResult = {
+        status: "typecheck_failed",
+        regression_summary: `verification environment error (typecheck): ${String(err)}`,
+      };
+      await emitResult(ctx, result);
+      return result;
+    }
+    ctx.state.typecheckStatus = "fail";
     const output = `${info.stdout}${info.stderr}`;
     const diagnostics = parseTypecheckDiagnostics(output);
     if (diagnostics.length > 0 && (ctx.state.changedFiles.size > 0 || affectedPackages === null)) {
@@ -1252,8 +1276,21 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     state.testStatus = "pass";
     return null;
   } catch (err: unknown) {
-    state.testStatus = "fail";
     const info = commandErrorInfo(err);
+    if (isVerificationEnvironmentFailure(info)) {
+      state.testStatus = "error";
+      deps.log.warn(
+        { handoffId, stage: "tests", err: String(err) },
+        "verification environment failed; not attributable to dispatched code",
+      );
+      const result: MergeResult = {
+        status: "test_failed",
+        regression_summary: `verification environment error (tests): ${String(err)}`,
+      };
+      await emitResult(ctx, result);
+      return result;
+    }
+    state.testStatus = "fail";
     const result: MergeResult = {
       status: "test_failed",
       regression_summary: info.stderr || info.stdout || String(err),

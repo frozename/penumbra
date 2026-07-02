@@ -673,6 +673,25 @@ test("Typecheck fail: returns typecheck_failed and skips PR creation", async () 
   });
 });
 
+test("Typecheck environment failure (empty-output exec error): stamps 'error' not 'fail', logs the break", async () => {
+  execFailures.set("git diff --name-only", new ExecCommandError({}));
+  execFailures.set(
+    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+    new ExecCommandError({}),
+  );
+
+  const result = await reconcile("h-env-tc");
+
+  expect(result.status).toBe("typecheck_failed");
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h-env-tc",
+    typecheck: "error",
+    tests: "skipped",
+  });
+  expect(logMocks.warn).toHaveBeenCalled();
+});
+
 test("Test fail: returns test_failed and skips PR creation", async () => {
   execFailures.set("bun test", new ExecCommandError({ stderr: "1 test failed" }));
 
@@ -688,6 +707,20 @@ test("Test fail: returns test_failed and skips PR creation", async () => {
   expect(notifyResultMock).toHaveBeenCalledWith("h3", {
     status: "test_failed",
     regression_summary: "1 test failed",
+  });
+});
+
+test("Test environment failure (empty-output exec error): stamps 'error' not 'fail'", async () => {
+  execFailures.set("bun test", new ExecCommandError({}));
+
+  const result = await reconcile("h-env-test");
+
+  expect(result.status).toBe("test_failed");
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h-env-test",
+    typecheck: "pass",
+    tests: "error",
   });
 });
 

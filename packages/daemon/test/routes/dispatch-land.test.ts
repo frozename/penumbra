@@ -275,8 +275,8 @@ function writeVerdictEvent(
     ts: string;
     handoffId: string;
     conversationId: string;
-    typecheck: "pass" | "fail";
-    tests: "pass" | "fail";
+    typecheck: "pass" | "fail" | "error";
+    tests: "pass" | "fail" | "error" | "skipped";
   },
 ): void {
   svc.t0Writer.write({
@@ -1720,6 +1720,157 @@ describe("dispatchLandRoute", () => {
         body: JSON.stringify({
           handoff_id: "h-audit-unverified",
           commit_message: "feat(core): audit-accept rescues missing verdict",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse") {
+            revParseCount += 1;
+            return {
+              code: 0,
+              stdout: revParseCount === 1 ? "base-main\n" : "new-main\n",
+              stderr: "",
+            };
+          }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result.commit_sha).toBe("new-main");
+  });
+
+  test("returns 409 verdict_unverified when environment-error verdict lacks audit accept", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-env-unverified", "c-env-unverified");
+    writeVerdictEvent(svc, {
+      eventId: "v-env-unverified",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-env-unverified",
+      conversationId: "c-env-unverified",
+      typecheck: "error",
+      tests: "skipped",
+    });
+
+    let called = false;
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-env-unverified",
+          commit_message: "feat(core): should not land unverified",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: () => {
+          called = true;
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(called).toBe(false);
+    const body = await readJsonAs<ErrorEnvelope>(res);
+    expect(body.error.code).toBe("verdict_unverified");
+    expect(body.error.verdict?.typecheck).toBe("error");
+  });
+
+  test("auto-accepts environment-error verdict when dispatch audit is trustworthy + recommends accept", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-audit-envfail", "c-audit-envfail");
+    writeVerdictEvent(svc, {
+      eventId: "v-audit-envfail",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-audit-envfail",
+      conversationId: "c-audit-envfail",
+      typecheck: "error",
+      tests: "skipped",
+    });
+
+    svc.db
+      .query<
+        unknown,
+        [string, string, string]
+      >(`UPDATE handoffs SET status='completed', worker_id=?, resolved_at=? WHERE handoff_id=?`)
+      .run("worker-1", "2026-05-08T00:03:00.000Z", "h-audit-envfail");
+    svc.dispatchEventLog.recordBatch([
+      {
+        handoff_id: "h-audit-envfail",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "dispatch.start",
+        ts: "2026-05-08T00:01:10.000Z",
+      },
+      {
+        handoff_id: "h-audit-envfail",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "proc.spawn",
+        ts: "2026-05-08T00:01:11.000Z",
+      },
+      {
+        handoff_id: "h-audit-envfail",
+        worker_id: "worker-1",
+        source: "worker",
+        kind: "dispatch.end",
+        ts: "2026-05-08T00:02:10.000Z",
+      },
+    ]);
+    svc.t0Writer.write({
+      event_id: "resp-audit-envfail",
+      ts: "2026-05-08T00:02:20.000Z",
+      ingest_ts: "2026-05-08T00:02:20.000Z",
+      source: "agentchat",
+      source_detail: "codex",
+      project_id: null,
+      user_id: "codex",
+      machine_id: "machine-1",
+      session_id: "c-audit-envfail",
+      event_type: "agent-response",
+      lane: "local",
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: { response: "done" },
+      payload_summary: "done",
+    });
+
+    let revParseCount = 0;
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-audit-envfail",
+          commit_message: "feat(core): audit-accept rescues environment error",
           mode: "squash",
           delete_branch: false,
         }),

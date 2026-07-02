@@ -262,7 +262,8 @@ function verdictHardFail(verdict: Record<string, unknown> | null): boolean {
 }
 
 function verdictUnverified(verdict: Record<string, unknown> | null): boolean {
-  return verdict === null;
+  if (verdict === null) return true;
+  return verdict.typecheck === "error" || verdict.tests === "error";
 }
 
 function verdictConflictFiles(verdict: Record<string, unknown> | null): string[] | null {
