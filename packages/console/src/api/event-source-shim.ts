@@ -12,7 +12,19 @@ export interface ShimOpts {
   onConnected?: () => void;
   onTransportError?: (err: unknown) => void;
   fetchImpl?: typeof fetch;
+  /**
+   * Max ms between successful chunk reads before the connection is treated as
+   * silently stalled. On expiry the fetch is aborted, which surfaces through
+   * the existing onTransportError → reconnect path. Set to 0 or negative to
+   * disable the watchdog. Defaults to 90_000 (server sends `: keepalive`
+   * every 30s, so 90s tolerates one dropped tick).
+   */
+  idleTimeoutMs?: number;
+  setTimeoutImpl?: (fn: () => void, ms: number) => unknown;
+  clearTimeoutImpl?: (handle: unknown) => void;
 }
+
+const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
 
 type Listener = (msg: { data: string; type: string }) => void;
 type ListenerMap = Map<string, Listener[]>;
@@ -61,6 +73,10 @@ interface ReadLoopCtx {
   isClosed: () => boolean;
   emit: (eventName: string, data: string) => void;
   onOverflow: () => boolean;
+  idleTimeoutMs: number;
+  setTimeoutImpl: (fn: () => void, ms: number) => unknown;
+  clearTimeoutImpl: (handle: unknown) => void;
+  abort: () => void;
 }
 
 function drainBuffer(buffer: string, ctx: ReadLoopCtx): { buffer: string; overflowed: boolean } {
@@ -79,11 +95,36 @@ function drainBuffer(buffer: string, ctx: ReadLoopCtx): { buffer: string; overfl
   return { buffer: rest, overflowed: false };
 }
 
+type ReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
+
+async function readWithIdleWatchdog(ctx: ReadLoopCtx): Promise<ReadResult> {
+  if (ctx.idleTimeoutMs <= 0) return ctx.reader.read();
+  let timerHandle: unknown = null;
+  const idlePromise = new Promise<never>((_, reject) => {
+    timerHandle = ctx.setTimeoutImpl(() => {
+      // Abort the underlying fetch so a wedged reader.read() eventually rejects
+      // and the surrounding runSseConnection catch fires onTransportError. Do
+      // not invent a parallel recovery path — reuse the existing one.
+      ctx.abort();
+      reject(new Error("sse_idle_timeout"));
+    }, ctx.idleTimeoutMs);
+  });
+  try {
+    return await Promise.race([ctx.reader.read(), idlePromise]);
+  } finally {
+    if (timerHandle !== null) ctx.clearTimeoutImpl(timerHandle);
+  }
+}
+
 async function readLoop(ctx: ReadLoopCtx): Promise<void> {
   const decoder = new TextDecoder();
   let buffer = "";
   while (!ctx.isClosed()) {
-    const { value, done } = await ctx.reader.read();
+    // Race each read against an idle timer. Any resolved read — including
+    // one whose payload turns out to be a `: keepalive` comment after
+    // parseEventChunk — resets the timer implicitly by starting a fresh one
+    // on the next loop iteration, so keepalive-only frames count as activity.
+    const { value, done } = await readWithIdleWatchdog(ctx);
     if (done) throw new Error("sse_stream_ended");
     buffer += decoder.decode(value, { stream: true });
     if (buffer.includes("\r\n")) buffer = buffer.replaceAll("\r\n", "\n");
@@ -105,6 +146,9 @@ async function runSseConnection(
     isClosed: () => boolean;
     emit: (eventName: string, data: string) => void;
     onOverflow: () => boolean;
+    idleTimeoutMs: number;
+    setTimeoutImpl: (fn: () => void, ms: number) => unknown;
+    clearTimeoutImpl: (handle: unknown) => void;
   },
 ): Promise<void> {
   try {
@@ -123,6 +167,16 @@ async function runSseConnection(
       isClosed: ctx.isClosed,
       emit: ctx.emit,
       onOverflow: ctx.onOverflow,
+      idleTimeoutMs: ctx.idleTimeoutMs,
+      setTimeoutImpl: ctx.setTimeoutImpl,
+      clearTimeoutImpl: ctx.clearTimeoutImpl,
+      abort: (): void => {
+        try {
+          ctx.controller.abort();
+        } catch {
+          /* ignore */
+        }
+      },
     });
   } catch (err) {
     if (ctx.isClosed()) return;
@@ -139,6 +193,14 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
   const listeners: ListenerMap = new Map();
+  const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const setTimeoutImpl =
+    opts.setTimeoutImpl ?? ((fn, ms): unknown => globalThis.setTimeout(fn, ms));
+  const clearTimeoutImpl =
+    opts.clearTimeoutImpl ??
+    ((h): void => {
+      globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>);
+    });
   let closed = false;
 
   function addEventListener(event: string, listener: Listener): void {
@@ -181,6 +243,9 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
       dispatchEvent(listeners, opts.url, eventName, data);
     },
     onOverflow: reportOverflow,
+    idleTimeoutMs,
+    setTimeoutImpl,
+    clearTimeoutImpl,
   });
 
   return { addEventListener, close };

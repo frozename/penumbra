@@ -296,6 +296,63 @@ describe("createSseSource", () => {
     src.close();
   });
 
+  test("idle stall triggers onTransportError via injected watchdog", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const onErr = mock((_e: unknown): void => {
+      /* spy */
+    });
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      onTransportError: onErr,
+      fetchImpl,
+      idleTimeoutMs: 40,
+    });
+    src.addEventListener("message", noop);
+
+    await flushMicrotasks();
+    // One frame lands, then the stream never delivers another chunk.
+    controller.send(":keepalive\n\n");
+    await flushMicrotasks();
+    // Wait past the idle threshold so the watchdog fires.
+    await new Promise((r) => setTimeout(r, 120));
+    await flushMicrotasks();
+
+    expect(onErr).toHaveBeenCalledTimes(1);
+    const err = onErr.mock.calls[0]![0] as Error;
+    expect(err.message).toBe("sse_idle_timeout");
+    src.close();
+  });
+
+  test("idle watchdog does not fire while chunks keep arriving", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const onErr = mock((_e: unknown): void => {
+      /* spy */
+    });
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      onTransportError: onErr,
+      fetchImpl,
+      idleTimeoutMs: 60,
+    });
+    const received: { data: string; type: string }[] = [];
+    src.addEventListener("message", (m) => received.push(m));
+
+    await flushMicrotasks();
+    // Keepalive comment counts as activity; then a real event well within the window.
+    controller.send(":keepalive\n\n");
+    await new Promise((r) => setTimeout(r, 30));
+    controller.send("data: real\n\n");
+    await flushMicrotasks();
+
+    expect(onErr).toHaveBeenCalledTimes(0);
+    expect(received).toEqual([{ data: "real", type: "message" }]);
+    src.close();
+  });
+
   test("oversized single event triggers sse_buffer_overflow", async () => {
     const { response, controller } = makeMockResponse();
     fetchImpl = makeFetch(response);
