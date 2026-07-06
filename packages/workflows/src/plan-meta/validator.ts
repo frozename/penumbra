@@ -139,13 +139,16 @@ function collectCycleNodes(
 
 function validateParallel(
   task: ValidatorTask,
-  tasks: ValidatorTask[],
-  taskIndex: TaskIndex,
+  eff: string | undefined,
+  canonicalIndex: Map<string, ValidatorTask>,
+  header: ValidatorPlanHeader | undefined,
   errors: ValidationError[],
 ): void {
   for (const parallelId of task.parallel_with) {
-    const parallelTaskIndex = taskIndex.get(parallelId);
-    if (parallelTaskIndex === undefined) {
+    const parsed = parseDep(parallelId, eff);
+    const parallelKey = canonicalKey(parsed.project, parsed.id);
+    const parallelTask = canonicalIndex.get(parallelKey);
+    if (!parallelTask) {
       errors.push({
         task_id: task.id,
         rule: "parallel_with_unknown",
@@ -153,11 +156,15 @@ function validateParallel(
       });
       continue;
     }
-    const parallelTask = tasks[parallelTaskIndex];
-    if (!parallelTask) {
-      continue;
-    }
-    if (!parallelTask.parallel_with.includes(task.id)) {
+    const targetEff = effectiveProject(parallelTask, header);
+    const reciprocalKey = canonicalKey(eff, task.id);
+    const targetParallelKeys = new Set(
+      parallelTask.parallel_with.map((entry) => {
+        const targetParsed = parseDep(entry, targetEff);
+        return canonicalKey(targetParsed.project, targetParsed.id);
+      }),
+    );
+    if (!targetParallelKeys.has(reciprocalKey)) {
       errors.push({
         task_id: task.id,
         rule: "parallel_with_not_reciprocal",
@@ -249,7 +256,7 @@ export async function validatePlan(
 
   for (const task of tasks) {
     const eff = effectiveProject(task, opts.header);
-    validateParallel(task, tasks, taskIndex, errors);
+    validateParallel(task, eff, canonicalIndex, opts.header, errors);
     await validateFiles(task, opts.repoRoot, errors);
     validateAgents(task, opts.knownAgents, errors);
     if (opts.projectRegistry && eff && !opts.projectRegistry.has(eff)) {

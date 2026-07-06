@@ -110,4 +110,20 @@ describe("validatePlan cross-project rules", () => {
     });
     expect(errors).toEqual([]);
   });
+
+  test("bare parallel_with resolves to declaring task project", async () => {
+    const repoRoot = await emptyRepoRoot();
+    const tasks: ValidatorTask[] = [
+      task({ id: "1.1", project: "penumbra", parallel_with: ["2.1"] }),
+      task({ id: "2.1", project: "penumbra", parallel_with: ["1.1"] }),
+      task({ id: "2.1", project: "sirius" }),
+    ];
+    const errors = await validatePlan(tasks, {
+      repoRoot,
+      knownAgents: KNOWN_AGENTS,
+      projectRegistry: fakeRegistry(["penumbra", "sirius"]),
+      header: { home_project: "penumbra" },
+    });
+    expect(errors).toEqual([]);
+  });
 });
