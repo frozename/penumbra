@@ -237,6 +237,8 @@ describe("WorktreeManager isolated-install mode", () => {
       expect(createErr).toBeDefined();
       expect(manager.getWorktree(id)).toBeNull();
       expect(fs.existsSync(path.join(homeRoot, id))).toBe(false);
+      const { stdout } = await exec(`git branch --list agent/${id}`, { cwd: repoDir });
+      expect(stdout.trim()).toBe("");
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
       fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });

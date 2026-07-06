@@ -344,28 +344,38 @@ export class WorktreeManager {
       this.worktrees.set(handoffId, handle);
       return handle;
     } catch (err) {
-      await this.removePartialWorktree(wtPath, repoRoot);
+      await this.removePartialWorktree(wtPath, repoRoot, branchName);
       throw err;
     }
   }
 
-  private async removePartialWorktree(wtPath: string, repoRoot: string): Promise<void> {
-    if (!fs.existsSync(wtPath)) return;
-    try {
-      await this.git(["worktree", "remove", "--force", wtPath], {
-        cwd: repoRoot,
-      });
-    } catch {
-      // Directory may not be registered as a git worktree yet.
+  private async removePartialWorktree(
+    wtPath: string,
+    repoRoot: string,
+    branchName: string,
+  ): Promise<void> {
+    if (fs.existsSync(wtPath)) {
+      try {
+        await this.git(["worktree", "remove", "--force", wtPath], {
+          cwd: repoRoot,
+        });
+      } catch {
+        // Directory may not be registered as a git worktree yet.
+      }
+      try {
+        await fs.promises.rm(wtPath, { recursive: true, force: true });
+      } catch (err) {
+        // Best-effort: a deletion failure (EBUSY etc.) must never mask the
+        // original install error the caller is about to rethrow; the unready
+        // directory is reaped later by the grace-period GC.
+        const errMessage = err instanceof Error ? err.message : String(err);
+        this.log.warn({ err: errMessage, wtPath }, "partial worktree cleanup failed");
+      }
     }
     try {
-      await fs.promises.rm(wtPath, { recursive: true, force: true });
-    } catch (err) {
-      // Best-effort: a deletion failure (EBUSY etc.) must never mask the
-      // original install error the caller is about to rethrow; the unready
-      // directory is reaped later by the grace-period GC.
-      const errMessage = err instanceof Error ? err.message : String(err);
-      this.log.warn({ err: errMessage, wtPath }, "partial worktree cleanup failed");
+      await this.git(["branch", "-D", branchName], { cwd: repoRoot });
+    } catch {
+      // Branch may not exist if creation failed before checkout completed.
     }
   }
 
