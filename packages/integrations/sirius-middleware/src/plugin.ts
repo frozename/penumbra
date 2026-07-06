@@ -37,6 +37,7 @@ export interface PenumbraSession {
   sessionId: string;
   promptInput: BuildPromptInput;
   promptEvent: PromptEvent;
+  promptDispatched: boolean;
 }
 
 declare module "fastify" {
@@ -230,7 +231,7 @@ function capturePromptSession(req: FastifyRequest, machineId: string): void {
   };
 
   const promptEvent = buildPromptEvent(promptInput);
-  req.penumbraSession = { sessionId, promptInput, promptEvent };
+  req.penumbraSession = { sessionId, promptInput, promptEvent, promptDispatched: false };
 }
 
 function registerPreHandler(fastify: FastifyInstance, machineId: string): void {
@@ -340,7 +341,10 @@ function registerOnSend(
 
     const { sessionId, promptInput, promptEvent } = session;
     const route = pathOnly(req.url);
-    dispatchObservation(promptEvent, promptInput, sessionId, route);
+    if (!session.promptDispatched) {
+      session.promptDispatched = true;
+      dispatchObservation(promptEvent, promptInput, sessionId, route);
+    }
 
     if (typeof payload === "string") {
       observeJsonResponse(payload, promptInput, dispatchObservation);
@@ -367,8 +371,32 @@ function registerOnSend(
 
 function registerReplyTaps(
   fastify: FastifyInstance,
+  dispatchObservation: DispatchObservation,
   dispatchStreamResponse: DispatchStreamResponse,
 ): void {
+  // Raw-socket callers bypass Fastify's onSend hook, so the tap decorators are
+  // the ONLY site that can dispatch the prompt observation on that path. The
+  // >=400 status-code security guard from fd450911/dd118e65 is preserved by
+  // checking reply.statusCode < 400 before dispatching. Tap-path callers must
+  // call reply.code(status) BEFORE invoking penumbraTapChunk/penumbraTapEnd if
+  // they intend a non-2xx response; otherwise reply.statusCode defaults to 200
+  // and the guard admits the dispatch.
+  function dispatchPromptIfNeeded(reply: FastifyReply, session: PenumbraSession): void {
+    if (session.promptDispatched) {
+      return;
+    }
+    if (reply.statusCode >= 400) {
+      return;
+    }
+    session.promptDispatched = true;
+    dispatchObservation(
+      session.promptEvent,
+      session.promptInput,
+      session.sessionId,
+      pathOnly(reply.request.url),
+    );
+  }
+
   fastify.decorateReply("penumbraTapChunk", function (this: FastifyReply, sseChunk: string) {
     const session = this.request.penumbraSession;
     if (!session) {
@@ -383,6 +411,7 @@ function registerReplyTaps(
     if (state.finished) {
       return;
     }
+    dispatchPromptIfNeeded(this, session);
     consumeSseLines(sseChunk, state);
   });
 
@@ -395,6 +424,10 @@ function registerReplyTaps(
     if (!state) {
       return;
     }
+    if (this.statusCode >= 400) {
+      return;
+    }
+    dispatchPromptIfNeeded(this, session);
     dispatchStreamResponse(
       state,
       session.sessionId,
@@ -431,7 +464,7 @@ export const penumbraObservePlugin: FastifyPluginCallback<PenumbraPluginOptions>
     const dispatchObservation = createDispatchObservation(client, logger);
     const dispatchStreamResponse = createDispatchStreamResponse(dispatchObservation);
     registerOnSend(fastify, logger, dispatchObservation, dispatchStreamResponse);
-    registerReplyTaps(fastify, dispatchStreamResponse);
+    registerReplyTaps(fastify, dispatchObservation, dispatchStreamResponse);
     done();
   },
 );

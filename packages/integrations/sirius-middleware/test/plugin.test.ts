@@ -434,12 +434,99 @@ describe("penumbraObservePlugin execution", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     const calls = mockFetch.mock.calls;
+    // The raw-socket path bypasses Fastify's onSend hook, so the tap decorators
+    // must fire BOTH agent-prompt (once) and agent-response.
+    const eventTypes = calls.map((c) => parseObservationBody(c[1]?.body).event_type);
+    expect(eventTypes).toEqual(["agent-prompt", "agent-response"]);
+    const promptBody = parseObservationBody(calls[0]![1]?.body);
+    expect(promptBody.payload_summary).toBe("tap me");
     const responseBody = parseObservationBody(calls[calls.length - 1]![1]?.body);
     expect(responseBody.event_type).toBe("agent-response");
     expect(responseBody.payload_summary).toBe("Tap works");
     expect(responseBody.tokens_in).toBe(9);
     expect(responseBody.tokens_out).toBe(2);
     expect(responseBody.model).toBe("gpt-3.5-turbo");
+  });
+
+  test("raw-socket tap path dispatches agent-prompt exactly once across chunk+end", async () => {
+    const fastify = Fastify();
+    const mockFetch = okFetch();
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: noopLogger(),
+    });
+
+    fastify.post("/v1/chat/completions", (_req: FastifyRequest, reply: FastifyReply) => {
+      const tap = reply.penumbraTapChunk?.bind(reply);
+      const end = reply.penumbraTapEnd?.bind(reply);
+      tap?.('data: {"choices":[{"delta":{"content":"a"}}]}\n\n');
+      tap?.('data: {"choices":[{"delta":{"content":"b"}}]}\n\n');
+      tap?.("data: [DONE]\n\n");
+      end?.();
+      reply.raw.writeHead(200);
+      reply.raw.end();
+    });
+
+    await fastify.inject({
+      headers: { "x-penumbra-project": "p", "x-request-id": "req-tap-once" },
+      method: "POST",
+      payload: { messages: [{ role: "user", content: "hi" }], model: "m" },
+      url: "/v1/chat/completions",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const eventTypes = mockFetch.mock.calls.map((c) => parseObservationBody(c[1]?.body).event_type);
+    // Exactly one agent-prompt despite three tap chunks + one tap end.
+    expect(eventTypes.filter((t) => t === "agent-prompt").length).toBe(1);
+  });
+
+  test("raw-socket tap path suppresses prompt observation when reply.code(>=400) is set first", async () => {
+    const fastify = Fastify();
+    const mockFetch = okFetch();
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: noopLogger(),
+    });
+
+    const SECRET_LIKE_PAYLOAD = "sk-live-DO-NOT-PERSIST-tap-secret";
+
+    fastify.post("/v1/chat/completions", (_req: FastifyRequest, reply: FastifyReply) => {
+      // Caller signals rejection BEFORE invoking the tap so the plugin's
+      // >=400 security guard can suppress the prompt+response observation.
+      reply.code(401);
+      const tap = reply.penumbraTapChunk?.bind(reply);
+      const end = reply.penumbraTapEnd?.bind(reply);
+      tap?.('data: {"choices":[{"delta":{"content":"unauthorized"}}]}\n\n');
+      end?.();
+      reply.raw.writeHead(401);
+      reply.raw.end();
+    });
+
+    await fastify.inject({
+      headers: { "x-penumbra-project": "p", "x-request-id": "req-tap-401" },
+      method: "POST",
+      payload: {
+        messages: [{ role: "user", content: SECRET_LIKE_PAYLOAD }],
+        model: "m",
+      },
+      url: "/v1/chat/completions",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Neither prompt nor response should fire on the tap path when the caller
+    // has signalled a >=400 status code via reply.code() before tapping.
+    const eventTypes = mockFetch.mock.calls.map((c) => parseObservationBody(c[1]?.body).event_type);
+    expect(eventTypes).toEqual([]);
+    const allBodies = mockFetch.mock.calls
+      .map((c) => c[1]?.body)
+      .filter((b): b is string => typeof b === "string");
+    for (const b of allBodies) {
+      expect(b).not.toContain(SECRET_LIKE_PAYLOAD);
+    }
   });
 
   test("skips both prompt and response observations when reply status is >= 400", async () => {
