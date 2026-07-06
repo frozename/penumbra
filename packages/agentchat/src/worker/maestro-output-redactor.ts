@@ -1,5 +1,6 @@
 import {
   ValuePatternRedactor,
+  WALKER_DEPTH_EXCEEDED_RULE_ID,
   type ValuePatternRule,
   type ValueRedactionHit,
 } from "@penumbra/core";
@@ -89,7 +90,13 @@ export class MaestroOutputRedactor {
     }
     const blocked = hits.some((h) => isFailClosed(h.rule_id));
     if (blocked) {
-      return { decision: "blocked", value, hits, bypassed: false };
+      const depthExceeded = hits.some((h) => h.rule_id === WALKER_DEPTH_EXCEEDED_RULE_ID);
+      return {
+        decision: "blocked",
+        value: depthExceeded && effectiveRewritten ? redacted : value,
+        hits,
+        bypassed: false,
+      };
     }
     if (!effectiveRewritten) {
       return { decision: "clean", value: redacted, hits, bypassed: false };

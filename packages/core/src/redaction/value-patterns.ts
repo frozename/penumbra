@@ -164,7 +164,15 @@ export class ValuePatternRedactor {
           addSyntheticHit(hitCounts, WALKER_DEPTH_EXCEEDED_RULE_ID);
           depthExceededRecorded = true;
         }
-        return { value: input, rewritten: false };
+        let serialized: string;
+        try {
+          serialized = JSON.stringify(input) ?? String(input);
+        } catch {
+          serialized = String(input);
+        }
+        const result = this.redactString(serialized);
+        mergeHits(hitCounts, result.hits);
+        return { value: result.redacted, rewritten: true };
       }
       if (typeof input === "string") return walkString(input);
       if (Array.isArray(input)) return walkArray(input, depth);

@@ -1,4 +1,4 @@
-import type { ValuePatternRule } from "@penumbra/core";
+import { WALKER_DEPTH_EXCEEDED_RULE_ID, type ValuePatternRule } from "@penumbra/core";
 
 /**
  * Rules sourced from `tools/maestro-bench/bench-maestro.py` v2 evidence
@@ -32,6 +32,7 @@ export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
 
 const FAIL_CLOSED_IDS = new Set<string>([
   ...MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
+  WALKER_DEPTH_EXCEEDED_RULE_ID,
   "unknown_initial_agent",
 ]);
 

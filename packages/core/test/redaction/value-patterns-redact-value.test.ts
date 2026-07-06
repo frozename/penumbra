@@ -22,7 +22,7 @@ test("redactValue: non-plain object roots are preserved (Date/URL/Map/RegExp)", 
   expect(r.redactValue(regex).redacted).toBe(regex);
 });
 
-test("redactValue: recursion cap records synthetic hit and avoids deep traversal", () => {
+test("redactValue: recursion cap records synthetic hit and redacts serialized subtree", () => {
   const r = new ValuePatternRedactor([
     { id: "soft_ssh", pattern: /\.ssh\/id_ed25519/g, replacement: "[REDACTED:ssh]" },
   ]);
@@ -34,7 +34,9 @@ test("redactValue: recursion cap records synthetic hit and avoids deep traversal
 
   const walked = r.redactValue(deep, { maxDepth: MAX_WALKER_DEPTH });
   expect(walked.hits.find((h) => h.rule_id === "walker_depth_exceeded")?.count).toBe(1);
-  expect(walked.hits.find((h) => h.rule_id === "soft_ssh")).toBeUndefined();
+  expect(walked.hits.find((h) => h.rule_id === "soft_ssh")?.count).toBe(1);
+  expect(walked.rewritten).toBe(true);
+  expect(JSON.stringify(walked.redacted)).not.toContain(".ssh/id_ed25519");
 });
 
 test("redactValue: oversize string records synthetic hit and preserves original bytes", () => {

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 
+import { MAX_WALKER_DEPTH } from "@penumbra/core";
+
 import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 
 interface RedactorOverride {
@@ -129,4 +131,20 @@ test("checkAnyValue still blocks oversized fail-closed values", () => {
   const value = `${"x".repeat(10_000)} git push --force-with-lease origin main ${"y".repeat(60_000)}`;
   const walked = m.checkAnyValue(value);
   expect(walked.decision).toBe("blocked");
+});
+
+test("checkAnyValue blocks depth-capped fail-closed values without returning the secret", () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(["planner"]),
+    bypass: false,
+  });
+
+  let value: unknown = "rm -rf --no-preserve-root /";
+  for (let i = 0; i < MAX_WALKER_DEPTH + 1; i++) {
+    value = { nested: value };
+  }
+
+  const walked = m.checkAnyValue(value);
+  expect(walked.decision).not.toBe("clean");
+  expect(JSON.stringify(walked.value)).not.toContain("rm -rf --no-preserve-root /");
 });
