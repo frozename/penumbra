@@ -61,6 +61,7 @@ interface LandError {
   step?: string;
   files?: string[];
   stderr?: string;
+  dirty_status?: string;
   cleanup_stderr?: string;
   manual_repair?: string;
   beforeMain?: string;
@@ -809,13 +810,14 @@ describe("dispatchLandRoute", () => {
 
     expect(gitCalls.map((c) => c.args.join(" "))).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --squash agent/h-1",
       "diff --cached --quiet",
       "commit -F -",
       "rev-parse main",
     ]);
-    expect(gitCalls[4]?.stdin).toBe("feat(core): curated subject\n\nbody details");
+    expect(gitCalls[5]?.stdin).toBe("feat(core): curated subject\n\nbody details");
 
     const landed = svc.db
       .query<
@@ -990,6 +992,7 @@ describe("dispatchLandRoute", () => {
     });
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --squash agent/h-squash-reland",
       "diff --cached --quiet",
@@ -1238,10 +1241,58 @@ describe("dispatchLandRoute", () => {
     expect(body.result.pr_closed).toBe(false);
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --ff-only agent/h-2",
       "rev-parse main",
     ]);
+  });
+
+  test("ff mode fails before checkout when the target repo already has staged changes", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-ff-dirty-before-land", "c-ff-dirty-before-land");
+    writeVerdictEvent(svc, {
+      eventId: "v-ff-dirty-before-land",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-ff-dirty-before-land",
+      conversationId: "c-ff-dirty-before-land",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const gitCalls: string[] = [];
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-ff-dirty-before-land",
+          commit_message: "chore: ignored by ff",
+          mode: "ff",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          const cmd = args.join(" ");
+          gitCalls.push(cmd);
+          if (cmd === "rev-parse main") return { code: 0, stdout: "base-main\n", stderr: "" };
+          if (cmd === "status --porcelain --untracked-files=no")
+            return { code: 0, stdout: "M  packages/core/src/index.ts\n", stderr: "" };
+          if (cmd === "merge --ff-only agent/h-ff-dirty-before-land")
+            return { code: 0, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        now: () => new Date("2026-05-08T00:03:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("dirty_before_land");
+    expect(body.error.dirty_status).toBe("M  packages/core/src/index.ts");
+    expect(gitCalls).toEqual(["rev-parse main", "status --porcelain --untracked-files=no"]);
   });
 
   test("ff mode checks out main before merging when ambient HEAD is another branch", async () => {
@@ -1314,6 +1365,7 @@ describe("dispatchLandRoute", () => {
     expect(expectGitOk(repoDir, ["rev-parse", "other"])).toBe(baseMain);
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --ff-only agent/h-ff-non-main",
       "rev-parse main",
@@ -1397,6 +1449,7 @@ describe("dispatchLandRoute", () => {
     expect(revParseCount).toBe(2);
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --ff-only agent/h-ff-reland",
       "rev-parse main",
@@ -2002,8 +2055,9 @@ describe("dispatchLandRoute", () => {
     expect(body.error.code).toBe("merge_conflict");
     expect(body.error.files).toEqual(["a.txt", "b.ts"]);
     expect(dirtyIndex).toBe(false);
-    expect(gitCalls.slice(0, 6)).toEqual([
+    expect(gitCalls.slice(0, 7)).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --squash agent/h-4",
       "diff --name-only --diff-filter=U",
@@ -2030,6 +2084,53 @@ describe("dispatchLandRoute", () => {
     expect(retryBody.status).toBe("done");
     expect(retryBody.result.commit_sha).toBe("main-after-second-land");
     expect(gitCalls).not.toContain("merge --abort");
+  });
+
+  test("squash mode fails before checkout when the target repo already has staged changes", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-squash-dirty-before-land", "c-squash-dirty-before-land");
+    writeVerdictEvent(svc, {
+      eventId: "v-squash-dirty-before-land",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-squash-dirty-before-land",
+      conversationId: "c-squash-dirty-before-land",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const gitCalls: string[] = [];
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-squash-dirty-before-land",
+          commit_message: "feat: should not absorb stale staged files",
+          mode: "squash",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          const cmd = args.join(" ");
+          gitCalls.push(cmd);
+          if (cmd === "rev-parse main") return { code: 0, stdout: "base-main\n", stderr: "" };
+          if (cmd === "status --porcelain --untracked-files=no")
+            return { code: 0, stdout: "A  fileA\n", stderr: "" };
+          if (cmd === "merge --squash agent/h-squash-dirty-before-land")
+            return { code: 0, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error.code).toBe("dirty_before_land");
+    expect(body.error.dirty_status).toBe("A  fileA");
+    expect(gitCalls).toEqual(["rev-parse main", "status --porcelain --untracked-files=no"]);
   });
 
   test("surfaces squash conflict cleanup failure with manual repair details", async () => {
@@ -2094,6 +2195,7 @@ describe("dispatchLandRoute", () => {
     );
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --squash agent/h-conflict-cleanup-fails",
       "diff --name-only --diff-filter=U",
@@ -2229,6 +2331,7 @@ describe("dispatchLandRoute", () => {
     expect(stagedSquashResidue).toBe(false);
     expect(gitCalls).toEqual([
       "rev-parse main",
+      "status --porcelain --untracked-files=no",
       "checkout main",
       "merge --squash agent/h-hook-fails",
       "diff --cached --quiet",

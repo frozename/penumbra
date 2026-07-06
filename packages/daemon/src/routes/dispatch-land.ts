@@ -130,6 +130,33 @@ async function resetMergeAndVerifyClean(deps: DispatchLandDeps): Promise<GitClea
   return { ok: true };
 }
 
+async function verifyCleanBeforeLand(deps: DispatchLandDeps): Promise<DispatchLandFailure | null> {
+  const status = await deps.runGit(["status", "--porcelain", "--untracked-files=no"]);
+  if (status.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "status_before_land",
+        stderr: status.stderr.trim() || undefined,
+      },
+    };
+  }
+
+  const dirtyStatus = status.stdout.trim();
+  if (dirtyStatus.length > 0) {
+    return {
+      status: 409,
+      error: {
+        code: "dirty_before_land",
+        dirty_status: dirtyStatus,
+      },
+    };
+  }
+
+  return null;
+}
+
 function commitFailureLooksLikeHook(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return (
@@ -690,6 +717,8 @@ async function performLandSquashFlow(
   branch: string,
   resolvedCommitMessage: string,
 ): Promise<{ already_landed: boolean } | DispatchLandFailure> {
+  const dirtyFailure = await verifyCleanBeforeLand(deps);
+  if (dirtyFailure) return dirtyFailure;
   const checkoutFailure = await performLandCheckoutMain(deps);
   if (checkoutFailure) return checkoutFailure;
   const mergeFailure = await performLandSquashMerge(deps, branch);
@@ -701,6 +730,8 @@ async function performLandFfFlow(
   deps: DispatchLandDeps,
   handoffId: string,
 ): Promise<DispatchLandFailure | null> {
+  const dirtyFailure = await verifyCleanBeforeLand(deps);
+  if (dirtyFailure) return dirtyFailure;
   const checkoutFailure = await performLandCheckoutMain(deps);
   if (checkoutFailure) return checkoutFailure;
   const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoffId}`]);
