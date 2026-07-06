@@ -312,11 +312,16 @@ describe("streams broker", () => {
     await flushMicrotasks();
     expect(sessions).toHaveLength(2);
 
-    // Healthy message on new conn — must reset the backoff counter.
+    // Healthy message on new conn.
     sessions[1]!.controller.send("message", JSON.stringify({ ok: true }));
     await flushMicrotasks();
 
-    // Second outage. Without a reset, attempt would be 1 → next delay 2s.
+    // Advance past the health-confirm window (2s) so the connection is
+    // treated as healthy and the backoff counter resets.
+    clock.advance(2_000);
+    await flushMicrotasks();
+
+    // Second outage. attempt has reset → next delay 1s.
     sessions[1]!.controller.error(new Error("boom2"));
     await flushMicrotasks();
 
@@ -327,6 +332,42 @@ describe("streams broker", () => {
 
     // 1ms more (total 1s since outage) must open it.
     clock.advance(1);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(3);
+
+    sub.unsubscribe();
+  });
+
+  test("backoff must not reset on transport-connect (headers-only, no health confirmation)", async () => {
+    const clock = new FakeClock();
+    __setSchedulers(clock.setTimeout, clock.clearTimeout);
+
+    pendingResponses = [createMockSseResponse(), createMockSseResponse(), createMockSseResponse()];
+    const sub = subscribe("dispatch-events", noop());
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(1);
+
+    // First outage → 1s backoff.
+    sessions[0]!.controller.error(new Error("boom1"));
+    await flushMicrotasks();
+    clock.advance(1_000);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(2);
+
+    // Kill the new connection immediately with ZERO messages. Headers were
+    // OK (onConnected fired), but no health confirmation window elapsed.
+    // Backoff must not reset — attempt stays at 1 → next delay 2s.
+    sessions[1]!.controller.error(new Error("boom2"));
+    await flushMicrotasks();
+
+    // Without the fix, dispatchReconnectSynthetic on onConnected reset
+    // attempt to 0, so this would open a third connection at +1000ms.
+    clock.advance(1_000);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(2);
+
+    // At +2000ms (BACKOFF_MS[1]), the third connection opens.
+    clock.advance(1_000);
     await flushMicrotasks();
     expect(sessions).toHaveLength(3);
 
@@ -459,6 +500,10 @@ function createFakeSseFactory(): {
         opts.onTransportError?.(err);
       },
     });
+    // Match the real shim: fire onConnected as soon as the "response" is
+    // established (before any bytes read). Broker relies on this to dispatch
+    // the reconnect synthetic + arm the health-confirm timer.
+    opts.onConnected?.();
     return {
       addEventListener(
         event: string,
@@ -539,7 +584,7 @@ describe("createStreamBroker", () => {
     globalThis.fetch = origFetch;
   });
 
-  test("F4-1: two brokers with independent fake schedulers; reconnect ack only fires on first new-conn message", async () => {
+  test("F4-1: two brokers with independent fake schedulers; reconnect ack fires on new-conn establishment", async () => {
     const clockA = new FakeClock();
     const clockB = new FakeClock();
     const fakeA = createFakeSseFactory();
@@ -585,19 +630,21 @@ describe("createStreamBroker", () => {
     // Broker B stays untouched.
     expect(gotB.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
 
-    // Advance ONLY clockA — clockB must not open any new conn.
+    // Advance ONLY clockA — clockB must not open any new conn. The new A
+    // connection's onConnected fires the reconnect synthetic immediately.
     clockA.advance(1_000);
     await flushMicrotasks();
     expect(fakeA.sources).toHaveLength(2);
     expect(fakeB.sources).toHaveLength(1);
-    expect(gotA.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
-
-    // First real message on the new A connection delivers __reconnect__ + the message.
-    fakeA.sources[1]!.emit("message", JSON.stringify({ k: "a-new" }));
-    await flushMicrotasks();
     const reconA = gotA.filter((m) => m.event === "__reconnect__");
     expect(reconA).toHaveLength(1);
     expect(reconA[0]!.data).toEqual({ reconnect: true });
+    expect(gotB.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    // Subsequent messages on the new connection do not re-fire the synthetic.
+    fakeA.sources[1]!.emit("message", JSON.stringify({ k: "a-new" }));
+    await flushMicrotasks();
+    expect(gotA.filter((m) => m.event === "__reconnect__")).toHaveLength(1);
     expect(gotB.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
 
     subA.unsubscribe();
@@ -632,11 +679,15 @@ describe("createStreamBroker", () => {
     await flushMicrotasks();
     expect(fake.sources).toHaveLength(2);
 
-    // Healthy message on new connection — must reset the backoff counter.
+    // Healthy message on new connection.
     fake.sources[1]!.emit("message", JSON.stringify({ ok: true }));
     await flushMicrotasks();
 
-    // Second outage. Without reset, next backoff would be 2s.
+    // Advance past the health-confirm window (2s) so backoff resets.
+    clock.advance(2_000);
+    await flushMicrotasks();
+
+    // Second outage. attempt has reset → next delay 1s.
     fake.sources[1]!.triggerError(new Error("boom2"));
     await flushMicrotasks();
 

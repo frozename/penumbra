@@ -48,6 +48,11 @@ export interface StreamBroker {
 const RING_CAP = 200;
 const LINGER_MS = 30_000;
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
+// Time a fresh connection must stay open before we treat it as "healthy" and
+// clear the reconnect backoff counter. onConnected fires on HTTP headers-OK
+// (response.ok in the shim) before any byte is read; an accept-then-die loop
+// (e.g. daemon mid-restart) would otherwise repeat BACKOFF_MS[0]=1s forever.
+const HEALTH_CONFIRM_MS = 2_000;
 
 interface BrokerEntry {
   key: string;
@@ -58,6 +63,7 @@ interface BrokerEntry {
   refcount: number;
   lingerHandle: unknown;
   reconnectHandle: unknown;
+  healthConfirmHandle: unknown;
   reconnectAttempt: number;
   awaitingReconnectAck: boolean;
   ring: StreamMessage<unknown>[];
@@ -106,7 +112,9 @@ function dispatchToSubscribers(entry: BrokerEntry, msg: StreamMessage<unknown>):
 
 function dispatchReconnectSynthetic(entry: BrokerEntry): void {
   entry.awaitingReconnectAck = false;
-  entry.reconnectAttempt = 0;
+  // reconnectAttempt is reset by the health-confirm timer, NOT here — this
+  // fires on HTTP headers-OK before any byte is read, so an accept-then-die
+  // loop would otherwise never escape BACKOFF_MS[0].
   entry.ring = [];
   const reconnectMsg: StreamMessage<unknown> = {
     event: "__reconnect__",
@@ -149,6 +157,13 @@ function openSource(ctx: BrokerCtx, entry: BrokerEntry): void {
       if (entry.awaitingReconnectAck) {
         dispatchReconnectSynthetic(entry);
       }
+      if (entry.healthConfirmHandle !== null) {
+        ctx.clearTimeoutImpl(entry.healthConfirmHandle);
+      }
+      entry.healthConfirmHandle = ctx.setTimeoutImpl((): void => {
+        entry.healthConfirmHandle = null;
+        entry.reconnectAttempt = 0;
+      }, HEALTH_CONFIRM_MS);
     },
     onTransportError: (err): void => {
       handleTransportError(ctx, entry, err);
@@ -162,6 +177,10 @@ function openSource(ctx: BrokerCtx, entry: BrokerEntry): void {
 
 function handleTransportError(ctx: BrokerCtx, entry: BrokerEntry, err: unknown): void {
   console.warn(`[stream:${entry.topic}] transport error`, err);
+  if (entry.healthConfirmHandle !== null) {
+    ctx.clearTimeoutImpl(entry.healthConfirmHandle);
+    entry.healthConfirmHandle = null;
+  }
   if (entry.source) {
     try {
       entry.source.close();
@@ -204,6 +223,7 @@ function ensureEntry(
       refcount: 0,
       lingerHandle: null,
       reconnectHandle: null,
+      healthConfirmHandle: null,
       reconnectAttempt: 0,
       awaitingReconnectAck: false,
       ring: [],
@@ -228,6 +248,10 @@ function lingerTeardown(ctx: BrokerCtx, captured: BrokerEntry): void {
   if (captured.reconnectHandle !== null) {
     ctx.clearTimeoutImpl(captured.reconnectHandle);
     captured.reconnectHandle = null;
+  }
+  if (captured.healthConfirmHandle !== null) {
+    ctx.clearTimeoutImpl(captured.healthConfirmHandle);
+    captured.healthConfirmHandle = null;
   }
   ctx.entries.delete(captured.key);
 }
@@ -290,6 +314,7 @@ function resetCtx(ctx: BrokerCtx): void {
   for (const e of ctx.entries.values()) {
     if (e.lingerHandle !== null) ctx.clearTimeoutImpl(e.lingerHandle);
     if (e.reconnectHandle !== null) ctx.clearTimeoutImpl(e.reconnectHandle);
+    if (e.healthConfirmHandle !== null) ctx.clearTimeoutImpl(e.healthConfirmHandle);
     e.source?.close();
   }
   ctx.entries.clear();
