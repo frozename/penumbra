@@ -51,6 +51,13 @@ function getRegistry(services: Services): Registry | undefined {
   return services.workflowRegistry as Registry | undefined;
 }
 
+function warnRegistryUnavailable(services: Services, route: string): void {
+  services.log.warn(
+    { route, workflow_registry: "unavailable" },
+    "workflow registry unset; returning benign empty response",
+  );
+}
+
 // Services typed agentchatConfig has a different agent element shape (strict
 // fields) than the AgentChatConfigLike workflows accepts (Record<string,unknown>[]).
 // Adapt at the route boundary via a single typed helper.
@@ -407,7 +414,10 @@ export async function fileSessionSummarizeStumbles(opts: {
 
 export function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
-  if (!reg) return Promise.resolve(json({ workflows: [] }));
+  if (!reg) {
+    warnRegistryUnavailable(services, "workflows/list");
+    return Promise.resolve(json({ workflows: [], registry_unavailable: true }));
+  }
   return Promise.resolve(
     json({
       workflows: reg.list().map((spec) => ({
@@ -1009,7 +1019,10 @@ async function runAllMatchedTriggerSpecs(opts: {
 
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
-  if (!reg) return json({ matched: [], additionalContext: null });
+  if (!reg) {
+    warnRegistryUnavailable(services, "workflows/trigger");
+    return json({ matched: [], additionalContext: null, registry_unavailable: true });
+  }
   const body = (await req.json().catch(() => null)) as WorkflowTriggerBody | null;
   const sessionIdFromBody = body?.session_id ?? null;
   const filePathFromBody =
@@ -1074,7 +1087,8 @@ export function workflowsHistoryRoute(req: Request, services: Services): Promise
 
 export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
-  if (!reg)
+  if (!reg) {
+    warnRegistryUnavailable(services, "workflows/suggest");
     return json({
       suggestions: [],
       metrics: {
@@ -1083,7 +1097,9 @@ export async function workflowsSuggestRoute(req: Request, services: Services): P
         "pending-handoffs": 0,
         "commits-since-last-handoff": 0,
       },
+      registry_unavailable: true,
     });
+  }
   const body = (await req.json().catch(() => ({}))) as { now?: string };
   const now = body.now ? new Date(body.now) : new Date();
   const metrics = computeStateMetrics({ db: services.db, now: (): Date => now });

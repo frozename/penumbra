@@ -2508,3 +2508,75 @@ test("POST /workflows/suggest returns workflows matching state thresholds", asyn
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("workflows/list logs a warning and reports registry_unavailable when workflowRegistry is unset", async () => {
+  const warnCalls: unknown[] = [];
+  const services = mockServices({
+    workflowRegistry: undefined,
+    log: {
+      warn: (obj: unknown) => {
+        warnCalls.push(obj);
+      },
+    },
+  });
+  const req = new Request("http://localhost/workflows/list");
+  const res = await workflowsListRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { workflows: unknown[]; registry_unavailable?: boolean };
+  expect(body.workflows).toEqual([]);
+  expect(body.registry_unavailable).toBe(true);
+  expect(warnCalls.length).toBeGreaterThan(0);
+});
+
+test("workflows/trigger logs a warning and reports registry_unavailable when workflowRegistry is unset", async () => {
+  const warnCalls: unknown[] = [];
+  const services = mockServices({
+    workflowRegistry: undefined,
+    log: {
+      warn: (obj: unknown) => {
+        warnCalls.push(obj);
+      },
+    },
+  });
+  const req = new Request("http://localhost/workflows/trigger", {
+    method: "POST",
+    body: JSON.stringify({ event: { kind: "lifecycle", event: "SessionStart" } }),
+  });
+  const res = await workflowsTriggerRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    matched: string[];
+    additionalContext: string | null;
+    registry_unavailable?: boolean;
+  };
+  expect(body.matched).toEqual([]);
+  expect(body.additionalContext).toBeNull();
+  expect(body.registry_unavailable).toBe(true);
+  expect(warnCalls.length).toBeGreaterThan(0);
+});
+
+test("workflows/suggest logs a warning and reports registry_unavailable when workflowRegistry is unset", async () => {
+  const warnCalls: unknown[] = [];
+  const services = mockServices({
+    workflowRegistry: undefined,
+    log: {
+      warn: (obj: unknown) => {
+        warnCalls.push(obj);
+      },
+    },
+  });
+  const req = new Request("http://localhost/workflows/suggest", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const res = await workflowsSuggestRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    suggestions: unknown[];
+    metrics: Record<string, number>;
+    registry_unavailable?: boolean;
+  };
+  expect(body.suggestions).toEqual([]);
+  expect(body.registry_unavailable).toBe(true);
+  expect(warnCalls.length).toBeGreaterThan(0);
+});
