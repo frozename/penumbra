@@ -306,8 +306,21 @@ export class WorktreeManager {
       ? "isolated_install"
       : "symlink_mirror";
 
+    // Pre-existence guard closes an in-process TOCTOU: two managers whose
+    // in-memory maps both miss the same handoffId would otherwise race
+    // and the loser's catch-all cleanup would delete the winner's live
+    // worktree. Throw non-destructively — a pre-existing wtPath was not
+    // created by THIS call and is not ours to remove.
+    if (fs.existsSync(wtPath)) {
+      throw new Error(`worktree_path_exists: ${wtPath}`);
+    }
+
+    // Kept outside the destructive-cleanup try so a `git worktree add`
+    // failure does not fall into removePartialWorktree; whatever partial
+    // state git left is reaped later by the grace-period GC.
+    await this.git(["worktree", "add", "--detach", wtPath, baseRef], { cwd: repoRoot });
+
     try {
-      await this.git(["worktree", "add", "--detach", wtPath, baseRef], { cwd: repoRoot });
       await this.git(["-C", wtPath, "checkout", "-b", branchName]);
       this.copyBunLockIfNeeded(wtPath, repoRoot, worktreeMode);
 
