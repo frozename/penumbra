@@ -314,14 +314,14 @@ const CLAUDE_MD_HEADER =
 const CLAUDE_MD_FOOTER = "<!-- penumbra: end managed [dispatch-discipline] block -->";
 
 // Bump this when CLAUDE_MD_BODY changes so an installed-but-stale block is rewritten.
-const CLAUDE_MD_VERSION = "v1";
+const CLAUDE_MD_VERSION = "v2";
 
 const CLAUDE_MD_BODY = [
   CLAUDE_MD_HEADER,
   `<!-- ${CLAUDE_MD_VERSION} -->`,
   "## Dispatch discipline (penumbra)",
   "",
-  "Dispatch-by-default for substantive work. A *list of edits*, a *multi-file change*, or a *repeated edit shape* is dispatchable — author/run a workflow (`workflow_run` / a CC Workflow: penumbra-fanout, fix-until-green, fleet-verify, swarm) or a `chain_start`, rather than hand-implementing solo.",
+  "Dispatch-by-default for substantive work. A *list of edits*, a *multi-file change*, or a *repeated edit shape* is dispatchable — author/run a workflow (`workflow_run` / a CC Workflow: penumbra-fanout, penumbra-fix-until-green, penumbra-fleet-verify, penumbra-swarm) or a `chain_start`, rather than hand-implementing solo.",
   "",
   "Solo is the *exception*, not the default. Hand-implement only for a single trivial edit, a daemon-won't-boot fix, or scaffolding an agent will build on — and log a one-line `SOLO-OK: <reason>` when you do.",
   "",

@@ -728,6 +728,28 @@ describe("hooks install --claude-md (dispatch-discipline managed block)", () => 
     expect(body).toContain("I once pasted the marker");
   });
 
+  it("rewrites the old dispatch workflow-name block", async () => {
+    const claudeDir = tmpClaudeDir();
+    const seeded = [
+      "<!-- penumbra: managed [dispatch-discipline] block — do not edit between markers -->",
+      "<!-- v1 -->",
+      "Dispatch-by-default for substantive work. A *list of edits*, a *multi-file change*, or a *repeated edit shape* is dispatchable — author/run a workflow (`workflow_run` / a CC Workflow: penumbra-fanout, fix-until-green, fleet-verify, swarm) or a `chain_start`, rather than hand-implementing solo.",
+      "<!-- penumbra: end managed [dispatch-discipline] block -->",
+      "",
+    ].join("\n");
+    writeFileSync(join(claudeDir, MD), seeded);
+
+    const r = await runHooksInstallClaudeMd({ claudeDir });
+    expect(r.installed).toBe(true);
+    expect(r.idempotent).not.toBe(true);
+
+    const body = readFileSync(join(claudeDir, MD), "utf8");
+    expect(body).toContain(
+      "penumbra-fanout, penumbra-fix-until-green, penumbra-fleet-verify, penumbra-swarm",
+    );
+    expect(body).not.toContain("penumbra-fanout, fix-until-green, fleet-verify, swarm");
+  });
+
   it("uninstall removes the block, preserving surrounding text", async () => {
     const claudeDir = tmpClaudeDir();
     const userText = "# Keep me\n";

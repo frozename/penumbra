@@ -136,7 +136,7 @@ function render(streak: number, threshold: number): string {
   return [
     "<system-reminder>",
     `dispatch-drift: ${streak} consecutive solo implementation tool-calls on the main loop with no fleet dispatch in between (threshold ${threshold}).`,
-    "Dispatch the remaining work-list via `workflow_run` / a CC Workflow (penumbra-fanout, fix-until-green, fleet-verify, swarm) rather than hand-implementing solo. Serial diagnosis is exempt — but the fix-list it produces is dispatchable.",
+    "Dispatch the remaining work-list via `workflow_run` / a CC Workflow (penumbra-fanout, penumbra-fix-until-green, penumbra-fleet-verify, penumbra-swarm) rather than hand-implementing solo. Serial diagnosis is exempt — but the fix-list it produces is dispatchable.",
     "If ultracode is ON, treat this as binding: workflow-first for EVERY substantive task, token cost is not a constraint. If this work is genuinely solo (single trivial edit, a daemon-won't-boot fix, or scaffolding an agent will build on), note `SOLO-OK: <reason>` and continue.",
     "</system-reminder>",
   ].join("\n");

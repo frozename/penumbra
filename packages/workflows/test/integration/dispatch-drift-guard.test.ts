@@ -144,6 +144,9 @@ test("at threshold fires, with the ultracode conditional in the reminder text", 
   const out = await run({ session_id: MAESTRO_SESSION });
   expect(out).toContain("dispatch-drift:");
   expect(out).toContain("workflow_run");
+  expect(out).toContain(
+    "penumbra-fanout, penumbra-fix-until-green, penumbra-fleet-verify, penumbra-swarm",
+  );
   expect(out).toContain("ultracode is ON"); // conditional guidance, applied by the model
   expect(out).toContain("SOLO-OK");
 });
