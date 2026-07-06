@@ -42,6 +42,20 @@ test("pid and port files are removed even when handle.stop() throws", async () =
   expect(existsSync(portPath)).toBe(false);
 });
 
+test("runStop awaits handle.stop() before resolving", async () => {
+  let teardownComplete = false;
+  const handle: DaemonHandle = {
+    port: 12345,
+    stop: async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      teardownComplete = true;
+    },
+  };
+
+  await runStop({ storageRoot: dir, handle });
+  expect(teardownComplete).toBe(true);
+});
+
 test("pid and port files are removed when handle is absent", async () => {
   const pidPath = join(dir, "pid");
   const portPath = join(dir, "port");

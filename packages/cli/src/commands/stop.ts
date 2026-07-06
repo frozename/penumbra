@@ -27,12 +27,14 @@ function cleanupStopArtifacts(pidPath: string, portPath: string, hadHandle: bool
 export function runStop(opts: RunStopOpts): Promise<number> {
   const pidPath = join(opts.storageRoot, "pid");
   const portPath = join(opts.storageRoot, "port");
-  try {
-    void opts.handle?.stop();
-  } catch (err) {
+  return (async () => {
+    try {
+      await opts.handle?.stop();
+    } catch (err) {
+      cleanupStopArtifacts(pidPath, portPath, Boolean(opts.handle));
+      throw err instanceof Error ? err : new Error(String(err));
+    }
     cleanupStopArtifacts(pidPath, portPath, Boolean(opts.handle));
-    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-  }
-  cleanupStopArtifacts(pidPath, portPath, Boolean(opts.handle));
-  return Promise.resolve(0);
+    return 0;
+  })();
 }
