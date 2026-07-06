@@ -8,6 +8,14 @@ import { join } from "node:path";
 
 import { memoryVerifyAuthorizeRoute } from "../../src/routes/memory-verify.js";
 
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded in this process
+}
+
 function setup(): {
   db: Database;
   root: string;
@@ -252,6 +260,54 @@ test("authorize route returns zero writes for dispatch_land basis without recall
     expect(body.ok).toBe(true);
     expect(body.events_written).toBe(0);
     expect(body.reason).toBeUndefined();
+  } finally {
+    ctx.stop();
+  }
+});
+
+test("authorize route writes one row per lane_ledger recalled memory for dispatch_land basis", async () => {
+  const ctx = setup();
+  try {
+    seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
+    seedMemory(ctx.db, "m2", "2026-05-17T11:05:00.000Z");
+    seedLaneClose(ctx.db, "L1", ["m1", "m2"], "h-review");
+    seedHandoff(ctx.db, "h-review", "h-impl", "h-review", "review_adversarial");
+
+    const res = await memoryVerifyAuthorizeRoute(
+      new Request("http://x/memory-verify/authorize", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-impl",
+          verdict: "passed",
+          authorized_by_handoff: "h-impl",
+          basis: {
+            kind: "dispatch_land",
+            merge_commit: "f128dd9",
+            reviewer_handoff: "h-review",
+          },
+        }),
+      }),
+      ctx.services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; events_written: number };
+    expect(body.ok).toBe(true);
+    expect(body.events_written).toBe(2);
+
+    const writtenRows = ctx.db
+      .query<{ c: number }, []>("SELECT COUNT(*) AS c FROM t2_memory_verification_events")
+      .get();
+    expect(writtenRows?.c).toBe(2);
+
+    const verifiedRows = ctx.db
+      .query<{ c: number }, []>(
+        `SELECT COUNT(*) AS c
+         FROM t2_memories
+         WHERE memory_id IN ('m1', 'm2') AND last_verified_at IS NOT NULL`,
+      )
+      .get();
+    expect(verifiedRows?.c).toBe(2);
   } finally {
     ctx.stop();
   }

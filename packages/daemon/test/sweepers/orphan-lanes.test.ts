@@ -88,12 +88,11 @@ function insertMemory(db: Database, memoryId: string): void {
   );
 }
 
-function insertDispatchMemory(db: Database, handoffId: string, memoryId: string): void {
-  db.run(
-    `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
-     VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-01-01T11:30:00.000Z', ?)`,
-    [handoffId, JSON.stringify({ memory_id: memoryId })],
-  );
+function setLaneRecalledMemoryIds(db: Database, laneId: string, memoryIds: string[]): void {
+  db.run(`UPDATE lane_ledger SET recalled_memory_ids=? WHERE lane_id=?`, [
+    JSON.stringify(memoryIds),
+    laneId,
+  ]);
 }
 
 function insertPerformance(db: Database, handoffId: string, gateOutcome: string | null): void {
@@ -430,7 +429,7 @@ test("orphan-lane sweeper close explicitly skips memory verify authorization", (
   openLane(db, "lane-1", "h-impl");
   setReviewerHandoff(db, "lane-1", "h-reviewer");
   insertMemory(db, "m-sweeper-skip");
-  insertDispatchMemory(db, "h-impl", "m-sweeper-skip");
+  setLaneRecalledMemoryIds(db, "lane-1", ["m-sweeper-skip"]);
 
   const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
   expect(result.closed).toBe(1);

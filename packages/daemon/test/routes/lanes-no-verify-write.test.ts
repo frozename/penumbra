@@ -152,16 +152,10 @@ test("POST /lanes/close does not write to t2_memory_verification_events", async 
         "2026-04-23T11:30:00.000Z",
       ],
     );
-    daemon.services.db.run(
-      `INSERT INTO dispatch_events(
-        handoff_id, worker_id, source, kind, ts, meta_json
-      ) VALUES (?, NULL, 'worker', 'memory_recall_injected', ?, ?)`,
-      [
-        "h-no-auto-fire",
-        "2026-04-23T12:00:30.000Z",
-        JSON.stringify({ memory_id: "m-no-auto-fire" }),
-      ],
-    );
+    daemon.services.db.run(`UPDATE lane_ledger SET recalled_memory_ids=? WHERE lane_id=?`, [
+      JSON.stringify(["m-no-auto-fire"]),
+      "lane-no-auto-fire",
+    ]);
 
     const closed = await postJson(daemon, "/lanes/close", {
       lane_id: "lane-no-auto-fire",

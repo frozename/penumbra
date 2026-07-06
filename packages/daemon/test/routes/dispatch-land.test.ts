@@ -207,6 +207,7 @@ function seedClosedLaneWithReviewer(
     laneId: string;
     implementerHandoff: string;
     reviewerHandoff: string;
+    recalledMemoryIds?: string[];
   },
 ): void {
   insertLane(svc.db, {
@@ -214,6 +215,7 @@ function seedClosedLaneWithReviewer(
     ts_opened: "2026-05-08T00:00:00.000Z",
     task_class: "STANDARD",
     implementer_handoff: input.implementerHandoff,
+    recalled_memory_ids: input.recalledMemoryIds ?? [],
   });
   closeLane(svc.db, input.laneId, {
     ts_closed: "2026-05-08T00:02:00.000Z",
@@ -236,14 +238,6 @@ function seedMemory(db: Database, memoryId: string): void {
       "2026-05-08T00:01:00.000Z",
       "2026-05-08T00:01:00.000Z",
     ],
-  );
-}
-
-function seedDispatchMemory(db: Database, handoffId: string, memoryId: string): void {
-  db.run(
-    `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
-     VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-05-08T00:01:30.000Z', ?)`,
-    [handoffId, JSON.stringify({ memory_id: memoryId })],
   );
 }
 
@@ -1024,6 +1018,7 @@ describe("dispatchLandRoute", () => {
       laneId: "lane-land-authz",
       implementerHandoff: "h-land-authz",
       reviewerHandoff: "h-reviewer-authz",
+      recalledMemoryIds: ["m-land-authz"],
     });
     writeVerdictEvent(svc, {
       eventId: "v-land-authz",
@@ -1034,7 +1029,6 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
     seedMemory(svc.db, "m-land-authz");
-    seedDispatchMemory(svc.db, "h-land-authz", "m-land-authz");
 
     const realCommit = Bun.spawnSync({
       cmd: ["git", "rev-parse", "HEAD"],
@@ -1115,6 +1109,7 @@ describe("dispatchLandRoute", () => {
       laneId: "lane-land-authz-throw",
       implementerHandoff: "h-land-authz-throw",
       reviewerHandoff: "h-reviewer-authz-throw",
+      recalledMemoryIds: ["m-land-authz-throw"],
     });
     writeVerdictEvent(svc, {
       eventId: "v-land-authz-throw",
@@ -1125,7 +1120,6 @@ describe("dispatchLandRoute", () => {
       tests: "pass",
     });
     seedMemory(svc.db, "m-land-authz-throw");
-    seedDispatchMemory(svc.db, "h-land-authz-throw", "m-land-authz-throw");
 
     // Force the memory-verify authorize side-effect to throw by dropping the
     // verification-events table out from under it. The land itself has already

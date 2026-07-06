@@ -65,40 +65,26 @@ function shortSummary(basis: z.infer<typeof BasisSchema>): string {
   }
 }
 
-function extractMetaMemoryIds(metaJson: string): string[] {
+function dispatchLandRecalledMemoryIds(services: Services, handoffId: string): string[] {
+  const row = services.db
+    .query<{ recalled_memory_ids: string | null }, [string]>(
+      `SELECT recalled_memory_ids FROM lane_ledger
+       WHERE implementer_handoff = ? AND ts_closed IS NOT NULL
+       ORDER BY ts_closed DESC LIMIT 1`,
+    )
+    .get(handoffId);
+  if (!row?.recalled_memory_ids) return [];
   try {
-    const meta = JSON.parse(metaJson) as Record<string, unknown>;
-    const ids: string[] = [];
-    const one = meta.memory_id;
-    if (typeof one === "string" && one.trim().length > 0) ids.push(one);
-    const many = meta.memory_ids;
-    if (Array.isArray(many)) {
-      for (const id of many) {
-        if (typeof id === "string" && id.trim().length > 0) ids.push(id);
-      }
+    const parsed = JSON.parse(row.recalled_memory_ids) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const ids = new Set<string>();
+    for (const id of parsed) {
+      if (typeof id === "string" && id.trim().length > 0) ids.add(id);
     }
-    return ids;
+    return [...ids];
   } catch {
     return [];
   }
-}
-
-function dispatchLandRecalledMemoryIds(services: Services, handoffId: string): string[] {
-  const rows = services.db
-    .query<{ meta_json: string | null }, [string]>(
-      `SELECT meta_json FROM dispatch_events
-       WHERE handoff_id = ? AND kind = 'memory_recall_injected'
-       ORDER BY ts ASC, id ASC`,
-    )
-    .all(handoffId);
-  const ids = new Set<string>();
-  for (const row of rows) {
-    if (!row.meta_json) continue;
-    for (const id of extractMetaMemoryIds(row.meta_json)) {
-      ids.add(id);
-    }
-  }
-  return [...ids];
 }
 
 export async function memoryVerifyAuthorizeRoute(

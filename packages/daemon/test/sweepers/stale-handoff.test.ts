@@ -122,19 +122,6 @@ function insertMemory(db: Database, memoryId: string): void {
   );
 }
 
-function insertMemoryRecallInjectedEvent(
-  db: Database,
-  handoff_id: string,
-  ts: string,
-  memoryId: string,
-): void {
-  db.run(
-    `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
-     VALUES (?, NULL, 'worker', 'memory_recall_injected', ?, ?)`,
-    [handoff_id, ts, JSON.stringify({ memory_id: memoryId })],
-  );
-}
-
 function makeOpts(services: Services): StaleHandoffSweeperOpts {
   return { services };
 }
