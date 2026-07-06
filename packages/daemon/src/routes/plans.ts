@@ -9,10 +9,16 @@ import {
   type TaskWriter,
 } from "@penumbra/core";
 import { parsePlanMetaFile, validatePlan } from "@penumbra/workflows";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 
+import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
+
+// Cap the plan file readFile() to bound memory usage. Prevents an attacker
+// pointing file_path at /dev/zero or a multi-GB file and forcing the daemon
+// to load it all into RAM before parsing.
+const PLAN_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const RegisterPlanRequestSchema = z
   .object({
     file_path: z.string().min(1),
@@ -44,6 +50,24 @@ function knownAgentsFromServices(services: Services): Set<string> {
 }
 
 export async function plansRegisterRoute(req: Request, services: Services): Promise<Response> {
+  // Plan registration is a maestro/CLI-driven flow (packages/cli/src/commands/plan.ts);
+  // no legitimate worker-token caller registers plans. Restricting to the shared
+  // principal removes the untrusted-worker attack surface on file_path, matching
+  // the shared-principal restriction dispatch-land already applies.
+  const principal = getPrincipal(req);
+  if (principal?.kind !== "shared") {
+    return json(
+      {
+        error: {
+          code: "principal_forbidden",
+          message:
+            "plans register is restricted to shared-bearer principals; worker-token callers are not authorized",
+        },
+      },
+      403,
+    );
+  }
+
   const raw = await safeJson(req);
   if (raw === null) return invalidInput([{ message: "request body was not valid JSON" }]);
 
@@ -52,8 +76,34 @@ export async function plansRegisterRoute(req: Request, services: Services): Prom
 
   const { file_path } = parsed.data;
 
+  // Defense in depth even for the shared principal: stat() before readFile()
+  // so a symlink to /dev/zero or a multi-GB regular file cannot OOM the
+  // daemon. isFile() rejects directories, devices, and named pipes.
   let fileBytes: Buffer;
   try {
+    const st = await stat(file_path);
+    if (!st.isFile()) {
+      return json(
+        {
+          error: "invalid_plan_file",
+          reason: "not_a_regular_file",
+          file_path,
+        },
+        400,
+      );
+    }
+    if (st.size > PLAN_FILE_MAX_BYTES) {
+      return json(
+        {
+          error: "invalid_plan_file",
+          reason: "file_too_large",
+          file_path,
+          size: st.size,
+          max_bytes: PLAN_FILE_MAX_BYTES,
+        },
+        400,
+      );
+    }
     fileBytes = await readFile(file_path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {

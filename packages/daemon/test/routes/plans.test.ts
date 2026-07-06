@@ -14,6 +14,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { setPrincipalForTest } from "../../src/auth.js";
+import { plansRegisterRoute } from "../../src/routes/plans.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
@@ -337,6 +339,123 @@ test("POST /plans/:plan_id/cancel flips plan status and cancels running children
       headers: authHeaders(daemon.token),
     });
     expect(ghost.status).toBe(404);
+  } finally {
+    daemon.stop();
+  }
+});
+
+function makeRegisterRequest(filePath: string): Request {
+  return new Request("http://x/plans", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file_path: filePath }),
+  });
+}
+
+test("POST /plans rejects worker-token principals with 403 (no readFile of arbitrary paths)", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const legitPlan = writePlanFile(daemon.root, "plan-worker.md", fixturePlan());
+
+    // A worker principal must be rejected pre-readFile regardless of the file
+    // path — this closes the existence oracle where a worker could distinguish
+    // /etc/hosts (readable) from a bogus path (ENOENT) via the response.
+    const workerLegit = makeRegisterRequest(legitPlan);
+    setPrincipalForTest(workerLegit, {
+      kind: "worker",
+      worker_id: "w-1",
+      token_hash: "hash-1",
+    });
+    const legitRes = await plansRegisterRoute(workerLegit, daemon.services);
+    expect(legitRes.status).toBe(403);
+
+    const workerHosts = makeRegisterRequest("/etc/hosts");
+    setPrincipalForTest(workerHosts, {
+      kind: "worker",
+      worker_id: "w-1",
+      token_hash: "hash-1",
+    });
+    const hostsRes = await plansRegisterRoute(workerHosts, daemon.services);
+    expect(hostsRes.status).toBe(403);
+
+    const workerMissing = makeRegisterRequest(join(daemon.root, "does-not-exist.md"));
+    setPrincipalForTest(workerMissing, {
+      kind: "worker",
+      worker_id: "w-1",
+      token_hash: "hash-1",
+    });
+    const missingRes = await plansRegisterRoute(workerMissing, daemon.services);
+    expect(missingRes.status).toBe(403);
+
+    // No principal (no auth applied) is also rejected.
+    const anon = makeRegisterRequest(legitPlan);
+    const anonRes = await plansRegisterRoute(anon, daemon.services);
+    expect(anonRes.status).toBe(403);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /plans rejects non-regular files (directory) with 400 pre-readFile", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const dirPath = join(daemon.root, "a-directory");
+    mkdirSync(dirPath, { recursive: true });
+
+    const req = makeRegisterRequest(dirPath);
+    setPrincipalForTest(req, { kind: "shared", via: "config" });
+    const res = await plansRegisterRoute(req, daemon.services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; reason?: string };
+    expect(body.error).toBe("invalid_plan_file");
+    expect(body.reason).toBe("not_a_regular_file");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /plans rejects oversize files with 400 pre-readFile (no OOM)", async () => {
+  const daemon = startTestDaemon();
+  try {
+    // Craft a plan file whose declared size exceeds the cap. The route must
+    // reject after stat() and MUST NOT call readFile() on it.
+    const bigPath = join(daemon.root, "huge-plan.md");
+    // Use a 12 MiB file (> 10 MiB cap); write it as a real file so stat.size
+    // reflects reality without relying on sparse-file quirks.
+    const twelveMiB = 12 * 1024 * 1024;
+    writeFileSync(bigPath, Buffer.alloc(twelveMiB, 0x61));
+
+    const req = makeRegisterRequest(bigPath);
+    setPrincipalForTest(req, { kind: "shared", via: "config" });
+    const res = await plansRegisterRoute(req, daemon.services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      reason?: string;
+      size?: number;
+      max_bytes?: number;
+    };
+    expect(body.error).toBe("invalid_plan_file");
+    expect(body.reason).toBe("file_too_large");
+    expect(body.size).toBe(twelveMiB);
+    expect(typeof body.max_bytes).toBe("number");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /plans still succeeds for shared principal on a normal plan file", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const planPath = writePlanFile(daemon.root, "plan-shared-ok.md", fixturePlan());
+
+    // Route level (bypasses fetch handler auth): stamp shared principal.
+    const req = makeRegisterRequest(planPath);
+    setPrincipalForTest(req, { kind: "shared", via: "config" });
+    const res = await plansRegisterRoute(req, daemon.services);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { plan_id: string; status: string };
+    expect(body.status).toBe("running");
   } finally {
     daemon.stop();
   }
