@@ -288,6 +288,39 @@ describe("CodexRolloutReader", () => {
     expect(d.cost_usd).toBeNull();
   });
 
+  it("prunes cursor entries for files aged past the lookback window across reads", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "04", "28");
+    mkdirSync(dayDir, { recursive: true });
+    const path = writeRollout(dayDir, "rollout-2026-04-28T12-00-00-prune.jsonl", [
+      tokenCountLine(1.0, 10.0),
+    ]);
+
+    const t0 = Date.now();
+    const readerFresh = new CodexRolloutReader({
+      rootDir: root,
+      lookbackHours: 24,
+      now: (): number => t0,
+    });
+    const r1 = await readerFresh.read(null);
+    const files1 = (r1.cursor as { files: Record<string, unknown> }).files;
+    expect(files1[path]).toBeDefined();
+
+    // Age the file past the lookback window before the second read.
+    const agedEpochSec = (t0 - 120 * 24 * 60 * 60 * 1000) / 1000;
+    utimesSync(path, agedEpochSec, agedEpochSec);
+
+    const readerAged = new CodexRolloutReader({
+      rootDir: root,
+      lookbackHours: 24,
+      now: (): number => t0,
+    });
+    const r2 = await readerAged.read(r1.cursor);
+    const files2 = (r2.cursor as { files: Record<string, unknown> }).files;
+    expect(files2[path]).toBeUndefined();
+    expect(Object.keys(files2)).toHaveLength(0);
+  });
+
   it("payload.info:null emits no usage_delta but rate-limit parsing still works on the same event", async () => {
     const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
     const dayDir = join(root, "2026", "04", "28");

@@ -80,6 +80,7 @@ export class CodexRolloutReader implements UsageReader {
     const allRateLimitSnapshots: RateLimitDelta[] = [];
     const allUsageDeltas: UsageReaderDelta[] = [];
     const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
+    const seenInWindow = new Set<string>();
 
     for (const filePath of files) {
       const fileCursor = newCursor.files[filePath];
@@ -88,6 +89,7 @@ export class CodexRolloutReader implements UsageReader {
       if (mtime_ms < cutoff) {
         continue;
       }
+      seenInWindow.add(filePath);
       const offset = fileCursor?.byte_offset ?? 0;
       if (offset >= size) {
         continue;
@@ -122,6 +124,10 @@ export class CodexRolloutReader implements UsageReader {
         ...(modelProvider ? { model_provider: modelProvider } : {}),
       };
     }
+
+    newCursor.files = Object.fromEntries(
+      Object.entries(newCursor.files).filter(([p]) => seenInWindow.has(p)),
+    );
 
     return {
       cursor: newCursor,
