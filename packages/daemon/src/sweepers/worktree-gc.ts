@@ -1,4 +1,4 @@
-import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
+import { selectWorktreeGcCandidates, type DispatchEventInput, type Services } from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -127,22 +127,20 @@ export async function runWorktreeGcTick(
       if (landStatus === "unlanded" || landStatus === "error") {
         deferred.push(candidate.handoff_id);
         unlanded_skipped.push(candidate.handoff_id);
-        const ts = now().toISOString();
-        services.db
-          .query<unknown, [string, string, string]>(
-            `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
-             VALUES (?, NULL, 'sweeper', 'worktree.gc.unlanded_skipped', ?, ?)`,
-          )
-          .run(
-            candidate.handoff_id,
-            ts,
-            JSON.stringify({
-              handoff_id: candidate.handoff_id,
-              branch: candidate.branch,
-              status: candidate.status,
-              land_status: landStatus,
-            }),
-          );
+        services.dispatchEventLog.record({
+          handoff_id: candidate.handoff_id,
+          source: "daemon",
+          // Cast until `worktree.gc.unlanded_skipped` lands in the shared
+          // api-contract enum; the local schema in this branch already lists it.
+          kind: "worktree.gc.unlanded_skipped" as DispatchEventInput["kind"],
+          ts: now().toISOString(),
+          meta: {
+            handoff_id: candidate.handoff_id,
+            branch: candidate.branch,
+            status: candidate.status,
+            land_status: landStatus,
+          },
+        });
         opts.log?.warn?.(
           {
             handoff_id: candidate.handoff_id,
@@ -170,26 +168,22 @@ export async function runWorktreeGcTick(
         continue;
       }
 
-      const ts = now().toISOString();
-      services.db
-        .query<unknown, [string, string, string]>(
-          `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
-           VALUES (?, NULL, 'sweeper', 'worktree.gc', ?, ?)`,
-        )
-        .run(
-          candidate.handoff_id,
-          ts,
-          JSON.stringify({
-            handoff_id: candidate.handoff_id,
-            branch_name: candidate.branch,
-            branch_sha: teardownResult.branchSha,
-            branch_deleted: teardownResult.branchDeleted,
-            status: candidate.status,
-            age_ms: candidate.age_ms,
-            reason: candidate.reason,
-            land_status: landStatus,
-          }),
-        );
+      services.dispatchEventLog.record({
+        handoff_id: candidate.handoff_id,
+        source: "daemon",
+        kind: "worktree.gc",
+        ts: now().toISOString(),
+        meta: {
+          handoff_id: candidate.handoff_id,
+          branch_name: candidate.branch,
+          branch_sha: teardownResult.branchSha,
+          branch_deleted: teardownResult.branchDeleted,
+          status: candidate.status,
+          age_ms: candidate.age_ms,
+          reason: candidate.reason,
+          land_status: landStatus,
+        },
+      });
 
       removed.push(candidate.handoff_id);
     } catch (err) {

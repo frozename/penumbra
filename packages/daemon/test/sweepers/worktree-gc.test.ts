@@ -1,4 +1,5 @@
 import {
+  DispatchEventLog,
   HandoffReader,
   HandoffWriter,
   loadSqliteVec,
@@ -49,6 +50,7 @@ function makeServices(
   };
   return {
     db,
+    dispatchEventLog: new DispatchEventLog(db),
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
     t0Writer: { write: noop },
