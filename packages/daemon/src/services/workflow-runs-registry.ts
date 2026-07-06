@@ -2,7 +2,7 @@ import type { WorkflowStatusLight } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative as pathRelative, resolve as pathResolve } from "node:path";
 
 type WorkflowRunInfo = {
@@ -203,17 +203,87 @@ function sweepExpired(ctx: RegistryCtx, nowMs: number): void {
   }
 }
 
+async function safeUnlinkSpill(
+  storageRoot: string,
+  spillPath: string | null | undefined,
+  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<void> {
+  if (!spillPath) return;
+  if (spillPath.startsWith("/")) {
+    log?.warn?.({ spill_path: spillPath }, "workflow run spill unlink rejected: absolute path");
+    return;
+  }
+  const filePath = pathResolve(storageRoot, spillPath);
+  try {
+    const [canonicalStorageRoot, canonicalFilePath] = await Promise.all([
+      realpath(storageRoot),
+      realpath(filePath),
+    ]);
+    if (!canonicalFilePath.startsWith(`${canonicalStorageRoot}/`)) {
+      log?.warn?.(
+        {
+          spill_path: spillPath,
+          resolved_path: canonicalFilePath,
+          storage_root: canonicalStorageRoot,
+        },
+        "workflow run spill unlink rejected: containment failure",
+      );
+      return;
+    }
+    await unlink(canonicalFilePath);
+  } catch (err) {
+    log?.warn?.({ spill_path: spillPath, err: String(err) }, "workflow run spill unlink failed");
+  }
+}
+
 function purgeExpiredRows(ctx: RegistryCtx, nowMs: number): void {
   const expiredRows = ctx.opts.db
     .query<
-      { id: string },
+      { id: string; result_spill_path: string | null; error_spill_path: string | null },
       [number]
-    >(`SELECT id FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
+    >(`SELECT id, result_spill_path, error_spill_path FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
     .all(nowMs);
   ctx.opts.db
     .query(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
     .run(nowMs);
-  for (const row of expiredRows) clearRunState(ctx, row.id);
+  for (const row of expiredRows) {
+    clearRunState(ctx, row.id);
+    void safeUnlinkSpill(ctx.opts.storageRoot, row.result_spill_path, ctx.opts.log);
+    void safeUnlinkSpill(ctx.opts.storageRoot, row.error_spill_path, ctx.opts.log);
+  }
+}
+
+async function sweepOrphanSpills(ctx: RegistryCtx): Promise<void> {
+  const spillDir = join(ctx.opts.storageRoot, ".penumbra", "workflow-runs");
+  let names: string[];
+  try {
+    names = await readdir(spillDir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const workflowRunId = name.slice(0, -".json".length);
+    let row: { id: string } | null = null;
+    try {
+      row =
+        ctx.opts.db
+          .query<{ id: string }, [string]>(`SELECT id FROM workflow_runs WHERE id = ? LIMIT 1`)
+          .get(workflowRunId) ?? null;
+    } catch (err) {
+      ctx.opts.log?.warn?.(
+        { workflow_run_id: workflowRunId, err: String(err) },
+        "workflow run orphan spill sweep query failed",
+      );
+      continue;
+    }
+    if (row) continue;
+    await safeUnlinkSpill(
+      ctx.opts.storageRoot,
+      pathRelative(ctx.opts.storageRoot, join(spillDir, name)),
+      ctx.opts.log,
+    );
+  }
 }
 
 function hydrateInfo(ctx: RegistryCtx, workflowRunId: string, bypassExpiry = false): Entry | null {
@@ -503,6 +573,8 @@ export function createWorkflowRunsRegistry(opts: RegistryOpts): WorkflowRunsRegi
     waitersByRunId: new Map<string, Waiter[]>(),
     persistenceByRunId: new Map<string, PersistenceStatus>(),
   };
+
+  void sweepOrphanSpills(ctx);
 
   return {
     register(workflowName: string, projectId: string | null): string | null {

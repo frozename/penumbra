@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -858,6 +858,104 @@ test("recordResult yields before the spill write completes and persists the resu
       finished_at: new Date("2026-04-26T00:00:00Z").getTime(),
       result: payload,
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000, stepMs = 10): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  if (!predicate()) throw new Error("waitFor: predicate never became true");
+}
+
+test("purgeExpiredRows unlinks spill files when purging expired terminal rows", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wfr-purge-spill-"));
+  const dbPath = join(root, "db.sqlite");
+  try {
+    let now = new Date("2026-04-26T00:00:00Z");
+    let n = 0;
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => `wfrun-${String(++n)}`,
+      clock: () => now,
+      db: freshDb(dbPath),
+      storageRoot: root,
+      ttlMs: 1_000,
+    });
+    expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+    const largePayload = { data: "x".repeat(200_000) };
+    await registry.recordResult("wfrun-1", largePayload);
+    const spillPath = join(root, ".penumbra", "workflow-runs", "wfrun-1.json");
+    expect(existsSync(spillPath)).toBe(true);
+
+    now = new Date("2026-04-26T00:10:00Z");
+    await registry.getStatus("wfrun-1");
+
+    await waitFor(() => !existsSync(spillPath));
+    expect(existsSync(spillPath)).toBe(false);
+
+    const dbRow = freshDb(dbPath)
+      .query<
+        { count: number },
+        [string]
+      >(`SELECT COUNT(*) AS count FROM workflow_runs WHERE id = ?`)
+      .get("wfrun-1");
+    expect(dbRow?.count).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("boot sweep unlinks orphan spill files whose workflow_runs rows are gone", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wfr-boot-sweep-"));
+  const dbPath = join(root, "db.sqlite");
+  try {
+    const spillDir = join(root, ".penumbra", "workflow-runs");
+    mkdirSync(spillDir, { recursive: true });
+    const orphanPath = join(spillDir, "wfrun-orphan.json");
+    writeFileSync(orphanPath, JSON.stringify({ orphan: true }));
+
+    createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+
+    await waitFor(() => !existsSync(orphanPath));
+    expect(existsSync(orphanPath)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("boot sweep leaves spill files whose workflow_runs rows still exist", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wfr-boot-keep-"));
+  const dbPath = join(root, "db.sqlite");
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => "wfrun-1",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry.register("wf-a", "proj")).toBe("wfrun-1");
+    await registry.recordResult("wfrun-1", { data: "x".repeat(200_000) });
+    const spillPath = join(root, ".penumbra", "workflow-runs", "wfrun-1.json");
+    expect(existsSync(spillPath)).toBe(true);
+
+    createWorkflowRunsRegistry({
+      uuid: () => "wfrun-2",
+      clock: () => new Date("2026-04-26T00:00:00Z"),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(existsSync(spillPath)).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
