@@ -10,13 +10,23 @@ export interface TaskEvent {
 
 interface TaskSubscriber {
   closed: boolean;
+  evictionWarned: boolean;
   predicate: (event: TaskEvent) => boolean;
   queue: TaskEvent[];
   pending: ((result: IteratorResult<TaskEvent>) => void)[];
 }
 
+export interface TaskEventBusOptions {
+  maxQueueLength?: number;
+}
+
 export class TaskEventBus {
   private subscribers = new Set<TaskSubscriber>();
+  private readonly maxQueueLength: number;
+
+  constructor(opts: TaskEventBusOptions = {}) {
+    this.maxQueueLength = opts.maxQueueLength ?? 1000;
+  }
 
   publish(event: TaskEvent): void {
     for (const subscriber of this.subscribers) {
@@ -27,6 +37,16 @@ export class TaskEventBus {
         continue;
       }
       subscriber.queue.push(event);
+      if (subscriber.queue.length > this.maxQueueLength) {
+        const evicted = subscriber.queue.length - this.maxQueueLength;
+        subscriber.queue.splice(0, evicted);
+        if (!subscriber.evictionWarned) {
+          subscriber.evictionWarned = true;
+          console.warn(
+            `TaskEventBus subscriber queue exceeded ${String(this.maxQueueLength)}; evicting oldest event(s)`,
+          );
+        }
+      }
     }
   }
 
@@ -35,6 +55,7 @@ export class TaskEventBus {
   ): AsyncIterableIterator<TaskEvent> {
     const subscriber: TaskSubscriber = {
       closed: false,
+      evictionWarned: false,
       predicate,
       queue: [],
       pending: [],

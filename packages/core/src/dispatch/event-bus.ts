@@ -7,13 +7,23 @@ export type DispatchEvent = Omit<DispatchEventInput, "worker_id" | "meta"> & {
 
 interface DispatchSubscriber {
   closed: boolean;
+  evictionWarned: boolean;
   predicate: (event: DispatchEvent) => boolean;
   queue: DispatchEvent[];
   pending: ((result: IteratorResult<DispatchEvent>) => void)[];
 }
 
+export interface DispatchEventBusOptions {
+  maxQueueLength?: number;
+}
+
 export class DispatchEventBus {
   private subscribers = new Set<DispatchSubscriber>();
+  private readonly maxQueueLength: number;
+
+  constructor(opts: DispatchEventBusOptions = {}) {
+    this.maxQueueLength = opts.maxQueueLength ?? 1000;
+  }
 
   publish(event: DispatchEvent): void {
     for (const subscriber of this.subscribers) {
@@ -24,6 +34,16 @@ export class DispatchEventBus {
         continue;
       }
       subscriber.queue.push(event);
+      if (subscriber.queue.length > this.maxQueueLength) {
+        const evicted = subscriber.queue.length - this.maxQueueLength;
+        subscriber.queue.splice(0, evicted);
+        if (!subscriber.evictionWarned) {
+          subscriber.evictionWarned = true;
+          console.warn(
+            `DispatchEventBus subscriber queue exceeded ${String(this.maxQueueLength)}; evicting oldest event(s)`,
+          );
+        }
+      }
     }
   }
 
@@ -32,6 +52,7 @@ export class DispatchEventBus {
   ): AsyncIterableIterator<DispatchEvent> {
     const subscriber: DispatchSubscriber = {
       closed: false,
+      evictionWarned: false,
       predicate,
       queue: [],
       pending: [],
