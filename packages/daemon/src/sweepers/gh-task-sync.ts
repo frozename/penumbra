@@ -652,6 +652,11 @@ async function mirrorInboundComments(
   task: LinkedTaskRecord,
   nowIso: string,
 ): Promise<void> {
+  // Capture the cursor timestamp BEFORE the awaited listComments so a comment
+  // created between fetch start and cursor stamp is included by the next
+  // sweep's `since` filter. gh_last_comment_id/isCommentAfterLastSeen dedupes
+  // the resulting overlap.
+  const fetchStartedAtMs = runtime.opts.now().getTime();
   const since =
     task.gh_comments_synced_at !== null && task.gh_comments_synced_at !== undefined
       ? toIsoFromMs(task.gh_comments_synced_at)
@@ -684,7 +689,7 @@ async function mirrorInboundComments(
   }
   const maxCommentId = pickMaxCommentId(filtered);
   if (maxCommentId) runtime.opts.taskWriter.setGhLastCommentId(task.id, maxCommentId);
-  runtime.opts.taskWriter.setGhCommentsSyncedAt(task.id, runtime.opts.now().getTime());
+  runtime.opts.taskWriter.setGhCommentsSyncedAt(task.id, fetchStartedAtMs);
 }
 
 async function postCommentForLinkedTask(

@@ -669,6 +669,79 @@ describe("gh-task-sync sweeper/service", () => {
     expect(seenSince).toEqual([undefined, "2026-05-08T03:01:00.000Z"]);
   });
 
+  test("mirrorInboundComments stamps cursor at pre-fetch time so mid-sweep comments are not lost", async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: "mid-sweep cursor race",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 90 });
+
+    const preFetchMs = Date.parse("2026-05-08T04:00:00.000Z");
+    const midSweepMs = Date.parse("2026-05-08T04:00:00.500Z");
+    const postFetchMs = Date.parse("2026-05-08T04:00:01.000Z");
+    const nextSweepMs = Date.parse("2026-05-08T04:00:05.000Z");
+
+    let clock = preFetchMs;
+    const now = (): Date => new Date(clock);
+
+    let listCall = 0;
+    const ghClient = makeGhClient({
+      viewIssue: () => Promise.resolve(viewOpen(90, "2026-05-08T03:00:00.000Z")),
+      listComments: (_repo, _issue, opts) => {
+        listCall += 1;
+        if (listCall === 1) {
+          // Simulate wall-clock advancing across the awaited fetch: a real
+          // GitHub call takes time and now() will read a later timestamp
+          // after the await settles.
+          clock = postFetchMs;
+          return Promise.resolve<GhIssueComment[]>([]);
+        }
+        // Second sweep: server-side `since` filter mirrors GitHub semantics
+        // (return comments with created_at >= since). The mid-sweep comment
+        // must survive the filter for this test to pass.
+        const sinceMs = opts?.since ? Date.parse(opts.since) : -Infinity;
+        const all: GhIssueComment[] = [
+          {
+            id: "9001",
+            author_login: "octocat",
+            body: "created between fetch start and cursor stamp",
+            created_at: new Date(midSweepMs).toISOString(),
+            url: "https://github.com/acordeiro/penumbra/issues/90#issuecomment-9001",
+          },
+        ];
+        return Promise.resolve<GhIssueComment[]>(
+          all.filter((c) => Date.parse(c.created_at) >= sinceMs),
+        );
+      },
+      getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
+    });
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now,
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+    });
+
+    await sync.syncLinkedTask(task_id);
+
+    clock = nextSweepMs;
+    await sync.syncLinkedTask(task_id);
+
+    const mirrored = db
+      .query<
+        { c: number },
+        []
+      >(`SELECT COUNT(*) AS c FROM t0_events WHERE event_type = 'gh_issue_comment'`)
+      .get();
+    expect(mirrored?.c).toBe(1);
+  });
+
   test("task touch does not advance gh comment cursor", () => {
     const { db, writer } = setup();
     const { task_id } = writer.file({
