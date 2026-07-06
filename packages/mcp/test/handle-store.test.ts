@@ -37,4 +37,18 @@ describe("HandleStore", () => {
     expect(store.keys()).toContain(id1);
     expect(store.keys()).toContain(id2);
   });
+
+  it("fifo-evicts oldest entries to stay under the aggregate byte cap", () => {
+    store.close();
+    store = new HandleStore({ ttlMs: 10_000, maxTotalBytes: 3 });
+
+    const first = store.put("aa");
+    const second = store.put("bb");
+    const third = store.put("c");
+
+    expect(store.get(first)).toBeUndefined();
+    expect(store.get(second)).toBe("bb");
+    expect(store.get(third)).toBe("c");
+    expect(store.keys()).toEqual([second, third]);
+  });
 });
