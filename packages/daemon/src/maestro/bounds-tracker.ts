@@ -136,7 +136,14 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
   function start(): void {
     if (timer) return;
     timer = setInterval(() => {
-      tick();
+      try {
+        tick();
+      } catch (err) {
+        opts.log?.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "maestro bounds-tracker tick failed",
+        );
+      }
     }, intervalMs);
   }
 

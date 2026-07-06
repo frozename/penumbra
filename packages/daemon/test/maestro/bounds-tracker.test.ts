@@ -505,6 +505,60 @@ test("each tick logs session count", () => {
   expect(logs[0]?.obj).toEqual({ session_count: 1 });
 });
 
+test("scheduled ticks log failures instead of throwing through the timer boundary", () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const timer = {};
+  const intervals: (() => void)[] = [];
+  const logs: { obj: Record<string, unknown>; msg: string }[] = [];
+
+  globalThis.setInterval = ((fn: () => void): ReturnType<typeof setInterval> => {
+    intervals.push(fn);
+    return timer as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]): void => {
+    expect(handle).toBe(timer);
+  }) as typeof clearInterval;
+
+  try {
+    sessions.listLive = (): MaestroSessionRecord[] => {
+      throw new Error("sqlite busy");
+    };
+
+    const tracker = createBoundsTracker({
+      db,
+      sessions,
+      now: (): number => nowMs,
+      log: {
+        info: (): void => undefined,
+        warn: (obj, msg): void => {
+          logs.push({ obj, msg });
+        },
+      },
+      onSoftWarn: (): void => undefined,
+      onHardKill: (): void => undefined,
+    });
+
+    tracker.start();
+
+    expect(intervals).toHaveLength(1);
+    expect(() => {
+      intervals[0]?.();
+    }).not.toThrow();
+    expect(logs).toEqual([
+      {
+        obj: { err: "sqlite busy" },
+        msg: "maestro bounds-tracker tick failed",
+      },
+    ]);
+
+    tracker.stop();
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
 test("soft warning failures are logged and do not crash the tick loop", () => {
   seedTask(db, "task-11");
   startSession(sessions, {
