@@ -265,6 +265,64 @@ test("dispatchLand throws DaemonHttpError when the async task reports status=fai
   expect(httpErr.body).toEqual({ code: "lifecycle_busy", message: "another land in flight" });
 });
 
+test("dispatchLand resolves { status: 'still_running', task_id } instead of throwing on client-side poll timeout", async () => {
+  let pollCount = 0;
+  mockFetch(
+    mock((input: FetchInput, init?: FetchInit) => {
+      const url = new URL(readUrl(input));
+      if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+        return Promise.resolve(Response.json({ task_id: "task-slow-1" }, { status: 202 }));
+      }
+      if (url.pathname === "/dispatch/land/task-slow-1") {
+        pollCount += 1;
+        return Promise.resolve(Response.json({ status: "running" }));
+      }
+      throw new Error(`unexpected fetch: ${url.pathname}`);
+    }),
+  );
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  const started = Date.now();
+  const out = await c.dispatchLand({
+    handoff_id: "h-slow",
+    commit_message: "feat: slow",
+    timeout_ms: 400,
+  });
+  const elapsed = Date.now() - started;
+  expect(out).toEqual({
+    status: "still_running",
+    task_id: "task-slow-1",
+    resume_url: "/dispatch/land/task-slow-1",
+  });
+  expect(pollCount).toBeGreaterThanOrEqual(2);
+  expect(elapsed).toBeLessThan(5_000);
+});
+
+test("dispatchLand does not forward timeout_ms in the daemon POST body", async () => {
+  let receivedBody: unknown = null;
+  mockFetch(
+    mock((input: FetchInput, init?: FetchInit) => {
+      const url = new URL(readUrl(input));
+      if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+        receivedBody = readJsonBody(init);
+        return Promise.resolve(
+          Response.json({ ok: true, commit_sha: "abc", branch_deleted: true, pr_closed: false }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${url.pathname}`);
+    }),
+  );
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  await c.dispatchLand({
+    handoff_id: "h-fast",
+    commit_message: "feat: fast",
+    timeout_ms: 10_000,
+  });
+  expect(receivedBody).toEqual({
+    handoff_id: "h-fast",
+    commit_message: "feat: fast",
+  });
+});
+
 test("mcpCall POSTs to /long-lived/mcp/call with the request body", async () => {
   let received: unknown = null;
   mockFetch(

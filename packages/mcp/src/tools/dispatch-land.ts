@@ -29,6 +29,14 @@ export const DispatchLandInputShape = {
     .describe(
       "When true and the git-write lock is held by another in-flight land, return a structured { ok:false, error:{ code:'lifecycle_busy', holder, retry_after_ms } } immediately instead of queuing. Default false (serialize behind the lock).",
     ),
+  timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Client-side poll deadline in ms (default 60000). On expiry returns { status: 'still_running', task_id } so the caller can resume-poll via GET /dispatch/land/:taskId instead of re-POSTing.",
+    ),
 };
 
 interface DispatchLandResult {
@@ -42,6 +50,7 @@ interface DispatchLandInput {
   delete_branch?: boolean;
   force?: boolean;
   reject_if_held?: boolean;
+  timeout_ms?: number;
 }
 
 export function dispatchLandHandler(
@@ -55,6 +64,7 @@ export function dispatchLandHandler(
       delete_branch: input.delete_branch,
       force: input.force,
       reject_if_held: input.reject_if_held,
+      timeout_ms: input.timeout_ms,
     });
     return {
       content: [

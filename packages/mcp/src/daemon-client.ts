@@ -499,15 +499,18 @@ export class DaemonClient {
     delete_branch?: boolean;
     force?: boolean;
     reject_if_held?: boolean;
+    timeout_ms?: number;
   }): Promise<unknown> {
     const { baseUrl, token } = this.resolve();
+    const { timeout_ms, ...requestBody } = input;
+    const pollTimeoutMs = timeout_ms ?? 60_000;
     const res = await fetch(`${baseUrl}/dispatch/land`, {
       method: "POST",
       headers: {
         ...this.authHeaders(token),
         "content-type": "application/json",
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify(requestBody),
     });
     if (!res.ok && res.status !== 202) throw await daemonHttpError("/dispatch/land", res);
     if (res.status !== 202) {
@@ -518,12 +521,19 @@ export class DaemonClient {
     if (!taskId) {
       throw new Error("dispatch land accepted without task_id");
     }
-    return await this.pollDispatchLand(baseUrl, token, taskId);
+    return await this.pollDispatchLand(baseUrl, token, taskId, pollTimeoutMs);
   }
 
-  private async pollDispatchLand(baseUrl: string, token: string, taskId: string): Promise<unknown> {
-    for (let i = 0; i < 300; i += 1) {
-      await Bun.sleep(200);
+  private async pollDispatchLand(
+    baseUrl: string,
+    token: string,
+    taskId: string,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const pollIntervalMs = 200;
+    const maxIterations = Math.max(1, Math.ceil(timeoutMs / pollIntervalMs));
+    for (let i = 0; i < maxIterations; i += 1) {
+      await Bun.sleep(pollIntervalMs);
       const taskRes = await fetch(`${baseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
         headers: this.authHeaders(token),
       });
@@ -544,7 +554,11 @@ export class DaemonClient {
         );
       }
     }
-    throw new Error(`dispatch land task timed out: ${taskId}`);
+    return {
+      status: "still_running",
+      task_id: taskId,
+      resume_url: `/dispatch/land/${taskId}`,
+    };
   }
 
   async getHandoffStatus(handoff_id: string): Promise<{
