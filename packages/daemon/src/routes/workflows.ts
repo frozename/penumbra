@@ -24,6 +24,7 @@ import {
 
 import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
+import { conversationsCancelRoute } from "./conversations.js";
 import { lookupSessionStart } from "./sessions.js";
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 
@@ -617,6 +618,19 @@ function startWorkflowExecution(
             workflowRunId,
             chainStart: (input) =>
               chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
+            chainCancel: async (conversationId) => {
+              const response = conversationsCancelRoute(
+                new Request(`http://localhost/conversations/${conversationId}/cancel`, {
+                  method: "POST",
+                }),
+                conversationId,
+                services,
+              );
+              if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`conversation cancel failed (${String(response.status)}): ${body}`);
+              }
+            },
           })
         : undefined,
     storageRoot: services.storageRoot,

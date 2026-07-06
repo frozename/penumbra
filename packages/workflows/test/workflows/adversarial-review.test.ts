@@ -159,6 +159,7 @@ type AwaitImplReview = (
   conversationId: string,
   opts?: { timeoutMs?: number },
 ) => Promise<AwaitResultReview>;
+type CancelImplReview = (conversationId: string) => Promise<void>;
 
 type MakeReviewCtxResult = {
   ctx: WorkflowCtx;
@@ -166,12 +167,14 @@ type MakeReviewCtxResult = {
   writes: { path: string; body: string }[];
   dispatch: ReturnType<typeof mock<DispatchImplReview>>;
   awaitChain: ReturnType<typeof mock<AwaitImplReview>>;
+  cancel: ReturnType<typeof mock<CancelImplReview>>;
 };
 
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
   dispatchImpl?: DispatchImplReview;
   awaitImpl?: AwaitImplReview;
+  cancelImpl?: CancelImplReview;
   db?: () => Database;
 }): MakeReviewCtxResult {
   const root = mkdtempSync(join(tmpdir(), "adv-review-"));
@@ -189,11 +192,13 @@ function makeCtx(opts?: {
     });
   const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
+  const cancel = mock(opts?.cancelImpl ?? (() => Promise.resolve()));
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
     dispatch,
     awaitChain,
+    cancel,
     fileWrite: async (relativePath, body): Promise<string> => {
       const path = isAbsolute(relativePath) ? relativePath : join(root, relativePath);
       writes.push({ path, body });
@@ -208,7 +213,7 @@ function makeCtx(opts?: {
     args: parsedArgs,
     db: opts?.db,
   };
-  return { ctx, root, writes, dispatch, awaitChain };
+  return { ctx, root, writes, dispatch, awaitChain, cancel };
 }
 
 function loadConfigWithRouting(routingYaml: string): ReturnType<typeof loadAgentChatConfigFromDir> {
@@ -1395,6 +1400,88 @@ test("fails over synthesizer pool when completed output is the failure marker", 
   }
 });
 
+test("cancels timed-out synthesizer conversation before failover", async () => {
+  const { ctx, root, cancel } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: ({ agent }) =>
+      Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` }),
+    awaitImpl: (conversationId) => {
+      if (conversationId === "codex-conv") {
+        return {
+          status: "timeout",
+          final_agent: null,
+          response_text: null,
+        };
+      }
+      if (conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: "gemini",
+          response_text: "final synthesizer text",
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini"];
+
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(result.synthesis_path).toBeTruthy();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith("codex-conv");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cancels thrown synthesizer conversation before failover", async () => {
+  const { ctx, root, cancel } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: ({ agent }) =>
+      Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` }),
+    awaitImpl: (conversationId) => {
+      if (conversationId === "codex-conv") {
+        throw new Error("lost synthesizer stream");
+      }
+      if (conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: "gemini",
+          response_text: "final synthesizer text",
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini"];
+
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(result.synthesis_path).toBeTruthy();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith("codex-conv");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not fail over when a long synthesis merely quotes the failure marker", async () => {
   const synthAgents: string[] = [];
   const quotingSynthesis = `<synthesizer failed: failed> is the marker this review discusses.\n\n${"The synthesis itself succeeded and analyzes the failover handling in depth. ".repeat(10)}`;
@@ -1472,7 +1559,7 @@ test("caps synthesis failover when every pool agent returns a failure marker", a
       synthesis_path: string | null;
       synthesizer_status: string | null;
     };
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.synthesizer_status).toBe("failed");
     expect(dispatch).toHaveBeenCalledTimes(3);
     expect(synthAgents).toEqual(["codex", "gemini"]);

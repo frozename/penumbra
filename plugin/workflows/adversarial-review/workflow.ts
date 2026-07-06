@@ -936,6 +936,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       return nextAgent !== failedAgent ? nextAgent : null;
     };
     while (true) {
+      let dispatchConversationId: string | null = null;
       try {
         attempts += 1;
         const dispatch = await ctx.dispatch({
@@ -945,6 +946,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           use_worktree: false,
           task_class: "TRIVIAL",
         });
+        dispatchConversationId = dispatch.conversation_id;
         const wait = await ctx.awaitChain(dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,
         });
@@ -954,6 +956,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         const nextAgent =
           attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
         if (nextAgent) {
+          await ctx.cancel(dispatch.conversation_id).catch(() => {});
           synthFailover = { from: currentAgent, to: nextAgent };
           currentAgent = nextAgent;
           continue;
@@ -972,6 +975,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         const nextAgent =
           attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
         if (nextAgent) {
+          if (dispatchConversationId) await ctx.cancel(dispatchConversationId).catch(() => {});
           synthFailover = { from: currentAgent, to: nextAgent };
           currentAgent = nextAgent;
           continue;

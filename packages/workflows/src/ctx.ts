@@ -33,6 +33,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     final_agent: string | null;
     response_text: string | null;
   }>;
+  cancel(conversationId: string): Promise<void>;
   fileWrite(relativePath: string, body: string): Promise<string>;
   db?: () => Database;
   config: AgentChatConfigLike;
@@ -63,6 +64,7 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   parentHandoffId?: string;
   workflowRunId?: string | null;
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
+  chainCancel?: (conversationId: string) => Promise<void> | void;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   pollIntervalMs?: number;
   now?: () => number;
@@ -203,6 +205,7 @@ function defaultReadChainStatus(
 type DispatchInput = Parameters<WorkflowCtx["dispatch"]>[0];
 type DispatchResult = Awaited<ReturnType<WorkflowCtx["dispatch"]>>;
 type AwaitChainResult = Awaited<ReturnType<WorkflowCtx["awaitChain"]>>;
+type CancelResult = Awaited<ReturnType<WorkflowCtx["cancel"]>>;
 
 function buildChainStartRequest<TArgs>(
   input: DispatchInput,
@@ -249,6 +252,13 @@ async function dispatchImpl<TArgs>(
     throw new Error("chain.start response missing conversation_id/handoff_id");
   }
   return { conversation_id: conversationId, handoff_id: handoffId };
+}
+
+async function cancelImpl<TArgs>(
+  conversationId: string,
+  deps: BuildWorkflowCtxDeps<TArgs>,
+): Promise<CancelResult> {
+  await deps.chainCancel?.(conversationId);
 }
 
 type AwaitChainDeps = {
@@ -342,6 +352,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     dispatch: (input): Promise<DispatchResult> => dispatchImpl(input, deps),
     awaitChain: (conversationId, opts): Promise<AwaitChainResult> =>
       awaitChainImpl(conversationId, opts, ac),
+    cancel: (conversationId): Promise<CancelResult> => cancelImpl(conversationId, deps),
     fileWrite: (relativePath, body): Promise<string> =>
       fileWriteImpl(relativePath, body, deps.cwd, deps.storageRoot),
     db: (): Database => {
