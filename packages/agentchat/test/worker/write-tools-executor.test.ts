@@ -683,6 +683,44 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
     );
   });
 
+  test("concurrent terminalCreate calls never exceed maxConcurrent", async () => {
+    await withCustomSandboxedExecutor(
+      async ({ executor }) => {
+        let peakOneShots = 0;
+        const oneShots = executor.__oneShotTerminals;
+        const originalSet = oneShots.set.bind(oneShots);
+        oneShots.set = ((...args) => {
+          const result = originalSet(...args);
+          peakOneShots = Math.max(peakOneShots, oneShots.size);
+          return result;
+        }) as typeof oneShots.set;
+
+        const results = await Promise.allSettled(
+          Array.from({ length: 5 }, () =>
+            executor.terminalCreate(
+              { argv: ["sleep", "5"] },
+              {
+                toolName: "terminal.create",
+                rawInput: {},
+                dispatchId: "d-test",
+              },
+            ),
+          ),
+        );
+
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled.length).toBe(1);
+        expect(rejected.length).toBe(4);
+        for (const result of rejected) {
+          expect(result.reason).toBeInstanceOf(TerminalCapExceededError);
+        }
+        expect(peakOneShots).toBeLessThanOrEqual(1);
+      },
+      { maxConcurrent: 1 },
+    );
+  });
+
   test("timeout emits terminal.killed reason=timeout", async () => {
     await withCustomSandboxedExecutor(
       async ({ executor }) => {

@@ -111,6 +111,7 @@ export function normalizeWriteTextContent(content: unknown): string {
 
 export class WriteToolsExecutor {
   private readonly oneShots = new Map<string, TerminalHandle>();
+  private pendingReservations = 0;
   private readonly pathLocks = new Map<string, Promise<void>>();
   private disposed = false;
 
@@ -304,74 +305,79 @@ export class WriteToolsExecutor {
     args: { command?: string; argv?: string[]; cwd?: string; output_byte_limit?: number },
     ctx: ToolCallContext,
   ): Promise<{ terminal_id: string }> {
-    if (this.oneShots.size >= this.opts.sandboxConfig.maxConcurrent) {
+    if (this.oneShots.size + this.pendingReservations >= this.opts.sandboxConfig.maxConcurrent) {
       throw new TerminalCapExceededError(this.opts.sandboxConfig.maxConcurrent);
     }
-    await this.gate(ctx);
+    this.pendingReservations++;
+    try {
+      await this.gate(ctx);
 
-    const cwd = await this.resolveTerminalCwd(args.cwd);
-    const terminal_id = randomUUID();
-    const controller = new AbortController();
-    const outputMaxBytes = args.output_byte_limit ?? this.opts.sandboxConfig.outputMaxBytes;
-    const argv = args.argv ?? ["bash", "-c", args.command ?? ""];
+      const cwd = await this.resolveTerminalCwd(args.cwd);
+      const terminal_id = randomUUID();
+      const controller = new AbortController();
+      const outputMaxBytes = args.output_byte_limit ?? this.opts.sandboxConfig.outputMaxBytes;
+      const argv = args.argv ?? ["bash", "-c", args.command ?? ""];
 
-    const done = spawnSandboxed({
-      argv: args.argv,
-      cmd: args.command,
-      cwd,
-      timeoutMs: this.opts.sandboxConfig.timeoutMs,
-      outputMaxBytes,
-      signal: controller.signal,
-      path: this.opts.sandboxConfig.path,
-    });
-
-    const handle: TerminalHandle = {
-      terminal_id,
-      argv,
-      cwd,
-      output: "",
-      truncated: false,
-      done,
-      controller,
-      startedAt: Date.now(),
-    };
-    this.oneShots.set(terminal_id, handle);
-
-    void done
-      .then(async (r) => {
-        handle.output = r.output;
-        handle.truncated = r.truncated;
-        handle.exitStatus = { exitCode: r.exitCode, signal: r.signal };
-        await this.opts.auditEmitter.emit("terminal.exited", {
-          terminal_id,
-          exit_code: r.exitCode,
-          signal: r.signal,
-          output_bytes: Buffer.byteLength(r.output, "utf8"),
-          output_truncated: r.truncated,
-          duration_ms: r.durationMs,
-          handoff_id: this.opts.handoffId,
-        });
-        if (r.killReason) {
-          await this.opts.auditEmitter.emit("terminal.killed", {
-            terminal_id,
-            reason: r.killReason,
-            handoff_id: this.opts.handoffId,
-          });
-        }
-      })
-      .catch((err: unknown) => {
-        this.opts.logger.error(`terminal tracking failed: ${errorMessage(err)}`);
+      const done = spawnSandboxed({
+        argv: args.argv,
+        cmd: args.command,
+        cwd,
+        timeoutMs: this.opts.sandboxConfig.timeoutMs,
+        outputMaxBytes,
+        signal: controller.signal,
+        path: this.opts.sandboxConfig.path,
       });
 
-    await this.opts.auditEmitter.emit("terminal.spawned", {
-      terminal_id,
-      argv,
-      cwd: cwd === this.opts.worktreeRoot ? "/" : path.relative(this.opts.worktreeRoot, cwd),
-      env_keys: computeSandboxEnvKeys(),
-      handoff_id: this.opts.handoffId,
-    });
+      const handle: TerminalHandle = {
+        terminal_id,
+        argv,
+        cwd,
+        output: "",
+        truncated: false,
+        done,
+        controller,
+        startedAt: Date.now(),
+      };
+      this.oneShots.set(terminal_id, handle);
 
-    return { terminal_id };
+      void done
+        .then(async (r) => {
+          handle.output = r.output;
+          handle.truncated = r.truncated;
+          handle.exitStatus = { exitCode: r.exitCode, signal: r.signal };
+          await this.opts.auditEmitter.emit("terminal.exited", {
+            terminal_id,
+            exit_code: r.exitCode,
+            signal: r.signal,
+            output_bytes: Buffer.byteLength(r.output, "utf8"),
+            output_truncated: r.truncated,
+            duration_ms: r.durationMs,
+            handoff_id: this.opts.handoffId,
+          });
+          if (r.killReason) {
+            await this.opts.auditEmitter.emit("terminal.killed", {
+              terminal_id,
+              reason: r.killReason,
+              handoff_id: this.opts.handoffId,
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          this.opts.logger.error(`terminal tracking failed: ${errorMessage(err)}`);
+        });
+
+      await this.opts.auditEmitter.emit("terminal.spawned", {
+        terminal_id,
+        argv,
+        cwd: cwd === this.opts.worktreeRoot ? "/" : path.relative(this.opts.worktreeRoot, cwd),
+        env_keys: computeSandboxEnvKeys(),
+        handoff_id: this.opts.handoffId,
+      });
+
+      return { terminal_id };
+    } finally {
+      this.pendingReservations--;
+    }
   }
 
   terminalOutput(args: {
