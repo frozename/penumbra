@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +35,25 @@ async function withEnv(
   } finally {
     setEnv(key, prev);
   }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw err;
+  }
+}
+
+async function waitUntilDead(pid: number, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return;
+    await Bun.sleep(50);
+  }
+  throw new Error(`pid ${pid.toString()} is still alive`);
 }
 
 describe("spawnSandboxed", () => {
@@ -159,6 +178,28 @@ describe("spawnSandboxed", () => {
     expect(r.killReason).toBe("timeout");
     expect(r.durationMs).toBeLessThan(3000);
     expect(r.exitCode).not.toBe(0);
+  });
+
+  test.skipIf(process.platform === "win32")("timeout kills background descendants", async () => {
+    const pidFile = join(cwd, "sandbox-grandchild.pid");
+    const r = await spawnSandboxed({
+      cmd: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}; wait`,
+      cwd,
+      timeoutMs: 200,
+      outputMaxBytes: 1024,
+    });
+    const pid = Number((await readFile(pidFile, "utf8")).trim());
+
+    try {
+      expect(r.killReason).toBe("timeout");
+      await waitUntilDead(pid);
+    } finally {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
   });
 
   test("timeout result exposes a termination signal when available", async () => {

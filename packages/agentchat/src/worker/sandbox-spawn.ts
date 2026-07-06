@@ -49,19 +49,40 @@ function buildSandboxEnv(opts: SpawnSandboxedOpts): Record<string, string> {
   return env;
 }
 
-function killProc(proc: Subprocess): void {
-  try {
-    proc.kill("SIGTERM");
-  } catch {
-    /* SIGTERM may race with natural exit */
-  }
-  setTimeout(() => {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      /* SIGKILL may race with natural exit */
+function killProc(proc: Subprocess): ReturnType<typeof setTimeout> | undefined {
+  const kill = (signal: NodeJS.Signals): void => {
+    const pid = proc.pid;
+    if (pid && process.platform !== "win32") {
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {
+        /* process group may already be gone */
+      }
     }
+    try {
+      proc.kill(signal);
+    } catch {
+      /* signal delivery may race with natural exit */
+    }
+  };
+
+  kill("SIGTERM");
+  return setTimeout(() => {
+    kill("SIGKILL");
   }, 2000);
+}
+
+function clearKillEscalation(handle: ReturnType<typeof setTimeout> | undefined): void {
+  if (handle) clearTimeout(handle);
+}
+
+function replaceKillEscalation(
+  current: ReturnType<typeof setTimeout> | undefined,
+  proc: Subprocess,
+): ReturnType<typeof setTimeout> | undefined {
+  clearKillEscalation(current);
+  return killProc(proc);
 }
 
 async function readStream(
@@ -101,6 +122,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     proc = Bun.spawn(argv, {
       cwd: opts.cwd,
       env,
+      detached: true,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -123,6 +145,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
   let buf = "";
   let truncated = false;
   let killReason: SpawnSandboxedResult["killReason"];
+  let killEscalationHandle: ReturnType<typeof setTimeout> | undefined;
 
   const ingest = (chunk: string): void => {
     if (truncated) return;
@@ -133,7 +156,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
       buf += chunk.slice(0, Math.max(0, remaining));
       truncated = true;
       killReason = "output_overflow";
-      killProc(proc);
+      killEscalationHandle = replaceKillEscalation(killEscalationHandle, proc);
       return;
     }
     buf += chunk;
@@ -142,13 +165,13 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
   const timeoutHandle = setTimeout(() => {
     if (proc.exitCode !== null) return;
     killReason ??= "timeout";
-    killProc(proc);
+    killEscalationHandle = replaceKillEscalation(killEscalationHandle, proc);
   }, opts.timeoutMs);
 
   const onAbort = (): void => {
     if (proc.exitCode !== null) return;
     killReason ??= "cancelled";
-    killProc(proc);
+    killEscalationHandle = replaceKillEscalation(killEscalationHandle, proc);
   };
 
   if (opts.signal) {
@@ -164,6 +187,7 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     await proc.exited;
   } finally {
     clearTimeout(timeoutHandle);
+    clearKillEscalation(killEscalationHandle);
     if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
   }
 

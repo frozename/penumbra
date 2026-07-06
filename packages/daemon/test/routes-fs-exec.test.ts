@@ -67,6 +67,25 @@ function fakeServices(
   return services as unknown as Services;
 }
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw err;
+  }
+}
+
+async function waitUntilDead(pid: number, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return;
+    await Bun.sleep(50);
+  }
+  throw new Error(`pid ${pid.toString()} is still alive`);
+}
+
 describe("worktrees exec route", () => {
   let tmp: string;
 
@@ -196,6 +215,36 @@ describe("worktrees exec route", () => {
     expect(body.timed_out).toBe(true);
     expect(body.exit_code).toBeNull();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "kills background descendants when command exceeds timeout",
+    async () => {
+      const services = fakeServices({ H1: tmp });
+      const pidFile = path.join(tmp, "fs-exec-grandchild.pid");
+      const req = new Request("http://x/worktrees/H1/exec", {
+        method: "POST",
+        body: JSON.stringify({
+          command: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}; wait`,
+          timeout_ms: 100,
+        }),
+      });
+      const res = await worktreesExecRoute(req, "H1", services);
+      const body = await jsonBody<ExecBody>(res);
+      const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+
+      try {
+        expect(body.timed_out).toBe(true);
+        expect(body.exit_code).toBeNull();
+        await waitUntilDead(pid);
+      } finally {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    },
+  );
 
   it("returns 404 when handoff is unknown", async () => {
     const services = fakeServices({});

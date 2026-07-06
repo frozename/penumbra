@@ -529,7 +529,12 @@ export async function worktreesExecRoute(
   })();
 
   return await new Promise<Response>((resolve) => {
-    const child = spawn(command, { shell: true, cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, {
+      shell: true,
+      cwd,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     const stdoutBuffer: OutputBuffer = { chunks: [], bytes: 0, truncated: false };
     const stderrBuffer: OutputBuffer = { chunks: [], bytes: 0, truncated: false };
@@ -548,9 +553,17 @@ export async function worktreesExecRoute(
       if (settled) return;
       settled = true;
       try {
-        child.kill("SIGKILL");
+        if (child.pid && process.platform !== "win32") {
+          process.kill(-child.pid, "SIGKILL");
+        } else {
+          child.kill("SIGKILL");
+        }
       } catch {
-        // Best-effort timeout cleanup only.
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Best-effort timeout cleanup only.
+        }
       }
       resolve(
         json({
