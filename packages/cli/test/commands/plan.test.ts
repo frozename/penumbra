@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  loadKnownAgents,
   runPlanCancel,
   runPlanList,
   runPlanStart,
@@ -398,6 +399,26 @@ test("runPlanStatus watch stops after the first poll when signaled", async () =>
 
   expect(polls).toBe(1);
   expect(lines.join("\n")).toContain("plan plan_123 (status: running)");
+});
+
+test("loadKnownAgents falls back to real fleet names (not stale repo yaml) when daemon is unreachable", async () => {
+  // Simulate a checkout where a retired root agentchat.yaml still exists with a
+  // stale 2-agent fixture. The daemon is unreachable (nonexistent storage root),
+  // so we must fall straight to FALLBACK_AGENTS — never to the yaml fixture.
+  await writeFile(
+    join(workDir, "agentchat.yaml"),
+    ["agents:", "  - name: local-gemma26", "    roles: [executor]", ""].join("\n"),
+    "utf8",
+  );
+  const warnings: string[] = [];
+  const agents = await loadKnownAgents(
+    workDir,
+    (s) => warnings.push(s),
+    join(workDir, "nonexistent-storage-root"),
+  );
+  expect(agents.has("anthropic-claude-sonnet-acp")).toBe(true);
+  expect(agents.has("local-gemma26")).toBe(false);
+  expect(warnings.some((w) => w.includes("daemon agent registry unreachable"))).toBe(true);
 });
 
 test("runPlanCancel prints the cancelled running count", async () => {

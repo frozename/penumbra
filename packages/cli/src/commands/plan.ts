@@ -3,7 +3,6 @@ import { parsePlanMetaFile, validatePlan } from "@penumbra/workflows";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import YAML from "yaml";
 
 import { renderPlanTree } from "./plan-render.js";
 
@@ -52,24 +51,6 @@ async function loadFromDaemon(storageRoot: string): Promise<Set<string> | null> 
   }
 }
 
-async function loadFromYaml(repoRoot: string, warn: Out): Promise<Set<string> | null> {
-  const yamlPath = join(repoRoot, "agentchat.yaml");
-  if (!existsSync(yamlPath)) return null;
-  try {
-    const text = await readFile(yamlPath, "utf8");
-    const parsed = YAML.parse(text) as { agents?: { name?: unknown }[] } | undefined;
-    const names = (parsed?.agents ?? [])
-      .map((a) => (typeof a.name === "string" ? a.name : null))
-      .filter((n): n is string => n !== null && n.length > 0);
-    return names.length > 0 ? new Set(names) : null;
-  } catch (err) {
-    warn(
-      `plan validate: failed to read agentchat.yaml (${err instanceof Error ? err.message : String(err)})`,
-    );
-    return null;
-  }
-}
-
 export async function loadKnownAgents(
   repoRoot: string,
   warn: Out,
@@ -79,8 +60,12 @@ export async function loadKnownAgents(
   if (storageRoot) {
     base = await loadFromDaemon(storageRoot);
   }
-  base ??= await loadFromYaml(repoRoot, warn);
-  base ??= new Set(FALLBACK_AGENTS);
+  if (base === null) {
+    warn(
+      "plan validate: daemon agent registry unreachable; falling back to built-in agent list. Preferred/fallback checks may be inaccurate.",
+    );
+    base = new Set(FALLBACK_AGENTS);
+  }
   for (const sentinel of MAESTRO_SENTINELS) base.add(sentinel);
   return base;
 }
