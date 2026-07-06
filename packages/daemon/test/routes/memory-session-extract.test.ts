@@ -486,6 +486,151 @@ describe("POST /memory/session-extract", () => {
     ).toBe(true);
   });
 
+  test("strips private spans from transcript_path before calling the judge", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+
+    const transcriptPath = join(daemon.root, "private-transcript.jsonl");
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            "The durable public memory extraction rule should keep only public transcript text that is safe for external judging. ".repeat(
+              3,
+            ) + "<private>my SSN is 123-45-6789</private>",
+        },
+      }) + "\n",
+    );
+
+    let judgePrompt = "";
+    globalThis.fetch = async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      if (typeof init?.body === "string") {
+        judgePrompt = init.body;
+      } else if (_input instanceof Request && !_input.bodyUsed) {
+        judgePrompt = await _input.text();
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: "Private Transcript Redaction",
+                      body: "Session extraction must avoid forwarding private-tagged transcript content to the external memory judge.",
+                      kind: "decision",
+                      why: "Private spans are user-marked sensitive data and must not leave the process.",
+                      source_quote: "only public transcript text",
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-private-transcript",
+        project_id: "proj",
+        transcript_path: transcriptPath,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(judgePrompt).toContain("only public transcript text");
+    expect(judgePrompt).not.toContain("123-45-6789");
+  });
+
+  test("strips private spans from payload_json when payload_summary is null", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+    daemon.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+       VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-private-payload', 'agent-prompt', 'local', ?, NULL)`,
+      [
+        "e-session-extract-private-payload",
+        "2026-06-11T10:04:00.000Z",
+        "2026-06-11T10:04:00.000Z",
+        JSON.stringify({
+          prompt:
+            "The durable public payload rule should preserve safe text from normalized event payloads for the external judge. ".repeat(
+              3,
+            ) + "<private>my SSN is 123-45-6789</private>",
+        }),
+      ],
+    );
+
+    let judgePrompt = "";
+    globalThis.fetch = async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      if (typeof init?.body === "string") {
+        judgePrompt = init.body;
+      } else if (_input instanceof Request && !_input.bodyUsed) {
+        judgePrompt = await _input.text();
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: "Private Payload Redaction",
+                      body: "Session extraction must avoid forwarding private-tagged payload JSON content to the external memory judge.",
+                      kind: "decision",
+                      why: "Payload JSON can bypass ingest normalization on this route and still needs redaction.",
+                      source_quote: "safe text from normalized event payloads",
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-private-payload",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(judgePrompt).toContain("safe text from normalized event payloads");
+    expect(judgePrompt).not.toContain("123-45-6789");
+  });
+
   test("returns zero candidates for transcript_path with no durable assistant prose", async () => {
     const daemon = makeDaemon();
     handles.push({ db: daemon.db, root: daemon.root });

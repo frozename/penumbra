@@ -1,4 +1,4 @@
-import { extractSessionCandidates, type Services } from "@penumbra/core";
+import { extractSessionCandidates, stripPrivacyTags, type Services } from "@penumbra/core";
 import { closeSync, fstatSync, openSync, readSync, type Stats, statSync } from "node:fs";
 import { z } from "zod";
 
@@ -327,7 +327,7 @@ function readString(value: unknown): string | null {
 
 function scrubTranscriptMarkup(content: string): string {
   if (!content) return "";
-  return content
+  return stripPrivacyTags(content)
     .replaceAll(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
