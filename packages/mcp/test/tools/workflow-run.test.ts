@@ -71,17 +71,23 @@ test("forwards optional args to daemon.workflowRun", async () => {
   });
 });
 
-test("fills cwd from handler opts when caller omits cwd, with resolution_warning", async () => {
-  const workflowRun = makeWorkflowRun();
+test("fills cwd from handler opts when caller omits cwd, with resolution_warning surfaced to caller", async () => {
+  const workflowRun = makeWorkflowRun({ workflow_run_id: "w" });
   const handler = workflowRunHandler(fakeDaemon({ workflowRun }), {
     resolveCwd: (): string => "/some/path",
   });
-  await handler({ name: "demo" });
+  const r = await handler({ name: "demo" });
   expect(workflowRun).toHaveBeenCalledWith({
     name: "demo",
     cwd: "/some/path",
-    resolution_warning: "workflow_cwd_inferred_from_mcp_cwd",
   });
+  const block = r.content[0];
+  if (!block) {
+    throw new Error("expected content[0]");
+  }
+  const parsed = JSON.parse(block.text);
+  expect(parsed.resolution_warning).toBe("workflow_cwd_inferred_from_mcp_cwd");
+  expect(parsed.workflow_run_id).toBe("w");
 });
 
 test("throws WorkflowCwdRequiredError when env gate set and cwd omitted", async () => {

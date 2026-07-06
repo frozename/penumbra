@@ -59,6 +59,7 @@ export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandle
   return async (input: unknown): Promise<TextContentEnvelope> => {
     const parsed = WorkflowRunSchema.parse(input);
     const payload = { ...parsed };
+    let resolutionWarning: string | undefined;
     if (parsed.cwd === undefined) {
       if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID)) {
         throw new WorkflowCwdRequiredError();
@@ -66,10 +67,16 @@ export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandle
       const resolvedCwd = opts.resolveCwd?.();
       if (resolvedCwd !== undefined) {
         payload.cwd = resolvedCwd;
-        (payload as Record<string, unknown>).resolution_warning =
-          "workflow_cwd_inferred_from_mcp_cwd";
+        resolutionWarning = "workflow_cwd_inferred_from_mcp_cwd";
       }
     }
-    return toTextContent(await daemon.workflowRun(payload));
+    const result = await daemon.workflowRun(payload);
+    if (resolutionWarning !== undefined) {
+      return toTextContent({
+        ...(result as Record<string, unknown>),
+        resolution_warning: resolutionWarning,
+      });
+    }
+    return toTextContent(result);
   };
 }
