@@ -130,14 +130,14 @@ export function formatChainGetResponse(r: ChainGetResponseResult): string {
 export interface HandoffGetResult {
   handoff: {
     handoff_id: string;
-    agent_name: string;
+    to_agent: string;
     status: string;
   };
 }
 export function formatHandoffGet(r: HandoffGetResult): string {
   const h = r.handoff;
   const id = dimColor(`h-${truncateId(h.handoff_id.replaceAll("-", ""), 7)}`);
-  return `${glyphFor(h.status)} handoff  ${id}  ${h.agent_name}  ${h.status}`;
+  return `${glyphFor(h.status)} handoff  ${id}  ${h.to_agent}  ${h.status}`;
 }
 
 export interface HandoffListPendingResult {

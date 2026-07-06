@@ -144,7 +144,7 @@ describe("per-tool formatters", () => {
       formatHandoffGet({
         handoff: {
           handoff_id: "7d3a91ab-1234-5678",
-          agent_name: "codex-mini",
+          to_agent: "codex-mini",
           status: "dispatched",
         },
       }),

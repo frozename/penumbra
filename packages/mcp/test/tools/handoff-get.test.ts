@@ -26,7 +26,7 @@ test("handoffGetHandler calls daemon.getHandoff and formats output", async () =>
     ts: "2026-04-26T19:00:00Z",
     conversation_id: "c1",
     from_agent: "user",
-    to_agent: "agent",
+    to_agent: "codex-deep",
   };
   const getHandoff: GetHandoffFn = (handoff_id) => {
     expect(handoff_id).toBe("h1");
@@ -37,7 +37,8 @@ test("handoffGetHandler calls daemon.getHandoff and formats output", async () =>
   const block = res.content[0];
   if (block === undefined) throw new Error("expected content[0]");
   expect(block.type).toBe("text");
-  expect(block.text).toMatch(/^[◌◐●◑] handoff {2}/);
+  const firstLine = block.text.split("\n", 1)[0] ?? "";
+  expect(firstLine).toContain("codex-deep");
   expect(block.text).toContain('"handoff_id": "h1"');
 });
 

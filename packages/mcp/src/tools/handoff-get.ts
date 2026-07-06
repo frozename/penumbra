@@ -43,7 +43,7 @@ export const handoffGetHandler =
       const formatterInput = {
         handoff: {
           handoff_id: output.handoff_id,
-          agent_name: typeof output.agent_name === "string" ? output.agent_name : "",
+          to_agent: typeof output.to_agent === "string" ? output.to_agent : "",
           status: output.status,
         },
       };
