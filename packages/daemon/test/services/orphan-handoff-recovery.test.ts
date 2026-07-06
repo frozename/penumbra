@@ -356,6 +356,24 @@ test("OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
   expect(row?.status).toBe("approved"); // requeued
 });
 
+test("OrphanHandoffRecoveryService runOnce(workerId) requeues never-heartbeat deep-stale dispatch-started handoff", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 1000 });
+
+  const workerId = "never-heartbeat-worker-single";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const deepStale = new Date(Date.now() - 10_000).toISOString();
+  setLastDispatchStartedAt(services, handoffId, deepStale);
+  recordDispatchStart(services, handoffId, workerId, deepStale);
+
+  const result = recovery.runOnce(workerId);
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
+});
+
 test("OrphanHandoffRecoveryService caps stale workers per call", () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });

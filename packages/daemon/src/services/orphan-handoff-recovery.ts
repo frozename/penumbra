@@ -53,7 +53,8 @@ export class OrphanHandoffRecoveryService {
   }
 
   recoverForWorker(workerId: string): RecoveryResult {
-    return this.recoverForWorkerIds([workerId]);
+    const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
+    return this.recoverForWorkerIds([workerId], deepStale);
   }
 
   async recoverAll(): Promise<void> {
