@@ -107,6 +107,7 @@ export function normalizeWriteTextContent(content: unknown): string {
 
 export class WriteToolsExecutor {
   private readonly oneShots = new Map<string, TerminalHandle>();
+  private readonly pathLocks = new Map<string, Promise<void>>();
   private disposed = false;
 
   constructor(private readonly opts: WriteToolsExecutorOpts) {}
@@ -118,39 +119,65 @@ export class WriteToolsExecutor {
     const normalizedContent = normalizeWriteTextContent(args.content);
     await this.gate(ctx);
     const real = await this.resolvePath(args.path);
-    let prev_sha256: string | null = null;
-    try {
-      const st = await stat(real);
-      if (st.isDirectory()) throw new NotAFileError(`path is a directory: ${args.path}`);
-      const existing = await readFile(real);
-      prev_sha256 = createHash("sha256").update(existing).digest("hex");
-    } catch (err) {
-      if (err instanceof NotAFileError) throw err;
-      if (errorCode(err) !== "ENOENT")
-        throw new IoError(`failed to stat ${args.path}: ${errorMessage(err)}`);
-    }
+    return this.withPathLock(real, async () => {
+      let prev_sha256: string | null = null;
+      try {
+        const st = await stat(real);
+        if (st.isDirectory()) throw new NotAFileError(`path is a directory: ${args.path}`);
+        const existing = await readFile(real);
+        prev_sha256 = createHash("sha256").update(existing).digest("hex");
+      } catch (err) {
+        if (err instanceof NotAFileError) throw err;
+        if (errorCode(err) !== "ENOENT")
+          throw new IoError(`failed to stat ${args.path}: ${errorMessage(err)}`);
+      }
 
-    await this.ensureParentDir(args.path, real);
+      await this.ensureParentDir(args.path, real);
 
-    const tmp = `${real}.tmp.${randomUUID()}`;
-    try {
-      await writeFile(tmp, normalizedContent, "utf8");
-      await rename(tmp, real);
-    } catch (err) {
-      throw new IoError(`failed to write ${args.path}: ${errorMessage(err)}`);
-    }
+      const tmp = `${real}.tmp.${randomUUID()}`;
+      try {
+        await writeFile(tmp, normalizedContent, "utf8");
+        await rename(tmp, real);
+      } catch (err) {
+        throw new IoError(`failed to write ${args.path}: ${errorMessage(err)}`);
+      }
 
-    const sha256 = createHash("sha256").update(normalizedContent, "utf8").digest("hex");
-    const bytesWritten = Buffer.byteLength(normalizedContent, "utf8");
+      const sha256 = createHash("sha256").update(normalizedContent, "utf8").digest("hex");
+      const bytesWritten = Buffer.byteLength(normalizedContent, "utf8");
 
-    await this.opts.auditEmitter.emit("fs.write_applied", {
-      path: args.path,
-      bytes: bytesWritten,
-      sha256,
-      prev_sha256,
-      handoff_id: this.opts.handoffId,
+      await this.opts.auditEmitter.emit("fs.write_applied", {
+        path: args.path,
+        bytes: bytesWritten,
+        sha256,
+        prev_sha256,
+        handoff_id: this.opts.handoffId,
+      });
+      return { bytesWritten, sha256 };
     });
-    return { bytesWritten, sha256 };
+  }
+
+  /**
+   * FIFO in-process mutex keyed on resolved realpath. Serializes the
+   * read→transform→rename critical section of writeTextFile/editTextFile
+   * against concurrent ACP fs/write dispatches to the same path.
+   */
+  private async withPathLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.pathLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((r) => {
+      release = r;
+    });
+    const chained = prev.then(() => next);
+    this.pathLocks.set(key, chained);
+    try {
+      await prev;
+      return await fn();
+    } finally {
+      release();
+      if (this.pathLocks.get(key) === chained) {
+        this.pathLocks.delete(key);
+      }
+    }
   }
 
   protected async resolvePath(p: string): Promise<string> {
@@ -215,53 +242,58 @@ export class WriteToolsExecutor {
     await this.gate(ctx);
     if (args.old_string === "") throw new EditAmbiguousError("old_string is empty", Infinity);
     const real = await this.resolvePath(args.path);
-    let existing: string;
-    try {
-      existing = await readFile(real, "utf8");
-    } catch (err) {
-      if (errorCode(err) === "ENOENT") throw new EditMissError(`file not found: ${args.path}`, 0);
-      throw new IoError(`failed to read ${args.path}: ${errorMessage(err)}`);
-    }
-    const prev_sha256 = createHash("sha256").update(existing, "utf8").digest("hex");
-    const oldBytes = Buffer.byteLength(args.old_string, "utf8");
-    const newBytes = Buffer.byteLength(args.new_string, "utf8");
+    return this.withPathLock(real, async () => {
+      let existing: string;
+      try {
+        existing = await readFile(real, "utf8");
+      } catch (err) {
+        if (errorCode(err) === "ENOENT") throw new EditMissError(`file not found: ${args.path}`, 0);
+        throw new IoError(`failed to read ${args.path}: ${errorMessage(err)}`);
+      }
+      const prev_sha256 = createHash("sha256").update(existing, "utf8").digest("hex");
+      const oldBytes = Buffer.byteLength(args.old_string, "utf8");
+      const newBytes = Buffer.byteLength(args.new_string, "utf8");
 
-    if (args.old_string === args.new_string) {
-      // no-op success; no event
-      return { bytesAdded: 0, bytesRemoved: 0, sha256: prev_sha256 };
-    }
+      if (args.old_string === args.new_string) {
+        // no-op success; no event
+        return { bytesAdded: 0, bytesRemoved: 0, sha256: prev_sha256 };
+      }
 
-    const occurrences = existing.split(args.old_string).length - 1;
-    if (occurrences === 0)
-      throw new EditMissError(
-        `old_string not found in ${args.path}`,
-        Buffer.byteLength(existing, "utf8"),
-      );
-    if (occurrences > 1 && !args.replace_all)
-      throw new EditAmbiguousError(`old_string matches ${String(occurrences)} times`, occurrences);
+      const occurrences = existing.split(args.old_string).length - 1;
+      if (occurrences === 0)
+        throw new EditMissError(
+          `old_string not found in ${args.path}`,
+          Buffer.byteLength(existing, "utf8"),
+        );
+      if (occurrences > 1 && !args.replace_all)
+        throw new EditAmbiguousError(
+          `old_string matches ${String(occurrences)} times`,
+          occurrences,
+        );
 
-    const next = args.replace_all
-      ? existing.split(args.old_string).join(args.new_string)
-      : existing.replace(args.old_string, args.new_string);
+      const next = args.replace_all
+        ? existing.split(args.old_string).join(args.new_string)
+        : existing.replace(args.old_string, args.new_string);
 
-    const tmp = `${real}.tmp.${randomUUID()}`;
-    await writeFile(tmp, next, "utf8");
-    await rename(tmp, real);
+      const tmp = `${real}.tmp.${randomUUID()}`;
+      await writeFile(tmp, next, "utf8");
+      await rename(tmp, real);
 
-    const sha256 = createHash("sha256").update(next, "utf8").digest("hex");
-    const replacements = args.replace_all ? occurrences : 1;
-    const bytesAdded = newBytes * replacements;
-    const bytesRemoved = oldBytes * replacements;
+      const sha256 = createHash("sha256").update(next, "utf8").digest("hex");
+      const replacements = args.replace_all ? occurrences : 1;
+      const bytesAdded = newBytes * replacements;
+      const bytesRemoved = oldBytes * replacements;
 
-    await this.opts.auditEmitter.emit("fs.edit_applied", {
-      path: args.path,
-      bytes_added: bytesAdded,
-      bytes_removed: bytesRemoved,
-      sha256,
-      prev_sha256,
-      handoff_id: this.opts.handoffId,
+      await this.opts.auditEmitter.emit("fs.edit_applied", {
+        path: args.path,
+        bytes_added: bytesAdded,
+        bytes_removed: bytesRemoved,
+        sha256,
+        prev_sha256,
+        handoff_id: this.opts.handoffId,
+      });
+      return { bytesAdded, bytesRemoved, sha256 };
     });
-    return { bytesAdded, bytesRemoved, sha256 };
   }
 
   async terminalCreate(

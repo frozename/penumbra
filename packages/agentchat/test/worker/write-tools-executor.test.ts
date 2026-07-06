@@ -381,6 +381,44 @@ describe("WriteToolsExecutor.writeTextFile", () => {
       expect(events.filter((e) => e.type === "fs.write_applied").length).toBe(1);
     });
   });
+
+  test("concurrent same-path writeTextFile calls serialize (no lost-update via racing prev_sha256)", async () => {
+    await withSandboxedExecutor(async ({ executor, events }) => {
+      await executor.writeTextFile(
+        { path: "race.txt", content: "orig" },
+        {
+          toolName: "fs.write_text_file",
+          rawInput: {},
+          dispatchId: "d-test",
+        },
+      );
+      const origSha = createHash("sha256").update("orig").digest("hex");
+      events.length = 0;
+
+      const N = 10;
+      await Promise.all(
+        Array.from({ length: N }, (_, i) =>
+          executor.writeTextFile(
+            { path: "race.txt", content: `payload-${String(i)}` },
+            {
+              toolName: "fs.write_text_file",
+              rawInput: {},
+              dispatchId: "d-test",
+            },
+          ),
+        ),
+      );
+
+      const writeEvents = events.filter((e) => e.type === "fs.write_applied");
+      expect(writeEvents.length).toBe(N);
+      // Under the fix, exactly one racing writer observes the pre-race original.
+      // Without the fix, every concurrent stat/read sees "orig" → this count > 1.
+      const sawOriginal = writeEvents.filter(
+        (e) => asWritePayload(e.payload).prev_sha256 === origSha,
+      );
+      expect(sawOriginal.length).toBe(1);
+    });
+  });
 });
 
 describe("WriteToolsExecutor.terminal* (one-shot)", () => {
@@ -869,6 +907,45 @@ describe("WriteToolsExecutor.editTextFile", () => {
       );
       expect(r.bytesRemoved).toBe(3);
       expect(r.bytesAdded).toBe(6);
+    });
+  });
+
+  test("concurrent same-path editTextFile calls serialize (no lost-update on interleaved edits)", async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
+      const N = 8;
+      const initial = Array.from({ length: N }, (_, i) => `X${String(i)}`).join("|");
+      await executor.writeTextFile(
+        { path: "edit-race.txt", content: initial },
+        {
+          toolName: "fs.write_text_file",
+          rawInput: {},
+          dispatchId: "d-test",
+        },
+      );
+
+      // Each edit targets a unique marker; if the read→rename critical section
+      // is unserialized every edit races on the original bytes and rename order
+      // decides the final state, dropping N-1 edits. With the lock all N apply.
+      await Promise.all(
+        Array.from({ length: N }, (_, i) =>
+          executor.editTextFile(
+            {
+              path: "edit-race.txt",
+              old_string: `X${String(i)}`,
+              new_string: `Y${String(i)}`,
+            },
+            {
+              toolName: "fs.edit",
+              rawInput: {},
+              dispatchId: "d-test",
+            },
+          ),
+        ),
+      );
+
+      const final = await readFile(join(worktreeRoot, "edit-race.txt"), "utf8");
+      const expected = Array.from({ length: N }, (_, i) => `Y${String(i)}`).join("|");
+      expect(final).toBe(expected);
     });
   });
 
