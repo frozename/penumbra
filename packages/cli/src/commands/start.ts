@@ -209,7 +209,6 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   try {
     loadSqliteVec(db);
     applyRuntimePragmas(db);
-    migrate(db, { embeddingDim: 384 });
 
     const embedderEnv = readEmbedderEnv(process.env) ?? { mode: "auto" as const };
     const embedder = await resolveEmbedder({
@@ -217,6 +216,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       remote: embedderEnv.remote,
       fallback: new BundledEmbedder(),
     });
+    migrate(db, { embeddingDim: embedder.dim });
     assertEmbedderDim(db, embedder.dim, embedder.name);
 
     const loadedAgentchat = loadAgentchatBundle();

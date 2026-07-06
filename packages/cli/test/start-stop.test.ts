@@ -146,6 +146,61 @@ test("start binds to an explicit port when one is provided", async () => {
   }
 });
 
+test("start migrates using the resolved embedder dim, not a hardcoded 384", async () => {
+  // Regression test for the boot-time hardcoded-384 defect. Before the fix,
+  // runStart() ran migrate(db, { embeddingDim: 384 }) unconditionally, so a
+  // non-384 corpus (e.g. a 1536-dim OpenAI-compatible embedder) tripped the
+  // "embedding_dim mismatch" throw inside migrate() itself on every boot. The
+  // fix resolves the embedder first and passes embedder.dim to migrate().
+  const nonDefaultDim = 768;
+  const isolated = mkdtempSync(join(tmpdir(), "penumbra-cli-dim-"));
+  await runInit({
+    storageRoot: isolated,
+    uuid: () => "tok",
+    claudeUserDir: join(isolated, "claude-user"),
+    embeddingDim: nonDefaultDim,
+  });
+
+  const priorEnv = {
+    mode: process.env.PENUMBRA_EMBEDDINGS_MODE,
+    baseUrl: process.env.PENUMBRA_EMBEDDINGS_BASE_URL,
+    model: process.env.PENUMBRA_EMBEDDINGS_MODEL,
+    dim: process.env.PENUMBRA_EMBEDDINGS_DIM,
+    healthPath: process.env.PENUMBRA_EMBEDDINGS_HEALTH_PATH,
+  };
+  process.env.PENUMBRA_EMBEDDINGS_MODE = "remote";
+  process.env.PENUMBRA_EMBEDDINGS_BASE_URL = "http://127.0.0.1:1";
+  process.env.PENUMBRA_EMBEDDINGS_MODEL = "test-model";
+  process.env.PENUMBRA_EMBEDDINGS_DIM = String(nonDefaultDim);
+  // Empty health path skips the liveness probe so the unreachable baseUrl
+  // never has to answer — the OpenAICompatEmbedder ctor is inert.
+  process.env.PENUMBRA_EMBEDDINGS_HEALTH_PATH = "";
+
+  try {
+    const handle = await runStart({ storageRoot: isolated, port: 51382 });
+    try {
+      const check = new Database(join(isolated, "db.sqlite"));
+      try {
+        const row = check
+          .query<{ value: string }, []>("SELECT value FROM db_meta WHERE key='embedding_dim'")
+          .get();
+        expect(row?.value).toBe(String(nonDefaultDim));
+      } finally {
+        check.close();
+      }
+    } finally {
+      await runStop({ storageRoot: isolated, handle });
+    }
+  } finally {
+    for (const [key, value] of Object.entries(priorEnv)) {
+      const envKey = `PENUMBRA_EMBEDDINGS_${key === "baseUrl" ? "BASE_URL" : key === "healthPath" ? "HEALTH_PATH" : key.toUpperCase()}`;
+      if (value === undefined) delete process.env[envKey];
+      else process.env[envKey] = value;
+    }
+    rmSync(isolated, { recursive: true, force: true });
+  }
+});
+
 test("concurrent runStart calls — exactly one wins, the other rejects", async () => {
   // Race two starts. One should claim the pid file via O_EXCL; the other
   // should reject with "already running" (or fail the EEXIST liveness check).
