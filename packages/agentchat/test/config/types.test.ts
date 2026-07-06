@@ -305,6 +305,66 @@ describe("AgentChatConfigSchema — adversarial review config blocks", () => {
   });
 });
 
+describe("AgentConfigSchema — tool-capable seats cannot opt into global recall", () => {
+  const base = { name: "a", adapter: "stdio-acp" };
+
+  test("terminal=true + recall_context.scope='global' is rejected", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        ...base,
+        options: { terminal: true },
+        recall_context: { enabled: true, scope: "global" },
+      }),
+    ).toThrow(/recall_context.*global.*tool-capable/i);
+  });
+
+  test("fsWriteTextFile=true + recall_context.scope='global' is rejected", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        ...base,
+        options: { fsWriteTextFile: true },
+        recall_context: { enabled: true, scope: "global" },
+      }),
+    ).toThrow(/recall_context.*global.*tool-capable/i);
+  });
+
+  test("terminal=true + recall_context.scope='project' is accepted", () => {
+    const parsed = AgentConfigSchema.parse({
+      ...base,
+      options: { terminal: true },
+      recall_context: { enabled: true, scope: "project" },
+    });
+    expect(parsed.recall_context?.scope).toBe("project");
+  });
+
+  test("terminal=true + recall_context.scope='corpus:x' is accepted", () => {
+    const parsed = AgentConfigSchema.parse({
+      ...base,
+      options: { terminal: true },
+      recall_context: { enabled: true, scope: "corpus:acp-work" },
+    });
+    expect(parsed.recall_context?.scope).toBe("corpus:acp-work");
+  });
+
+  test("global scope is accepted on a seat without terminal/fsWriteTextFile", () => {
+    const parsed = AgentConfigSchema.parse({
+      ...base,
+      options: {},
+      recall_context: { enabled: true, scope: "global" },
+    });
+    expect(parsed.recall_context?.scope).toBe("global");
+  });
+
+  test("global scope is accepted when recall is disabled (dormant config, no runtime risk)", () => {
+    const parsed = AgentConfigSchema.parse({
+      ...base,
+      options: { terminal: true },
+      recall_context: { enabled: false, scope: "global" },
+    });
+    expect(parsed.recall_context?.scope).toBe("global");
+  });
+});
+
 describe("AgentConfigSchema — canonical provider values (fail-closed at config load)", () => {
   const base = { name: "a", adapter: "stdio-acp" };
 

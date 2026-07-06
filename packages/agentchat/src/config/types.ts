@@ -204,6 +204,23 @@ export const AgentConfigSchema = z
         message: "long_lived: true requires long_lived_config",
       });
     }
+    // Tool-capable seats (fs write, terminal exec) must not opt into global
+    // cross-project recall. The enricher splices recall bodies into the
+    // dispatched prompt; a global-scope recall on a tool-capable agent is a
+    // prompt-injection vector (any project's text can steer any other
+    // project's tool use). Corpus scope is fine — corpora are curated.
+    if (
+      data.recall_context?.enabled === true &&
+      data.recall_context.scope === "global" &&
+      (data.options?.terminal === true || data.options?.fsWriteTextFile === true)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recall_context", "scope"],
+        message:
+          "recall_context.scope='global' is not allowed on tool-capable agents (options.terminal=true or options.fsWriteTextFile=true); use 'project' or 'corpus:<name>' to avoid cross-project prompt-injection",
+      });
+    }
   });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 

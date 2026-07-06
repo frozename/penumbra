@@ -1,10 +1,66 @@
-import type { Logger } from "@penumbra/core";
+import { ValuePatternRedactor, type ValuePatternRule, type Logger } from "@penumbra/core";
 
 import type { RecallContextConfig } from "../config/types.js";
 import type { PenumbraClient } from "../penumbra-client.js";
 
 const QUERY_MAX_CHARS = 500;
 const RECALL_TIMEOUT_MS = 5000;
+
+/**
+ * Prompt-injection-oriented pattern scan applied to recall bodies before
+ * they are spliced into a dispatched agent's message. Cross-project recall
+ * (scope: global) can surface any observation from any project — including
+ * text that was itself captured from an attacker-controlled surface. Without
+ * this guard, that text is fed verbatim into a tool-capable agent's prompt.
+ *
+ * Rules are fail-closed: on a hit, drop the entire recall item rather than
+ * try to sanitize in-place. All rules are anchored to injection-shaped text
+ * (imperative overrides, shell/pipe-exec, tool-invocation markers) — they
+ * are not general-purpose secret redaction.
+ */
+const INJECTION_SCAN_RULES: readonly ValuePatternRule[] = [
+  {
+    id: "imperative_override",
+    pattern:
+      /\b(?:ignore|disregard|forget|override|bypass)\b[^\n]{0,40}\b(?:all\s+)?(?:prior|previous|above|earlier|preceding|initial|original)\b[^\n]{0,40}\b(?:instructions?|prompts?|rules?|directives?|system\s+prompt|context)\b/gi,
+    replacement: "[REDACTED:injection]",
+    failClosed: true,
+  },
+  {
+    id: "role_reassignment",
+    pattern: /\byou\s+are\s+now\s+(?:a|an|the)\b[^\n]{0,80}/gi,
+    replacement: "[REDACTED:role-reassignment]",
+    failClosed: true,
+  },
+  {
+    id: "chat_role_marker",
+    pattern: /(?:^|\n)\s*(?:system|assistant|human|user)\s*:\s*(?=\n|$)/gi,
+    replacement: "[REDACTED:role-marker]",
+    failClosed: true,
+  },
+  {
+    id: "new_directive_marker",
+    pattern: /\bnew\s+(?:instructions?|task|prompt|directive|system\s+prompt)\s*:/gi,
+    replacement: "[REDACTED:new-directive]",
+    failClosed: true,
+  },
+  {
+    id: "shell_pipe_exec",
+    pattern:
+      /(?:curl|wget|fetch)\b[^\n|]{0,200}\|\s*(?:sh|bash|zsh|dash|python\d?|ruby|perl|node)\b/gi,
+    replacement: "[REDACTED:shell-pipe]",
+    failClosed: true,
+  },
+  {
+    id: "tool_call_marker",
+    pattern:
+      /<\s*(?:antml:)?function_calls\b|<\s*(?:antml:)?invoke\b|<\s*tool_use\b|<\|\s*tool_call\s*\|>|<\|\s*im_start\s*\|>/gi,
+    replacement: "[REDACTED:tool-marker]",
+    failClosed: true,
+  },
+] as const;
+
+const INJECTION_REDACTOR = new ValuePatternRedactor(INJECTION_SCAN_RULES);
 
 export interface EnrichOpts {
   /** The original handoff prompt; the enricher returns the same string with recalled context appended (or unchanged on failure). */
@@ -55,8 +111,44 @@ export class RecallEnricher {
 
     if (!items || items.length === 0) return opts.message;
 
-    const preamble = formatPreamble(items, opts.config.max_chars_per_result);
+    const safe = this.scanForInjection(items);
+    if (safe.length === 0) return opts.message;
+
+    const preamble = formatPreamble(safe, opts.config.max_chars_per_result);
     return `${opts.message}\n\n${preamble}`;
+  }
+
+  /**
+   * Fail-closed injection scan. Drops any item whose body trips a rule.
+   * Any thrown error (regex engine misbehavior, unexpected redactor bug)
+   * drops that item without escaping — recall enrichment must never block
+   * dispatch, and it must never emit un-scanned content on failure.
+   */
+  private scanForInjection(items: PreambleItem[]): PreambleItem[] {
+    const kept: PreambleItem[] = [];
+    for (const item of items) {
+      try {
+        const { hits } = INJECTION_REDACTOR.redactString(item.body);
+        if (hits.length > 0) {
+          this.deps.log.warn(
+            {
+              rule_ids: hits.map((h) => h.rule_id),
+              tier: item.tier,
+              ts: item.ts,
+            },
+            "recall item dropped by injection scan",
+          );
+          continue;
+        }
+        kept.push(item);
+      } catch (err) {
+        this.deps.log.warn(
+          { err: err instanceof Error ? err.message : String(err), tier: item.tier, ts: item.ts },
+          "recall injection scan errored; dropping item (soft-fail)",
+        );
+      }
+    }
+    return kept;
   }
 
   private async queryRecall(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
