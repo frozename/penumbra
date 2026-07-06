@@ -135,7 +135,7 @@ function readGateDeltas(storageRoot: string): GateDeltas {
       .query<
         { c: number },
         []
-      >("SELECT COUNT(*) AS c FROM dream_actions WHERE source = 't2_promotion_near_dup_gate' AND status IN ('queued', 'approved', 'auto_applied')")
+      >("SELECT COUNT(*) AS c FROM dream_actions WHERE json_extract(payload_json,'$.source') = 't2_promotion_near_dup_gate' AND status IN ('queued', 'approved', 'auto_applied')")
       .get();
     deltas.neardup = neardupRow?.c ?? null;
   } catch {
