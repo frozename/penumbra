@@ -23,7 +23,8 @@ export interface SpawnSandboxedResult {
 
 type Subprocess = ReturnType<typeof Bun.spawn>;
 
-const PASS_THROUGH_ENV_KEYS = ["LANG", "LC_ALL"];
+const BASE_ENV_KEYS = ["PATH", "HOME", "CI", "TERM"] as const;
+const PASS_THROUGH_ENV_KEYS = ["LANG", "LC_ALL"] as const;
 
 function isExecutableMissingError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -47,6 +48,21 @@ function buildSandboxEnv(opts: SpawnSandboxedOpts): Record<string, string> {
   }
   for (const [k, v] of Object.entries(opts.envOverride ?? {})) env[k] = v;
   return env;
+}
+
+/**
+ * Returns the env var names the sandbox will expose to a child, matching
+ * buildSandboxEnv's shape without the values. Kept in lockstep with
+ * buildSandboxEnv via shared BASE_ENV_KEYS / PASS_THROUGH_ENV_KEYS constants so
+ * security-audit events cannot silently drift from the real spawn env.
+ */
+export function computeSandboxEnvKeys(envOverride?: Record<string, string>): string[] {
+  const keys = new Set<string>(BASE_ENV_KEYS);
+  for (const key of PASS_THROUGH_ENV_KEYS) {
+    if (process.env[key] !== undefined) keys.add(key);
+  }
+  for (const key of Object.keys(envOverride ?? {})) keys.add(key);
+  return [...keys];
 }
 
 function killProc(proc: Subprocess): ReturnType<typeof setTimeout> | undefined {

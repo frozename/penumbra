@@ -46,6 +46,18 @@ interface TerminalKilledPayload {
   handoff_id: string;
 }
 
+interface TerminalSpawnedPayload {
+  terminal_id: string;
+  argv: string[];
+  cwd: string;
+  env_keys: string[];
+  handoff_id: string;
+}
+
+function asSpawnedPayload(p: unknown): TerminalSpawnedPayload {
+  return p as TerminalSpawnedPayload;
+}
+
 function asWritePayload(p: unknown): FsWriteAppliedPayload {
   return p as FsWriteAppliedPayload;
 }
@@ -440,6 +452,39 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
       expect(events.some((e) => e.type === "terminal.spawned")).toBe(true);
       expect(events.some((e) => e.type === "terminal.exited")).toBe(true);
     });
+  });
+
+  test("terminal.spawned env_keys reflects LANG/LC_ALL when set on host", async () => {
+    const priorLang = process.env.LANG;
+    const priorLcAll = process.env.LC_ALL;
+    process.env.LANG = "en_US.UTF-8";
+    delete process.env.LC_ALL;
+    try {
+      await withSandboxedExecutor(async ({ executor, events }) => {
+        const { terminal_id } = await executor.terminalCreate(
+          { argv: ["echo", "env"] },
+          {
+            toolName: "terminal.create",
+            rawInput: {},
+            dispatchId: "d-test",
+          },
+        );
+        await executor.terminalWaitForExit({ terminal_id });
+        const spawned = events.find((e) => e.type === "terminal.spawned");
+        expect(spawned).toBeDefined();
+        const keys = asSpawnedPayload(spawned?.payload).env_keys;
+        expect(keys).toContain("PATH");
+        expect(keys).toContain("HOME");
+        expect(keys).toContain("CI");
+        expect(keys).toContain("TERM");
+        expect(keys).toContain("LANG");
+        expect(keys).not.toContain("LC_ALL");
+      });
+    } finally {
+      if (priorLang === undefined) delete process.env.LANG;
+      else process.env.LANG = priorLang;
+      if (priorLcAll !== undefined) process.env.LC_ALL = priorLcAll;
+    }
   });
 
   test("argv preferred over cmd when both set", async () => {

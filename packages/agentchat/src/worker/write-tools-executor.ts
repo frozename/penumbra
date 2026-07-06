@@ -9,7 +9,11 @@ import type { ToolCallContext } from "../sdk/adapter.js";
 import type { PermissionCallback } from "./permission-callback.js";
 import type { SandboxConfig } from "./sandbox-config.js";
 
-import { spawnSandboxed, type SpawnSandboxedResult } from "./sandbox-spawn.js";
+import {
+  computeSandboxEnvKeys,
+  spawnSandboxed,
+  type SpawnSandboxedResult,
+} from "./sandbox-spawn.js";
 import {
   EditAmbiguousError,
   EditMissError,
@@ -363,7 +367,7 @@ export class WriteToolsExecutor {
       terminal_id,
       argv,
       cwd: cwd === this.opts.worktreeRoot ? "/" : path.relative(this.opts.worktreeRoot, cwd),
-      env_keys: ["PATH", "HOME", "CI", "TERM"],
+      env_keys: computeSandboxEnvKeys(),
       handoff_id: this.opts.handoffId,
     });
 
