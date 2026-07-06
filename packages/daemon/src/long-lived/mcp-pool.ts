@@ -130,17 +130,7 @@ class McpPoolRuntime implements McpPool {
     try {
       await this.ensureStateRunning(spec);
     } catch (error) {
-      this.lastRegistration = {
-        registered: [...this.lastRegistration.registered],
-        skipped: [
-          ...this.lastRegistration.skipped,
-          {
-            server: spec.name,
-            tool: spec.name,
-            reason: errorMessage(error),
-          },
-        ],
-      };
+      this.recordSkip(spec.name, errorMessage(error));
       throw error;
     }
     this.snapshotHealth();
@@ -154,7 +144,12 @@ class McpPoolRuntime implements McpPool {
   ): Promise<unknown> {
     const existing = this.states.get(serverName);
     if (!existing) throw new Error("mcp_unavailable");
-    await this.ensureStateRunning(existing.spec);
+    try {
+      await this.ensureStateRunning(existing.spec);
+    } catch (error) {
+      this.recordSkip(serverName, errorMessage(error));
+      throw error;
+    }
     const state = this.states.get(serverName);
     if (!state || state.tornDown) throw new Error("mcp_unavailable");
     const params: Record<string, unknown> = {
@@ -170,8 +165,27 @@ class McpPoolRuntime implements McpPool {
   async listTools(serverName: string): Promise<McpToolDescriptor[]> {
     const state = this.states.get(serverName);
     if (!state) throw new Error("mcp_unavailable");
-    await this.ensureStateRunning(state.spec);
+    try {
+      await this.ensureStateRunning(state.spec);
+    } catch (error) {
+      this.recordSkip(serverName, errorMessage(error));
+      throw error;
+    }
     return [...(this.states.get(serverName)?.tools ?? [])];
+  }
+
+  private recordSkip(server: string, reason: string): void {
+    const skipped = this.lastRegistration.skipped;
+    const key = `${server}::${server}::${reason}`;
+    for (const entry of skipped) {
+      if (`${entry.server}::${entry.tool}::${entry.reason}` === key) {
+        return;
+      }
+    }
+    this.lastRegistration = {
+      registered: [...this.lastRegistration.registered],
+      skipped: [...skipped, { server, tool: server, reason }],
+    };
   }
 
   acquire(agentId: string, serverName: string): void {
@@ -278,6 +292,12 @@ class McpPoolRuntime implements McpPool {
     if (state.initialized) {
       for (const tool of state.tools) {
         registered.push({ server, tool: tool.name, name: `${server}.${tool.name}` });
+      }
+      for (let i = skipped.length - 1; i >= 0; i--) {
+        const entry = skipped[i];
+        if (!entry || entry.server !== server) continue;
+        seenSkipped.delete(`${entry.server}::${entry.tool}::${entry.reason}`);
+        skipped.splice(i, 1);
       }
       return;
     }

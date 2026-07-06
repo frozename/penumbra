@@ -151,6 +151,109 @@ test("ensureRunning initializes and caches tools", async () => {
   await pool.shutdown();
 });
 
+test("getFederationHealth prunes stale skip entries after recovery", async () => {
+  const failing = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { protocolVersion: "2025-03-26", capabilities: {} },
+      });
+    } else if (req.method === "tools/list") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        error: { code: -32603, message: "tools_unavailable" },
+      });
+    }
+  });
+  const succeeding = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { protocolVersion: "2025-03-26", capabilities: {} },
+      });
+    } else if (req.method === "tools/list") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { tools: [{ name: "echo", description: "echoes its args" }] },
+      });
+    }
+  });
+  const spawnChildProcess = mock()
+    .mockReturnValueOnce(failing.proc)
+    .mockReturnValueOnce(succeeding.proc);
+  const pool = createMcpPool({ spawnChildProcess: asSpawn(spawnChildProcess) });
+  const spec: HostedMcpServer = {
+    name: "flappy",
+    command: "bun",
+    args: ["run", fixture],
+    env: [],
+  };
+
+  await expectRejection(pool.ensureRunning(spec), "tools_unavailable");
+  expect(pool.getFederationHealth().skipped).toEqual([
+    { server: "flappy", tool: "flappy", reason: "tools_unavailable" },
+  ]);
+
+  await pool.ensureRunning(spec);
+  expect(pool.getFederationHealth()).toEqual({
+    registered: [{ server: "flappy", tool: "echo", name: "flappy.echo" }],
+    skipped: [],
+  });
+  await pool.shutdown();
+});
+
+test("callTool records a post-boot restart failure as skipped", async () => {
+  const first = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { protocolVersion: "2025-03-26", capabilities: {} },
+      });
+    } else if (req.method === "tools/list") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { tools: [{ name: "echo", description: "echoes its args" }] },
+      });
+    }
+  });
+  const second = makeFakeProc((req, stdout) => {
+    if (req.method === "initialize") {
+      emitJson(stdout, {
+        jsonrpc: "2.0",
+        id: req.id,
+        error: { code: -32603, message: "restart_failed" },
+      });
+    }
+  });
+  const spawnChildProcess = mock().mockReturnValueOnce(first.proc).mockReturnValueOnce(second.proc);
+  const pool = createMcpPool({ spawnChildProcess: asSpawn(spawnChildProcess) });
+  const spec: HostedMcpServer = {
+    name: "crash-and-burn",
+    command: "bun",
+    args: ["run", fixture],
+    env: [],
+  };
+
+  await pool.ensureRunning(spec);
+  expect(pool.getFederationHealth().skipped).toEqual([]);
+
+  const state = getStateOrThrow(pool, "crash-and-burn");
+  state.proc.emit("close");
+
+  await expectRejection(pool.callTool("crash-and-burn", "echo", {}), "restart_failed");
+
+  expect(pool.getFederationHealth().skipped).toEqual([
+    { server: "crash-and-burn", tool: "crash-and-burn", reason: "restart_failed" },
+  ]);
+  await pool.shutdown();
+});
+
 test("getFederationHealth retains skipped bootstrap failures", async () => {
   const { proc } = makeFakeProc((req, stdout) => {
     if (req.method === "initialize") {
