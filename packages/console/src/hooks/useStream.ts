@@ -85,6 +85,14 @@ export function useStream<T = unknown>(
       { params: opts?.params },
     );
 
+    const buffered = sub.tail() as readonly StreamMessage<T>[];
+    if (buffered.length) {
+      setSnapshot((prev) => {
+        const merged = prev.length ? prev : buffered;
+        return bufferSize === 0 ? [] : merged.slice(-bufferSize);
+      });
+    }
+
     subscriptionRef.current?.unsubscribe();
     subscriptionRef.current = sub;
 

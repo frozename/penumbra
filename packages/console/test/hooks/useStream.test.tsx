@@ -61,6 +61,32 @@ describe("useStream", () => {
     expect(result.current.reconnectCount).toBe(0);
   });
 
+  test("hydrates initial messages from subscription tail", async () => {
+    const buffered: readonly StreamMessage<{ id: number }>[] = [
+      {
+        event: "message",
+        data: { id: 1 },
+        raw: { reconnect: false } as unknown as MessageEvent,
+      },
+      {
+        event: "message",
+        data: { id: 2 },
+        raw: { reconnect: false } as unknown as MessageEvent,
+      },
+    ];
+    const subscribeImpl = mock(((..._args: any[]) => ({
+      tail: () => buffered,
+      unsubscribe: mock(() => {}),
+    })) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ id: number }>("dispatch-events", { enabled: true }, { subscribeImpl }),
+    );
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+    expect(result.current.messages.map((m) => m.data)).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
   test("reconnect clears messages and increments reconnectCount per reconnect", async () => {
     let emit!: (msg: StreamMessage<{ id?: number }>) => void;
     const subscribeImpl = mock(((...args: any[]) => {
