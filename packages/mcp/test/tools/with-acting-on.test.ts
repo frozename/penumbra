@@ -80,6 +80,16 @@ describe("withActingOnEnvelope", () => {
     expect(result).toBe(payload);
   });
 
+  it("forwards the SDK's extra argument to the wrapped handler", async () => {
+    const captured: unknown[] = [];
+    const handler = withActingOnEnvelope((_input: unknown, extra: unknown) => {
+      captured.push(extra);
+      return { ok: true };
+    });
+    await handler({ handoff_id: "h-1" }, { _meta: { origin: "m" } });
+    expect(captured).toEqual([{ _meta: { origin: "m" } }]);
+  });
+
   it("rethrows handler errors", async () => {
     const err = new Error("boom");
     const handler = withActingOnEnvelope(() => {

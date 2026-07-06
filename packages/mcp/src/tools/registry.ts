@@ -247,7 +247,10 @@ export type ToolDescriptor = {
 
 export type ToolDef = {
   descriptor: ToolDescriptor;
-  makeHandler: (daemon: DaemonClient, opts?: unknown) => (args: unknown) => Promise<unknown>;
+  makeHandler: (
+    daemon: DaemonClient,
+    opts?: unknown,
+  ) => (args: unknown, extra?: unknown) => Promise<unknown>;
   readOnly: boolean;
   handlerOpts?: (ctx: ToolBuildContext) => unknown;
 };

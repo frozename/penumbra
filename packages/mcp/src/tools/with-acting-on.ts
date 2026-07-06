@@ -22,14 +22,14 @@ export const DEFAULT_ID_KIND_MAP: Record<string, ActingOnKind> = {
 
 export type ActingOn = { kind: ActingOnKind; id: string };
 
-export type Handler<I = unknown, O = unknown> = (input: I) => Promise<O> | O;
+export type Handler<I = unknown, O = unknown> = (input: I, extra?: unknown) => Promise<O> | O;
 
 export function withActingOnEnvelope<I, O>(
   handler: Handler<I, O>,
   idKindMap: Record<string, ActingOnKind> = DEFAULT_ID_KIND_MAP,
-): (input: I) => Promise<O | (O & { acting_on: ActingOn })> {
-  return async (input: I) => {
-    const result = await handler(input);
+): (input: I, extra?: unknown) => Promise<O | (O & { acting_on: ActingOn })> {
+  return async (input: I, extra?: unknown) => {
+    const result = await handler(input, extra);
     const actingOn = extractActingOn(input, idKindMap);
     if (!actingOn) return result;
     if (!isPlainObject(result)) return result;
