@@ -63,6 +63,13 @@ const ReqStr = z.string().min(1);
 const OptNonNegInt = NonNegInt.optional();
 const OptNonNegNum = NonNegNum.optional();
 const OptPosInt = PosInt.optional();
+const DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
+const SakanaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
+  if (v === undefined) return v;
+  const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT;
+  return parsed;
+}, z.number().positive());
 
 export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   // ── daemon ──────────────────────────────────────────────────────────
@@ -244,6 +251,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: "",
     description:
       "Comma-separated hostnames treated as local model nodes for analyzer health checks.",
+  },
+  PENUMBRA_LLAMACTL_PROXY_BASE_URL: {
+    schema: z.string(),
+    default: "http://127.0.0.1:7944",
+    description: "Base URL for llamactl proxy served-model discovery.",
   },
   PENUMBRA_HANDOFF_ID: {
     schema: OptStr,
@@ -877,6 +889,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: NonNegNum,
     default: 40,
     description: "Maximum plausible percentage for synthesized Google usage estimates.",
+  },
+  PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT: {
+    schema: SakanaSynthMaxPlausiblePct,
+    default: DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT,
+    description: "Maximum plausible percentage for synthesized Sakana usage estimates.",
   },
   PENUMBRA_PER_WORKER_USAGE_CURSOR: {
     schema: Bool,

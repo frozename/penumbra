@@ -63,6 +63,29 @@ describe("parseEnv", () => {
     const ok = parseEnv({ PENUMBRA_T2_EMBED_RECIPE: "title_plus_concise" });
     expect(ok.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");
   });
+
+  test("sakana plausible percentage falls back for blank or invalid values", () => {
+    const unset = parseEnv({}) as Record<string, unknown>;
+    expect(unset.PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT).toBe(300);
+
+    const blank = parseEnv({ PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT: "" }) as Record<
+      string,
+      unknown
+    >;
+    expect(blank.PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT).toBe(300);
+
+    const invalid = parseEnv({ PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT: "not-a-number" }) as Record<
+      string,
+      unknown
+    >;
+    expect(invalid.PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT).toBe(300);
+
+    const override = parseEnv({ PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT: "450" }) as Record<
+      string,
+      unknown
+    >;
+    expect(override.PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT).toBe(450);
+  });
 });
 
 describe("ENV_REGISTRY", () => {

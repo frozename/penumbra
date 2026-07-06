@@ -43,12 +43,12 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_MCP_TOOL_ALLOWLIST",
 ]);
 const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
-const PENUMBRA_MCP_PATH_RE = /penumbra-mcp(?:\.[jt]s)?(?:$|[\s/])/;
+const MCP_PATH_RE = /penumbra-mcp(?:\.[jt]s)?(?:$|[\s/])/;
 
 function isPenumbraMcp(server: McpServer): server is McpServerStdio {
   if ("type" in server) return false;
   const haystack = [server.name, server.command, ...server.args].join(" ");
-  return PENUMBRA_MCP_PATH_RE.test(haystack);
+  return MCP_PATH_RE.test(haystack);
 }
 
 function buildLongLivedMcpEnv(input: DispatchInput): { name: string; value: string }[] {

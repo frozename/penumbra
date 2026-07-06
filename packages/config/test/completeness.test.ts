@@ -190,6 +190,18 @@ describe("scanForPenumbraTokens", () => {
     }).not.toThrow();
   });
 
+  test("registers live raw env reads without code-only constants", () => {
+    const result = scanForPenumbraTokens(".", [
+      "packages/config/**",
+      "**/dist/**",
+      "**/node_modules/**",
+    ]);
+
+    expect(ENV_REGISTRY).toHaveProperty("PENUMBRA_LLAMACTL_PROXY_BASE_URL");
+    expect(ENV_REGISTRY).toHaveProperty("PENUMBRA_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT");
+    expect(result.tokens.has("PENUMBRA_MCP_PATH_RE")).toBe(false);
+  });
+
   test("ignores comment references", async () => {
     ensureDir(join(fixtureDir, "packages"));
     await Bun.write(fixturePath, "// PENUMBRA_TODO_LATER\n");
