@@ -182,6 +182,31 @@ describe("buildServer tool registration", () => {
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("closes invocation sink on server close when logging is enabled", async () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = "1";
+    delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
+    const sinkStub: InvocationSink = {
+      write: () => undefined,
+      close: () => Promise.resolve(),
+    };
+    spyOn(registry, "initSink").mockResolvedValue(sinkStub);
+    const closeSinkSpy = spyOn(registry, "closeSink").mockResolvedValue(undefined);
+    const server = await buildServer({ daemon: fakeDaemon() });
+    const preCloseCount = closeSinkSpy.mock.calls.length;
+    await server.close();
+    expect(closeSinkSpy.mock.calls.length).toBeGreaterThan(preCloseCount);
+  });
+
+  it("does NOT close invocation sink on server close when logging is disabled", async () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
+    const closeSinkSpy = spyOn(registry, "closeSink").mockResolvedValue(undefined);
+    const server = await buildServer({ daemon: fakeDaemon() });
+    const preCloseCount = closeSinkSpy.mock.calls.length;
+    await server.close();
+    expect(closeSinkSpy.mock.calls.length).toBe(preCloseCount);
+  });
+
   it("warns when workflow_wait is allowlisted without read_handle", async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "workflow_wait";
     const lines: string[] = [];

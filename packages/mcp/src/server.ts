@@ -178,7 +178,7 @@ async function assembleServer(opts: AssembleOptions): Promise<McpServer> {
   if (!allowlist || allowlist.has("read_handle")) {
     registerReadHandleTool({ server, handleStore, invocationLogEnabled, responseBudgetTokens });
   }
-  installHandleStoreTeardown(server, handleStore);
+  installHandleStoreTeardown(server, handleStore, invocationLogEnabled);
   const result = await registerFederatedTools({
     server,
     daemon,
@@ -255,7 +255,11 @@ function registerReadHandleTool(opts: ReadHandleRegistrationOpts): void {
   );
 }
 
-function installHandleStoreTeardown(server: McpServer, handleStore: HandleStore): void {
+function installHandleStoreTeardown(
+  server: McpServer,
+  handleStore: HandleStore,
+  invocationLogEnabled: boolean,
+): void {
   let handleStoreClosed = false;
   const closeHandleStore = (): void => {
     if (handleStoreClosed) return;
@@ -264,11 +268,17 @@ function installHandleStoreTeardown(server: McpServer, handleStore: HandleStore)
   };
   const priorClose = server.close.bind(server);
   // Keep teardown on the public close() surface and avoid coupling to SDK internals.
+  // Flush the invocation sink here so bin/penumbra-mcp.ts's shutdown() awaits any
+  // in-flight rotation/gzip before process.exit(0) — the bin only calls server.close().
   (server as unknown as { close: () => Promise<void> }).close = async (): Promise<void> => {
     try {
       await priorClose();
     } finally {
-      closeHandleStore();
+      try {
+        if (invocationLogEnabled) await closeSink();
+      } finally {
+        closeHandleStore();
+      }
     }
   };
 }
