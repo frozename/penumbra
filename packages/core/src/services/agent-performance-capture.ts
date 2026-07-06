@@ -280,7 +280,7 @@ function detectRecoveryCancel(
     .prepare<
       { ts: string },
       [string]
-    >(`SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts ASC LIMIT 1`)
+    >(`SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
     .get(handoffId);
   if (!row) {
     // No terminal event yet but capture is being called — likely a synthetic

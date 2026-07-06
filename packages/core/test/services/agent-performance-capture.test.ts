@@ -944,6 +944,43 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.notes).toContain("recovery_cancel");
   });
 
+  it("uses the latest dispatch.end when detecting recovery cancel after a retry", () => {
+    db.prepare(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?`).run(
+      "2026-05-04T10:00:30Z",
+      "h1",
+    );
+    const insertDispatchEnd = db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    );
+    insertDispatchEnd.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-05-04T10:00:00Z",
+      JSON.stringify({ status: "error", reason: "stale_force_resolve" }),
+    );
+    insertDispatchEnd.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-05-04T10:01:00Z",
+      JSON.stringify({ status: "ok" }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-retry-recovery",
+      clock: () => new Date("2026-05-04T10:02:00Z"),
+      input: { handoff_id: "h1", reason: "cancelled" },
+    });
+
+    expect(row.maestro_takeover_required).toBe("y");
+    expect(row.notes).toContain("recovery_cancel");
+  });
+
   it("flags maestro_takeover_required='n' when dispatch.end already happened before cancel_requested_at (late cancel)", () => {
     db.prepare(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?`).run(
       "2026-05-04T10:00:30Z",
