@@ -157,8 +157,12 @@ export class PenumbraClient {
     return result;
   }
 
-  async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
-    return await this.post("/observations", event);
+  async observe(
+    event: Record<string, unknown>,
+    init?: { signal?: AbortSignal },
+  ): Promise<{ event_id: string }> {
+    const signal = init?.signal ?? AbortSignal.timeout(10_000);
+    return await this.post("/observations", event, { signal });
   }
   async recall(body: {
     query: string;

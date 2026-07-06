@@ -73,6 +73,7 @@ interface HeldToolCall {
 type RedactionHit = MaestroRedactionResult["hits"][number];
 
 const TRUNCATE_LIMIT = 8 * 1024;
+const MAX_IN_FLIGHT = 256;
 const MAESTRO_RESPONSE_BLOCKED_SENTINEL = "[maestro response withheld by output policy]";
 const MAESTRO_TOOL_USE_BLOCKED_SENTINEL = "[maestro tool-use withheld by output policy]";
 const MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL = "[maestro tool-result withheld by output policy]";
@@ -101,6 +102,12 @@ function readErrorBody(err: unknown): unknown {
   return candidate;
 }
 
+function isAbortLikeError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
 function assignFiniteUsageToken(
   payload: UsageTokenPayload,
   key: keyof UsageTokenPayload,
@@ -124,7 +131,8 @@ export class CapturePort {
   private chunkBuffer: ChunkBuffer | null = null;
   private readonly toolCalls = new Map<string, HeldToolCall>();
   private readonly inFlight = new Set<Promise<unknown>>();
-  private stats = { sent: 0, failed: 0 };
+  private stats = { sent: 0, failed: 0, dropped: 0, timedOut: 0 };
+  private overflowWarned = false;
   private closed = false;
   private usageWarnedMissing = false;
 
@@ -168,6 +176,10 @@ export class CapturePort {
       new Promise<void>((resolve) => setTimeout(resolve, closeTimeoutMs)),
     ]);
     if (this.inFlight.size > 0 && pendingCount > 0) {
+      // Pending observes will be aborted by PenumbraClient.observe()'s
+      // per-call AbortSignal.timeout(10s); surface count as timedOut so
+      // getStats() reflects the stall instead of only logging.
+      this.stats.timedOut += this.inFlight.size;
       console.error(
         `capture-port: close timed out after ${String(closeTimeoutMs)}ms; pending=${String(this.inFlight.size)}`,
       );
@@ -180,7 +192,7 @@ export class CapturePort {
     await this.flush();
   }
 
-  getStats(): { sent: number; failed: number } {
+  getStats(): { sent: number; failed: number; dropped: number; timedOut: number } {
     return { ...this.stats };
   }
 
@@ -513,6 +525,16 @@ export class CapturePort {
   }
 
   private dispatch(event: ObservedDispatchEvent): void {
+    if (this.inFlight.size >= MAX_IN_FLIGHT) {
+      this.stats.dropped++;
+      if (!this.overflowWarned) {
+        console.error(
+          `capture-port: in-flight cap reached (${String(MAX_IN_FLIGHT)}); dropping events`,
+        );
+        this.overflowWarned = true;
+      }
+      return;
+    }
     const p = this.opts
       .observe(event)
       .then(() => {
@@ -520,6 +542,7 @@ export class CapturePort {
       })
       .catch((err: unknown) => {
         this.stats.failed++;
+        if (isAbortLikeError(err)) this.stats.timedOut++;
         const msg = err instanceof Error ? err.message : String(err);
         const body = readErrorBody(err);
         const bodySuffix = body === undefined ? "" : ` body=${JSON.stringify(body)}`;

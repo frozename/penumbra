@@ -261,6 +261,59 @@ test("9. close() awaits in-flight observe promises", async () => {
   expect(closeResolved).toBe(true);
 });
 
+test("12. dispatch drops events past MAX_IN_FLIGHT cap and increments stats.dropped", async () => {
+  // Stalled observe forces every dispatched event to remain in inFlight.
+  const port = new CapturePort({
+    ...baseOpts,
+    closeTimeoutMs: 50,
+    observe: (): Promise<{ event_id: string }> => new Promise(() => undefined),
+  });
+  const N = 300;
+  for (let i = 0; i < N; i++) {
+    // usage_update emits a discrete dispatch per event (no coalescing).
+    port.emit({ kind: "usage_update", used: i + 1, size: 1000 });
+  }
+  const stats = port.getStats();
+  expect(stats.dropped).toBeGreaterThan(0);
+  expect(stats.dropped).toBe(N - 256);
+  await port.close();
+});
+
+test("13. flush() attributes stalled observes to stats.timedOut (not just logging)", async () => {
+  const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+  const port = new CapturePort({
+    ...baseOpts,
+    closeTimeoutMs: 30,
+    observe: (): Promise<{ event_id: string }> => new Promise(() => undefined),
+  });
+  port.emit({ kind: "usage_update", used: 1, size: 100 });
+  port.emit({ kind: "usage_update", used: 2, size: 100 });
+  await port.close();
+  const stats = port.getStats();
+  expect(stats.timedOut).toBeGreaterThanOrEqual(2);
+  consoleError.mockRestore();
+});
+
+test("14. observe rejection with AbortError-like name increments stats.timedOut", async () => {
+  class AbortLike extends Error {
+    constructor() {
+      super("aborted");
+      this.name = "TimeoutError";
+    }
+  }
+  const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: (): Promise<{ event_id: string }> => Promise.reject(new AbortLike()),
+  });
+  port.emit({ kind: "usage_update", used: 1, size: 100 });
+  await port.flush();
+  const stats = port.getStats();
+  expect(stats.failed).toBeGreaterThanOrEqual(1);
+  expect(stats.timedOut).toBeGreaterThanOrEqual(1);
+  consoleError.mockRestore();
+});
+
 test("11. close() resolves within 300ms when in-flight requests stall", async () => {
   const port = new CapturePort({
     ...baseOpts,
