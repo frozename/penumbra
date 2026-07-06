@@ -133,6 +133,35 @@ describe("executeGlob", () => {
     expect(r.results).toEqual([]);
     expect(r.truncated).toBe(false);
   });
+
+  it("does not escape the worktree via ../ glob pattern", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "fs-glob-parent-"));
+    const wt = path.join(parent, "wt");
+    fs.mkdirSync(wt);
+    fs.writeFileSync(path.join(parent, "secret.txt"), "x");
+    try {
+      const r = await executeGlob({ pattern: "../*.txt" }, wt);
+      expect(r.results).toEqual([]);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("does not leak sibling-worktree files via a ../** glob", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "fs-glob-parent-"));
+    const wt = path.join(parent, "wt");
+    const sibling = path.join(parent, "sibling");
+    fs.mkdirSync(wt);
+    fs.mkdirSync(sibling);
+    fs.writeFileSync(path.join(sibling, "leaked.txt"), "y");
+    fs.writeFileSync(path.join(wt, "kept.txt"), "z");
+    try {
+      const r = await executeGlob({ pattern: "../**/*.txt" }, wt);
+      expect(r.results.some((p) => p.startsWith("..") || path.isAbsolute(p))).toBe(false);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("executeGrep", () => {

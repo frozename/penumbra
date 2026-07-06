@@ -269,6 +269,9 @@ export async function executeGlob(args: GlobArgs, worktree: string): Promise<Glo
   for await (const rel of scanGlob(glob, searchRoot)) {
     const abs = path.resolve(searchRoot, rel);
     const relFromWorktree = path.relative(worktreeRoot, abs);
+    if (relFromWorktree.startsWith("..") || path.isAbsolute(relFromWorktree)) {
+      continue;
+    }
     if (gitignoreCache && isIgnoredByGitignores(abs, worktreeRoot, gitignoreCache)) {
       continue;
     }
