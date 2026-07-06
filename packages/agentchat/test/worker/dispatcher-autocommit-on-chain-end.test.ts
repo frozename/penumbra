@@ -355,6 +355,61 @@ test("filterAutocommitPaths rejects secret filename variants", () => {
   ).toEqual(["README.md", "packages/app/src/foo.ts", "packages/app/tests/secret-handling.test.ts"]);
 });
 
+test("filterAutocommitPaths keeps top-level source dirs under deny-by-default policy", () => {
+  expect(filterAutocommitPaths(["packages/foo.ts", "scripts/bar.ts", "test/baz.test.ts"])).toEqual([
+    "packages/foo.ts",
+    "scripts/bar.ts",
+    "test/baz.test.ts",
+  ]);
+});
+
+test("filterAutocommitPaths drops build/dependency artifact dirs", () => {
+  expect(
+    filterAutocommitPaths([
+      "node_modules/foo/index.js",
+      "dist/bundle.js",
+      "build/out.js",
+      "local_cache/entry",
+      "coverage/lcov.info",
+      ".git/HEAD",
+      "packages/app/node_modules/dep/index.js",
+      "packages/app/dist/x.js",
+    ]),
+  ).toEqual([]);
+});
+
+test("autocommit warns with dropped_paths when some paths are filtered out", async () => {
+  const warn = mock();
+  const execFile = mock()
+    .mockResolvedValueOnce({
+      stdout: " M packages/app/src/index.ts\n M .env\n?? node_modules/foo/x.js\n",
+    })
+    .mockResolvedValueOnce({ stdout: "" })
+    .mockResolvedValueOnce({ stdout: "" });
+  const committed = await autocommitOnChainEnd(
+    {
+      handoff_id: "123e4567-e89b-12d3-a456-426614174777",
+      conversation_id: "conv-1",
+      to_agent: "executor",
+    },
+    { path: "/tmp/repo" },
+    { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
+  );
+
+  expect(committed).toBe(true);
+  const droppedWarn = mockCalls<[Record<string, unknown>, string]>(warn).find(
+    (call) => call[1] === "autocommit on chain end dropped paths",
+  );
+  expect(droppedWarn).toBeDefined();
+  expect(droppedWarn?.[0]).toEqual(
+    expect.objectContaining({
+      component: "autocommit-on-chain-end",
+      handoff_id: "123e4567-e89b-12d3-a456-426614174777",
+      dropped_paths: expect.arrayContaining([".env", "node_modules/foo/x.js"]) as unknown,
+    }),
+  );
+});
+
 test("autocommit skips malformed handoff ids", async () => {
   const warn = mock();
   const execFile = mock();

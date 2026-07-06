@@ -43,13 +43,34 @@ const DEFAULT_DENIED_EXTENSIONS = new Set([
   ".sqlite3",
 ]);
 
-function isAllowedPath(path: string): boolean {
-  return (
-    path.startsWith("packages/") ||
-    path.startsWith("docs/") ||
-    path.startsWith("plugin/") ||
-    /^[^/]+\.(?:md|ts|json)$/.test(path)
+const NON_SOURCE_DIR_SEGMENTS = [
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  "local_cache",
+  ".git",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".vite",
+  ".svelte-kit",
+  ".parcel-cache",
+] as const;
+
+function isNonSourceArtifactPath(path: string): boolean {
+  if (path.startsWith("/") || path.includes("..")) return true;
+  const segments = path.split("/");
+  return segments.some((segment) =>
+    NON_SOURCE_DIR_SEGMENTS.includes(segment as (typeof NON_SOURCE_DIR_SEGMENTS)[number]),
   );
+}
+
+function isAllowedPath(path: string): boolean {
+  if (!path) return false;
+  return !isNonSourceArtifactPath(path);
 }
 
 function isDeniedPath(path: string): boolean {
@@ -83,8 +104,24 @@ export function parseGitStatusPaths(stdout: string): string[] {
     });
 }
 
+export function partitionAutocommitPaths(paths: string[]): {
+  kept: string[];
+  dropped: string[];
+} {
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const path of paths) {
+    if (isAllowedPath(path) && !isDeniedPath(path)) {
+      kept.push(path);
+    } else {
+      dropped.push(path);
+    }
+  }
+  return { kept, dropped };
+}
+
 export function filterAutocommitPaths(paths: string[]): string[] {
-  return paths.filter((path) => isAllowedPath(path) && !isDeniedPath(path));
+  return partitionAutocommitPaths(paths).kept;
 }
 
 export async function autocommitOnChainEnd(
@@ -112,7 +149,19 @@ export async function autocommitOnChainEnd(
   );
   const statusText =
     typeof stdout === "string" ? stdout : Buffer.isBuffer(stdout) ? stdout.toString("utf8") : "";
-  const filtered = filterAutocommitPaths(parseGitStatusPaths(statusText));
+  const { kept: filtered, dropped } = partitionAutocommitPaths(parseGitStatusPaths(statusText));
+
+  if (dropped.length > 0) {
+    deps.log.warn(
+      {
+        component: "autocommit-on-chain-end",
+        handoff_id: handoff.handoff_id,
+        dropped_paths: dropped,
+        kept_count: filtered.length,
+      },
+      "autocommit on chain end dropped paths",
+    );
+  }
 
   if (filtered.length === 0) {
     deps.log.warn(
