@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { findActiveTranscriptForCwd } from "../src/transcript-reader.js";
+import {
+  findActiveTranscriptForCwd,
+  resetTranscriptReaderCache,
+} from "../src/transcript-reader.js";
 
 const CWD = "/Volumes/WorkSSD/repos/test-project";
 const CWD_DIR = "-Volumes-WorkSSD-repos-test-project";
@@ -94,6 +97,115 @@ test("returns the most-recently-modified jsonl when multiple exist", async () =>
   const result = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
   expect(result).not.toBeNull();
   expect(result!.sessionId).toBe("newer");
+});
+
+test("incremental cache: appended lines add to previous total without re-parsing", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+
+  const lineA =
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "aaaa" }] },
+    }) + "\n";
+  const lineB =
+    JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "bb" }] },
+    }) + "\n";
+  await writeFile(path, lineA);
+
+  resetTranscriptReaderCache();
+  const first = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  expect(first).not.toBeNull();
+  // "aaaa" = 4 * 0.25 = 1
+  expect(first!.estimatedTokens).toBe(1);
+
+  await appendFile(path, lineB);
+
+  const second = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  expect(second).not.toBeNull();
+  // "aaaa" (1) + "bb" (2 chars -> 1) = 2
+  expect(second!.estimatedTokens).toBe(2);
+});
+
+test("incremental cache: cold re-reads when file is truncated", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+
+  const lineA =
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "aaaaaaaa" }] },
+    }) + "\n";
+  const lineShort =
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "z" }] },
+    }) + "\n";
+  await writeFile(path, lineA + lineA);
+
+  resetTranscriptReaderCache();
+  const first = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  expect(first).not.toBeNull();
+  // Two lines of "aaaaaaaa" (8 * 0.25 = 2 each) = 4
+  expect(first!.estimatedTokens).toBe(4);
+
+  // Truncate & replace with a much smaller file (rotation-like).
+  await truncate(path, 0);
+  await writeFile(path, lineShort);
+
+  const second = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  expect(second).not.toBeNull();
+  // Fresh content only: "z" = 1 char -> ceil(0.25) = 1
+  expect(second!.estimatedTokens).toBe(1);
+});
+
+test("incremental cache: second call after append is dramatically faster", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+
+  const lines: string[] = [];
+  for (let i = 0; i < 30_000; i++) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: [{ type: "text", text: `line-${i}` }] },
+      }),
+    );
+  }
+  await writeFile(path, lines.join("\n") + "\n");
+
+  resetTranscriptReaderCache();
+  // Warm the JIT with a dry pass on a different, unrelated read is unnecessary;
+  // the first call is the "expensive" cold pass we care about.
+  const t1Start = Bun.nanoseconds();
+  const first = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  const t1 = Bun.nanoseconds() - t1Start;
+  expect(first).not.toBeNull();
+
+  const appended =
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "appended" }] },
+    }) + "\n";
+  await appendFile(path, appended);
+
+  const t2Start = Bun.nanoseconds();
+  const second = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
+  const t2 = Bun.nanoseconds() - t2Start;
+  expect(second).not.toBeNull();
+  // "appended" = 8 * 0.25 = 2 tokens added
+  expect(second!.estimatedTokens).toBe(first!.estimatedTokens + 2);
+
+  // Defect check: 2nd call after 1-line append <= first/20
+  expect(t2 * 20).toBeLessThanOrEqual(t1);
 });
 
 test("returns null when transcript is stale beyond staleAfterMin", async () => {

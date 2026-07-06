@@ -1,4 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -78,6 +86,99 @@ function pickNewestJsonl(subdir: string): { path: string; mtimeMs: number } | nu
   return { path: bestPath, mtimeMs: bestMtime };
 }
 
+type TranscriptCacheEntry = {
+  byteOffset: number;
+  partialLineRemainder: string;
+  cachedTokenTotal: number;
+  mtimeMs: number;
+};
+
+const transcriptCache = new Map<string, TranscriptCacheEntry>();
+
+export function resetTranscriptReaderCache(): void {
+  transcriptCache.clear();
+}
+
+function tokenizeCompleteLines(
+  chunk: string,
+  startTotal: number,
+): { total: number; remainder: string } {
+  const lines = chunk.split("\n");
+  let total = startTotal;
+  for (let i = 0; i < lines.length - 1; i++) {
+    total += estimateTokensFromJsonlLine(lines[i]!);
+  }
+  return { total, remainder: lines[lines.length - 1] ?? "" };
+}
+
+function readTranscriptTokens(path: string, mtimeMs: number): number {
+  let fileSize: number;
+  try {
+    fileSize = statSync(path).size;
+  } catch {
+    return transcriptCache.get(path)?.cachedTokenTotal ?? 0;
+  }
+
+  const cached = transcriptCache.get(path);
+  const rotated = !cached || fileSize < cached.byteOffset || mtimeMs < cached.mtimeMs;
+
+  if (rotated) {
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      return cached?.cachedTokenTotal ?? 0;
+    }
+    const bytes = Buffer.byteLength(text, "utf8");
+    const { total, remainder } = tokenizeCompleteLines(text, 0);
+    transcriptCache.set(path, {
+      byteOffset: bytes,
+      partialLineRemainder: remainder,
+      cachedTokenTotal: total,
+      mtimeMs,
+    });
+    return total;
+  }
+
+  if (fileSize === cached.byteOffset) {
+    if (mtimeMs !== cached.mtimeMs) {
+      transcriptCache.set(path, { ...cached, mtimeMs });
+    }
+    return cached.cachedTokenTotal;
+  }
+
+  const bytesToRead = fileSize - cached.byteOffset;
+  const buffer = Buffer.alloc(bytesToRead);
+  let actuallyRead = 0;
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    actuallyRead = readSync(fd, buffer, 0, bytesToRead, cached.byteOffset);
+  } catch {
+    return cached.cachedTokenTotal;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const appended = buffer.slice(0, actuallyRead).toString("utf8");
+  const combined = cached.partialLineRemainder + appended;
+  const { total, remainder } = tokenizeCompleteLines(combined, cached.cachedTokenTotal);
+
+  transcriptCache.set(path, {
+    byteOffset: cached.byteOffset + actuallyRead,
+    partialLineRemainder: remainder,
+    cachedTokenTotal: total,
+    mtimeMs,
+  });
+  return total;
+}
+
 export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): TranscriptInfo | null {
   const root = opts.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
   if (!existsSync(root)) return null;
@@ -94,16 +195,7 @@ export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): Transcript
   if (stalenessMin > limit) return null;
 
   const sessionId = (bestPath.split("/").pop() ?? "").replace(/\.jsonl$/, "");
-
-  let totalTokens = 0;
-  try {
-    const text = readFileSync(bestPath, "utf8");
-    for (const line of text.split("\n")) {
-      totalTokens += estimateTokensFromJsonlLine(line);
-    }
-  } catch {
-    /* if we can't read, return what we have */
-  }
+  const totalTokens = readTranscriptTokens(bestPath, bestMtime);
 
   return {
     sessionId,
