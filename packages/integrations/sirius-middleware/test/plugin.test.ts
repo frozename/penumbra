@@ -398,6 +398,45 @@ describe("penumbraObservePlugin execution", () => {
     expect(fallthrough?.payload_type).toBeDefined();
   });
 
+  test("warns when onSend receives a 2xx string body that is malformed JSON", async () => {
+    const fastify = Fastify();
+    okFetch();
+    const warnings: WarnMsg[] = [];
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: recordingWarnLogger(warnings),
+    });
+
+    fastify.post("/v1/chat/completions", (_req: FastifyRequest, reply: FastifyReply) => {
+      // Return a raw string with application/json content-type; Fastify forwards
+      // the string verbatim to onSend, and JSON.parse will throw.
+      reply.type("application/json");
+      return reply.send("{not valid json");
+    });
+
+    const response = await fastify.inject({
+      headers: {
+        "x-penumbra-project": "test-project",
+        "x-request-id": "req-malformed-1",
+      },
+      method: "POST",
+      payload: {
+        messages: [{ role: "user", content: "hi" }],
+        model: "gpt-3.5-turbo",
+      },
+      url: "/v1/chat/completions",
+    });
+
+    expect(response.statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 10));
+
+    const parseWarn = warnings.find((w) => w.msg === "penumbra response payload parse failed");
+    expect(parseWarn).toBeDefined();
+    expect(parseWarn?.error).toBeDefined();
+  });
+
   test("reply.penumbraTapChunk + penumbraTapEnd captures raw-socket streaming responses", async () => {
     const fastify = Fastify();
     const mockFetch = okFetch();

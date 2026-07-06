@@ -262,23 +262,34 @@ function observeJsonResponse(
   payload: string,
   promptInput: BuildPromptInput,
   dispatchObservation: DispatchObservation,
+  logger: PenumbraPluginLogger,
+  requestId: string,
+  route: string,
 ): void {
+  let body: unknown;
   try {
-    const body = JSON.parse(payload) as unknown;
-    if (!isChatResponseLike(body)) {
-      return;
-    }
-    const completionTs = Date.now();
-    const responseEvent = buildResponseEvent({
-      ...promptInput,
-      assistantText: extractAssistantText(body),
-      response: body,
-      completionTs,
+    body = JSON.parse(payload);
+  } catch (error) {
+    logger.warn({
+      msg: "penumbra response payload parse failed",
+      project_id: promptInput.projectId,
+      request_id: requestId,
+      route,
+      error: error instanceof Error ? error.message : String(error),
     });
-    dispatchObservation(responseEvent, promptInput, promptInput.requestId, CHAT_COMPLETIONS_PATH);
-  } catch {
-    // handle parse error silently
+    return;
   }
+  if (!isChatResponseLike(body)) {
+    return;
+  }
+  const completionTs = Date.now();
+  const responseEvent = buildResponseEvent({
+    ...promptInput,
+    assistantText: extractAssistantText(body),
+    response: body,
+    completionTs,
+  });
+  dispatchObservation(responseEvent, promptInput, requestId, route);
 }
 
 function observeStreamPayload(
@@ -348,7 +359,7 @@ function registerOnSend(
     }
 
     if (typeof payload === "string") {
-      observeJsonResponse(payload, promptInput, dispatchObservation);
+      observeJsonResponse(payload, promptInput, dispatchObservation, logger, sessionId, route);
       done(null, payload);
       return;
     }
