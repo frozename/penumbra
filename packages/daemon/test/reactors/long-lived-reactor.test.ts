@@ -4,6 +4,7 @@ import { createMcpEventBus } from "@penumbra/daemon/events/mcp-event-bus";
 import { createLongLivedReactor } from "@penumbra/daemon/reactors/long-lived-reactor";
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import { Cron } from "croner";
 
 import type {
   FederationHealthSnapshot,
@@ -15,8 +16,14 @@ interface AgentRecord {
   name: string;
   long_lived: boolean;
   long_lived_config: {
-    schedule_cron: string;
+    schedule_cron?: string;
     subscriptions: { server: string; event: string }[];
+    hosted_mcp_servers?: {
+      name: string;
+      command: string;
+      args: string[];
+      env: { name: string; value: string }[];
+    }[];
     mcp_allowlist: string[];
     bounds: { wall_clock_ms: number; cost_cents: number; max_sub_dispatches: number };
     circuit_breaker_threshold: number;
@@ -37,10 +44,10 @@ const fakeAgent: AgentRecord = {
   },
 };
 
-function makeMcpPool(): McpPool {
+function makeMcpPool(overrides: Partial<Pick<McpPool, "ensureRunning">> = {}): McpPool {
   const empty: FederationHealthSnapshot = { registered: [], skipped: [] };
   return {
-    ensureRunning: () => Promise.resolve(),
+    ensureRunning: overrides.ensureRunning ?? (() => Promise.resolve()),
     callTool: () => Promise.resolve(undefined),
     listTools: () => Promise.resolve<McpToolDescriptor[]>([]),
     acquire: () => undefined,
@@ -164,6 +171,58 @@ describe("long-lived reactor", () => {
     ]);
   });
 
+  it("does not orphan sweeper cron jobs when reloads overlap", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db, { embeddingDim: 384 });
+    const bus = createMcpEventBus();
+    const spawn = mock((): Promise<{ chain_id: string }> => Promise.resolve({ chain_id: "c" }));
+    const ensureResolvers: (() => void)[] = [];
+    const ensureRunning = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          ensureResolvers.push(resolve);
+        }),
+    );
+    const stopSpy = spyOn(Cron.prototype, "stop");
+    const hostedAgent: AgentRecord = {
+      ...fakeAgent,
+      long_lived_config: {
+        ...fakeAgent.long_lived_config,
+        schedule_cron: undefined,
+        subscriptions: [],
+        hosted_mcp_servers: [{ name: "echo", command: "bun", args: ["echo.ts"], env: [] }],
+      },
+    };
+    const reactor = createLongLivedReactor({
+      db,
+      bus,
+      spawn,
+      isChainActive: () => false,
+      now: () => 100,
+      mcpPool: makeMcpPool({ ensureRunning }),
+      loadAgentchatYaml: () => Promise.resolve({ agents: [hostedAgent] }),
+    });
+
+    try {
+      const first = reactor.reload();
+      await waitFor(() => ensureResolvers.length === 1);
+      const second = reactor.reload();
+      await Bun.sleep(10);
+
+      ensureResolvers.shift()?.();
+      await waitFor(() => ensureResolvers.length === 1);
+      ensureResolvers.shift()?.();
+      await Promise.all([first, second]);
+
+      await reactor.shutdown();
+
+      expect(stopSpy).toHaveBeenCalledTimes(4);
+    } finally {
+      stopSpy.mockRestore();
+    }
+  });
+
   it("logs and swallows tick chain DB write failures", async () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
@@ -214,6 +273,14 @@ describe("long-lived reactor", () => {
 });
 
 type LoggerArg = NonNullable<Parameters<typeof createLongLivedReactor>[0]["log"]>;
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > 500) throw new Error("timed out waiting for condition");
+    await Bun.sleep(1);
+  }
+}
 
 function stubLogger(
   overrides: Partial<Record<"error" | "warn" | "info" | "debug" | "trace" | "fatal", unknown>>,

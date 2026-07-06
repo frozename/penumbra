@@ -170,8 +170,11 @@ function registerLongLivedSweepers(
   cron: CronScheduler,
   sweeperIds: Map<string, string>,
 ): void {
+  const pendingExpiryKey = "__sweeper_pending_expiry__";
+  const prevPendingExpiry = sweeperIds.get(pendingExpiryKey);
+  if (prevPendingExpiry) cron.cancel(prevPendingExpiry);
   sweeperIds.set(
-    "__sweeper_pending_expiry__",
+    pendingExpiryKey,
     cron.register("0 */1 * * *", () => {
       try {
         runPendingExpiry(deps.db, {
@@ -184,8 +187,11 @@ function registerLongLivedSweepers(
       }
     }),
   );
+  const snapshotPurgeKey = "__sweeper_snapshot_purge__";
+  const prevSnapshotPurge = sweeperIds.get(snapshotPurgeKey);
+  if (prevSnapshotPurge) cron.cancel(prevSnapshotPurge);
   sweeperIds.set(
-    "__sweeper_snapshot_purge__",
+    snapshotPurgeKey,
     cron.register("0 3 * * *", () => {
       void runSnapshotPurge({
         db: deps.db,
@@ -226,6 +232,8 @@ function createReloadHelpers(
   function registerAgent(agent: ActiveLongLivedAgent): void {
     const cfg = agent.long_lived_config;
     if (cfg.schedule_cron !== undefined) {
+      const prev = cronIds.get(agent.name);
+      if (prev) cron.cancel(prev);
       const cronId = cron.register(cfg.schedule_cron, () => {
         tickGate.attempt({ agent_id: agent.name, trigger_kind: "cron" });
       });
@@ -356,8 +364,9 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
     hostedMcpByAgent,
     tickGate,
   );
+  let reloadChain: Promise<void> = Promise.resolve();
 
-  async function reload(): Promise<void> {
+  async function doReload(): Promise<void> {
     const yaml = await deps.loadAgentchatYaml();
     const agents = activeAgents(yaml.agents);
     reconcileLongLivedAgents(deps.db, toReconcilerAgents(agents), { now: deps.now() });
@@ -370,6 +379,11 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
     for (const agent of agents) helpers.registerAgent(agent);
     for (const agent of agents) await helpers.reconcileHostedMcp(agent);
     helpers.registerSweepers();
+  }
+
+  function reload(): Promise<void> {
+    reloadChain = reloadChain.then(doReload, doReload);
+    return reloadChain;
   }
 
   async function shutdown(): Promise<void> {
