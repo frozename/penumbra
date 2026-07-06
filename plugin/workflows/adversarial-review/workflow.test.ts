@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { resolveRequestedPersonas } from "./workflow.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { RecallBundle, WorkflowCtx } from "../../../packages/workflows/src/index.js";
+import { fn, resolveRequestedPersonas } from "./workflow.js";
 
 describe("resolveRequestedPersonas", () => {
   const available = ["security-paranoid", "performance-hawk", "ui-pragmatist"];
@@ -51,5 +55,74 @@ describe("resolveRequestedPersonas", () => {
       available,
     );
     expect(out.resolved).toEqual(["performance-hawk", "security-paranoid", "ui-pragmatist"]);
+  });
+});
+
+describe("adversarial-review workflow", () => {
+  test("reports failure when personas complete but synthesizer dispatch throws", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-workflow-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = {
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input: { agent: string }) => {
+          dispatchCount += 1;
+          if (input.agent === "synth") {
+            throw new Error("synth unavailable");
+          }
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        awaitChain: async () => ({
+          status: "completed" as const,
+          final_agent: "reviewer-agent",
+          response_text:
+            'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"high","category":"correctness","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+        }),
+        fileWrite: async (path: string) => path,
+      } satisfies Partial<WorkflowCtx>;
+      const recall = {
+        byKey: { "git.diff": "", "git.show": [] },
+        warnings: [],
+        estimatedTokens: 0,
+      } satisfies RecallBundle;
+
+      const result = (await fn(ctx as WorkflowCtx, recall)) as {
+        ok: boolean;
+        synthesizer_status: string | null;
+        synth_failed?: boolean;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.synthesizer_status).toBe("failed");
+      expect(result.synth_failed).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

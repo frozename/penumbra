@@ -471,6 +471,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       typeof result.response_text === "string" &&
       result.response_text.length > 0,
   );
+  const failedPersonas = personaResults
+    .filter((result) => result.status !== "completed")
+    .map((result) => result.persona);
+  const outcome = failedPersonas.length === 0 ? "success" : "failed";
 
   if (completedResults.length === 0) {
     return {
@@ -575,7 +579,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
 
   return {
-    ok: true,
+    ok: outcome !== "failed" && synthStatus === "completed",
+    outcome,
+    failed_personas: failedPersonas,
+    completed_personas: personaResults
+      .filter((result) => result.status === "completed")
+      .map((result) => result.persona),
     out_dir: absoluteOutDir,
     personas: personaResults.map((result) => ({
       name: result.persona,
@@ -584,6 +593,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     })),
     synthesis_path: synthesisPath,
     synthesizer_status: synthStatus,
+    synth_failed: synthStatus !== "completed",
   };
 };
 

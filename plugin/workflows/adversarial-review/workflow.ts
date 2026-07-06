@@ -1050,7 +1050,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
 
   return {
-    ok: outcome !== "failed",
+    ok: outcome !== "failed" && synthStatus === "completed",
     outcome,
     ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
     failed_personas: failedPersonas,
@@ -1066,6 +1066,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     })),
     synthesis_path: synthesisPath,
     synthesizer_status: synthStatus,
+    synth_failed: synthStatus !== "completed",
   };
 };
 
