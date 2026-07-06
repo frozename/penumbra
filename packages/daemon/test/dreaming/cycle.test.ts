@@ -298,6 +298,72 @@ it("P1 releases stale claims by TTL using millisecond timestamps", async () => {
   expect(fresh?.claimed_by_cycle).toBe("still-running");
 });
 
+function p1DedupConfig(): DreamConfig {
+  return testConfig({
+    autoPromoteMinJudges: 2,
+    skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+  } as Partial<DreamConfig>);
+}
+
+it("P1 does not re-queue promote_t1 for a never-promoted rollup across cycles", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "long-enough body that clears the P1 excerpt guard for judging across cycles.",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: false, confidence: 0.4 },
+    { promote: false, confidence: 0.3 },
+  ]);
+
+  await runDreamCycle(db, p1DedupConfig(), { judgePool: pool });
+
+  db.prepare(
+    `UPDATE t1_rollups SET claimed_at=NULL, claimed_by_cycle=NULL, promotion_filtered_at=NULL WHERE rollup_id=?`,
+  ).run(rollupId);
+
+  await runDreamCycle(db, p1DedupConfig(), { judgePool: pool });
+
+  const queuedCount = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dream_actions
+        WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { n: number };
+  expect(queuedCount.n).toBe(1);
+});
+
+it("P1 stamps promotion_filtered_at on non-auto-promoted rollups so future cycles skip them", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "long-enough body that clears the P1 excerpt guard so judges vote against promotion.",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: false, confidence: 0.4 },
+    { promote: false, confidence: 0.3 },
+  ]);
+
+  await runDreamCycle(db, p1DedupConfig(), { judgePool: pool });
+
+  const marker = db
+    .prepare(`SELECT promotion_filtered_at FROM t1_rollups WHERE rollup_id=?`)
+    .get(rollupId) as { promotion_filtered_at: string | null } | null;
+  expect(marker?.promotion_filtered_at).not.toBeNull();
+
+  db.prepare(`UPDATE t1_rollups SET claimed_at=NULL, claimed_by_cycle=NULL WHERE rollup_id=?`).run(
+    rollupId,
+  );
+
+  await runDreamCycle(db, p1DedupConfig(), { judgePool: pool });
+
+  const queuedCount = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dream_actions
+        WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { n: number };
+  expect(queuedCount.n).toBe(1);
+});
+
 it("P2 auto-applies semantic_near link when cosine >= LINK_AUTO_THRESHOLD", async () => {
   const db = openTestDb();
   seedMemoryWithVector(db, { id: "M-A", vector: [1, 0, 0] });

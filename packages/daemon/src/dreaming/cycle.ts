@@ -181,6 +181,7 @@ interface CycleCtx {
   p4MemoryByProjectStmt: ReturnType<Database["prepare"]>;
   p4QueuedQueryExistsStmt: ReturnType<Database["prepare"]>;
   p2QueuedLinkExistsStmt: ReturnType<Database["prepare"]>;
+  p1QueuedPromoteExistsStmt: ReturnType<Database["prepare"]>;
   emitDreamEvent: (kind: DispatchEventInput["kind"], meta: Record<string, unknown>) => void;
 }
 
@@ -293,6 +294,9 @@ function buildCycleCtx(
   const p2QueuedLinkExistsStmt = db.prepare(
     `SELECT 1 FROM dream_actions WHERE action_type='link' AND status='queued' AND target_ids IN (?, ?) LIMIT 1`,
   );
+  const p1QueuedPromoteExistsStmt = db.prepare(
+    `SELECT 1 FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=? LIMIT 1`,
+  );
   const p4MemoryByProjectStmt = hasT2ProjectId
     ? db.prepare(
         `SELECT memory_id, title, SUBSTR(body, 1, 200) AS body, updated_at FROM t2_memories WHERE project_id = ? AND kind NOT IN ('brief') AND retired_at IS NULL AND title IS NOT NULL AND title != '' ORDER BY created_at DESC LIMIT 2`,
@@ -344,6 +348,7 @@ function buildCycleCtx(
     p4MemoryByProjectStmt,
     p4QueuedQueryExistsStmt,
     p2QueuedLinkExistsStmt,
+    p1QueuedPromoteExistsStmt,
     emitDreamEvent,
   };
 }
@@ -513,6 +518,9 @@ async function runCycleP1(
     const body = rollup.first_prompt_excerpt;
     if (!body || body.trim().length < 40) continue;
 
+    const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
+    if (ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) continue;
+
     const votes = await getPromoteVotes(ctx.judgePool, body);
     const total = votes.length;
     const yesCount = votes.filter((v) => v.promote).length;
@@ -539,12 +547,19 @@ async function runCycleP1(
       ctx.cycleId,
       avgConfidence,
       result.status,
-      JSON.stringify([rollup.rollup_id]),
+      rollupTargetIds,
       JSON.stringify({
         votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
         ...(result.mintedT2Id ? { t2_memory_id: result.mintedT2Id } : {}),
       }),
     );
+
+    if (result.status === "queued") {
+      db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
+        new Date(ctx.nowMs).toISOString(),
+        rollup.rollup_id,
+      );
+    }
   }
 
   phaseEnd(db, ctx, "P1", p1Start);
@@ -573,6 +588,7 @@ function claimT1Rollups(
             SELECT rollup_id, project_id FROM t1_rollups
                WHERE t2_promoted_at IS NULL
                  AND claimed_at IS NULL
+                 AND promotion_filtered_at IS NULL
                  AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
                  ${longLivedFilter}
                  ORDER BY started_at ASC
@@ -595,6 +611,7 @@ function claimT1Rollups(
         SELECT rollup_id FROM t1_rollups
           WHERE t2_promoted_at IS NULL
             AND claimed_at IS NULL
+            AND promotion_filtered_at IS NULL
             AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
             ${longLivedFilter}
           ORDER BY started_at ASC
@@ -648,20 +665,27 @@ async function maybeAutoPromoteT1(
   const existing = existingRow as { memory_id: string } | undefined;
 
   if (existing) {
-    db.prepare(
-      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
-       VALUES(?, ?, 'P1', 'promote_t1', ?, 'queued', ?, ?)`,
-    ).run(
-      crypto.randomUUID(),
-      ctx.cycleId,
-      avgConfidence,
-      JSON.stringify([rollup.rollup_id]),
-      JSON.stringify({
-        votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
-        dedup_against: existing.memory_id,
-        project_id: rollup.project_id,
-      }),
-    );
+    const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
+    if (!ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) {
+      db.prepare(
+        `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+         VALUES(?, ?, 'P1', 'promote_t1', ?, 'queued', ?, ?)`,
+      ).run(
+        crypto.randomUUID(),
+        ctx.cycleId,
+        avgConfidence,
+        rollupTargetIds,
+        JSON.stringify({
+          votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
+          dedup_against: existing.memory_id,
+          project_id: rollup.project_id,
+        }),
+      );
+      db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
+        new Date(ctx.nowMs).toISOString(),
+        rollup.rollup_id,
+      );
+    }
     return { skip: true };
   }
 
