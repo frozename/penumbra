@@ -5,7 +5,7 @@ import { formatChainWait, wrapWithSummary } from "../format-summary.js";
 import { type ToolHandler, type ToolResult } from "./context.js";
 
 export const ChainWaitInputShape = {
-  conversation_id: z.string().describe("The conversation ID to wait for."),
+  conversation_id: z.string().min(1).describe("The conversation ID to wait for."),
   timeout_ms: z.number().optional().default(60000).describe("Timeout in ms (default 60000)."),
 };
 
@@ -35,7 +35,12 @@ function makeResult(payload: WaitPayload, elapsedMs: number): ToolResult {
 }
 
 function isHardDaemonError(status: number): boolean {
-  return status === 401 || status === 403 || status >= 500;
+  return (
+    status === 401 ||
+    status === 403 ||
+    status >= 500 ||
+    (status >= 400 && status < 500 && status !== 404 && status !== 429)
+  );
 }
 
 function hardErrorResult(

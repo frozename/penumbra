@@ -16,6 +16,7 @@ function textOf(res: { content: { text?: unknown }[] }): string {
 
 test("ChainWaitInputShape requires conversation_id", () => {
   expect(() => ChainWaitInputShape.conversation_id.parse(undefined)).toThrow();
+  expect(() => ChainWaitInputShape.conversation_id.parse("")).toThrow();
   expect(ChainWaitInputShape.timeout_ms.parse(undefined)).toBe(60000);
 });
 
@@ -100,6 +101,27 @@ test("chainWaitHandler surfaces 401 as a structured error, not a timeout", async
   const text = textOf(res);
   expect(text).toContain('"status": "error"');
   expect(text).toContain('"code": 401');
+  expect(text).not.toContain('"status": "timeout"');
+});
+
+test("chainWaitHandler surfaces permanent 4xx as a structured error, not a timeout", async () => {
+  let calls = 0;
+  const getLatestHandoff: GetLatestHandoffFn = (_conversation_id: string) => {
+    calls++;
+    return Promise.reject(new DaemonHttpError("daemon 400 missing_param", 400));
+  };
+  const daemon = fakeDaemon({ getLatestHandoff });
+
+  const handler = chainWaitHandler(daemon);
+  const startedAt = Date.now();
+  const res = await handler({ conversation_id: "conv1", timeout_ms: 10_000 });
+  const elapsed = Date.now() - startedAt;
+
+  expect(elapsed).toBeLessThan(2000);
+  expect(calls).toBe(1);
+  const text = textOf(res);
+  expect(text).toContain('"status": "error"');
+  expect(text).toContain('"code": 400');
   expect(text).not.toContain('"status": "timeout"');
 });
 
