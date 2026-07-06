@@ -46,6 +46,19 @@ describe("no-raw-env lint", () => {
     expect(result.stderr).toContain("process.env.PENUMBRA_TEST_TOKEN");
   });
 
+  test("allowlist matches nested paths under packages/config/**", async () => {
+    const file = join(fixtureRoot, "packages", "config", "test", "nested", "deep.test.ts");
+    mkdirSync(join(fixtureRoot, "packages", "config", "test", "nested"), {
+      recursive: true,
+    });
+    await Bun.write(file, "const token = process.env.PENUMBRA_TEST_TOKEN;\nconsole.log(token);\n");
+
+    const result = run("packages/**/*.ts");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no raw PENUMBRA env reads found");
+  });
+
   test("allows clean fixture trees", async () => {
     const file = join(fixtureRoot, "packages", "feature", "src", "index.ts");
     mkdirSync(join(fixtureRoot, "packages", "feature", "src"), {

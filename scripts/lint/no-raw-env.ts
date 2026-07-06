@@ -35,12 +35,13 @@ function readArgs(argv: string[]): string[] {
 }
 
 function matchesGlob(path: string, glob: string): boolean {
-  const escaped = glob
-    .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll("**/", "(?:.*\\/)?")
-    .replaceAll("**", ".*")
-    .replaceAll("*", "[^/]*");
-  return new RegExp(`^${escaped}$`).test(path);
+  const escaped = glob.replaceAll(/[.+^${}()|[\]\\]/g, "\\$&");
+  const expanded = escaped.replace(/\*\*\/|\*\*|\*/g, (token) => {
+    if (token === "**/") return "(?:.*\\/)?";
+    if (token === "**") return ".*";
+    return "[^/]*";
+  });
+  return new RegExp(`^${expanded}$`).test(path);
 }
 
 function isAllowed(path: string): boolean {
