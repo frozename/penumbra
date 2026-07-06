@@ -11,6 +11,13 @@ import {
   reloadWorkflowAndProjectRegistrySubsystem,
 } from "./reload-config-orchestrators.js";
 
+// Serializes overlapping /agentchat/reload calls per DaemonServices instance
+// so a slower workflow-registry rebuild can't commit its stale snapshot after
+// a fresher call has already committed. Queued calls run in invocation order,
+// mirroring supervisor.runLifecycleSerial. Keyed per-services so distinct
+// daemons in the same process don't share a gate.
+const reloadGates = new WeakMap<DaemonServices, Promise<void>>();
+
 /**
  * POST /agentchat/reload
  * Reloads the daemon-side validation registry, agentchat config snapshot,
@@ -29,8 +36,25 @@ import {
  *
  * Worker agentchat config is automatically reloaded via the worker control bus
  * on a successful config reload here.
+ *
+ * Overlapping calls are serialized per-services via `reloadGates` so that the
+ * freshest triggering call's config wins regardless of which disk I/O
+ * resolves first.
  */
-export async function reloadConfigRoute(
+export function reloadConfigRoute(req: Request, services: DaemonServices): Promise<Response> {
+  const prev = reloadGates.get(services) ?? Promise.resolve();
+  const run = prev.then(() => reloadConfigRouteUnlocked(req, services));
+  reloadGates.set(
+    services,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+async function reloadConfigRouteUnlocked(
   _req: Request,
   services: DaemonServices,
 ): Promise<Response> {

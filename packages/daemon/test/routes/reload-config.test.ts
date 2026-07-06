@@ -1077,3 +1077,92 @@ test("POST /agentchat/reload emits agentchat_reload to workerControl on success"
     rmSync(yamlPath, { recursive: true, force: true });
   }
 });
+
+test("POST /agentchat/reload serializes overlapping calls so invocation order wins", async () => {
+  const services = tempServices();
+  const testDir = mkdtempSync(join(tmpdir(), "reload-race-"));
+  tempDirs.push(testDir);
+  const configDirA = join(testDir, "cfg-a");
+  const configDirB = join(testDir, "cfg-b");
+
+  writeAgentchat(
+    configDirA,
+    `
+agents:
+  - name: agent-a1
+    adapter: mock
+  - name: agent-a2
+    adapter: mock
+  - name: agent-a3
+    adapter: mock
+`,
+  );
+  writeAgentchat(
+    configDirB,
+    `
+agents:
+  - name: agent-b1
+    adapter: mock
+  - name: agent-b2
+    adapter: mock
+`,
+  );
+
+  // Gate the FIRST route call inside the long-lived reactor reload — which
+  // runs AFTER the route commits its snapshot. This lets us observe the
+  // committed state of a still-in-flight call A while call B is enqueued.
+  let releaseReactorA: (() => void) | undefined;
+  const reactorAGate = new Promise<void>((resolve) => {
+    releaseReactorA = resolve;
+  });
+  let reactorCallCount = 0;
+  asDaemonServices(services).longLivedReactor = {
+    manualTick: (): { outcome: string } => ({ outcome: "noop" }),
+    reload: (): Promise<void> => {
+      reactorCallCount += 1;
+      if (reactorCallCount === 1) return reactorAGate;
+      return Promise.resolve();
+    },
+    shutdown: (): Promise<void> => Promise.resolve(),
+  };
+
+  spyOn(services.log, "info").mockImplementation(noopLogFn("info"));
+
+  try {
+    process.env.PENUMBRA_CONFIG_DIR = configDirA;
+    const promiseA = reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    // Give call A time to progress through the sync read + workflow rebuild
+    // and reach the reactor.reload() await where it blocks on reactorAGate.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Now switch env to the fresher, smaller config and fire the second call.
+    process.env.PENUMBRA_CONFIG_DIR = configDirB;
+    const promiseB = reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    // Give ample time for call B to run in the RED (unserialized) path.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // With serialization: A has committed 3 agents and is blocked on the
+    // reactor gate; B is queued and hasn't touched services yet.
+    // Without serialization: B has already run concurrently, its 2-agent
+    // snapshot has clobbered A's 3-agent snapshot.
+    expect(services.agentRegistry).toEqual(["agent-a1", "agent-a2", "agent-a3"]);
+
+    releaseReactorA?.();
+    const [resA, resB] = await Promise.all([promiseA, promiseB]);
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+
+    // Invocation order wins: B was invoked second, so its config is the
+    // final committed state regardless of which rebuild resolved first.
+    expect(services.agentRegistry).toEqual(["agent-b1", "agent-b2"]);
+    expect(reactorCallCount).toBe(2);
+  } finally {
+    releaseReactorA?.();
+  }
+});
