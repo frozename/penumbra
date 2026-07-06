@@ -18,9 +18,24 @@ export interface NormalizeCtx {
   redactor: RegexRedactor;
 }
 
+function stripPrivacyTagsDeep(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return stripPrivacyTags(value);
+  if (Array.isArray(value)) return value.map((v) => stripPrivacyTagsDeep(v));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = stripPrivacyTagsDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function normalize(input: T0EventInput, ctx: NormalizeCtx): T0Event {
   const validated = T0EventInputSchema.parse(input);
-  const redactedPayload = ctx.redactor.redact(validated.payload_json) as Record<string, unknown>;
+  const strippedPayload = stripPrivacyTagsDeep(validated.payload_json) as Record<string, unknown>;
+  const redactedPayload = ctx.redactor.redact(strippedPayload) as Record<string, unknown>;
   const summary =
     validated.payload_summary === undefined || validated.payload_summary === null
       ? null
