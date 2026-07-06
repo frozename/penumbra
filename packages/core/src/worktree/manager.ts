@@ -422,6 +422,12 @@ export class WorktreeManager {
     const scratchPath = path.join(base, `.stage-${handoffId}`);
     const stageBranch = `stage/${handoffId}`;
 
+    // stageBranch is intentionally left behind: downstream consumers
+    // (worker/worktree-integration.ts resolveBaseRef, merge-reconciler.ts)
+    // resolve this name back to a SHA hours later. Deleting it here would
+    // break those reads. The worktree-gc sweeper reaps stage/* refs only
+    // once every handoff whose branch_base points at the ref is terminal
+    // + past grace.
     await this.git(["-C", repoRoot, "branch", "-f", stageBranch, firstRef]);
     await this.git(["-C", repoRoot, "worktree", "add", "--detach", scratchPath, stageBranch]);
 

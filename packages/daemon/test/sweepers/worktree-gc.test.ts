@@ -8,10 +8,17 @@ import {
   type WorktreeHandle,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execFile as execFileCb } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
 
 import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
 import { type BranchLandStatus, runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+
+const execFile = promisify(execFileCb);
 
 try {
   if (process.platform === "darwin") {
@@ -83,6 +90,24 @@ function insertHandoff(
      ) VALUES (?, '2026-05-01T00:00:00.000Z', NULL, ?, 'maestro', 'worker',
                NULL, 'do work', ?, ?, 1, 'implement_small')`,
     [handoff_id, `c-${handoff_id}`, status, resolved_at],
+  );
+}
+
+function insertHandoffWithBranchBase(
+  db: Database,
+  handoff_id: string,
+  status: string,
+  resolved_at: string | null,
+  branch_base: string,
+): void {
+  db.run(
+    `INSERT INTO handoffs (
+       handoff_id, ts, project_id, conversation_id, from_agent, to_agent,
+       to_role, message, status, resolved_at, use_worktree, chain_task_type,
+       branch_base
+     ) VALUES (?, '2026-05-01T00:00:00.000Z', NULL, ?, 'maestro', 'worker',
+               NULL, 'do work', ?, ?, 1, 'implement_small', ?)`,
+    [handoff_id, `c-${handoff_id}`, status, resolved_at, branch_base],
   );
 }
 
@@ -512,6 +537,19 @@ describe("runWorktreeGcTick", () => {
     expect(meta.branch_deleted).toBe(true);
   });
 
+  test("returns empty stage_reaped/stage_deferred when no stage/* refs exist", async () => {
+    const db = setupDb();
+    const svc = makeServices(db, [], () => Promise.resolve());
+    // Point at a directory that isn't a git repo so for-each-ref fails; the
+    // stage reaper must fail-closed to empty (no throw, no fabricated ref).
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+    expect(result.stage_reaped).toEqual([]);
+    expect(result.stage_deferred).toEqual([]);
+  });
+
   test("branchLandedCheck error result is treated as unlanded (fail-safe defer)", async () => {
     const db = setupDb();
     const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
@@ -546,5 +584,182 @@ describe("runWorktreeGcTick", () => {
     expect(row).toBeDefined();
     const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
     expect(meta.land_status).toBe("error");
+  });
+});
+
+function makeServicesWithRepo(
+  db: Database,
+  mainRepoDir: string,
+  worktreeHandles: WorktreeHandle[] = [],
+): Services {
+  return {
+    db,
+    dispatchEventLog: new DispatchEventLog(db),
+    handoffWriter: new HandoffWriter({ db }),
+    handoffReader: new HandoffReader({ db }),
+    t0Writer: { write: noop },
+    machineId: { get: () => "machine-test" },
+    uuid: (() => {
+      let n = 0;
+      return () => `evt-${String(++n)}`;
+    })(),
+    clock: () => new Date(),
+    log: { info: noop, warn: noop },
+    worktreeManager: {
+      listWorktrees: () => worktreeHandles,
+      discoverOrphanWorktrees: () => Promise.resolve([]),
+      teardownWorktree: () => Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+      mainRepoDir,
+    },
+  } as unknown as Services;
+}
+
+async function stageRefExists(repoDir: string, ref: string): Promise<boolean> {
+  try {
+    await execFile("git", ["-C", repoDir, "rev-parse", "--verify", "--quiet", `refs/heads/${ref}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("runWorktreeGcTick — stage/* branch reaper", () => {
+  let repoDir: string;
+  let baseSha: string;
+
+  beforeEach(async () => {
+    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-stage-gc-"));
+    await execFile("git", ["-C", repoDir, "init", "-b", "main"]);
+    await execFile("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", repoDir, "config", "user.name", "test"]);
+    fs.writeFileSync(path.join(repoDir, "README.md"), "# base\n");
+    await execFile("git", ["-C", repoDir, "add", "README.md"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "base"]);
+    const { stdout } = await execFile("git", ["-C", repoDir, "rev-parse", "HEAD"]);
+    baseSha = stdout.trim();
+  });
+
+  afterEach(() => {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("stage/* branch WITHOUT any referencing handoff is preserved (fail-closed)", async () => {
+    const db = setupDb();
+    await execFile("git", ["-C", repoDir, "branch", "stage/orphaned", baseSha]);
+    const svc = makeServicesWithRepo(db, repoDir);
+
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.stage_reaped).toEqual([]);
+    expect(result.stage_deferred).toContain("stage/orphaned");
+    expect(await stageRefExists(repoDir, "stage/orphaned")).toBe(true);
+  });
+
+  test("stage/* branch is reaped when every referencing handoff is terminal + past grace", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoffWithBranchBase(db, "h-stage-done", "completed", resolvedAt, "stage/reaped");
+    await execFile("git", ["-C", repoDir, "branch", "stage/reaped", baseSha]);
+
+    const svc = makeServicesWithRepo(db, repoDir);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.stage_reaped).toEqual(["stage/reaped"]);
+    expect(result.stage_deferred).not.toContain("stage/reaped");
+    expect(await stageRefExists(repoDir, "stage/reaped")).toBe(false);
+
+    const eventRow = db
+      .query<{ kind: string; meta_json: string }, [string]>(
+        `SELECT kind, meta_json FROM dispatch_events
+         WHERE handoff_id = ? AND kind = 'worktree.gc.stage_reaped'`,
+      )
+      .get("reaped");
+    expect(eventRow).toBeDefined();
+    const meta = JSON.parse(eventRow?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.ref).toBe("stage/reaped");
+    expect(meta.referencing_handoffs).toBe(1);
+  });
+
+  test("stage/* branch is deferred when a referencing handoff is non-terminal", async () => {
+    const db = setupDb();
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoffWithBranchBase(db, "h-done", "completed", resolvedAt, "stage/mixed");
+    insertHandoffWithBranchBase(db, "h-live", "dispatched", null, "stage/mixed");
+    await execFile("git", ["-C", repoDir, "branch", "stage/mixed", baseSha]);
+
+    const svc = makeServicesWithRepo(db, repoDir);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.stage_reaped).toEqual([]);
+    expect(result.stage_deferred).toContain("stage/mixed");
+    expect(await stageRefExists(repoDir, "stage/mixed")).toBe(true);
+  });
+
+  test("stage/* branch is deferred when a referencing handoff is terminal but WITHIN grace", async () => {
+    const db = setupDb();
+    // resolved 1h ago — within 2h grace
+    const resolvedAt = new Date(NOW.getTime() - 60 * 60_000).toISOString();
+    insertHandoffWithBranchBase(db, "h-recent", "completed", resolvedAt, "stage/recent");
+    await execFile("git", ["-C", repoDir, "branch", "stage/recent", baseSha]);
+
+    const svc = makeServicesWithRepo(db, repoDir);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.stage_reaped).toEqual([]);
+    expect(result.stage_deferred).toContain("stage/recent");
+    expect(await stageRefExists(repoDir, "stage/recent")).toBe(true);
+  });
+
+  test("non-stage branches (agent/*, main) are ignored by the stage reaper", async () => {
+    const db = setupDb();
+    // agent/foo has no referencing handoff row; still must not be reaped by the stage sweep.
+    await execFile("git", ["-C", repoDir, "branch", "agent/keep-me", baseSha]);
+
+    const svc = makeServicesWithRepo(db, repoDir);
+    const result = await runWorktreeGcTick(
+      { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+      NOW_FN,
+    );
+
+    expect(result.stage_reaped).toEqual([]);
+    expect(result.stage_deferred).toEqual([]);
+    expect(await stageRefExists(repoDir, "agent/keep-me")).toBe(true);
+    expect(await stageRefExists(repoDir, "main")).toBe(true);
+  });
+
+  test("stage/* reaper is skipped when lifecycle lock is held", async () => {
+    resetLifecycleLock();
+    const release = await lifecycleLock.acquire("h-landing");
+    try {
+      const db = setupDb();
+      const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+      insertHandoffWithBranchBase(db, "h-stage-done", "completed", resolvedAt, "stage/locked");
+      await execFile("git", ["-C", repoDir, "branch", "stage/locked", baseSha]);
+
+      const svc = makeServicesWithRepo(db, repoDir);
+      const result = await runWorktreeGcTick(
+        { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+        NOW_FN,
+      );
+
+      expect(result.stage_reaped).toEqual([]);
+      expect(result.stage_deferred).toEqual([]);
+      expect(await stageRefExists(repoDir, "stage/locked")).toBe(true);
+    } finally {
+      release();
+      resetLifecycleLock();
+    }
   });
 });

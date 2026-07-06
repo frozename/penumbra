@@ -40,6 +40,7 @@ export const DispatchEventKindSchema = z.enum([
   "shell.session.close",
   "worktree.gc",
   "worktree.gc.unlanded_skipped",
+  "worktree.gc.stage_reaped",
   "reconciler.sweep.tick",
   "plan.quarantined",
   "worker.recovery.requeued",

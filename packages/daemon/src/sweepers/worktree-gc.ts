@@ -49,7 +49,11 @@ export interface WorktreeGcTickResult {
   failed: string[];
   deferred: string[];
   unlanded_skipped: string[];
+  stage_reaped: string[];
+  stage_deferred: string[];
 }
+
+const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
 
@@ -78,6 +82,111 @@ function buildDefaultBranchLandedCheck(
       return "error";
     }
   };
+}
+
+// Fail-closed stage/* reaper. stageMergedBase leaks a stage/<handoffId> ref
+// on every call because worker/worktree-integration.ts and merge-reconciler.ts
+// consume the NAME (not a captured SHA) hours later. We only reap a stage ref
+// once every handoff whose branch_base points at it is terminal + past grace;
+// on probe error or no referencing handoff we preserve the ref (fail-closed),
+// mirroring verifyBranchDeleted's pattern.
+async function reapStageBranches(
+  services: Services,
+  mainRepoDir: string,
+  gracePeriodMs: number,
+  nowMs: number,
+  now: () => Date,
+  log?: WorktreeGcOpts["log"],
+): Promise<{ reaped: string[]; deferred: string[] }> {
+  const reaped: string[] = [];
+  const deferred: string[] = [];
+
+  let refsOut: string;
+  try {
+    const { stdout } = await execFile("git", [
+      "-C",
+      mainRepoDir,
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/heads/stage/",
+    ]);
+    refsOut = stdout;
+  } catch (err) {
+    log?.warn?.({ err: String(err) }, "worktree-gc stage listing failed");
+    return { reaped, deferred };
+  }
+
+  const refs = refsOut
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("stage/"));
+
+  for (const ref of refs) {
+    let rows: { status: string; resolved_at: string | null }[];
+    try {
+      rows = services.db
+        .query<
+          { status: string; resolved_at: string | null },
+          [string]
+        >("SELECT status, resolved_at FROM handoffs WHERE branch_base = ?")
+        .all(ref);
+    } catch (err) {
+      deferred.push(ref);
+      log?.warn?.(
+        { ref, err: String(err) },
+        "worktree-gc stage reap: handoff probe failed (fail-closed)",
+      );
+      continue;
+    }
+
+    if (rows.length === 0) {
+      // No referencing handoff — preserve the ref. A concurrent plan-runtime
+      // may still be racing to create the handoff row.
+      deferred.push(ref);
+      continue;
+    }
+
+    const allTerminalPastGrace = rows.every((row) => {
+      if (!TERMINAL_HANDOFF_STATUSES.has(row.status)) return false;
+      if (row.resolved_at === null) return false;
+      const resolvedAtMs = new Date(row.resolved_at).getTime();
+      if (!Number.isFinite(resolvedAtMs)) return false;
+      return nowMs - resolvedAtMs >= gracePeriodMs;
+    });
+
+    if (!allTerminalPastGrace) {
+      deferred.push(ref);
+      continue;
+    }
+
+    try {
+      await execFile("git", ["-C", mainRepoDir, "branch", "-D", ref]);
+    } catch (err) {
+      deferred.push(ref);
+      log?.warn?.(
+        { ref, err: String(err) },
+        "worktree-gc stage reap: branch -D failed (fail-closed)",
+      );
+      continue;
+    }
+
+    reaped.push(ref);
+    const handoffIdFromRef = ref.slice("stage/".length);
+    services.dispatchEventLog.record({
+      handoff_id: handoffIdFromRef,
+      source: "daemon",
+      // Cast until `worktree.gc.stage_reaped` propagates into the shared
+      // api-contract node_modules copy; the local schema already lists it.
+      kind: "worktree.gc.stage_reaped" as DispatchEventInput["kind"],
+      ts: now().toISOString(),
+      meta: {
+        ref,
+        referencing_handoffs: rows.length,
+      },
+    });
+  }
+
+  return { reaped, deferred };
 }
 
 /**
@@ -195,7 +304,26 @@ export async function runWorktreeGcTick(
     }
   }
 
-  return { candidates, removed, failed, deferred, unlanded_skipped };
+  const stageResult = lifecycleLock.isHeld()
+    ? { reaped: [] as string[], deferred: [] as string[] }
+    : await reapStageBranches(
+        services,
+        services.worktreeManager.mainRepoDir,
+        gracePeriodMs,
+        nowMs,
+        now,
+        opts.log,
+      );
+
+  return {
+    candidates,
+    removed,
+    failed,
+    deferred,
+    unlanded_skipped,
+    stage_reaped: stageResult.reaped,
+    stage_deferred: stageResult.deferred,
+  };
 }
 
 /** Schedules the GC sweep on a recurring interval. Returns a cancel function. */
