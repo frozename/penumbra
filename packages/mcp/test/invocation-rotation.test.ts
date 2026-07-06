@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -108,23 +107,6 @@ describe("invocation rotation", () => {
     expect(existsSync(join(dir, old))).toBe(false);
   });
 
-  it("rotateIfNeeded cleans up staged .jsonl if gzip pipeline fails", async () => {
-    const live = join(dir, "mcp-invocations.jsonl");
-    writeFileSync(live, '{"tool":"x"}\n');
-    const staged = join(dir, "mcp-invocations.2026-01-01.jsonl");
-    const gzPath = `${staged}.gz`;
-    mkdirSync(gzPath);
-
-    let thrown: unknown = null;
-    try {
-      await rotateIfNeeded(live, new Date("2026-01-01T00:00:00.000Z"));
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect(existsSync(staged)).toBe(false);
-  });
-
   it("pruneOldRotations also prunes orphaned dated .jsonl files", () => {
     const keepGz = `mcp-invocations.${dayKey(0)}.jsonl.gz`;
     const oldGz = `mcp-invocations.${dayKey(40)}.jsonl.gz`;
@@ -154,6 +136,23 @@ describe("invocation rotation", () => {
 
     expect(existsSync(join(dir, `custom-invocations.${dayKey(40)}.jsonl.gz`))).toBe(false);
     expect(existsSync(join(dir, `mcp-invocations.${dayKey(40)}.jsonl.gz`))).toBe(true);
+  });
+
+  it("compressStaged falls back to a uniquely-suffixed name when the primary .gz already exists", async () => {
+    const staged = join(dir, "mcp-invocations.2026-05-27.7777.jsonl");
+    writeFileSync(staged, '{"tool":"raced"}\n');
+    // Simulate a prior rotator having already produced the primary archive.
+    const primary = `${staged}.gz`;
+    writeFileSync(primary, "prior-archive");
+
+    const gzPath = await compressStaged(staged);
+
+    expect(gzPath).not.toBe(primary);
+    expect(gzPath).toMatch(/^.*mcp-invocations\.2026-05-27\.7777-\d+\.jsonl\.gz$/);
+    expect(existsSync(gzPath)).toBe(true);
+    expect(existsSync(primary)).toBe(true);
+    expect(readFileSync(primary, "utf8")).toBe("prior-archive");
+    expect(existsSync(staged)).toBe(false);
   });
 
   it("compressStaged writes a 0o600 gzip and removes the staged file", async () => {

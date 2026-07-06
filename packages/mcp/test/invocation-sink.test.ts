@@ -262,10 +262,9 @@ describe("invocation sink", () => {
 
     const files = readdirSync(dir);
     const rotated = files.find((name) =>
-      /^mcp-invocations\.\d{4}-\d{2}-\d{2}\.jsonl\.gz$/.test(name),
+      /^mcp-invocations\.\d{4}-\d{2}-\d{2}\.\d+\.jsonl\.gz$/.test(name),
     );
-    expect(rotated).toBe("mcp-invocations.2026-01-01.jsonl.gz");
-    expect(rotated).toBeDefined();
+    expect(rotated).toMatch(/^mcp-invocations\.2026-01-01\.\d+\.jsonl\.gz$/);
     expect(files).toContain("mcp-invocations.jsonl");
 
     const rotatedContent = gunzipSync(readFileSync(join(dir, rotated!))).toString("utf8");
@@ -311,10 +310,11 @@ describe("invocation sink", () => {
     }
 
     const files = readdirSync(dir);
-    expect(files).toContain("mcp-invocations.2026-01-01.jsonl.gz");
-    const rotatedContent = gunzipSync(
-      readFileSync(join(dir, "mcp-invocations.2026-01-01.jsonl.gz")),
-    ).toString("utf8");
+    const rotated = files.find((name) =>
+      /^mcp-invocations\.2026-01-01\.\d+\.jsonl\.gz$/.test(name),
+    );
+    expect(rotated).toBeDefined();
+    const rotatedContent = gunzipSync(readFileSync(join(dir, rotated!))).toString("utf8");
     expect(rotatedContent).toContain('"tool":"day1"');
     const liveContent = readFileSync(filePath, "utf8");
     expect(liveContent).toContain('"tool":"day2"');
@@ -432,6 +432,70 @@ describe("invocation sink", () => {
     }
     expect(syncWrites).toBe(50);
     await sink.close();
+  });
+
+  it("multi-process day-boundary rotation preserves each process archive (pid segregation)", async () => {
+    const filePath = join(dir, "mcp-invocations.jsonl");
+    const day1 = new Date("2026-01-01T12:00:00.000Z");
+    const RealDate = Date;
+    let fakeNow = "2026-01-02T12:00:00.000Z";
+
+    class FakeDate extends RealDate {
+      constructor(value?: ConstructorParameters<typeof Date>[0]) {
+        if (value === undefined) {
+          super(fakeNow);
+          return;
+        }
+        super(value);
+      }
+      static now(): number {
+        return new RealDate(fakeNow).getTime();
+      }
+    }
+    (globalThis as { Date: DateConstructor }).Date = FakeDate as unknown as DateConstructor;
+
+    try {
+      // Process A: seeded live file with day1-A content, rotates to day2.
+      writeFileSync(
+        filePath,
+        `${JSON.stringify(makeRow({ ts: "2026-01-01T12:00:00.000Z", tool: "day1-A" }))}\n`,
+      );
+      utimesSync(filePath, day1, day1);
+      const sinkA = openInvocationSinkForTest(filePath, {
+        testHooks: { pid: () => 111_111 },
+      });
+      sinkA.write(makeRow({ ts: fakeNow, tool: "day2-A" }));
+      await sinkA.close();
+
+      // Process B: encounters the shared dir with its own day1-B row still in
+      // the live file (simulating an interleaving where B's live-file read
+      // happens before A's rename finishes propagating). Both rotators end up
+      // racing to stage a day1 archive under the same basename+date key.
+      writeFileSync(
+        filePath,
+        `${JSON.stringify(makeRow({ ts: "2026-01-01T13:00:00.000Z", tool: "day1-B" }))}\n`,
+      );
+      utimesSync(filePath, day1, day1);
+      const sinkB = openInvocationSinkForTest(filePath, {
+        testHooks: { pid: () => 222_222 },
+      });
+      sinkB.write(makeRow({ ts: fakeNow, tool: "day2-B" }));
+      await sinkB.close();
+    } finally {
+      (globalThis as { Date: DateConstructor }).Date = RealDate;
+    }
+
+    const files = readdirSync(dir);
+    const day1Archives = files.filter((name) =>
+      /^mcp-invocations\.2026-01-01\..*\.jsonl\.gz$/.test(name),
+    );
+    expect(day1Archives.length).toBe(2);
+
+    const combined = day1Archives
+      .map((name) => gunzipSync(readFileSync(join(dir, name))).toString("utf8"))
+      .join("");
+    expect(combined).toContain('"tool":"day1-A"');
+    expect(combined).toContain('"tool":"day1-B"');
   });
 
   it("pending buffer during rotation drops newest rows at cap with one warning", async () => {

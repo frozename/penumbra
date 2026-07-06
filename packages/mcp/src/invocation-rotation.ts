@@ -24,7 +24,26 @@ export function escapeRegExp(value: string): string {
 }
 
 function rotationNameRe(basenameValue: string): RegExp {
-  return new RegExp(`^${escapeRegExp(basenameValue)}\\.(\\d{4}-\\d{2}-\\d{2})\\.jsonl(?:\\.gz)?$`);
+  // Optional trailing segment covers pid- (and pid+timestamp-) suffixed archives
+  // produced when multiple penumbra-mcp processes rotate the shared log.
+  return new RegExp(
+    `^${escapeRegExp(basenameValue)}\\.(\\d{4}-\\d{2}-\\d{2})(?:\\.[\\w-]+)?\\.jsonl(?:\\.gz)?$`,
+  );
+}
+
+function errnoCode(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return String((error as { code?: unknown }).code);
+  }
+  return "";
+}
+
+async function pipeToGz(stagedPath: string, gzPath: string): Promise<void> {
+  await pipeline(
+    createReadStream(stagedPath),
+    createGzip(),
+    createWriteStream(gzPath, { mode: 0o600, flags: "wx" }),
+  );
 }
 
 function warnOnce(tag: string, message: string, error: unknown): void {
@@ -36,12 +55,19 @@ function warnOnce(tag: string, message: string, error: unknown): void {
 }
 
 export async function compressStaged(stagedPath: string): Promise<string> {
-  const gzPath = `${stagedPath}.gz`;
-  await pipeline(
-    createReadStream(stagedPath),
-    createGzip(),
-    createWriteStream(gzPath, { mode: 0o600 }),
-  );
+  const primaryGz = `${stagedPath}.gz`;
+  let gzPath = primaryGz;
+  try {
+    await pipeToGz(stagedPath, primaryGz);
+  } catch (error) {
+    if (errnoCode(error) !== "EEXIST") throw error;
+    // Another rotator already produced the archive at the same path; fall
+    // back to a uniquely-suffixed name so we never clobber a prior archive.
+    const stagedNoExt = stagedPath.replace(/\.jsonl$/, "");
+    const fallback = `${stagedNoExt}-${String(Date.now())}.jsonl.gz`;
+    await pipeToGz(stagedPath, fallback);
+    gzPath = fallback;
+  }
   await unlink(stagedPath);
   return gzPath;
 }

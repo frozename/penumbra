@@ -31,8 +31,10 @@ function resolveInputFiles(logPath: string): string[] {
   if (!existsSync(dir)) return [];
 
   const liveBase = basename(logPath).replace(/\.jsonl$/, "");
+  // Optional trailing segment covers pid- (and pid+timestamp-) suffixed archives
+  // produced when multiple penumbra-mcp processes rotate the shared log.
   const rotationNameRe = new RegExp(
-    `^${liveBase.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\d{4}-\\d{2}-\\d{2}\\.jsonl\\.gz$`,
+    `^${liveBase.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\d{4}-\\d{2}-\\d{2}(?:\\.[\\w-]+)?\\.jsonl\\.gz$`,
   );
 
   const rotated = readdirSync(dir)

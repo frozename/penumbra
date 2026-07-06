@@ -40,6 +40,7 @@ export interface InvocationSinkOptions {
 interface InvocationSinkTestHooks {
   testHooks?: {
     now?: () => Date;
+    pid?: () => number;
     compressStaged?: (stagedPath: string) => Promise<string>;
     onSyncWrite?: () => void;
     pauseBeforeReopen?: () => Promise<void>;
@@ -112,6 +113,7 @@ class InvocationSinkImpl implements InvocationSink {
   private readonly parentDir: string;
   private readonly rotationBasename: string;
   private readonly now: () => Date;
+  private readonly pid: () => number;
   private readonly compressStagedFn: (stagedPath: string) => Promise<string>;
   private readonly maxPendingDuringRotation: number;
   private readonly warned = new Set<string>();
@@ -136,6 +138,7 @@ class InvocationSinkImpl implements InvocationSink {
     this.parentDir = dirname(filePath);
     this.rotationBasename = deriveRotationBasename(filePath);
     this.now = options.testHooks?.now ?? ((): Date => new Date());
+    this.pid = options.testHooks?.pid ?? ((): number => process.pid);
     this.compressStagedFn = options.testHooks?.compressStaged ?? compressStaged;
     this.maxPendingDuringRotation =
       options.testHooks?.maxPendingDuringRotation ?? MAX_PENDING_DURING_ROTATION;
@@ -318,7 +321,13 @@ class InvocationSinkImpl implements InvocationSink {
   }
 
   private stagePreviousDay(previousDay: string): string | null {
-    const stagedPath = join(this.parentDir, `${this.rotationBasename}.${previousDay}.jsonl`);
+    // Include pid so concurrent penumbra-mcp processes rotating the shared log
+    // never compute the same destination — otherwise renameSync clobbers the
+    // first archive with the second process's fresh (empty) live file.
+    const stagedPath = join(
+      this.parentDir,
+      `${this.rotationBasename}.${previousDay}.${String(this.pid())}.jsonl`,
+    );
     try {
       renameSync(this.filePath, stagedPath);
       return stagedPath;
