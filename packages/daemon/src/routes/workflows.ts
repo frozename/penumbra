@@ -628,6 +628,7 @@ async function waitAndPersist(
   workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined,
   workflowRunId: string | null,
   start: number,
+  services: Services,
 ): Promise<Response> {
   const result = await runPromise;
   if (workflowRunId && workflowRuns) {
@@ -637,7 +638,24 @@ async function waitAndPersist(
       finished_at: Date.now(),
       result,
     });
-    await workflowRuns.recordResult(workflowRunId, result);
+    try {
+      await workflowRuns.recordResult(workflowRunId, result);
+    } catch (err) {
+      // Persistence failure must not clobber the completed in-memory record or
+      // discard the caller's real result. Mark persistence_failed and fall
+      // through — do not rethrow into the outer catch, whose recordError path
+      // overwrites the completed record via hydrateRecord's running-row
+      // passthrough.
+      workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
+      services.log.error(
+        {
+          component: "workflow_run_persist",
+          workflow_run_id: workflowRunId,
+          err: serializeError(err),
+        },
+        "workflow_run wait:true persistence failed; returning result to caller",
+      );
+    }
   }
   return json(result);
 }
@@ -697,7 +715,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     const bundle = await composeWorkflowBundle(execOpts);
     const runPromise = startWorkflowExecution(execOpts, bundle);
     if (shouldWait) {
-      return await waitAndPersist(runPromise, workflowRuns, workflowRunId, start);
+      return await waitAndPersist(runPromise, workflowRuns, workflowRunId, start, services);
     }
     attachRunPersistHandlers(runPromise, workflowRuns, workflowRunId, start, services);
     return json({ workflow_run_id: workflowRunId, started_at: start });

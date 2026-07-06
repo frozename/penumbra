@@ -329,6 +329,89 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', nested: { ok: true
   }
 });
 
+test("POST /workflows/run with wait:true returns the real result even when persistence fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-wait-persistfail-"));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, "playbooks"), { recursive: true });
+    mkdirSync(join(root, "workflows/waitedfail"), { recursive: true });
+    writeFileSync(
+      join(root, "workflows/waitedfail/workflow.ts"),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'waitedfail',
+  description: 'waited fail',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => ({ outcome: 'sync', payload: { real: true } });
+`,
+    );
+    const reg = await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    });
+    const db = freshDb();
+    const persistenceStatuses: string[] = [];
+    let recordErrorCalls = 0;
+    let recordResultCalls = 0;
+    const workflowRuns = {
+      register: (): string => "wfrun-persistfail",
+      verify: (): { workflow_name: string; project_id: string | null; registered_at: number } => ({
+        workflow_name: "waitedfail",
+        project_id: null,
+        registered_at: 0,
+      }),
+      unregister: (): void => undefined,
+      recordResult: async (): Promise<void> => {
+        recordResultCalls += 1;
+        throw new Error("no such table: workflow_runs");
+      },
+      recordError: async (): Promise<void> => {
+        recordErrorCalls += 1;
+      },
+      getStatus: async (): Promise<null> => null,
+      getStatusLight: async (): Promise<null> => null,
+      waitForResult: async (): Promise<null> => null,
+      setPersistenceStatus: (
+        _id: string,
+        status: "pending" | "persisted" | "persistence_failed",
+      ): void => {
+        persistenceStatuses.push(status);
+      },
+      setExecutionRecord: (): void => undefined,
+    };
+    const services = mockServices({
+      workflowRegistry: reg,
+      workflowRuns,
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    });
+    const req = new Request("http://localhost/workflows/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "waitedfail", cwd: root, wait: true }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      outcome?: string;
+      runResult?: { outcome?: string; payload?: { real?: boolean } };
+    };
+    expect(body.outcome).toBe("success");
+    expect(body.runResult).toMatchObject({ outcome: "sync", payload: { real: true } });
+    expect(recordResultCalls).toBe(1);
+    expect(persistenceStatuses).toContain("persistence_failed");
+    expect(recordErrorCalls).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("POST /workflows/run returns workflow_run_id immediately when wait is omitted, and status becomes completed later", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-async-"));
   try {
