@@ -1525,6 +1525,7 @@ export class StdioAcpAdapter implements Adapter {
       args.state.promptTimeoutRejector = null;
       clearPromptTimer(args.state);
       clearInterval(heartbeatTimer);
+      args.lifecycleHandles.detachSessionExitRejection();
     }
   }
 
@@ -1892,6 +1893,40 @@ interface ServerLifecycleHandles {
   serverAliveRef: { current: boolean };
   toolUseRejection: { promise: Promise<never>; reject: (err: Error) => void };
   sessionExitRejection: { promise: Promise<never>; reject: (err: Error) => void };
+  detachSessionExitRejection: () => void;
+}
+
+interface ServerExitRegistry {
+  aliveRef: { current: boolean };
+  sessionExitRejectors: Set<(err: Error) => void>;
+}
+
+// Per-connection registry keyed by the shared server handle. The pool holds a
+// warm process across many dispatches (30-min max-age); attaching a fresh
+// per-dispatch .then() closure to server.exited retained every dispatch's
+// DispatchState (accumulatedText) until process death, growing the retained
+// set as O(total dispatches served). The registry installs exactly ONE
+// .then() per connection and dispatches into a mutable Set that
+// runPromptInteraction empties in its finally block, bounding retained state
+// to O(active dispatches).
+const serverExitRegistries = new WeakMap<StdioAcpHandle, ServerExitRegistry>();
+
+function getOrCreateServerExitRegistry(server: StdioAcpHandle): ServerExitRegistry {
+  const existing = serverExitRegistries.get(server);
+  if (existing) return existing;
+  const registry: ServerExitRegistry = {
+    aliveRef: { current: true },
+    sessionExitRejectors: new Set(),
+  };
+  serverExitRegistries.set(server, registry);
+  void server.exited.then((code) => {
+    registry.aliveRef.current = false;
+    if (code !== 0) {
+      for (const reject of registry.sessionExitRejectors) reject(new AcpSessionEvictedError());
+      registry.sessionExitRejectors.clear();
+    }
+  });
+  return registry;
 }
 
 function setupServerLifecycleHandles(
@@ -1899,19 +1934,23 @@ function setupServerLifecycleHandles(
   state: DispatchState,
   turnCtx: DispatchTurnContext,
 ): ServerLifecycleHandles {
-  const serverAliveRef: { current: boolean } = { current: true };
-  void server.exited.then(() => {
-    serverAliveRef.current = false;
-  });
+  const registry = getOrCreateServerExitRegistry(server);
   const toolUseRejection = createRejectablePromise<never>();
   turnCtx.toolUseRejectorRef.current = toolUseRejection.reject;
   const sessionExitRejection = createRejectablePromise<never>();
-  void server.exited.then((code) => {
-    if (state.pooledEntry && code !== 0) {
-      sessionExitRejection.reject(new AcpSessionEvictedError());
-    }
-  });
-  return { serverAliveRef, toolUseRejection, sessionExitRejection };
+  const gatedReject = (err: Error): void => {
+    if (state.pooledEntry) sessionExitRejection.reject(err);
+  };
+  registry.sessionExitRejectors.add(gatedReject);
+  const detachSessionExitRejection = (): void => {
+    registry.sessionExitRejectors.delete(gatedReject);
+  };
+  return {
+    serverAliveRef: registry.aliveRef,
+    toolUseRejection,
+    sessionExitRejection,
+    detachSessionExitRejection,
+  };
 }
 
 function buildSessionUpdateHandler(
