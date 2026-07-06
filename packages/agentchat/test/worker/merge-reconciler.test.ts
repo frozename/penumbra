@@ -110,6 +110,9 @@ const defaultShortStat: ExecResult = {
   stdout: " 1 file changed, 2 insertions(+), 1 deletion(-)\n",
   stderr: "",
 };
+const defaultBaseTipSha = "a".repeat(40);
+const defaultBranchHeadSha = "b".repeat(40);
+const defaultMergeBaseSha = "c".repeat(40);
 
 const postProgressMock = mock((id: string, payload: unknown): Promise<void> => {
   progressCalls.push({ id, payload });
@@ -145,9 +148,18 @@ const createDispatchPRMock = mock(
   },
 );
 
-function defaultExec(argv: string[], _opts: { cwd: string }): Promise<ExecResult> {
-  const cmd = argv.join(" ");
-  execHistory.push(cmd);
+function defaultExecForCommand(cmd: string): Promise<ExecResult> {
+  if (cmd === "git rev-parse HEAD") {
+    return Promise.resolve({ stdout: `${defaultBranchHeadSha}\n`, stderr: "" });
+  }
+
+  if (cmd.startsWith("git rev-parse ")) {
+    return Promise.resolve({ stdout: `${defaultBaseTipSha}\n`, stderr: "" });
+  }
+
+  if (cmd.startsWith("git merge-base ") && !cmd.startsWith("git merge-base --is-ancestor")) {
+    return Promise.resolve({ stdout: `${defaultMergeBaseSha}\n`, stderr: "" });
+  }
 
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve(defaultDiffResult);
@@ -162,6 +174,12 @@ function defaultExec(argv: string[], _opts: { cwd: string }): Promise<ExecResult
   }
 
   return Promise.resolve(nextExecResult);
+}
+
+function defaultExec(argv: string[], _opts: { cwd: string }): Promise<ExecResult> {
+  const cmd = argv.join(" ");
+  execHistory.push(cmd);
+  return defaultExecForCommand(cmd);
 }
 
 const execMock = mock(defaultExec);
@@ -296,7 +314,9 @@ test("default reconcile verifies and emits verdict without opening PR", async ()
     "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
   );
   expect(execHistory).toContain("bun test packages/daemon/test/");
-  expect(execHistory).toContain("git diff main...agent/h1 --shortstat");
+  expect(execHistory).toContain(
+    `git diff ${defaultMergeBaseSha}...${defaultBranchHeadSha} --shortstat`,
+  );
   expect(prCalls).toHaveLength(0);
   expect(logMocks.info).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -355,7 +375,13 @@ test("ff_mergeable=false rebase success emits success verdict with rebased branc
     if (cmd === "git rev-parse agent/h_rebase_ok") {
       return Promise.resolve({ stdout: "rebased-sha\n", stderr: "" });
     }
-    return Promise.resolve(nextExecResult);
+    if (cmd === `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`) {
+      mergeBaseCalls += 1;
+      if (mergeBaseCalls === 1)
+        return Promise.reject(new ExecCommandError({ stderr: "not-ancestor", code: 1 }));
+      return Promise.resolve({ stdout: "", stderr: "" });
+    }
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_rebase_ok");
@@ -372,11 +398,11 @@ test("ff_mergeable=false rebase success emits success verdict with rebased branc
   });
   for (const expected of [
     "git worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok",
-    "git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_ok main",
+    `git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_ok ${defaultBaseTipSha}`,
     "git checkout agent/h_rebase_ok",
-    "git rebase main",
+    `git rebase ${defaultBaseTipSha}`,
     "git rev-parse agent/h_rebase_ok",
-    "git merge-base --is-ancestor main rebased-sha",
+    `git merge-base --is-ancestor ${defaultBaseTipSha} rebased-sha`,
     "git push --force-with-lease origin agent/h_rebase_ok:agent/h_rebase_ok",
   ]) {
     expect(execHistory).toContain(expected);
@@ -385,7 +411,7 @@ test("ff_mergeable=false rebase success emits success verdict with rebased branc
 
 test("ff_mergeable=false rebase conflict emits conflict verdict with file list", async () => {
   execFailures.set(
-    "git merge-base --is-ancestor main agent/h_rebase_conflict",
+    `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
     new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
   );
   execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
@@ -396,12 +422,12 @@ test("ff_mergeable=false rebase conflict emits conflict verdict with file list",
     if (cmd.startsWith("git diff --name-only")) return Promise.resolve(defaultDiffResult);
     if (cmd.startsWith("git diff") && cmd.includes("--shortstat"))
       return Promise.resolve(defaultShortStat);
-    if (cmd === "git rebase main")
+    if (cmd === `git rebase ${defaultBaseTipSha}`)
       return Promise.reject(new ExecCommandError({ stderr: "CONFLICT" }));
     for (const [pattern, error] of execFailures) {
       if (cmd.includes(pattern)) return Promise.reject(error);
     }
-    return Promise.resolve(nextExecResult);
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_rebase_conflict");
@@ -418,9 +444,9 @@ test("ff_mergeable=false rebase conflict emits conflict verdict with file list",
   });
   for (const expected of [
     "git worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict",
-    "git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_conflict main",
+    `git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_conflict ${defaultBaseTipSha}`,
     "git checkout agent/h_rebase_conflict",
-    "git rebase main",
+    `git rebase ${defaultBaseTipSha}`,
     "git diff --name-only --diff-filter=U",
     "git rebase --abort",
   ]) {
@@ -430,7 +456,7 @@ test("ff_mergeable=false rebase conflict emits conflict verdict with file list",
 
 test("reconcilerAutoRebase=false skips rebase even when ff_mergeable=false", async () => {
   execFailures.set(
-    "git merge-base --is-ancestor main agent/h_rebase_disabled",
+    `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
     new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
   );
   const reconcileNoAuto = createMergeReconciler({
@@ -673,6 +699,108 @@ test("Typecheck fail: returns typecheck_failed and skips PR creation", async () 
   });
 });
 
+test("reconciler diffs against a fixed merge-base and worktree head snapshot", async () => {
+  const baseTip = "a".repeat(40);
+  const branchTip = "b".repeat(40);
+  const mergeBase = "c".repeat(40);
+
+  execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd === "git rev-parse HEAD") {
+      return Promise.resolve({ stdout: `${branchTip}\n`, stderr: "" });
+    }
+    if (cmd === "git rev-parse main") {
+      return Promise.resolve({ stdout: `${baseTip}\n`, stderr: "" });
+    }
+    if (cmd === `git merge-base ${baseTip} ${branchTip}`) {
+      return Promise.resolve({ stdout: `${mergeBase}\n`, stderr: "" });
+    }
+    if (cmd.startsWith("git diff --name-only")) {
+      return Promise.resolve({
+        stdout: "packages/daemon/src/routes/handoffs.ts\npackages/core/src/index.ts\n",
+        stderr: "",
+      });
+    }
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+      if (cmd === `git diff ${mergeBase}...${branchTip} --shortstat`) {
+        return Promise.resolve({
+          stdout: " 2 files changed, 5 insertions(+), 1 deletion(-)\n",
+          stderr: "",
+        });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    }
+    return defaultExecForCommand(cmd);
+  });
+
+  const result = await reconcile("h_snapshot");
+
+  expect(result.status).toBe("verified");
+  expect(execHistory).toContain(`git merge-base ${baseTip} ${branchTip}`);
+  expect(execHistory).toContain(`git diff --name-only ${mergeBase}...${branchTip}`);
+  expect(execHistory).toContain(`git diff ${mergeBase}...${branchTip} --shortstat`);
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_snapshot",
+    head_sha: branchTip,
+    base_sha: baseTip,
+    files_changed: 2,
+    lines_added: 5,
+    lines_deleted: 1,
+    typecheck: "pass",
+    tests: "pass",
+  });
+});
+
+test("head/base mismatch with persistently empty diff does not emit hard-fail verdict", async () => {
+  const baseTip = "1".repeat(40);
+  const branchTip = "2".repeat(40);
+  const mergeBase = "3".repeat(40);
+
+  execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd === "git rev-parse HEAD" || cmd === "git rev-parse agent/h_empty_diff_fail") {
+      return Promise.resolve({ stdout: `${branchTip}\n`, stderr: "" });
+    }
+    if (cmd === "git rev-parse main") {
+      return Promise.resolve({ stdout: `${baseTip}\n`, stderr: "" });
+    }
+    if (cmd === `git merge-base ${baseTip} ${branchTip}`) {
+      return Promise.resolve({ stdout: `${mergeBase}\n`, stderr: "" });
+    }
+    if (cmd.startsWith("git diff --name-only")) {
+      return Promise.resolve({ stdout: "packages/daemon/src/routes/handoffs.ts\n", stderr: "" });
+    }
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+      return Promise.resolve({ stdout: "", stderr: "" });
+    }
+    if (cmd.startsWith("bun tsc -b")) {
+      return Promise.reject(new ExecCommandError({ stderr: "Syntax error", code: 2 }));
+    }
+    return defaultExecForCommand(cmd);
+  });
+
+  const result = await reconcile("h_empty_diff_fail");
+
+  expect(result.status).toBe("typecheck_failed");
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_empty_diff_fail",
+    head_sha: branchTip,
+    base_sha: baseTip,
+    files_changed: 0,
+    typecheck: "error",
+    tests: "skipped",
+  });
+  expect(verdictCalls[0]?.summary).toContain("verification-error");
+  expect(verdictCalls[0]?.summary).not.toContain("verification-failed");
+  expect(
+    execHistory.filter((cmd) => cmd === `git diff ${mergeBase}...${branchTip} --shortstat`),
+  ).toHaveLength(2);
+});
+
 test("Typecheck environment failure (empty-output exec error): stamps 'error' not 'fail', logs the break", async () => {
   execFailures.set("git diff --name-only", new ExecCommandError({}));
   execFailures.set(
@@ -768,7 +896,7 @@ test("Empty branch diff returns no_changes and skips PR creation", async () => {
       return Promise.reject(new Error("shortstat should not run for empty branches"));
     }
 
-    return Promise.resolve(nextExecResult);
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_empty");
@@ -776,7 +904,9 @@ test("Empty branch diff returns no_changes and skips PR creation", async () => {
   expect(result.status).toBe("no_changes");
   expect(execHistory.find((cmd) => cmd.startsWith("bun tsc -b"))).toBeUndefined();
   expect(execHistory.find((cmd) => cmd.startsWith("bun test"))).toBeUndefined();
-  expect(execHistory).toContain("git diff --name-only main...agent/h_empty");
+  expect(execHistory).toContain(
+    `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`,
+  );
   expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
     id: "h_empty",
@@ -809,7 +939,11 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_null");
 
-    expect(execHistory).toContain("git diff --name-only main...agent/h_branch_null");
+    expect(execHistory).toContain("git rev-parse main");
+    expect(execHistory).toContain(`git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`);
+    expect(execHistory).toContain(
+      `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`,
+    );
   });
 
   test("uses main when branch_base is main", async () => {
@@ -817,7 +951,11 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_main");
 
-    expect(execHistory).toContain("git diff --name-only main...agent/h_branch_main");
+    expect(execHistory).toContain("git rev-parse main");
+    expect(execHistory).toContain(`git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`);
+    expect(execHistory).toContain(
+      `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`,
+    );
   });
 
   test("uses agent branch_base when present", async () => {
@@ -825,7 +963,11 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_agent");
 
-    expect(execHistory).toContain("git diff --name-only agent/abc-123...agent/h_branch_agent");
+    expect(execHistory).toContain("git rev-parse agent/abc-123");
+    expect(execHistory).toContain(`git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`);
+    expect(execHistory).toContain(
+      `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`,
+    );
   });
 
   test("uses stage branch_base when present", async () => {
@@ -833,7 +975,11 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_stage");
 
-    expect(execHistory).toContain("git diff --name-only stage/plan__1.3...agent/h_branch_stage");
+    expect(execHistory).toContain("git rev-parse stage/plan__1.3");
+    expect(execHistory).toContain(`git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`);
+    expect(execHistory).toContain(
+      `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`,
+    );
   });
 
   test("non-main branch_base threads through no-changes gate, shortstat, and verdict", async () => {
@@ -841,14 +987,15 @@ describe("branch_base diff scoping", () => {
 
     await reconcile("h_branch_full_scope");
 
-    const scopedDiff = "git diff --name-only stage/plan__2.7...agent/h_branch_full_scope";
+    const scopedDiff = `git diff --name-only ${defaultMergeBaseSha}...${defaultBranchHeadSha}`;
     expect(execHistory.filter((c) => c === scopedDiff).length).toBeGreaterThanOrEqual(2);
     expect(execHistory).toContain(
-      "git diff stage/plan__2.7...agent/h_branch_full_scope --shortstat",
+      `git diff ${defaultMergeBaseSha}...${defaultBranchHeadSha} --shortstat`,
     );
     expect(execHistory).toContain("git rev-parse stage/plan__2.7");
+    expect(execHistory).toContain(`git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`);
     expect(execHistory).toContain(
-      "git merge-base --is-ancestor stage/plan__2.7 agent/h_branch_full_scope",
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
     );
     expect(execHistory.some((c) => c === "git rev-parse main")).toBe(false);
     expect(execHistory.some((c) => c.startsWith("git merge-base --is-ancestor main "))).toBe(false);
@@ -973,7 +1120,7 @@ test("Typecheck timeout returns timed_out: true", async () => {
     ) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return { stdout: "", stderr: "" };
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_timeout_1");
@@ -988,13 +1135,14 @@ test("Test timeout returns timed_out: true", async () => {
   };
   execMock.mockImplementation(async (argv: string[]): Promise<ExecResult> => {
     const cmd = argv.join(" ");
+    execHistory.push(cmd);
     if (cmd.startsWith("git diff --name-only")) {
       return defaultDiffResult;
     }
     if (cmd.includes("bun test")) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return { stdout: "", stderr: "" };
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_timeout_2");
@@ -1012,7 +1160,7 @@ test("merge-base probe exit 128 is treated as error, not 'rebase needed'", async
     if (cmd.startsWith("git merge-base --is-ancestor")) {
       return Promise.reject(new ExecCommandError({ stderr: "fatal: bad revision", code: 128 }));
     }
-    return Promise.resolve(nextExecResult);
+    return defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_probe_err");
@@ -1089,6 +1237,17 @@ describe("resolveAffectedPackages", () => {
 function makeScopedReconciler(
   exec: (argv: string[], opts: { cwd: string }) => Promise<ExecResult>,
 ): ReturnType<typeof createMergeReconciler> {
+  const execWithSnapshotDefaults = (argv: string[], opts: { cwd: string }): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    if (
+      cmd === "git rev-parse HEAD" ||
+      cmd.startsWith("git rev-parse ") ||
+      (cmd.startsWith("git merge-base ") && !cmd.startsWith("git merge-base --is-ancestor"))
+    ) {
+      return defaultExecForCommand(cmd);
+    }
+    return exec(argv, opts);
+  };
   return createMergeReconciler({
     worktreeManager: new WorktreeManager(),
     postProgress: mock(() => Promise.resolve()),
@@ -1101,7 +1260,7 @@ function makeScopedReconciler(
         number: 999,
       }),
     ),
-    exec,
+    exec: execWithSnapshotDefaults,
   });
 }
 

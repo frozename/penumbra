@@ -460,12 +460,20 @@ interface ReconcileState {
   testCommandUsed: string;
 }
 
+interface ReconcileSnapshot {
+  baseTipSha: string;
+  branchHeadSha: string;
+  mergeBaseSha: string;
+  diffSpec: string;
+}
+
 interface ReconcileCtx {
   deps: ReconcilerDeps;
   handoffId: string;
   handoff: HandoffRow | null;
   wt: WorktreeHandle;
   baseRef: string;
+  snapshot: ReconcileSnapshot | null;
   startedAtMs: number;
   packageJsonCache: Map<string, WorkspacePackageJson | null>;
   state: ReconcileState;
@@ -524,6 +532,59 @@ async function execGitProbe(
   } catch (err: unknown) {
     return commandErrorInfo(err);
   }
+}
+
+function requireSnapshot(ctx: ReconcileCtx): ReconcileSnapshot {
+  if (!ctx.snapshot) {
+    throw new Error("reconcile snapshot has not been resolved");
+  }
+  return ctx.snapshot;
+}
+
+async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<void> {
+  const { deps, baseRef, wt } = ctx;
+  const branchHeadRes = await execGit(ctx, ["rev-parse", "HEAD"], wt.path);
+  const branchHeadSha = branchHeadRes.stdout.trim();
+  const baseTipRes = await execGit(ctx, ["rev-parse", baseRef], deps.mainRepoDir);
+  const baseTipSha = baseTipRes.stdout.trim();
+  const mergeBaseRes = await execGit(
+    ctx,
+    ["merge-base", baseTipSha, branchHeadSha],
+    deps.mainRepoDir,
+  );
+  const mergeBaseSha = mergeBaseRes.stdout.trim();
+
+  if (!branchHeadSha || !baseTipSha || !mergeBaseSha) {
+    throw new Error(`unable to resolve reconcile snapshot for ${wt.branchName} against ${baseRef}`);
+  }
+
+  ctx.snapshot = {
+    baseTipSha,
+    branchHeadSha,
+    mergeBaseSha,
+    diffSpec: `${mergeBaseSha}...${branchHeadSha}`,
+  };
+}
+
+async function refreshSnapshotFromDurableBranch(ctx: ReconcileCtx): Promise<void> {
+  const { deps, baseRef, wt } = ctx;
+  const current = requireSnapshot(ctx);
+  const branchHeadRes = await execGitSafe(ctx, ["rev-parse", wt.branchName], deps.mainRepoDir);
+  const branchHeadSha = branchHeadRes?.stdout.trim();
+  if (!branchHeadSha) return;
+  const mergeBaseRes = await execGitSafe(
+    ctx,
+    ["merge-base", current.baseTipSha, branchHeadSha],
+    deps.mainRepoDir,
+  );
+  const mergeBaseSha = mergeBaseRes?.stdout.trim();
+  if (!mergeBaseSha) return;
+  ctx.snapshot = {
+    ...current,
+    branchHeadSha,
+    mergeBaseSha,
+    diffSpec: `${mergeBaseSha}...${branchHeadSha}`,
+  };
 }
 
 async function readWorkspacePackageJson(
@@ -742,10 +803,15 @@ async function computeAffectedPackageClosure(ctx: ReconcileCtx): Promise<Affecte
 
 async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<RebaseOutcome> {
   const { wt, baseRef, handoffId, deps } = ctx;
-  await execGit(ctx, ["worktree", "add", "--detach", scratchPath, baseRef], deps.mainRepoDir);
+  const snapshot = requireSnapshot(ctx);
+  await execGit(
+    ctx,
+    ["worktree", "add", "--detach", scratchPath, snapshot.baseTipSha],
+    deps.mainRepoDir,
+  );
   await execGit(ctx, ["checkout", wt.branchName], scratchPath);
   try {
-    await execGit(ctx, ["rebase", baseRef], scratchPath);
+    await execGit(ctx, ["rebase", snapshot.baseTipSha], scratchPath);
   } catch {
     const conflictRes = await execGitSafe(
       ctx,
@@ -762,7 +828,7 @@ async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<
   }
 
   const rebasedTip = (await execGit(ctx, ["rev-parse", wt.branchName], scratchPath)).stdout.trim();
-  await execGit(ctx, ["merge-base", "--is-ancestor", baseRef, rebasedTip], scratchPath);
+  await execGit(ctx, ["merge-base", "--is-ancestor", snapshot.baseTipSha, rebasedTip], scratchPath);
   if (baseRef !== "main") {
     // Guard: only force-push when baseRef is the canonical main branch.
     // Pushing a rebase against a non-main base could silently rewrite a
@@ -793,13 +859,14 @@ async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<
 
 async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
   const { deps, wt, handoffId, baseRef, state } = ctx;
+  const snapshot = requireSnapshot(ctx);
   if (deps.reconcilerAutoRebase === false) {
     state.rebaseOutcome = { attempted: false, result: "skipped" };
     return;
   }
   const ffProbe = await execGitProbe(
     ctx,
-    ["merge-base", "--is-ancestor", baseRef, wt.branchName],
+    ["merge-base", "--is-ancestor", snapshot.baseTipSha, snapshot.branchHeadSha],
     deps.mainRepoDir,
   );
   if (ffProbe.exitCode === 0) {
@@ -812,6 +879,8 @@ async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
         handoffId,
         baseRef,
         branch: wt.branchName,
+        baseTipSha: snapshot.baseTipSha,
+        branchHeadSha: snapshot.branchHeadSha,
         exitCode: ffProbe.exitCode,
         stderr: ffProbe.stderr.slice(0, 200),
       },
@@ -861,24 +930,75 @@ function buildVerdictSummary(
   return summaryParts.join(" | ").slice(0, 220);
 }
 
-async function buildVerdict(ctx: ReconcileCtx, result: MergeResult): Promise<ReconcilerVerdict> {
-  const { deps, wt, baseRef, handoffId, handoff, state, startedAtMs } = ctx;
-  const [headShaRes, baseShaRes, ffProbe] = await Promise.all([
-    execGitSafe(ctx, ["rev-parse", wt.branchName], deps.mainRepoDir),
-    execGitSafe(ctx, ["rev-parse", baseRef], deps.mainRepoDir),
-    execGitProbe(ctx, ["merge-base", "--is-ancestor", baseRef, wt.branchName], deps.mainRepoDir),
-  ]);
+function hasHardFailingCheck(state: ReconcileState): boolean {
+  return state.typecheckStatus === "fail" || state.testStatus === "fail";
+}
 
-  const head_sha = headShaRes?.stdout.trim() ?? "";
-  const base_sha = baseShaRes?.stdout.trim() ?? "";
+function downgradeHardFailingChecksToError(state: ReconcileState): void {
+  if (state.typecheckStatus === "fail") state.typecheckStatus = "error";
+  if (state.testStatus === "fail") state.testStatus = "error";
+}
+
+async function recomputeVerdictDiffStats(ctx: ReconcileCtx): Promise<void> {
+  const snapshot = requireSnapshot(ctx);
+  const diffStatsRes = await execGitSafe(
+    ctx,
+    ["diff", snapshot.diffSpec, "--shortstat"],
+    ctx.deps.mainRepoDir,
+  );
+  if (!diffStatsRes) return;
+  ctx.state.diffStats = parseShortStat(diffStatsRes.stdout);
+}
+
+async function ensureVerdictDiffConsistency(ctx: ReconcileCtx): Promise<void> {
+  const { deps, handoffId, wt, state } = ctx;
+  if (!hasHardFailingCheck(state)) return;
+
+  for (let attempt = 0; attempt < 2 && state.diffStats.filesChanged === 0; attempt += 1) {
+    if (attempt > 0) {
+      await refreshSnapshotFromDurableBranch(ctx);
+    }
+    await recomputeVerdictDiffStats(ctx);
+  }
+
+  const snapshot = requireSnapshot(ctx);
+  if (snapshot.branchHeadSha === snapshot.baseTipSha || state.diffStats.filesChanged > 0) return;
+
+  deps.log.warn(
+    {
+      handoffId,
+      branch: wt.branchName,
+      baseRef: ctx.baseRef,
+      baseTipSha: snapshot.baseTipSha,
+      branchHeadSha: snapshot.branchHeadSha,
+    },
+    "reconciler verdict diff is self-inconsistent; marking verification as unverified",
+  );
+  downgradeHardFailingChecksToError(state);
+}
+
+async function buildVerdict(ctx: ReconcileCtx, result: MergeResult): Promise<ReconcilerVerdict> {
+  const { deps, wt, handoffId, handoff, state, startedAtMs } = ctx;
+  await ensureVerdictDiffConsistency(ctx);
+  const snapshot = requireSnapshot(ctx);
+  const ffProbe = await execGitProbe(
+    ctx,
+    ["merge-base", "--is-ancestor", snapshot.baseTipSha, snapshot.branchHeadSha],
+    deps.mainRepoDir,
+  );
+
+  const head_sha = snapshot.branchHeadSha;
+  const base_sha = snapshot.baseTipSha;
   const ff_mergeable = ffProbe.exitCode === 0;
   const rebase_required = ffProbe.exitCode === 1;
   if (ffProbe.exitCode !== 0 && ffProbe.exitCode !== 1) {
     deps.log.warn(
       {
         handoffId,
-        baseRef,
+        baseRef: ctx.baseRef,
         branch: wt.branchName,
+        baseTipSha: snapshot.baseTipSha,
+        branchHeadSha: snapshot.branchHeadSha,
         exitCode: ffProbe.exitCode,
         stderr: ffProbe.stderr.slice(0, 200),
       },
@@ -1014,7 +1134,8 @@ async function emitInvalidInputResult(
 }
 
 async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
-  const { deps, wt, baseRef, state, handoffId } = ctx;
+  const { deps, wt, state, handoffId } = ctx;
+  const snapshot = requireSnapshot(ctx);
   const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   try {
     // Use the symmetric-difference operator (`A...B`) consistently with the
@@ -1023,7 +1144,7 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
     // file set: changes B introduced since branching from A.
     const diffRes = await execGit(
       ctx,
-      ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
+      ["diff", "--name-only", snapshot.diffSpec],
       deps.mainRepoDir,
       timeout,
     );
@@ -1035,7 +1156,7 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
     state.affectedPackages = resolveAffectedPackages(diffFiles);
   } catch (err) {
     deps.log.warn(
-      { handoffId, baseRef, branch: wt.branchName, err: String(err) },
+      { handoffId, baseRef: ctx.baseRef, branch: wt.branchName, err: String(err) },
       "gatherChangedFiles diff failed; falling back to unscoped full-repo verification",
     );
     state.affectedPackages = null;
@@ -1302,6 +1423,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
 
 async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
   const { deps, wt, baseRef, handoffId, handoff, state } = ctx;
+  const snapshot = requireSnapshot(ctx);
   deps.log.debug({ handoffId }, "acquired global merge lock");
   try {
     const dispatchPrompt = handoff?.message ?? "<unknown>";
@@ -1309,7 +1431,7 @@ async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
     const conversationId = handoff?.conversation_id ?? null;
     const diffNames = await execGit(
       ctx,
-      ["diff", "--name-only", `${baseRef}...${wt.branchName}`],
+      ["diff", "--name-only", snapshot.diffSpec],
       deps.mainRepoDir,
     );
     if (!diffNames.stdout.trim()) {
@@ -1321,11 +1443,7 @@ async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
       await emitResult(ctx, result);
       return result;
     }
-    const diffStatsRes = await execGit(
-      ctx,
-      ["diff", `${baseRef}...${wt.branchName}`, "--shortstat"],
-      wt.path,
-    );
+    const diffStatsRes = await execGit(ctx, ["diff", snapshot.diffSpec, "--shortstat"], wt.path);
     state.diffStats = parseShortStat(diffStatsRes.stdout);
     await attemptAutoRebase(ctx);
     const shouldOpenPr = handoff?.open_pr_on_review === true;
@@ -1408,6 +1526,7 @@ export function createMergeReconciler(
       wt,
       baseRef,
       startedAtMs,
+      snapshot: null,
       packageJsonCache: new Map<string, WorkspacePackageJson | null>(),
       state: {
         typecheckStatus: "skipped",
@@ -1434,6 +1553,7 @@ export function createMergeReconciler(
       });
     }
 
+    await resolveReconcileSnapshot(ctx);
     await gatherChangedFiles(ctx);
 
     const typecheckResult = await runTypecheckStage(ctx);
