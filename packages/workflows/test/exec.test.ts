@@ -1,4 +1,4 @@
-import { loadSqliteVec, migrate } from "@penumbra/core";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -8,7 +8,20 @@ import { join } from "node:path";
 import type { WorkflowCtx } from "../src/ctx.js";
 import type { WorkflowSpec } from "../src/schema.js";
 
+import { buildWorkflowCtx } from "../src/ctx.js";
 import { executeWorkflow } from "../src/exec.js";
+
+function fakeServices(): Services {
+  return {
+    handoffReader: {
+      getRootForConversation: () => null,
+      getLatestForConversation: () => null,
+    },
+    chainReader: {
+      getResponses: () => [],
+    },
+  } as unknown as Services;
+}
 
 test("markdown spec renders body with bundle and writes to file", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "exec-"));
@@ -52,6 +65,55 @@ test("ts spec runs fn and surfaces result", async () => {
   });
   expect(result.outcome).toBe("success");
   expect(result.runResult).toEqual({ note: "ran" });
+});
+
+test("ts spec closes ctx.db handle after run", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  let capturedDb: Database | null = null;
+  try {
+    const initialDb = new Database(join(tmp, "db.sqlite"));
+    initialDb.close();
+    const spec: WorkflowSpec = {
+      name: "ts-db-close",
+      description: "ts-db-close",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [],
+      run: { kind: "ts-function" },
+    };
+    const ctx = buildWorkflowCtx({
+      services: fakeServices(),
+      cwd: tmp,
+      storageRoot: tmp,
+      project: "proj",
+      agentchatConfig: {},
+      chainStart: () =>
+        new Response(JSON.stringify({ conversation_id: "conv", handoff_id: "hid" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    const fn = async (workflowCtx: WorkflowCtx): Promise<{ ok: boolean }> => {
+      const db = workflowCtx.db?.();
+      expect(db?.query("SELECT 1 AS ok").get()).toEqual({ ok: 1 });
+      capturedDb = db ?? null;
+      return { ok: true };
+    };
+
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      fn,
+      ctx,
+      storageRoot: tmp,
+    });
+
+    expect(result.outcome).toBe("success");
+    expect(capturedDb).not.toBeNull();
+    expect(() => capturedDb?.query("SELECT 1").get()).toThrow();
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("ts fn throw → outcome=run_error", async () => {

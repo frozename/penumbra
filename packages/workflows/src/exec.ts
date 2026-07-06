@@ -56,6 +56,15 @@ export type WorkflowFn<TArgs = Record<string, unknown>> = (
   recall: RecallBundle,
 ) => Promise<unknown>;
 
+type DisposableWorkflowCtx = WorkflowCtx & {
+  dispose?: () => void;
+};
+
+function disposeWorkflowCtx(ctx: WorkflowCtx): void {
+  const dispose = (ctx as DisposableWorkflowCtx).dispose;
+  if (typeof dispose === "function") dispose.call(ctx);
+}
+
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(flat)) {
@@ -358,9 +367,13 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
 
   try {
     const baseCtx = opts.ctx ?? ({} as WorkflowCtx);
-    const ran = await composePromptOrRun(spec, bundle, fn, baseCtx, artifacts, warnings, tplCtx);
-    composedPrompt = ran.composedPrompt;
-    runResult = ran.runResult;
+    try {
+      const ran = await composePromptOrRun(spec, bundle, fn, baseCtx, artifacts, warnings, tplCtx);
+      composedPrompt = ran.composedPrompt;
+      runResult = ran.runResult;
+    } finally {
+      disposeWorkflowCtx(baseCtx);
+    }
   } catch (err: unknown) {
     const result: ExecuteResult = {
       outcome: spec.run.kind === "markdown-template" ? "render_error" : "run_error",

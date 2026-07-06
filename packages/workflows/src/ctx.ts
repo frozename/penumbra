@@ -42,6 +42,10 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   args: TArgs;
 };
 
+type DisposableWorkflowCtx<TArgs = Record<string, unknown>> = WorkflowCtx<TArgs> & {
+  dispose: () => void;
+};
+
 type ChainTerminalSnapshot = {
   terminal: boolean;
   status: "completed" | "failed";
@@ -334,7 +338,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
   let workflowDb: Database | null = null;
   const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs };
 
-  return {
+  const ctx: DisposableWorkflowCtx<TArgs> = {
     dispatch: (input): Promise<DispatchResult> => dispatchImpl(input, deps),
     awaitChain: (conversationId, opts): Promise<AwaitChainResult> =>
       awaitChainImpl(conversationId, opts, ac),
@@ -349,5 +353,10 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     storageRoot: deps.storageRoot,
     project: deps.project,
     args: deps.args ?? ({} as TArgs),
+    dispose: (): void => {
+      workflowDb?.close();
+      workflowDb = null;
+    },
   };
+  return ctx;
 }
