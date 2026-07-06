@@ -83,7 +83,7 @@ export async function taskOutput(
     requires_review: config.requires_review,
     created_by_kind: "workflow",
     created_by_id: ctx.workflow.name,
-    origin: ctx.workflow.origin ?? null,
+    origin: ctx.workflow.origin ?? undefined,
   } as FileTaskInput;
 
   try {

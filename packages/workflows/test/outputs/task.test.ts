@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { FileTaskInputSchema } from "@penumbra/core";
+
 import { taskOutput, type TaskOutputCtx } from "../../src/outputs/task.js";
 import { WorkflowSpecSchema } from "../../src/schema.js";
 
@@ -107,7 +109,7 @@ test("taskOutput resolves templates and posts the workflow task payload", async 
     expect(body.priority).toBe("high");
     expect(body.created_by_kind).toBe("workflow");
     expect(body.created_by_id).toBe("task-wf");
-    expect(body.origin).toBeNull();
+    expect("origin" in body).toBe(false);
     expect(body.eligibility?.required_tags).toEqual(["penumbra"]);
     expect(body.review_eligibility?.min_tier).toBe("penumbra");
   } finally {
@@ -193,6 +195,40 @@ test("taskOutput omits kind/bounds when not specified", async () => {
     const body = capturedBody as TaskBody | null;
     expect(body?.kind).toBeUndefined();
     expect(body?.bounds).toBeUndefined();
+  } finally {
+    globalThis.fetch = realFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("taskOutput wire body satisfies FileTaskInputSchema when origin is unset", async () => {
+  const realFetch = globalThis.fetch;
+  const root = mkdtempSync(join(tmpdir(), "task-out-"));
+  writeFileSync(join(root, "port"), "54321");
+  writeFileSync(join(root, "token"), "test-token");
+  try {
+    let capturedBody: unknown = null;
+    globalThis.fetch = ((_input: FetchInput, init?: FetchInit) => {
+      capturedBody = JSON.parse(bodyString(init));
+      return Promise.resolve(
+        new Response(JSON.stringify({ task_id: "task-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    await taskOutput({ kind: "task", prompt: "do the thing" }, {
+      workflow: { name: "task-wf", origin: undefined },
+      now: (): Date => new Date("2026-05-05T08:00:00Z"),
+      project: "penumbra",
+      sessionStart: "2026-05-05T07:00:00Z",
+      tz: "UTC",
+      storageRoot: root,
+    } as TaskOutputCtx);
+
+    const parsed = FileTaskInputSchema.safeParse(capturedBody);
+    expect(parsed.success).toBe(true);
   } finally {
     globalThis.fetch = realFetch;
     rmSync(root, { recursive: true, force: true });
