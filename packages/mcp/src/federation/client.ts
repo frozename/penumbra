@@ -21,6 +21,14 @@ interface SkippedTool {
 export interface RegisterFederatedToolsResult {
   registered: VirtualToolDef[];
   skipped: SkippedTool[];
+  /**
+   * Set when the daemon federation-tools fetch failed (network error, non-2xx,
+   * daemon mid-restart). Distinguishes a total-fetch failure — which the caller
+   * should surface loudly — from a legitimately-empty federation set. Absent on
+   * success so existing equality checks against `{ registered: [], skipped: [] }`
+   * still match a genuinely-empty response.
+   */
+  fetch_failed?: true;
 }
 
 interface RegisterFederatedToolsOpts {
@@ -97,7 +105,9 @@ export async function registerFederatedTools(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn("[federation] failed to fetch federation tools:", message);
-    return { registered: [], skipped: [] };
+    // fetch_failed: distinguishes a total-fetch failure from a legitimately-empty
+    // federation set — must NOT rethrow (would abort MCP boot including core tools).
+    return { registered: [], skipped: [], fetch_failed: true };
   }
 
   const allow = opts.envAllowlist;

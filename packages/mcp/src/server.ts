@@ -187,12 +187,24 @@ async function assembleServer(opts: AssembleOptions): Promise<McpServer> {
     responseBudgetTokens,
     handleStore,
   });
+  if (result.fetch_failed) {
+    // Distinct event so a total-fetch failure is greppable separately from a
+    // legitimately-empty federation set (which also has registered_count=0).
+    console.error(
+      JSON.stringify({
+        event: "federation.fetch_failed",
+        registered_count: result.registered.length,
+        skipped_count: result.skipped.length,
+      }),
+    );
+  }
   console.error(
     JSON.stringify({
       event: "federation.registered",
       registered_count: result.registered.length,
       skipped_count: result.skipped.length,
       skipped: result.skipped,
+      ...(result.fetch_failed ? { fetch_failed: true } : {}),
     }),
   );
   return server;

@@ -496,18 +496,39 @@ test("skips a federated tool whose registration throws without killing the rest"
   expect(result.skipped).toEqual([{ name: "ha.bad", reason: "boom" }]);
 });
 
-test("bootstrap failure returns no federated tools", async () => {
+test("bootstrap failure returns no federated tools and flags fetch_failed", async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
   setLongLivedRuntimeContextFromEnv(process.env);
   const server = makeMcpServer();
   const registerSpy = spyOn(server, "registerTool");
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   const daemon = makeDaemon({
     getFederationTools: () => Promise.reject(new Error("boom")),
   });
   const result = await registerFederatedTools({ server, daemon });
-  expect(result).toEqual({ registered: [], skipped: [] });
+  // fetch_failed must be truthy so assembleServer can log a distinct event.
+  // A byte-identical `{ registered:[], skipped:[] }` collides with a genuinely
+  // empty federation set and silently masks daemon-unreachable at MCP boot.
+  expect(result.registered).toEqual([]);
+  expect(result.skipped).toEqual([]);
+  expect(result.fetch_failed).toBe(true);
   expect(registerSpy).not.toHaveBeenCalled();
+  expect(warnSpy).toHaveBeenCalled();
+});
+
+test("legitimately-empty federation set does NOT flag fetch_failed", async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = makeMcpServer();
+  const daemon = makeDaemon({
+    getFederationTools: () => Promise.resolve({ tools: [] }),
+  });
+  const result = await registerFederatedTools({ server, daemon });
+  expect(result.registered).toEqual([]);
+  expect(result.skipped).toEqual([]);
+  expect(result.fetch_failed).toBeUndefined();
 });
 
 test("federated tool invocation writes exactly one log row (single wrap)", async () => {

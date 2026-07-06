@@ -425,6 +425,44 @@ describe("buildServer tool registration", () => {
     }
   });
 
+  it("emits a distinct fetch_failed event when the daemon federation fetch throws", async () => {
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = ((...args: unknown[]) => {
+      if (typeof args[0] === "string") lines.push(args[0]);
+    }) as typeof console.error;
+    const warnOriginal = console.warn;
+    console.warn = ((): void => undefined) as typeof console.warn;
+    try {
+      process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+      process.env.PENUMBRA_LONG_LIVED_TICK_ID = "tick-1";
+      delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
+      const daemon = fakeDaemon({
+        getFederationTools: () => Promise.reject(new Error("boom")),
+      });
+      await buildServer({ daemon });
+      const events = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        })
+        .filter((row): row is Record<string, unknown> => row !== null);
+      const fetchFailed = events.find((row) => row.event === "federation.fetch_failed");
+      const registered = events.find((row) => row.event === "federation.registered");
+      expect(fetchFailed).toBeDefined();
+      expect(registered).toBeDefined();
+      // The registered event must also carry fetch_failed so a single-line grep
+      // catches both a total failure AND a legitimately-empty registration.
+      expect(registered?.fetch_failed).toBe(true);
+    } finally {
+      console.error = original;
+      console.warn = warnOriginal;
+    }
+  });
+
   it("long_lived_self_state_get resolves running agent from env context when called without args", async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), "penumbra-mcp-server-test-"));
     try {
