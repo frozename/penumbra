@@ -73,7 +73,6 @@ interface SessionState {
   agentName?: string;
   runQueue: Promise<unknown>;
   dead: boolean;
-  replacing: boolean;
   stdoutBuffer: string;
   stderrBuffer: string;
   stdoutTruncated: boolean;
@@ -201,6 +200,7 @@ type BunSpawnWithPty = (
 
 export class ShellSessionPool {
   private readonly handoffs = new Map<string, Map<string, SessionState>>();
+  private readonly intentionallyKilled = new WeakSet<Subprocess<"pipe", "pipe", "pipe">>();
 
   constructor(private readonly deps: ShellSessionPoolDeps) {}
 
@@ -243,7 +243,6 @@ export class ShellSessionPool {
       agentName: input.agentName,
       runQueue: Promise.resolve(),
       dead: false,
-      replacing: false,
       stdoutBuffer: "",
       stderrBuffer: "",
       stdoutTruncated: false,
@@ -610,7 +609,7 @@ export class ShellSessionPool {
     void this.pumpStream(state, proc, proc.stdout, "stdout");
     void this.pumpStream(state, proc, proc.stderr, "stderr");
     void proc.exited.finally(() => {
-      if (state.replacing && state.proc === proc) return;
+      if (this.intentionallyKilled.has(proc)) return;
       if (state.proc !== proc) return;
       state.dead = true;
       this.notifyWaiters(state);
@@ -625,8 +624,12 @@ export class ShellSessionPool {
   }
 
   private async replaceTimedOutProcess(state: SessionState): Promise<void> {
+    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+      return;
+    }
+
     const oldProc = state.proc;
-    state.replacing = true;
+    this.intentionallyKilled.add(oldProc);
     try {
       oldProc.kill("SIGTERM");
     } catch {
@@ -642,12 +645,24 @@ export class ShellSessionPool {
       await Promise.race([oldProc.exited, this.sleep(100)]);
     }
 
+    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+      return;
+    }
+
     const proc = this.spawnShell(state.cwd, state.launchEnv, state.pty);
     state.proc = proc;
-    state.dead = false;
     this.attachProcess(state, proc);
     await this.bootstrapSession(state);
-    state.replacing = false;
+
+    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+      this.intentionallyKilled.add(proc);
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // process may already be dead
+      }
+      return;
+    }
   }
 
   private deleteSession(handoffId: string, sessionId: string): void {

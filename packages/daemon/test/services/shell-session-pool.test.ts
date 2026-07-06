@@ -308,6 +308,58 @@ describe("ShellSessionPool", () => {
     await localPool.shutdown();
   });
 
+  it("concurrent close during replaceTimedOutProcess does not resurrect the session", async () => {
+    const cfg = makeConfig({ maxCommandDurationMs: 5000 });
+    const localPool = new ShellSessionPool({ config: cfg, uuid: (): string => "sess-race" });
+    const { sessionId } = await localPool.createSession({
+      handoffId: "h-race",
+      cwd: "/tmp",
+      env: {},
+      pty: false,
+    });
+
+    interface InternalState {
+      dead: boolean;
+      proc: { exitCode: number | null; exited: Promise<number>; kill: (sig?: string) => void };
+      handoffId: string;
+      sessionId: string;
+      launchEnv: Record<string, string>;
+      cwd: string;
+      pty: boolean;
+    }
+    const internal = localPool as unknown as {
+      handoffs: Map<string, Map<string, InternalState>>;
+      replaceTimedOutProcess(state: InternalState): Promise<void>;
+    };
+
+    const state = internal.handoffs.get("h-race")!.get(sessionId)!;
+    expect(state.dead).toBe(false);
+
+    // Kick off replaceTimedOutProcess concurrently with closeSession. closeSession
+    // synchronously sets state.dead=true and deletes the map entry before its first
+    // await, so when replaceTimedOutProcess resumes it should observe the deletion
+    // and NOT resurrect state.dead to false or leave an orphan replacement process.
+    const replacePromise = internal.replaceTimedOutProcess(state);
+    const closePromise = localPool.closeSession({ handoffId: "h-race", sessionId });
+    await Promise.all([replacePromise, closePromise]);
+
+    expect(state.dead).toBe(true);
+    expect(internal.handoffs.get("h-race")).toBeUndefined();
+    expect(localPool.listSessions("h-race")).toHaveLength(0);
+
+    // The now-current state.proc must be terminated (either the original oldProc
+    // that closeSession killed, or a replacement that replaceTimedOutProcess
+    // SIGKILLed after observing the concurrent close). Await its exit with a
+    // bounded timeout so an orphaned live shell would be detected reliably.
+    const exitedWithin = await Promise.race([
+      state.proc.exited.then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
+    ]);
+    expect(exitedWithin).toBe(true);
+
+    await localPool.shutdown();
+  });
+
   it("reapHandoff kills all sessions for a handoff", async () => {
     await pool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
     await pool.createSession({ handoffId: "h-1", cwd: "/tmp", env: {}, pty: false });
