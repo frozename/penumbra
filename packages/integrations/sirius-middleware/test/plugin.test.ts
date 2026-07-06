@@ -448,6 +448,44 @@ describe("penumbraObservePlugin execution", () => {
     expect(responseBody.model).toBe("gpt-3.5-turbo");
   });
 
+  test("raw-socket tap path buffers SSE lines split across chunks", async () => {
+    const fastify = Fastify();
+    const mockFetch = okFetch();
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: "http://mock-daemon",
+      token: "fake-token",
+      logger: noopLogger(),
+    });
+
+    fastify.post("/v1/chat/completions", (_req: FastifyRequest, reply: FastifyReply) => {
+      const tap = reply.penumbraTapChunk?.bind(reply);
+      const end = reply.penumbraTapEnd?.bind(reply);
+      const line = 'data: {"choices":[{"delta":{"content":"Hello world"}}]}\n\n';
+      tap?.(line.slice(0, 30));
+      tap?.(line.slice(30));
+      tap?.("data: [DONE]\n\n");
+      end?.();
+      reply.raw.writeHead(200, { "Content-Type": "text/event-stream" });
+      reply.raw.end();
+    });
+
+    await fastify.inject({
+      headers: {
+        "x-penumbra-project": "test-project",
+        "x-request-id": "req-tap-split",
+      },
+      method: "POST",
+      payload: { messages: [{ role: "user", content: "tap split" }], model: "gpt-4o-mini" },
+      url: "/v1/chat/completions",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const responseBody = parseObservationBody(mockFetch.mock.calls.at(-1)?.[1]?.body);
+    expect(responseBody.event_type).toBe("agent-response");
+    expect(responseBody.payload_summary).toBe("Hello world");
+  });
+
   test("raw-socket tap path dispatches agent-prompt exactly once across chunk+end", async () => {
     const fastify = Fastify();
     const mockFetch = okFetch();

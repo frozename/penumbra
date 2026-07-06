@@ -61,6 +61,7 @@ type StreamUsage = { prompt_tokens?: number; completion_tokens?: number; total_t
 
 interface StreamState {
   accumulated: string;
+  buffered?: string;
   usage?: StreamUsage;
   finished: boolean;
 }
@@ -412,7 +413,10 @@ function registerReplyTaps(
       return;
     }
     dispatchPromptIfNeeded(this, session);
-    consumeSseLines(sseChunk, state);
+    state.buffered = (state.buffered ?? "") + sseChunk;
+    const lines = state.buffered.split("\n");
+    state.buffered = lines.pop() ?? "";
+    consumeSseLines(lines.join("\n"), state);
   });
 
   fastify.decorateReply("penumbraTapEnd", function (this: FastifyReply) {
@@ -428,6 +432,8 @@ function registerReplyTaps(
       return;
     }
     dispatchPromptIfNeeded(this, session);
+    consumeSseLines(state.buffered ?? "", state);
+    state.buffered = "";
     dispatchStreamResponse(
       state,
       session.sessionId,
