@@ -86,6 +86,20 @@ const EXECUTOR_SATISFIABLE_GATES: ReadonlySet<GateName> = new Set<GateName>([
   "verification-before-complete",
 ]);
 
+// Output sink kinds whose emit path is actually implemented by the executor.
+// 'commit' and 'dispatch' are schema-valid but have no runtime implementation
+// (they return {} — see emitOneSink), which would silently succeed with no
+// artifact and no warning. Fail-closed: reject the spec instead of pretending.
+type OutputSinkKind = WorkflowSpec["output"][number]["kind"];
+const EXECUTOR_SATISFIABLE_OUTPUT_KINDS: ReadonlySet<OutputSinkKind> = new Set<OutputSinkKind>([
+  "file",
+  "clipboard",
+  "next-session-prompt",
+  "session-reminder",
+  "observation",
+  "task",
+]);
+
 function bodyFromRunResult(composedPrompt: string | undefined, runResult: unknown): string {
   if (composedPrompt !== undefined) return composedPrompt;
   if (typeof runResult === "string") return runResult;
@@ -309,6 +323,21 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       artifacts,
       warnings,
       errorMessage: `spec lists process_gates the executor cannot satisfy: ${unsatisfiableGates.join(", ")}`,
+      latencyMs: Date.now() - start,
+    };
+    await runCapture(opts, result, recallSourceNames, itemCount);
+    return result;
+  }
+
+  const unsatisfiableOutputs = spec.output
+    .map((o) => o.kind)
+    .filter((k) => !EXECUTOR_SATISFIABLE_OUTPUT_KINDS.has(k));
+  if (unsatisfiableOutputs.length > 0) {
+    const result: ExecuteResult = {
+      outcome: "run_error",
+      artifacts,
+      warnings,
+      errorMessage: `spec lists output kinds the executor cannot satisfy: ${unsatisfiableOutputs.join(", ")}`,
       latencyMs: Date.now() - start,
     };
     await runCapture(opts, result, recallSourceNames, itemCount);

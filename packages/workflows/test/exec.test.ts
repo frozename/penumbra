@@ -156,6 +156,28 @@ test("passing gate keeps success outcome", async () => {
   expect(result.outcome).toBe("success");
 });
 
+test("spec listing unsatisfiable output kind → outcome=run_error (fail-closed)", async () => {
+  for (const output of [{ kind: "commit" as const, message: "x" }, { kind: "dispatch" as const }]) {
+    const spec: WorkflowSpec = {
+      name: `unsat-${output.kind}`,
+      description: "u",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [output],
+      run: { kind: "markdown-template", template: "anything" },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: "/tmp",
+    });
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("output kinds the executor cannot satisfy");
+    expect(result.errorMessage).toContain(output.kind);
+    expect(result.artifacts).toEqual([]);
+  }
+});
+
 test("spec listing unsatisfiable process_gate → outcome=run_error (fail-closed)", async () => {
   for (const gate of ["tdd", "brainstorm-first", "worktree-isolation"] as const) {
     const spec: WorkflowSpec = {
