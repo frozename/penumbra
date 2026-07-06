@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -249,6 +249,29 @@ describe("runDispatchLand", () => {
     expect(printed.join("\n")).toContain("verdict failed");
     expect(printed.join("\n")).toContain("x.ts");
     expect(printed.join("\n")).toContain("rebase and retry");
+  });
+
+  test("editor branch cleans up temp directory on empty-message throw", async () => {
+    const listLandDirs = (): Set<string> =>
+      new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith("penumbra-dispatch-land-")));
+    const before = listLandDirs();
+
+    await expectAsyncThrow(
+      runDispatchLand({
+        handoffId: "h-editor-leak",
+        storageRoot,
+        editor: "true",
+        fetch: () => Promise.resolve(new Response("{}", { status: 200 })),
+        print: () => {
+          /* discard */
+        },
+      }),
+      "commit message is empty",
+    );
+
+    const after = listLandDirs();
+    const leaked = [...after].filter((entry) => !before.has(entry));
+    expect(leaked).toEqual([]);
   });
 
   test("polls async land task until terminal result", async () => {

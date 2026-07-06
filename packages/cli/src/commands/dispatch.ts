@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
@@ -196,23 +196,27 @@ async function openEditorAndReadMessage(opts: {
 
   const editor = opts.editor ?? process.env.EDITOR ?? "vi";
   const dir = mkdtempSync(join(tmpdir(), "penumbra-dispatch-land-"));
-  const filePath = join(dir, "COMMIT_EDITMSG");
-  await Bun.write(filePath, template);
+  try {
+    const filePath = join(dir, "COMMIT_EDITMSG");
+    await Bun.write(filePath, template);
 
-  const proc = Bun.spawn({
-    cmd: [editor, filePath],
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const code = await proc.exited;
-  if (code !== 0) {
-    throw new Error(`penumbra dispatch land: editor exited with code ${String(code)}`);
+    const proc = Bun.spawn({
+      cmd: [editor, filePath],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const code = await proc.exited;
+    if (code !== 0) {
+      throw new Error(`penumbra dispatch land: editor exited with code ${String(code)}`);
+    }
+    const edited = await Bun.file(filePath).text();
+    const cleaned = stripEditorCommentsAndTrim(edited);
+    if (!cleaned) throw new Error("penumbra dispatch land: commit message is empty");
+    return cleaned;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  const edited = await Bun.file(filePath).text();
-  const cleaned = stripEditorCommentsAndTrim(edited);
-  if (!cleaned) throw new Error("penumbra dispatch land: commit message is empty");
-  return cleaned;
 }
 
 async function defaultConfirm(prompt: string): Promise<boolean> {
