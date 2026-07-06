@@ -112,7 +112,7 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
   const maxBytes = input.args.max_bytes ?? DEFAULT_MAX_BYTES;
   let byteSize: number;
   try {
-    const info = await stat(absPath);
+    const info = await stat(realAbsPath ?? absPath);
     if (!info.isFile()) {
       return { result: { path: absPath, body: null, error: "not_found" }, warnings: [] };
     }
@@ -128,7 +128,7 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
       `file.contents: ${absPath} exceeds max_bytes=${String(limit)}; returning first ${String(Math.min(byteSize, limit))} bytes`,
     );
   }
-  const { body, truncated } = await readBoundedBody(absPath, byteSize, limit);
+  const { body, truncated } = await readBoundedBody(realAbsPath ?? absPath, byteSize, limit);
   if (body === "<binary file omitted>") {
     return {
       result: { path: absPath, body, truncated: false, byte_size: byteSize },

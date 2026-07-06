@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -146,6 +146,30 @@ test("file.contents allows explicit allowed roots outside cwd and storageRoot", 
     rmSync(dir, { recursive: true, force: true });
     rmSync(storageRoot, { recursive: true, force: true });
     rmSync(allowedRoot, { recursive: true, force: true });
+  }
+});
+
+test("file.contents does not leak via TOCTOU symlink swap after containment check", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const outsideDir = mkdtempSync(join(tmpdir(), "file-contents-outside-"));
+  const inside = join(dir, "inside.txt");
+  const secret = join(outsideDir, "secret.txt");
+  const safeBody = "SAFE_INSIDE_CONTENT_XXXXXXXXXXXX";
+  const secretBody = "SECRET_LEAKED_CONTENT_XXXXXXXXXX";
+  writeFileSync(inside, safeBody);
+  writeFileSync(secret, secretBody);
+  const link = join(dir, "link.txt");
+  symlinkSync(inside, link);
+  try {
+    const promise = runFileContents({ cwd: dir, args: { path: "link.txt" } });
+    // Race the swap between the sync containment check and the awaited stat/open.
+    unlinkSync(link);
+    symlinkSync(secret, link);
+    const out = await promise;
+    expect(out.result.body).toBe(safeBody);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
   }
 });
 
