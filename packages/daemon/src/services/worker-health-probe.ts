@@ -130,16 +130,11 @@ export class WorkerHealthProbe {
           misses,
           probe_interval_ms: this.intervalMs,
         };
-        Promise.resolve(this.controller.onSignal(signal))
-          .then(() => {
-            this.recoveredThisStreak.add(worker_id);
-          })
-          .catch((err: unknown) => {
-            this.log.error(
-              { err, worker_id, probe_id: probeId },
-              "worker health onSignal rejected",
-            );
-          });
+        this.recoveredThisStreak.add(worker_id);
+        Promise.resolve(this.controller.onSignal(signal)).catch((err: unknown) => {
+          this.recoveredThisStreak.delete(worker_id);
+          this.log.error({ err, worker_id, probe_id: probeId }, "worker health onSignal rejected");
+        });
       }
     }
 

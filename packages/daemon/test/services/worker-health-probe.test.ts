@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "bun:test";
 
 import {
   createWorkerHealthController,
+  type WorkerHealthController,
   type WorkerHealthControllerDeps,
   WorkerHealthProbe,
   type WorkerHealthSignal,
@@ -492,4 +493,37 @@ test("async onSignal rejection is logged and allows re-signal on next tick", asy
   advance(500);
   await flushPending();
   expect(signalCount).toBe(2);
+});
+
+test("in-flight onSignal is not re-dispatched on subsequent ticks for same streak", async () => {
+  vi.useFakeTimers();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+
+  let signalCount = 0;
+  const controller: WorkerHealthController = {
+    onSignal: (): Promise<void> => {
+      signalCount++;
+      return new Promise<void>(() => {
+        // Never resolves — simulates a slow restart+recover that outlasts the probe interval.
+      });
+    },
+  };
+
+  const { services } = buildServices();
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    controller,
+    log: services.log,
+  });
+
+  probe.start();
+  // Enough ticks to cross the threshold and then keep firing while onSignal is pending.
+  advance(1000);
+  await flushPending();
+
+  expect(signalCount).toBe(1);
 });
