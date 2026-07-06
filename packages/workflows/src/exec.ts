@@ -255,7 +255,11 @@ async function emitOneSink(
       return {};
     }
     case "next-session-prompt": {
-      const r = await emitNextSessionPromptOutput({ body, storageRoot });
+      const r = await emitNextSessionPromptOutput({
+        body,
+        storageRoot,
+        workflowName: octx.spec.name,
+      });
       warnings.push(...r.warnings);
       if (r.path) {
         artifacts.push(r.path);

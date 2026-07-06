@@ -223,15 +223,22 @@ test("emitFileOutput on unwritable parent returns warning", async () => {
   expect(r.warnings.length).toBeGreaterThan(0);
 });
 
-test("emitNextSessionPromptOutput writes to ~/.penumbra/pending-handoff.md", async () => {
+test("emitNextSessionPromptOutput writes body in a keyed section to pending-handoff.md", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penum-"));
   try {
-    const r = await emitNextSessionPromptOutput({ body: "next prompt body", storageRoot: dir });
+    const r = await emitNextSessionPromptOutput({
+      body: "next prompt body",
+      storageRoot: dir,
+      workflowName: "wf-a",
+    });
     const target = join(dir, "pending-handoff.md");
     expect(r.warnings).toEqual([]);
     expect(r.path).toBe(target);
     expect(existsSync(target)).toBe(true);
-    expect(readFileSync(target, "utf8")).toBe("next prompt body");
+    const content = readFileSync(target, "utf8");
+    expect(content).toContain("next prompt body");
+    expect(content).toContain("<!-- penumbra:section wf-a -->");
+    expect(content).toContain("<!-- /penumbra:section wf-a -->");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -243,19 +250,89 @@ test("emitNextSessionPromptOutput skips write and returns warning when body is e
     const target = join(dir, "pending-handoff.md");
     await Bun.write(target, "existing content");
 
-    const r1 = await emitNextSessionPromptOutput({ body: "", storageRoot: dir });
+    const r1 = await emitNextSessionPromptOutput({
+      body: "",
+      storageRoot: dir,
+      workflowName: "wf-a",
+    });
     expect(r1.warnings).toEqual([
       "output next-session-prompt: empty body — skipped write to preserve existing artifact",
     ]);
     expect(r1.path).toBeUndefined();
     expect(readFileSync(target, "utf8")).toBe("existing content");
 
-    const r2 = await emitNextSessionPromptOutput({ body: "   \n  \t ", storageRoot: dir });
+    const r2 = await emitNextSessionPromptOutput({
+      body: "   \n  \t ",
+      storageRoot: dir,
+      workflowName: "wf-a",
+    });
     expect(r2.warnings).toEqual([
       "output next-session-prompt: empty body — skipped write to preserve existing artifact",
     ]);
     expect(r2.path).toBeUndefined();
     expect(readFileSync(target, "utf8")).toBe("existing content");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("emitNextSessionPromptOutput preserves other workflows' sections when a second workflow writes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penum-"));
+  try {
+    const target = join(dir, "pending-handoff.md");
+
+    const r1 = await emitNextSessionPromptOutput({
+      body: "A body",
+      storageRoot: dir,
+      workflowName: "session-handoff-stop",
+    });
+    expect(r1.warnings).toEqual([]);
+
+    const r2 = await emitNextSessionPromptOutput({
+      body: "B body",
+      storageRoot: dir,
+      workflowName: "session-memory-sweep",
+    });
+    expect(r2.warnings).toEqual([]);
+
+    const content = readFileSync(target, "utf8");
+    expect(content).toContain("A body");
+    expect(content).toContain("B body");
+    expect(content.indexOf("A body")).toBeLessThan(content.indexOf("B body"));
+    expect(content).toContain("<!-- penumbra:section session-handoff-stop -->");
+    expect(content).toContain("<!-- /penumbra:section session-handoff-stop -->");
+    expect(content).toContain("<!-- penumbra:section session-memory-sweep -->");
+    expect(content).toContain("<!-- /penumbra:section session-memory-sweep -->");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("emitNextSessionPromptOutput replaces its own section on re-emit without touching other sections", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penum-"));
+  try {
+    const target = join(dir, "pending-handoff.md");
+
+    await emitNextSessionPromptOutput({
+      body: "A v1",
+      storageRoot: dir,
+      workflowName: "wf-a",
+    });
+    await emitNextSessionPromptOutput({
+      body: "B v1",
+      storageRoot: dir,
+      workflowName: "wf-b",
+    });
+    await emitNextSessionPromptOutput({
+      body: "A v2",
+      storageRoot: dir,
+      workflowName: "wf-a",
+    });
+
+    const content = readFileSync(target, "utf8");
+    expect(content).not.toContain("A v1");
+    expect(content).toContain("A v2");
+    expect(content).toContain("B v1");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
