@@ -110,7 +110,12 @@ function countModifiedCandidates(rootDir: string, relativeFiles: string[]): numb
     stderr: "pipe",
     stdout: "pipe",
   });
-  if (proc.exitCode !== 0) return 0;
+  if (proc.exitCode !== 0) {
+    const stderr = new TextDecoder().decode(proc.stderr).trim();
+    throw new Error(
+      `git status failed while checking candidate files (exit ${String(proc.exitCode)}): ${stderr}`,
+    );
+  }
 
   const text = new TextDecoder().decode(proc.stdout);
   return text

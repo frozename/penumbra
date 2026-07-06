@@ -34,6 +34,25 @@ function archivePath(name: string, month = "2026-05"): string {
   return join(rootDir, "docs", "notes", "archive", month, name);
 }
 
+function git(args: string[]): void {
+  const proc = Bun.spawnSync({
+    cmd: ["git", ...args],
+    cwd: rootDir,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if (proc.exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${new TextDecoder().decode(proc.stderr)}`);
+  }
+}
+
 describe("runNotesRotate", () => {
   test("dry-run lists files that would be moved and does not mutate the filesystem", async () => {
     for (let i = 1; i <= 12; i++)
@@ -127,25 +146,6 @@ describe("runNotesRotate", () => {
     for (let i = 1; i <= 12; i++)
       writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, "0")}.md`);
 
-    const git = (args: string[]): void => {
-      const proc = Bun.spawnSync({
-        cmd: ["git", ...args],
-        cwd: rootDir,
-        env: {
-          ...process.env,
-          GIT_AUTHOR_NAME: "test",
-          GIT_AUTHOR_EMAIL: "test@example.com",
-          GIT_COMMITTER_NAME: "test",
-          GIT_COMMITTER_EMAIL: "test@example.com",
-        },
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      if (proc.exitCode !== 0) {
-        throw new Error(`git ${args.join(" ")} failed: ${new TextDecoder().decode(proc.stderr)}`);
-      }
-    };
-
     git(["init", "--quiet", "-b", "main"]);
     git(["add", "."]);
     git(["commit", "--quiet", "-m", "seed notes"]);
@@ -163,6 +163,32 @@ describe("runNotesRotate", () => {
         now: new Date("2026-05-19T12:00:00.000Z"),
       }),
       /refusing.*modified files/,
+    );
+
+    expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(true);
+    expect(existsSync(archivePath("maestro-continuation-2026-05-01.md"))).toBe(false);
+  });
+
+  test("refuses to rotate when git status fails while checking candidates", async () => {
+    for (let i = 1; i <= 12; i++)
+      writeNotes(`maestro-continuation-2026-05-${String(i).padStart(2, "0")}.md`);
+
+    git(["init", "--quiet", "-b", "main"]);
+    git(["add", "."]);
+    git(["commit", "--quiet", "-m", "seed notes"]);
+
+    const candidate = notesPath("maestro-continuation-2026-05-01.md");
+    writeFileSync(candidate, "dirty edit\n");
+    writeFileSync(join(rootDir, ".git", "index"), "not a git index\n");
+
+    await expectAsyncThrow(
+      runNotesRotate({
+        rootDir,
+        apply: true,
+        keepCount: 10,
+        now: new Date("2026-05-19T12:00:00.000Z"),
+      }),
+      /git status failed while checking candidate files/,
     );
 
     expect(existsSync(notesPath("maestro-continuation-2026-05-01.md"))).toBe(true);
