@@ -257,3 +257,76 @@ test("applySchema adds dream_research_cache negative-cache fields and index", ()
     .all();
   expect(indexes).toHaveLength(1);
 });
+
+const DREAM_QR_MARKER = "dream_query_rewrites_model_scoped_keys_v1";
+
+test("applySchema migrates a dream_query_rewrites table with an orphan row without a FK-violation boot crash", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  applySchema(db);
+
+  // Simulate a pre-model-scoped-keys DB: an old-shape dream_query_rewrites (no model-scoped
+  // UNIQUE) holding a row whose t2_memory_id has no matching t2_memories row. This is the
+  // exact state that made applySchema throw FOREIGN KEY constraint failed and crash the
+  // daemon at boot, because the in-transaction PRAGMA foreign_keys=OFF was a no-op.
+  db.run("PRAGMA foreign_keys = OFF");
+  db.run("DROP TABLE dream_query_rewrites");
+  db.run(`
+    CREATE TABLE dream_query_rewrites (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      t2_memory_id          TEXT NOT NULL,
+      memory_updated_at_ms  INTEGER NOT NULL,
+      verdict_kind          TEXT NOT NULL,
+      query                 TEXT,
+      reason                TEXT,
+      model                 TEXT,
+      expires_at            INTEGER NOT NULL,
+      created_at            INTEGER NOT NULL,
+      FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+    )
+  `);
+  db.run(
+    `INSERT INTO dream_query_rewrites(t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at)
+     VALUES('orphan-memory-does-not-exist', 1, 'query', 'q', NULL, 'granite-4.1-3b', 9999, 1)`,
+  );
+  db.run("DELETE FROM db_meta WHERE key = ?", [DREAM_QR_MARKER]);
+  // Boot condition: the connection enforces foreign keys.
+  db.run("PRAGMA foreign_keys = ON");
+
+  expect(() => applySchema(db)).not.toThrow();
+
+  // The rewrite ran: new-shape column present and the orphan row survived the upgrade.
+  const columns = db
+    .query<{ name: string }, []>(`PRAGMA table_info(dream_query_rewrites)`)
+    .all()
+    .map((column) => column.name);
+  expect(columns).toContain("model");
+  const rows = db
+    .query<{ t2_memory_id: string }, []>(`SELECT t2_memory_id FROM dream_query_rewrites`)
+    .all();
+  expect(rows.map((row) => row.t2_memory_id)).toContain("orphan-memory-does-not-exist");
+
+  // Idempotency marker set and FK enforcement restored to ON.
+  const marker = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get(DREAM_QR_MARKER);
+  expect(marker).toBeTruthy();
+  const fk = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
+  expect(fk?.foreign_keys).toBe(1);
+
+  // Second boot is a no-op via the marker (does not throw, rowid stays stable).
+  const rowidBefore = db
+    .query<
+      { rowid: number },
+      []
+    >(`SELECT rowid FROM sqlite_master WHERE type='table' AND name='dream_query_rewrites'`)
+    .get()?.rowid;
+  expect(() => applySchema(db)).not.toThrow();
+  const rowidAfter = db
+    .query<
+      { rowid: number },
+      []
+    >(`SELECT rowid FROM sqlite_master WHERE type='table' AND name='dream_query_rewrites'`)
+    .get()?.rowid;
+  expect(rowidAfter).toBe(rowidBefore);
+});

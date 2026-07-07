@@ -1145,7 +1145,6 @@ function applyRoutingAndNotificationsMigration(db: Database): void {
   addColumnIfMissing(db, "notification_outbox", "attempt_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "notification_outbox", "deliver_after", "INTEGER");
   addColumnIfMissing(db, "dream_research_cache", "is_negative", "INTEGER NOT NULL DEFAULT 0");
-  migrateDreamQueryRewritesToModelScopedKeys(db);
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
   );
@@ -1248,6 +1247,13 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.run("ROLLBACK");
     throw err;
   }
+  // Run OUTSIDE the main transaction: the dream_query_rewrites rebuild copies rows
+  // (including any orphaned t2_memory_id) into a table declaring a FOREIGN KEY to
+  // t2_memories, which is only safe with PRAGMA foreign_keys=OFF — and SQLite silently
+  // ignores foreign_keys changes while a transaction is open. Toggling it here (no
+  // enclosing transaction) keeps the FK-disable effective so an orphaned row upgrades
+  // instead of crashing applySchema on a FOREIGN KEY violation.
+  migrateDreamQueryRewritesToModelScopedKeys(db);
 }
 
 function createT0FtsSrcView(db: Database): void {
@@ -1494,9 +1500,29 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
   }
 }
 
+const DREAM_QR_MODEL_SCOPED_KEYS_META_KEY = "dream_query_rewrites_model_scoped_keys_v1";
+
+function markDreamQueryRewritesMigrated(db: Database): void {
+  db.run("INSERT OR REPLACE INTO db_meta(key, value) VALUES(?, ?)", [
+    DREAM_QR_MODEL_SCOPED_KEYS_META_KEY,
+    "1",
+  ]);
+}
+
 function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
+  // Idempotency: a db_meta marker (not a brittle PRAGMA index_list probe) records that
+  // this rewrite already ran, so a re-boot returns immediately and the table's sqlite_master
+  // rowid stays stable across restarts.
+  const alreadyMigrated = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key = ?")
+    .get(DREAM_QR_MODEL_SCOPED_KEYS_META_KEY);
+  if (alreadyMigrated) return;
+
   const columns = db.query<{ name: string }, []>(`PRAGMA table_info(dream_query_rewrites)`).all();
-  if (columns.length === 0) return;
+  if (columns.length === 0) {
+    markDreamQueryRewritesMigrated(db);
+    return;
+  }
 
   const hasReason = columns.some((column) => column.name === "reason");
   const hasSkipReason = columns.some((column) => column.name === "skip_reason");
@@ -1524,6 +1550,7 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
   });
 
   if (hasReason && hasModel && hasModelScopedUnique) {
+    markDreamQueryRewritesMigrated(db);
     return;
   }
 
@@ -1535,46 +1562,64 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
       ? "skip_reason"
       : "NULL";
 
+  // PRAGMA foreign_keys must be toggled OUTSIDE a transaction to take effect. This
+  // function is invoked after applySchema's COMMIT, so there is no enclosing transaction:
+  // disable FK enforcement, then open our own transaction for the rebuild. Capture the
+  // prior FK state and restore it in finally so we never leave enforcement in the wrong
+  // mode on any error path.
+  const fkState = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
+  const restoreForeignKeys = fkState?.foreign_keys === 0 ? "OFF" : "ON";
   db.run("PRAGMA foreign_keys = OFF");
-  db.run(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
-  db.run(`
-    CREATE TABLE dream_query_rewrites (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      t2_memory_id          TEXT NOT NULL,
-      memory_updated_at_ms  INTEGER NOT NULL,
-      verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN ('query', 'skip')),
-      query                 TEXT,
-      reason                TEXT,
-      model                 TEXT NOT NULL,
-      expires_at            INTEGER NOT NULL,
-      created_at            INTEGER NOT NULL,
-      CHECK (verdict_kind != 'query' OR query IS NOT NULL),
-      CHECK (verdict_kind != 'skip' OR reason IS NOT NULL),
-      UNIQUE (t2_memory_id, memory_updated_at_ms, model),
-      FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
-    )
-  `);
-  db.run(`INSERT INTO dream_query_rewrites(
-    t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
-  )
-  SELECT
-    t2_memory_id,
-    memory_updated_at_ms,
-    verdict_kind,
-    query,
-    ${reasonSource},
-    COALESCE(model, 'granite-4.1-3b'),
-    expires_at,
-    created_at
-  FROM dream_query_rewrites_v27
-  WHERE (verdict_kind != 'query' OR query IS NOT NULL)
-    AND (verdict_kind != 'skip' OR ${reasonSource} IS NOT NULL)
-  `);
-  db.run(`DROP TABLE dream_query_rewrites_v27`);
-  db.run(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
-    ON dream_query_rewrites(t2_memory_id)`);
-  db.run("PRAGMA foreign_keys = ON");
+  try {
+    db.run("BEGIN");
+    try {
+      db.run(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
+      db.run(`
+        CREATE TABLE dream_query_rewrites (
+          id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+          t2_memory_id          TEXT NOT NULL,
+          memory_updated_at_ms  INTEGER NOT NULL,
+          verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN ('query', 'skip')),
+          query                 TEXT,
+          reason                TEXT,
+          model                 TEXT NOT NULL,
+          expires_at            INTEGER NOT NULL,
+          created_at            INTEGER NOT NULL,
+          CHECK (verdict_kind != 'query' OR query IS NOT NULL),
+          CHECK (verdict_kind != 'skip' OR reason IS NOT NULL),
+          UNIQUE (t2_memory_id, memory_updated_at_ms, model),
+          FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+        )
+      `);
+      db.run(`INSERT INTO dream_query_rewrites(
+        t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
+      )
+      SELECT
+        t2_memory_id,
+        memory_updated_at_ms,
+        verdict_kind,
+        query,
+        ${reasonSource},
+        COALESCE(model, 'granite-4.1-3b'),
+        expires_at,
+        created_at
+      FROM dream_query_rewrites_v27
+      WHERE (verdict_kind != 'query' OR query IS NOT NULL)
+        AND (verdict_kind != 'skip' OR ${reasonSource} IS NOT NULL)
+      `);
+      db.run(`DROP TABLE dream_query_rewrites_v27`);
+      db.run(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
+        ON dream_query_rewrites(t2_memory_id)`);
+      markDreamQueryRewritesMigrated(db);
+      db.run("COMMIT");
+    } catch (err) {
+      db.run("ROLLBACK");
+      throw err;
+    }
+  } finally {
+    db.run(`PRAGMA foreign_keys = ${restoreForeignKeys}`);
+  }
 }
 
 export function runStartupZombieSweep(db: Database): void {
