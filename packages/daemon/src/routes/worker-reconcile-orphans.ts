@@ -42,7 +42,7 @@ export async function workerReconcileOrphansRoute(
   if (authErr) return authErr;
 
   try {
-    const result = recovery.runOnce(body.data.worker_id);
+    const result = recovery.runOnce(body.data.worker_id, { workerKnownDead: true });
     return json({
       requeued: result.requeued,
       exhausted: result.exhausted,

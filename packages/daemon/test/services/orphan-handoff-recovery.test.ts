@@ -194,6 +194,45 @@ test("OrphanHandoffRecoveryService ignores old dispatch.start events for a never
   expect(row?.worker_id).toBe(workerId);
 });
 
+test("OrphanHandoffRecoveryService does not recover started dispatches for recently heartbeated workers on periodic sweep", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 1000 });
+
+  const workerId = "recent-heartbeat-worker";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const recent = new Date(Date.now()).toISOString();
+  setLastDispatchStartedAt(services, handoffId, recent);
+  recordDispatchStart(services, handoffId, workerId, recent);
+
+  services.watchdog.recordHeartbeat(workerId);
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 0, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("dispatched");
+  expect(row?.worker_id).toBe(workerId);
+});
+
+test("OrphanHandoffRecoveryService can recover recent started dispatches when worker is known dead", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 1000 });
+
+  const workerId = "known-dead-started-worker";
+  const handoffId = await createDispatchedHandoff(services, workerId);
+  const recent = new Date(Date.now()).toISOString();
+  setLastDispatchStartedAt(services, handoffId, recent);
+  recordDispatchStart(services, handoffId, workerId, recent);
+  services.watchdog.recordHeartbeat(workerId);
+
+  const result = recovery.recoverForWorker(workerId, { workerKnownDead: true });
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  const row = services.handoffReader.get(handoffId);
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
+});
+
 test("OrphanHandoffRecoveryService requeues when attempts < max", async () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 }); // 0 ms means everything is stale

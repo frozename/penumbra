@@ -52,8 +52,11 @@ export class OrphanHandoffRecoveryService {
     this.failFastMode = opts?.failFastMode ?? false;
   }
 
-  recoverForWorker(workerId: string): RecoveryResult {
+  recoverForWorker(workerId: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
     const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
+    if (opts?.workerKnownDead) {
+      deepStale.push(workerId);
+    }
     return this.recoverForWorkerIds([workerId], deepStale);
   }
 
@@ -80,9 +83,9 @@ export class OrphanHandoffRecoveryService {
     }
   }
 
-  runOnce(workerId?: string): RecoveryResult {
+  runOnce(workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
     if (workerId) {
-      return this.recoverForWorker(workerId);
+      return this.recoverForWorker(workerId, opts);
     }
     return this.recoverAllInner();
   }

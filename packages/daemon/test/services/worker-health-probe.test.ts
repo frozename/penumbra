@@ -381,6 +381,7 @@ test("default worker health controller evicts wedged worker before orphan recove
     orphanHandoffRecovery: {
       recoverForWorker: (
         workerId: string,
+        opts?: { workerKnownDead?: boolean },
       ): {
         requeued: number;
         exhausted: number;
@@ -389,7 +390,7 @@ test("default worker health controller evicts wedged worker before orphan recove
         _requeuedRows: unknown[];
         _exhaustedRows: unknown[];
       } => {
-        actions.push(`recover:${workerId}`);
+        actions.push(`recover:${workerId}:${String(Boolean(opts?.workerKnownDead))}`);
         recovered.push(workerId);
         return {
           requeued: 0,
@@ -423,7 +424,7 @@ test("default worker health controller evicts wedged worker before orphan recove
     misses: 3,
     event: "probe_timeout",
   });
-  expect(actions).toEqual(["restart:worker-a", "recover:worker-a"]);
+  expect(actions).toEqual(["restart:worker-a", "recover:worker-a:true"]);
   expect(knownWorkers.has("worker-a")).toBe(false);
 
   await controller.onSignal(signal);
@@ -432,9 +433,9 @@ test("default worker health controller evicts wedged worker before orphan recove
   expect(recovered[1]).toBe("worker-a");
   expect(actions).toEqual([
     "restart:worker-a",
-    "recover:worker-a",
+    "recover:worker-a:true",
     "restart:worker-a",
-    "recover:worker-a",
+    "recover:worker-a:true",
   ]);
 });
 

@@ -174,7 +174,10 @@ export interface WorkerHealthControllerDeps {
     }): void;
   };
   orphanHandoffRecovery: {
-    recoverForWorker(workerId: string): {
+    recoverForWorker(
+      workerId: string,
+      opts?: { workerKnownDead?: boolean },
+    ): {
       requeued: number;
       exhausted: number;
       exhaustedRowIds: string[];
@@ -208,7 +211,9 @@ export function createWorkerHealthController(
       try {
         await services.extraWorkerSupervisor.restartWorkerById(signal.worker_id);
       } finally {
-        services.orphanHandoffRecovery.recoverForWorker(signal.worker_id);
+        services.orphanHandoffRecovery.recoverForWorker(signal.worker_id, {
+          workerKnownDead: true,
+        });
       }
     },
   };

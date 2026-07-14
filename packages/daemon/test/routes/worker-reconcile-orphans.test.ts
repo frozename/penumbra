@@ -115,7 +115,7 @@ test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce erro
   const services = tempServices();
   const token = "secret-token";
   const mockRecovery = asRecoveryService({
-    runOnce: () => {
+    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }) => {
       throw new Error("database crash");
     },
   });
@@ -149,9 +149,11 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   const token = "secret-token";
 
   let passedWorkerId: string | undefined;
+  let passedOptions: { workerKnownDead?: boolean } | undefined;
   const mockRecovery = asRecoveryService({
-    runOnce: (workerId?: string): RecoveryResult => {
+    runOnce: (workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult => {
       passedWorkerId = workerId;
+      passedOptions = opts;
       return {
         requeued: 4,
         exhausted: 2,
@@ -191,6 +193,7 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
     exhaustedRowIds: ["2"],
   });
   expect(passedWorkerId).toBe("test-worker-123");
+  expect(passedOptions).toEqual({ workerKnownDead: true });
 });
 
 test("POST /worker/reconcile-orphans auth boundary and service-unavailable", async () => {
@@ -237,7 +240,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
 
   // 4. Shared bearer + recovery service -> 403 (route runs, principal check fires)
   const mockRecovery = asRecoveryService({
-    runOnce: (): RecoveryResult => ({
+    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 1,
       exhausted: 0,
       requeuedRowIds: ["1"],
@@ -290,7 +293,7 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
   const services = tempServices();
   const token = "secret-token";
   const mockRecovery = asRecoveryService({
-    runOnce: (): RecoveryResult => ({
+    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -321,7 +324,7 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
   const services = tempServices();
   const token = "secret-token";
   const mockRecovery = asRecoveryService({
-    runOnce: (): RecoveryResult => ({
+    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -361,7 +364,7 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
 
   let calledWith: string | undefined;
   const mockRecovery = asRecoveryService({
-    runOnce: (workerId?: string): RecoveryResult => {
+    runOnce: (workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => {
       calledWith = workerId;
       return {
         requeued: 2,

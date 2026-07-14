@@ -524,7 +524,7 @@ export class ExtraWorkerSupervisor {
     );
 
     if (this.orphanHandoffRecovery) {
-      this.orphanHandoffRecovery.recoverForWorker(extra.id);
+      this.orphanHandoffRecovery.recoverForWorker(extra.id, { workerKnownDead: true });
     }
     return Promise.resolve();
   }

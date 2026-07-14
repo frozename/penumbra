@@ -214,6 +214,19 @@ function createSupervisor(
   options?: {
     storageRoot?: string;
     spawnImpl?: (args: string[], options: SpawnCall["options"]) => FakeSubprocess;
+    orphanHandoffRecovery?: {
+      recoverForWorker(
+        workerId: string,
+        opts?: { workerKnownDead?: boolean },
+      ): {
+        requeued: number;
+        exhausted: number;
+        requeuedRowIds: string[];
+        exhaustedRowIds: string[];
+        _requeuedRows: unknown[];
+        _exhaustedRows: unknown[];
+      };
+    };
   },
 ): SupervisorHarness {
   const spawnCalls: SpawnCall[] = [];
@@ -237,6 +250,7 @@ function createSupervisor(
     storageRoot: options?.storageRoot ?? "/tmp/penumbra-storage",
     log,
     spawn,
+    orphanHandoffRecovery: options?.orphanHandoffRecovery,
   });
 
   return {
@@ -987,7 +1001,62 @@ describe("extra worker supervisor", () => {
     );
   });
 
-  test("crash recovery only requeues dispatched handoffs that have not started", async () => {
+  test("onProcessExit passes workerKnownDead flag to orphan recovery", async () => {
+    const recovery = {
+      recoverForWorker: mock(
+        (
+          workerId: string,
+          opts?: { workerKnownDead?: boolean },
+        ): {
+          requeued: number;
+          exhausted: number;
+          requeuedRowIds: string[];
+          exhaustedRowIds: string[];
+          _requeuedRows: unknown[];
+          _exhaustedRows: unknown[];
+        } => {
+          expect(workerId).toBe("worker-a");
+          expect(opts).toEqual({ workerKnownDead: true });
+          return {
+            requeued: 0,
+            exhausted: 0,
+            requeuedRowIds: [],
+            exhaustedRowIds: [],
+            _requeuedRows: [],
+            _exhaustedRows: [],
+          };
+        },
+      ),
+    };
+
+    const { supervisor, processes } = createSupervisor(
+      [
+        {
+          id: "worker-a",
+          concurrency: 1,
+          isolation: "shared",
+        },
+      ],
+      undefined,
+      { orphanHandoffRecovery: recovery },
+    );
+
+    await supervisor.start();
+    const state = supervisorProbe(supervisor).states.get("worker-a");
+    expect(state).toBeDefined();
+    const proc = state!.proc;
+    expect(proc).toBeDefined();
+
+    await supervisorProbe(supervisor).onProcessExit(
+      { id: "worker-a", concurrency: 1, isolation: "shared" },
+      proc!,
+      state!,
+    );
+    expect(recovery.recoverForWorker).toHaveBeenCalledWith("worker-a", { workerKnownDead: true });
+    expect(processes).toHaveLength(1);
+  });
+
+  test("crash recovery requeues dispatched handoffs, including ones with dispatch.start", async () => {
     const services = tempServices();
     const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
     const supervisor = new ExtraWorkerSupervisor({
@@ -1065,8 +1134,8 @@ describe("extra worker supervisor", () => {
     const stillDispatched = services.handoffReader.get(started.handoff_id);
     expect(requeued?.status).toBe("approved");
     expect(requeued?.worker_id).toBeNull();
-    expect(stillDispatched?.status).toBe("dispatched");
-    expect(stillDispatched?.worker_id).toBe("worker-a");
+    expect(stillDispatched?.status).toBe("approved");
+    expect(stillDispatched?.worker_id).toBeNull();
 
     const events = services.dispatchEventLog.listByHandoff(noStart.handoff_id);
     expect(events.some((event) => event.kind === "worker.recovery.requeued")).toBe(true);
@@ -1074,6 +1143,6 @@ describe("extra worker supervisor", () => {
       services.dispatchEventLog
         .listByHandoff(started.handoff_id)
         .some((event) => event.kind === "worker.recovery.requeued"),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
