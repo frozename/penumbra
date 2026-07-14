@@ -265,6 +265,45 @@ describe("readRoutingBiases", () => {
     expect(filtered[0].value).toBe("a1");
     db.close();
   });
+
+  it("orders a refreshed existing bias ahead of older biases", async () => {
+    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const db = makeDb();
+
+    const readNow = new Date("2026-06-15T00:00:00.000Z");
+    const futureISO = new Date("2026-06-15T01:00:00.000Z").toISOString();
+
+    setRoutingBias(db, {
+      scope: "agent",
+      value: "a1",
+      mode: "boost",
+      weight: 1.0,
+      expires_at: futureISO,
+      now: new Date("2026-06-15T00:00:01.000Z"),
+    });
+    setRoutingBias(db, {
+      scope: "agent",
+      value: "a2",
+      mode: "boost",
+      weight: 1.0,
+      expires_at: futureISO,
+      now: new Date("2026-06-15T00:00:02.000Z"),
+    });
+    setRoutingBias(db, {
+      scope: "agent",
+      value: "a1",
+      mode: "boost",
+      weight: 1.0,
+      expires_at: futureISO,
+      now: new Date("2026-06-15T00:00:03.000Z"),
+    });
+
+    const result = readRoutingBiases(db, { now: readNow });
+    expect(result.map((bias) => bias.value)).toEqual(["a1", "a2"]);
+    expect(result[0].created_at).toBe("2026-06-15T00:00:03.000Z");
+    db.close();
+  });
 });
 
 describe("setRoutingBias", () => {

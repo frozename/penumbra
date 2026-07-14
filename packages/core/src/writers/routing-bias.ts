@@ -61,6 +61,7 @@ export function setRoutingBias(db: Database, args: SetRoutingBiasArgs): RoutingB
     INSERT INTO routing_bias (bias_id, scope, value, mode, weight, reason, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(scope, value, mode) DO UPDATE SET
+      created_at = excluded.created_at,
       expires_at = excluded.expires_at,
       weight = excluded.weight,
       reason = excluded.reason
