@@ -1121,6 +1121,165 @@ describe("routeAgent", () => {
     });
   });
 
+  test("stale >=90% snapshot does NOT exclude the provider's candidate (fail-open in routeAgent single)", () => {
+    // Defect regression: a stale 100% snapshot for provider 'sakana' must
+    // NOT hard-exclude sakana-backed agents. The scorer keys stale snapshots
+    // by (provider, window_label, model) — dropping matching stale snapshots
+    // from the exclusion check. If the stale snapshot were still applied,
+    // this test would return the failover instead.
+    const staleOut = routeAgent({
+      db,
+      detail: "single",
+      role: "reviewer",
+      message: "Implementation Plan",
+      agentchatConfig: {
+        agents: [
+          {
+            name: "reviewer",
+            roles: ["reviewer"],
+            pricing_mode: "subscription",
+            subscription_provider: "sakana",
+          },
+          { name: "reviewer-failover", roles: ["reviewer"], api_provider: "openai" },
+        ],
+      },
+      roleExplorationPolicy: "ranked-first",
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "sakana",
+            window_label: "weekly",
+            model: null,
+            used_pct: 100,
+            resets_at: null,
+            observed_at: "2026-04-01T00:00:00Z",
+            source_kind: "subscription",
+          },
+        ],
+        warnings: [
+          {
+            code: "stale_snapshot",
+            provider: "sakana",
+            window_label: "weekly",
+            model: null,
+            age_seconds: 999_999,
+          },
+        ],
+      },
+      now: NOW,
+    });
+    expect(staleOut.detail).toBe("single");
+    if (staleOut.detail !== "single") return;
+    expect(staleOut.route).toEqual({
+      agent: "reviewer",
+      role: "reviewer",
+      taskType: "implement_substantial",
+    });
+
+    // Regression guard: an identical snapshot WITHOUT a stale warning must
+    // still exclude the sakana seat — proves the stale filter is doing the
+    // work, not some other pathway.
+    const freshOut = routeAgent({
+      db,
+      detail: "single",
+      role: "reviewer",
+      message: "Implementation Plan",
+      agentchatConfig: {
+        agents: [
+          {
+            name: "reviewer",
+            roles: ["reviewer"],
+            pricing_mode: "subscription",
+            subscription_provider: "sakana",
+          },
+          { name: "reviewer-failover", roles: ["reviewer"], api_provider: "openai" },
+        ],
+      },
+      roleExplorationPolicy: "ranked-first",
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "sakana",
+            window_label: "weekly",
+            model: null,
+            used_pct: 100,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "subscription",
+          },
+        ],
+      },
+      now: NOW,
+    });
+    expect(freshOut.detail).toBe("single");
+    if (freshOut.detail !== "single") return;
+    expect(freshOut.route).toEqual({
+      agent: "reviewer-failover",
+      role: "reviewer",
+      taskType: "implement_substantial",
+    });
+  });
+
+  test("stale used_pct applies NO score penalty in applyPressureFactor (headroom weighting)", () => {
+    const input: RouteAgentInput = {
+      db,
+      detail: "rank" as const,
+      taskType: "implement_substantial" as const,
+      agentchatConfig: {
+        role_routing: { headroom_weighting: true },
+        agents: [
+          {
+            name: "alpha",
+            roles: ["coder"],
+            pricing_mode: "subscription" as const,
+            subscription_provider: "prov1",
+          },
+        ],
+      },
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "prov1",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 100,
+            resets_at: null,
+            observed_at: "2026-04-01T00:00:00Z",
+            source_kind: "test",
+          },
+        ],
+        warnings: [
+          {
+            code: "stale_snapshot",
+            provider: "prov1",
+            window_label: "five_minute",
+            model: null,
+            age_seconds: 999_999,
+          },
+        ],
+      },
+      now: NOW,
+    };
+
+    const rankStale = routeAgent(input);
+    const alphaStale = findCandidate(rankStale, "alpha");
+
+    // With the same 100% snapshot but WITHOUT a stale warning, the factor
+    // would zero the score. Fail-open must leave the score unchanged.
+    const rankWithoutWarning = routeAgent({
+      ...input,
+      applyPressure: {
+        snapshots: input.applyPressure!.snapshots,
+        // no warnings — snapshot is treated as fresh, penalty applies
+      },
+    });
+    const alphaPenalized = findCandidate(rankWithoutWarning, "alpha");
+
+    // Fresh 100% zeroes score; stale one must not.
+    expect(alphaPenalized.score).toBe(0);
+    expect(alphaStale.score).toBeGreaterThan(0);
+  });
+
   test("single mode excludes unhealthy agents and selects a failover", () => {
     const out = routeAgent({
       db,

@@ -243,6 +243,45 @@ describe("readSubscriptionPressure", () => {
     });
   });
 
+  it("stale warning carries the model dimension of its snapshot", () => {
+    // Warnings must carry model so downstream stale-key comparisons match the
+    // reader's snapshot group key exactly. Without model, a stale per-model
+    // warning would mask a fresh global snapshot and vice versa.
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "a",
+      ts: "2026-05-08T00:00:00Z",
+      provider: "google",
+      window_label: "daily",
+      model: "gemini-3.1-pro-preview",
+      used_pct: 20,
+      resets_at: null,
+      source_kind: "local-state-google-otlp-synth",
+    });
+    insertSnapshotRow(db, {
+      event_id: "b",
+      ts: "2026-05-08T00:00:00Z",
+      provider: "google",
+      window_label: "daily",
+      model: null,
+      used_pct: 40,
+      resets_at: null,
+      source_kind: "local-state-google-otlp-synth",
+    });
+
+    const out = readSubscriptionPressure(db, {
+      stale_after_seconds: 1800,
+      now: () => new Date("2026-05-08T01:00:00Z"),
+    });
+
+    const models = new Set(
+      out.warnings
+        .filter((w) => w.provider === "google" && w.window_label === "daily")
+        .map((w) => w.model),
+    );
+    expect(models).toEqual(new Set([null, "gemini-3.1-pro-preview"]));
+  });
+
   it("does not warn when the snapshot is still fresh", () => {
     const db = makeDb();
     insertSnapshotRow(db, {

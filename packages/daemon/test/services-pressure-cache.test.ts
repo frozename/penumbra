@@ -86,6 +86,111 @@ describe("buildServices subscription pressure cache", () => {
     expect(isAnyProviderOverPressure(pressure)).toBe(false);
   });
 
+  it("does not let a stale per-model warning mask a fresh global (model=null) over-pressure snapshot", () => {
+    // A stale warning keyed to a specific model must NOT match — and thus
+    // silence — a fresh snapshot with model=null for the same provider +
+    // window_label. Without the model dimension in the stale key, the two
+    // collide and the fresh over-pressure snapshot would be dropped from the
+    // check, letting a real throttle slip through.
+    const pressure: PressureResult = {
+      warnings: [
+        {
+          code: "stale_snapshot",
+          provider: "google",
+          window_label: "daily",
+          model: "gemini-3-flash-preview",
+          age_seconds: 999_999,
+        },
+      ],
+      snapshots: [
+        {
+          provider: "google",
+          window_label: "daily",
+          model: null,
+          used_pct: 100,
+          resets_at: null,
+          observed_at: "2026-05-08T00:00:00Z",
+          source_kind: "local-state-google-otlp-synth",
+        },
+      ],
+    };
+
+    expect(isAnyProviderOverPressure(pressure)).toBe(true);
+  });
+
+  it("does not let a stale global (model=null) warning mask a fresh per-model over-pressure snapshot", () => {
+    const pressure: PressureResult = {
+      warnings: [
+        {
+          code: "stale_snapshot",
+          provider: "google",
+          window_label: "daily",
+          model: null,
+          age_seconds: 999_999,
+        },
+      ],
+      snapshots: [
+        {
+          provider: "google",
+          window_label: "daily",
+          model: "gemini-3.1-pro-preview",
+          used_pct: 100,
+          resets_at: null,
+          observed_at: "2026-05-08T00:00:00Z",
+          source_kind: "local-state-google-otlp-synth",
+        },
+      ],
+    };
+
+    expect(isAnyProviderOverPressure(pressure)).toBe(true);
+  });
+
+  it("a fresh 100 percent usage snapshot is still over pressure (regression guard)", () => {
+    const pressure: PressureResult = {
+      warnings: [],
+      snapshots: [
+        {
+          provider: "anthropic",
+          window_label: "five_hour",
+          model: null,
+          used_pct: 100,
+          resets_at: null,
+          observed_at: "2026-05-08T00:00:00Z",
+          source_kind: "local-state-claude-statusline",
+        },
+      ],
+    };
+
+    expect(isAnyProviderOverPressure(pressure)).toBe(true);
+  });
+
+  it("a stale >=90% snapshot with a matching stale key does NOT count as over pressure (fail open)", () => {
+    const pressure: PressureResult = {
+      warnings: [
+        {
+          code: "stale_snapshot",
+          provider: "sakana",
+          window_label: "weekly",
+          model: null,
+          age_seconds: 999_999,
+        },
+      ],
+      snapshots: [
+        {
+          provider: "sakana",
+          window_label: "weekly",
+          model: null,
+          used_pct: 100,
+          resets_at: null,
+          observed_at: "2026-05-08T00:00:00Z",
+          source_kind: "subscription",
+        },
+      ],
+    };
+
+    expect(isAnyProviderOverPressure(pressure)).toBe(false);
+  });
+
   it("exposes subscriptionPressureCache with the cache API", () => {
     const { db, services } = makeServices();
 

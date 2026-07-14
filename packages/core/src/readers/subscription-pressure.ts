@@ -14,6 +14,12 @@ export interface PressureWarning {
   code: "stale_snapshot";
   provider: string;
   window_label: string;
+  // Model dimension of the stale snapshot. Must be present (null for
+  // model-less snapshots) so stale-key comparisons match the snapshot's
+  // (provider, window_label, model) identity exactly. Without this, a stale
+  // per-model warning would mask a fresh global (model=null) snapshot and
+  // vice versa — see the reader group key.
+  model: string | null;
   age_seconds: number;
 }
 
@@ -98,6 +104,7 @@ export function readSubscriptionPressure(
         code: "stale_snapshot",
         provider: row.provider,
         window_label: payload.window_label,
+        model: payload.model ?? null,
         age_seconds: Math.floor(ageSeconds),
       });
     }

@@ -13,6 +13,7 @@ import {
   ImportMarkdownResultSchema,
   inferAgentTaskTypeForRole,
   parseAgentPerformanceMarkdownRows,
+  type PressureWarning,
   readFleetLatency,
   readSubscriptionPressure,
   recordOperatorAgentPerformance,
@@ -39,7 +40,7 @@ export type AgentRoutePressureSnapshot = {
     observed_at: string;
     source_kind: string;
   }[];
-  warnings?: unknown[];
+  warnings?: PressureWarning[];
 };
 
 export type AgentRouteAgentchatConfig = {

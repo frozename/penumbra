@@ -2,6 +2,7 @@ import type { AgentPool } from "@penumbra/config";
 import type { Database } from "bun:sqlite";
 
 import type { RoutingBias } from "../readers/routing-bias.js";
+import type { PressureWarning } from "../readers/subscription-pressure.js";
 
 import {
   type AgentKind,
@@ -21,7 +22,12 @@ type AgentRoutePressureSnapshot = {
     observed_at: string;
     source_kind: string;
   }[];
-  warnings?: unknown[];
+  // Stale-snapshot warnings from readSubscriptionPressure. When present, the
+  // scorer filters snapshots with a matching (provider, window_label, model)
+  // key OUT before both exclusion and pressure-scaling — fail-OPEN so a stale
+  // 100% used_pct doesn't hard-throttle a provider indefinitely (mirrors the
+  // fail-open contract in packages/daemon/src/pressure.ts).
+  warnings?: PressureWarning[];
 };
 
 export type ResolvedAgentPoolMember = { agent: string; tier: "local" | "cloud" };
@@ -193,10 +199,7 @@ export interface RouteAgentInput {
   roleExplorationPolicy?: "unsampled-first" | "ranked-first";
   defaultRoles?: Record<string, string>;
   agentRegistry?: string[] | null;
-  applyPressure?: {
-    snapshots: AgentRoutePressureSnapshot["snapshots"];
-    warnings?: unknown[];
-  };
+  applyPressure?: AgentRoutePressureSnapshot;
   // User-driven routing-bias steers (usage steering). Injected by the caller
   // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
   activeBiases?: RoutingBias[];
@@ -751,16 +754,45 @@ function getConfigMembershipAllowlist(input: RouteAgentInput): Set<string> | nul
   return null;
 }
 
+// Fail-OPEN stale-key set for pressure snapshots. Keys are triples of
+// (provider, window_label, model) — matching the reader's snapshot grouping
+// key exactly, so a stale per-model warning does NOT mask a fresh global
+// (model=null) snapshot and vice versa. Callers that pass no warnings behave
+// as though nothing is stale (byte-identical to pre-fix behavior).
+function buildPressureStaleKeys(
+  pressureSnapshot: RouteAgentInput["applyPressure"] | undefined,
+): Set<string> {
+  if (!pressureSnapshot?.warnings || pressureSnapshot.warnings.length === 0) {
+    return new Set();
+  }
+  return new Set(
+    pressureSnapshot.warnings.map((w) => `${w.provider} ${w.window_label} ${w.model ?? ""}`),
+  );
+}
+
+function pressureSnapshotKey(snapshot: {
+  provider: string;
+  window_label: string;
+  model: string | null;
+}): string {
+  return `${snapshot.provider} ${snapshot.window_label} ${snapshot.model ?? ""}`;
+}
+
 function isOverPressure(
   provider: string,
   pressureSnapshot?: RouteAgentInput["applyPressure"],
 ): boolean {
   if (!pressureSnapshot) return false;
-  return pressureSnapshot.snapshots.some(
-    (snapshot) =>
-      snapshot.provider === provider &&
-      (snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown"),
-  );
+  const staleKeys = buildPressureStaleKeys(pressureSnapshot);
+  // Fail OPEN: stale snapshots must NOT throttle. A snapshot whose
+  // (provider, window_label, model) key is in the stale set is dropped from
+  // the exclusion check. If every snapshot for a provider is stale, the
+  // provider is treated as not-over-pressure.
+  return pressureSnapshot.snapshots.some((snapshot) => {
+    if (snapshot.provider !== provider) return false;
+    if (staleKeys.has(pressureSnapshotKey(snapshot))) return false;
+    return snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown";
+  });
 }
 
 // User-driven routing-bias ("usage steering") effect for one candidate.
@@ -860,7 +892,14 @@ function applyPressureFactor(
   const agentConf = input.agentchatConfig.agents.find((a) => a.name === summary.agent_name);
   const provider = agentConf ? resolveProvider(agentConf) : null;
   if (!provider) return score;
-  const snaps = input.applyPressure.snapshots.filter((snap) => snap.provider === provider);
+  // Fail OPEN: drop stale snapshots (keyed on provider+window_label+model)
+  // before averaging used_pct. If every snapshot for this provider is stale,
+  // apply no penalty at all — a stale >=90% must never scale a score down
+  // indefinitely.
+  const staleKeys = buildPressureStaleKeys(input.applyPressure);
+  const snaps = input.applyPressure.snapshots.filter(
+    (snap) => snap.provider === provider && !staleKeys.has(pressureSnapshotKey(snap)),
+  );
   if (snaps.length === 0) return score;
   const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));
   const factor = clamp01(1 - maxUsedPct / 100);
