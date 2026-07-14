@@ -151,7 +151,15 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     updated.push(entry);
     this.entries.set(key, updated);
     void entry.handle.exited.then((code) => {
-      if (code !== 0 && entry.refs.size === 0) this.teardown(key, entry);
+      if (code !== 0 && entry.refs.size === 0) {
+        // Surface warm-pool crash-reaps: paired with stdio-acp-server's spawn
+        // error log, this makes crash-loops visible instead of silently
+        // tearing down and rewarming.
+        console.warn(
+          `acp-warm-pool: crashed warm entry teardown key=${key} exit_code=${String(code)}`,
+        );
+        this.teardown(key, entry);
+      }
     });
     return entry;
   }

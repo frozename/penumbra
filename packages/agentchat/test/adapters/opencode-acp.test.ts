@@ -10,6 +10,7 @@ import type {
   AcpCreateSessionRequest,
   AcpEvent,
   AcpTool,
+  McpServer,
   McpServerStdio,
 } from "../../src/adapters/acp-types.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
@@ -355,6 +356,50 @@ test("opencode-acp injects long-lived env into penumbra mcp config for long_live
   expect(allowlist.has("long_lived_self_state_get")).toBe(true);
   expect(allowlist.has("long_lived_self_state_set")).toBe(true);
   expect(allowlist.has("long_lived_self_pending_actions")).toBe(true);
+});
+
+test("opencode-acp preserves the original dispatch error when xdg cleanup also throws", async () => {
+  const warns: string[] = [];
+  const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+    warns.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  });
+  try {
+    const dispatchErrorMessage = "opencode-acp: primary-dispatch-error under test";
+    const cleanupErrorMessage = "opencode-acp: cleanup-error under test";
+    let cleanupCalled = 0;
+    const prepareMcpConfig = mock(
+      (_servers: McpServer[]): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> =>
+        Promise.resolve({
+          xdgConfigHome: "/tmp/opencode-acp-xdg-fixture",
+          cleanup: (): Promise<void> => {
+            cleanupCalled++;
+            return Promise.reject(new Error(cleanupErrorMessage));
+          },
+        }),
+    );
+    const startServer = mock((_opts: StartAcpServerOptions): Promise<AcpServerHandle> => {
+      throw new Error(dispatchErrorMessage);
+    });
+    const createClientMock = mock((_opts: AcpClientOptions): AcpClientLike => {
+      throw new Error("client should not be created when boot fails");
+    });
+
+    const adapter = new OpencodeAcpAdapter(
+      {
+        model: "deepseek-v4",
+        cwd: "/tmp/opencode-acp",
+        mcpServers: [penumbraMcpServer],
+      },
+      { startServer, createClient: createClientMock, prepareMcpConfig },
+    );
+
+    await expectRejectionMatching(adapter.dispatch(createInput()), dispatchErrorMessage);
+    expect(cleanupCalled).toBe(1);
+    const joined = warns.join("\n");
+    expect(joined).toContain(cleanupErrorMessage);
+  } finally {
+    warnSpy.mockRestore();
+  }
 });
 
 const integrationEnabled =

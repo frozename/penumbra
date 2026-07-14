@@ -135,6 +135,66 @@ test("respondPermission POSTs to /session/{sid}/permissions/{pid}", async () => 
   await client.respondPermission("s1", "p1", { response: { ok: true } });
 });
 
+test("sendMessage aborts the SSE stream and surfaces the send error when POST rejects", async () => {
+  // Simulate a server that (a) accepts the /event subscription and holds it
+  // open with no further events, and (b) rejects the /message POST. Without
+  // the abort-on-reject fix, the for-await loop would block until the caller-
+  // supplied requestTimeoutMs. Here we assert that the send error surfaces
+  // well under that deadline.
+  const eventStreamAborted = { value: false };
+  installFetchMock((url, init) => {
+    const urlStr = url.toString();
+    if (urlStr.includes("/event")) {
+      const signal = init?.signal;
+      // A ReadableStream that never emits chunks but honors abort. When the
+      // signal aborts, reader.read() rejects, unblocking the for-await.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const onAbort = (): void => {
+            eventStreamAborted.value = true;
+            controller.error(new DOMException("aborted", "AbortError"));
+          };
+          if (signal) {
+            if (signal.aborted) onAbort();
+            else signal.addEventListener("abort", onAbort, { once: true });
+          }
+        },
+      });
+      return Promise.resolve(
+        new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      );
+    }
+    if (urlStr.includes("/message")) {
+      return Promise.resolve(
+        new Response("bad request body", {
+          status: 400,
+          statusText: "Bad Request",
+        }),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+
+  const client = new AcpClient({ baseUrl });
+  const started = Date.now();
+  let caught: unknown;
+  try {
+    for await (const _ev of client.sendMessage("sess-err", "ping")) {
+      /* unreachable — sendPromise rejects before any event yields */
+    }
+  } catch (err) {
+    caught = err;
+  }
+  const elapsed = Date.now() - started;
+
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toContain("HTTP 400");
+  // Sanity: the abort must have fired, and the whole thing must complete
+  // well under the default requestTimeoutMs (600s).
+  expect(eventStreamAborted.value).toBe(true);
+  expect(elapsed).toBeLessThan(2_000);
+});
+
 test("subscribeEvents handles malformed SSE and non-data lines", async () => {
   const sseBody = [
     ": comment\n",

@@ -167,8 +167,18 @@ export class AcpClient {
     // Only set it when the caller has a real wrk_* id.
     const workspace = opts?.workspace;
 
+    // Local abort controller so a POST rejection can unblock the SSE read
+    // promptly instead of stalling until requestTimeoutMs elapses. Composed
+    // with the caller-supplied signal via AbortSignal.any so external aborts
+    // still propagate.
+    const localAbort = new AbortController();
+    const streamSignal =
+      typeof AbortSignal.any === "function" && this.signal
+        ? AbortSignal.any([this.signal, localAbort.signal])
+        : (this.signal ?? localAbort.signal);
+
     // 1. Subscribe to the event stream
-    const eventStream = this.subscribeEvents(directory, workspace, sessionId);
+    const eventStream = this.subscribeEvents(directory, workspace, sessionId, streamSignal);
 
     // 2. Dispatch the message POST. OpenCode validates the request body strictly:
     //    - messageID must start with "msg_"
@@ -192,13 +202,23 @@ export class AcpClient {
     let sendError: Error | undefined;
     sendPromise.catch((err: unknown) => {
       sendError = err instanceof Error ? err : new Error(String(err));
+      // Abort the SSE reader so a POST rejection unblocks the for-await
+      // loop immediately instead of waiting for the server to close /event.
+      localAbort.abort();
     });
 
     // 3. Yield events until 'done' or error
-    for await (const event of eventStream) {
+    try {
+      for await (const event of eventStream) {
+        if (sendError) throw sendError;
+        yield event;
+        if (event.type === "done") break;
+      }
+    } catch (err) {
+      // If the SSE read was aborted specifically because sendPromise rejected,
+      // surface the original send error rather than the abort artifact.
       if (sendError) throw sendError;
-      yield event;
-      if (event.type === "done") break;
+      throw err;
     }
 
     // Ensure the send actually finished if we didn't get a 'done' event but the stream closed
@@ -216,6 +236,7 @@ export class AcpClient {
     directory: string,
     workspace: string | undefined,
     sessionId: string,
+    signal?: AbortSignal,
   ): AsyncIterable<AcpEvent> {
     const url = new URL(`${this.baseUrl}/event`);
     url.searchParams.set("directory", directory);
@@ -226,7 +247,7 @@ export class AcpClient {
       headers: {
         Accept: "text/event-stream",
       },
-      signal: this.signal,
+      signal: signal ?? this.signal,
     });
 
     if (!res.ok) {

@@ -25,6 +25,13 @@ export interface StdioAcpHandle {
   pid?: number;
   /** Returns up to the last `stderrTailBytes` of child stderr seen so far. */
   getStderrTail: () => string;
+  /**
+   * Populated when the child process fails to spawn (ENOENT/EACCES) or emits
+   * an `error` event before/without exiting. Callers can surface this to
+   * disambiguate `exited === null` (spawn failure) from a SIGKILL exit code.
+   * Optional so existing test fixtures/handle stubs don't need to implement it.
+   */
+  getSpawnError?: () => Error | null;
 }
 
 export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> {
@@ -72,11 +79,20 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     }
   });
 
+  let spawnError: Error | null = null;
   const exited = new Promise<number | null>((resolve) => {
     child.on("exit", (code) => {
       resolve(code);
     });
-    child.on("error", () => {
+    child.on("error", (err) => {
+      // Retain the error so callers can distinguish ENOENT/EACCES from a
+      // clean SIGKILL exit (both otherwise yield exited === null). Log with
+      // adapter+binary context so a misconfigured binary path is not silent
+      // in worker logs.
+      spawnError = err;
+      console.error(
+        `stdio-acp-server: spawn error for binary=${binary} args=${JSON.stringify(args)}: ${err.message}`,
+      );
       resolve(null);
     });
   });
@@ -121,5 +137,6 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     exited,
     pid: child.pid,
     getStderrTail: () => Buffer.concat(tailChunks).toString("utf8"),
+    getSpawnError: () => spawnError,
   });
 }

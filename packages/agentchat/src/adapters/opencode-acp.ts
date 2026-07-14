@@ -108,6 +108,9 @@ type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
 interface OpencodeAcpDeps {
   startServer: (opts: StartAcpServerOptions) => Promise<AcpServerHandle>;
   createClient: (opts: AcpClientOptions) => AcpClientLike;
+  prepareMcpConfig?: (
+    servers: McpServer[],
+  ) => Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }>;
 }
 
 interface OpencodeWireEvent {
@@ -204,7 +207,8 @@ export class OpencodeAcpAdapter implements Adapter {
 
     const mcpServersWithEnv = injectPenumbraMcpEnv(this.opts.mcpServers ?? [], input);
     if (mcpServersWithEnv.length > 0) {
-      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(mcpServersWithEnv);
+      const prepare = this.deps.prepareMcpConfig ?? prepareOpencodeMcpConfigDir;
+      const { xdgConfigHome, cleanup } = await prepare(mcpServersWithEnv);
       extraEnv = { XDG_CONFIG_HOME: xdgConfigHome };
       lifecycle.xdgCleanup = cleanup;
     }
@@ -229,7 +233,14 @@ export class OpencodeAcpAdapter implements Adapter {
         });
       }
       if (lifecycle.xdgCleanup) {
-        await lifecycle.xdgCleanup();
+        // Guard cleanup so a rmdir/permission failure here does not mask the
+        // original dispatch error (which would otherwise be replaced by the
+        // cleanup rejection at the top of the awaited finally block).
+        await lifecycle.xdgCleanup().catch((cleanupErr: unknown) => {
+          console.warn(
+            `opencode-acp: xdg cleanup failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+          );
+        });
       }
     }
   }

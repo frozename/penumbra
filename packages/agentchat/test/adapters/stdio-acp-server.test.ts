@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
 
@@ -48,6 +48,29 @@ describe("startStdioAcpServer", () => {
     expect(tail).toContain("line-5");
     expect(tail).not.toContain("line-1");
     if (handle.pid) cleanupPids.delete(handle.pid);
+  });
+
+  test("logs a spawn error and exposes it via getSpawnError when the binary is missing", async () => {
+    const errors: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+    });
+    try {
+      const handle = await startStdioAcpServer({
+        binary: "/nonexistent/acp-binary-under-test-xyz",
+      });
+      const code = await handle.exited;
+      expect(code).toBeNull();
+      const joined = errors.join("\n");
+      expect(joined).toContain("stdio-acp-server");
+      expect(joined).toContain("/nonexistent/acp-binary-under-test-xyz");
+      expect(handle.getSpawnError).toBeDefined();
+      const spawnError = handle.getSpawnError?.() ?? null;
+      expect(spawnError).not.toBeNull();
+      expect(spawnError?.message.length ?? 0).toBeGreaterThan(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("kill escalates when the ACP process ignores SIGTERM", async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
@@ -215,6 +215,31 @@ describe("AcpWarmPool", () => {
     expect(pool.acquire("h1", key, "spec-a")).toBeNull();
     pool.evict(key);
     expect(h.kill).toHaveBeenCalledTimes(1);
+  });
+
+  test("logs a warning when an idle deposited entry crashes and self-evicts", async () => {
+    const warns: string[] = [];
+    const spy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warns.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+    });
+    try {
+      const exit = deferred<number | null>();
+      const pool = createAcpWarmPool();
+      const h = handle({ exited: exit.promise });
+      pool.deposit(key, { handle: h, client, sessionId: "s1", specHash: "spec-a" });
+
+      exit.resolve(137);
+      // Flush the microtask queue so the .then() handler observes the resolved code.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const joined = warns.join("\n");
+      expect(joined).toContain("acp-warm-pool");
+      expect(joined).toContain("137");
+      expect(h.kill).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("shutdown kills all entries and future acquire returns null", () => {
