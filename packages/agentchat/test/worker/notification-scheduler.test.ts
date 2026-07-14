@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 
 import type { DiscordNotificationEvent } from "../../src/worker/discord-events.js";
 import type { RuntimeNotificationConfig } from "../../src/worker/notification-config.js";
@@ -48,6 +48,31 @@ function makeQuotaSummaryMock(
 }
 
 describe("createNotificationScheduler", () => {
+  it("unrefs the scheduled interval", () => {
+    const unref = mock(() => undefined);
+    const intervalHandle = { unref } as unknown as ReturnType<typeof setInterval>;
+    const setIntervalSpy = spyOn(globalThis, "setInterval").mockImplementation(
+      (..._args: Parameters<typeof setInterval>) => intervalHandle,
+    );
+
+    try {
+      const scheduler = createNotificationScheduler({
+        now: () => new Date("2026-05-01T09:00:00.000Z").getTime(),
+        intervalMs: 60_000,
+        config: makeConfig(),
+        getQuotaSummary: makeQuotaSummaryMock([]),
+        postEvent: makePostEventMock(),
+      });
+
+      scheduler.start();
+
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(unref).toHaveBeenCalledTimes(1);
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
+  });
+
   it("fires a daily cost quota summary when enabled", async () => {
     let now = new Date("2026-05-01T09:00:00.000Z").getTime();
     const postEvent = makePostEventMock();

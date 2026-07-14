@@ -521,6 +521,27 @@ test("emits cancel.dispatched when cancellation matches an active dispatch", asy
   ).toBe(true);
 });
 
+test("unmatched cancels do not grow pendingCancel state without bound", () => {
+  const d = deps();
+  const dispatcher = createWorkerDispatcher(d);
+
+  // Each cancel targets a distinct handoff/conversation with no active
+  // dispatch, so every one lands in the pending-cancel state. In a long-lived
+  // worker these are never consumed and (before the fix) grow unbounded.
+  for (let i = 0; i < 1_500; i += 1) {
+    dispatcher.cancel(`c-unmatched-${String(i)}`, `h-unmatched-${String(i)}`);
+  }
+
+  expect(dispatcher.__internals().pendingCancelSize).toBeLessThanOrEqual(1_000);
+
+  // Conv-scoped cancels (legacy callers, no handoff_id) share the same cap.
+  for (let i = 0; i < 1_500; i += 1) {
+    dispatcher.cancel(`c-conv-only-${String(i)}`);
+  }
+
+  expect(dispatcher.__internals().pendingCancelSize).toBeLessThanOrEqual(1_000);
+});
+
 test("emits dispatch.end status=error when dispatch reports terminal error", async () => {
   const events: DispatchEventInput[] = [];
   const dispatchEvents: DiscordNotificationEvent[] = [];
@@ -1107,4 +1128,38 @@ test("no claimGraceMs dep → claim immediately (backward compatible)", async ()
   await dispatcher.idle();
   expect(delay).not.toHaveBeenCalled();
   expect(d.claim).toHaveBeenCalledTimes(1);
+});
+
+test("unmatched handoff-scoped cancels are bounded and evict oldest entries", () => {
+  const d = deps();
+  const dispatcher = createWorkerDispatcher(d);
+
+  for (let i = 0; i < 1_005; i++) {
+    dispatcher.cancel("c-leak", `h-${String(i).padStart(4, "0")}`);
+  }
+
+  const internals = dispatcher.__internals() as {
+    pendingCancelsByHandoffKeys?: string[];
+    pendingCancelsByHandoffSize?: number;
+  };
+  expect(internals.pendingCancelsByHandoffSize).toBe(1_000);
+  expect(internals.pendingCancelsByHandoffKeys?.[0]).toBe("h-0005");
+  expect(internals.pendingCancelsByHandoffKeys).not.toContain("h-0000");
+});
+
+test("unmatched conversation-scoped cancels are bounded and evict oldest entries", () => {
+  const d = deps();
+  const dispatcher = createWorkerDispatcher(d);
+
+  for (let i = 0; i < 1_005; i++) {
+    dispatcher.cancel(`c-${String(i).padStart(4, "0")}`);
+  }
+
+  const internals = dispatcher.__internals() as {
+    pendingCancelsByConvKeys?: string[];
+    pendingCancelsByConvSize?: number;
+  };
+  expect(internals.pendingCancelsByConvSize).toBe(1_000);
+  expect(internals.pendingCancelsByConvKeys?.[0]).toBe("c-0005");
+  expect(internals.pendingCancelsByConvKeys).not.toContain("c-0000");
 });

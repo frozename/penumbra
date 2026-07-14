@@ -111,6 +111,11 @@ export interface WorkerDispatcher<H extends DispatcherHandoff = DispatcherHandof
   /** @internal Test-only diagnostics. Not part of the runtime contract. */
   __internals(): {
     claimRetryStateSize: number;
+    pendingCancelsByHandoffSize: number;
+    pendingCancelsByHandoffKeys: string[];
+    pendingCancelsByConvSize: number;
+    pendingCancelsByConvKeys: string[];
+    pendingCancelSize: number;
     progressBufferBytes: number;
     progressBufferedChunks: number;
   };
@@ -125,6 +130,10 @@ interface SnapshotResult {
 interface ClaimRetryEntry {
   attempts: number;
   resumeAtMs: number;
+}
+
+interface PendingCancelEntry {
+  tsMs: number;
 }
 
 interface ProgressState {
@@ -166,6 +175,8 @@ interface ConvLocks {
 
 const STALE_CLAIM_RETRY_MS = 5 * 60_000;
 const MAX_CLAIM_RETRY_STATE = 1_000;
+const STALE_PENDING_CANCEL_MS = STALE_CLAIM_RETRY_MS;
+const MAX_PENDING_CANCEL_STATE = 1_000;
 const CLAIM_BACKOFF_CAP_MS = 30_000;
 const CLAIM_BACKOFF_BASE_MS = 1_000;
 const PROGRESS_BATCH_MS = 100;
@@ -322,6 +333,58 @@ function evictStaleClaimRetryState(claimRetryState: Map<string, ClaimRetryEntry>
     }
     claimRetryState.delete(oldestKey);
   }
+}
+
+function evictStalePendingCancelState(pendingCancels: Map<string, PendingCancelEntry>): void {
+  if (pendingCancels.size === 0) {
+    return;
+  }
+  const now = Date.now();
+  for (const [key, state] of pendingCancels) {
+    if (now - state.tsMs > STALE_PENDING_CANCEL_MS) {
+      pendingCancels.delete(key);
+    }
+  }
+}
+
+function deleteOldestPendingCancel(
+  byHandoff: Map<string, PendingCancelEntry>,
+  byConv: Map<string, PendingCancelEntry>,
+): void {
+  const handoffEntry = byHandoff.entries().next().value;
+  const convEntry = byConv.entries().next().value;
+  if (handoffEntry === undefined && convEntry === undefined) {
+    return;
+  }
+  if (convEntry === undefined) {
+    if (handoffEntry !== undefined) {
+      byHandoff.delete(handoffEntry[0]);
+    }
+    return;
+  }
+  if (handoffEntry !== undefined && handoffEntry[1].tsMs <= convEntry[1].tsMs) {
+    byHandoff.delete(handoffEntry[0]);
+    return;
+  }
+  byConv.delete(convEntry[0]);
+}
+
+function evictPendingCancelState(
+  byHandoff: Map<string, PendingCancelEntry>,
+  byConv: Map<string, PendingCancelEntry>,
+): void {
+  evictStalePendingCancelState(byHandoff);
+  evictStalePendingCancelState(byConv);
+  while (byHandoff.size + byConv.size > MAX_PENDING_CANCEL_STATE) {
+    deleteOldestPendingCancel(byHandoff, byConv);
+  }
+}
+
+function recordPendingCancel(pendingCancels: Map<string, PendingCancelEntry>, key: string): void {
+  if (pendingCancels.has(key)) {
+    pendingCancels.delete(key);
+  }
+  pendingCancels.set(key, { tsMs: Date.now() });
 }
 
 function emitClaimRetryEvent(
@@ -957,11 +1020,12 @@ async function runDispatchLifecycle(
 }
 
 function consumePendingCancel(
-  pending: { byHandoff: Set<string>; byConv: Set<string> },
+  pending: { byHandoff: Map<string, PendingCancelEntry>; byConv: Map<string, PendingCancelEntry> },
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
   abort: AbortController,
 ): void {
+  evictPendingCancelState(pending.byHandoff, pending.byConv);
   if (!pending.byHandoff.has(handoff.handoff_id) && !pending.byConv.has(handoff.conversation_id)) {
     return;
   }
@@ -980,8 +1044,8 @@ interface DispatcherState {
   semaphore: Semaphore;
   activeAborts: Map<string, { handoff_id: string; abort: AbortController }>;
   claimRetryState: Map<string, ClaimRetryEntry>;
-  pendingCancelsByHandoff: Set<string>;
-  pendingCancelsByConv: Set<string>;
+  pendingCancelsByHandoff: Map<string, PendingCancelEntry>;
+  pendingCancelsByConv: Map<string, PendingCancelEntry>;
   inflight: Set<Promise<void>>;
   currentProgress: ProgressState | null;
   delay: (ms: number) => Promise<void>;
@@ -1074,10 +1138,11 @@ function handleCancel(state: DispatcherState, conversation_id: string, handoff_i
     return;
   }
   if (handoff_id !== undefined) {
-    state.pendingCancelsByHandoff.add(handoff_id);
+    recordPendingCancel(state.pendingCancelsByHandoff, handoff_id);
   } else {
-    state.pendingCancelsByConv.add(conversation_id);
+    recordPendingCancel(state.pendingCancelsByConv, conversation_id);
   }
+  evictPendingCancelState(state.pendingCancelsByHandoff, state.pendingCancelsByConv);
 }
 
 function dispatchToInflight(state: DispatcherState, handoff: DispatcherHandoff): void {
@@ -1108,8 +1173,8 @@ export function createWorkerDispatcher<H extends DispatcherHandoff = DispatcherH
     semaphore: makeSemaphore(deps.concurrency),
     activeAborts: new Map(),
     claimRetryState: new Map(),
-    pendingCancelsByHandoff: new Set(),
-    pendingCancelsByConv: new Set(),
+    pendingCancelsByHandoff: new Map(),
+    pendingCancelsByConv: new Map(),
     inflight: new Set(),
     currentProgress: null,
     delay: deps.delay ?? defaultDelay,
@@ -1141,6 +1206,11 @@ export function createWorkerDispatcher<H extends DispatcherHandoff = DispatcherH
     },
     __internals: () => ({
       claimRetryStateSize: state.claimRetryState.size,
+      pendingCancelsByHandoffSize: state.pendingCancelsByHandoff.size,
+      pendingCancelsByHandoffKeys: Array.from(state.pendingCancelsByHandoff.keys()),
+      pendingCancelsByConvSize: state.pendingCancelsByConv.size,
+      pendingCancelsByConvKeys: Array.from(state.pendingCancelsByConv.keys()),
+      pendingCancelSize: state.pendingCancelsByHandoff.size + state.pendingCancelsByConv.size,
       progressBufferBytes: state.currentProgress?.bufferBytes ?? 0,
       progressBufferedChunks: state.currentProgress?.bufferedChunks ?? 0,
     }),
