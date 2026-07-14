@@ -4,11 +4,10 @@ import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonServices } from "../serve.js";
-import type {
-  InProcessPermissionDecision,
-  InProcessPermissionRequestInput,
-} from "../services/in-process-permission-service.js";
 
+import type { ShellConfig } from "./command-policy.js";
+
+import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { json } from "./_helpers.js";
 import { checkWorkerOwnership } from "./fs.js";
 
@@ -29,26 +28,8 @@ const ShellCloseInputSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const ShellAgentchatConfigSchema = z.looseObject({
-  agents: z
-    .array(
-      z.looseObject({
-        auto_approve_to: z.unknown().optional(),
-        name: z.string(),
-      }),
-    )
-    .optional(),
-});
-
 type ShellRunInput = z.infer<typeof ShellRunInputSchema>;
 type ShellSessionPool = NonNullable<DaemonServices["shellSessionPool"]>;
-type ShellConfig = NonNullable<DaemonServices["shellConfig"]>;
-type PermissionService = {
-  requestPermission(input: InProcessPermissionRequestInput): Promise<InProcessPermissionDecision>;
-};
-type ShellDaemonServices = DaemonServices & {
-  permissionService?: PermissionService;
-};
 
 const TERMINAL_STATUSES = new Set<HandoffRow["status"]>([
   "completed",
@@ -81,48 +62,6 @@ function clearApproved(handoffId: string, sessionId?: string): void {
   const sessions = approvedSessions.get(handoffId);
   sessions?.delete(sessionId);
   if (sessions?.size === 0) approvedSessions.delete(handoffId);
-}
-
-function autoApproveTargetsForAgent(agentchatConfig: unknown, agentName: string): unknown {
-  const parsed = ShellAgentchatConfigSchema.safeParse(agentchatConfig);
-  if (!parsed.success) {
-    return undefined;
-  }
-
-  const cfg = parsed.data.agents?.find((agent) => agent.name === agentName);
-  return cfg?.auto_approve_to;
-}
-
-async function requestPermission(
-  services: DaemonServices,
-  input: {
-    handoffId: string;
-    agentName: string;
-    toolName: "shell_run" | "shell_run.dangerous";
-    context: Record<string, unknown>;
-  },
-): Promise<"approve" | "reject"> {
-  const shellServices = services as ShellDaemonServices;
-  const permissionService = shellServices.permissionService;
-  const autoApproveTo = autoApproveTargetsForAgent(services.agentchatConfig, input.agentName);
-  if (
-    input.toolName === "shell_run" &&
-    Array.isArray(autoApproveTo) &&
-    autoApproveTo.includes("shell_run")
-  ) {
-    return "approve";
-  }
-  if (!permissionService) {
-    return "reject";
-  }
-
-  const decision = await permissionService.requestPermission({
-    parent_handoff_id: input.handoffId,
-    agent_name: input.agentName,
-    tool_name: input.toolName,
-    context: input.context,
-  });
-  return decision.approved ? "approve" : "reject";
 }
 
 async function safeJson(req: Request): Promise<unknown> {
@@ -256,7 +195,7 @@ async function ensureShellPermission(
     return null;
   }
 
-  const decision = await requestPermission(services, {
+  const decision = await requestCommandPermission(services, {
     handoffId: input.handoff_id,
     agentName: input.agent_name,
     toolName: "shell_run",
@@ -286,23 +225,6 @@ async function ensureShellPermission(
   });
 }
 
-function matchedDangerousPatterns(
-  shellConfig: ShellConfig,
-  agentName: string,
-  command: string,
-): string[] {
-  const dangerousPatterns = shellConfig.dangerousCommandsForAgent(agentName);
-  const normalizedCommand = command.replaceAll(/\s+/g, " ");
-  return dangerousPatterns.filter((pattern) => {
-    try {
-      return new RegExp(pattern).test(normalizedCommand);
-    } catch (err) {
-      console.warn(`[shell-run] Malformed dangerous command pattern "${pattern}":`, err);
-      return true;
-    }
-  });
-}
-
 async function ensureDangerousCommandPermission(
   services: DaemonServices,
   shellConfig: ShellConfig,
@@ -314,7 +236,7 @@ async function ensureDangerousCommandPermission(
     return null;
   }
 
-  const decision = await requestPermission(services, {
+  const decision = await requestCommandPermission(services, {
     handoffId: input.handoff_id,
     agentName: input.agent_name,
     toolName: "shell_run.dangerous",

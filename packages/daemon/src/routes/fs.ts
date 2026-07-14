@@ -9,6 +9,7 @@ import type { DaemonServices } from "../serve.js";
 
 import { getPrincipal } from "../auth.js";
 import { executeGlob, executeGrep, GrepError, type GrepOutputMode } from "../fs-search.js";
+import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { bodyJson, json } from "./_helpers.js";
 import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
 
@@ -506,18 +507,36 @@ export async function worktreesExecRoute(
     );
   }
   const agentName = context.handoff?.to_agent ?? "";
-  const dangerousPatterns: string[] = shellConfig.dangerousCommandsForAgent(agentName);
-  const normalizedCommand = command.split(/\s+/).join(" ");
-  const matched = dangerousPatterns.filter((pattern: string) => {
-    try {
-      return new RegExp(pattern).test(normalizedCommand);
-    } catch (err) {
-      console.warn(`[fs-exec] Malformed dangerous command pattern "${pattern}":`, err);
-      return true; // Fail closed
-    }
+
+  // Unify with shell_run: fs_exec must pass the same permission/trust gate the
+  // shell_run route enforces before spawning, not just the dangerous-command
+  // regex. Unattended dispatches whose agent auto-approves shell_run skip the
+  // prompt exactly as shell_run does; everyone else raises a permission request
+  // via the in-process permission service (fail-closed when none is wired).
+  const generalDecision = await requestCommandPermission(context.services, {
+    handoffId: handoff_id,
+    agentName,
+    toolName: "shell_run",
+    context: { command: command.slice(0, 200) },
   });
+  if (generalDecision === "reject") {
+    return json(
+      { error: { code: "permission_denied", message: "permission denied: shell_run" } },
+      403,
+    );
+  }
+
+  const matched = matchedDangerousPatterns(shellConfig, agentName, command);
   if (matched.length > 0) {
-    return json({ error: { code: "dangerous_command", matched } }, 403);
+    const dangerousDecision = await requestCommandPermission(context.services, {
+      handoffId: handoff_id,
+      agentName,
+      toolName: "shell_run.dangerous",
+      context: { command: command.slice(0, 1024), matched_patterns: matched },
+    });
+    if (dangerousDecision === "reject") {
+      return json({ error: { code: "dangerous_command", matched } }, 403);
+    }
   }
 
   const cwd = ((): string => {

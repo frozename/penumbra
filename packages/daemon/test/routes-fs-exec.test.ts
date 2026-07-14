@@ -32,6 +32,23 @@ async function jsonBody<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+type ExecToolName = "shell_run" | "shell_run.dangerous";
+
+interface ExecPermissionInput {
+  parent_handoff_id: string;
+  agent_name: string;
+  tool_name: ExecToolName;
+  context: Record<string, unknown>;
+}
+
+interface ExecPermissionService {
+  requestPermission(input: ExecPermissionInput): Promise<{ approved: boolean }>;
+}
+
+interface ExecAgentchatConfig {
+  agents: { name: string; auto_approve_to: string[] }[];
+}
+
 function fakeServices(
   worktrees: Record<string, string>,
   opts: {
@@ -39,11 +56,15 @@ function fakeServices(
     dangerousPatterns?: Record<string, string[]>;
     omitShellConfig?: boolean;
     shellConfig?: unknown;
+    permissionService?: ExecPermissionService;
+    agentchatConfig?: ExecAgentchatConfig;
   } = {},
 ): Services {
   const services: {
     handoffReader: { get: (id: string) => { to_agent?: string } | null };
     shellConfig?: unknown;
+    agentchatConfig?: ExecAgentchatConfig;
+    permissionService?: ExecPermissionService;
     worktreeManager: {
       getWorktree: (id: string) => { handoffId: string; path: string } | null;
     };
@@ -63,6 +84,15 @@ function fakeServices(
         agentName === null ? [] : (opts.dangerousPatterns?.[agentName] ?? []),
     };
   }
+  if (opts.agentchatConfig) {
+    services.agentchatConfig = opts.agentchatConfig;
+  }
+  // Default gate mirrors an unattended dispatch: general shell_run is approved,
+  // but dangerous commands are not auto-approved (matching shell_run policy).
+  services.permissionService = opts.permissionService ?? {
+    requestPermission: (input: ExecPermissionInput): Promise<{ approved: boolean }> =>
+      Promise.resolve({ approved: input.tool_name === "shell_run" }),
+  };
   // The route under test reads only these daemon service fields.
   return services as unknown as Services;
 }
@@ -296,5 +326,144 @@ describe("worktrees exec route", () => {
     const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("shell_config_unavailable");
     expect(body.error.message).toBe("service temporarily unavailable");
+  });
+});
+
+interface ExecPermissionCall {
+  agent_name: string;
+  tool_name: ExecToolName;
+}
+
+function gatedServices(opts: {
+  worktreePath: string;
+  agentName?: string;
+  autoApprove?: string[];
+  dangerousPatterns?: string[];
+  decide?: (toolName: ExecToolName) => boolean;
+}): { services: Services; calls: ExecPermissionCall[] } {
+  const agentName = opts.agentName ?? "agent-x";
+  const calls: ExecPermissionCall[] = [];
+  const decide = opts.decide ?? ((): boolean => true);
+  const permissionService: ExecPermissionService = {
+    requestPermission: (input: ExecPermissionInput): Promise<{ approved: boolean }> => {
+      calls.push({ agent_name: input.agent_name, tool_name: input.tool_name });
+      return Promise.resolve({ approved: decide(input.tool_name) });
+    },
+  };
+  const services = fakeServices(
+    { H1: opts.worktreePath },
+    {
+      handoffs: { H1: { to_agent: agentName } },
+      dangerousPatterns: { [agentName]: opts.dangerousPatterns ?? [] },
+      agentchatConfig: { agents: [{ name: agentName, auto_approve_to: opts.autoApprove ?? [] }] },
+      permissionService,
+    },
+  );
+  return { services, calls };
+}
+
+describe("worktrees exec route \u2014 permission unification", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "routes-fs-exec-perm-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("(a) denies a benign command when the permission service rejects shell_run", async () => {
+    const { services, calls } = gatedServices({
+      worktreePath: tmp,
+      autoApprove: [],
+      decide: () => false,
+    });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo hello" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(403);
+    const body = await jsonBody<RouteErrorBody>(res);
+    expect(body.error.code).toBe("permission_denied");
+    // The command must NOT have executed.
+    expect(JSON.stringify(body)).not.toContain("hello");
+    expect(calls.some((c) => c.tool_name === "shell_run")).toBe(true);
+  });
+
+  it("(b) trust_mode:all (auto_approve shell_run) still executes without a prompt", async () => {
+    const { services, calls } = gatedServices({
+      worktreePath: tmp,
+      autoApprove: ["shell_run"],
+      // Even a rejecting service must be bypassed by the auto-approve fast path.
+      decide: () => false,
+    });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo unattended" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(200);
+    const body = await jsonBody<ExecBody>(res);
+    expect(body.stdout).toContain("unattended");
+    expect(body.exit_code).toBe(0);
+    // Auto-approve means the general gate never hits the permission service.
+    expect(calls.some((c) => c.tool_name === "shell_run")).toBe(false);
+  });
+
+  it("(c) routes through the permission service (same hook shell_run uses)", async () => {
+    const { services, calls } = gatedServices({
+      worktreePath: tmp,
+      autoApprove: [],
+      decide: () => true,
+    });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo approved" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(200);
+    const body = await jsonBody<ExecBody>(res);
+    expect(body.stdout).toContain("approved");
+    expect(calls).toContainEqual({ agent_name: "agent-x", tool_name: "shell_run" });
+  });
+
+  it("(d) dangerous commands are gated via the permission service, not raw regex", async () => {
+    const { services, calls } = gatedServices({
+      worktreePath: tmp,
+      autoApprove: ["shell_run"],
+      dangerousPatterns: ["rm\\s+-rf"],
+      // General is auto-approved; dangerous must still consult the service and be denied.
+      decide: (toolName) => toolName === "shell_run",
+    });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "rm -rf /tmp/whatever" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(403);
+    const body = await jsonBody<DangerousCommandBody>(res);
+    expect(body.error.code).toBe("dangerous_command");
+    expect(body.error.matched.length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.tool_name === "shell_run.dangerous")).toBe(true);
+  });
+
+  it("(e) a dangerous command approved by the permission service executes", async () => {
+    const { services, calls } = gatedServices({
+      worktreePath: tmp,
+      autoApprove: ["shell_run"],
+      dangerousPatterns: ["echo\\s+danger"],
+      decide: () => true,
+    });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo danger" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(200);
+    const body = await jsonBody<ExecBody>(res);
+    expect(body.stdout).toContain("danger");
+    expect(calls.some((c) => c.tool_name === "shell_run.dangerous")).toBe(true);
   });
 });
