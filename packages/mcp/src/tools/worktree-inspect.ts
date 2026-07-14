@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { type DaemonClient, DaemonHttpError } from "../daemon-client.js";
 import { type ToolHandler, type ToolResult } from "./context.js";
+import { handoffErrorContent, resolveHandoffId } from "./handoff-guard.js";
 
 export const WorktreeInspectInputShape = {
   handoff_id: z.string().min(1).describe("The handoff ID to inspect the worktree for"),
@@ -9,8 +10,12 @@ export const WorktreeInspectInputShape = {
 
 export function worktreeInspectHandler(daemon: DaemonClient): ToolHandler<{ handoff_id: string }> {
   return async (input): Promise<ToolResult> => {
+    const resolved = resolveHandoffId(input.handoff_id);
+    if (!resolved.ok) {
+      return handoffErrorContent(resolved.error.code, resolved.error.message);
+    }
     try {
-      const res = await daemon.inspectWorktree(input.handoff_id);
+      const res = await daemon.inspectWorktree(resolved.handoff_id);
       return { content: [{ type: "text", text: JSON.stringify(res) }] };
     } catch (err) {
       if (err instanceof DaemonHttpError && err.status === 404) {

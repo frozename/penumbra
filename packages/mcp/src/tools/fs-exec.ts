@@ -9,6 +9,7 @@ import {
   makeFsEnvelopeResult,
   toErrorContent,
 } from "./fs-envelope.js";
+import { resolveHandoffId } from "./handoff-guard.js";
 
 export const FsExecInputShape = {
   command: z
@@ -47,13 +48,11 @@ export function fsExecHandler(
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsExecInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {
-    const handoff_id = input.handoff_id ?? process.env.PENUMBRA_HANDOFF_ID;
-    if (!handoff_id) {
-      return errorContent(
-        "no_handoff_context",
-        "pass handoff_id explicitly or run inside a dispatch (PENUMBRA_HANDOFF_ID env var unset)",
-      );
+    const resolved = resolveHandoffId(input.handoff_id);
+    if (!resolved.ok) {
+      return errorContent(resolved.error.code, resolved.error.message);
     }
+    const handoff_id = resolved.handoff_id;
     try {
       const result = await daemon.execInWorktree(handoff_id, {
         command: input.command,

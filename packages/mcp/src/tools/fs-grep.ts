@@ -9,6 +9,7 @@ import {
   makeFsEnvelopeResult,
   toErrorContent,
 } from "./fs-envelope.js";
+import { resolveHandoffId } from "./handoff-guard.js";
 
 export const FsGrepInputShape = {
   pattern: z.string().min(1).describe("Regular expression to search for."),
@@ -64,13 +65,11 @@ export function fsGrepHandler(
   opts?: FsEnvelopeHandlerOpts,
 ): (input: FsGrepInput) => Promise<FsToolResult> {
   return async (input): Promise<FsToolResult> => {
-    const handoff_id = input.handoff_id ?? process.env.PENUMBRA_HANDOFF_ID;
-    if (!handoff_id) {
-      return errorContent(
-        "no_handoff_context",
-        "pass handoff_id explicitly or run inside a dispatch (PENUMBRA_HANDOFF_ID env var unset)",
-      );
+    const resolved = resolveHandoffId(input.handoff_id);
+    if (!resolved.ok) {
+      return errorContent(resolved.error.code, resolved.error.message);
     }
+    const handoff_id = resolved.handoff_id;
 
     const outputMode = input.output_mode ?? "content";
     if (
