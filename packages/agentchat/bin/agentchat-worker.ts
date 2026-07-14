@@ -83,6 +83,11 @@ import {
 } from "../src/worker/orchestrate-tools.js";
 import { createPermissionCallback } from "../src/worker/permission-callback.js";
 import { PermissionDaemonClient } from "../src/worker/permission-daemon-client.js";
+import {
+  createPermissionEventSource,
+  type PermissionEventSource,
+  type PermissionSseCreds,
+} from "../src/worker/permission-event-source.js";
 import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
 import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
 import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
@@ -865,152 +870,6 @@ function loadProjectContext(project_id: string | null): string | undefined {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 }
 
-type PermissionEventSourceListener = (evt: { data: string; lastEventId?: string }) => void;
-
-interface PermissionEventSource {
-  addEventListener: (name: string, fn: PermissionEventSourceListener) => void;
-  onReconnect: (fn: () => void) => () => void;
-  close: () => void;
-}
-
-interface ParsedSseFrame {
-  eventName: string;
-  lastEventId: string | undefined;
-  data: string;
-}
-
-function parseSseFrame(frame: string): ParsedSseFrame | null {
-  let eventName = "";
-  let lastEventId: string | undefined;
-  const dataLines: string[] = [];
-  for (const line of frame.split("\n")) {
-    if (line.startsWith("event:")) {
-      eventName = line.slice(6).trim();
-    } else if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).replace(/^ /, ""));
-    } else if (line.startsWith("id:")) {
-      lastEventId = line.slice(3).trim();
-    }
-  }
-  if (!eventName || dataLines.length === 0) {
-    return null;
-  }
-  return { eventName, lastEventId, data: dataLines.join("\n") };
-}
-
-function createPermissionEventSource(url: string, token: string): PermissionEventSource {
-  // Native EventSource (browser API) doesn't support custom headers — bun's
-  // global EventSource (when available) inherits that limitation, so we
-  // can't use it here: the daemon's bearer auth would never be sent. The
-  // fallback below is the authoritative path until we adopt a polyfill that
-  // supports authenticated reconnect.
-  const listeners = new Map<string, Set<PermissionEventSourceListener>>();
-  const reconnectListeners = new Set<() => void>();
-  const controller = new AbortController();
-  let closed = false;
-  let backoffMs = 200;
-
-  const fireReconnectListeners = (): void => {
-    for (const fn of reconnectListeners) {
-      fn();
-    }
-  };
-
-  const emit = (name: string, data: string, lastEventId?: string): void => {
-    for (const fn of listeners.get(name) ?? []) {
-      fn({ data, lastEventId });
-    }
-  };
-
-  const handleFrame = (frame: string): void => {
-    const parsed = parseSseFrame(frame);
-    if (parsed) {
-      emit(parsed.eventName, parsed.data, parsed.lastEventId);
-    }
-  };
-
-  const isStreamStopped = (): boolean => closed || controller.signal.aborted;
-
-  const consumeBody = async (body: ReadableStream<Uint8Array>): Promise<void> => {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    fireReconnectListeners();
-    try {
-      while (!isStreamStopped()) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-        backoffMs = 200;
-        buf += decoder.decode(value, { stream: true });
-        const frames = buf.split("\n\n");
-        buf = frames.pop() ?? "";
-        for (const frame of frames) {
-          handleFrame(frame);
-        }
-      }
-    } finally {
-      reader.releaseLock();
-      try {
-        await body.cancel();
-      } catch {
-        /* noop */
-      }
-    }
-  };
-
-  const isStopped = (): boolean => closed || controller.signal.aborted;
-
-  const pump = async (): Promise<void> => {
-    while (!isStopped()) {
-      try {
-        const res = await fetch(url, {
-          headers: {
-            accept: "text/event-stream",
-            authorization: `Bearer ${token}`,
-          },
-          signal: controller.signal,
-        });
-        if (!res.ok || !res.body) {
-          throw new Error(`permissions SSE HTTP ${String(res.status)}`);
-        }
-        await consumeBody(res.body);
-      } catch {
-        if (isStopped()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-        backoffMs = Math.min(backoffMs * 2, 30000);
-      }
-    }
-  };
-  void pump();
-
-  return {
-    addEventListener(name: string, fn: PermissionEventSourceListener): void {
-      let bucket = listeners.get(name);
-      if (!bucket) {
-        bucket = new Set();
-        listeners.set(name, bucket);
-      }
-      bucket.add(fn);
-    },
-    onReconnect(fn: () => void): () => void {
-      reconnectListeners.add(fn);
-      return (): void => {
-        reconnectListeners.delete(fn);
-      };
-    },
-    close(): void {
-      closed = true;
-      controller.abort();
-      reconnectListeners.clear();
-      listeners.clear();
-    },
-  };
-}
-
 async function loadConversationTranscript(
   conversation_id: string,
 ): Promise<{ handoff_id: string; agent: string; text: string }[]> {
@@ -1195,28 +1054,34 @@ const refreshPrewarmLoop = (): void => {
 };
 refreshPrewarmLoop();
 
-// Read port + token at boot to construct authenticated SSE connections to the
-// daemon. PenumbraClient re-reads on every call (survives daemon restarts) but
-// the SSE pump captures these once; daemon-restart resilience is a documented
-// Phase 1c v2 limitation. Wrap in try/catch so a missing daemon yields a clean
-// error instead of an opaque ENOENT trace.
-let baseDaemonUrl: string;
-let daemonToken: string;
+// Probe port + token at boot so a missing daemon yields a clean error
+// instead of an opaque ENOENT trace from the first SSE connect attempt.
 try {
-  const portStr = readFileSync(join(storageRoot, "port"), "utf8").trim();
-  daemonToken = readFileSync(join(storageRoot, "token"), "utf8").trim();
-  baseDaemonUrl = `http://127.0.0.1:${String(Number(portStr))}`;
-} catch (err) {
+  readFileSync(join(storageRoot, "port"), "utf8");
+  readFileSync(join(storageRoot, "token"), "utf8");
+} catch {
   console.error(
     `penumbra not running at ${storageRoot} (missing port/token); start the daemon first`,
   );
   process.exit(1);
 }
 
+// Resolve daemon port + token FRESH on every (re)connect so a daemon
+// token-rotation is picked up without restarting the worker. Mirrors
+// PenumbraClient.subscribeSse's resolve()-per-connect pattern.
+const resolvePermissionSseCreds = (): PermissionSseCreds => {
+  const portStr = readFileSync(join(storageRoot, "port"), "utf8").trim();
+  const token = readFileSync(join(storageRoot, "token"), "utf8").trim();
+  return {
+    baseUrl: `http://127.0.0.1:${String(Number(portStr))}`,
+    token,
+  };
+};
+
 const permissionDaemonClient = new PermissionDaemonClient({
   penumbraClient: client,
   makeEventSource: (): PermissionEventSource =>
-    createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
+    createPermissionEventSource("/permissions/events", resolvePermissionSseCreds),
   uuid: systemUuid,
   log,
   onPermissionEvent: (event): void => {
