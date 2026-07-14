@@ -178,6 +178,21 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
   };
   void poll();
 
+  const cancellableSleep = async (ms: number): Promise<void> => {
+    if (abort.signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        abort.signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      abort.signal.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
   const sseLoop = async (): Promise<void> => {
     let backoff = startMs;
     while (!isStopped()) {
@@ -193,18 +208,22 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
         logUnreachable("sse", err);
       }
       if (isStopped()) break;
-      await new Promise((r) => setTimeout(r, backoff));
+      await cancellableSleep(backoff);
       backoff = Math.min(backoff * 2, capMs);
     }
   };
-  void sseLoop();
+  const ssePromise = sseLoop();
+  void ssePromise;
 
   return {
-    stop(): Promise<void> {
+    async stop(): Promise<void> {
       stopped = true;
       if (pollTimer) clearTimeout(pollTimer);
       abort.abort();
-      return Promise.resolve();
+      // Await the SSE loop so callers observing stop() (and tests asserting
+      // prompt exit from the backoff sleep) can rely on the coroutine
+      // having released its closures before stop() resolves.
+      await ssePromise;
     },
     forget(handoff_id: string): void {
       seen.delete(handoff_id);

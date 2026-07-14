@@ -40,12 +40,21 @@ async function* throwHandoffs(message: string): AsyncGenerator<HandoffRow, void,
   yield { handoff_id: "", status: "" };
 }
 
-// A never-resolving async generator (SSE "alive but quiet"). The yield+await
-// after the never-resolving promise are unreachable; this satisfies eslint
-// without a disable comment.
-async function* hangHandoffs(): AsyncGenerator<HandoffRow, void, undefined> {
-  await new Promise<void>(() => {
-    /* never resolves */
+// SSE "alive but quiet" generator: sleeps until the abort signal fires so
+// stop() can unblock the sseLoop's `for await` on it. The yield+await after
+// the sleep are unreachable; they satisfy eslint's require-yield /
+// require-await without a disable comment.
+async function* hangHandoffs(opts?: {
+  signal?: AbortSignal;
+}): AsyncGenerator<HandoffRow, void, undefined> {
+  await new Promise<void>((resolve) => {
+    const signal = opts?.signal;
+    if (!signal) return; // truly never resolves — legacy behavior for callers not passing a signal
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", () => resolve(), { once: true });
   });
   yield { handoff_id: "", status: "" };
 }
@@ -166,11 +175,14 @@ test("SSE events are delivered to handler", async () => {
   const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
-    subscribeHandoffEvents: () =>
-      yieldHandoffsThenHang([
-        { handoff_id: "sse-1", status: "approved" },
-        { handoff_id: "sse-2", status: "approved" },
-      ]),
+    subscribeHandoffEvents: (opts) =>
+      yieldHandoffsThenHang(
+        [
+          { handoff_id: "sse-1", status: "approved" },
+          { handoff_id: "sse-2", status: "approved" },
+        ],
+        opts,
+      ),
   };
   const handle = startEventSource({
     client,
@@ -186,15 +198,23 @@ test("SSE events are delivered to handler", async () => {
 // Helper for SSE-style streams that yield a fixed batch then hold open
 // (the production SSE channel is long-lived, so the production code path
 // reading the iterator must not see done=true after the test's yields).
+// Honors the abort signal so stop() can unblock the sseLoop.
 async function* yieldHandoffsThenHang(
   events: HandoffRow[],
+  opts?: { signal?: AbortSignal },
 ): AsyncGenerator<HandoffRow, void, undefined> {
   for (const ev of events) {
     await Promise.resolve();
     yield ev;
   }
-  await new Promise<void>(() => {
-    /* hold open */
+  await new Promise<void>((resolve) => {
+    const signal = opts?.signal;
+    if (!signal) return; // hold open forever if no signal was provided
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", () => resolve(), { once: true });
   });
 }
 
@@ -202,11 +222,14 @@ test("hard isolation drops SSE handoff events from other projects", async () => 
   const handler = mock((_row: EventSourceRow) => undefined);
   const client: EventSourceClient = {
     listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
-    subscribeHandoffEvents: () =>
-      yieldHandoffsThenHang([
-        { handoff_id: "sse-matched", status: "approved", project_id: "proj-a" },
-        { handoff_id: "sse-other", status: "approved", project_id: "proj-b" },
-      ]),
+    subscribeHandoffEvents: (opts) =>
+      yieldHandoffsThenHang(
+        [
+          { handoff_id: "sse-matched", status: "approved", project_id: "proj-a" },
+          { handoff_id: "sse-other", status: "approved", project_id: "proj-b" },
+        ],
+        opts,
+      ),
   };
   const handle = startEventSource({
     client,
@@ -232,7 +255,8 @@ test("dedupes by handoff_id across SSE + poll", async () => {
       pollCount++;
       return Promise.resolve({ handoffs: [{ handoff_id: "x", status: "approved" }] });
     }),
-    subscribeHandoffEvents: () => yieldHandoffsThenHang([{ handoff_id: "x", status: "approved" }]),
+    subscribeHandoffEvents: (opts) =>
+      yieldHandoffsThenHang([{ handoff_id: "x", status: "approved" }], opts),
   };
   const handle = startEventSource({
     client,
@@ -254,10 +278,10 @@ test("SSE error switches to polling and resumes when SSE recovers", async () => 
     listHandoffs: mock(() =>
       Promise.resolve({ handoffs: [{ handoff_id: "p", status: "approved" }] }),
     ),
-    subscribeHandoffEvents: () => {
+    subscribeHandoffEvents: (opts) => {
       sseAttempt++;
       if (sseAttempt === 1) return throwHandoffs("boom");
-      return yieldHandoffsThenHang([{ handoff_id: "sse-after-recover", status: "approved" }]);
+      return yieldHandoffsThenHang([{ handoff_id: "sse-after-recover", status: "approved" }], opts);
     },
   };
   const handle = startEventSource({
@@ -413,6 +437,35 @@ interface PollLogEntry {
   obj: Record<string, unknown>;
   msg: string;
 }
+
+test("stop() during the SSE backoff sleep interrupts it promptly", async () => {
+  // Uncancellable-sleep regression: previously the sseLoop slept up to
+  // sseBackoffCapMs before noticing stop(); now stop() must interrupt the
+  // sleep so the coroutine exits and releases its closures (BoundedSeen,
+  // callbacks, abort listener) quickly.
+  const handler = mock((_row: EventSourceRow) => undefined);
+  const client: EventSourceClient = {
+    listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
+    // SSE errors immediately so the loop enters the backoff sleep.
+    subscribeHandoffEvents: () => throwHandoffs("sse-down"),
+  };
+  const backoffMs = 3000;
+  const handle = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    // Long enough that a poll tick won't intervene during the measured close.
+    pollIntervalMs: 60_000,
+    sseBackoffStartMs: backoffMs,
+    sseBackoffCapMs: backoffMs,
+  });
+  // Wait long enough to be inside the backoff sleep.
+  await new Promise((r) => setTimeout(r, 30));
+  const t0 = Date.now();
+  await handle.stop();
+  const dt = Date.now() - t0;
+  expect(dt).toBeLessThan(backoffMs / 2);
+});
 
 test("logs daemon unreachable on poll failure when log is provided, throttled to once per window", async () => {
   const warns: PollLogEntry[] = [];

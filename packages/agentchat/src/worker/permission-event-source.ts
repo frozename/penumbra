@@ -4,6 +4,8 @@ export interface PermissionEventSource {
   addEventListener: (name: string, fn: PermissionEventSourceListener) => void;
   onReconnect: (fn: () => void) => () => void;
   close: () => void;
+  /** @internal Test-only: resolves when the pump loop has exited (after close()). */
+  _done: () => Promise<void>;
 }
 
 /**
@@ -130,6 +132,21 @@ export function createPermissionEventSource(
     }
   };
 
+  const cancellableSleep = async (ms: number): Promise<void> => {
+    if (controller.signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        controller.signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
   const pump = async (): Promise<void> => {
     while (!isStopped()) {
       try {
@@ -150,16 +167,23 @@ export function createPermissionEventSource(
           throw new Error(`permissions SSE HTTP ${String(res.status)}`);
         }
         await consumeBody(res.body);
-      } catch {
+      } catch (err) {
         if (isStopped()) {
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        // Surface the failure so an operator can see a persistently-broken
+        // permission stream instead of a silent forever-retry loop.
+        console.error("permissions SSE stream error, retrying after backoff", {
+          err: err instanceof Error ? err.message : String(err),
+          backoff_ms: backoffMs,
+        });
+        await cancellableSleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, backoffCapMs);
       }
     }
   };
-  void pump();
+  const pumpPromise = pump();
+  void pumpPromise;
 
   return {
     addEventListener(name: string, fn: PermissionEventSourceListener): void {
@@ -181,6 +205,9 @@ export function createPermissionEventSource(
       controller.abort();
       reconnectListeners.clear();
       listeners.clear();
+    },
+    _done(): Promise<void> {
+      return pumpPromise;
     },
   };
 }

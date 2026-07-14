@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import {
   createPermissionEventSource,
@@ -198,6 +198,86 @@ describe("createPermissionEventSource", () => {
       expect(req.authorization).toBe("Bearer recovered");
     } finally {
       es.close();
+    }
+  });
+
+  test("pump errors are logged via console.error including the backoff delay", async () => {
+    // Silent-retry regression: prior to the fix the pump caught with a bare
+    // `catch {}` and spun forever with zero operator signal. Confirm the
+    // retryable path now emits a log per failed connect attempt including
+    // the backoff we're about to sleep for.
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let attempts = 0;
+      const resolveCreds = (): PermissionSseCreds => {
+        attempts++;
+        throw new Error("simulated boot failure");
+      };
+      const es = createPermissionEventSource("/permissions/events", resolveCreds, {
+        fetchImpl: (async () => {
+          throw new Error("unreachable");
+        }) as unknown as typeof fetch,
+        backoffStartMs: 3,
+        backoffCapMs: 20,
+      });
+      try {
+        for (let i = 0; i < 50 && consoleError.mock.calls.length < 1; i++) {
+          await sleep(5);
+        }
+        expect(attempts).toBeGreaterThanOrEqual(1);
+        expect(consoleError).toHaveBeenCalled();
+        const logged = consoleError.mock.calls.some((call) => {
+          const meta = call[1];
+          return (
+            typeof meta === "object" &&
+            meta !== null &&
+            "backoff_ms" in (meta as Record<string, unknown>) &&
+            "err" in (meta as Record<string, unknown>)
+          );
+        });
+        expect(logged).toBe(true);
+      } finally {
+        es.close();
+      }
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  test("close() during the backoff sleep interrupts it promptly (well under backoff)", async () => {
+    // Uncancellable-sleep regression: previously the pump slept up to
+    // backoffCapMs before noticing close(); now close() must interrupt the
+    // sleep so the coroutine exits quickly and releases its closures.
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let attempts = 0;
+      const resolveCreds = (): PermissionSseCreds => {
+        attempts++;
+        throw new Error("simulated boot failure");
+      };
+      const backoffMs = 2000;
+      const es = createPermissionEventSource("/permissions/events", resolveCreds, {
+        fetchImpl: (async () => {
+          throw new Error("unreachable");
+        }) as unknown as typeof fetch,
+        backoffStartMs: backoffMs,
+        backoffCapMs: backoffMs,
+      });
+      try {
+        for (let i = 0; i < 50 && attempts < 1; i++) {
+          await sleep(5);
+        }
+        expect(attempts).toBeGreaterThanOrEqual(1);
+        const t0 = Date.now();
+        es.close();
+        await es._done();
+        const dt = Date.now() - t0;
+        expect(dt).toBeLessThan(backoffMs / 2);
+      } finally {
+        es.close();
+      }
+    } finally {
+      consoleError.mockRestore();
     }
   });
 
