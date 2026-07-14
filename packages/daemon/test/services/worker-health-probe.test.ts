@@ -496,7 +496,7 @@ test("async onSignal rejection is logged and allows re-signal on next tick", asy
   expect(signalCount).toBe(2);
 });
 
-test("in-flight onSignal is not re-dispatched on subsequent ticks for same streak", async () => {
+test("in-flight onSignal is not re-dispatched inside the recovery window", async () => {
   vi.useFakeTimers();
   const advance = (ms: number): void => {
     vi.advanceTimersByTime(ms);
@@ -517,6 +517,7 @@ test("in-flight onSignal is not re-dispatched on subsequent ticks for same strea
     services,
     intervalMs: 100,
     missThreshold: 3,
+    recoveryAckTimeoutMs: 10_000,
     controller,
     log: services.log,
   });
@@ -527,4 +528,138 @@ test("in-flight onSignal is not re-dispatched on subsequent ticks for same strea
   await flushPending();
 
   expect(signalCount).toBe(1);
+});
+
+test("in-flight onSignal with no ACK re-emits after the recovery window", async () => {
+  vi.useFakeTimers();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+
+  let signalCount = 0;
+  const controller: WorkerHealthController = {
+    onSignal: (): Promise<void> => {
+      signalCount++;
+      return new Promise<void>(() => {
+        // Never resolves — a wedged restart path that also never ACKs.
+      });
+    },
+  };
+
+  const { services } = buildServices();
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    recoveryAckTimeoutMs: 300,
+    controller,
+    log: services.log,
+  });
+
+  probe.start();
+  advance(500);
+  await flushPending();
+  expect(signalCount).toBe(1);
+
+  advance(1000);
+  await flushPending();
+  expect(signalCount).toBeGreaterThanOrEqual(2);
+});
+
+test("failed recovery (onSignal resolved, no ACK) re-emits after the recovery window", async () => {
+  vi.useFakeTimers();
+  const { services, signals, controller } = buildServices();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    recoveryAckTimeoutMs: 300,
+    controller,
+    log: services.log,
+  });
+
+  probe.start();
+  advance(500);
+  await flushPending();
+  // First eviction signal fired and onSignal resolved (default controller resolves synchronously).
+  expect(signals).toHaveLength(1);
+
+  // No ACK ever arrives: the restarted worker never came back. Once the recovery
+  // window elapses, further misses must re-emit an eviction signal instead of
+  // silencing the dead worker forever.
+  advance(1000);
+  await flushPending();
+  expect(signals.length).toBeGreaterThanOrEqual(2);
+});
+
+test("ACK inside the recovery window clears suppression and prevents duplicate signals", async () => {
+  vi.useFakeTimers();
+  const { services, signals, controlEvents, controller } = buildServices();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    recoveryAckTimeoutMs: 300,
+    controller,
+    log: services.log,
+  });
+
+  probe.start();
+  advance(500);
+  await flushPending();
+  expect(signals).toHaveLength(1);
+
+  // Worker recovers and keeps acking every probe: no further eviction signals,
+  // even well past the recovery window.
+  for (let i = 0; i < 20; i++) {
+    advance(100);
+    await flushPending();
+    const latest = controlEvents.at(-1)!.probe_id;
+    probe.recordAck("worker-a", latest);
+  }
+
+  expect(signals).toHaveLength(1);
+  expect(probe.getMissCount("worker-a")).toBe(0);
+});
+
+test("onSignal rejection clears suppression immediately so the same streak can re-signal", async () => {
+  vi.useFakeTimers();
+  const advance = (ms: number): void => {
+    vi.advanceTimersByTime(ms);
+  };
+
+  let signalCount = 0;
+  const controller: WorkerHealthController = {
+    onSignal: (): Promise<void> => {
+      signalCount++;
+      return Promise.reject(new Error("eviction failed"));
+    },
+  };
+
+  const { services } = buildServices();
+  const probe = new WorkerHealthProbe({
+    services,
+    intervalMs: 100,
+    missThreshold: 3,
+    // Large window so any re-signal is due to rejection-clear, not window expiry.
+    recoveryAckTimeoutMs: 10_000_000,
+    controller,
+    log: services.log,
+  });
+
+  probe.start();
+  advance(500);
+  await flushPending();
+  expect(signalCount).toBe(1);
+
+  // Rejection cleared suppression immediately, so the next miss re-signals.
+  advance(200);
+  await flushPending();
+  expect(signalCount).toBeGreaterThanOrEqual(2);
 });

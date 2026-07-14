@@ -34,18 +34,27 @@ export class WorkerHealthProbe {
   private probeSeq = 0;
   private readonly pending = new Map<string, Map<string, number>>();
   private readonly missCounts = new Map<string, number>();
-  private readonly recoveredThisStreak = new Set<string>();
+  // Suppression is keyed by worker_id and stamped with the clock time the
+  // eviction `onSignal` was dispatched. A suppression with no ACK inside
+  // `recoveryAckTimeoutMs` is treated as a failed recovery and re-emitted on the
+  // next miss, so a worker whose restart never comes back (onSignal rejects,
+  // resolves without recovery, or never settles at all) is not silenced forever.
+  private readonly recoveryAckTimeoutMs: number;
+  private readonly suppressed = new Map<string, number>();
 
   constructor(opts: {
     services: WorkerHealthProbeServices;
     intervalMs?: number;
     missThreshold?: number;
+    recoveryAckTimeoutMs?: number;
     log: Services["log"];
     controller: WorkerHealthController;
   }) {
     this.services = opts.services;
     this.intervalMs = opts.intervalMs ?? 15_000;
     this.missThreshold = opts.missThreshold ?? 3;
+    this.recoveryAckTimeoutMs =
+      opts.recoveryAckTimeoutMs ?? 2 * this.missThreshold * this.intervalMs;
     this.log = opts.log;
     this.controller = opts.controller;
   }
@@ -83,7 +92,7 @@ export class WorkerHealthProbe {
       if (!active.has(worker_id)) {
         this.pending.delete(worker_id);
         this.missCounts.delete(worker_id);
-        this.recoveredThisStreak.delete(worker_id);
+        this.suppressed.delete(worker_id);
       }
     }
   }
@@ -94,7 +103,7 @@ export class WorkerHealthProbe {
       return false;
     }
     this.missCounts.set(worker_id, 0);
-    this.recoveredThisStreak.delete(worker_id);
+    this.suppressed.delete(worker_id);
     return true;
   }
 
@@ -122,7 +131,7 @@ export class WorkerHealthProbe {
       const misses = (this.missCounts.get(worker_id) ?? 0) + 1;
       this.missCounts.set(worker_id, misses);
 
-      if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
+      if (misses >= this.missThreshold && this.shouldEmitSignal(worker_id, now)) {
         const signal: WorkerHealthSignal = {
           kind: "miss_threshold_exceeded",
           worker_id,
@@ -130,9 +139,12 @@ export class WorkerHealthProbe {
           misses,
           probe_interval_ms: this.intervalMs,
         };
-        this.recoveredThisStreak.add(worker_id);
+        const suppressedAt = now;
+        this.suppressed.set(worker_id, suppressedAt);
         Promise.resolve(this.controller.onSignal(signal)).catch((err: unknown) => {
-          this.recoveredThisStreak.delete(worker_id);
+          if (this.suppressed.get(worker_id) === suppressedAt) {
+            this.suppressed.delete(worker_id);
+          }
           this.log.error({ err, worker_id, probe_id: probeId }, "worker health onSignal rejected");
         });
       }
@@ -150,6 +162,13 @@ export class WorkerHealthProbe {
       worker_id,
       probe_id,
     });
+  }
+
+  private shouldEmitSignal(worker_id: string, now: number): boolean {
+    const suppressedAt = this.suppressed.get(worker_id);
+    if (suppressedAt === undefined) return true;
+    // No ACK inside the recovery window → treat as a failed recovery and retry.
+    return now - suppressedAt > this.recoveryAckTimeoutMs;
   }
 }
 
