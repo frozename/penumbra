@@ -753,6 +753,66 @@ test("reconciler diffs against a fixed merge-base and worktree head snapshot", a
   });
 });
 
+test("full-repo typecheck runs direct tsc build, not the dist-freshness-gated script", async () => {
+  // A non-package diff forces the unscoped full-repo verification path.
+  execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd.startsWith("git diff --name-only")) {
+      return Promise.resolve({ stdout: "README.md\n", stderr: "" });
+    }
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+      return Promise.resolve(defaultShortStat);
+    }
+    return defaultExecForCommand(cmd);
+  });
+
+  const result = await reconcile("h_full_tc_pass");
+
+  expect(result.status).toBe("verified");
+  expect(execHistory).toContain("bun tsc -b");
+  expect(execHistory).not.toContain("bun run typecheck");
+  expect(execHistory.some((cmd) => cmd.includes("check-dist-freshness"))).toBe(false);
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_full_tc_pass",
+    typecheck: "pass",
+  });
+});
+
+test("full-repo typecheck still fails on a real tsc diagnostic", async () => {
+  execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd.startsWith("git diff --name-only")) {
+      return Promise.resolve({ stdout: "README.md\n", stderr: "" });
+    }
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+      return Promise.resolve(defaultShortStat);
+    }
+    if (cmd === "bun tsc -b") {
+      return Promise.reject(
+        new ExecCommandError({
+          stdout: "packages/core/src/broken.ts(12,3): error TS2304: Cannot find name 'foo'.\n",
+          code: 2,
+        }),
+      );
+    }
+    return defaultExecForCommand(cmd);
+  });
+
+  const result = await reconcile("h_full_tc_fail");
+
+  expect(result.status).toBe("typecheck_failed");
+  expect(execHistory).toContain("bun tsc -b");
+  expect(execHistory).not.toContain("bun run typecheck");
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_full_tc_fail",
+    typecheck: "fail",
+  });
+});
+
 test("head/base mismatch with persistently empty diff does not emit hard-fail verdict", async () => {
   const baseTip = "1".repeat(40);
   const branchTip = "2".repeat(40);

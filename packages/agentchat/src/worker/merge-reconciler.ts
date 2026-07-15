@@ -1168,7 +1168,7 @@ async function runTypecheckOnAllPackages(
   timeoutSeconds: number,
 ): Promise<MergeResult | null> {
   ctx.deps.log.debug({ handoffId: ctx.handoffId }, "running full typecheck in worktree");
-  const res = await execCmd(ctx, ["bun", "run", "typecheck"], ctx.wt.path, timeoutSeconds);
+  const res = await execCmd(ctx, ["bun", "tsc", "-b"], ctx.wt.path, timeoutSeconds);
   if (res.timedOut) {
     ctx.state.typecheckStatus = "fail";
     const result: MergeResult = {
