@@ -85,7 +85,7 @@ function shellRuntime(services: DaemonServices):
     return json({ error: { code: "shell_disabled" } }, 503);
   }
 
-  if (!shellConfig) {
+  if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
     return json(
       {
         error: {
