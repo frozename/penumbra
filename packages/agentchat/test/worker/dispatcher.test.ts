@@ -1,6 +1,6 @@
 import type { DispatchEventInput, Logger } from "@penumbra/core";
 
-import { expect, mock, test } from "bun:test";
+import { expect, mock, test, vi } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -540,6 +540,28 @@ test("unmatched cancels do not grow pendingCancel state without bound", () => {
   }
 
   expect(dispatcher.__internals().pendingCancelSize).toBeLessThanOrEqual(1_000);
+});
+
+test("stale unmatched cancels are evicted before the size cap is reached", () => {
+  let nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+  const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+  try {
+    const d = deps();
+    const dispatcher = createWorkerDispatcher(d);
+
+    dispatcher.cancel("c-stale", "h-stale");
+    expect(dispatcher.__internals().pendingCancelsByHandoffKeys).toContain("h-stale");
+
+    nowMs += 300_001;
+    dispatcher.cancel("c-fresh", "h-fresh");
+
+    const internals = dispatcher.__internals();
+    expect(internals.pendingCancelsByHandoffKeys).toEqual(["h-fresh"]);
+    expect(internals.pendingCancelsByHandoffKeys).not.toContain("h-stale");
+    expect(internals.pendingCancelSize).toBe(1);
+  } finally {
+    nowSpy.mockRestore();
+  }
 });
 
 test("emits dispatch.end status=error when dispatch reports terminal error", async () => {
