@@ -763,3 +763,154 @@ describe("runWorktreeGcTick — stage/* branch reaper", () => {
     }
   });
 });
+
+describe("runWorktreeGcTick — default git-backed branchLandedCheck", () => {
+  let repoDir: string;
+  let baseSha: string;
+
+  beforeEach(async () => {
+    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-landed-gc-"));
+    await execFile("git", ["-C", repoDir, "init", "-b", "main"]);
+    await execFile("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", repoDir, "config", "user.name", "test"]);
+    fs.writeFileSync(path.join(repoDir, "README.md"), "# base\n");
+    await execFile("git", ["-C", repoDir, "add", "README.md"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "base"]);
+    const { stdout } = await execFile("git", ["-C", repoDir, "rev-parse", "HEAD"]);
+    baseSha = stdout.trim();
+  });
+
+  afterEach(() => {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  // (a) A squash-landed branch: its own commit is NOT an ancestor of main, but
+  // its content is fully present in main (dispatch_land squashes). Must classify
+  // as "landed" and be reaped — this is the defect the fix targets.
+  test("squash-landed branch (non-ancestor, content in main) IS reaped", async () => {
+    const db = setupDb();
+    // Branch introduces feature.txt + edits README.
+    await execFile("git", ["-C", repoDir, "checkout", "-b", "agent/h-squash", baseSha]);
+    fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+    fs.writeFileSync(path.join(repoDir, "README.md"), "# base\nfeature\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "add feature"]);
+    // Squash-land the SAME content onto main as a fresh commit, then move on.
+    await execFile("git", ["-C", repoDir, "checkout", "main"]);
+    fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+    fs.writeFileSync(path.join(repoDir, "README.md"), "# base\nfeature\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "land feature (squash)"]);
+    fs.writeFileSync(path.join(repoDir, "next.txt"), "next\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "later unrelated work"]);
+
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-squash", "completed", resolvedAt);
+    const svc = makeServicesWithRepo(db, repoDir, [makeHandle("h-squash")]);
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.removed).toEqual(["h-squash"]);
+    expect(result.unlanded_skipped).toEqual([]);
+    expect(result.deferred).toEqual([]);
+    const row = db
+      .query<
+        { meta_json: string },
+        [string]
+      >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'worktree.gc'`)
+      .get("h-squash");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.land_status).toBe("landed");
+  });
+
+  // (a') Fast path: a branch that IS an ancestor of main is still "landed".
+  test("ancestor branch IS reaped (classified landed)", async () => {
+    const db = setupDb();
+    await execFile("git", ["-C", repoDir, "branch", "agent/h-anc", baseSha]);
+    fs.writeFileSync(path.join(repoDir, "more.txt"), "more\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "advance main past branch"]);
+
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-anc", "completed", resolvedAt);
+    const svc = makeServicesWithRepo(db, repoDir, [makeHandle("h-anc")]);
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.removed).toEqual(["h-anc"]);
+    expect(result.unlanded_skipped).toEqual([]);
+  });
+
+  // (b) A branch with genuine content not present in main must stay "unlanded"
+  // and be preserved — reaping would lose work (regression guard).
+  test("genuinely unlanded branch (real content not in main) is PRESERVED", async () => {
+    const db = setupDb();
+    await execFile("git", ["-C", repoDir, "checkout", "-b", "agent/h-real", baseSha]);
+    fs.writeFileSync(path.join(repoDir, "unmerged.txt"), "real unmerged work\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "real work"]);
+    await execFile("git", ["-C", repoDir, "checkout", "main"]);
+    // main advances independently; the branch's file never lands.
+    fs.writeFileSync(path.join(repoDir, "other.txt"), "other\n");
+    await execFile("git", ["-C", repoDir, "add", "-A"]);
+    await execFile("git", ["-C", repoDir, "commit", "-m", "unrelated main work"]);
+
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-real", "completed", resolvedAt);
+    const svc = makeServicesWithRepo(db, repoDir, [makeHandle("h-real")]);
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.removed).toEqual([]);
+    expect(result.unlanded_skipped).toEqual(["h-real"]);
+    const row = db
+      .query<{ meta_json: string }, [string]>(
+        `SELECT meta_json FROM dispatch_events
+         WHERE handoff_id = ? AND kind = 'worktree.gc.unlanded_skipped'`,
+      )
+      .get("h-real");
+    const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+    expect(meta.land_status).toBe("unlanded");
+  });
+
+  // (c) A missing branch ref classifies "missing" and is reaped (nothing to lose).
+  test("missing branch ref classifies missing and IS reaped", async () => {
+    const db = setupDb();
+    // No agent/h-gone branch is ever created.
+    const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+    insertHandoff(db, "h-gone", "completed", resolvedAt);
+    const svc = makeServicesWithRepo(db, repoDir, [makeHandle("h-gone")]);
+
+    const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+    expect(result.removed).toEqual(["h-gone"]);
+    expect(result.unlanded_skipped).toEqual([]);
+  });
+
+  // (d) A probe error (mainRepoDir is not a git repo) fails safe: defer, never reap.
+  test("probe error (non-git mainRepoDir) fails safe and defers", async () => {
+    const db = setupDb();
+    const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-nonrepo-"));
+    try {
+      const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
+      insertHandoff(db, "h-err", "completed", resolvedAt);
+      const svc = makeServicesWithRepo(db, nonRepo, [makeHandle("h-err")]);
+
+      const result = await runWorktreeGcTick({ services: svc, gracePeriodMs: GRACE_MS }, NOW_FN);
+
+      expect(result.removed).toEqual([]);
+      expect(result.unlanded_skipped).toEqual(["h-err"]);
+      const row = db
+        .query<{ meta_json: string }, [string]>(
+          `SELECT meta_json FROM dispatch_events
+           WHERE handoff_id = ? AND kind = 'worktree.gc.unlanded_skipped'`,
+        )
+        .get("h-err");
+      const meta = JSON.parse(row?.meta_json ?? "{}") as Record<string, unknown>;
+      expect(meta.land_status).toBe("error");
+    } finally {
+      fs.rmSync(nonRepo, { recursive: true, force: true });
+    }
+  });
+});
