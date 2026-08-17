@@ -29,6 +29,8 @@ describe("resolveInsideWorktree", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);
       expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
+      expect((err as FsPathError).message).not.toContain("/etc/passwd");
     }
   });
 
@@ -44,6 +46,7 @@ describe("resolveInsideWorktree", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);
       expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
     }
   });
 
@@ -56,6 +59,7 @@ describe("resolveInsideWorktree", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);
       expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
     } finally {
       fs.unlinkSync("/tmp/fs-paths-target.txt");
     }
@@ -82,6 +86,38 @@ describe("resolveInsideWorktree", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);
       expect((err as FsPathError).code).toBe("not_found");
+    }
+  });
+
+  it("uses the identical generic error for existing and nonexistent outside paths", async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-paths-outside-"));
+    const existingOutside = path.join(outsideDir, "secret.txt");
+    const missingOutside = path.join(outsideDir, "missing.txt");
+    fs.writeFileSync(existingOutside, "secret");
+
+    async function capture(userPath: string): Promise<{ code: string; message: string }> {
+      try {
+        await resolveInsideWorktree(userPath, tmp);
+        throw new Error("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(FsPathError);
+        return { code: (err as FsPathError).code, message: (err as FsPathError).message };
+      }
+    }
+
+    try {
+      const existing = await capture(existingOutside);
+      const missing = await capture(missingOutside);
+
+      expect(existing).toEqual({
+        code: "outside_worktree",
+        message: "path is outside the worktree",
+      });
+      expect(missing).toEqual(existing);
+      expect(existing.message).not.toContain(outsideDir);
+      expect(missing.message).not.toContain(outsideDir);
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 });
