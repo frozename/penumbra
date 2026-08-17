@@ -14,6 +14,11 @@ import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
 import {
+  type BunTestReport,
+  isKnownBunTeardownPanicPass,
+  parseBunTestReport,
+} from "./bun-test-output.js";
+import {
   runThoughtAnalyzer,
   type ThoughtAnalyzerDeps,
   type ThoughtRow,
@@ -87,6 +92,7 @@ class Mutex {
 }
 
 const globalMergeLock = new Mutex();
+const testBaselineCache = new Map<string, Promise<BunTestCommandOutcome>>();
 
 /**
  * Maps changed file paths to affected package roots.
@@ -154,6 +160,16 @@ interface RebaseOutcome {
 interface CommandResult {
   stdout: string;
   stderr: string;
+}
+
+interface BunTestCommandOutcome {
+  timedOut: boolean;
+  envFailure: boolean;
+  passed: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  report: BunTestReport;
 }
 
 interface CommandRun {
@@ -1408,6 +1424,202 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
   }
 }
 
+function didBunTestCommandPass(exitCode: number, report: BunTestReport): boolean {
+  if (exitCode === 0) {
+    return report.fails === null || (report.fails === 0 && report.errors === 0);
+  }
+  return isKnownBunTeardownPanicPass(report);
+}
+
+async function runBunTestCommand(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  cwd: string,
+  timeout: number,
+): Promise<BunTestCommandOutcome> {
+  try {
+    const res = await execCmd(ctx, ["bun", "test", ...testArgs], cwd, timeout);
+    const stdout = res.stdout;
+    const stderr = res.stderr;
+    const report = parseBunTestReport(`${stdout}${stderr}`);
+    return {
+      timedOut: res.timedOut === true,
+      envFailure: false,
+      passed: res.timedOut === true ? false : didBunTestCommandPass(0, report),
+      exitCode: 0,
+      stdout,
+      stderr,
+      report,
+    };
+  } catch (err: unknown) {
+    const info = commandErrorInfo(err);
+    const report = parseBunTestReport(`${info.stdout}${info.stderr}`);
+    return {
+      timedOut: false,
+      envFailure: isVerificationEnvironmentFailure(info),
+      passed: didBunTestCommandPass(info.exitCode, report),
+      exitCode: info.exitCode,
+      stdout: info.stdout,
+      stderr: info.stderr,
+      report,
+    };
+  }
+}
+
+function safePathToken(value: string): string {
+  const token = value.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
+  return token.length > 0 ? token.slice(0, 120) : "unknown";
+}
+
+function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): string {
+  const snapshot = requireSnapshot(ctx);
+  return [ctx.deps.mainRepoDir, snapshot.mergeBaseSha, ...testArgs].join("\0");
+}
+
+async function runBunTestBaseline(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  timeout: number,
+): Promise<BunTestCommandOutcome> {
+  const { deps, handoffId } = ctx;
+  const snapshot = requireSnapshot(ctx);
+  const scratchRoot = deps.rebaseScratchRoot ?? join(homedir(), ".penumbra", "rebase-scratch");
+  const scratchPath = join(scratchRoot, "test-baseline", safePathToken(handoffId));
+  await mkdir(dirname(scratchPath), { recursive: true });
+  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+  await rm(scratchPath, { recursive: true, force: true }).catch(noop);
+  try {
+    await execGit(
+      ctx,
+      ["worktree", "add", "--detach", scratchPath, snapshot.mergeBaseSha],
+      deps.mainRepoDir,
+    );
+    return await runBunTestCommand(ctx, testArgs, scratchPath, timeout);
+  } finally {
+    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+    await rm(scratchPath, { recursive: true, force: true }).catch(noop);
+  }
+}
+
+async function getCachedBunTestBaseline(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  timeout: number,
+): Promise<BunTestCommandOutcome> {
+  const key = testBaselineCacheKey(ctx, testArgs);
+  let pending = testBaselineCache.get(key);
+  if (!pending) {
+    pending = runBunTestBaseline(ctx, testArgs, timeout);
+    testBaselineCache.set(key, pending);
+  }
+  return await pending;
+}
+
+function testOutcomeOutput(outcome: BunTestCommandOutcome): string {
+  return outcome.stderr || outcome.stdout || outcome.report.rawOutput;
+}
+
+function formatNewTestFailures(newKeys: string[], outcome: BunTestCommandOutcome): string {
+  if (newKeys.length === 0) {
+    return testOutcomeOutput(outcome) || "tests failed";
+  }
+  const visible = newKeys.slice(0, 20).map((key) => key.replace(/^(fail|error):/, ""));
+  if (newKeys.length > 20) visible.push(`... (${String(newKeys.length - 20)} more)`);
+  const detail = testOutcomeOutput(outcome);
+  return `new test failures:\n${visible.join("\n")}${detail ? `\n\n${detail}` : ""}`;
+}
+
+function findNewFailureKeys(
+  branch: BunTestCommandOutcome,
+  baseline: BunTestCommandOutcome,
+): string[] {
+  const baselineKeys = new Set(baseline.report.failureKeys);
+  return branch.report.failureKeys.filter((key) => !baselineKeys.has(key));
+}
+
+function canCompareAgainstBaseline(outcome: BunTestCommandOutcome): boolean {
+  return (
+    outcome.report.reachedSummary && !outcome.passed && !outcome.timedOut && !outcome.envFailure
+  );
+}
+
+async function emitTestFailure(
+  ctx: ReconcileCtx,
+  regressionSummary: string,
+  timedOut = false,
+): Promise<MergeResult> {
+  ctx.state.testStatus = "fail";
+  const result: MergeResult = {
+    status: "test_failed",
+    regression_summary: regressionSummary,
+    ...(timedOut ? { timed_out: true } : {}),
+  };
+  await emitResult(ctx, result);
+  return result;
+}
+
+async function emitTestEnvironmentError(
+  ctx: ReconcileCtx,
+  regressionSummary: string,
+): Promise<MergeResult> {
+  ctx.state.testStatus = "error";
+  ctx.deps.log.warn(
+    { handoffId: ctx.handoffId, stage: "tests", err: regressionSummary },
+    "verification environment failed; not attributable to dispatched code",
+  );
+  const result: MergeResult = {
+    status: "test_failed",
+    regression_summary: `verification environment error (tests): ${regressionSummary}`,
+  };
+  await emitResult(ctx, result);
+  return result;
+}
+
+async function evaluateBunTestOutcome(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  timeout: number,
+  outcome: BunTestCommandOutcome,
+): Promise<MergeResult | null> {
+  if (outcome.timedOut) {
+    return await emitTestFailure(ctx, "tests timed out", true);
+  }
+  if (outcome.envFailure) {
+    return await emitTestEnvironmentError(ctx, "empty stdout/stderr from test command");
+  }
+  if (outcome.passed) {
+    ctx.state.testStatus = "pass";
+    return null;
+  }
+  if (!canCompareAgainstBaseline(outcome)) {
+    return await emitTestFailure(ctx, testOutcomeOutput(outcome) || "tests failed");
+  }
+
+  const baseline = await getCachedBunTestBaseline(ctx, testArgs, timeout);
+  if (baseline.timedOut) {
+    return await emitTestEnvironmentError(ctx, "baseline tests timed out");
+  }
+  if (baseline.envFailure) {
+    return await emitTestEnvironmentError(ctx, "empty stdout/stderr from baseline test command");
+  }
+  if (!baseline.report.reachedSummary) {
+    return await emitTestEnvironmentError(
+      ctx,
+      testOutcomeOutput(baseline) || "baseline tests did not reach a summary",
+    );
+  }
+  const newFailureKeys = findNewFailureKeys(outcome, baseline);
+  if (newFailureKeys.length === 0) {
+    ctx.deps.log.warn(
+      { handoffId: ctx.handoffId, testArgs },
+      "scoped tests failed only with failures already present at branch base",
+    );
+    ctx.state.testStatus = "pass";
+    return null;
+  }
+  return await emitTestFailure(ctx, formatNewTestFailures(newFailureKeys, outcome));
+}
+
 async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
   const { deps, wt, handoffId, state } = ctx;
   try {
@@ -1418,19 +1630,12 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     if (affectedPackages === null) {
       deps.log.debug({ handoffId }, "running full test suite in worktree");
       state.testCommandUsed = "bun test";
-      const res = await execCmd(ctx, ["bun", "test"], wt.path, timeout);
-      if (res.timedOut) {
-        state.testStatus = "fail";
-        const result: MergeResult = {
-          status: "test_failed",
-          timed_out: true,
-          regression_summary: "tests timed out",
-        };
-        await emitResult(ctx, result);
-        return result;
-      }
-      state.testStatus = "pass";
-      return null;
+      return await evaluateBunTestOutcome(
+        ctx,
+        [],
+        timeout,
+        await runBunTestCommand(ctx, [], wt.path, timeout),
+      );
     }
     if (affectedPackages.length === 0) {
       deps.log.debug({ handoffId }, "skipping tests for docs-only diff");
@@ -1449,19 +1654,12 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     }
     deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
     state.testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
-    const res = await execCmd(ctx, ["bun", "test", ...scopedTestPaths], wt.path, timeout);
-    if (res.timedOut) {
-      state.testStatus = "fail";
-      const result: MergeResult = {
-        status: "test_failed",
-        timed_out: true,
-        regression_summary: "tests timed out",
-      };
-      await emitResult(ctx, result);
-      return result;
-    }
-    state.testStatus = "pass";
-    return null;
+    return await evaluateBunTestOutcome(
+      ctx,
+      scopedTestPaths,
+      timeout,
+      await runBunTestCommand(ctx, scopedTestPaths, wt.path, timeout),
+    );
   } catch (err: unknown) {
     const info = commandErrorInfo(err);
     if (isVerificationEnvironmentFailure(info)) {

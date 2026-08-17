@@ -18,6 +18,11 @@
  */
 import { spawnSync } from "node:child_process";
 
+import {
+  isKnownBunTeardownPanicPass,
+  parseBunTestReport,
+} from "../packages/agentchat/src/worker/bun-test-output.js";
+
 // Always exclude stale compiled test shadows in dist/ — the package tsconfigs are
 // noEmit, so any packages/*/dist/test/*.test.js are leftover artifacts that bun
 // would otherwise glob (failing on relative imports and inflating the count).
@@ -44,21 +49,9 @@ if (code === 0) {
   process.exit(0);
 }
 
-// Build the ANSI-escape pattern from String.fromCharCode so the source does
-// not contain a literal ESC control character (no-control-regex).
-const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
-const out = raw.replaceAll(ANSI_PATTERN, ""); // strip ANSI before parsing
-const lastNum = (re: RegExp): number | null => {
-  const matches = [...out.matchAll(re)];
-  const last = matches.at(-1);
-  return last ? Number(last[1]) : null;
-};
-const fails = lastNum(/(\d+)\s+fail\b/g);
-const errors = lastNum(/(\d+)\s+error\b/g) ?? 0;
-const reachedSummary = /Ran\s+\d+\s+tests?\b/.test(out);
-const knownPanic = /Bun has crashed|panic\(main thread\)/.test(out);
+const report = parseBunTestReport(raw);
 
-if (reachedSummary && fails === 0 && errors === 0 && knownPanic) {
+if (isKnownBunTeardownPanicPass(report)) {
   console.error(
     `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
   );
@@ -66,6 +59,6 @@ if (reachedSummary && fails === 0 && errors === 0 && knownPanic) {
 }
 
 console.error(
-  `bun-test-gate: failing (exit ${String(code)}; fails=${String(fails)} errors=${String(errors)} reachedSummary=${String(reachedSummary)} knownPanic=${String(knownPanic)}).`,
+  `bun-test-gate: failing (exit ${String(code)}; fails=${String(report.fails)} errors=${String(report.errors)} reachedSummary=${String(report.reachedSummary)} knownPanic=${String(report.knownPanic)}).`,
 );
 process.exit(code);
