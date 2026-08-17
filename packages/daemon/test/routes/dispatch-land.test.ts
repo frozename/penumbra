@@ -58,6 +58,7 @@ interface LandResult {
 }
 interface LandError {
   code: string;
+  check?: string;
   step?: string;
   files?: string[];
   stderr?: string;
@@ -66,7 +67,9 @@ interface LandError {
   manual_repair?: string;
   beforeMain?: string;
   afterMain?: string;
-  verdict?: { tests?: string; typecheck?: string };
+  verdict_head_sha?: string;
+  branch_head_sha?: string;
+  verdict?: { tests?: string; typecheck?: string; head_sha?: string };
 }
 interface AcceptedBody {
   ok?: boolean;
@@ -270,6 +273,7 @@ function writeVerdictEvent(
     ts: string;
     handoffId: string;
     conversationId: string;
+    headSha?: string;
     typecheck: "pass" | "fail" | "error";
     tests: "pass" | "fail" | "error" | "skipped";
   },
@@ -297,6 +301,7 @@ function writeVerdictEvent(
       handoff_id: input.handoffId,
       conversation_id: input.conversationId,
       branch: `agent/${input.handoffId}`,
+      head_sha: input.headSha ?? `head-${input.handoffId}`,
       typecheck: input.typecheck,
       tests: input.tests,
       files_changed: 3,
@@ -1564,11 +1569,11 @@ describe("dispatchLandRoute", () => {
       ts: "2026-05-08T00:01:00.000Z",
       handoffId: "h-3",
       conversationId: "c-3",
-      typecheck: "pass",
-      tests: "fail",
+      typecheck: "fail",
+      tests: "pass",
     });
 
-    let called = false;
+    const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
       landReq("http://x/dispatch/land", {
         method: "POST",
@@ -1579,9 +1584,12 @@ describe("dispatchLandRoute", () => {
       }),
       svc,
       landDeps({
-        runGit: () => {
-          called = true;
-          return { code: 0, stdout: "", stderr: "" };
+        runGit: (args: string[]) => {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "agent/h-3") {
+            return { code: 0, stdout: "head-h-3\n", stderr: "" };
+          }
+          throw new Error(`unexpected land git call: ${args.join(" ")}`);
         },
         gh: {
           listOpenPullRequestsByHead: () => [],
@@ -1593,10 +1601,65 @@ describe("dispatchLandRoute", () => {
     );
 
     expect(res.status).toBe(409);
-    expect(called).toBe(false);
+    expect(gitCalls).toEqual(["rev-parse agent/h-3"]);
     const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("verdict_unverified");
-    expect(body.error.verdict?.tests).toBe("fail");
+    expect(body.error.check).toBe("typecheck");
+    expect(body.error.verdict_head_sha).toBe("head-h-3");
+    expect(body.error.branch_head_sha).toBe("head-h-3");
+    expect(body.error.verdict?.typecheck).toBe("fail");
+  });
+
+  test("does not block landing when a hard-fail verdict is stale relative to branch head", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-stale-verdict", "c-stale-verdict");
+    writeVerdictEvent(svc, {
+      eventId: "v-stale-verdict",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-stale-verdict",
+      conversationId: "c-stale-verdict",
+      headSha: "old-head",
+      typecheck: "fail",
+      tests: "pass",
+    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+
+    let mainRevParseCount = 0;
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-stale-verdict",
+          commit_message: "fix(daemon): land newer branch head",
+          mode: "ff",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-stale-verdict") {
+            return { code: 0, stdout: "new-head\n", stderr: "" };
+          }
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            mainRevParseCount += 1;
+            return {
+              code: 0,
+              stdout: mainRevParseCount === 1 ? "before-main\n" : "after-main\n",
+              stderr: "",
+            };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
   });
 
   test("rejects audit-accept gate bypass when reconciler verdict has hard test failure", async () => {
@@ -1667,7 +1730,7 @@ describe("dispatchLandRoute", () => {
       payload_summary: "done",
     });
 
-    let runGitCalled = false;
+    const gitCalls: string[] = [];
     const res = await dispatchLandRoute(
       landReq("http://x/dispatch/land", {
         method: "POST",
@@ -1680,9 +1743,12 @@ describe("dispatchLandRoute", () => {
       }),
       svc,
       landDeps({
-        runGit: () => {
-          runGitCalled = true;
-          return { code: 0, stdout: "", stderr: "" };
+        runGit: (args: string[]) => {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "agent/h-audit-hardfail") {
+            return { code: 0, stdout: "head-h-audit-hardfail\n", stderr: "" };
+          }
+          throw new Error(`unexpected land git call: ${args.join(" ")}`);
         },
         gh: {
           listOpenPullRequestsByHead: () => [],
@@ -1695,9 +1761,10 @@ describe("dispatchLandRoute", () => {
     );
 
     expect(res.status).toBe(409);
-    expect(runGitCalled).toBe(false);
+    expect(gitCalls).toEqual(["rev-parse agent/h-audit-hardfail"]);
     const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("verdict_unverified");
+    expect(body.error.check).toBe("tests");
     expect(body.error.verdict?.tests).toBe("fail");
   });
 

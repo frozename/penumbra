@@ -1,5 +1,8 @@
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
 import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createMergeReconciler, type ReconcilerDeps } from "../../src/worker/merge-reconciler.js";
 
@@ -27,6 +30,8 @@ class ExecCommandError extends Error {
 const execHistory: string[] = [];
 const execFailures = new Map<string, ExecCommandError>();
 let diffOutput = "packages/daemon/src/routes/handoffs.ts\n";
+let worktreePath: string | null = null;
+const temporaryRoots: string[] = [];
 
 // HandoffRow has Zod preprocessors (use_worktree, open_pr_on_review, isolated_install)
 // whose inferred output type is `boolean | null` even though the runtime schema
@@ -86,6 +91,15 @@ const execMock = mock((argv: string[], _opts: { cwd: string }): Promise<ExecResu
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }
+  if (worktreePath !== null && cmd === "git rev-parse HEAD") {
+    return Promise.resolve({ stdout: "branch-head\n", stderr: "" });
+  }
+  if (worktreePath !== null && cmd === "git rev-parse main") {
+    return Promise.resolve({ stdout: "base-head\n", stderr: "" });
+  }
+  if (worktreePath !== null && cmd === "git merge-base base-head branch-head") {
+    return Promise.resolve({ stdout: "merge-base\n", stderr: "" });
+  }
   return Promise.resolve({ stdout: "", stderr: "" });
 });
 
@@ -114,7 +128,7 @@ const mockDeps: ReconcilerDeps = {
 const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
   (id: string) => ({
     handoffId: id,
-    path: `/worktree/${id}`,
+    path: worktreePath ?? `/worktree/${id}`,
     branchName: `agent/${id}`,
     storageRoot: `/worktree/${id}/.test-storage`,
     createdAt: "",
@@ -125,12 +139,14 @@ const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImple
 
 afterAll(() => {
   getWorktreeSpy.mockRestore();
+  for (const root of temporaryRoots) rmSync(root, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   execHistory.length = 0;
   diffOutput = "packages/daemon/src/routes/handoffs.ts\n";
   execFailures.clear();
+  worktreePath = null;
 });
 
 function makeReconciler(): ReturnType<typeof createMergeReconciler> {
@@ -147,6 +163,48 @@ test("scopes typecheck to the affected package when one package changed", async 
     "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
   );
   expect(execHistory).not.toContain("bun run typecheck");
+});
+
+test("limits scoped reverse dependencies to the root TypeScript build graph", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-reconciler-build-graph-"));
+  temporaryRoots.push(root);
+  worktreePath = root;
+  const packages = ["agentchat", "cli", "config", "core", "daemon", "e2e", "mcp", "workflows"];
+  for (const name of packages) {
+    mkdirSync(join(root, "packages", name), { recursive: true });
+    const dependsOnDaemon = ["agentchat", "cli", "e2e", "mcp", "workflows"].includes(name);
+    const dependencies = dependsOnDaemon
+      ? { "@penumbra/daemon": "workspace:*" }
+      : name === "daemon"
+        ? { "@penumbra/config": "workspace:*", "@penumbra/core": "workspace:*" }
+        : {};
+    writeFileSync(
+      join(root, "packages", name, "package.json"),
+      JSON.stringify({ name: `@penumbra/${name}`, dependencies }),
+    );
+    writeFileSync(
+      join(root, "packages", name, "tsconfig.json"),
+      JSON.stringify({
+        references: name === "daemon" ? [{ path: "../config" }, { path: "../core" }] : [],
+      }),
+    );
+  }
+  writeFileSync(
+    join(root, "tsconfig.json"),
+    JSON.stringify({
+      references: ["agentchat", "cli", "core", "daemon", "mcp", "workflows"].map((name) => ({
+        path: `./packages/${name}`,
+      })),
+    }),
+  );
+  diffOutput = "packages/daemon/src/routes/handoffs.ts\n";
+
+  await makeReconciler()("h-build-graph");
+
+  expect(execHistory).toContain(
+    "bun tsc -b packages/core packages/agentchat packages/cli packages/daemon packages/mcp packages/workflows",
+  );
+  expect(execHistory.some((cmd) => cmd.includes("packages/e2e"))).toBe(false);
 });
 
 test("scopes typecheck to multiple affected packages", async () => {

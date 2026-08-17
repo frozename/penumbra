@@ -1151,6 +1151,21 @@ function extractErrorCode(errorBody: unknown): string {
   return "unknown";
 }
 
+function daemonErrorDetails(body: unknown): string {
+  if (typeof body !== "object" || body === null) return "";
+  const outer = body as Record<string, unknown>;
+  const error =
+    typeof outer.error === "object" && outer.error !== null
+      ? (outer.error as Record<string, unknown>)
+      : outer;
+  const fields = ["code", "check", "verdict_head_sha", "branch_head_sha"] as const;
+  const details = fields.flatMap((field) => {
+    const value = error[field];
+    return typeof value === "string" && value.length > 0 ? [`${field}=${value}`] : [];
+  });
+  return details.length > 0 ? ` (${details.join("; ")})` : "";
+}
+
 async function daemonHttpError(path: string, res: Response): Promise<DaemonHttpError> {
   let body: unknown;
   try {
@@ -1158,5 +1173,9 @@ async function daemonHttpError(path: string, res: Response): Promise<DaemonHttpE
   } catch {
     // body remains undefined when the daemon response has no JSON payload
   }
-  return new DaemonHttpError(`daemon ${path}: HTTP ${String(res.status)}`, res.status, body);
+  return new DaemonHttpError(
+    `daemon ${path}: HTTP ${String(res.status)}${daemonErrorDetails(body)}`,
+    res.status,
+    body,
+  );
 }

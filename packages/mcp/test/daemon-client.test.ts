@@ -265,6 +265,42 @@ test("dispatchLand throws DaemonHttpError when the async task reports status=fai
   expect(httpErr.body).toEqual({ code: "lifecycle_busy", message: "another land in flight" });
 });
 
+test("dispatchLand surfaces the failing verdict check and compared head SHAs on HTTP 409", async () => {
+  mockFetch(
+    mock(() =>
+      Promise.resolve(
+        Response.json(
+          {
+            error: {
+              code: "verdict_unverified",
+              check: "typecheck",
+              verdict_head_sha: "verified-head",
+              branch_head_sha: "current-head",
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    ),
+  );
+  const client = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+
+  let thrown: unknown = null;
+  try {
+    await client.dispatchLand({ handoff_id: "h-stale", commit_message: "fix: stale verdict" });
+  } catch (err) {
+    thrown = err;
+  }
+
+  expect(thrown).toBeInstanceOf(DaemonHttpError);
+  const httpErr = thrown as DaemonHttpError;
+  expect(httpErr.status).toBe(409);
+  expect(httpErr.message).toContain("verdict_unverified");
+  expect(httpErr.message).toContain("check=typecheck");
+  expect(httpErr.message).toContain("verdict_head_sha=verified-head");
+  expect(httpErr.message).toContain("branch_head_sha=current-head");
+});
+
 test("dispatchLand resolves { status: 'still_running', task_id } instead of throwing on client-side poll timeout", async () => {
   let pollCount = 0;
   mockFetch(

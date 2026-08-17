@@ -288,6 +288,48 @@ function verdictHardFail(verdict: Record<string, unknown> | null): boolean {
   return verdict.typecheck === "fail" || verdict.tests === "fail";
 }
 
+function verdictHardFailCheck(verdict: Record<string, unknown>): "typecheck" | "tests" {
+  return verdict.typecheck === "fail" ? "typecheck" : "tests";
+}
+
+async function evaluateCurrentVerdictHardFail(input: {
+  verdict: Record<string, unknown> | null;
+  branch: string;
+  force: boolean;
+  deps: DispatchLandDeps;
+}): Promise<Response | null> {
+  const { verdict, branch, force, deps } = input;
+  if (force || !verdict || !verdictHardFail(verdict)) return null;
+  const branchHeadResult = await deps.runGit(["rev-parse", branch]);
+  if (branchHeadResult.code !== 0) {
+    return json(
+      {
+        error: {
+          code: "git_failed",
+          step: "resolve_verdict_branch_head",
+          stderr: branchHeadResult.stderr.trim() || undefined,
+        },
+      },
+      500,
+    );
+  }
+  const branchHeadSha = branchHeadResult.stdout.trim();
+  const verdictHeadSha = typeof verdict.head_sha === "string" ? verdict.head_sha.trim() : "";
+  if (verdictHeadSha === "" || verdictHeadSha !== branchHeadSha) return null;
+  return json(
+    {
+      error: {
+        code: "verdict_unverified",
+        check: verdictHardFailCheck(verdict),
+        verdict_head_sha: verdictHeadSha,
+        branch_head_sha: branchHeadSha,
+        verdict,
+      },
+    },
+    409,
+  );
+}
+
 function verdictUnverified(verdict: Record<string, unknown> | null): boolean {
   if (verdict === null) return true;
   return verdict.typecheck === "error" || verdict.tests === "error";
@@ -421,6 +463,41 @@ function evaluateLandVerdictConflict(
   );
 }
 
+async function evaluateLandVerdictGates(input: {
+  services: Services;
+  handoffId: string;
+  verdict: Record<string, unknown> | null;
+  branch: string;
+  force: boolean;
+  deps: DispatchLandDeps;
+}): Promise<Response | null> {
+  const { services, handoffId, verdict, branch, force, deps } = input;
+  const conflictResponse = evaluateLandVerdictConflict(
+    branch,
+    force,
+    verdictConflictFiles(verdict),
+  );
+  if (conflictResponse) return conflictResponse;
+  if (force) return null;
+
+  // Hard failure: explicit typecheck/tests=fail. Only force:true can land.
+  // dispatch_audit trustworthiness reflects the run's reliability — it must
+  // not overrule a reviewer-confirmed failure at this branch head.
+  const hardFailResponse = await evaluateCurrentVerdictHardFail({
+    verdict,
+    branch,
+    force,
+    deps,
+  });
+  if (hardFailResponse) return hardFailResponse;
+
+  // Unverified (no reviewer verdict on record): allow dispatch_audit to
+  // rescue when the run looks trustworthy + accept.
+  if (!verdictUnverified(verdict)) return null;
+  if (await isAuditTrustedAccept(services, handoffId)) return null;
+  return json({ error: { code: "verdict_unverified", verdict } }, 409);
+}
+
 function findInflightLandTaskResponse(handoff_id: string): Response | null {
   for (const [existingTaskId, existingTask] of dispatchLandTasks.entries()) {
     if (existingTask.handoff_id !== handoff_id) continue;
@@ -485,22 +562,15 @@ export async function dispatchLandRoute(
 
   const branch = `agent/${handoff_id}`;
   const verdict = readLatestVerdict(services, handoff_id);
-  const conflictFiles = verdictConflictFiles(verdict);
-  const conflictResponse = evaluateLandVerdictConflict(branch, force, conflictFiles);
-  if (conflictResponse) return conflictResponse;
-  if (!force) {
-    // Hard failure: explicit typecheck/tests=fail. Only force:true can land.
-    // dispatch_audit trustworthiness reflects the run's reliability — it must
-    // not overrule a reviewer-confirmed test/typecheck failure.
-    if (verdictHardFail(verdict)) {
-      return json({ error: { code: "verdict_unverified", verdict } }, 409);
-    }
-    // Unverified (no reviewer verdict on record): allow dispatch_audit to
-    // rescue when the run looks trustworthy + accept.
-    if (verdictUnverified(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
-      return json({ error: { code: "verdict_unverified", verdict } }, 409);
-    }
-  }
+  const verdictGateResponse = await evaluateLandVerdictGates({
+    services,
+    handoffId: handoff_id,
+    verdict,
+    branch,
+    force,
+    deps: routeDeps,
+  });
+  if (verdictGateResponse) return verdictGateResponse;
   const stampPassedGateOutcome = !force && !verdictHardFail(verdict) && !verdictUnverified(verdict);
 
   const inflightResponse = findInflightLandTaskResponse(handoff_id);

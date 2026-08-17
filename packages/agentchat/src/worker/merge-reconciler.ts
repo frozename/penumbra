@@ -8,7 +8,7 @@ import {
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
@@ -631,6 +631,68 @@ interface AffectedClosure {
   packages: string[];
 }
 
+interface TypeScriptProjectConfig {
+  references?: { path?: unknown }[];
+}
+
+interface ResolvedTypeScriptProjectReference {
+  configPath: string;
+  packageRoot: string | null;
+}
+
+async function readTypeScriptProjectReferencePaths(configPath: string): Promise<string[]> {
+  const parsed = JSON.parse(await readFile(configPath, "utf8")) as TypeScriptProjectConfig;
+  return (parsed.references ?? []).flatMap((reference) =>
+    typeof reference.path === "string" && reference.path.trim() !== "" ? [reference.path] : [],
+  );
+}
+
+function resolveTypeScriptProjectReference(
+  worktreePath: string,
+  configPath: string,
+  referencePath: string,
+): ResolvedTypeScriptProjectReference {
+  const referencedPath = resolve(dirname(configPath), referencePath);
+  const referencesConfigFile = referencedPath.endsWith(".json");
+  const projectDir = referencesConfigFile ? dirname(referencedPath) : referencedPath;
+  const relativeProjectDir = relative(worktreePath, projectDir);
+  const packageRoot =
+    relativeProjectDir.startsWith("packages/") && !relativeProjectDir.includes("..")
+      ? relativeProjectDir
+      : null;
+  return {
+    configPath: referencesConfigFile ? referencedPath : join(referencedPath, "tsconfig.json"),
+    packageRoot,
+  };
+}
+
+async function discoverRootBuildPackageRoots(ctx: ReconcileCtx): Promise<string[] | null> {
+  const rootConfigPath = join(ctx.wt.path, "tsconfig.json");
+  const pending = [rootConfigPath];
+  const visited = new Set<string>();
+  const packageRoots = new Set<string>();
+  try {
+    while (pending.length > 0) {
+      const configPath = pending.shift();
+      if (!configPath || visited.has(configPath)) continue;
+      visited.add(configPath);
+      const referencePaths = await readTypeScriptProjectReferencePaths(configPath);
+      for (const referencePath of referencePaths) {
+        const reference = resolveTypeScriptProjectReference(ctx.wt.path, configPath, referencePath);
+        if (reference.packageRoot) packageRoots.add(reference.packageRoot);
+        pending.push(reference.configPath);
+      }
+    }
+    return Array.from(packageRoots).sort();
+  } catch (err) {
+    ctx.deps.log.warn(
+      { handoffId: ctx.handoffId, path: rootConfigPath, err: String(err) },
+      "root TypeScript build graph discovery failed, using fallback package list",
+    );
+    return null;
+  }
+}
+
 async function discoverWorkspacePackageRoots(ctx: ReconcileCtx): Promise<string[]> {
   const fallbackWorkspacePackageRoots = [
     "packages/agentchat",
@@ -640,6 +702,10 @@ async function discoverWorkspacePackageRoots(ctx: ReconcileCtx): Promise<string[
     "packages/mcp",
     "packages/workflows",
   ];
+  const rootBuildPackageRoots = await discoverRootBuildPackageRoots(ctx);
+  if (rootBuildPackageRoots && rootBuildPackageRoots.length > 0) {
+    return rootBuildPackageRoots;
+  }
   try {
     const packageDirEntries = await readdir(join(ctx.wt.path, "packages"), {
       withFileTypes: true,
