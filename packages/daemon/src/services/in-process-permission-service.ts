@@ -48,6 +48,7 @@ export class InProcessPermissionService {
     if (this.unsubscribe) return;
     this.unsubscribe = this.services.permissionEvents.subscribe((evt) => {
       if (evt.kind !== "permission.decided" && evt.kind !== "permission.expired") return;
+      this.abortedPermissions.delete(evt.permission_id);
       const w = this.takeWaiter(evt.permission_id);
       if (!w) return;
       if (evt.kind === "permission.decided") {
@@ -216,71 +217,74 @@ export class InProcessPermissionService {
       );
       return;
     }
-    if (!row) return;
-
     try {
-      this.services.permissionEvents.emit({
-        kind: "permission.decided",
-        permission_id: row.permission_id,
-        ts: decidedAt,
-        payload: {
-          permission_id: row.permission_id,
-          parent_handoff_id: row.parent_handoff_id,
-          conversation_id: row.conversation_id,
-          agent_name: row.agent_name,
-          tool_name: row.tool_name,
-          decision: "reject",
-          remember: null,
-          decided_by: "request_abort",
-          decided_at: decidedAt,
-          reason: "request aborted",
-        },
-      });
-    } catch (error) {
-      this.services.log.warn(
-        { err: String(error), permission_id: permissionId },
-        "permission abort event failed",
-      );
-    }
+      if (!row) return;
 
-    try {
-      this.services.t0Writer.write({
-        event_id: this.services.uuid(),
-        ts: decidedAt,
-        ingest_ts: decidedAt,
-        source: "mcp",
-        source_detail: "permission-audit",
-        project_id: null,
-        user_id: this.services.machineId.get(),
-        machine_id: this.services.machineId.get(),
-        session_id: row.conversation_id,
-        event_type: "permission-decided",
-        lane: "unknown",
-        provider: null,
-        model: null,
-        tokens_in: null,
-        tokens_out: null,
-        cost_usd: null,
-        latency_ms: null,
-        request_id: null,
-        origin: null,
-        payload_json: {
+      try {
+        this.services.permissionEvents.emit({
+          kind: "permission.decided",
           permission_id: row.permission_id,
-          tool_name: row.tool_name,
-          decision: "reject",
-          remember: null,
-          decided_by: "request_abort",
-          reason: "request aborted",
-        },
-        payload_summary: `reject ${row.tool_name}`,
-      });
-    } catch (error) {
-      this.services.log.warn(
-        { err: String(error), permission_id: permissionId },
-        "permission abort audit failed",
-      );
+          ts: decidedAt,
+          payload: {
+            permission_id: row.permission_id,
+            parent_handoff_id: row.parent_handoff_id,
+            conversation_id: row.conversation_id,
+            agent_name: row.agent_name,
+            tool_name: row.tool_name,
+            decision: "reject",
+            remember: null,
+            decided_by: "request_abort",
+            decided_at: decidedAt,
+            reason: "request aborted",
+          },
+        });
+      } catch (error) {
+        this.services.log.warn(
+          { err: String(error), permission_id: permissionId },
+          "permission abort event failed",
+        );
+      }
+
+      try {
+        this.services.t0Writer.write({
+          event_id: this.services.uuid(),
+          ts: decidedAt,
+          ingest_ts: decidedAt,
+          source: "mcp",
+          source_detail: "permission-audit",
+          project_id: null,
+          user_id: this.services.machineId.get(),
+          machine_id: this.services.machineId.get(),
+          session_id: row.conversation_id,
+          event_type: "permission-decided",
+          lane: "unknown",
+          provider: null,
+          model: null,
+          tokens_in: null,
+          tokens_out: null,
+          cost_usd: null,
+          latency_ms: null,
+          request_id: null,
+          origin: null,
+          payload_json: {
+            permission_id: row.permission_id,
+            tool_name: row.tool_name,
+            decision: "reject",
+            remember: null,
+            decided_by: "request_abort",
+            reason: "request aborted",
+          },
+          payload_summary: `reject ${row.tool_name}`,
+        });
+      } catch (error) {
+        this.services.log.warn(
+          { err: String(error), permission_id: permissionId },
+          "permission abort audit failed",
+        );
+      }
+    } finally {
+      this.abortedPermissions.delete(permissionId);
     }
-    this.abortedPermissions.delete(permissionId);
   }
 
   private takeWaiter(permissionId: string): PermissionWaiter | undefined {

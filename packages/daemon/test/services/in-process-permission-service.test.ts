@@ -324,6 +324,7 @@ test("aborting a request settles its waiter when durable cleanup throws", async 
   await Bun.sleep(10);
   expect(warnings).toHaveLength(1);
   expect(warnings[0]).toContain("database busy");
+  expect(svc.isPermissionAborted("id-1")).toBe(true);
   const pending = (await permissionsListRoute(
     new Request("http://x/permissions?status=pending&parent_handoff_id=h-1"),
     services,
@@ -338,6 +339,45 @@ test("aborting a request settles its waiter when durable cleanup throws", async 
     services,
   );
   expect(lateApproval.status).toBe(409);
+
+  services.clock = (): Date => new Date("2026-05-03T12:05:01.000Z");
+  expect(runPermissionTtlSweep(services)).toBe(1);
+  expect(services.permissionReader.get("id-1")?.status).toBe("expired");
+  expect(svc.isPermissionAborted("id-1")).toBe(false);
+  svc.stop();
+});
+
+test("aborting a request releases suppression when durable cleanup returns no row", async () => {
+  const now = new Date("2026-05-03T12:00:00.000Z");
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db, now, {
+    handoff: { handoff_id: "h-1", conversation_id: "c-1" },
+  });
+  const durableDecide = services.permissionWriter.decide.bind(services.permissionWriter);
+  services.permissionWriter.decide = (permissionId, input) => {
+    durableDecide(permissionId, input);
+    return null;
+  };
+  const svc = new InProcessPermissionService(services);
+  Object.assign(services, { permissionService: svc });
+  svc.start();
+  const controller = new AbortController();
+
+  const decision = svc.requestPermission({
+    parent_handoff_id: "h-1",
+    agent_name: "claude-acp-sonnet",
+    tool_name: "shell_run",
+    context: {},
+    signal: controller.signal,
+  });
+  controller.abort();
+
+  await expectRejectsWith(decision, /aborted/);
+  await Bun.sleep(10);
+  expect(services.permissionReader.get("id-1")?.status).toBe("rejected");
+  expect(svc.isPermissionAborted("id-1")).toBe(false);
   svc.stop();
 });
 
