@@ -83,6 +83,11 @@ interface SessionState {
 const REDACTION_PATTERNS: RegExp[] = [
   /sk-[A-Za-z0-9_-]{20,}/g,
   /gh[pousr]_[A-Za-z0-9_]{20,}/g,
+  /AIza[0-9A-Za-z_-]{35}/g,
+  /gsk_[A-Za-z0-9]{20,}/g,
+  /nvapi-[A-Za-z0-9_-]{20,}/g,
+  /xai-[A-Za-z0-9]{20,}/g,
+  /fc-[A-Za-z0-9]{20,}/g,
   /https:\/\/discord\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+/g,
   /Bearer\s+[A-Za-z0-9._-]+/g,
 ];

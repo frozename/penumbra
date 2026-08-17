@@ -433,13 +433,16 @@ describe("worktrees exec route", () => {
     const services = fakeServices({ H1: tmp }, { redactOutput: true });
     const req = new Request("http://x/worktrees/H1/exec", {
       method: "POST",
-      body: JSON.stringify({ command: "echo sk-abcdefghijklmnopqrstuvwxyz012345" }),
+      body: JSON.stringify({
+        command: "echo sk-abcdefghijklmnopqrstuvwxyz012345; echo gsk_abcdefghijklmnopqrstuvwxyz012345",
+      }),
     });
     const res = await worktreesExecRoute(req, "H1", services);
     expect(res.status).toBe(200);
     const body = await jsonBody<ExecBody>(res);
     expect(body.stdout).toContain("[REDACTED]");
     expect(body.stdout).not.toContain("sk-abcdefghijklmnopqrstuvwxyz012345");
+    expect(body.stdout).not.toContain("gsk_abcdefghijklmnopqrstuvwxyz012345");
   });
 });
 

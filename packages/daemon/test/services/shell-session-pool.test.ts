@@ -280,6 +280,22 @@ describe("ShellSessionPool", () => {
     expect((result.stdout.match(/\[REDACTED\]/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
+  it("redacts newer provider credential shapes from stdout", async () => {
+    const { sessionId } = await pool.createSession({
+      handoffId: "h-1",
+      cwd: "/tmp",
+      env: {},
+      pty: false,
+    });
+    const result = await pool.runCommand({
+      handoffId: "h-1",
+      sessionId,
+      command: "echo gsk_abcdefghijklmnopqrstuvwxyz012345",
+    });
+    expect(result.stdout).toContain("[REDACTED]");
+    expect(result.stdout).not.toContain("gsk_abcdefghijklmnopqrstuvwxyz012345");
+  });
+
   it("buildScrubbedChildEnv keeps allowlisted vars, drops parent secrets, and lets extraEnv override", () => {
     const prevPath = process.env.PATH;
     const prevSomeSecret = process.env.SOME_SECRET;
