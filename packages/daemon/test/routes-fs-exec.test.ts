@@ -384,6 +384,51 @@ describe("worktrees exec route", () => {
     }
   });
 
+  it("does not leak provider or custom parent env secrets into the child environment", async () => {
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY;
+    const prevSomeSecret = process.env.SOME_SECRET;
+    process.env.ANTHROPIC_API_KEY = "anthropic-parent-secret";
+    process.env.SOME_SECRET = "custom-parent-secret";
+    try {
+      const services = fakeServices({ H1: tmp });
+      const req = new Request("http://x/worktrees/H1/exec", {
+        method: "POST",
+        body: JSON.stringify({
+          command: "printenv ANTHROPIC_API_KEY || true; printenv SOME_SECRET || true",
+        }),
+      });
+      const res = await worktreesExecRoute(req, "H1", services);
+      expect(res.status).toBe(200);
+      const body = await jsonBody<ExecBody>(res);
+      expect(body.stdout).not.toContain("anthropic-parent-secret");
+      expect(body.stdout).not.toContain("custom-parent-secret");
+    } finally {
+      if (prevAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prevAnthropic;
+      if (prevSomeSecret === undefined) delete process.env.SOME_SECRET;
+      else process.env.SOME_SECRET = prevSomeSecret;
+    }
+  });
+
+  it("preserves PATH in the child environment", async () => {
+    const prevPath = process.env.PATH;
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      const services = fakeServices({ H1: tmp });
+      const req = new Request("http://x/worktrees/H1/exec", {
+        method: "POST",
+        body: JSON.stringify({ command: "printenv PATH" }),
+      });
+      const res = await worktreesExecRoute(req, "H1", services);
+      expect(res.status).toBe(200);
+      const body = await jsonBody<ExecBody>(res);
+      expect(body.stdout.trim()).toBe("/usr/bin:/bin");
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+    }
+  });
+
   it("redacts credential-shaped output when redaction is enabled for the agent", async () => {
     const services = fakeServices({ H1: tmp }, { redactOutput: true });
     const req = new Request("http://x/worktrees/H1/exec", {

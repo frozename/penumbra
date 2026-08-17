@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { ShellSessionPool } from "../../src/services/shell-session-pool.js";
+import {
+  buildScrubbedChildEnv,
+  ShellSessionPool,
+} from "../../src/services/shell-session-pool.js";
 
 // bun:test's `.rejects.toThrow()` is typed as void even though it awaits the
 // underlying promise at runtime. Use this helper instead.
@@ -275,6 +278,25 @@ describe("ShellSessionPool", () => {
     expect(result.stdout).not.toContain("webhooks/12345");
     expect(result.stdout).not.toContain("xyz.abc-123");
     expect((result.stdout.match(/\[REDACTED\]/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("buildScrubbedChildEnv keeps allowlisted vars, drops parent secrets, and lets extraEnv override", () => {
+    const prevPath = process.env.PATH;
+    const prevSomeSecret = process.env.SOME_SECRET;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SOME_SECRET = "custom-parent-secret";
+    try {
+      const env = buildScrubbedChildEnv([], { PATH: "/custom/bin", CUSTOM_ALLOWED: "from-extra" });
+
+      expect(env.PATH).toBe("/custom/bin");
+      expect(env.SOME_SECRET).toBeUndefined();
+      expect(env.CUSTOM_ALLOWED).toBe("from-extra");
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+      if (prevSomeSecret === undefined) delete process.env.SOME_SECRET;
+      else process.env.SOME_SECRET = prevSomeSecret;
+    }
   });
 
   it("closeSession terminates the subprocess and subsequent runCommand returns exit_code -1", async () => {

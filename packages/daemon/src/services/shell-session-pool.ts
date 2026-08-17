@@ -110,19 +110,37 @@ export const DAEMON_SECRET_ENV_KEYS: readonly string[] = [
   "PENUMBRA_SIRIUS_TOKEN",
 ];
 
-// Build a child-process environment by inheriting the daemon's env minus the
-// operator's unset_env keys AND the daemon's own auth tokens. Shared by
-// shell_run (ShellSessionPool) and fs_exec so env-scrubbing has one source.
+const CHILD_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "TZ",
+  "TMPDIR",
+  "PWD",
+] as const;
+
+// Build a child-process environment from a strict allowlist, then apply the
+// operator's unset_env keys and the daemon's own auth-token blocklist.
 export function buildScrubbedChildEnv(
   unsetEnv: readonly string[] | undefined,
   extraEnv: Record<string, string> = {},
 ): Record<string, string> {
   const drop = new Set<string>([...(unsetEnv ?? []), ...DAEMON_SECRET_ENV_KEYS]);
   const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = process.env[key];
     if (typeof value === "string" && !drop.has(key)) out[key] = value;
   }
-  return { ...out, ...extraEnv };
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (!drop.has(key)) out[key] = value;
+  }
+  return out;
 }
 
 // ESC (0x1B) and BEL (0x07) built at runtime to satisfy no-control-regex
