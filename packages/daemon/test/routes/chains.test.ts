@@ -44,8 +44,11 @@ type ChainResponseBody = {
   ok?: boolean;
   conversation_id?: string;
   handoff_id?: string;
+  requested_agent?: string;
+  resolved_agent?: string;
   routed_agent?: string;
   routed_role?: string | null;
+  routing_resolution_reason?: string;
   routing_task_type?: string | null;
   routing_warning?: {
     code: string;
@@ -93,6 +96,8 @@ type HandoffRawRow = {
   from_agent: string;
   to_agent: string;
   to_role: string | null;
+  requested_agent: string | null;
+  routing_resolution_reason: string | null;
   message: string;
   status: string;
   resolved_by: string | null;
@@ -1112,12 +1117,17 @@ test("POST /chains/start routes role targets to the best ledger-ranked role agen
 
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.requested_agent).toBe("executor");
+  expect(body.resolved_agent).toBe("codex-mini");
   expect(body.routed_agent).toBe("codex-mini");
   expect(body.routed_role).toBe("executor");
+  expect(body.routing_resolution_reason).toBe("role_route");
   expect(body.routing_task_type).toBe("implement_substantial");
   const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.requested_agent).toBe("executor");
   expect(handoff.to_agent).toBe("codex-mini");
   expect(handoff.to_role).toBe("executor");
+  expect(handoff.routing_resolution_reason).toBe("role_route");
 });
 
 test("POST /chains/start treats a name that is also a configured role as a role target", async () => {

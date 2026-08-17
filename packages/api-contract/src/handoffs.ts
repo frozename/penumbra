@@ -23,6 +23,8 @@ export const HandoffRowSchema = z
     from_agent: z.string(),
     to_agent: z.string(),
     to_role: z.string().nullable(),
+    requested_agent: z.string().nullable().optional(),
+    routing_resolution_reason: z.string().nullable().optional(),
     message: z.string(),
     status: HandoffStatusSchema,
     resolved_by: z.string().nullable(),

@@ -1151,6 +1151,8 @@ interface PersistChainStartArgs {
   conversation_id: string;
   routedAgent: string;
   routedRole: string | null;
+  requestedAgent: string | null;
+  routingResolutionReason: string | null;
   handoffMessage: string;
   route: InitialRoute | null;
   isolatedInstall: boolean | null;
@@ -1171,6 +1173,8 @@ function persistChainStart(args: PersistChainStartArgs): void {
     conversation_id,
     routedAgent,
     routedRole,
+    requestedAgent,
+    routingResolutionReason,
     handoffMessage,
     route,
     isolatedInstall,
@@ -1212,6 +1216,8 @@ function persistChainStart(args: PersistChainStartArgs): void {
       from: "user",
       to: routedAgent,
       to_role: routedRole,
+      requested_agent: requestedAgent,
+      routing_resolution_reason: routingResolutionReason,
       message: handoffMessage,
       triggered_by_event_id: user_prompt_event_id,
       resolved_by: "chain-start",
@@ -1258,6 +1264,8 @@ interface BuildChainStartResponseArgs {
   recalled_memories: { id: string; title: string; obs_type: string; snippet_head?: string }[];
   routedAgent: string;
   routedRole: string | null;
+  requestedAgent: string | null;
+  routingResolutionReason: string | null;
   route: InitialRoute | null;
   routingWarning: RoutingWarningPayload | undefined;
   routingAdvisory: RoutingAdvisoryPayload | undefined;
@@ -1282,6 +1290,13 @@ function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
           routing_task_type: args.route?.taskType,
         }
       : {}),
+    ...(args.requestedAgent !== null && args.routingResolutionReason !== null
+      ? {
+          requested_agent: args.requestedAgent,
+          resolved_agent: args.routedAgent,
+          routing_resolution_reason: args.routingResolutionReason,
+        }
+      : {}),
     ...(args.routingWarning !== undefined ? { routing_warning: args.routingWarning } : {}),
     ...(args.routingAdvisory !== undefined ? { routing_advisory: args.routingAdvisory } : {}),
   };
@@ -1304,6 +1319,8 @@ interface RoutingResolution {
   route: InitialRoute | null;
   routedAgent: string;
   routedRole: string | null;
+  requestedAgent: string | null;
+  routingResolutionReason: string | null;
 }
 
 function rerouteForAgent(
@@ -1332,10 +1349,19 @@ function resolveRoutingWithFallbacks(
 ): RoutingResolution {
   const stripped = stripAgentPrefixes(input);
   if (stripped.response) {
-    return { response: stripped.response, route: null, routedAgent: "", routedRole: null };
+    return {
+      response: stripped.response,
+      route: null,
+      routedAgent: "",
+      routedRole: null,
+      requestedAgent: null,
+      routingResolutionReason: null,
+    };
   }
   let { initialAgent } = stripped;
   const { forceExactAgent } = stripped;
+  const requestedAgent = initialAgent;
+  let routingResolutionReason: string | null = null;
 
   let route = resolveInitialRoute({
     initialAgent,
@@ -1353,11 +1379,21 @@ function resolveRoutingWithFallbacks(
     services,
   );
   if (unknownAgentResponse) {
-    return { response: unknownAgentResponse, route: null, routedAgent: "", routedRole: null };
+    return {
+      response: unknownAgentResponse,
+      route: null,
+      routedAgent: "",
+      routedRole: null,
+      requestedAgent: null,
+      routingResolutionReason: null,
+    };
   }
 
   let routedAgent = route?.agent ?? initialAgent;
   let routedRole = route?.role ?? null;
+  if (routedAgent !== requestedAgent && routedRole !== null) {
+    routingResolutionReason = "role_route";
+  }
 
   const classifierFallback = applyClassifierDeclineFallback(input, services);
   if (classifierFallback.response) {
@@ -1366,30 +1402,59 @@ function resolveRoutingWithFallbacks(
       route: null,
       routedAgent: "",
       routedRole: null,
+      requestedAgent: null,
+      routingResolutionReason: null,
     };
   }
   if (classifierFallback.fallbackAgent !== undefined) {
     initialAgent = classifierFallback.fallbackAgent;
     ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+    if (routedAgent !== requestedAgent) {
+      routingResolutionReason = "classifier_decline_fallback";
+    }
   }
 
   if (applyMaestroBudgetGate) {
     const budgetResponse = enforceMaestroBudgetForChainStart(input, services);
     if (budgetResponse) {
-      return { response: budgetResponse, route: null, routedAgent: "", routedRole: null };
+      return {
+        response: budgetResponse,
+        route: null,
+        routedAgent: "",
+        routedRole: null,
+        requestedAgent: null,
+        routingResolutionReason: null,
+      };
     }
   }
 
   const pressureOutcome = enforceSubscriptionPressureGate(input, services);
   if (pressureOutcome.response) {
-    return { response: pressureOutcome.response, route: null, routedAgent: "", routedRole: null };
+    return {
+      response: pressureOutcome.response,
+      route: null,
+      routedAgent: "",
+      routedRole: null,
+      requestedAgent: null,
+      routingResolutionReason: null,
+    };
   }
   if (pressureOutcome.fallbackAgent !== undefined) {
     initialAgent = pressureOutcome.fallbackAgent;
     ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+    if (routedAgent !== requestedAgent) {
+      routingResolutionReason = "subscription_pressure_fallback";
+    }
   }
 
-  return { response: null, route, routedAgent, routedRole };
+  return {
+    response: null,
+    route,
+    routedAgent,
+    routedRole,
+    requestedAgent: routingResolutionReason === null ? null : requestedAgent,
+    routingResolutionReason,
+  };
 }
 
 export async function chainStartInternal(
@@ -1407,7 +1472,7 @@ export async function chainStartInternal(
 
   const routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
   if (routing.response) return routing.response;
-  const { route, routedAgent, routedRole } = routing;
+  const { route, routedAgent, routedRole, requestedAgent, routingResolutionReason } = routing;
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
@@ -1445,6 +1510,8 @@ export async function chainStartInternal(
     conversation_id,
     routedAgent,
     routedRole,
+    requestedAgent,
+    routingResolutionReason,
     handoffMessage,
     route,
     isolatedInstall,
@@ -1465,6 +1532,8 @@ export async function chainStartInternal(
     recalled_memories,
     routedAgent,
     routedRole,
+    requestedAgent,
+    routingResolutionReason,
     route,
     routingWarning,
     routingAdvisory,
