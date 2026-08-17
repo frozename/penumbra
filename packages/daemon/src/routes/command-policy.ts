@@ -1,10 +1,10 @@
+import { z } from "zod";
+
 import type { DaemonServices } from "../serve.js";
 import type {
   InProcessPermissionDecision,
   InProcessPermissionRequestInput,
 } from "../services/in-process-permission-service.js";
-
-import { z } from "zod";
 
 export type ShellConfig = NonNullable<DaemonServices["shellConfig"]>;
 
@@ -53,6 +53,7 @@ export async function requestCommandPermission(
     agentName: string;
     toolName: CommandPermissionToolName;
     context: Record<string, unknown>;
+    signal?: AbortSignal;
   },
 ): Promise<"approve" | "reject"> {
   const shellServices = services as ShellDaemonServices;
@@ -74,6 +75,7 @@ export async function requestCommandPermission(
     agent_name: input.agentName,
     tool_name: input.toolName,
     context: input.context,
+    signal: input.signal,
   });
   return decision.approved ? "approve" : "reject";
 }

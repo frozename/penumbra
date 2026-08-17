@@ -9,8 +9,10 @@ import { worktreesExecRoute } from "../src/routes/fs.js";
 
 interface ExecBody {
   exit_code: number | null;
+  stderr: string;
   stdout: string;
   timed_out: boolean;
+  truncated: boolean;
 }
 
 interface RouteErrorBody {
@@ -32,6 +34,15 @@ async function jsonBody<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+async function withinHardDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return await Promise.race([
+    promise,
+    Bun.sleep(timeoutMs).then(() => {
+      throw new Error(`test hard timeout after ${timeoutMs.toString()}ms`);
+    }),
+  ]);
+}
+
 type ExecToolName = "shell_run" | "shell_run.dangerous";
 
 interface ExecPermissionInput {
@@ -39,6 +50,7 @@ interface ExecPermissionInput {
   agent_name: string;
   tool_name: ExecToolName;
   context: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 interface ExecPermissionService {
@@ -256,6 +268,134 @@ describe("worktrees exec route", () => {
     expect(body.exit_code).toBeNull();
   });
 
+  it("bounds a permission acquisition that never settles and does not fabricate success", async () => {
+    let permissionAttempts = 0;
+    let permissionCancellations = 0;
+    const sideEffectPath = path.join(tmp, "must-not-exist");
+    const services = fakeServices(
+      { H1: tmp },
+      {
+        permissionService: {
+          requestPermission: (input): Promise<{ approved: boolean }> => {
+            permissionAttempts += 1;
+            return new Promise((_, reject) => {
+              input.signal?.addEventListener(
+                "abort",
+                () => {
+                  permissionCancellations += 1;
+                  setTimeout(() => {
+                    const cleanupFinishedAt = Date.now() + 100;
+                    while (Date.now() < cleanupFinishedAt) {
+                      // Simulate deferred durable cleanup under SQLite contention.
+                    }
+                  }, 0);
+                  reject(new Error("permission request aborted"));
+                },
+                { once: true },
+              );
+            });
+          },
+        },
+      },
+    );
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({
+        command: `touch ${JSON.stringify(sideEffectPath)}`,
+        timeout_ms: 25,
+      }),
+    });
+
+    const startedAt = Date.now();
+    const res = await withinHardDeadline(worktreesExecRoute(req, "H1", services), 250);
+    const body = await jsonBody<ExecBody>(res);
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      stdout: "",
+      stderr: "",
+      exit_code: null,
+      timed_out: true,
+      truncated: false,
+    });
+    expect(permissionAttempts).toBe(1);
+    expect(Date.now() - startedAt).toBeLessThan(80);
+    expect(permissionCancellations).toBe(1);
+    expect(fs.existsSync(sideEffectPath)).toBe(false);
+    await Bun.sleep(120);
+  });
+
+  it("starts a fresh attempt after permission acquisition times out", async () => {
+    let permissionAttempts = 0;
+    const firstSideEffectPath = path.join(tmp, "first-must-not-exist");
+    const services = fakeServices(
+      { H1: tmp },
+      {
+        permissionService: {
+          requestPermission: (): Promise<{ approved: boolean }> => {
+            permissionAttempts += 1;
+            if (permissionAttempts === 1) {
+              return new Promise(() => {
+                // Deliberately never settles to reproduce the pre-execution wedge.
+              });
+            }
+            return Promise.resolve({ approved: true });
+          },
+        },
+      },
+    );
+    const first = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({
+        command: `touch ${JSON.stringify(firstSideEffectPath)}`,
+        timeout_ms: 25,
+      }),
+    });
+    const second = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo fresh-attempt", timeout_ms: 500 }),
+    });
+
+    const firstRes = await withinHardDeadline(worktreesExecRoute(first, "H1", services), 250);
+    const firstBody = await jsonBody<ExecBody>(firstRes);
+    const secondRes = await withinHardDeadline(worktreesExecRoute(second, "H1", services), 1_000);
+    const secondBody = await jsonBody<ExecBody>(secondRes);
+
+    expect(firstBody.timed_out).toBe(true);
+    expect(fs.existsSync(firstSideEffectPath)).toBe(false);
+    expect(secondBody.timed_out).toBe(false);
+    expect(secondBody.exit_code).toBe(0);
+    expect(secondBody.stdout).toContain("fresh-attempt");
+    expect(permissionAttempts).toBe(2);
+  });
+
+  it("charges permission latency against the command timeout budget", async () => {
+    const services = fakeServices(
+      { H1: tmp },
+      {
+        permissionService: {
+          requestPermission: async (): Promise<{ approved: boolean }> => {
+            await Bun.sleep(60);
+            return { approved: true };
+          },
+        },
+      },
+    );
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "sleep 0.2; echo too-late", timeout_ms: 100 }),
+    });
+    const startedAt = Date.now();
+
+    const res = await withinHardDeadline(worktreesExecRoute(req, "H1", services), 250);
+    const body = await jsonBody<ExecBody>(res);
+
+    expect(body.timed_out).toBe(true);
+    expect(body.exit_code).toBeNull();
+    expect(body.stdout).not.toContain("too-late");
+    expect(Date.now() - startedAt).toBeLessThan(140);
+  });
+
   it.skipIf(process.platform === "win32")(
     "kills background descendants when command exceeds timeout",
     async () => {
@@ -434,7 +574,8 @@ describe("worktrees exec route", () => {
     const req = new Request("http://x/worktrees/H1/exec", {
       method: "POST",
       body: JSON.stringify({
-        command: "echo sk-abcdefghijklmnopqrstuvwxyz012345; echo gsk_abcdefghijklmnopqrstuvwxyz012345",
+        command:
+          "echo sk-abcdefghijklmnopqrstuvwxyz012345; echo gsk_abcdefghijklmnopqrstuvwxyz012345",
       }),
     });
     const res = await worktreesExecRoute(req, "H1", services);

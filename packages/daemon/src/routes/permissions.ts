@@ -9,6 +9,14 @@ import {
 import { json } from "./_helpers.js";
 const DEFAULT_TTL_SECONDS = 300;
 
+interface PermissionAbortRegistry {
+  isPermissionAborted(permissionId: string): boolean;
+}
+
+function permissionAbortRegistry(services: Services): PermissionAbortRegistry | undefined {
+  return (services as Services & { permissionService?: PermissionAbortRegistry }).permissionService;
+}
+
 async function safeJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
@@ -156,11 +164,14 @@ export function permissionsListRoute(req: Request, services: Services): Response
     statuses = ["pending"];
   }
 
-  const permissions = services.permissionReader.listByStatus({
-    statuses,
-    conversation_id: conv,
-    parent_handoff_id: parent,
-  });
+  const abortRegistry = permissionAbortRegistry(services);
+  const permissions = services.permissionReader
+    .listByStatus({
+      statuses,
+      conversation_id: conv,
+      parent_handoff_id: parent,
+    })
+    .filter((row) => !abortRegistry?.isPermissionAborted(row.permission_id));
   return json({ permissions });
 }
 
@@ -192,6 +203,19 @@ export async function permissionsDecideRoute(
 
   const decided_at = services.clock().toISOString();
   const decided_by = parsed.data.resolved_by ?? services.machineId.get();
+
+  if (permissionAbortRegistry(services)?.isPermissionAborted(permission_id)) {
+    return json(
+      {
+        error: {
+          code: "conflict",
+          message: `permission ${permission_id} was aborted`,
+        },
+        current_status: "rejected",
+      },
+      409,
+    );
+  }
 
   const row = services.permissionWriter.decide(permission_id, {
     decision: parsed.data.decision,

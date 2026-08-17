@@ -9,7 +9,7 @@ import {
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { permissionsDecideRoute } from "../../src/routes/permissions.js";
+import { permissionsDecideRoute, permissionsListRoute } from "../../src/routes/permissions.js";
 import { InProcessPermissionService } from "../../src/services/in-process-permission-service.js";
 import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
@@ -205,6 +205,140 @@ test("stop() rejects pending waiters", async () => {
 
   svc.stop();
   await expectRejectsWith(decision, /stopped/);
+});
+
+test("aborting a request rejects its waiter and durably removes it from the pending queue", async () => {
+  const now = new Date("2026-05-03T12:00:00.000Z");
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db, now, {
+    handoff: { handoff_id: "h-1", conversation_id: "c-1" },
+  });
+  const auditEvents: { event_type: string; payload_json: unknown }[] = [];
+  services.t0Writer.write = (event): void => {
+    auditEvents.push({ event_type: event.event_type, payload_json: event.payload_json });
+  };
+  const svc = new InProcessPermissionService(services);
+  Object.assign(services, { permissionService: svc });
+  svc.start();
+  const controller = new AbortController();
+
+  const decision = svc.requestPermission({
+    parent_handoff_id: "h-1",
+    agent_name: "claude-acp-sonnet",
+    tool_name: "shell_run",
+    context: {},
+    signal: controller.signal,
+  });
+  const abortedDecision = expectRejectsWith(decision, /aborted/);
+  controller.abort();
+
+  const lateApproval = await permissionsDecideRoute(
+    new Request("http://x/permissions/decide", {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve", resolved_by: "user" }),
+    }),
+    "id-1",
+    services,
+  );
+  expect(lateApproval.status).toBe(409);
+
+  await Promise.race([
+    abortedDecision,
+    Bun.sleep(100).then(() => {
+      throw new Error("aborted permission waiter did not settle");
+    }),
+  ]);
+  await Bun.sleep(10);
+  expect(services.permissionReader.get("id-1")?.status).toBe("rejected");
+  expect(
+    services.permissionReader.listByStatus({
+      statuses: ["pending"],
+      parent_handoff_id: "h-1",
+    }),
+  ).toHaveLength(0);
+  expect(auditEvents.at(-1)).toMatchObject({
+    event_type: "permission-decided",
+    payload_json: { decided_by: "request_abort" },
+  });
+
+  const freshDecision = svc.requestPermission({
+    parent_handoff_id: "h-1",
+    agent_name: "claude-acp-sonnet",
+    tool_name: "shell_run",
+    context: {},
+  });
+  const freshPermission = services.permissionReader.listByStatus({
+    statuses: ["pending"],
+    parent_handoff_id: "h-1",
+  })[0];
+  expect(freshPermission).toBeDefined();
+  await permissionsDecideRoute(
+    new Request("http://x/permissions/decide", {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve", resolved_by: "user" }),
+    }),
+    freshPermission!.permission_id,
+    services,
+  );
+  expect((await freshDecision).approved).toBe(true);
+  svc.stop();
+});
+
+test("aborting a request settles its waiter when durable cleanup throws", async () => {
+  const now = new Date("2026-05-03T12:00:00.000Z");
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db, now, {
+    handoff: { handoff_id: "h-1", conversation_id: "c-1" },
+  });
+  const warnings: string[] = [];
+  services.log.warn = (fields: unknown): void => {
+    warnings.push(JSON.stringify(fields));
+  };
+  services.permissionWriter.decide = (): never => {
+    throw new Error("database busy");
+  };
+  const svc = new InProcessPermissionService(services);
+  Object.assign(services, { permissionService: svc });
+  svc.start();
+  const controller = new AbortController();
+
+  const decision = svc.requestPermission({
+    parent_handoff_id: "h-1",
+    agent_name: "claude-acp-sonnet",
+    tool_name: "shell_run",
+    context: {},
+    signal: controller.signal,
+  });
+  controller.abort();
+
+  await Promise.race([
+    expectRejectsWith(decision, /aborted/),
+    Bun.sleep(100).then(() => {
+      throw new Error("aborted permission waiter did not settle");
+    }),
+  ]);
+  await Bun.sleep(10);
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("database busy");
+  const pending = (await permissionsListRoute(
+    new Request("http://x/permissions?status=pending&parent_handoff_id=h-1"),
+    services,
+  ).json()) as { permissions: unknown[] };
+  expect(pending.permissions).toHaveLength(0);
+  const lateApproval = await permissionsDecideRoute(
+    new Request("http://x/permissions/decide", {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve", resolved_by: "user" }),
+    }),
+    "id-1",
+    services,
+  );
+  expect(lateApproval.status).toBe(409);
+  svc.stop();
 });
 
 test("throws if started twice or used before start", async () => {

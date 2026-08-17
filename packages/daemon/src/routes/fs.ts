@@ -10,8 +10,8 @@ import type { DaemonServices } from "../serve.js";
 import { getPrincipal } from "../auth.js";
 import { executeGlob, executeGrep, GrepError, type GrepOutputMode } from "../fs-search.js";
 import { buildScrubbedChildEnv, redactCredentials } from "../services/shell-session-pool.js";
-import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { bodyJson, json } from "./_helpers.js";
+import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
 
 const FS_READ_MAX_BYTES = 1024 * 1024; // 1 MiB
@@ -478,6 +478,44 @@ export async function worktreesGrepRoute(
 const EXEC_DEFAULT_TIMEOUT_MS = 120_000;
 const EXEC_MAX_TIMEOUT_MS = 600_000;
 const EXEC_OUTPUT_MAX_BYTES = 1024 * 1024;
+const EXEC_TIMED_OUT = Symbol("EXEC_TIMED_OUT");
+
+function execTimedOutResponse(stdout = "", stderr = "", truncated = false): Response {
+  return json({
+    stdout,
+    stderr,
+    exit_code: null,
+    timed_out: true,
+    truncated,
+  });
+}
+
+async function waitWithinExecDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  deadline: number,
+): Promise<T | typeof EXEC_TIMED_OUT> {
+  const remainingMs = deadline - performance.now();
+  if (remainingMs <= 0) return EXEC_TIMED_OUT;
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(controller.signal),
+      new Promise<typeof EXEC_TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          resolve(EXEC_TIMED_OUT);
+        }, remainingMs);
+      }),
+    ]);
+  } catch (error) {
+    if (controller.signal.aborted) return EXEC_TIMED_OUT;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function worktreesExecRoute(
   req: Request,
@@ -494,6 +532,7 @@ export async function worktreesExecRoute(
 
   const rawTimeout = optionalNumber(body, "timeout_ms") ?? EXEC_DEFAULT_TIMEOUT_MS;
   const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
+  const deadline = performance.now() + timeout_ms;
 
   // Mirror shell_run's kill-switch: the session pool is constructed only when
   // shell.enabled is true, so its absence means the operator disabled shell.
@@ -528,12 +567,18 @@ export async function worktreesExecRoute(
   // regex. Unattended dispatches whose agent auto-approves shell_run skip the
   // prompt exactly as shell_run does; everyone else raises a permission request
   // via the in-process permission service (fail-closed when none is wired).
-  const generalDecision = await requestCommandPermission(context.services, {
-    handoffId: handoff_id,
-    agentName,
-    toolName: "shell_run",
-    context: { command: command.slice(0, 200) },
-  });
+  const generalDecision = await waitWithinExecDeadline(
+    (signal) =>
+      requestCommandPermission(context.services, {
+        handoffId: handoff_id,
+        agentName,
+        toolName: "shell_run",
+        context: { command: command.slice(0, 200) },
+        signal,
+      }),
+    deadline,
+  );
+  if (generalDecision === EXEC_TIMED_OUT) return execTimedOutResponse();
   if (generalDecision === "reject") {
     return json(
       { error: { code: "permission_denied", message: "permission denied: shell_run" } },
@@ -543,12 +588,18 @@ export async function worktreesExecRoute(
 
   const matched = matchedDangerousPatterns(shellConfig, agentName, command);
   if (matched.length > 0) {
-    const dangerousDecision = await requestCommandPermission(context.services, {
-      handoffId: handoff_id,
-      agentName,
-      toolName: "shell_run.dangerous",
-      context: { command: command.slice(0, 1024), matched_patterns: matched },
-    });
+    const dangerousDecision = await waitWithinExecDeadline(
+      (signal) =>
+        requestCommandPermission(context.services, {
+          handoffId: handoff_id,
+          agentName,
+          toolName: "shell_run.dangerous",
+          context: { command: command.slice(0, 1024), matched_patterns: matched },
+          signal,
+        }),
+      deadline,
+    );
+    if (dangerousDecision === EXEC_TIMED_OUT) return execTimedOutResponse();
     if (dangerousDecision === "reject") {
       return json({ error: { code: "dangerous_command", matched } }, 403);
     }
@@ -573,6 +624,9 @@ export async function worktreesExecRoute(
     const text = outputBufferToString(buffer);
     return redactOut ? redactCredentials(text) : text;
   };
+
+  const remainingMs = deadline - performance.now();
+  if (remainingMs <= 0) return execTimedOutResponse();
 
   return await new Promise<Response>((resolve) => {
     const child = spawn(command, {
@@ -613,15 +667,13 @@ export async function worktreesExecRoute(
         }
       }
       resolve(
-        json({
-          stdout: finalize(stdoutBuffer),
-          stderr: finalize(stderrBuffer),
-          exit_code: null,
-          timed_out: true,
-          truncated: stdoutBuffer.truncated || stderrBuffer.truncated,
-        }),
+        execTimedOutResponse(
+          finalize(stdoutBuffer),
+          finalize(stderrBuffer),
+          stdoutBuffer.truncated || stderrBuffer.truncated,
+        ),
       );
-    }, timeout_ms);
+    }, remainingMs);
 
     child.on("close", (code: number | null) => {
       if (settled) return;
