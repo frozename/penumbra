@@ -33,7 +33,7 @@ function createGhClientMock(commentBodies: string[]): GhClient {
         stateReason: null,
         updatedAt: "2026-05-08T18:00:00.000Z",
         title: "Issue 91",
-        url: "https://github.com/acordeiro/penumbra/issues/91",
+        url: "https://github.com/frozename/penumbra/issues/91",
       });
     },
     closeIssue(): Promise<void> {
@@ -49,7 +49,7 @@ function createGhClientMock(commentBodies: string[]): GhClient {
     ): Promise<{ comment_url: string }> {
       commentBodies.push(body);
       return Promise.resolve({
-        comment_url: "https://github.com/acordeiro/penumbra/issues/91#issuecomment-777",
+        comment_url: "https://github.com/frozename/penumbra/issues/91#issuecomment-777",
       });
     },
     listComments(): Promise<[]> {
@@ -70,7 +70,7 @@ test("canceling a linked task posts a status_change comment to GitHub", async ()
     created_by_kind: "human",
     created_by_id: "cli",
   });
-  writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 91 });
+  writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 91 });
 
   const commentBodies: string[] = [];
   const ghClient = createGhClientMock(commentBodies);

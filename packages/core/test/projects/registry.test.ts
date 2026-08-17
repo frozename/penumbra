@@ -172,12 +172,12 @@ test("gh_repo parses owner/name form", () => {
     `projects:
   - project_id: penumbra
     root_path: /tmp/penumbra
-    gh_repo: acordeiro/penumbra
+    gh_repo: frozename/penumbra
 `,
   );
 
   const registry = loadProjectRegistry(path);
-  expect(getGithubRepo(registry.get("penumbra"))).toBe("acordeiro/penumbra");
+  expect(getGithubRepo(registry.get("penumbra"))).toBe("frozename/penumbra");
 });
 
 test("invalid gh_repo format throws", () => {
@@ -189,7 +189,7 @@ test("invalid gh_repo format throws", () => {
     `projects:
   - project_id: penumbra
     root_path: /tmp/penumbra
-    gh_repo: acordeiro
+    gh_repo: frozename
 `,
   );
 
@@ -207,13 +207,13 @@ test("remote github form parses and helper prefers remote repo", () => {
     root_path: /tmp/penumbra
     remote:
       kind: github
-      repo: acordeiro/penumbra
+      repo: frozename/penumbra
 `,
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
-  expect(getGithubRepo(registry.get("penumbra"))).toBe("acordeiro/penumbra");
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "frozename/penumbra" });
+  expect(getGithubRepo(registry.get("penumbra"))).toBe("frozename/penumbra");
 });
 
 test("both gh_repo and remote throw", () => {
@@ -225,10 +225,10 @@ test("both gh_repo and remote throw", () => {
     `projects:
   - project_id: penumbra
     root_path: /tmp/penumbra
-    gh_repo: acordeiro/penumbra
+    gh_repo: frozename/penumbra
     remote:
       kind: github
-      repo: acordeiro/penumbra
+      repo: frozename/penumbra
 `,
   );
 
@@ -248,7 +248,7 @@ test("invalid remote github repo format throws", () => {
     root_path: /tmp/penumbra
     remote:
       kind: github
-      repo: acordeiro
+      repo: frozename
 `,
   );
 
@@ -265,13 +265,13 @@ test("remote parses when repo appears before kind", () => {
   - project_id: penumbra
     root_path: /tmp/penumbra
     remote:
-      repo: acordeiro/penumbra
+      repo: frozename/penumbra
       kind: github
 `,
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "frozename/penumbra" });
 });
 
 test("remote parses with blank line before kind", () => {
@@ -286,12 +286,12 @@ test("remote parses with blank line before kind", () => {
     remote:
 
       kind: github
-      repo: acordeiro/penumbra
+      repo: frozename/penumbra
 `,
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "frozename/penumbra" });
 });
 
 test("remote block missing repo throws", () => {
@@ -322,19 +322,19 @@ test("multiple remote entries do not swallow the next project", () => {
     root_path: /tmp/penumbra
     remote:
       kind: github
-      repo: acordeiro/penumbra
+      repo: frozename/penumbra
   - project_id: sirius
     root_path: /tmp/sirius
     remote:
-      repo: acordeiro/sirius
+      repo: frozename/sirius
       kind: github
 `,
   );
 
   const registry = loadProjectRegistry(path);
   expect(registry.list()).toHaveLength(2);
-  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
-  expect(registry.get("sirius")?.remote).toEqual({ kind: "github", repo: "acordeiro/sirius" });
+  expect(registry.get("penumbra")?.remote).toEqual({ kind: "github", repo: "frozename/penumbra" });
+  expect(registry.get("sirius")?.remote).toEqual({ kind: "github", repo: "frozename/sirius" });
 });
 
 test("default registry path points at home .config/penumbra/projects.yaml", () => {

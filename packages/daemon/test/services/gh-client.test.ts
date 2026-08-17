@@ -43,7 +43,7 @@ describe("createGhCliClient", () => {
     const exec: GhExec = (args) => {
       calls.push(args);
       return Promise.resolve({
-        stdout: "https://github.com/acordeiro/penumbra/issues/42\n",
+        stdout: "https://github.com/frozename/penumbra/issues/42\n",
         stderr: "",
         exitCode: 0,
       });
@@ -51,11 +51,11 @@ describe("createGhCliClient", () => {
     const client = createGhCliClient({ exec });
 
     const out = await client.createIssue({
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Task title",
       body: "Task body",
       labels: ["tasks", "phase-2"],
-      assignees: ["acordeiro"],
+      assignees: ["frozename"],
     });
 
     expect(calls).toEqual([
@@ -63,7 +63,7 @@ describe("createGhCliClient", () => {
         "issue",
         "create",
         "--repo",
-        "acordeiro/penumbra",
+        "frozename/penumbra",
         "--title",
         "Task title",
         "--body",
@@ -73,12 +73,12 @@ describe("createGhCliClient", () => {
         "--label",
         "phase-2",
         "--assignee",
-        "acordeiro",
+        "frozename",
       ],
     ]);
     expect(out).toEqual({
       number: 42,
-      url: "https://github.com/acordeiro/penumbra/issues/42",
+      url: "https://github.com/frozename/penumbra/issues/42",
     });
   });
 
@@ -93,7 +93,7 @@ describe("createGhCliClient", () => {
 
     await expectRejectsWithMessage(
       client.createIssue({
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "Task title",
       }),
       "did not print an issue URL",
@@ -117,7 +117,7 @@ describe("createGhCliClient", () => {
           });
         }
         return Promise.resolve({
-          stdout: "https://github.com/acordeiro/penumbra/issues/43\n",
+          stdout: "https://github.com/frozename/penumbra/issues/43\n",
           stderr: "",
           exitCode: 0,
         });
@@ -163,7 +163,7 @@ describe("createGhCliClient", () => {
       ]);
       expect(out).toEqual({
         number: 43,
-        url: "https://github.com/acordeiro/penumbra/issues/43",
+        url: "https://github.com/frozename/penumbra/issues/43",
       });
     } finally {
       warnSpy.mockRestore();
@@ -187,7 +187,7 @@ describe("createGhCliClient", () => {
           });
         }
         return Promise.resolve({
-          stdout: "https://github.com/acordeiro/penumbra/issues/44\n",
+          stdout: "https://github.com/frozename/penumbra/issues/44\n",
           stderr: "",
           exitCode: 0,
         });
@@ -231,7 +231,7 @@ describe("createGhCliClient", () => {
       ]);
       expect(out).toEqual({
         number: 44,
-        url: "https://github.com/acordeiro/penumbra/issues/44",
+        url: "https://github.com/frozename/penumbra/issues/44",
       });
     } finally {
       warnSpy.mockRestore();
@@ -252,11 +252,11 @@ describe("createGhCliClient", () => {
 
     await expectRejectsWithMessage(
       client.createIssue({
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "Task title",
         labels: ["keep"],
       }),
-      "gh issue create --repo acordeiro/penumbra --title Task title --label keep failed: GraphQL: Something else went wrong",
+      "gh issue create --repo frozename/penumbra --title Task title --label keep failed: GraphQL: Something else went wrong",
     );
 
     expect(calls).toHaveLength(1);
@@ -267,7 +267,7 @@ describe("createGhCliClient", () => {
     const exec: GhExec = (args) => {
       calls.push(args);
       return Promise.resolve({
-        stdout: "https://github.com/acordeiro/penumbra/issues/45\n",
+        stdout: "https://github.com/frozename/penumbra/issues/45\n",
         stderr: "",
         exitCode: 0,
       });
@@ -275,7 +275,7 @@ describe("createGhCliClient", () => {
     const client = createGhCliClient({ exec });
 
     const out = await client.createIssue({
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Task title",
       labels: ["keep"],
     });
@@ -283,7 +283,7 @@ describe("createGhCliClient", () => {
     expect(calls).toHaveLength(1);
     expect(out).toEqual({
       number: 45,
-      url: "https://github.com/acordeiro/penumbra/issues/45",
+      url: "https://github.com/frozename/penumbra/issues/45",
     });
   });
 
@@ -292,25 +292,25 @@ describe("createGhCliClient", () => {
     const exec: GhExec = (args) => {
       calls.push(args);
       return Promise.resolve({
-        stdout: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-123456789\n",
+        stdout: "https://github.com/frozename/penumbra/issues/1#issuecomment-123456789\n",
         stderr: "",
         exitCode: 0,
       });
     };
     const client = createGhCliClient({ exec });
-    const out = await client.commentIssue("acordeiro/penumbra", 1, "hello");
+    const out = await client.commentIssue("frozename/penumbra", 1, "hello");
 
     expect(calls[0]).toEqual([
       "issue",
       "comment",
       "1",
       "--repo",
-      "acordeiro/penumbra",
+      "frozename/penumbra",
       "--body",
       "hello",
     ]);
     expect(out).toEqual({
-      comment_url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-123456789",
+      comment_url: "https://github.com/frozename/penumbra/issues/1#issuecomment-123456789",
     });
   });
 
@@ -326,7 +326,7 @@ describe("createGhCliClient", () => {
               user: { login: "octocat" },
               body: "Looks good",
               created_at: "2026-05-08T17:00:00Z",
-              html_url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001",
+              html_url: "https://github.com/frozename/penumbra/issues/1#issuecomment-9001",
             },
           ],
           [
@@ -335,7 +335,7 @@ describe("createGhCliClient", () => {
               user: {},
               body: null,
               created_at: null,
-              url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-9002",
+              url: "https://github.com/frozename/penumbra/issues/1#issuecomment-9002",
             },
           ],
         ]),
@@ -344,13 +344,13 @@ describe("createGhCliClient", () => {
       });
     };
     const client = createGhCliClient({ exec });
-    const out = await client.listComments("acordeiro/penumbra", 1, {
+    const out = await client.listComments("frozename/penumbra", 1, {
       since: "2026-05-08T16:00:00.000Z",
     });
 
     expect(calls[0]).toEqual([
       "api",
-      "repos/acordeiro/penumbra/issues/1/comments?since=2026-05-08T16%3A00%3A00.000Z",
+      "repos/frozename/penumbra/issues/1/comments?since=2026-05-08T16%3A00%3A00.000Z",
       "--paginate",
       "--slurp",
     ]);
@@ -360,14 +360,14 @@ describe("createGhCliClient", () => {
         author_login: "octocat",
         body: "Looks good",
         created_at: "2026-05-08T17:00:00Z",
-        url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001",
+        url: "https://github.com/frozename/penumbra/issues/1#issuecomment-9001",
       },
       {
         id: "9002",
         author_login: "",
         body: "",
         created_at: "",
-        url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-9002",
+        url: "https://github.com/frozename/penumbra/issues/1#issuecomment-9002",
       },
     ]);
   });

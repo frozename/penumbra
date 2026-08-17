@@ -53,11 +53,11 @@ describe("task board schemas", () => {
       acceptance_criteria: "It works",
       expected_artifacts: [{ type: "commit", ref: "abc123" }],
       gh_create: {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "Task-backed issue",
         body: "Issue body",
         labels: ["tasks", "automation"],
-        assignees: ["acordeiro"],
+        assignees: ["frozename"],
       },
       eligibility: {
         required_tags: ["foo"],

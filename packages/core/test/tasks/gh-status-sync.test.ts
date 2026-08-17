@@ -75,7 +75,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: issue });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: issue });
     db.run(`DELETE FROM gh_outbox`); // ignore any enqueue from linking itself
     return task_id;
   }
@@ -170,7 +170,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       created_by_id: "cli",
       requires_review: true,
     }).task_id;
-    writer.linkGhIssue(parent, { repo: "acordeiro/penumbra", issue_number: 9 });
+    writer.linkGhIssue(parent, { repo: "frozename/penumbra", issue_number: 9 });
     const parentLease = writer.lease({ task_id: parent, agent_id: "worker-a" });
     writer.complete({ task_id: parent, lease_id: parentLease.lease_id, result_summary: "ready" });
     db.run(`DELETE FROM gh_outbox`); // isolate the review-pass flip
@@ -198,7 +198,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       created_by_id: "cli",
       requires_review: true,
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 21 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 21 });
     const lease = writer.lease({ task_id, agent_id: "agent-a" });
     db.run(`DELETE FROM gh_outbox`); // isolate the complete transition
     const res = writer.complete({ task_id, lease_id: lease.lease_id, result_summary: "done" });
@@ -215,7 +215,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       created_by_id: "cli",
       requires_review: true,
     }).task_id;
-    writer.linkGhIssue(parent, { repo: "acordeiro/penumbra", issue_number: 31 });
+    writer.linkGhIssue(parent, { repo: "frozename/penumbra", issue_number: 31 });
     const parentLease = writer.lease({ task_id: parent, agent_id: "worker-a" });
     writer.complete({ task_id: parent, lease_id: parentLease.lease_id, result_summary: "ready" });
     db.run(`DELETE FROM gh_outbox`); // isolate the review-fail flip
@@ -257,7 +257,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
     writer.complete({ task_id: parent, lease_id: parentLease.lease_id, result_summary: "ready" });
 
     const review = insertReviewTask(db, parent);
-    writer.linkGhIssue(review, { repo: "acordeiro/penumbra", issue_number: 41 });
+    writer.linkGhIssue(review, { repo: "frozename/penumbra", issue_number: 41 });
     const reviewLease = writer.lease({ task_id: review, agent_id: "reviewer-a" });
     db.run(`DELETE FROM gh_outbox`); // isolate the review task's own completion
     writer.complete({
@@ -312,7 +312,7 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    auctionWriter.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 51 });
+    auctionWriter.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 51 });
     db.run(`DELETE FROM gh_outbox`); // isolate the auction lease transition
     nowMs = 10_000;
     const leased = await auctionWriter.next({ agent_id: "A" });
@@ -344,7 +344,7 @@ describe("enqueueGhStatusSyncOnDb (raw-SQL bypass paths)", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: issue });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: issue });
     db.run(`DELETE FROM gh_outbox`);
     return task_id;
   }

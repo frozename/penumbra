@@ -23,7 +23,7 @@ test("POST /tasks/sync-gh-now with task_id uses pushStatusNow and returns post-p
       syncCalled = true;
       return Promise.resolve({
         task_id,
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         issue_number: 11,
         gh_state: "OPEN",
         action: "pulled",
@@ -34,7 +34,7 @@ test("POST /tasks/sync-gh-now with task_id uses pushStatusNow and returns post-p
       pushedTaskId = task_id;
       return Promise.resolve({
         task_id,
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         issue_number: 11,
         gh_state: "CLOSED",
         action: "pushed",

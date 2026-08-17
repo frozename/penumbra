@@ -278,10 +278,10 @@ test("task new with gh_create prints task id and queued status", async () => {
   const lines: string[] = [];
   await runTaskNew({
     prompt: "wire task gh create",
-    gh_repo: "acordeiro/penumbra",
+    gh_repo: "frozename/penumbra",
     gh_title: "Custom GH title",
     gh_labels: ["tasks", "phase-2"],
-    gh_assignees: ["acordeiro"],
+    gh_assignees: ["frozename"],
     storageRoot,
     fetch: (_url, init) => {
       const bodyStr = typeof init?.body === "string" ? init.body : "{}";
@@ -303,10 +303,10 @@ test("task new with gh_create prints task id and queued status", async () => {
   expect(postedBody).toMatchObject({
     prompt: "wire task gh create",
     gh_create: {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Custom GH title",
       labels: ["tasks", "phase-2"],
-      assignees: ["acordeiro"],
+      assignees: ["frozename"],
     },
   });
   expect(lines).toEqual(["task_gh_1", "gh_create_status=queued"]);

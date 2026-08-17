@@ -29,7 +29,7 @@ to approve handoffs.
      - name: local
        adapter: openai-compat-http
        options:
-         baseUrl: https://192.168.68.76:7843/v1
+         baseUrl: https://your-llm-node.local:7843/v1
          api_key_env: LLAMACTL_TOKEN_LOCAL
          model: gemma-4-E4B-it-GGUF/...
        roles: [reviewer]
@@ -210,12 +210,12 @@ Targets any server speaking the OpenAI Chat Completions schema
 
 ```yaml
 options:
-  baseUrl: https://192.168.68.76:7843/v1 # required; trailing /v1 expected
+  baseUrl: https://your-llm-node.local:7843/v1 # required; trailing /v1 expected
   apiKey: ll_agt_… # required; or use api_key_env
   api_key_env: LLAMACTL_TOKEN_LOCAL # alternative: env var name
   model: gemma-4-E4B-it-GGUF/... # required; sent as `model` field
   maxTokens: 8192 # default 1024
-  caPath: /tmp/llamactl-mac-mini-ca.pem # PEM file with extra trusted CAs
+  caPath: /tmp/llamactl-ca.pem # PEM file with extra trusted CAs
   systemPrompt: | # prepended as {role: 'system'} message
     You are a planner. End replies with @executor <task>.
   extraBody: # arbitrary fields merged into request body

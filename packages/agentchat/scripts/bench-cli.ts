@@ -16,10 +16,10 @@
  *
  * examples:
  *   # agy / claude shape: bin --model X --print <prompt>
- *   bun bench-cli.ts --command /Users/acordeiro/.local/bin/agy \
+ *   bun bench-cli.ts --command /Users/frozename/.local/bin/agy \
  *     --model "Gemini 3.1 Pro (High)" --label google-gemini-cli > results.jsonl
  *   # opencode shape: opencode run --model X <prompt>
- *   bun bench-cli.ts --command /Users/acordeiro/.opencode/bin/opencode \
+ *   bun bench-cli.ts --command /Users/frozename/.opencode/bin/opencode \
  *     --model "opencode-go/glm-5.2" --pre-args run --extra-args "" \
  *     --label opencode-glm-52 > results.jsonl
  */

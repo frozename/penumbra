@@ -118,7 +118,7 @@ const mockDeps: ReconcilerDeps = {
   getHandoff: mock((_handoffId: string) => Promise.resolve(makeHandoffRow())),
   createDispatchPR: mock(() =>
     Promise.resolve({
-      url: "https://github.com/acordeiro/penumbra/pull/1",
+      url: "https://github.com/frozename/penumbra/pull/1",
       number: 1,
     }),
   ),

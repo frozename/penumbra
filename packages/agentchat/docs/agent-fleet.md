@@ -151,10 +151,10 @@ bun packages/agentchat/scripts/bench.ts \
 # Mac-mini gemma (self-signed CA):
 bun packages/agentchat/scripts/bench.ts \
   --label gemma4-e4b-mac-mini \
-  --url https://192.168.68.76:7843/v1 \
+  --url https://your-llm-node.local:7843/v1 \
   --model gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf \
   --auth-token "$LLAMACTL_TOKEN_MAC_MINI" \
-  --auth-cert /tmp/llamactl-mac-mini-ca.pem
+  --auth-cert /tmp/llamactl-ca.pem
 ```
 
 Each invocation prints one JSON line per task to stdout. To compare a new model against the table, eyeball the `answer` vs `groundTruth` fields and update the row above.

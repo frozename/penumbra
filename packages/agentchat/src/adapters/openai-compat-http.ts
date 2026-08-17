@@ -7,7 +7,7 @@ import { createDispatchAbortSignal, type DispatchAbortHandle } from "./dispatch-
 import { resolveAdapterApiKey } from "./secret.js";
 
 export interface OpenAiCompatHttpOptions {
-  baseUrl: string; // e.g. https://192.168.68.76:7843/v1
+  baseUrl: string; // e.g. https://your-llm-node.local:7843/v1
   /** Literal API key. Use only for anonymous endpoints (`local-no-auth`) or
    *  trusted on-disk configs. Prefer apiKeyEnv/apiKeyKeychain/apiKeyFile. */
   apiKey?: string;

@@ -64,9 +64,9 @@ type FleetResults = Record<string, FleetAgentResult>;
 type FleetAgent = AgentChatConfig["agents"][number];
 
 const DEFAULT_SKIP_TAGS = ["avoid-on-free-tier", "swap-required"];
-const DEFAULT_JUDGE_URL = "https://192.168.68.76:7843/v1";
+const DEFAULT_JUDGE_URL = "https://your-llm-node.local:7843/v1";
 const DEFAULT_JUDGE_MODEL = "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf";
-const DEFAULT_JUDGE_CA = "/tmp/llamactl-mac-mini-ca.pem";
+const DEFAULT_JUDGE_CA = "/tmp/llamactl-ca.pem";
 const DEFAULT_PER_AGENT_TIMEOUT_MS = 180_000;
 const STRICT_OPENAI_HOST_RE = /groq\.com|generativelanguage\.googleapis\.com|openai\.com/;
 

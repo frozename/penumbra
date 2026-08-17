@@ -36,11 +36,11 @@ describe("TaskWriter gh issue linking", () => {
       created_by_id: "cli",
     });
 
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 123 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 123 });
 
-    const found = writer.findByGhIssue("acordeiro/penumbra", 123);
+    const found = writer.findByGhIssue("frozename/penumbra", 123);
     expect(found?.id).toBe(task_id);
-    expect(found?.gh_issue_repo).toBe("acordeiro/penumbra");
+    expect(found?.gh_issue_repo).toBe("frozename/penumbra");
     expect(found?.gh_issue_number).toBe(123);
   });
 
@@ -50,7 +50,7 @@ describe("TaskWriter gh issue linking", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 321 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 321 });
 
     writer.unlinkGhIssue(task_id);
 

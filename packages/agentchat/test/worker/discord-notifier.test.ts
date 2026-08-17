@@ -167,13 +167,13 @@ describe("formatMergeResultEmbed", () => {
       conversation_id: "c-pr",
       agent: "gemini",
       status: "pr_opened",
-      pr_url: "https://github.com/acordeiro/penumbra/pull/321",
+      pr_url: "https://github.com/frozename/penumbra/pull/321",
     });
 
     expect(embed.color).toBe(0x00cc66);
     expect(findField(embed, "pr")).toMatchObject({
       name: "pr",
-      value: "https://github.com/acordeiro/penumbra/pull/321",
+      value: "https://github.com/frozename/penumbra/pull/321",
     });
   });
 

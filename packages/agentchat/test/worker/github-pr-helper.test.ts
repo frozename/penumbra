@@ -41,7 +41,7 @@ test("createDispatchPR pushes the branch and creates a PR with a body file", asy
         expect(body).toContain("- tests: bun test packages/daemon/test/ → pass");
         expect(body).toContain("1 file changed, 2 insertions(+), 1 deletion(-)");
         return {
-          stdout: "https://github.com/acordeiro/penumbra/pull/321\n",
+          stdout: "https://github.com/frozename/penumbra/pull/321\n",
           stderr: "",
           code: 0,
         };
@@ -91,7 +91,7 @@ test("createDispatchPR pushes the branch and creates a PR with a body file", asy
   );
 
   expect(result).toEqual({
-    url: "https://github.com/acordeiro/penumbra/pull/321",
+    url: "https://github.com/frozename/penumbra/pull/321",
     number: 321,
   });
   expect(calls).toHaveLength(2);

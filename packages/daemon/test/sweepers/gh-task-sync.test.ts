@@ -60,7 +60,7 @@ function makeGhClient(overrides: Partial<GhClient>): GhClient {
     reopenIssue: () => resolveVoid(),
     commentIssue: (_repo: string, issue: number) =>
       Promise.resolve({
-        comment_url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}#issuecomment-1`,
+        comment_url: `https://github.com/frozename/penumbra/issues/${String(issue)}#issuecomment-1`,
       }),
     listComments: () => resolveEmptyComments(),
   };
@@ -74,7 +74,7 @@ function viewOpen(issue: number, updatedAt = "2026-05-08T00:00:00.000Z"): GhIssu
     stateReason: null,
     updatedAt,
     title: `Issue ${String(issue)}`,
-    url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}`,
+    url: `https://github.com/frozename/penumbra/issues/${String(issue)}`,
   };
 }
 
@@ -89,7 +89,7 @@ function viewClosed(
     stateReason,
     updatedAt,
     title: `Issue ${String(issue)}`,
-    url: `https://github.com/acordeiro/penumbra/issues/${String(issue)}`,
+    url: `https://github.com/frozename/penumbra/issues/${String(issue)}`,
   };
 }
 
@@ -101,7 +101,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 10 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 10 });
 
     const ghClient = makeGhClient({
       viewIssue: () => Promise.resolve(viewClosed(10, "NOT_PLANNED")),
@@ -143,7 +143,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 12 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 12 });
 
     const ghClient = makeGhClient({
       viewIssue: () => Promise.resolve(viewClosed(12, "COMPLETED")),
@@ -172,7 +172,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 13 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 13 });
 
     const ghClient = makeGhClient({
       viewIssue: () => Promise.resolve(viewClosed(13, "NOT_PLANNED")),
@@ -201,7 +201,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 14 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 14 });
 
     const ghClient = makeGhClient({
       viewIssue: () => Promise.resolve(viewClosed(14, null)),
@@ -230,7 +230,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 11 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 11 });
 
     setNow(Date.parse("2026-05-08T02:00:00.000Z"));
     db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
@@ -259,7 +259,7 @@ describe("gh-task-sync sweeper/service", () => {
     const out = await sync.syncLinkedTask(task_id);
 
     expect(out.action).toBe("pushed");
-    expect(closedCalls).toEqual([{ repo: "acordeiro/penumbra", issue: 11, reason: "completed" }]);
+    expect(closedCalls).toEqual([{ repo: "frozename/penumbra", issue: 11, reason: "completed" }]);
   });
 
   test("syncAllLinkedTasks continues when one linked task errors", async () => {
@@ -279,9 +279,9 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     }).task_id;
-    writer.linkGhIssue(t1, { repo: "acordeiro/penumbra", issue_number: 21 });
-    writer.linkGhIssue(t2, { repo: "acordeiro/penumbra", issue_number: 22 });
-    writer.linkGhIssue(t3, { repo: "acordeiro/penumbra", issue_number: 23 });
+    writer.linkGhIssue(t1, { repo: "frozename/penumbra", issue_number: 21 });
+    writer.linkGhIssue(t2, { repo: "frozename/penumbra", issue_number: 22 });
+    writer.linkGhIssue(t3, { repo: "frozename/penumbra", issue_number: 23 });
 
     const viewed: number[] = [];
     const ghClient = makeGhClient({
@@ -316,7 +316,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 24 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 24 });
 
     const warns: { obj: Record<string, unknown>; msg?: string }[] = [];
     const ghClient = makeGhClient({
@@ -349,7 +349,7 @@ describe("gh-task-sync sweeper/service", () => {
     expect(warns[0]?.msg).toBe("gh-task-sync: linked task sync failed");
     expect(warns[0]?.obj).toMatchObject({
       taskId: task_id,
-      ghRef: "acordeiro/penumbra#24",
+      ghRef: "frozename/penumbra#24",
       err: "network down",
       code: "ETIMEDOUT",
     });
@@ -363,7 +363,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_id: "cli",
     });
     writer.enqueueGhOutbox(task_id, "gh_create_issue", {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: `line one\n${"x".repeat(1200)}\nline three`,
       body: "full body",
     });
@@ -374,7 +374,7 @@ describe("gh-task-sync sweeper/service", () => {
         createCalls.push(input);
         return Promise.resolve({
           number: 99,
-          url: "https://github.com/acordeiro/penumbra/issues/99",
+          url: "https://github.com/frozename/penumbra/issues/99",
         });
       },
     });
@@ -392,7 +392,7 @@ describe("gh-task-sync sweeper/service", () => {
     await sync.syncAllLinkedTasks({ fullReconcile: false });
 
     expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]?.repo).toBe("acordeiro/penumbra");
+    expect(createCalls[0]?.repo).toBe("frozename/penumbra");
     expect(createCalls[0]?.title).toMatch(/^[^\n]+$/);
     expect((createCalls[0]?.title ?? "").length).toBeLessThanOrEqual(256);
     expect(createCalls[0]?.title).toContain("line one");
@@ -411,7 +411,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_id: "cli",
     });
     writer.enqueueGhOutbox(task_id, "gh_create_issue", {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Create once",
       body: "body",
     });
@@ -429,7 +429,7 @@ describe("gh-task-sync sweeper/service", () => {
         }
         return {
           number: 99,
-          url: "https://github.com/acordeiro/penumbra/issues/99",
+          url: "https://github.com/frozename/penumbra/issues/99",
         };
       },
     });
@@ -478,7 +478,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_id: "cli",
     });
     writer.enqueueGhOutbox(task_id, "gh_create_issue", {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Create once",
       body: "body",
     });
@@ -491,7 +491,7 @@ describe("gh-task-sync sweeper/service", () => {
         createCalls.push(input);
         return Promise.resolve({
           number: 99,
-          url: "https://github.com/acordeiro/penumbra/issues/99",
+          url: "https://github.com/frozename/penumbra/issues/99",
         });
       },
     });
@@ -522,7 +522,7 @@ describe("gh-task-sync sweeper/service", () => {
         created_by_kind: "human",
         created_by_id: "cli",
       }).task_id;
-      writer.linkGhIssue(taskId, { repo: "acordeiro/penumbra", issue_number: 100 + i });
+      writer.linkGhIssue(taskId, { repo: "frozename/penumbra", issue_number: 100 + i });
     }
 
     let active = 0;
@@ -557,7 +557,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 55 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 55 });
 
     const ghClient = makeGhClient({
       viewIssue: () => Promise.resolve(viewOpen(55, "2026-05-08T03:00:00.000Z")),
@@ -568,14 +568,14 @@ describe("gh-task-sync sweeper/service", () => {
             author_login: "penumbra-bot",
             body: "<!-- penumbra:source=task:task_x kind=status_change ts=2026-05-08T03:00:00.000Z -->",
             created_at: "2026-05-08T03:00:00.000Z",
-            url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1001",
+            url: "https://github.com/frozename/penumbra/issues/55#issuecomment-1001",
           },
           {
             id: "1002",
             author_login: "octocat",
             body: "can we add test coverage?",
             created_at: "2026-05-08T03:01:00.000Z",
-            url: "https://github.com/acordeiro/penumbra/issues/55#issuecomment-1002",
+            url: "https://github.com/frozename/penumbra/issues/55#issuecomment-1002",
           },
         ]),
       getAuthenticatedLogin: () => Promise.resolve("penumbra-bot"),
@@ -618,7 +618,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 80 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 80 });
 
     const seenSince: (string | undefined)[] = [];
     let pass = 0;
@@ -634,7 +634,7 @@ describe("gh-task-sync sweeper/service", () => {
             author_login: "octocat",
             body: "status changed but this should still mirror",
             created_at: "2026-05-08T03:01:30.000Z",
-            url: "https://github.com/acordeiro/penumbra/issues/80#issuecomment-8001",
+            url: "https://github.com/frozename/penumbra/issues/80#issuecomment-8001",
           },
         ]);
       },
@@ -676,7 +676,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 90 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 90 });
 
     const preFetchMs = Date.parse("2026-05-08T04:00:00.000Z");
     const midSweepMs = Date.parse("2026-05-08T04:00:00.500Z");
@@ -708,7 +708,7 @@ describe("gh-task-sync sweeper/service", () => {
             author_login: "octocat",
             body: "created between fetch start and cursor stamp",
             created_at: new Date(midSweepMs).toISOString(),
-            url: "https://github.com/acordeiro/penumbra/issues/90#issuecomment-9001",
+            url: "https://github.com/frozename/penumbra/issues/90#issuecomment-9001",
           },
         ];
         return Promise.resolve<GhIssueComment[]>(
@@ -749,7 +749,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 81 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 81 });
     db.run(`UPDATE tasks SET gh_comments_synced_at = ? WHERE id = ?`, [
       Date.parse("2026-05-08T03:10:00.000Z"),
       task_id,
@@ -770,7 +770,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 82 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 82 });
 
     let viewCalls = 0;
     const ghClient = makeGhClient({
@@ -810,7 +810,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_kind: "human",
       created_by_id: "cli",
     });
-    writer.linkGhIssue(task_id, { repo: "acordeiro/penumbra", issue_number: 31 });
+    writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 31 });
     setNow(Date.parse("2026-05-08T02:00:00.000Z"));
     db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [
       Date.parse("2026-05-08T02:00:00.000Z"),
@@ -904,7 +904,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_id: "cli",
     });
     writer.enqueueGhOutbox(task_id, "gh_create_issue", {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "Idempotent create",
       body: "issue body",
     });
@@ -921,7 +921,7 @@ describe("gh-task-sync sweeper/service", () => {
         createCalls.push(input);
         return Promise.resolve({
           number: 1000,
-          url: "https://github.com/acordeiro/penumbra/issues/1000",
+          url: "https://github.com/frozename/penumbra/issues/1000",
         });
       },
     });
@@ -950,12 +950,12 @@ describe("gh-task-sync sweeper/service", () => {
 
     expect(createCalls).toHaveLength(0);
     expect(markerCalls).toHaveLength(1);
-    expect(markerCalls[0]?.repo).toBe("acordeiro/penumbra");
+    expect(markerCalls[0]?.repo).toBe("frozename/penumbra");
     expect(markerCalls[0]?.marker).toMatch(/^<!-- penumbra-outbox-id=\d+ -->$/);
 
     const task = writer.get(task_id);
     expect(task.gh_issue_number).toBe(999);
-    expect(task.gh_issue_repo).toBe("acordeiro/penumbra");
+    expect(task.gh_issue_repo).toBe("frozename/penumbra");
 
     const row = db
       .query<{ status: string }, [string]>(`SELECT status FROM gh_outbox WHERE task_id = ?`)
@@ -971,7 +971,7 @@ describe("gh-task-sync sweeper/service", () => {
       created_by_id: "cli",
     });
     writer.enqueueGhOutbox(task_id, "gh_create_issue", {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       title: "marker create",
       body: "original body",
     });
@@ -982,7 +982,7 @@ describe("gh-task-sync sweeper/service", () => {
         createCalls.push(input);
         return Promise.resolve({
           number: 42,
-          url: "https://github.com/acordeiro/penumbra/issues/42",
+          url: "https://github.com/frozename/penumbra/issues/42",
         });
       },
     });

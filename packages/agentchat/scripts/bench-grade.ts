@@ -325,10 +325,10 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const url = flag("url") ?? "https://192.168.68.76:7843/v1";
+  const url = flag("url") ?? "https://your-llm-node.local:7843/v1";
   const model = flag("model") ?? "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf";
   const authToken = flag("auth-token") ?? getApiKeyFromConfig();
-  const caPath = flag("auth-cert") ?? "/tmp/llamactl-mac-mini-ca.pem";
+  const caPath = flag("auth-cert") ?? "/tmp/llamactl-ca.pem";
 
   const results = await runGrade({ inputPath, url, model, authToken, caPath });
   for (const r of results) {

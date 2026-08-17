@@ -217,7 +217,7 @@ test("POST /tasks with gh_create queues github issue creation and returns queued
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 42,
           gh_state: "OPEN",
           action: "pushed",
@@ -232,7 +232,7 @@ test("POST /tasks with gh_create queues github issue creation and returns queued
       created_by_kind: "human",
       created_by_id: "cli",
       gh_create: {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         labels: ["tasks"],
       },
     });
@@ -272,7 +272,7 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 43,
           gh_state: "OPEN",
           action: "pushed",
@@ -282,7 +282,7 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
     }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
-    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
+    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "frozename/penumbra" },
   ]);
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -323,7 +323,7 @@ test("POST /tasks with gh_create resolves repo from project registry when omitte
 
     expect(createCalls).toEqual([
       {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "build task board route",
         body: "build task board route",
         labels: ["tasks"],
@@ -351,7 +351,7 @@ test("POST /tasks resolves repo from remote github project registry entries", as
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 44,
           gh_state: "OPEN",
           action: "pushed",
@@ -364,7 +364,7 @@ test("POST /tasks resolves repo from remote github project registry entries", as
     {
       project_id: "penumbra",
       root_path: "/tmp/penumbra",
-      remote: { kind: "github", repo: "acordeiro/penumbra" },
+      remote: { kind: "github", repo: "frozename/penumbra" },
     },
   ]);
   try {
@@ -387,7 +387,7 @@ test("POST /tasks resolves repo from remote github project registry entries", as
     expect(created.gh_create_error).toBeNull();
     expect(createCalls).toEqual([
       {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "build task board route",
         body: "build task board route",
         labels: ["tasks"],
@@ -415,7 +415,7 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 45,
           gh_state: "OPEN",
           action: "pushed",
@@ -425,7 +425,7 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
     }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
-    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
+    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "frozename/penumbra" },
   ]);
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -463,7 +463,7 @@ test("POST /tasks with refiner-origin draft defaults gh_create labels and resolv
     expect(created.gh_create_error).toBeNull();
     expect(createCalls).toEqual([
       {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "refiner task file",
         body: "refiner task file",
         labels: ["task-draft", "refiner-promoted"],
@@ -495,7 +495,7 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 46,
           gh_state: "OPEN",
           action: "pushed",
@@ -561,7 +561,7 @@ test("POST /tasks with refiner-origin draft rejects missing drafts and already p
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 47,
           gh_state: "OPEN",
           action: "pushed",
@@ -637,7 +637,7 @@ test("POST /tasks upgrades trusted auto-approved refiner promotions to orchestra
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 52,
           gh_state: "OPEN",
           action: "pushed",
@@ -701,7 +701,7 @@ test("POST /tasks returns 4xx for explicit non-maestro-capable allow_agents duri
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 53,
           gh_state: "OPEN",
           action: "pushed",
@@ -761,7 +761,7 @@ test("POST /tasks fails closed when no default auto-promote agents are maestro c
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 54,
           gh_state: "OPEN",
           action: "pushed",
@@ -823,7 +823,7 @@ test("POST /tasks preserves explicit allow_agents during trusted auto-approved r
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 53,
           gh_state: "OPEN",
           action: "pushed",
@@ -886,7 +886,7 @@ test("POST /tasks keeps untrusted or non-auto-approved refiner promotions as wor
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 53,
           gh_state: "OPEN",
           action: "pushed",
@@ -975,7 +975,7 @@ test("POST /tasks rejects forged draft origins before refiner promotion side eff
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 49,
           gh_state: "OPEN",
           action: "pushed",
@@ -1069,7 +1069,7 @@ test("POST /tasks rejects dash-only draft origins before promotion side effects"
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 49,
           gh_state: "OPEN",
           action: "pushed",
@@ -1134,7 +1134,7 @@ test("POST /tasks rejects draft origins with non-hex suffixes before promotion s
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 49,
           gh_state: "OPEN",
           action: "pushed",
@@ -1171,7 +1171,7 @@ test("POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id"
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 50,
           gh_state: "OPEN",
           action: "pushed",
@@ -1242,7 +1242,7 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 50,
           gh_state: "OPEN",
           action: "pushed",
@@ -1252,7 +1252,7 @@ test("POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
     }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
-    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
+    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "frozename/penumbra" },
   ]);
   insertTaskDraftEvent(daemon.services.db, {
     event_id: "draft-created",
@@ -1327,7 +1327,7 @@ test("POST /tasks with human origin or no origin stays unchanged", async () => {
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 47,
           gh_state: "OPEN",
           action: "pushed",
@@ -1337,7 +1337,7 @@ test("POST /tasks with human origin or no origin stays unchanged", async () => {
     }),
   });
   daemon.services.projectRegistry = makeProjectRegistry([
-    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "acordeiro/penumbra" },
+    { project_id: "penumbra", root_path: "/tmp/penumbra", gh_repo: "frozename/penumbra" },
   ]);
   try {
     const human = await postJson(daemon, "/tasks", {
@@ -1365,7 +1365,7 @@ test("POST /tasks with human origin or no origin stays unchanged", async () => {
 
     expect(createCalls).toEqual([
       {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "human task file",
         body: "human task file",
         labels: ["tasks"],
@@ -1404,7 +1404,7 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 48,
           gh_state: "OPEN",
           action: "pushed",
@@ -1438,7 +1438,7 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
       created_by_id: "cli",
       origin: "draft:33333333-3333-4333-8333-333333333333",
       gh_create: {
-        repo: "acordeiro/custom",
+        repo: "frozename/custom",
         labels: ["custom"],
       },
     });
@@ -1447,7 +1447,7 @@ test("POST /tasks with explicit gh_create keeps caller supplied config for refin
     expect(created.gh_create_status).toBe("queued");
     expect(createCalls).toEqual([
       {
-        repo: "acordeiro/custom",
+        repo: "frozename/custom",
         title: "refiner task file explicit gh",
         body: "refiner task file explicit gh",
         labels: ["custom"],
@@ -1475,7 +1475,7 @@ test("POST /tasks with gh_create and missing repo fails when project registry ha
       pushStatusNow: () =>
         Promise.resolve({
           task_id: "task-1",
-          repo: "acordeiro/penumbra",
+          repo: "frozename/penumbra",
           issue_number: 44,
           gh_state: "OPEN",
           action: "pushed",
@@ -1538,7 +1538,7 @@ test("POST /tasks with gh_create remains success even when GH would fail later",
       created_by_kind: "human",
       created_by_id: "cli",
       gh_create: {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
       },
     });
     expect(create.status).toBe(201);
@@ -1583,7 +1583,7 @@ test("POST /tasks/:id/comment-gh posts manual comment for linked task", async ()
       createIssue: () =>
         Promise.resolve({
           number: 99,
-          url: "https://github.com/acordeiro/penumbra/issues/99",
+          url: "https://github.com/frozename/penumbra/issues/99",
         }),
       viewIssue: () =>
         Promise.resolve({
@@ -1592,14 +1592,14 @@ test("POST /tasks/:id/comment-gh posts manual comment for linked task", async ()
           stateReason: null,
           updatedAt: "2026-05-08T00:00:00.000Z",
           title: "Issue 99",
-          url: "https://github.com/acordeiro/penumbra/issues/99",
+          url: "https://github.com/frozename/penumbra/issues/99",
         }),
       closeIssue: () => Promise.resolve(),
       reopenIssue: () => Promise.resolve(),
       commentIssue: (_repo, _issue, body) => {
         comments.push(body);
         return Promise.resolve({
-          comment_url: "https://github.com/acordeiro/penumbra/issues/99#issuecomment-999",
+          comment_url: "https://github.com/frozename/penumbra/issues/99#issuecomment-999",
         });
       },
       listComments: () => Promise.resolve([]),
@@ -1616,7 +1616,7 @@ test("POST /tasks/:id/comment-gh posts manual comment for linked task", async ()
     const created = (await create.json()) as { task_id: string };
 
     const link = await postJson(daemon, `/tasks/${created.task_id}/link-gh`, {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       issue_number: 99,
     });
     expect(link.status).toBe(200);
@@ -1640,7 +1640,7 @@ test("POST /tasks/:id/comment-gh returns 503 when github client is unavailable",
       createIssue: () =>
         Promise.resolve({
           number: 101,
-          url: "https://github.com/acordeiro/penumbra/issues/101",
+          url: "https://github.com/frozename/penumbra/issues/101",
         }),
       viewIssue: () =>
         Promise.resolve({
@@ -1649,7 +1649,7 @@ test("POST /tasks/:id/comment-gh returns 503 when github client is unavailable",
           stateReason: null,
           updatedAt: "2026-05-08T00:00:00.000Z",
           title: "Issue 101",
-          url: "https://github.com/acordeiro/penumbra/issues/101",
+          url: "https://github.com/frozename/penumbra/issues/101",
         }),
       closeIssue: () => Promise.resolve(),
       reopenIssue: () => Promise.resolve(),
@@ -1670,7 +1670,7 @@ test("POST /tasks/:id/comment-gh returns 503 when github client is unavailable",
     const created = (await create.json()) as { task_id: string };
 
     const link = await postJson(daemon, `/tasks/${created.task_id}/link-gh`, {
-      repo: "acordeiro/penumbra",
+      repo: "frozename/penumbra",
       issue_number: 101,
     });
     expect(link.status).toBe(200);

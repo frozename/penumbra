@@ -79,11 +79,11 @@ describe("task.* handlers", () => {
       acceptance_criteria: "tool is callable",
       expected_artifacts: [{ type: "commit" as const, ref: "deadbeef" }],
       gh_create: {
-        repo: "acordeiro/penumbra",
+        repo: "frozename/penumbra",
         title: "Task issue title",
         body: "Task issue body",
         labels: ["tasks"],
-        assignees: ["acordeiro"],
+        assignees: ["frozename"],
       },
       eligibility: { required_tags: ["typescript"] },
       review_eligibility: { min_tier: "premium" },
@@ -386,7 +386,7 @@ describe("task.* handlers", () => {
         calls.push({ taskId, body });
         return Promise.resolve({
           task_id: taskId,
-          gh_issue_url: "https://github.com/acordeiro/penumbra/issues/1",
+          gh_issue_url: "https://github.com/frozename/penumbra/issues/1",
           gh_state: "queued",
           last_sync_ts: null,
           gh_sync_status: "queued",
@@ -394,11 +394,11 @@ describe("task.* handlers", () => {
       },
     });
 
-    const out = await handler({ task_id: "task_9", repo: "acordeiro/penumbra", issue_number: 1 });
+    const out = await handler({ task_id: "task_9", repo: "frozename/penumbra", issue_number: 1 });
 
     expect(calls[0]).toEqual({
       taskId: "task_9",
-      body: { repo: "acordeiro/penumbra", issue_number: 1 },
+      body: { repo: "frozename/penumbra", issue_number: 1 },
     });
     const parsed = z
       .object({
@@ -418,7 +418,7 @@ describe("task.* handlers", () => {
       taskCommentGh: (taskId, body) => {
         calls.push({ taskId, body });
         return Promise.resolve({
-          comment_url: "https://github.com/acordeiro/penumbra/issues/1#issuecomment-222",
+          comment_url: "https://github.com/frozename/penumbra/issues/1#issuecomment-222",
         });
       },
     });

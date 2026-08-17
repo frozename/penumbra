@@ -59,15 +59,15 @@ test("loadProjectRegistry uses PENUMBRA_PROJECTS_YAML", () => {
 
 test("loadProjectRegistry parses github remote entries", () => {
   const path = writeRegistry(
-    `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    remote:\n      kind: github\n      repo: acordeiro/penumbra\n`,
+    `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    remote:\n      kind: github\n      repo: frozename/penumbra\n`,
   );
   const reg = loadProjectRegistry(path);
-  expect(reg.get("penumbra")?.remote).toEqual({ kind: "github", repo: "acordeiro/penumbra" });
+  expect(reg.get("penumbra")?.remote).toEqual({ kind: "github", repo: "frozename/penumbra" });
 });
 
 test("loadProjectRegistry rejects entries that declare both gh_repo and remote", () => {
   const path = writeRegistry(
-    `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    gh_repo: acordeiro/penumbra\n    remote:\n      kind: github\n      repo: acordeiro/penumbra\n`,
+    `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    gh_repo: frozename/penumbra\n    remote:\n      kind: github\n      repo: frozename/penumbra\n`,
   );
   expect(() => loadProjectRegistry(path)).toThrow(
     "declares both legacy gh_repo and remote; pick one",

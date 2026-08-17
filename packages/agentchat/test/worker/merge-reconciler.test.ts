@@ -142,7 +142,7 @@ const createDispatchPRMock = mock(
       throw new Error("Boom");
     }
     return {
-      url: "https://github.com/acordeiro/penumbra/pull/321",
+      url: "https://github.com/frozename/penumbra/pull/321",
       number: 321,
     };
   },
@@ -244,7 +244,7 @@ beforeEach(() => {
         throw new Error("Boom");
       }
       return {
-        url: "https://github.com/acordeiro/penumbra/pull/321",
+        url: "https://github.com/frozename/penumbra/pull/321",
         number: 321,
       };
     },
@@ -494,7 +494,7 @@ test("opens PR only when handoff open_pr_on_review is true", async () => {
   expect(result.status).toBe("pr_opened");
   expect(prCalls).toHaveLength(1);
   expect(verdictCalls).toHaveLength(1);
-  expect(verdictCalls[0]?.pr_url).toBe("https://github.com/acordeiro/penumbra/pull/321");
+  expect(verdictCalls[0]?.pr_url).toBe("https://github.com/frozename/penumbra/pull/321");
 });
 
 test("reconciler posts successful results to capture dependency", async () => {
@@ -1108,7 +1108,7 @@ test("Parallel reconciles are serialized by the lock", async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       activePRs -= 1;
       return {
-        url: "https://github.com/acordeiro/penumbra/pull/321",
+        url: "https://github.com/frozename/penumbra/pull/321",
         number: 321,
       };
     },
@@ -1149,7 +1149,7 @@ test("Mutex isolation: subsequent PR flows run even if previous one throws", asy
         return Promise.reject(new Error("Boom"));
       }
       return Promise.resolve({
-        url: "https://github.com/acordeiro/penumbra/pull/321",
+        url: "https://github.com/frozename/penumbra/pull/321",
         number: 321,
       });
     },
@@ -1316,7 +1316,7 @@ function makeScopedReconciler(
     getHandoff: mock(() => Promise.resolve<HandoffRow | null>(null)),
     createDispatchPR: mock(() =>
       Promise.resolve({
-        url: "https://github.com/acordeiro/penumbra/pull/999",
+        url: "https://github.com/frozename/penumbra/pull/999",
         number: 999,
       }),
     ),
