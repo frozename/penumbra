@@ -1,23 +1,73 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { exec as execCb } from "node:child_process";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { WorktreeManager } from "../../src/worktree/manager.js";
+import { type WorktreeCommandRunner, WorktreeManager } from "../../src/worktree/manager.js";
+
+const TEST_TMP_ROOT = "/private/tmp";
 
 // node:util.promisify(child_process.exec)'s declaration overloads make TS pick
 // the void-returning variant in eslint's type-aware pass; the runtime is in
 // fact a Promise (per util.promisify.custom), so the explicit shape closes the
 // gap without an `as any` dodge.
 type ExecResult = { stdout: string; stderr: string };
-type ExecOpts = { cwd?: string };
+type ExecOpts = { cwd?: string; env?: NodeJS.ProcessEnv };
 const exec: (command: string, opts?: ExecOpts) => Promise<ExecResult> = promisify(execCb);
+const execFile: (file: string, args?: string[], opts?: ExecOpts) => Promise<ExecResult> =
+  promisify(execFileCb);
 const TSC_BIN = path.resolve(process.cwd(), "node_modules", "typescript", "bin", "tsc");
+const originalBunTmpDir = process.env.BUN_TMPDIR;
+const originalBunInstall = process.env.BUN_INSTALL;
+const originalHome = process.env.HOME;
+const originalTmpDir = process.env.TMPDIR;
+const sharedBunTmpDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-bun-tmp-"));
+process.env.BUN_TMPDIR = sharedBunTmpDir;
+process.env.BUN_INSTALL = sharedBunTmpDir;
+process.env.HOME = sharedBunTmpDir;
+process.env.TMPDIR = sharedBunTmpDir;
+
+function withBunEnv(opts: ExecOpts): ExecOpts {
+  return {
+    ...opts,
+    env: {
+      ...process.env,
+      BUN_INSTALL: sharedBunTmpDir,
+      BUN_TMPDIR: sharedBunTmpDir,
+      HOME: sharedBunTmpDir,
+      TMPDIR: sharedBunTmpDir,
+    },
+  };
+}
+
+async function bunInstall(cwd: string): Promise<void> {
+  await execFile("bun", ["install"], withBunEnv({ cwd }));
+}
+
+function createWorkspaceNodeModules(repoDir: string): void {
+  const daemonScopeDir = path.join(repoDir, "packages", "daemon", "node_modules", "@penumbra");
+  fs.mkdirSync(daemonScopeDir, { recursive: true });
+  fs.symlinkSync(path.join(repoDir, "packages", "core"), path.join(daemonScopeDir, "core"), "dir");
+  fs.mkdirSync(path.join(repoDir, "node_modules"), { recursive: true });
+}
+
+const workspaceInstallRunner: WorktreeCommandRunner = async (cmd, args, opts = {}) => {
+  if (cmd === "bun") {
+    createWorkspaceNodeModules(opts.cwd!);
+    return { stdout: "", stderr: "" };
+  }
+  return execFile(cmd, args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
+    signal: opts.signal,
+  });
+};
 
 async function setupWorkspaceRepo(prefix: string): Promise<string> {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const repoDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, prefix));
   await exec("git init -b main", { cwd: repoDir });
   await exec('git config user.email "test@example.com"', { cwd: repoDir });
   await exec('git config user.name "test"', { cwd: repoDir });
@@ -90,8 +140,46 @@ async function setupWorkspaceRepo(prefix: string): Promise<string> {
 
   fs.writeFileSync(path.join(repoDir, "README.md"), "# test\n");
   await exec("git add . && git commit -m init", { cwd: repoDir });
-  await exec("bun install", { cwd: repoDir });
+  fs.writeFileSync(path.join(repoDir, "bun.lock"), "");
+  createWorkspaceNodeModules(repoDir);
   return repoDir;
+}
+
+async function setupRepoWithExternalFileDependency(): Promise<{
+  repoDir: string;
+  externalPackageDir: string;
+}> {
+  const repoDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-filedep-repo-"));
+  const externalPackageDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-filedep-ext-"));
+  await exec("git init -b main", { cwd: repoDir });
+  await exec('git config user.email "test@example.com"', { cwd: repoDir });
+  await exec('git config user.name "test"', { cwd: repoDir });
+
+  fs.writeFileSync(
+    path.join(externalPackageDir, "package.json"),
+    JSON.stringify({ name: "@fixture/external", version: "1.0.0", main: "index.js" }, null, 2),
+  );
+  fs.writeFileSync(path.join(externalPackageDir, "index.js"), "export const value = 1;\n");
+
+  const fileSpecifier = `file:${path.relative(repoDir, externalPackageDir)}`;
+  fs.writeFileSync(
+    path.join(repoDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "filedep-root",
+        type: "module",
+        dependencies: { "@fixture/external": fileSpecifier },
+      },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(path.join(repoDir, "README.md"), "# filedep\n");
+  await bunInstall(repoDir);
+  await exec("git add package.json bun.lock README.md", { cwd: repoDir });
+  await exec('git commit -m "init"', { cwd: repoDir });
+
+  return { repoDir, externalPackageDir };
 }
 
 async function runTypecheck(cwd: string): Promise<{ ok: boolean; output: string }> {
@@ -116,19 +204,33 @@ function resolveWorkspaceLink(wtRoot: string, pkgName: string): string {
 }
 
 describe("WorktreeManager isolated-install mode", () => {
-  let homeRoot: string;
-  let homeRepo: string;
+  let homeRoot = "";
+  let homeRepo = "";
   let counter = 0;
 
+  afterAll(() => {
+    if (originalBunTmpDir === undefined) delete process.env.BUN_TMPDIR;
+    else process.env.BUN_TMPDIR = originalBunTmpDir;
+    if (originalBunInstall === undefined) delete process.env.BUN_INSTALL;
+    else process.env.BUN_INSTALL = originalBunInstall;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalTmpDir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTmpDir;
+    fs.rmSync(sharedBunTmpDir, { recursive: true, force: true });
+  });
+
   beforeEach(async () => {
-    homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-isolated-"));
+    homeRoot = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-isolated-"));
     homeRepo = await setupWorkspaceRepo("penumbra-wt-repo-");
   });
 
   afterEach(() => {
-    fs.rmSync(homeRoot, { recursive: true, force: true });
-    fs.rmSync(homeRepo, { recursive: true, force: true });
-    fs.rmSync(`${homeRepo}-worktrees`, { recursive: true, force: true });
+    if (homeRoot) fs.rmSync(homeRoot, { recursive: true, force: true });
+    if (homeRepo) {
+      fs.rmSync(homeRepo, { recursive: true, force: true });
+      fs.rmSync(`${homeRepo}-worktrees`, { recursive: true, force: true });
+    }
   });
 
   function nextHandoff(): string {
@@ -136,7 +238,11 @@ describe("WorktreeManager isolated-install mode", () => {
   }
 
   it("default mode mirrors node_modules symlinks to main repo and keeps the stale-type trap", async () => {
-    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: workspaceInstallRunner,
+    });
     const id = nextHandoff();
     const handle = await manager.createWorktree(id);
 
@@ -166,7 +272,11 @@ describe("WorktreeManager isolated-install mode", () => {
   });
 
   it("isolated mode runs bun install in worktree and creates workspace-local links", async () => {
-    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: workspaceInstallRunner,
+    });
     const id = nextHandoff();
     const handle = await manager.createWorktree(id, { isolated_install: true });
 
@@ -197,7 +307,11 @@ describe("WorktreeManager isolated-install mode", () => {
   });
 
   it("rediscovery preserves isolated worktree topology instead of remirroring node_modules", async () => {
-    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: workspaceInstallRunner,
+    });
     const id = nextHandoff();
     const handle = await manager.createWorktree(id, { isolated_install: true });
 
@@ -217,7 +331,7 @@ describe("WorktreeManager isolated-install mode", () => {
   });
 
   it("does not create an isolated worktree when bun install fails", async () => {
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-bad-repo-"));
+    const repoDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-bad-repo-"));
     await exec("git init -b main", { cwd: repoDir });
     await exec('git config user.email "test@example.com"', { cwd: repoDir });
     await exec('git config user.name "test"', { cwd: repoDir });
@@ -242,6 +356,63 @@ describe("WorktreeManager isolated-install mode", () => {
     } finally {
       fs.rmSync(repoDir, { recursive: true, force: true });
       fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
+    }
+  });
+
+  it("isolated mode installs external file dependencies from a non-sibling worktree base", async () => {
+    const { repoDir, externalPackageDir } = await setupRepoWithExternalFileDependency();
+    const rootDir = fs.mkdtempSync(
+      path.join(TEST_TMP_ROOT, "penumbra-wt-filedep-nonsibling-base-"),
+    );
+    const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
+    const id = nextHandoff();
+
+    try {
+      const handle = await manager.createWorktree(id, { isolated_install: true });
+      const linkPath = path.join(rootDir, path.basename(externalPackageDir));
+
+      expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync.native(linkPath)).toBe(fs.realpathSync.native(externalPackageDir));
+      expect(fs.existsSync(path.join(handle.path, "node_modules", "@fixture", "external"))).toBe(
+        true,
+      );
+
+      const { stdout } = await exec("git status --short", { cwd: handle.path });
+      expect(stdout.trim()).toBe("");
+
+      await manager.teardownWorktree(id, true);
+    } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+      fs.rmSync(repoDir, { recursive: true, force: true });
+      fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
+      fs.rmSync(externalPackageDir, { recursive: true, force: true });
+    }
+  });
+
+  it("external file dependency link preparation is idempotent across worktrees in the same base", async () => {
+    const { repoDir, externalPackageDir } = await setupRepoWithExternalFileDependency();
+    const rootDir = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "penumbra-wt-filedep-idem-base-"));
+    const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
+    const firstId = `${nextHandoff()}-a`;
+    const secondId = `${nextHandoff()}-b`;
+
+    try {
+      const first = await manager.createWorktree(firstId, { isolated_install: true });
+      const second = await manager.createWorktree(secondId, { isolated_install: true });
+      const linkPath = path.join(rootDir, path.basename(externalPackageDir));
+
+      expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync.native(linkPath)).toBe(fs.realpathSync.native(externalPackageDir));
+
+      await manager.teardownWorktree(firstId, true);
+      await manager.teardownWorktree(secondId, true);
+      expect(fs.existsSync(first.path)).toBe(false);
+      expect(fs.existsSync(second.path)).toBe(false);
+    } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+      fs.rmSync(repoDir, { recursive: true, force: true });
+      fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
+      fs.rmSync(externalPackageDir, { recursive: true, force: true });
     }
   });
 });

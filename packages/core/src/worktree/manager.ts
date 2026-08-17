@@ -14,6 +14,7 @@ const WORKTREE_READY_FILE = ".test-storage/worktree-ready";
 const DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS = 120_000;
 const ISOLATED_INSTALL_MAX_BUFFER = 1024 * 1024 * 10;
 const UNREADY_WORKTREE_ORPHAN_GRACE_MS = 15 * 60_000;
+const ISOLATED_INSTALL_STDERR_TAIL_CHARS = 16 * 1024;
 // Stderr kept for error context only; cap it so a chatty child cannot balloon memory.
 const SPAWN_STDERR_CAP = 16 * 1024;
 
@@ -25,6 +26,7 @@ export interface WorktreeCommandRunnerOptions {
   timeout?: number;
   maxBuffer?: number;
   signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
   stdio?: "ignore";
 }
 
@@ -33,6 +35,17 @@ export type WorktreeCommandRunner = (
   args: string[],
   opts?: WorktreeCommandRunnerOptions,
 ) => Promise<{ stdout: string; stderr: string }>;
+
+export interface FileDependencyManifest {
+  relDir: string;
+  packageJson: unknown;
+}
+
+export interface EscapingFileDependencyLinkPlan {
+  dependencyName: string;
+  linkPath: string;
+  targetPath: string;
+}
 
 export interface WorktreeHandle {
   handoffId: string;
@@ -87,6 +100,7 @@ function spawnSilent(
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
+      env: opts.env,
       signal: opts.signal,
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -272,6 +286,7 @@ export class WorktreeManager {
     signal: AbortSignal | undefined,
   ): Promise<void> {
     if (worktreeMode === "isolated_install") {
+      prepareEscapingFileDependencyLinks(repoRoot, wtPath);
       await this.runIsolatedInstall(wtPath, signal);
     } else {
       mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
@@ -323,6 +338,9 @@ export class WorktreeManager {
     try {
       await this.git(["-C", wtPath, "checkout", "-b", branchName]);
       this.copyBunLockIfNeeded(wtPath, repoRoot, worktreeMode);
+      if (worktreeMode === "isolated_install") {
+        configureIsolatedWorktreeLocalExcludes(wtPath);
+      }
 
       const storageRoot = path.join(wtPath, ".test-storage");
       fs.mkdirSync(storageRoot, { recursive: true });
@@ -391,7 +409,7 @@ export class WorktreeManager {
         maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
         encoding: "utf8",
         signal,
-        stdio: "ignore",
+        env: process.env,
       });
     } catch (err) {
       // A deliberate cancellation is not a timeout — re-throw it unwrapped so
@@ -399,6 +417,12 @@ export class WorktreeManager {
       if (isAbortError(err)) throw err;
       if (isTimeoutError(err)) {
         throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
+          cause: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+      const stderrTail = stderrTailFromError(err);
+      if (stderrTail.length > 0) {
+        throw new Error(`isolated bun install failed: ${stderrTail}`, {
           cause: err instanceof Error ? err : new Error(String(err)),
         });
       }
@@ -755,6 +779,199 @@ function inferWorktreeMode(wtRoot: string): WorktreeMode {
   return "symlink_mirror";
 }
 
+function prepareEscapingFileDependencyLinks(mainRepoRoot: string, worktreeRoot: string): void {
+  const manifests = readWorkspacePackageJsonManifests(worktreeRoot);
+  for (const link of planEscapingFileDependencyLinks(mainRepoRoot, worktreeRoot, manifests)) {
+    ensureEscapingFileDependencyLink(link);
+  }
+}
+
+function configureIsolatedWorktreeLocalExcludes(wtPath: string): void {
+  const gitDir = resolveWorktreeGitDir(wtPath);
+  for (const excludeGitDir of new Set([gitDir, resolveCommonGitDir(gitDir)])) {
+    appendGitExcludeEntries(excludeGitDir, [".test-storage/", "node_modules/"]);
+  }
+}
+
+function appendGitExcludeEntries(gitDir: string, desiredEntries: string[]): void {
+  const excludePath = path.join(gitDir, "info", "exclude");
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+
+  let existing = "";
+  try {
+    existing = fs.readFileSync(excludePath, "utf8");
+  } catch (err) {
+    if (!isMissingError(err)) throw err;
+  }
+
+  const entries = new Set(existing.split(/\r?\n/u).map((line) => line.trim()));
+  const additions = desiredEntries.filter((entry) => !entries.has(entry));
+  if (additions.length === 0) return;
+
+  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  fs.appendFileSync(excludePath, `${prefix}${additions.join("\n")}\n`);
+}
+
+function resolveCommonGitDir(gitDir: string): string {
+  const commonDirPath = path.join(gitDir, "commondir");
+  try {
+    const raw = fs.readFileSync(commonDirPath, "utf8").trim();
+    return path.isAbsolute(raw) ? raw : path.resolve(gitDir, raw);
+  } catch (err) {
+    if (isMissingError(err)) return gitDir;
+    throw err;
+  }
+}
+
+function resolveWorktreeGitDir(wtPath: string): string {
+  const dotGitPath = path.join(wtPath, ".git");
+  const stat = fs.lstatSync(dotGitPath);
+  if (stat.isDirectory()) return dotGitPath;
+
+  const raw = fs.readFileSync(dotGitPath, "utf8").trim();
+  const prefix = "gitdir:";
+  if (!raw.startsWith(prefix)) {
+    throw new Error(`unexpected .git file format in worktree: ${dotGitPath}`);
+  }
+  const gitDir = raw.slice(prefix.length).trim();
+  return path.isAbsolute(gitDir) ? gitDir : path.resolve(wtPath, gitDir);
+}
+
+function readWorkspacePackageJsonManifests(repoRoot: string): FileDependencyManifest[] {
+  const rootPackageJson = readPackageJsonManifest(repoRoot, "");
+  const manifests: FileDependencyManifest[] = [rootPackageJson];
+
+  for (const pattern of extractWorkspacePatterns(rootPackageJson.packageJson)) {
+    for (const relDir of expandWorkspacePattern(repoRoot, pattern, NOOP_LOG)) {
+      const packageJsonPath = path.join(repoRoot, relDir, "package.json");
+      if (!fs.existsSync(packageJsonPath)) continue;
+      manifests.push(readPackageJsonManifest(repoRoot, relDir));
+    }
+  }
+
+  return manifests;
+}
+
+function readPackageJsonManifest(repoRoot: string, relDir: string): FileDependencyManifest {
+  const packageJsonPath = path.join(repoRoot, relDir, "package.json");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(packageJsonPath, "utf8");
+  } catch (err) {
+    throw new Error(`failed to read package.json for isolated install: ${packageJsonPath}`, {
+      cause: err instanceof Error ? err : new Error(String(err)),
+    });
+  }
+
+  try {
+    return { relDir, packageJson: JSON.parse(raw) };
+  } catch (err) {
+    throw new Error(`failed to parse package.json for isolated install: ${packageJsonPath}`, {
+      cause: err instanceof Error ? err : new Error(String(err)),
+    });
+  }
+}
+
+export function planEscapingFileDependencyLinks(
+  mainRepoRoot: string,
+  worktreeRoot: string,
+  manifests: FileDependencyManifest[],
+): EscapingFileDependencyLinkPlan[] {
+  const normalizedMainRoot = path.resolve(mainRepoRoot);
+  const normalizedWorktreeRoot = path.resolve(worktreeRoot);
+  const byLinkPath = new Map<string, EscapingFileDependencyLinkPlan>();
+
+  for (const manifest of manifests) {
+    const mainPackageDir = path.resolve(normalizedMainRoot, manifest.relDir);
+    const worktreePackageDir = path.resolve(normalizedWorktreeRoot, manifest.relDir);
+
+    for (const dep of extractFileDependencies(manifest.packageJson)) {
+      const specifierPath = dep.specifier.slice("file:".length);
+      const targetPath = path.resolve(mainPackageDir, specifierPath);
+      if (isPathInsideOrEqual(normalizedMainRoot, targetPath)) continue;
+
+      const linkPath = path.resolve(worktreePackageDir, specifierPath);
+      if (!fs.existsSync(targetPath)) {
+        throw new Error(
+          `file dependency ${dep.name} escapes the repo but target is missing; main target: ${targetPath}; worktree path: ${linkPath}`,
+        );
+      }
+
+      const existing = byLinkPath.get(linkPath);
+      if (existing !== undefined) {
+        if (existing.targetPath !== targetPath || existing.dependencyName !== dep.name) {
+          throw new Error(
+            `conflicting file dependency link plan for ${dep.name}; main target: ${targetPath}; worktree path: ${linkPath}`,
+          );
+        }
+        continue;
+      }
+
+      byLinkPath.set(linkPath, { dependencyName: dep.name, linkPath, targetPath });
+    }
+  }
+
+  return [...byLinkPath.values()];
+}
+
+function extractFileDependencies(packageJson: unknown): { name: string; specifier: string }[] {
+  if (!packageJson || typeof packageJson !== "object") return [];
+  const parsed = packageJson as Record<string, unknown>;
+  const deps: { name: string; specifier: string }[] = [];
+
+  for (const field of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    const rawDeps = parsed[field];
+    if (!rawDeps || typeof rawDeps !== "object" || Array.isArray(rawDeps)) continue;
+    for (const [name, specifier] of Object.entries(rawDeps as Record<string, unknown>)) {
+      if (typeof specifier === "string" && specifier.startsWith("file:")) {
+        deps.push({ name, specifier });
+      }
+    }
+  }
+
+  return deps;
+}
+
+function ensureEscapingFileDependencyLink(link: EscapingFileDependencyLinkPlan): void {
+  let stat: fs.Stats | undefined;
+  try {
+    stat = fs.lstatSync(link.linkPath);
+  } catch (err) {
+    if (!isMissingError(err)) throw err;
+  }
+
+  if (stat !== undefined) {
+    if (!stat.isSymbolicLink()) {
+      throw new Error(
+        `file dependency ${link.dependencyName} cannot be linked because worktree path already exists; main target: ${link.targetPath}; worktree path: ${link.linkPath}`,
+      );
+    }
+
+    const actualTarget = fs.realpathSync.native(link.linkPath);
+    const expectedTarget = fs.realpathSync.native(link.targetPath);
+    if (actualTarget !== expectedTarget) {
+      throw new Error(
+        `file dependency ${link.dependencyName} has an existing symlink to the wrong target; expected main target: ${link.targetPath}; actual target: ${actualTarget}; worktree path: ${link.linkPath}`,
+      );
+    }
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(link.linkPath), { recursive: true });
+  const targetStat = fs.lstatSync(link.targetPath);
+  fs.symlinkSync(link.targetPath, link.linkPath, targetStat.isDirectory() ? "dir" : "file");
+}
+
+function isPathInsideOrEqual(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 // Deliberately asymmetric: symlink_mirror needs no sentinel because
 // re-mirroring on rediscovery is idempotent and self-heals a crash
 // mid-setup, and demanding one would orphan every worktree created before
@@ -825,6 +1042,13 @@ function isAbortError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const code = "code" in err ? String((err as { code?: unknown }).code) : "";
   return code === "ABORT_ERR";
+}
+
+function stderrTailFromError(err: unknown): string {
+  if (typeof err !== "object" || err === null || !("stderr" in err)) return "";
+  const stderr = (err as { stderr?: unknown }).stderr;
+  if (typeof stderr !== "string") return "";
+  return stderr.trim().slice(-ISOLATED_INSTALL_STDERR_TAIL_CHARS);
 }
 
 function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string, log: Logger = NOOP_LOG): void {

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { WorktreeManager } from "../../src/worktree/manager.js";
+import { planEscapingFileDependencyLinks, WorktreeManager } from "../../src/worktree/manager.js";
 
 type RunnerOptions = {
   cwd?: string;
@@ -12,6 +12,7 @@ type RunnerOptions = {
   maxBuffer?: number;
   encoding?: string;
   signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
   stdio?: "ignore";
 };
 type RunnerResult = { stdout: string; stderr: string };
@@ -63,6 +64,14 @@ function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean
     if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
       fs.mkdirSync(args[3]!, { recursive: true });
       fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
+      const sourcePackageJson = path.join(runnerOpts.cwd!, "package.json");
+      if (fs.existsSync(sourcePackageJson)) {
+        fs.copyFileSync(sourcePackageJson, path.join(args[3]!, "package.json"));
+      }
+      const sourceBunLock = path.join(runnerOpts.cwd!, "bun.lock");
+      if (fs.existsSync(sourceBunLock)) {
+        fs.copyFileSync(sourceBunLock, path.join(args[3]!, "bun.lock"));
+      }
     }
     if (cmd === "bun" && opts?.failBunInstall) {
       return Promise.reject(opts.failBunInstall);
@@ -152,6 +161,11 @@ test("isolated install writes readiness marker only after bun install succeeds",
       if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
         fs.mkdirSync(args[3]!, { recursive: true });
         fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
+        fs.copyFileSync(
+          path.join(runnerOpts.cwd!, "package.json"),
+          path.join(args[3]!, "package.json"),
+        );
+        fs.copyFileSync(path.join(runnerOpts.cwd!, "bun.lock"), path.join(args[3]!, "bun.lock"));
       }
       if (cmd === "bun") {
         observed.push({
@@ -213,7 +227,72 @@ test("rediscovery skips isolated worktrees with a mode marker but no readiness m
   }
 });
 
-test("isolated install forwards abort signal and discards output", async () => {
+test("plans links for file dependencies that escape the main repo root", () => {
+  const mainRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-link-plan-main-"));
+  const worktreeRoot = path.join(os.tmpdir(), "penumbra-wt-link-plan-worktree", "handoff");
+  const novaContracts = path.join(path.dirname(mainRepoRoot), "nova", "packages", "contracts");
+
+  try {
+    fs.mkdirSync(novaContracts, { recursive: true });
+
+    const manifests = [
+      {
+        relDir: "packages/core",
+        packageJson: {
+          dependencies: {
+            "@nova/contracts": "file:../../../nova/packages/contracts",
+            "@penumbra/in-tree": "file:../in-tree",
+          },
+        },
+      },
+    ];
+
+    expect(planEscapingFileDependencyLinks(mainRepoRoot, worktreeRoot, manifests)).toEqual([
+      {
+        dependencyName: "@nova/contracts",
+        linkPath: path.join(path.dirname(worktreeRoot), "nova", "packages", "contracts"),
+        targetPath: novaContracts,
+      },
+    ]);
+  } finally {
+    fs.rmSync(mainRepoRoot, { recursive: true, force: true });
+    fs.rmSync(path.join(path.dirname(mainRepoRoot), "nova"), { recursive: true, force: true });
+  }
+});
+
+test("file dependency link planning throws when an escaping target is missing", () => {
+  const mainRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-link-plan-main-"));
+  const worktreeRoot = path.join(os.tmpdir(), "penumbra-wt-link-plan-worktree", "handoff");
+
+  try {
+    expect(() =>
+      planEscapingFileDependencyLinks(mainRepoRoot, worktreeRoot, [
+        {
+          relDir: "packages/core",
+          packageJson: {
+            dependencies: {
+              "@missing/dep": "file:../../../missing/packages/dep",
+            },
+          },
+        },
+      ]),
+    ).toThrow(
+      new RegExp(
+        [
+          "@missing/dep",
+          path.join(path.dirname(mainRepoRoot), "missing", "packages", "dep"),
+          path.join(path.dirname(worktreeRoot), "missing", "packages", "dep"),
+        ]
+          .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join(".*"),
+      ),
+    );
+  } finally {
+    fs.rmSync(mainRepoRoot, { recursive: true, force: true });
+  }
+});
+
+test("isolated install forwards abort signal and captures output", async () => {
   calls.length = 0;
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-signal-repo-"));
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-signal-root-"));
@@ -235,14 +314,14 @@ test("isolated install forwards abort signal and discards output", async () => {
 
     const bunInstall = calls.find((call) => call.cmd === "bun");
     expect(bunInstall?.opts.signal).toBe(abort.signal);
-    expect(bunInstall?.opts.stdio).toBe("ignore");
+    expect(bunInstall?.opts.stdio).toBeUndefined();
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(rootDir, { recursive: true, force: true });
   }
 });
 
-test("default isolated install runner does not buffer bun output", async () => {
+test("default isolated install runner includes bun stderr in install failures", async () => {
   const previousPath = process.env.PATH;
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-output-repo-"));
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-output-root-"));
@@ -259,7 +338,7 @@ test("default isolated install runner does not buffer bun output", async () => {
     const fakeBun = path.join(binDir, "bun");
     fs.writeFileSync(
       fakeBun,
-      '#!/usr/bin/env node\nprocess.stdout.write("x".repeat(11 * 1024 * 1024));\n',
+      '#!/usr/bin/env node\nprocess.stderr.write("fixture bun failure details\\n");\nprocess.exit(1);\n',
     );
     fs.chmodSync(fakeBun, 0o755);
     process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
@@ -269,9 +348,10 @@ test("default isolated install runner does not buffer bun output", async () => {
       mainRepoDir: repoDir,
     });
 
-    const handle = await manager.createWorktree("h-install-output", { isolated_install: true });
-
-    expect(handle.worktreeMode).toBe("isolated_install");
+    await expectRejectsWith(
+      manager.createWorktree("h-install-output", { isolated_install: true }),
+      "fixture bun failure details",
+    );
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
@@ -290,6 +370,8 @@ test("isolated install timeout rethrows a clear timeout message", async () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-install-timeout-root-"));
 
   try {
+    fs.writeFileSync(path.join(repoDir, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(repoDir, "bun.lock"), "");
     const manager = new WorktreeManager({
       rootDir,
       mainRepoDir: repoDir,
