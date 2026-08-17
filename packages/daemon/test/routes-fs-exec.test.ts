@@ -55,6 +55,8 @@ function fakeServices(
     handoffs?: Record<string, { to_agent?: string }>;
     dangerousPatterns?: Record<string, string[]>;
     omitShellConfig?: boolean;
+    omitShellSessionPool?: boolean;
+    redactOutput?: boolean;
     shellConfig?: unknown;
     permissionService?: ExecPermissionService;
     agentchatConfig?: ExecAgentchatConfig;
@@ -63,6 +65,7 @@ function fakeServices(
   const services: {
     handoffReader: { get: (id: string) => { to_agent?: string } | null };
     shellConfig?: unknown;
+    shellSessionPool?: unknown;
     agentchatConfig?: ExecAgentchatConfig;
     permissionService?: ExecPermissionService;
     worktreeManager: {
@@ -76,12 +79,19 @@ function fakeServices(
       get: (id: string) => opts.handoffs?.[id] ?? null,
     },
   };
+  // The session pool is constructed only when shell.enabled is true; the exec
+  // route reads only its presence (the enabled kill-switch), never its methods.
+  if (opts.omitShellSessionPool !== true) {
+    services.shellSessionPool = {};
+  }
   if ("shellConfig" in opts) {
     services.shellConfig = opts.shellConfig;
   } else if (opts.omitShellConfig !== true) {
     services.shellConfig = {
       dangerousCommandsForAgent: (agentName: string | null): string[] =>
         agentName === null ? [] : (opts.dangerousPatterns?.[agentName] ?? []),
+      unsetEnv: [] as string[],
+      redactOutputForAgent: (): boolean => opts.redactOutput === true,
     };
   }
   if (opts.agentchatConfig) {
@@ -326,6 +336,65 @@ describe("worktrees exec route", () => {
     const body = await jsonBody<RouteErrorBody>(res);
     expect(body.error.code).toBe("shell_config_unavailable");
     expect(body.error.message).toBe("service temporarily unavailable");
+  });
+
+  it("returns 503 shell_config_unavailable when redactOutputForAgent is missing (partial config fails closed)", async () => {
+    const services = fakeServices(
+      { H1: tmp },
+      { shellConfig: { dangerousCommandsForAgent: (): string[] => [], unsetEnv: [] } },
+    );
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo safe" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(503);
+    const body = await jsonBody<RouteErrorBody>(res);
+    expect(body.error.code).toBe("shell_config_unavailable");
+  });
+
+  it("returns 503 shell_disabled when the shell session pool is absent (kill-switch)", async () => {
+    const services = fakeServices({ H1: tmp }, { omitShellSessionPool: true });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo safe" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(503);
+    const body = await jsonBody<RouteErrorBody>(res);
+    expect(body.error.code).toBe("shell_disabled");
+  });
+
+  it("does not leak the daemon's own auth token into the child environment", async () => {
+    const prev = process.env.PENUMBRA_TOKEN;
+    process.env.PENUMBRA_TOKEN = "super-secret-daemon-bearer";
+    try {
+      const services = fakeServices({ H1: tmp });
+      const req = new Request("http://x/worktrees/H1/exec", {
+        method: "POST",
+        body: JSON.stringify({ command: "printenv PENUMBRA_TOKEN || true" }),
+      });
+      const res = await worktreesExecRoute(req, "H1", services);
+      expect(res.status).toBe(200);
+      const body = await jsonBody<ExecBody>(res);
+      expect(body.stdout).not.toContain("super-secret-daemon-bearer");
+    } finally {
+      if (prev === undefined) delete process.env.PENUMBRA_TOKEN;
+      else process.env.PENUMBRA_TOKEN = prev;
+    }
+  });
+
+  it("redacts credential-shaped output when redaction is enabled for the agent", async () => {
+    const services = fakeServices({ H1: tmp }, { redactOutput: true });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo sk-abcdefghijklmnopqrstuvwxyz012345" }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    expect(res.status).toBe(200);
+    const body = await jsonBody<ExecBody>(res);
+    expect(body.stdout).toContain("[REDACTED]");
+    expect(body.stdout).not.toContain("sk-abcdefghijklmnopqrstuvwxyz012345");
   });
 });
 

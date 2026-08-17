@@ -9,6 +9,7 @@ import type { DaemonServices } from "../serve.js";
 
 import { getPrincipal } from "../auth.js";
 import { executeGlob, executeGrep, GrepError, type GrepOutputMode } from "../fs-search.js";
+import { buildScrubbedChildEnv, redactCredentials } from "../services/shell-session-pool.js";
 import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { bodyJson, json } from "./_helpers.js";
 import { resolveWorktreeForHandoff } from "./worktree-resolve.js";
@@ -494,8 +495,22 @@ export async function worktreesExecRoute(
   const rawTimeout = optionalNumber(body, "timeout_ms") ?? EXEC_DEFAULT_TIMEOUT_MS;
   const timeout_ms = Math.min(Math.max(1, rawTimeout), EXEC_MAX_TIMEOUT_MS);
 
+  // Mirror shell_run's kill-switch: the session pool is constructed only when
+  // shell.enabled is true, so its absence means the operator disabled shell.
+  // Without this, fs_exec stays a live command-exec surface after shell is off.
+  if (!context.services.shellSessionPool) {
+    return json({ error: { code: "shell_disabled" } }, 503);
+  }
+
   const shellConfig = context.services.shellConfig;
-  if (!shellConfig || typeof shellConfig.dangerousCommandsForAgent !== "function") {
+  // Validate every field the route reads (dangerousCommandsForAgent AND the two
+  // fields the env-scrub/redaction path added) so a partial config fails closed
+  // with 503 rather than throwing a 500 (mirrors the 0b2a466e guard intent).
+  if (
+    !shellConfig ||
+    typeof shellConfig.dangerousCommandsForAgent !== "function" ||
+    typeof shellConfig.redactOutputForAgent !== "function"
+  ) {
     return json(
       {
         error: {
@@ -547,12 +562,25 @@ export async function worktreesExecRoute(
     }
   })();
 
+  // Scrub the child env (drop the daemon's own auth tokens + operator unset_env)
+  // and redact output — parity with shell_run. This closes the PENUMBRA_TOKEN
+  // worker->daemon escalation; provider API keys are dropped only if the operator
+  // lists them in unset_env (output redaction is stdout-only defense-in-depth and
+  // does not stop network egress like `env | curl`).
+  const childEnv = buildScrubbedChildEnv(shellConfig.unsetEnv);
+  const redactOut = shellConfig.redactOutputForAgent(agentName);
+  const finalize = (buffer: OutputBuffer): string => {
+    const text = outputBufferToString(buffer);
+    return redactOut ? redactCredentials(text) : text;
+  };
+
   return await new Promise<Response>((resolve) => {
     const child = spawn(command, {
       shell: true,
       cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: childEnv,
     });
 
     const stdoutBuffer: OutputBuffer = { chunks: [], bytes: 0, truncated: false };
@@ -586,8 +614,8 @@ export async function worktreesExecRoute(
       }
       resolve(
         json({
-          stdout: outputBufferToString(stdoutBuffer),
-          stderr: outputBufferToString(stderrBuffer),
+          stdout: finalize(stdoutBuffer),
+          stderr: finalize(stderrBuffer),
           exit_code: null,
           timed_out: true,
           truncated: stdoutBuffer.truncated || stderrBuffer.truncated,
@@ -601,8 +629,8 @@ export async function worktreesExecRoute(
       clearTimeout(timer);
       resolve(
         json({
-          stdout: outputBufferToString(stdoutBuffer),
-          stderr: outputBufferToString(stderrBuffer),
+          stdout: finalize(stdoutBuffer),
+          stderr: finalize(stderrBuffer),
           exit_code: code,
           timed_out: false,
           truncated: stdoutBuffer.truncated || stderrBuffer.truncated,

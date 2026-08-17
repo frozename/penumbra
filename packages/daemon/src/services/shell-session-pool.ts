@@ -92,12 +92,37 @@ const COMMAND_CANCELLED = "COMMAND_CANCELLED" as const;
 const LIVE_CAPTURE_MARKER_CONTEXT_BYTES = 8192;
 const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "expired", "cancelled"]);
 
-function redactCredentials(text: string): string {
+export function redactCredentials(text: string): string {
   let out = text;
   for (const pattern of REDACTION_PATTERNS) {
     out = out.replace(pattern, "[REDACTED]");
   }
   return out;
+}
+
+// The daemon's own auth tokens must never reach a spawned shell: leaking
+// PENUMBRA_TOKEN (the shared bearer) escalates a sandboxed worker to full
+// daemon-API control. Dropped unconditionally from every child env, on top of
+// the operator's configured unset_env list.
+export const DAEMON_SECRET_ENV_KEYS: readonly string[] = [
+  "PENUMBRA_TOKEN",
+  "PENUMBRA_DAEMON_TOKEN",
+  "PENUMBRA_SIRIUS_TOKEN",
+];
+
+// Build a child-process environment by inheriting the daemon's env minus the
+// operator's unset_env keys AND the daemon's own auth tokens. Shared by
+// shell_run (ShellSessionPool) and fs_exec so env-scrubbing has one source.
+export function buildScrubbedChildEnv(
+  unsetEnv: readonly string[] | undefined,
+  extraEnv: Record<string, string> = {},
+): Record<string, string> {
+  const drop = new Set<string>([...(unsetEnv ?? []), ...DAEMON_SECRET_ENV_KEYS]);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string" && !drop.has(key)) out[key] = value;
+  }
+  return { ...out, ...extraEnv };
 }
 
 // ESC (0x1B) and BEL (0x07) built at runtime to satisfy no-control-regex
@@ -544,20 +569,11 @@ export class ShellSessionPool {
     sessionId: string,
     env: Record<string, string>,
   ): Record<string, string> {
-    const unsetKeys = new Set(this.deps.config.unsetEnv);
-    const inherited: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (typeof value === "string" && !unsetKeys.has(key)) {
-        inherited[key] = value;
-      }
-    }
-
-    return {
-      ...inherited,
+    return buildScrubbedChildEnv(this.deps.config.unsetEnv, {
       ...env,
       PENUMBRA_SHELL_SESSION_ID: sessionId,
       PENUMBRA_HANDOFF_ID: handoffId,
-    };
+    });
   }
 
   private notifyWaiters(state: SessionState): void {
