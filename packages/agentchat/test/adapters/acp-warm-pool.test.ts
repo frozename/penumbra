@@ -164,6 +164,30 @@ describe("AcpWarmPool", () => {
     expect(healthy.kill).not.toHaveBeenCalled();
   });
 
+  test("evicts a client whose transport has closed before reusing its process", () => {
+    const pool = createAcpWarmPool();
+    const closedTransport = handle();
+    const closedClient = { isTransportOpen: () => false } as unknown as StdioAcpClient;
+    pool.deposit(key, {
+      handle: closedTransport,
+      client: closedClient,
+      sessionId: "closed-transport",
+      specHash: "spec-a",
+    });
+
+    expect(pool.acquire("h1", key, "spec-a")).toBeNull();
+    expect(closedTransport.kill).toHaveBeenCalledTimes(1);
+
+    const replacement = handle();
+    pool.deposit(key, {
+      handle: replacement,
+      client,
+      sessionId: "replacement",
+      specHash: "spec-a",
+    });
+    expect(pool.acquire("h2", key, "spec-a")?.sessionId).toBe("replacement");
+  });
+
   test("evicts oldest idle entry when maxEntries is full but returns null when all entries are held", () => {
     let now = 0;
     const pool = createAcpWarmPool({ now: () => now, maxEntries: 2 });

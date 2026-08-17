@@ -40,6 +40,7 @@ import { resolveAdapterApiKey } from "../src/adapters/secret.js";
 import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
 import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
 import { loadConfigPathOrDir } from "../src/config/load.js";
+import { invalidateChangedWarmPools } from "../src/worker/warm-pool-reload.js";
 import { PenumbraClient } from "../src/penumbra-client.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
@@ -1789,25 +1790,7 @@ void runWorkerControlListener({
   onConfigReload: () => {
     const previousConfig = config;
     config = loadConfigPathOrDir(configPath);
-    const previousWarmAgents = new Set(
-      previousConfig.agents
-        .filter(
-          (agent) => (agent.options as Record<string, unknown> | undefined)?.warm_pool === true,
-        )
-        .map((agent) => agent.name),
-    );
-    for (const agent of config.agents) {
-      if (
-        previousWarmAgents.has(agent.name) &&
-        (agent.options as Record<string, unknown> | undefined)?.warm_pool !== true
-      ) {
-        drainAgent(agent.name);
-      }
-      previousWarmAgents.delete(agent.name);
-    }
-    for (const removedAgent of previousWarmAgents) {
-      drainAgent(removedAgent);
-    }
+    invalidateChangedWarmPools(previousConfig.agents, config.agents, drainAgent);
     // Recompute pre-warm targets against the new config: start the loop if an
     // agent just opted in, stop it if the last one opted out, otherwise refresh.
     refreshPrewarmLoop();

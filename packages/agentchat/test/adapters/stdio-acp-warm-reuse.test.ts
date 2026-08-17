@@ -6,7 +6,7 @@ import type { McpServerStdio } from "../../src/adapters/acp-types.js";
 import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
+import { acpSpecHash, createAcpWarmPool, poolKeyFor } from "../../src/adapters/acp-warm-pool.js";
 import { StdioAcpAdapter, type StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
 import {
   makeMockAcpClient,
@@ -212,4 +212,55 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
       { handoffId: "hB", storageRoot: "/repo/wt-b/.test-storage" },
     ]);
   });
+
+  it("replaces a dead pooled transport with a cold dispatch", async () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    const staleServer = makeServer();
+    let transportOpen = true;
+    const staleClient = {
+      isTransportOpen: () => transportOpen,
+      onRequest: vi.fn(),
+      on: vi.fn(),
+      request: vi.fn((method: string) => {
+        if (method === "session/new") {
+          transportOpen = false;
+          return Promise.reject(new Error("read ECONNRESET"));
+        }
+        return Promise.reject(new Error(`unexpected stale request: ${method}`));
+      }),
+    } as unknown as StdioAcpClient;
+    const opts: StdioAcpOptions = {
+      binary: "mock-acp",
+      agentName: "codex-acp-fast",
+      warmPool: true,
+      repoRoot: "/repo",
+    };
+    const poolKey = poolKeyFor({ agent: "codex-acp-fast", cwd: "/repo" });
+    pool.deposit(poolKey, {
+      handle: staleServer,
+      client: staleClient,
+      specHash: acpSpecHash({ binary: "mock-acp" }),
+    });
+
+    const calls: RecordedCall[] = [];
+    const request = makeTrackedRequest(calls);
+    const startServer = vi.fn().mockResolvedValue(makeServer());
+    const adapter = new StdioAcpAdapter(opts, {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request }),
+      pool,
+    });
+
+    await expect(adapter.dispatch(makeDispatchInput("h1", []))).resolves.toMatchObject({
+      text: "",
+    });
+    expect(staleServer.kill).toHaveBeenCalledTimes(1);
+    expect(startServer).toHaveBeenCalledTimes(1);
+    expect(calls.map((call) => call.method)).toEqual([
+      "initialize",
+      "session/new",
+      "session/prompt",
+    ]);
+  }, 1_000);
 });

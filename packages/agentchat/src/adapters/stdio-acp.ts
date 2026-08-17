@@ -1788,7 +1788,19 @@ function shouldRetryColdDispatch(
   warmPoolEnabled: boolean,
   pooledEntry: AcpWarmPoolEntry | null,
 ): boolean {
-  return err instanceof AcpSessionEvictedError && warmPoolEnabled && pooledEntry !== null;
+  return (
+    warmPoolEnabled &&
+    pooledEntry !== null &&
+    (err instanceof AcpSessionEvictedError || isTransportClosedError(err, pooledEntry))
+  );
+}
+
+function isTransportClosedError(err: unknown, pooledEntry: AcpWarmPoolEntry): boolean {
+  const isTransportOpen = pooledEntry.client.isTransportOpen;
+  return (
+    (typeof isTransportOpen === "function" && !isTransportOpen.call(pooledEntry.client)) ||
+    (err instanceof Error && err.message.includes("stdio-acp-client: transport closed"))
+  );
 }
 
 interface DispatchConstants {

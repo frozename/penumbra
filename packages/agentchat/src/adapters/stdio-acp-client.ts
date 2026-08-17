@@ -72,6 +72,7 @@ export class StdioAcpClient {
   private readonly handlers = new Map<string, WireHandler>();
   private readonly requestHandlers = new Map<string, WireHandler>();
   private readonly framing: "newline" | "content-length";
+  private transportOpen = true;
 
   // For content-length framing
   private buffer: Buffer = Buffer.alloc(0);
@@ -91,13 +92,24 @@ export class StdioAcpClient {
       });
     }
 
-    this.options.stdout.on("close", () => {
-      const err = new Error("stdio-acp-client: transport closed");
-      for (const req of this.pendingRequests.values()) {
-        req.reject(err);
-      }
-      this.pendingRequests.clear();
-    });
+    this.options.stdout.once("close", () => this.closeTransport());
+    this.options.stdout.once("end", () => this.closeTransport());
+    this.options.stdout.once("error", (err) => this.closeTransport(err));
+    this.options.stdin.once("close", () => this.closeTransport());
+    this.options.stdin.once("error", (err) => this.closeTransport(err));
+  }
+
+  isTransportOpen(): boolean {
+    const stdout = this.options.stdout as Readable & { closed?: boolean; readableEnded?: boolean };
+    return (
+      this.transportOpen &&
+      this.options.stdin.writable &&
+      !this.options.stdin.destroyed &&
+      stdout.readable &&
+      !stdout.destroyed &&
+      !stdout.closed &&
+      !stdout.readableEnded
+    );
   }
 
   async request(method: string, params?: unknown): Promise<unknown> {
@@ -243,6 +255,16 @@ export class StdioAcpClient {
     } else {
       this.options.stdin.write(jsonStr + "\n");
     }
+  }
+
+  private closeTransport(cause?: Error): void {
+    if (!this.transportOpen) return;
+    this.transportOpen = false;
+    const err = cause ?? new Error("stdio-acp-client: transport closed");
+    for (const req of this.pendingRequests.values()) {
+      req.reject(err);
+    }
+    this.pendingRequests.clear();
   }
 
   private handleMessage(rawMessage: unknown): void {
