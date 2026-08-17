@@ -1,4 +1,4 @@
-import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { FailTaskInputSchema } from "@penumbra/core";
 
 import type { DaemonClient } from "../daemon-client.js";

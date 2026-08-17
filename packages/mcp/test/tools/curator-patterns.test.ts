@@ -1,4 +1,4 @@
-import { type TextContentEnvelope } from "@nova/mcp-shared";
+import { type TextContentEnvelope } from "@novaproto/mcp-shared";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";

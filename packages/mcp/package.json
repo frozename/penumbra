@@ -32,7 +32,7 @@
     "@penumbra/config": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",
-    "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
+    "@novaproto/mcp-shared": "^0.1.0",
     "zod": "^4.3.0"
   },
   "devDependencies": {

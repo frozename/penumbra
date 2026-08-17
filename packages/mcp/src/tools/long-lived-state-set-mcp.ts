@@ -1,4 +1,4 @@
-import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { WorkingMemorySchema } from "@penumbra/core/long-lived/types";
 import { z } from "zod";
 

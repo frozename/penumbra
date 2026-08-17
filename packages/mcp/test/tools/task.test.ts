@@ -1,4 +1,4 @@
-import { type TextContentEnvelope } from "@nova/mcp-shared";
+import { type TextContentEnvelope } from "@novaproto/mcp-shared";
 import {
   CancelTaskInputSchema,
   CompleteTaskInputSchema,

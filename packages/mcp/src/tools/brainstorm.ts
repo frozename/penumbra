@@ -1,4 +1,4 @@
-import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import { type DaemonClient, DaemonHttpError } from "../daemon-client.js";

@@ -20,8 +20,6 @@
     "@penumbra/api-contract": "workspace:*",
     "@penumbra/config": "workspace:*",
     "zod": "^4.3.0",
-    "@nova/contracts": "file:../../../nova/packages/contracts",
-    "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "fastembed": "^1.14.1",
     "pino": "^9.0.0",
     "sqlite-vec": "^0.1.6",

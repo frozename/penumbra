@@ -1,4 +1,4 @@
-import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { MaestroSessionRecord } from "@penumbra/core";
 import { z } from "zod";
 

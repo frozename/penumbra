@@ -1,4 +1,4 @@
-import { type TextContentEnvelope, toTextContent } from "@nova/mcp-shared";
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { type LaneCloseMetadata, LaneCloseMetadataSchema } from "@penumbra/core";
 import { z } from "zod";
 
