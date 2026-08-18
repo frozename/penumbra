@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { listPendingDreamActionsQuery } from "../dreaming/digest.js";
 import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
+import { computeSubsystemAlerts } from "../services/subsystem-health.js";
 import { bodyJson, json } from "./_helpers.js";
 
 const QuerySchema = z.object({
@@ -60,6 +61,23 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       .get(yesterdayMs) as { c: number }
   ).c;
 
+  const yesterdayIso = new Date(yesterdayMs).toISOString();
+  const query_rewrite_failed_24h = (
+    db
+      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
+      .get(yesterdayIso, "dream_p4_query_rewrite_failed") as { c: number }
+  ).c;
+  const query_rewritten_24h = (
+    db
+      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
+      .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
+  ).c;
+  const query_rewrite_degraded_24h = (
+    db
+      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
+      .get(yesterdayIso, "dream_p4_query_rewrite_degraded") as { c: number }
+  ).c;
+
   const alerts = [];
   if (uptimeMs > 24 * 60 * 60 * 1000 && cycles_in_last_24h === 0) {
     alerts.push("dream.health.no_cycles_24h");
@@ -67,11 +85,21 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
   if (cycles_crashed_24h >= 3) {
     alerts.push("dream.health.crashed_high");
   }
+  alerts.push(
+    ...computeSubsystemAlerts(db, {
+      now: new Date(now),
+      queryRewriteFailed24h: query_rewrite_failed_24h,
+      queryRewritten24h: query_rewritten_24h,
+    }),
+  );
 
   return json({
     current_running_cycle,
     cycles_in_last_24h,
     cycles_crashed_24h,
+    query_rewrite_failed_24h,
+    query_rewritten_24h,
+    query_rewrite_degraded_24h,
     alerts,
   });
 }

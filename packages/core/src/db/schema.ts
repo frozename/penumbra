@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 
-// 37 = t0_events payload immutability guard for external-content t0_fts.
-export const SCHEMA_VERSION = 37;
+// 38 = durable subsystem health gauge.
+export const SCHEMA_VERSION = 38;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -383,6 +383,21 @@ const SCHEMA_DDL_BLOCK_01 = `
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff_kind ON dispatch_events(handoff_id, kind);
+
+      CREATE TABLE IF NOT EXISTS subsystem_health (
+        subsystem TEXT PRIMARY KEY,
+        tier TEXT NOT NULL,
+        seat TEXT,
+        model TEXT,
+        host TEXT,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_success_ts TEXT,
+        last_failure_ts TEXT,
+        last_failure_reason TEXT,
+        last_failure_status INTEGER,
+        first_non_primary_ts TEXT,
+        updated_at TEXT NOT NULL
+      );
 
       CREATE TABLE IF NOT EXISTS worker_tokens (
         token_hash    TEXT NOT NULL PRIMARY KEY,

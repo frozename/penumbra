@@ -1689,6 +1689,7 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
       Promise.resolve({
         ok: false as const,
         reason: "http_error",
+        status: 503,
         failureMessage: "provider unavailable",
       }),
   });
@@ -1709,7 +1710,30 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
     n: number;
   };
   expect(cacheRow.n).toBe(0);
-  expect(events.some((entry) => entry.kind === "dream_p4_query_rewrite_failed")).toBe(true);
+  const failureEvent = events.find((entry) => entry.kind === "dream_p4_query_rewrite_failed");
+  expect(failureEvent).toBeDefined();
+  expect(failureEvent?.meta).toMatchObject({ reason: "http_error", status: 503 });
+  const healthRow = db
+    .query<
+      {
+        tier: string;
+        consecutive_failures: number;
+        last_failure_reason: string;
+        last_failure_status: number;
+      },
+      []
+    >(
+      `SELECT tier, consecutive_failures, last_failure_reason, last_failure_status
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow).toEqual({
+    tier: "fallback",
+    consecutive_failures: 1,
+    last_failure_reason: "http_error",
+    last_failure_status: 503,
+  });
   expect(events.some((entry) => entry.kind === "dream_p4_query_skipped")).toBe(false);
 });
 
