@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.penumbra.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BUN_PATH__</string>
+    <string>__PENUMBRA_REPO__/packages/cli/bin/penumbra.ts</string>
+    <string>watchdog</string>
+    <string>--heal</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PENUMBRA_STORAGE_ROOT</key>
+    <string>__PENUMBRA_STORAGE_ROOT__</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>__PENUMBRA_REPO__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>StandardOutPath</key>
+  <string>__PENUMBRA_STORAGE_ROOT__/watchdog-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PENUMBRA_STORAGE_ROOT__/watchdog-launchd.error.log</string>
+</dict>
+</plist>

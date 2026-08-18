@@ -33,6 +33,7 @@ import { runStart, runStartDetached } from "../src/commands/start.js";
 import { runStatus } from "../src/commands/status.js";
 import { runStop } from "../src/commands/stop.js";
 import { runTail } from "../src/commands/tail.js";
+import { runWatchdog } from "../src/commands/watchdog.js";
 import {
   runTaskCancel,
   runTaskList,
@@ -132,6 +133,21 @@ switch (cmd) {
       const s = await runStatus({ storageRoot: resolveLiveRoot() });
       emit(JSON.stringify(s, null, 2));
       process.exit(s.status === "running" ? 0 : 2);
+    }
+    break;
+  case "watchdog":
+    {
+      try {
+        const result = await runWatchdog({
+          storageRoot: resolveLiveRoot(),
+          heal: process.argv.includes("--heal"),
+        });
+        emit(JSON.stringify(result));
+        process.exit(result.status === "healthy" ? 0 : 2);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
     }
     break;
   case "export":
