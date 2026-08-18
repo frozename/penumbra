@@ -4,7 +4,11 @@ import { z } from "zod";
 
 import { listPendingDreamActionsQuery } from "../dreaming/digest.js";
 import { applyDreamAction, revertDreamAction } from "../dreaming/reembed.js";
-import { computeSubsystemAlerts } from "../services/subsystem-health.js";
+import {
+  computeSubsystemAlerts,
+  DREAM_QUERY_REWRITE_SUBSYSTEM,
+  readSubsystemHealth,
+} from "../services/subsystem-health.js";
 import { bodyJson, json } from "./_helpers.js";
 
 const QuerySchema = z.object({
@@ -69,14 +73,28 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
   ).c;
   const query_rewritten_24h = (
     db
-      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
+      )
       .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
   ).c;
-  const query_rewrite_degraded_24h = (
-    db
-      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
-      .get(yesterdayIso, "dream_p4_query_rewrite_degraded") as { c: number }
-  ).c;
+  const subsystemHealth = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
+  const subsystem_health = subsystemHealth
+    ? {
+        subsystem: subsystemHealth.subsystem,
+        tier: subsystemHealth.tier,
+        seat: subsystemHealth.seat,
+        model: subsystemHealth.model,
+        consecutive_failures: subsystemHealth.consecutive_failures,
+        last_success_ts: subsystemHealth.last_success_ts,
+        last_failure_ts: subsystemHealth.last_failure_ts,
+        last_failure_reason: subsystemHealth.last_failure_reason,
+      }
+    : null;
 
   const alerts = [];
   if (uptimeMs > 24 * 60 * 60 * 1000 && cycles_in_last_24h === 0) {
@@ -89,7 +107,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
     ...computeSubsystemAlerts(db, {
       now: new Date(now),
       queryRewriteFailed24h: query_rewrite_failed_24h,
-      queryRewritten24h: query_rewritten_24h,
+      queryRewriteSuccess24h: query_rewritten_24h,
     }),
   );
 
@@ -99,7 +117,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
     cycles_crashed_24h,
     query_rewrite_failed_24h,
     query_rewritten_24h,
-    query_rewrite_degraded_24h,
+    subsystem_health,
     alerts,
   });
 }

@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 
 const PRIMARY_TIER = "primary";
-const DREAM_QUERY_REWRITE_SUBSYSTEM = "dream.query_rewrite";
+export const DREAM_QUERY_REWRITE_SUBSYSTEM = "dream.query_rewrite";
 const PERMANENT_FALLBACK_AFTER_MS = 6 * 60 * 60_000;
+const QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD = 0.9;
 
 export interface RecordSubsystemOutcomeInput {
   subsystem: string;
@@ -35,7 +36,8 @@ export interface ComputeSubsystemAlertsOptions {
   now?: Date;
   permanentFallbackAfterMs?: number;
   queryRewriteFailed24h?: number;
-  queryRewritten24h?: number;
+  queryRewriteSuccess24h?: number;
+  queryRewriteFailureRateAlertThreshold?: number;
 }
 
 function normalizeTs(ts: Date | string | undefined): string {
@@ -118,11 +120,15 @@ export function computeSubsystemAlerts(
   const alerts: string[] = [];
   const now = opts.now ?? new Date();
   const permanentFallbackAfterMs = opts.permanentFallbackAfterMs ?? PERMANENT_FALLBACK_AFTER_MS;
+  const rewriteFailures = opts.queryRewriteFailed24h ?? 0;
+  const rewriteSuccesses = opts.queryRewriteSuccess24h ?? 0;
+  const rewriteAttempts = rewriteFailures + rewriteSuccesses;
+  const rewriteFailureRate = rewriteAttempts > 0 ? rewriteFailures / rewriteAttempts : 0;
+  const rewriteFailureRateAlertThreshold =
+    opts.queryRewriteFailureRateAlertThreshold ?? QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD;
   const rewrite = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
 
-  if ((opts.queryRewriteFailed24h ?? 0) > 0 && (opts.queryRewritten24h ?? 0) === 0) {
-    alerts.push("dream.health.rewrite_failing");
-  } else if ((rewrite?.consecutive_failures ?? 0) > 0) {
+  if (rewriteFailures > 0 && rewriteFailureRate >= rewriteFailureRateAlertThreshold) {
     alerts.push("dream.health.rewrite_failing");
   }
 
