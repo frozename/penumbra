@@ -167,6 +167,26 @@ Ran 1944 tests across 204 files. [${init.totalTime}]
 `;
 }
 
+function unhandledErrorOutput(suitePath: string, totalTime: string): string {
+  return `bun test v1.3.14 (0d9b296a)
+
+${suitePath}:
+
+# Unhandled error between tests
+-------------------------------
+62 |         await closePullRequest({ number: 10, comment: "", deleteBranch: true });
+                   ^
+error: "await" can only be used inside an "async" function
+    at /worktree/branch/${suitePath}:62:15
+-------------------------------
+
+ 0 pass
+ 0 fail
+ 1 error
+Ran 0 tests across 1 files. [${totalTime}]
+`;
+}
+
 function panicOutput(): string {
   return `${passOutput()}
 panic(main thread): A C++ exception occurred
@@ -325,6 +345,46 @@ beforeEach(() => {
 function makeReconciler(): ReturnType<typeof createMergeReconciler> {
   return createMergeReconciler(deps);
 }
+
+test("unhandled error between tests identifies the suite failure key", () => {
+  const suitePath = "packages/daemon/test/sweepers/reconciler-sweep.test.ts";
+
+  const report = parseBunTestReport(unhandledErrorOutput(suitePath, "52.34s"));
+
+  expect(report.failureKeys).toContain(`error:${suitePath}`);
+});
+
+test("unhandled error failure key is stable across timing-only changes", () => {
+  const suitePath = "packages/daemon/test/sweepers/reconciler-sweep.test.ts";
+  const expectedKeys = [`error:${suitePath}`];
+
+  const first = parseBunTestReport(unhandledErrorOutput(suitePath, "52.34s"));
+  const second = parseBunTestReport(unhandledErrorOutput(suitePath, "53.04s"));
+
+  expect(first.failureKeys).toEqual(expectedKeys);
+  expect(second.failureKeys).toEqual(expectedKeys);
+});
+
+test("unhandled errors in different suites produce different failure keys", () => {
+  const firstSuite = "packages/daemon/test/sweepers/reconciler-sweep.test.ts";
+  const secondSuite = "packages/daemon/test/sweepers/notification-sweeper.test.ts";
+
+  const first = parseBunTestReport(unhandledErrorOutput(firstSuite, "52.34s"));
+  const second = parseBunTestReport(unhandledErrorOutput(secondSuite, "52.34s"));
+
+  expect(first.failureKeys).toEqual([`error:${firstSuite}`]);
+  expect(second.failureKeys).toEqual([`error:${secondSuite}`]);
+  expect(first.failureKeys[0]).not.toBe(second.failureKeys[0]);
+});
+
+test("parsed unhandled error does not add a raw-output fallback key", () => {
+  const suitePath = "packages/daemon/test/sweepers/reconciler-sweep.test.ts";
+
+  const report = parseBunTestReport(unhandledErrorOutput(suitePath, "52.34s"));
+
+  expect(report.failureKeys).toEqual([`error:${suitePath}`]);
+  expect(report.failureKeys.some((key) => key.startsWith("unparsed:"))).toBe(false);
+});
 
 test("pre-existing scoped test failure present at base and branch does not fail the branch", async () => {
   baseHasPreExistingFailure = true;
