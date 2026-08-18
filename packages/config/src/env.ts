@@ -528,7 +528,7 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_DREAMING_REWRITER_MODEL: {
     schema: z.string(),
-    default: "Qwen3.6-35B-A3B-4bit",
+    default: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
     description: "Model for the dreaming rewriter.",
   },
   PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS: {

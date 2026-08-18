@@ -177,10 +177,14 @@ test("timeout maps to timeout", async () => {
   expect(result.reason).toBe("timeout");
 });
 
-test("empty choices/content maps to empty_response", async () => {
+test("empty or whitespace-only message content maps to empty_response", async () => {
   const fetchMock = mock(
     (): Promise<Response> =>
-      Promise.resolve(new Response(JSON.stringify({ choices: [] }), { status: 200 })),
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: " \n\t " } }] }), {
+          status: 200,
+        }),
+      ),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 

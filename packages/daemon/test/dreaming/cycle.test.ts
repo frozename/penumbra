@@ -73,6 +73,13 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     linkAutoThreshold: 0.75,
     p1BatchSize: 10,
     t2PromotionMinEvents: 5,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "http://127.0.0.1:7944",
+    rewriterModel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    rewriterTimeoutMs: 5000,
+    rewriterCacheTtlMs: 30 * 24 * 60 * 60 * 1000,
+    rewriterConcurrency: 4,
+    skipPhases: new Set(),
     ...overrides,
   };
 }
@@ -1454,7 +1461,7 @@ it("P4 uses cached rewriter skip verdict and does not call llmInvoke", async () 
     t2_memory_id: memoryId,
     memory_updated_at_ms: memoryUpdatedAtMs,
     verdict: { kind: "skip", reason: "too-internal" },
-    model: "granite-4.1-3b",
+    model: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
     now_ms: Date.now(),
   });
 
@@ -1511,7 +1518,7 @@ it("P4 uses cached rewriter query verdict when available", async () => {
     t2_memory_id: memoryId,
     memory_updated_at_ms: memoryUpdatedAtMs,
     verdict: { kind: "query", query: "searchable rewritten stability query" },
-    model: "granite-4.1-3b",
+    model: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
     now_ms: Date.now(),
   });
 
@@ -1690,6 +1697,51 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
   expect(cacheRow.n).toBe(0);
   expect(events.some((entry) => entry.kind === "dream_p4_query_rewrite_failed")).toBe(true);
   expect(events.some((entry) => entry.kind === "dream_p4_query_skipped")).toBe(false);
+});
+
+it("P4 falls back to title when the rewriter returns an empty response", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-empty-response-fallback";
+  const memoryId = seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "TypeScript strict null checks in async systems",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  const events: { kind: string; meta: unknown }[] = [];
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: false as const,
+        reason: "empty_response" as const,
+        failureMessage: "no response content",
+      }),
+  });
+
+  const action = db
+    .prepare(
+      `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+    )
+    .get() as { payload_json: string } | null;
+  expect(action).not.toBeNull();
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
+    "TypeScript strict null checks in async systems",
+  );
+
+  const cacheCount = (
+    db
+      .prepare(`SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`)
+      .get(memoryId) as { n: number }
+  ).n;
+  expect(cacheCount).toBe(0);
+  expect(events.some((entry) => entry.kind === "dream_p4_query_rewrite_failed")).toBe(true);
 });
 
 it("P4 rewritten query rejected by guard falls back to memory title and does not cache rejected rewrite", async () => {

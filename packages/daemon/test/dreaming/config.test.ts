@@ -155,7 +155,7 @@ describe("dreaming/config", () => {
     const config = buildDreamingConfig(getConfig(process.env));
     expect(config.rewriterEnabled).toBe(false);
     expect(config.rewriterBaseUrl).toBe("http://127.0.0.1:7944");
-    expect(config.rewriterModel).toBe("Qwen3.6-35B-A3B-4bit");
+    expect(config.rewriterModel).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
     expect(config.rewriterTimeoutMs).toBe(5000);
     expect(config.rewriterCacheTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
     expect(config.rewriterConcurrency).toBe(4);
@@ -182,7 +182,7 @@ describe("dreaming/config", () => {
     const defaults = buildDreamingConfig(getConfig({}));
     expect(defaults.enabled).toBe(false);
     expect(defaults.briefRefreshHours).toBe(24);
-    expect(defaults.rewriterModel).toBe("Qwen3.6-35B-A3B-4bit");
+    expect(defaults.rewriterModel).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
     expect(defaults.t2PromotionMinEvents).toBe(5);
 
     process.env.PENUMBRA_DREAMING_ENABLED = "true";

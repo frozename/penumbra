@@ -1074,6 +1074,19 @@ type ResolvedQuery = {
   rewriteLatencyMs: number;
 };
 
+function fallbackToMemoryTitle(
+  ctx: CycleCtx,
+  memory: { title: string },
+  rewriteLatencyMs: number,
+): ResolvedQuery {
+  return {
+    resolvedQuery: memory.title,
+    cacheHit: false,
+    rewriteModel: ctx.rewriterModel,
+    rewriteLatencyMs,
+  };
+}
+
 async function resolveMemoryQuery(
   db: Database,
   ctx: CycleCtx,
@@ -1081,12 +1094,7 @@ async function resolveMemoryQuery(
   updatedAtMs: number,
 ): Promise<ResolvedQuery | null> {
   if (!ctx.rewriterEnabled) {
-    return {
-      resolvedQuery: memory.title,
-      cacheHit: false,
-      rewriteModel: ctx.rewriterModel,
-      rewriteLatencyMs: 0,
-    };
+    return fallbackToMemoryTitle(ctx, memory, 0);
   }
 
   const cached = getRewriteForMemory({
@@ -1151,7 +1159,7 @@ async function fetchRewriteFromLlm(
       model: ctx.rewriterModel,
       latency_ms: rewriteLatencyMs,
     });
-    return null;
+    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
 
   if (rewriteResult.value.kind === "skip") {
@@ -1181,11 +1189,19 @@ async function fetchRewriteFromLlm(
       model: ctx.rewriterModel,
       latency_ms: rewriteLatencyMs,
     });
-    return null;
+    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
 
   const sanitized = sanitizeTitleForQuery(rewriteResult.value.query);
-  if (!sanitized) return null;
+  if (!sanitized) {
+    ctx.emitDreamEvent("dream_p4_query_rewrite_failed", {
+      t2_memory_id: memory.memory_id,
+      cache_hit: false,
+      model: ctx.rewriterModel,
+      latency_ms: rewriteLatencyMs,
+    });
+    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
+  }
 
   setRewriteForMemory({
     db,
