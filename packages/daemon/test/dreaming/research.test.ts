@@ -195,6 +195,52 @@ describe("P5: Active Research", () => {
     expect(actions[0]!.payload_json).toContain("cached text");
   });
 
+  test("dream_research_cache miss fetches instead of throwing", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"uncached query\"}')",
+    ).run();
+
+    const searchMock = mock(
+      (): Promise<WebResearchResult[]> =>
+        Promise.resolve([
+          webfetchResult({
+            url: "https://example.com/fetched",
+            title: "Fetched",
+            markdown: "fresh uncached body",
+          }),
+        ]),
+    );
+    const deps = depsWithAdapter(
+      {
+        search: searchMock,
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
+
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+
+    expect(searchMock.mock.calls.length).toBe(1);
+    const p4 = db
+      .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'")
+      .get() as DreamActionStatusRow;
+    expect(p4.status).toBe("completed");
+    expect(p4.decided_by).toBeNull();
+
+    const actions = db
+      .prepare("SELECT * FROM dream_actions WHERE phase='P5'")
+      .all() as DreamActionResearchRow[];
+    expect(actions.length).toBe(1);
+    expect(actions[0]!.payload_json).toContain("fresh uncached body");
+  });
+
   test("P5 caches empty search results as negative and short-circuits on second hit", async () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
@@ -347,6 +393,45 @@ describe("P5: Active Research", () => {
       { url: "https://example.com/b" },
       { url: "https://example.com/c" },
     ]);
+  });
+
+  test("unexpired negative cache row short-circuits without re-fetching", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"negative cached query\"}')",
+    ).run();
+
+    const cacheKey = createHash("sha256")
+      .update("negative cached query|negative cached query")
+      .digest("hex");
+    db.prepare(
+      `INSERT INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd, is_negative)
+       VALUES(?, 'negative', 'proj1', 'negative cached query', ?, '', '', 1, 9999999999999, 0, 1)`,
+    ).run(cacheKey, cacheKey);
+
+    const searchMock = mock((): Promise<WebResearchResult[]> => Promise.resolve([]));
+    const deps = depsWithAdapter(
+      {
+        search: searchMock,
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
+
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+
+    expect(searchMock.mock.calls.length).toBe(0);
+    const p4 = db
+      .prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'")
+      .get() as DreamActionStatusRow;
+    expect(p4.status).toBe("failed");
+    expect(p4.decided_by).toBe("negative-cache-hit");
   });
 
   test("expired negative cache row triggers re-fetch (does not serve empty positive result)", async () => {

@@ -110,10 +110,10 @@ function markActionCompleted(db: Database, actionId: string): void {
   );
 }
 
-function readCache(db: Database, cacheKey: string): ResearchCacheRow | undefined {
-  const row = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as
-    | ResearchCacheRow
-    | undefined;
+function readCache(db: Database, cacheKey: string): ResearchCacheRow | null {
+  const row = db
+    .prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`)
+    .get(cacheKey) as ResearchCacheRow | null;
   return row;
 }
 
@@ -280,7 +280,7 @@ function readCachedOutcome(
   ctx: ActionContext,
 ): { kind: "negative" } | { kind: "positive"; outcome: FetchOutcome } | { kind: "miss" } {
   const cached = readCache(db, ctx.cacheKey);
-  if (cached === undefined) return { kind: "miss" };
+  if (cached == null) return { kind: "miss" };
   if (Number(cached.is_negative) === 1) {
     return cached.expires_at > ctx.now ? { kind: "negative" } : { kind: "miss" };
   }
