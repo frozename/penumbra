@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export interface BunTestReport {
   rawOutput: string;
   output: string;
+  pass: number | null;
   fails: number | null;
   errors: number;
   reachedSummary: boolean;
@@ -146,6 +147,7 @@ function unenumerableFailureKey(init: {
 
 export function parseBunTestReport(rawOutput: string): BunTestReport {
   const output = rawOutput.replaceAll(ANSI_PATTERN, "");
+  const pass = lastNum(output, /(\d+)\s+pass\b/g);
   const fails = lastNum(output, /(\d+)\s+fail\b/g);
   const errors = lastNum(output, /(\d+)\s+error\b/g) ?? 0;
   const reachedSummary = /Ran\s+\d+\s+tests?\b/.test(output);
@@ -173,6 +175,7 @@ export function parseBunTestReport(rawOutput: string): BunTestReport {
   return {
     rawOutput,
     output,
+    pass,
     fails,
     errors,
     reachedSummary,

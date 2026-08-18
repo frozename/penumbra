@@ -1,3 +1,4 @@
+import * as core from "@penumbra/core";
 import {
   type HandoffRow,
   type Logger,
@@ -142,6 +143,7 @@ export interface ReconcilerDeps {
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
   exec?: (argv: string[], options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
+  mirrorNodeModuleSymlinks?: NodeModulesMirror;
   thoughtsConfig?: RuntimeThoughtsConfig;
   thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
   runThoughtAnalyzer?: typeof runThoughtAnalyzer;
@@ -149,6 +151,8 @@ export interface ReconcilerDeps {
   getParentHandoffId?: (handoffId: string) => Promise<string | null>;
   settings?: Pick<Settings, "reconcileTypecheckTimeoutSec" | "reconcileTestTimeoutSec">;
 }
+
+type NodeModulesMirror = (mainRoot: string, wtRoot: string, log: Logger) => void;
 
 interface RebaseOutcome {
   attempted: boolean;
@@ -1494,6 +1498,11 @@ async function runBunTestBaseline(
       ["worktree", "add", "--detach", scratchPath, snapshot.mergeBaseSha],
       deps.mainRepoDir,
     );
+    (
+      deps.mirrorNodeModuleSymlinks ??
+      (core as typeof core & { mirrorNodeModuleSymlinks: NodeModulesMirror })
+        .mirrorNodeModuleSymlinks
+    )(deps.mainRepoDir, scratchPath, deps.log);
     return await runBunTestCommand(ctx, testArgs, scratchPath, timeout);
   } finally {
     await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
@@ -1540,6 +1549,17 @@ function findNewFailureKeys(
 function canCompareAgainstBaseline(outcome: BunTestCommandOutcome): boolean {
   return (
     outcome.report.reachedSummary && !outcome.passed && !outcome.timedOut && !outcome.envFailure
+  );
+}
+
+function isCredibleBunTestBaseline(outcome: BunTestCommandOutcome): boolean {
+  const { report } = outcome;
+  // A zero-pass baseline whose reported failures are only load errors cannot
+  // establish whether branch failures are regressions or missing dependencies.
+  return !(
+    report.pass === 0 &&
+    report.failureKeys.length > 0 &&
+    report.failureKeys.every((key) => key.startsWith("error:"))
   );
 }
 
@@ -1606,6 +1626,12 @@ async function evaluateBunTestOutcome(
     return await emitTestEnvironmentError(
       ctx,
       testOutcomeOutput(baseline) || "baseline tests did not reach a summary",
+    );
+  }
+  if (!isCredibleBunTestBaseline(baseline)) {
+    return await emitTestEnvironmentError(
+      ctx,
+      "baseline ran no successful tests and reported only load errors",
     );
   }
   const newFailureKeys = findNewFailureKeys(outcome, baseline);

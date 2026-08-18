@@ -531,6 +531,7 @@ export {
   type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
   WorktreeManager,
+  mirrorNodeModuleSymlinks,
   type WorktreeMode,
 } from "./worktree/manager.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";

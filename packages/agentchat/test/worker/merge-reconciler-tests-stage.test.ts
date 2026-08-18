@@ -1,5 +1,6 @@
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
 import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   createMergeReconciler,
@@ -38,6 +39,15 @@ let baseHasPreExistingFailure = false;
 let holdBranchTestOpen = false;
 let branchTestOutputOverride: string | null = null;
 let baseTestOutputOverride: string | null = null;
+
+const brokenBaselineRaw = readFileSync(
+  new URL("../fixtures/merge-reconciler/broken-baseline-raw.txt", import.meta.url),
+  "utf8",
+);
+const healthyBranchRaw = readFileSync(
+  new URL("../fixtures/merge-reconciler/healthy-branch-raw.txt", import.meta.url),
+  "utf8",
+);
 
 function makeHandoffRow(overrides: Partial<HandoffRow> = {}): HandoffRow {
   return {
@@ -235,6 +245,7 @@ const emitVerdict = mock((verdict: ReconcilerVerdict) => {
 });
 const notifyResult = mock((_handoffId: string, _result: MergeResult) => Promise.resolve());
 const postProgress = mock((_handoffId: string, _payload: unknown) => Promise.resolve());
+const baselineNodeModulesMirror = mock(() => undefined);
 
 const deps: ReconcilerDeps = {
   worktreeManager: new WorktreeManager(),
@@ -246,6 +257,7 @@ const deps: ReconcilerDeps = {
   rebaseScratchRoot: "/tmp/reconciler-test-scratch",
   getHandoff: mock(() => Promise.resolve(makeHandoffRow())),
   exec: execMock,
+  mirrorNodeModuleSymlinks: baselineNodeModulesMirror,
   settings: {
     reconcileTypecheckTimeoutSec: 1,
     reconcileTestTimeoutSec: 1,
@@ -278,6 +290,8 @@ beforeEach(() => {
   holdBranchTestOpen = false;
   branchTestOutputOverride = null;
   baseTestOutputOverride = null;
+  baselineNodeModulesMirror.mockClear();
+  deps.mirrorNodeModuleSymlinks = baselineNodeModulesMirror;
   deps.settings = {
     reconcileTypecheckTimeoutSec: 1,
     reconcileTestTimeoutSec: 1,
@@ -303,6 +317,51 @@ test("pre-existing scoped test failure present at base and branch does not fail 
     handoff_id: "h-pre-existing",
     tests: "pass",
   });
+});
+
+test("a captured zero-pass load-error baseline is a test environment error", async () => {
+  mergeBaseSha = "f".repeat(40);
+  baseTestOutputOverride = brokenBaselineRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+
+  const result = await makeReconciler()("h-captured-broken-baseline");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-captured-broken-baseline",
+    tests: "error",
+  });
+});
+
+test("captured branch failures shared by a healthy baseline are suppressed", async () => {
+  mergeBaseSha = "g".repeat(40);
+  baseTestOutputOverride = healthyBranchRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+
+  const result = await makeReconciler()("h-captured-shared-failures");
+
+  expect(result.status).toBe("verified");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-captured-shared-failures",
+    tests: "pass",
+  });
+});
+
+test("baseline setup mirrors node_modules into its scratch worktree", async () => {
+  mergeBaseSha = "h".repeat(40);
+  baseTestOutputOverride = healthyBranchRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+  const mirrorNodeModuleSymlinks = mock(() => undefined);
+  deps.mirrorNodeModuleSymlinks = mirrorNodeModuleSymlinks;
+
+  await makeReconciler()("h-baseline-mirror");
+
+  expect(mirrorNodeModuleSymlinks).toHaveBeenCalledWith(
+    "/main/repo",
+    "/tmp/reconciler-test-scratch/test-baseline/h-baseline-mirror",
+    deps.log,
+  );
 });
 
 test("pre-existing unenumerable scoped failures are stable across timing-only reruns", async () => {

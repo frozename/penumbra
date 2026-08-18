@@ -1,0 +1,1011 @@
+bun test v1.3.14 (0d9b296a)
+
+packages/agentchat/test/smoke.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find package 'reflect-metadata' from '/Users/acordeiro/.penumbra/rebase-scratch/test-baseline/probe-manual-maestro/test/setup.ts'
+-------------------------------
+
+
+packages/agentchat/test/transcript-slice.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/mcp-allowlist-proxy.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/penumbra-client.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/registry.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker-id.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/cookie-file.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/google-otlp-synth.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/opencode-db-reader.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/poller-machine-lock.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/claude-jsonl-reader.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/sakana-usage-synth.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/poll-lock.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/opencode-console-reader.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/poller-concurrent-persist.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/poller-coalesced-persist.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/claude-statusline-bridge.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/poller.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/opencode-console-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/usage-readers/codex-rollout-reader.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/config/long-lived-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/config/agent-options-warm-pool.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/config/types.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/config/load.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/config/hosted-mcp-server.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/acp-write-tools.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/thin-client.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/hosted-mcp-wiring.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/headless-chain-sse.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/worker-project-isolation.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/worker-bin-coexistence.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/shell-e2e.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/reliability-smoke.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/thoughts-e2e.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/worker-restart-recovery.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/headless-chain.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/integration/audit-events.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worktree/manager.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/attachments.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/queue-approve.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/discord.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/loop-redaction.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/trust.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/input.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/route-input.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/transcript.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/dispatch-handoff.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/loop.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/cli/inline-approval.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-prewarm.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/opencode-mcp-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-model-warmup.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/cli-adapters.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-factory.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-exited-listeners.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-trust-hint.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/acp-server-process-group.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/opencode-cli.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/acp-fs.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/acp-warm-pool.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-write.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/cli-spawn-stream.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-warm-reuse.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-warm.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/cli-spawn.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/openai-compat-http.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-integration-prewarm-reuse.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/secret.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-overhead.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/acp-client.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-integration-cold-fallback.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-client.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-server.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/acp-server.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/stdio-acp-integration-warm-reuse.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/adapters/opencode-acp.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/sdk/adapter-types.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/sdk/stream-wrapper.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/mention/parser.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/mention/resolver.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/write-tools-executor.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/silent-failure-retry.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/merge-reconciler-typecheck-scoping.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/write-tools-errors.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/event-queue.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/acp-pool-wiring.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/merge-reconciler-typecheck-filter.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/permission-callback.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/dispatcher-autocommit-on-chain-end.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/maestro-output-rules.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/project-cwd.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/merge-reconciler-tests-stage.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/github-pr-helper.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/warm-pool-reload.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/event-source.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/shell-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/discord-events.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/prewarm-bounds.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/worktree-manager.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/dispatcher.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/permission-event-source.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/thought-analyzer.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/inject-route.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/executor-registry.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/maestro-output-redactor-from-env.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/boot-reconcile.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/notification-scheduler.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/discord-rate-limit.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/orchestrate-tools.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/notification-router.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/control-loop.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/prewarm-loop.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/heartbeat-emit.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/mcp-tool-name.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/thought-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/prewarm-targets.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/boot-token-registration.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/unguarded-rejection-repro.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/capture-port.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/allowlist-matcher.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/shutdown.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/sandbox-spawn.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/thought-capture.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/control-listener.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/claim-affinity.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/worktree-ready-event.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/permission-daemon-client.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/heartbeat-loop.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/worktree-integration.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/maestro-output-redactor.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/heartbeat-retry.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/notification-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/merge-reconciler.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/discord-notifier.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/recall-enricher.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/worker/sandbox-config.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/e2e/handoff-roundtrip.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/scripts/acp-promotion/evaluate.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/scripts/acp-promotion/run.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/scripts/acp-promotion/scenarios.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+packages/agentchat/test/scripts/acp-promotion/report.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+-------------------------------
+
+
+ 0 pass
+ 143 fail
+ 143 errors
+Ran 143 tests across 143 files. [14.00ms]
+real 0.01
+user 0.00
+sys 0.00

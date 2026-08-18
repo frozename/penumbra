@@ -1051,7 +1051,11 @@ function stderrTailFromError(err: unknown): string {
   return stderr.trim().slice(-ISOLATED_INSTALL_STDERR_TAIL_CHARS);
 }
 
-function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string, log: Logger = NOOP_LOG): void {
+export function mirrorNodeModuleSymlinks(
+  mainRoot: string,
+  wtRoot: string,
+  log: Logger = NOOP_LOG,
+): void {
   if (resolveExistingPath(mainRoot) === resolveExistingPath(wtRoot)) {
     return;
   }
