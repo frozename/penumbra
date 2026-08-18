@@ -1,36 +1,73 @@
 import { z } from "zod";
 
+import {
+  attemptLlmCandidates,
+  buildChatCompletionsUrl,
+  describeLlmCandidate,
+  type LlmAuthSource,
+  type LlmCandidate,
+  type LlmPurpose,
+  type LlmRoutingBias,
+  type LlmServingCandidate,
+  type ResolveKeychainSecret,
+  resolveLlmAuthorization,
+  resolveLlmCandidates,
+  resolveLlmProvider,
+  type ResolvedLlmCandidate,
+} from "../../../core/src/services/llm-candidates.js";
+
 export interface LlmInvokeInput<T extends z.ZodType> {
   baseUrl: string;
   model: string;
+  provider?: string;
+  auth?: LlmAuthSource;
+  candidateName?: string;
+  fallbackCandidates?: LlmCandidate[];
+  activeBiases?: LlmRoutingBias[];
+  purpose?: LlmPurpose;
+  now?: Date;
   messages: { role: "system" | "user" | "assistant"; content: string }[];
   schema: T;
   timeoutMs?: number;
   temperature?: number;
+  fetchFn?: typeof fetch;
+  resolveKeychain?: ResolveKeychainSecret;
 }
 
-export type LlmInvokeResult<T extends z.ZodType> =
-  | { ok: true; value: z.infer<T>; raw: string }
+type LlmInvokeFailure =
   | {
       ok: false;
       reason: "http_error";
       failureMessage: string;
       status: number;
+      candidate?: LlmServingCandidate;
     }
   | {
       ok: false;
       reason: "timeout" | "invalid_json" | "schema_violation" | "empty_response";
       failureMessage: string;
+      candidate?: LlmServingCandidate;
     };
+
+type SingleCandidateResult<T extends z.ZodType> =
+  | { ok: true; value: z.infer<T>; raw: string }
+  | LlmInvokeFailure;
+
+export type LlmInvokeResult<T extends z.ZodType> =
+  | { ok: true; value: z.infer<T>; raw: string; candidate: LlmServingCandidate }
+  | LlmInvokeFailure;
 
 function httpError<T extends z.ZodType>(
   status: number,
   failureMessage: string,
-): LlmInvokeResult<T> {
+): SingleCandidateResult<T> {
   return { ok: false, reason: "http_error", status, failureMessage };
 }
 
-function parseContent<T extends z.ZodType>(responseMessage: string, schema: T): LlmInvokeResult<T> {
+function parseContent<T extends z.ZodType>(
+  responseMessage: string,
+  schema: T,
+): SingleCandidateResult<T> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(responseMessage) as unknown;
@@ -56,7 +93,7 @@ async function parseHttpResponse<T extends z.ZodType>(
   response: Response,
   maxResponseBytes: number,
   schema: T,
-): Promise<LlmInvokeResult<T>> {
+): Promise<SingleCandidateResult<T>> {
   const responseLengthHeader = response.headers.get("content-length");
   const responseLength = responseLengthHeader
     ? Number.parseInt(responseLengthHeader, 10)
@@ -95,23 +132,75 @@ export async function llmInvoke<T extends z.ZodType>(
 ): Promise<LlmInvokeResult<T>> {
   const maxResponseBytes = 1024 * 1024;
   const timeoutMs = input.timeoutMs ?? 30_000;
+  const candidates = resolveLlmCandidates({
+    purpose: input.purpose ?? "generation",
+    activeBiases: input.activeBiases,
+    now: input.now,
+    candidates: [
+      {
+        name: input.candidateName ?? input.model,
+        baseUrl: input.baseUrl,
+        model: input.model,
+        provider: resolveLlmProvider(input.baseUrl, input.provider),
+        auth: input.auth ?? { source: "none" },
+      },
+      ...(input.fallbackCandidates ?? []),
+    ],
+  });
+  const attempted = await attemptLlmCandidates<
+    { value: z.infer<T>; raw: string },
+    LlmInvokeFailure
+  >(candidates, async (candidate) => {
+    const result = await invokeCandidate(input, candidate, timeoutMs, maxResponseBytes);
+    return result.ok
+      ? { ok: true as const, value: { value: result.value, raw: result.raw } }
+      : { ok: false as const, error: result };
+  });
+  if (attempted.ok) {
+    return {
+      ok: true,
+      value: attempted.value.value,
+      raw: attempted.value.raw,
+      candidate: describeLlmCandidate(attempted.candidate),
+    };
+  }
+  const finalFailure = attempted.failures.at(-1);
+  if (!finalFailure) {
+    throw new Error("no LLM candidate attempt was made");
+  }
+  if (candidates.length === 1) return finalFailure.error;
+  return { ...finalFailure.error, candidate: describeLlmCandidate(finalFailure.candidate) };
+}
+
+async function invokeCandidate<T extends z.ZodType>(
+  input: LlmInvokeInput<T>,
+  candidate: ResolvedLlmCandidate,
+  timeoutMs: number,
+  maxResponseBytes: number,
+): Promise<SingleCandidateResult<T>> {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort(new DOMException("Request timed out", "AbortError"));
   }, timeoutMs);
 
   try {
-    const response = await globalThis.fetch(`${input.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: input.model,
-        messages: input.messages,
-        temperature: input.temperature ?? 0,
-        response_format: { type: "json_object" },
-      }),
-      signal: controller.signal,
-    });
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    const token = resolveLlmAuthorization(candidate, input.resolveKeychain);
+    if (token) headers.authorization = `Bearer ${token}`;
+    const response = await (input.fetchFn ?? globalThis.fetch)(
+      buildChatCompletionsUrl(candidate.baseUrl),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: candidate.model,
+          messages: input.messages,
+          temperature: input.temperature ?? 0,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      },
+    );
 
     if (!response.ok) {
       const body = await response.text();

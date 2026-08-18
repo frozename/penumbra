@@ -414,6 +414,27 @@ export {
   resolveJudgeConfig,
 } from "./services/judge-chat.js";
 export {
+  ALLOWED_LLM_PROVIDERS,
+  attemptCandidatesInOrder,
+  attemptLlmCandidates,
+  buildChatCompletionsUrl,
+  createNvidiaNimFallbackCandidate,
+  describeLlmCandidate,
+  type LlmAuthSource,
+  type LlmCandidate,
+  type LlmCandidateAttemptResult,
+  type LlmCandidateFailure,
+  type LlmProvider,
+  type LlmPurpose,
+  type LlmRoutingBias,
+  type LlmServingCandidate,
+  type ResolvedLlmCandidate,
+  type ResolveKeychainSecret,
+  resolveLlmAuthorization,
+  resolveLlmCandidates,
+  resolveLlmProvider,
+} from "./services/llm-candidates.js";
+export {
   collectLlamactlInventory,
   type CollectLlamactlInventoryOpts,
   type LlamactlInventory,

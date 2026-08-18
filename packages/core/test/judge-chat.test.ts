@@ -70,6 +70,7 @@ test("resolveJudgeConfig falls through to local defaults when env is empty", () 
   const cfg = resolveJudgeConfig({});
   expect(cfg.baseUrl).toBe("http://127.0.0.1:7944");
   expect(cfg.model).toBe("local");
+  expect(cfg.provider).toBe("local");
   expect(cfg.token).toBe("");
   expect(cfg.usedDefaultBaseUrl).toBe(true);
   expect(cfg.usedDefaultModel).toBe(true);
@@ -77,11 +78,11 @@ test("resolveJudgeConfig falls through to local defaults when env is empty", () 
 
 test("resolveJudgeConfig honors PENUMBRA_JUDGE_* primary env names", () => {
   const cfg = resolveJudgeConfig({
-    PENUMBRA_JUDGE_BASE_URL: "http://judge:9000",
+    PENUMBRA_JUDGE_BASE_URL: "http://127.0.0.1:9000",
     PENUMBRA_JUDGE_MODEL: "qwen3-8b",
     PENUMBRA_JUDGE_TOKEN: "t",
   });
-  expect(cfg.baseUrl).toBe("http://judge:9000");
+  expect(cfg.baseUrl).toBe("http://127.0.0.1:9000");
   expect(cfg.model).toBe("qwen3-8b");
   expect(cfg.token).toBe("t");
   expect(cfg.usedDefaultBaseUrl).toBe(false);
@@ -90,11 +91,11 @@ test("resolveJudgeConfig honors PENUMBRA_JUDGE_* primary env names", () => {
 
 test("resolveJudgeConfig falls back to legacy PENUMBRA_SIRIUS_* + SIRIUS_URL", () => {
   const cfg = resolveJudgeConfig({
-    PENUMBRA_SIRIUS_BASE_URL: "http://legacy:1234",
+    PENUMBRA_SIRIUS_BASE_URL: "http://127.0.0.1:1234",
     PENUMBRA_SIRIUS_MODEL: "gpt-4o",
     PENUMBRA_SIRIUS_TOKEN: "legacy-token",
   });
-  expect(cfg.baseUrl).toBe("http://legacy:1234");
+  expect(cfg.baseUrl).toBe("http://127.0.0.1:1234");
   expect(cfg.model).toBe("gpt-4o");
   expect(cfg.token).toBe("legacy-token");
   expect(cfg.usedDefaultBaseUrl).toBe(false);
@@ -103,13 +104,13 @@ test("resolveJudgeConfig falls back to legacy PENUMBRA_SIRIUS_* + SIRIUS_URL", (
 
 test("resolveJudgeConfig prefers PENUMBRA_JUDGE_* over legacy", () => {
   const cfg = resolveJudgeConfig({
-    PENUMBRA_JUDGE_BASE_URL: "http://new",
-    PENUMBRA_SIRIUS_BASE_URL: "http://old",
-    SIRIUS_URL: "http://oldest",
+    PENUMBRA_JUDGE_BASE_URL: "http://127.0.0.1:9000",
+    PENUMBRA_SIRIUS_BASE_URL: "http://127.0.0.1:9001",
+    SIRIUS_URL: "http://127.0.0.1:9002",
     PENUMBRA_JUDGE_MODEL: "new-model",
     PENUMBRA_SIRIUS_MODEL: "old-model",
   });
-  expect(cfg.baseUrl).toBe("http://new");
+  expect(cfg.baseUrl).toBe("http://127.0.0.1:9000");
   expect(cfg.model).toBe("new-model");
 });
 
@@ -122,6 +123,21 @@ test("resolveJudgeConfig honors extraModelEnv first", () => {
     { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] },
   );
   expect(cfg.model).toBe("refiner-special");
+});
+
+test("resolveJudgeConfig derives NVIDIA NIM and rejects a billed provider", () => {
+  expect(
+    resolveJudgeConfig({
+      PENUMBRA_JUDGE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      PENUMBRA_JUDGE_MODEL: "meta/llama-3.1-8b-instruct",
+    }).provider,
+  ).toBe("nvidia-nim");
+
+  expect(() =>
+    resolveJudgeConfig({
+      PENUMBRA_JUDGE_BASE_URL: "https://api.openai.com/v1",
+    }),
+  ).toThrow(/provider.*required.*api\.openai\.com/i);
 });
 
 test("resolveJudgeChatTimeoutMs defaults to 30s and honors PENUMBRA_JUDGE_TIMEOUT_MS", () => {
@@ -159,6 +175,45 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
       caught = err;
     }
     expect((caught as Error).message).toContain("timed out after 10ms");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("createJudgeChat advances past whitespace-only content to the cloud rung", async () => {
+  const fetchMock = mock((url: string) =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: url.startsWith("http://judge") ? " \n\t " : "cloud" } }],
+        }),
+        { status: 200 },
+      ),
+    ),
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchMock as typeof fetch;
+
+  try {
+    const chat = createJudgeChat({
+      baseUrl: "http://judge",
+      provider: "local",
+      fallbackCandidates: [
+        {
+          name: "nim-llama",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
+          model: "meta/llama-3.1-8b-instruct",
+          provider: "nvidia-nim",
+          auth: { source: "bearer", token: "test-token" },
+        },
+      ],
+      fetchFn: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      chat({ model: "local", messages: [{ role: "user", content: "hi" }] }),
+    ).resolves.toBe("cloud");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   } finally {
     globalThis.fetch = originalFetch;
   }

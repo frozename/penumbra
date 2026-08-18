@@ -19,6 +19,12 @@ import {
   type LlmInvokeResult,
   llmInvoke as realLlmInvoke,
 } from "../services/llm-invoke.js";
+import {
+  createNvidiaNimFallbackCandidate,
+  type LlmServingCandidate,
+  resolveLlmProvider,
+} from "../../../core/src/services/llm-candidates.js";
+import { readRoutingBiases } from "../../../core/src/readers/routing-bias.js";
 import { recordSubsystemOutcome } from "../services/subsystem-health.js";
 import { runPC1Phase } from "./curator/pc1-ephemera.js";
 import { runPC2Phase } from "./curator/pc2-cluster.js";
@@ -1097,13 +1103,14 @@ function recordRewriteFailure(
     latencyMs: number;
     reason: string;
     status?: number;
+    candidate?: LlmServingCandidate;
   },
 ): void {
   const ts = new Date().toISOString();
   ctx.emitDreamEvent("dream_p4_query_rewrite_failed", {
     t2_memory_id: input.memoryId,
     cache_hit: false,
-    model: ctx.rewriterModel,
+    model: input.candidate?.model ?? ctx.rewriterModel,
     latency_ms: input.latencyMs,
     reason: input.reason,
     ...(input.status === undefined ? {} : { status: input.status }),
@@ -1113,9 +1120,34 @@ function recordRewriteFailure(
     tier: "fallback",
     ok: false,
     ts,
-    model: ctx.rewriterModel,
+    seat: input.candidate?.name ?? "memory-title",
+    model: input.candidate?.model ?? ctx.rewriterModel,
+    host: input.candidate ? new URL(input.candidate.baseUrl).hostname : null,
     reason: input.reason,
     status: input.status,
+  });
+}
+
+function primaryRewriteCandidate(ctx: CycleCtx): LlmServingCandidate {
+  return {
+    name: ctx.rewriterModel,
+    baseUrl: ctx.rewriterBaseUrl,
+    model: ctx.rewriterModel,
+    provider: resolveLlmProvider(ctx.rewriterBaseUrl),
+    authSource: "none",
+    tier: "primary",
+  };
+}
+
+function recordRewriteSuccess(db: Database, candidate: LlmServingCandidate): void {
+  recordSubsystemOutcome(db, {
+    subsystem: "dream.query_rewrite",
+    tier: candidate.tier,
+    ok: true,
+    ts: new Date().toISOString(),
+    seat: candidate.name,
+    model: candidate.model,
+    host: new URL(candidate.baseUrl).hostname,
   });
 }
 
@@ -1177,6 +1209,10 @@ async function fetchRewriteFromLlm(
   const rewriteResult = await ctx.invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
     baseUrl: ctx.rewriterBaseUrl,
     model: ctx.rewriterModel,
+    provider: resolveLlmProvider(ctx.rewriterBaseUrl),
+    auth: { source: "none" },
+    fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+    activeBiases: readRoutingBiases(db),
     messages: prompt,
     schema: REWRITE_RESPONSE_SCHEMA,
     timeoutMs: ctx.rewriterTimeoutMs,
@@ -1190,9 +1226,11 @@ async function fetchRewriteFromLlm(
       latencyMs: rewriteLatencyMs,
       reason: rewriteResult.reason,
       status: "status" in rewriteResult ? rewriteResult.status : undefined,
+      candidate: rewriteResult.candidate,
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
+  const servingCandidate = rewriteResult.candidate ?? primaryRewriteCandidate(ctx);
 
   if (rewriteResult.value.kind === "skip") {
     setRewriteForMemory({
@@ -1200,16 +1238,17 @@ async function fetchRewriteFromLlm(
       t2_memory_id: memory.memory_id,
       memory_updated_at_ms: updatedAtMs,
       verdict: rewriteResult.value,
-      model: ctx.rewriterModel,
+      model: servingCandidate.model,
       now_ms: ctx.nowMs,
       ttl_ms: ctx.rewriterCacheTtlMs,
     });
     ctx.emitDreamEvent("dream_p4_query_skipped", {
       t2_memory_id: memory.memory_id,
       cache_hit: false,
-      model: ctx.rewriterModel,
+      model: servingCandidate.model,
       latency_ms: rewriteLatencyMs,
     });
+    recordRewriteSuccess(db, servingCandidate);
     return null;
   }
 
@@ -1219,6 +1258,7 @@ async function fetchRewriteFromLlm(
       memoryId: memory.memory_id,
       latencyMs: rewriteLatencyMs,
       reason: passes.reason ?? "rejected_unsearchable",
+      candidate: servingCandidate,
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
@@ -1229,6 +1269,7 @@ async function fetchRewriteFromLlm(
       memoryId: memory.memory_id,
       latencyMs: rewriteLatencyMs,
       reason: "empty_sanitized_query",
+      candidate: servingCandidate,
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
@@ -1238,27 +1279,21 @@ async function fetchRewriteFromLlm(
     t2_memory_id: memory.memory_id,
     memory_updated_at_ms: updatedAtMs,
     verdict: { kind: "query", query: sanitized },
-    model: ctx.rewriterModel,
+    model: servingCandidate.model,
     now_ms: ctx.nowMs,
     ttl_ms: ctx.rewriterCacheTtlMs,
   });
   ctx.emitDreamEvent("dream_p4_query_rewritten", {
     t2_memory_id: memory.memory_id,
     cache_hit: false,
-    model: ctx.rewriterModel,
+    model: servingCandidate.model,
     latency_ms: rewriteLatencyMs,
   });
-  recordSubsystemOutcome(db, {
-    subsystem: "dream.query_rewrite",
-    tier: "primary",
-    ok: true,
-    ts: new Date().toISOString(),
-    model: ctx.rewriterModel,
-  });
+  recordRewriteSuccess(db, servingCandidate);
   return {
     resolvedQuery: sanitized,
     cacheHit: false,
-    rewriteModel: ctx.rewriterModel,
+    rewriteModel: servingCandidate.model,
     rewriteLatencyMs,
   };
 }

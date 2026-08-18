@@ -1667,6 +1667,63 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
   expect(cacheRow?.query).toBe("something searchable and useful query terms");
 });
 
+it("P4 wires the NIM rung and records the fallback candidate that served", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-cloud-fallback";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "A stable architecture question with human language",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  let invokeInput: Record<string, unknown> | undefined;
+
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: (input) => {
+      invokeInput = input as unknown as Record<string, unknown>;
+      return Promise.resolve({
+        ok: true as const,
+        value: { kind: "query" as const, query: "something searchable and useful query terms" },
+        raw: '{"kind":"query","query":"something searchable and useful query terms"}',
+        candidate: {
+          name: "nvidia-nim-llama-3.1-8b-instruct",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
+          model: "meta/llama-3.1-8b-instruct",
+          provider: "nvidia-nim" as const,
+          authSource: "keychain" as const,
+          tier: "fallback" as const,
+        },
+      });
+    },
+  });
+
+  expect(invokeInput?.fallbackCandidates).toEqual([
+    {
+      name: "nvidia-nim-llama-3.1-8b-instruct",
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      model: "meta/llama-3.1-8b-instruct",
+      provider: "nvidia-nim",
+      auth: { source: "keychain", service: "llamactl", account: "nvidia" },
+    },
+  ]);
+  expect(invokeInput?.activeBiases).toEqual([]);
+  const health = db
+    .query<{ tier: string; seat: string; model: string; host: string }, []>(
+      `SELECT tier, seat, model, host
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(health).toEqual({
+    tier: "fallback",
+    seat: "nvidia-nim-llama-3.1-8b-instruct",
+    model: "meta/llama-3.1-8b-instruct",
+    host: "integrate.api.nvidia.com",
+  });
+});
+
 it("P4 falls back to title when rewriter fails and does not cache on failure", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-failure-fallback";

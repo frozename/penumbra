@@ -1,3 +1,18 @@
+import {
+  attemptLlmCandidates,
+  buildChatCompletionsUrl,
+  describeLlmCandidate,
+  type LlmAuthSource,
+  type LlmCandidate,
+  type LlmRoutingBias,
+  type LlmServingCandidate,
+  type ResolveKeychainSecret,
+  resolveLlmAuthorization,
+  resolveLlmCandidates,
+  resolveLlmProvider,
+  type ResolvedLlmCandidate,
+} from "./llm-candidates.js";
+
 export type JudgeChatFn = (opts: {
   messages: { role: string; content: string }[];
   model: string;
@@ -24,50 +39,123 @@ export function createJudgeChat(opts: {
   baseUrl: string;
   token?: string;
   timeoutMs?: number;
+  provider?: string;
+  auth?: LlmAuthSource;
+  candidateName?: string;
+  fallbackCandidates?: LlmCandidate[];
+  activeBiases?: LlmRoutingBias[] | (() => LlmRoutingBias[]);
+  now?: Date;
+  fetchFn?: typeof fetch;
+  resolveKeychain?: ResolveKeychainSecret;
+  onOutcome?: (outcome: {
+    ok: boolean;
+    candidate: LlmServingCandidate;
+    reason?: string;
+    status?: number;
+  }) => void;
 }): JudgeChatFn {
-  const baseUrl = opts.baseUrl.replace(/\/$/, "");
   const timeoutMs = opts.timeoutMs ?? resolveJudgeChatTimeoutMs();
   return async (chatOpts) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
-    let res: Response;
-    try {
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
-      if (opts.token) {
-        headers.authorization = `Bearer ${opts.token}`;
-      }
-      res = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
+    const candidates = resolveLlmCandidates({
+      candidates: [
+        {
+          name: opts.candidateName ?? chatOpts.model,
+          baseUrl: opts.baseUrl,
           model: chatOpts.model,
-          messages: chatOpts.messages,
-        }),
-        signal: controller.signal,
-      });
-    } catch (err) {
-      if (controller.signal.aborted) {
-        throw new Error(`judge chat: timed out after ${String(timeoutMs)}ms`);
+          provider: opts.provider ?? "local",
+          auth:
+            opts.auth ??
+            (opts.token ? { source: "bearer", token: opts.token } : { source: "none" }),
+        },
+        ...(opts.fallbackCandidates ?? []),
+      ],
+      purpose: "generation",
+      activeBiases:
+        typeof opts.activeBiases === "function" ? opts.activeBiases() : opts.activeBiases,
+      now: opts.now,
+    });
+    const attempted = await attemptLlmCandidates<string, Error & { status?: number }>(
+      candidates,
+      async (candidate) => {
+        try {
+          return {
+            ok: true as const,
+            value: await invokeJudgeCandidate(candidate, chatOpts.messages),
+          };
+        } catch (error) {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          return { ok: false as const, error: normalized };
+        }
+      },
+    );
+    if (attempted.ok) {
+      opts.onOutcome?.({ ok: true, candidate: describeLlmCandidate(attempted.candidate) });
+      return attempted.value;
+    }
+    const finalFailure = attempted.failures.at(-1);
+    if (!finalFailure) throw new Error("judge chat: no candidate attempt was made");
+    const candidate = describeLlmCandidate(finalFailure.candidate);
+    opts.onOutcome?.({
+      ok: false,
+      candidate,
+      reason: finalFailure.error.message,
+      status: finalFailure.error.status,
+    });
+    if (attempted.failures.length === 1) throw finalFailure.error;
+    throw new Error(
+      `all judge chat candidates failed: ${attempted.failures
+        .map((failure) => `${failure.candidate.name}: ${failure.error.message}`)
+        .join("; ")}`,
+    );
+
+    async function invokeJudgeCandidate(
+      candidate: ResolvedLlmCandidate,
+      messages: { role: string; content: string }[],
+    ): Promise<string> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        controller.abort();
+      }, timeoutMs);
+      let res: Response;
+      try {
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+        };
+        const token = resolveLlmAuthorization(candidate, opts.resolveKeychain);
+        if (token) headers.authorization = `Bearer ${token}`;
+        res = await (opts.fetchFn ?? globalThis.fetch)(buildChatCompletionsUrl(candidate.baseUrl), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: candidate.model,
+            messages,
+          }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          throw new Error(`judge chat: timed out after ${String(timeoutMs)}ms`);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
       }
-      throw err;
-    } finally {
-      clearTimeout(timer);
+      if (!res.ok) {
+        const error = new Error(`judge chat: HTTP ${String(res.status)}`) as Error & {
+          status?: number;
+        };
+        error.status = res.status;
+        throw error;
+      }
+      const body = (await res.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      const content = body.choices?.[0]?.message?.content;
+      if (typeof content !== "string" || content.trim().length === 0) {
+        throw new Error("judge chat: empty response");
+      }
+      return content;
     }
-    if (!res.ok) {
-      throw new Error(`judge chat: HTTP ${String(res.status)}`);
-    }
-    const body = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = body.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error("judge chat: empty response");
-    }
-    return content;
   };
 }
 
@@ -77,6 +165,7 @@ const DEFAULT_JUDGE_MODEL = "local";
 export interface ResolvedJudgeConfig {
   baseUrl: string;
   model: string;
+  provider: string;
   token: string;
   usedDefaultBaseUrl: boolean;
   usedDefaultModel: boolean;
@@ -114,10 +203,12 @@ export function resolveJudgeConfig(
   }
 
   const token = env.PENUMBRA_JUDGE_TOKEN ?? env.PENUMBRA_SIRIUS_TOKEN ?? "";
+  const provider = resolveLlmProvider(baseUrl);
 
   return {
     baseUrl,
     model,
+    provider,
     token,
     usedDefaultBaseUrl: !baseUrlSources.some((v) => !!v),
     usedDefaultModel: !modelFromEnv,

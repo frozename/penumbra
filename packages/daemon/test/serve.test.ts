@@ -3,7 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 
-import { serve } from "../src/serve.js";
+import { createDaemonFetchHandler, serve } from "../src/serve.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
 try {
@@ -16,6 +16,8 @@ try {
 
 afterEach(() => {
   delete process.env.PENUMBRA_DAEMON_HOST;
+  delete process.env.PENUMBRA_JUDGE_BASE_URL;
+  delete process.env.PENUMBRA_REFINER_MODEL;
   mock.restore();
 });
 
@@ -107,6 +109,77 @@ test("serve leaves process signal handling to direct embedders by default", asyn
     expect(process.listenerCount("SIGINT")).toBe(baselineSigint);
   } finally {
     await handle.stop();
+    services.db.close();
+  }
+});
+
+test("dispatch refiner falls back from empty local content to NIM and records health", async () => {
+  process.env.PENUMBRA_JUDGE_BASE_URL = "http://127.0.0.1:7944";
+  process.env.PENUMBRA_REFINER_MODEL = "lfm2-generator";
+  const services = makeServices();
+  const fetchMock = mock(
+    (url: string): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: url.startsWith("http://127.0.0.1:7944")
+                    ? ""
+                    : "Implement the requested change. Keep the scope narrow.",
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+  );
+  const handler = createDaemonFetchHandler({
+    services,
+    token: "test-token",
+    allowRemote: true,
+    llmFetchFn: fetchMock as unknown as typeof fetch,
+    resolveLlmKeychain: () => "test-nvidia-token",
+  });
+
+  try {
+    const response = await handler(
+      new Request("http://localhost/dispatch/refine", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ message: "Original dispatch prompt" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      refined: "Implement the requested change. Keep the scope narrow.",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, fallbackInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(fallbackInit.headers).toMatchObject({
+      authorization: "Bearer test-nvidia-token",
+    });
+    const health = services.db
+      .query<{ tier: string; seat: string; model: string; host: string }, []>(
+        `SELECT tier, seat, model, host
+         FROM subsystem_health
+         WHERE subsystem = 'dispatch.refiner'`,
+      )
+      .get();
+    expect(health).toEqual({
+      tier: "fallback",
+      seat: "nvidia-nim-llama-3.1-8b-instruct",
+      model: "meta/llama-3.1-8b-instruct",
+      host: "integrate.api.nvidia.com",
+    });
+  } finally {
+    services.supervisor.stopAll();
     services.db.close();
   }
 });

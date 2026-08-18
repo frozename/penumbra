@@ -8,12 +8,11 @@ import {
   type ChainStartRequest,
   checkEmbeddingModelVersion,
   type Services as CoreServices,
-  createJudgeChat,
   ledgerWriteToPerformanceRow,
   MaestroSessionWriter,
   mapTaskEventToLedger,
   readStoredEmbeddingModelVersion,
-  resolveJudgeConfig,
+  readRoutingBiases,
   resolveProjectId,
   runStartupZombieSweep,
   TaskCooldowns,
@@ -34,6 +33,13 @@ import {
 } from "@penumbra/workflows";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import {
+  createNvidiaNimFallbackCandidate,
+  type LlmServingCandidate,
+  type ResolveKeychainSecret,
+} from "../../core/src/services/llm-candidates.js";
+import { createJudgeChat, resolveJudgeConfig } from "../../core/src/services/judge-chat.js";
 
 import type { GhClient } from "./services/gh-client.js";
 
@@ -271,6 +277,7 @@ import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker } from "./workers/t2-promotion.js";
+import { recordSubsystemOutcome } from "./services/subsystem-health.js";
 
 type Services = CoreServices;
 
@@ -997,6 +1004,8 @@ export function createDaemonFetchHandler(opts: {
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   workerHealthProbe?: WorkerHealthProbe;
   lagSampler?: LagSampler;
+  llmFetchFn?: typeof fetch;
+  resolveLlmKeychain?: ResolveKeychainSecret;
 }): (req: Request) => Promise<Response> {
   const daemonServices = opts.services as DaemonServices;
   const workerTokenStore = new WorkerTokenStore(opts.services.db);
@@ -1051,6 +1060,14 @@ export function createDaemonFetchHandler(opts: {
       baseUrl: cfg.baseUrl,
       token: cfg.token,
       timeoutMs: refinerTimeoutMs,
+      provider: cfg.provider,
+      fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+      activeBiases: () => readRoutingBiases(opts.services.db),
+      fetchFn: opts.llmFetchFn,
+      resolveKeychain: opts.resolveLlmKeychain,
+      onOutcome: (outcome) => {
+        recordJudgeOutcome(opts.services.db, "dispatch.refiner", outcome);
+      },
     });
     return makeDispatchRefineRoute({ chat, model: cfg.model });
   })();
@@ -1497,6 +1514,12 @@ function createEfficacyJobRunnerEntry(
   const judgeChat = createJudgeChat({
     baseUrl: cfg.baseUrl,
     token: cfg.token,
+    provider: cfg.provider,
+    fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+    activeBiases: () => readRoutingBiases(opts.services.db),
+    onOutcome: (outcome) => {
+      recordJudgeOutcome(opts.services.db, "memory.efficacy_judge", outcome);
+    },
   });
   return createMemoryEfficacyJobRunner({
     db: opts.services.db,
@@ -1508,6 +1531,28 @@ function createEfficacyJobRunnerEntry(
       process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "1" ||
       process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "true",
     log: opts.services.log,
+  });
+}
+
+function recordJudgeOutcome(
+  db: CoreServices["db"],
+  subsystem: string,
+  outcome: {
+    ok: boolean;
+    candidate: LlmServingCandidate;
+    reason?: string;
+    status?: number;
+  },
+): void {
+  recordSubsystemOutcome(db, {
+    subsystem,
+    tier: outcome.candidate.tier,
+    ok: outcome.ok,
+    seat: outcome.candidate.name,
+    model: outcome.candidate.model,
+    host: new URL(outcome.candidate.baseUrl).hostname,
+    reason: outcome.reason,
+    status: outcome.status,
   });
 }
 

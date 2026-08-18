@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { attemptCandidatesInOrder } from "../../../core/src/services/llm-candidates.js";
+
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 
 export interface BriefSynthesizerInput {
@@ -141,20 +143,27 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
     // order. A single down seat (e.g. an unreachable local MLX endpoint) must not
     // degrade the brief to a stub when a healthy sibling is one retry away — only
     // throw (caller falls back to stub) when EVERY seat fails.
-    const errors: string[] = [];
-    for (let i = 0; i < agentCount; i += 1) {
-      const agent = this.agents[(start + i) % agentCount];
-      if (!agent) continue;
+    const orderedAgents = Array.from(
+      { length: agentCount },
+      (_, index) => this.agents[(start + index) % agentCount],
+    ).filter((agent): agent is BriefSynthesizerState => agent !== undefined);
+    const attempted = await attemptCandidatesInOrder(orderedAgents, async (agent) => {
       try {
-        const markdown = await this.callAgent(agent, prompt);
-        return {
-          markdown,
-          source_memory_ids: input.recent_memories.map((m) => m.memory_id),
-        };
-      } catch (err) {
-        errors.push(`${agent.name}: ${err instanceof Error ? err.message : String(err)}`);
+        return { ok: true as const, value: await this.callAgent(agent, prompt) };
+      } catch (error) {
+        return { ok: false as const, error };
       }
+    });
+    if (attempted.ok) {
+      return {
+        markdown: attempted.value,
+        source_memory_ids: input.recent_memories.map((m) => m.memory_id),
+      };
     }
+    const errors = attempted.failures.map(
+      ({ candidate, error }) =>
+        `${candidate.name}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     throw new Error(`all brief synthesizer agents failed: ${errors.join("; ")}`);
   }
 }
