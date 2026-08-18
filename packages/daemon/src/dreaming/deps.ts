@@ -100,7 +100,7 @@ export function buildDreamCycleDeps(
   const realJudgePool = createDreamingJudgePoolFromAgentchat();
   const judgePool = realJudgePool ?? new StubJudgePool();
 
-  const briefSynthesizer = createBriefSynthesizerFromAgentchat();
+  const briefSynthesizer = createBriefSynthesizerFromAgentchat({ log: services.log });
   const rewriterCandidates = createDreamingRewriterCandidates(dreamConfig, services.log);
 
   const contentQualityJudge =

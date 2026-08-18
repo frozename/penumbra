@@ -261,6 +261,32 @@ describe("createBriefSynthesizerFromAgentchat", () => {
     }
   });
 
+  it("logs when matching role candidates are filtered out", () => {
+    writeConfig(
+      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+    );
+    const saved = process.env["PENUMBRA_CONFIG_DIR"];
+    const warnCalls: { fields: unknown[]; msg: string }[] = [];
+    process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
+    try {
+      const synth = createBriefSynthesizerFromAgentchat({
+        log: {
+          warn: (...args: unknown[]) => {
+            warnCalls.push({
+              fields: args.slice(0, -1),
+              msg: String(args.at(-1) ?? ""),
+            });
+          },
+        },
+      });
+      expect(synth).toBeNull();
+      expect(warnCalls.some((call) => call.msg.includes("no admitted agents"))).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
+      else process.env["PENUMBRA_CONFIG_DIR"] = saved;
+    }
+  });
+
   it("returns a synthesizer when 1 matching agent exists", () => {
     writeConfig(
       `  - name: synth-1\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: http://localhost:1111/v1\n`,

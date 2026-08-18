@@ -197,7 +197,13 @@ export function createBriefSynthesizerFromAgentchat(
       caPath: candidate.caPath,
     }));
 
-  if (agents.length === 0) return null;
+  if (agents.length === 0) {
+    services?.log?.warn(
+      { configDir, roleTag, candidateCount: candidates.length },
+      "dreaming: brief synthesizer role resolved no admitted agents",
+    );
+    return null;
+  }
 
   return new BriefSynthesizerImpl(agents, fetchImpl);
 }

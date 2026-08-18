@@ -38,6 +38,13 @@ describe("P6: Brief Refresh", () => {
         list: () => [{ project_id: "proj1", dreaming: {} }],
       },
       memoryObserve: memoryObserveMock,
+      briefSynthesizer: {
+        synthesize: () =>
+          Promise.resolve({
+            markdown: "# Project Brief: proj1\nReal brief",
+            source_memory_ids: [],
+          }),
+      },
     };
 
     await runDreamCycle(
