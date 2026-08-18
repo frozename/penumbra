@@ -52,6 +52,45 @@ function insertDraft(
   );
 }
 
+function insertT0Event(
+  db: Database,
+  input: {
+    event_id: string;
+    ts: string;
+    ingest_ts: string;
+    project_id: string | null;
+    event_type: string;
+    payload: unknown;
+  },
+): void {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
+     VALUES (?, ?, ?, 'mcp', ?, 'u', 'm', ?, 'unknown', ?)`,
+    [
+      input.event_id,
+      input.ts,
+      input.ingest_ts,
+      input.project_id,
+      input.event_type,
+      JSON.stringify(input.payload),
+    ],
+  );
+}
+
+const capturedLongLivedTickStatusPayloads = [
+  {
+    tick_id: "8fde299d-1006-4edf-a866-121ee4a5eabf",
+    status: "tick_start",
+  },
+  {
+    tick_id: "6441b4e4-83da-4a5f-8cf4-fd49cea27654",
+    status: "idle",
+    reason: "no pending drafts, state tools unavailable",
+    drafts_pending: 0,
+    task_pending_total: 7,
+  },
+] as const;
+
 describe("TaskDraftReader.listPending", () => {
   let db: Database;
   let reader: TaskDraftReader;
@@ -382,6 +421,55 @@ describe("TaskDraftReader.listPending", () => {
 
     const out = reader.listPending({ latest_event_type: "task_draft", project_id: "p1" });
     expect(out.map((r) => r.event_id)).toEqual(["good"]);
+  });
+
+  test("ignores captured long-lived tick status telemetry while real drafts round-trip", () => {
+    for (const [index, payload] of capturedLongLivedTickStatusPayloads.entries()) {
+      insertT0Event(db, {
+        event_id: `tick-status-${String(index + 1)}`,
+        ts: "2026-08-18T12:00:00.008Z",
+        ingest_ts: "2026-08-18T12:00:00.008Z",
+        project_id: null,
+        event_type: "long_lived.tick.status",
+        payload,
+      });
+    }
+
+    const draftId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    insertDraft(db, {
+      event_id: "real-draft",
+      ts: "2026-08-18T12:01:00.000Z",
+      ingest_ts: "2026-08-18T12:01:01.000Z",
+      project_id: "p1",
+      event_type: "task_draft",
+      draft_id: draftId,
+      payload: {
+        draft_id: draftId,
+        prompt: "real follow-up",
+        affects_projects: ["p1"],
+        evidence: { files: ["packages/core/src/readers/task-draft.ts"] },
+        auto_ok: false,
+        filed_by_agent: "task-refiner-primary",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+
+    expect(reader.listPending({ latest_event_type: "task_draft", project_id: "p1" })).toEqual([
+      {
+        event_id: "real-draft",
+        ts: "2026-08-18T12:01:00.000Z",
+        project_id: "p1",
+        draft_id: draftId,
+        prompt: "real follow-up",
+        affects_projects: ["p1"],
+        evidence: { files: ["packages/core/src/readers/task-draft.ts"] },
+        auto_ok: false,
+        filed_by_agent: "task-refiner-primary",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    ]);
   });
 });
 

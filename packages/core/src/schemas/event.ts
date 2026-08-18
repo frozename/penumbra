@@ -12,6 +12,7 @@ export const TASK_DRAFT_LIFECYCLE_EVENT_TYPES = [
 ] as const;
 
 export type TaskDraftLifecycleEventType = (typeof TASK_DRAFT_LIFECYCLE_EVENT_TYPES)[number];
+export const LONG_LIVED_TICK_STATUS_EVENT_TYPE = "long_lived.tick.status" as const;
 
 export const SourceSchema = z.enum([
   "mcp",
@@ -51,6 +52,7 @@ export const EventTypeSchema = z.enum([
   "dispatch.landed",
   "lifecycle_lock_held",
   "task.gh_state_pulled",
+  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
   ...TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
   "gh_issue_comment",
   "workflow.run",

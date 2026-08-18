@@ -1,7 +1,15 @@
-import { loadSqliteVec, migrate, TaskDraftReader } from "@penumbra/core";
+import {
+  DEFAULT_REDACTION_RULES,
+  loadSqliteVec,
+  migrate,
+  RegexRedactor,
+  T0Writer,
+  TaskDraftReader,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
+import { observationsRoute } from "../../src/routes/observations.js";
 import {
   taskDraftsPendingEscalationsRoute,
   taskDraftsPendingRoute,
@@ -26,6 +34,40 @@ function freshDb(): Database {
   return db;
 }
 
+const capturedLongLivedTickStatusPayloads = [
+  {
+    tick_id: "8fde299d-1006-4edf-a866-121ee4a5eabf",
+    status: "tick_start",
+  },
+  {
+    tick_id: "6441b4e4-83da-4a5f-8cf4-fd49cea27654",
+    status: "idle",
+    reason: "no pending drafts, state tools unavailable",
+    drafts_pending: 0,
+    task_pending_total: 7,
+  },
+] as const;
+
+function observationServices(db: Database): {
+  db: Database;
+  taskDraftReader: TaskDraftReader;
+  t0Writer: T0Writer;
+  machineId: { get(): string };
+  clock(): Date;
+  uuid(): string;
+  redactor: RegexRedactor;
+} {
+  return {
+    db,
+    taskDraftReader: new TaskDraftReader({ db }),
+    t0Writer: new T0Writer(db),
+    machineId: { get: () => "m" },
+    clock: () => new Date("2026-08-18T21:20:00.000Z"),
+    uuid: () => "generated-event-id",
+    redactor: new RegexRedactor(DEFAULT_REDACTION_RULES),
+  };
+}
+
 test("GET /task-drafts/pending returns pending drafts and validates params", async () => {
   const db = freshDb();
   db.run(
@@ -42,6 +84,58 @@ test("GET /task-drafts/pending returns pending drafts and validates params", asy
   const body = (await res.json()) as { drafts: { event_id: string }[] };
   expect(body.drafts).toHaveLength(1);
   expect(body.drafts[0]!.event_id).toBe("e1");
+});
+
+test("POST /observations remaps captured long-lived tick status payloads out of task_draft", async () => {
+  const db = freshDb();
+  const services = observationServices(db);
+
+  for (const [index, payload] of capturedLongLivedTickStatusPayloads.entries()) {
+    const res = await observationsRoute(
+      new Request("http://localhost/observations", {
+        method: "POST",
+        body: JSON.stringify({
+          event_id: `tick-status-${String(index + 1)}`,
+          ts: "2026-08-18T12:00:00.008Z",
+          ingest_ts: "2026-08-18T12:00:00.008Z",
+          source: "mcp",
+          user_id: "mcp-client",
+          machine_id: "mcp-client",
+          event_type: "task_draft",
+          lane: "unknown",
+          payload_json: payload,
+        }),
+      }),
+      services as never,
+    );
+    expect(res.status).toBe(200);
+  }
+
+  const rows = db
+    .query<{ event_id: string; event_type: string; payload_json: string }, []>(
+      `SELECT event_id, event_type, payload_json
+       FROM t0_events
+       WHERE event_id LIKE 'tick-status-%'
+       ORDER BY event_id`,
+    )
+    .all();
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => row.event_type)).toEqual([
+    "long_lived.tick.status",
+    "long_lived.tick.status",
+  ]);
+  expect(JSON.parse(rows[0]!.payload_json)).toEqual(capturedLongLivedTickStatusPayloads[0]);
+  expect(JSON.parse(rows[1]!.payload_json)).toEqual(capturedLongLivedTickStatusPayloads[1]);
+
+  const polluted = db
+    .query<{ count: number }, []>(
+      `SELECT COUNT(*) AS count
+       FROM t0_events
+       WHERE event_type = 'task_draft'
+         AND json_extract(payload_json, '$.tick_id') IS NOT NULL`,
+    )
+    .get();
+  expect(polluted?.count).toBe(0);
 });
 
 test("GET /task-drafts/pending returns 400 on invalid latest_event_type", async () => {

@@ -1,5 +1,9 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
-import { T0EventInputSchema, TASK_DRAFT_LIFECYCLE_EVENT_TYPES } from "@penumbra/core";
+import {
+  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
+  T0EventInputSchema,
+  TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
+} from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -10,6 +14,7 @@ const ObserveBaseEventTypes = [
   "agent-response",
   "request",
   "response",
+  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
 ] as const;
 
 export const ObserveInputShape = {

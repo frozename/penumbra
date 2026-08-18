@@ -254,6 +254,7 @@ export {
   type T0EventInput,
   T0EventInputSchema,
   T0EventSchema,
+  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
   TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
   type TaskDraftLifecycleEventType,
 } from "./schemas/event.js";
