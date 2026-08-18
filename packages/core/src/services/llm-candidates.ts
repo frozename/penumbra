@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 export const ALLOWED_LLM_PROVIDERS = ["local", "sakana"] as const;
 
@@ -8,7 +9,9 @@ export type LlmPurpose = "generation" | "embedding";
 export type LlmAuthSource =
   | { source: "none" }
   | { source: "bearer"; token: string }
-  | { source: "keychain"; service: string; account: string };
+  | { source: "keychain"; service: string; account: string }
+  | { source: "env"; variable: string }
+  | { source: "file"; path: string };
 
 export interface LlmCandidate {
   name: string;
@@ -122,9 +125,7 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
           subscriptionProvider: agent.subscription_provider,
           apiProvider: agent.api_provider,
         }),
-        auth: options?.apiKey
-          ? { source: "bearer" as const, token: options.apiKey }
-          : { source: "none" as const },
+        auth: resolveCandidateAuth(options),
         caPath: options?.caPath,
         adapter,
         options: options ? { ...options } : {},
@@ -150,22 +151,22 @@ export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): Resolved
     throw new Error("embedding fallback candidates are forbidden");
   }
 
-  const resolved = input.candidates.map((candidate, index): ResolvedLlmCandidate => {
-    if (isDirectHttpCandidate(candidate) && !ALLOWED_PROVIDER_SET.has(candidate.provider)) {
+  const policyEligible = input.candidates.filter((candidate) => {
+    if (!ALLOWED_PROVIDER_SET.has(candidate.provider)) {
       throw new Error(`LLM provider '${candidate.provider}' is not allowed`);
     }
-    return {
-      ...candidate,
-      provider: candidate.provider as LlmProvider,
-      tier: index === 0 ? "primary" : "fallback",
-    };
+    if (isUnauthenticatedExternalHttpCandidate(candidate)) {
+      console.warn(`Dropping LLM candidate '${candidate.name}'`, "missing_auth_for_external_http");
+      return false;
+    }
+    return true;
   });
 
   const nowMs = (input.now ?? new Date()).getTime();
   const activeExclusions = (input.activeBiases ?? []).filter(
     (bias) => bias.mode === "exclude" && Date.parse(bias.expires_at) > nowMs,
   );
-  const eligible = resolved.filter(
+  const eligible = policyEligible.filter(
     (candidate) =>
       !activeExclusions.some(
         (bias) =>
@@ -176,7 +177,13 @@ export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): Resolved
   if (eligible.length === 0) {
     throw new Error("no eligible LLM candidate remains after routing biases");
   }
-  return eligible;
+  return eligible.map((candidate, index): ResolvedLlmCandidate => {
+    return {
+      ...candidate,
+      provider: candidate.provider as LlmProvider,
+      tier: index === 0 ? "primary" : "fallback",
+    };
+  });
 }
 
 export function resolveLlmProvider(baseUrl: string, explicitProvider?: string): LlmProvider {
@@ -262,7 +269,17 @@ export function resolveLlmAuthorization(
 ): string | null {
   if (candidate.auth.source === "none") return null;
   if (candidate.auth.source === "bearer") return candidate.auth.token;
-  return resolveKeychain(candidate.auth.service, candidate.auth.account).trim();
+  if (candidate.auth.source === "keychain") {
+    return resolveKeychain(candidate.auth.service, candidate.auth.account).trim();
+  }
+  if (candidate.auth.source === "env") {
+    const token = process.env[candidate.auth.variable]?.trim();
+    if (!token) {
+      throw new Error(`apiKeyEnv: env var ${candidate.auth.variable} is unset or empty`);
+    }
+    return token;
+  }
+  return readFileSync(candidate.auth.path, "utf8").trim();
 }
 
 export function buildChatCompletionsUrl(baseUrl: string): string {
@@ -292,6 +309,32 @@ function resolveCandidateProvider(input: {
   return input.apiProvider ?? input.subscriptionProvider ?? "unknown";
 }
 
+function resolveCandidateAuth(
+  options: NonNullable<
+    ResolveRoleLlmCandidatesInput["agentchatConfig"]["agents"]
+  >[number]["options"],
+): LlmAuthSource {
+  if (options?.apiKey) return { source: "bearer", token: options.apiKey };
+  const apiKeyEnv = options?.apiKeyEnv ?? options?.api_key_env;
+  if (typeof apiKeyEnv === "string" && apiKeyEnv !== "") {
+    return { source: "env", variable: apiKeyEnv };
+  }
+  if (typeof options?.apiKeyKeychain === "string" && options.apiKeyKeychain !== "") {
+    const slash = options.apiKeyKeychain.indexOf("/");
+    if (slash > 0 && slash < options.apiKeyKeychain.length - 1) {
+      return {
+        source: "keychain",
+        service: options.apiKeyKeychain.slice(0, slash),
+        account: options.apiKeyKeychain.slice(slash + 1),
+      };
+    }
+  }
+  if (typeof options?.apiKeyFile === "string" && options.apiKeyFile !== "") {
+    return { source: "file", path: options.apiKeyFile };
+  }
+  return { source: "none" };
+}
+
 function candidateCostTier(candidate: LlmCandidate): number {
   if (isDirectHttpCandidate(candidate)) {
     if (candidate.provider === "local") return 0;
@@ -303,4 +346,29 @@ function candidateCostTier(candidate: LlmCandidate): number {
 
 function isDirectHttpCandidate(candidate: Pick<LlmCandidate, "adapter">): boolean {
   return (candidate.adapter ?? "openai-compat-http") === "openai-compat-http";
+}
+
+function isUnauthenticatedExternalHttpCandidate(candidate: LlmCandidate): boolean {
+  return (
+    isDirectHttpCandidate(candidate) &&
+    isNonLoopbackHttpUrl(candidate.baseUrl) &&
+    candidate.auth.source === "none"
+  );
+}
+
+function isNonLoopbackHttpUrl(baseUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return true;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname !== "localhost" &&
+    hostname !== "127.0.0.1" &&
+    hostname !== "::1" &&
+    hostname !== "[::1]"
+  );
 }

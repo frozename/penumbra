@@ -22,7 +22,7 @@ test("createJudgeChat omits authorization when token is empty", async () => {
   globalThis.fetch = fetchMock as typeof fetch;
 
   try {
-    const chat = createJudgeChat({ baseUrl: "http://judge" });
+    const chat = createJudgeChat({ baseUrl: "http://127.0.0.1:7944" });
     await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -51,7 +51,7 @@ test("createJudgeChat includes bearer authorization when token is set", async ()
   globalThis.fetch = fetchMock as typeof fetch;
 
   try {
-    const chat = createJudgeChat({ baseUrl: "http://judge", token: "secret" });
+    const chat = createJudgeChat({ baseUrl: "http://127.0.0.1:7944", token: "secret" });
     await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -167,7 +167,7 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
       });
     })) as typeof fetch;
   try {
-    const chat = createJudgeChat({ baseUrl: "http://judge", timeoutMs: 10 });
+    const chat = createJudgeChat({ baseUrl: "http://127.0.0.1:7944", timeoutMs: 10 });
     let caught: unknown;
     try {
       await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
@@ -185,7 +185,9 @@ test("createJudgeChat advances past whitespace-only content to the cloud rung", 
     Promise.resolve(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: url.startsWith("http://judge") ? " \n\t " : "cloud" } }],
+          choices: [
+            { message: { content: url.startsWith("http://127.0.0.1:7944") ? " \n\t " : "cloud" } },
+          ],
         }),
         { status: 200 },
       ),
@@ -196,7 +198,7 @@ test("createJudgeChat advances past whitespace-only content to the cloud rung", 
 
   try {
     const chat = createJudgeChat({
-      baseUrl: "http://judge",
+      baseUrl: "http://127.0.0.1:7944",
       provider: "local",
       fallbackCandidates: [
         {

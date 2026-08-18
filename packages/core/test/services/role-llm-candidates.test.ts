@@ -1,23 +1,15 @@
-import { expect, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 
 import * as llmCandidates from "../../src/services/llm-candidates.js";
 
 const resolver = (input: unknown): unknown =>
   (llmCandidates as Record<string, (value: unknown) => unknown>).resolveRoleLlmCandidates(input);
 
-test("resolves role-tagged local seats before subscription HTTP seats before process adapters", () => {
+test("resolves allowed role-tagged HTTP seats before process adapters", () => {
   const candidates = resolver({
     roleTag: "dreaming-rewriter",
     agentchatConfig: {
       agents: [
-        {
-          name: "cli-first-in-config",
-          adapter: "codex-cli",
-          roles: ["dreaming-rewriter"],
-          pricing_mode: "subscription",
-          subscription_provider: "openai",
-          options: { model: "codex" },
-        },
         {
           name: "sakana-second-in-config",
           adapter: "openai-compat-http",
@@ -34,8 +26,7 @@ test("resolves role-tagged local seats before subscription HTTP seats before pro
           name: "acp-third-in-config",
           adapter: "stdio-acp",
           roles: ["dreaming-rewriter"],
-          pricing_mode: "subscription",
-          subscription_provider: "anthropic",
+          api_provider: "local",
           options: { binary: "claude", args: ["mcp"] },
         },
         {
@@ -58,22 +49,266 @@ test("resolves role-tagged local seats before subscription HTTP seats before pro
     "local-fourth-in-config",
     "local-third-in-config",
     "sakana-second-in-config",
-    "cli-first-in-config",
     "acp-third-in-config",
   ]);
-  expect(candidates.map(({ provider }) => provider)).toEqual([
-    "local",
-    "local",
-    "sakana",
-    "openai",
-    "anthropic",
-  ]);
+  expect(candidates.map(({ provider }) => provider)).toEqual(["local", "local", "sakana", "local"]);
   expect(candidates.map(({ adapter }) => adapter)).toEqual([
     "openai-compat-http",
     "openai-compat-http",
     "openai-compat-http",
-    "codex-cli",
     "stdio-acp",
+  ]);
+});
+
+test("maps keychain auth for role-tagged HTTP seats", () => {
+  const candidates = resolver({
+    roleTag: "dreaming-rewriter",
+    agentchatConfig: {
+      agents: [
+        {
+          name: "sakana-keychain",
+          adapter: "openai-compat-http",
+          roles: ["dreaming-rewriter"],
+          options: {
+            baseUrl: "https://api.sakana.ai/v1",
+            model: "sakana-rewriter",
+            provider: "sakana",
+            apiKeyKeychain: "llamactl/sakana",
+          },
+        },
+      ],
+    },
+  }) as { auth: unknown }[];
+
+  expect(candidates[0]?.auth).toEqual({
+    source: "keychain",
+    service: "llamactl",
+    account: "sakana",
+  });
+});
+
+test("resolves env auth at authorization time", () => {
+  const previous = process.env.PENUMBRA_TEST_LLM_KEY;
+  delete process.env.PENUMBRA_TEST_LLM_KEY;
+  const candidates = resolver({
+    roleTag: "dreaming-rewriter",
+    agentchatConfig: {
+      agents: [
+        {
+          name: "sakana-env",
+          adapter: "openai-compat-http",
+          roles: ["dreaming-rewriter"],
+          options: {
+            baseUrl: "https://api.sakana.ai/v1",
+            model: "sakana-rewriter",
+            provider: "sakana",
+            apiKeyEnv: "PENUMBRA_TEST_LLM_KEY",
+          },
+        },
+      ],
+    },
+  }) as llmCandidates.LlmCandidate[];
+
+  try {
+    process.env.PENUMBRA_TEST_LLM_KEY = "late-bound-token";
+    expect(llmCandidates.resolveLlmAuthorization(candidates[0]!)).toBe("late-bound-token");
+  } finally {
+    if (previous === undefined) delete process.env.PENUMBRA_TEST_LLM_KEY;
+    else process.env.PENUMBRA_TEST_LLM_KEY = previous;
+  }
+});
+
+test("resolves snake_case env auth at authorization time", () => {
+  const previous = process.env.PENUMBRA_TEST_LLM_SNAKE_KEY;
+  delete process.env.PENUMBRA_TEST_LLM_SNAKE_KEY;
+  const candidates = resolver({
+    roleTag: "dreaming-rewriter",
+    agentchatConfig: {
+      agents: [
+        {
+          name: "sakana-env",
+          adapter: "openai-compat-http",
+          roles: ["dreaming-rewriter"],
+          options: {
+            baseUrl: "https://api.sakana.ai/v1",
+            model: "sakana-rewriter",
+            provider: "sakana",
+            api_key_env: "PENUMBRA_TEST_LLM_SNAKE_KEY",
+          },
+        },
+      ],
+    },
+  }) as llmCandidates.LlmCandidate[];
+
+  try {
+    process.env.PENUMBRA_TEST_LLM_SNAKE_KEY = "late-bound-snake-token";
+    expect(llmCandidates.resolveLlmAuthorization(candidates[0]!)).toBe("late-bound-snake-token");
+  } finally {
+    if (previous === undefined) delete process.env.PENUMBRA_TEST_LLM_SNAKE_KEY;
+    else process.env.PENUMBRA_TEST_LLM_SNAKE_KEY = previous;
+  }
+});
+
+test("maps file auth for role-tagged HTTP seats", () => {
+  const candidates = resolver({
+    roleTag: "dreaming-rewriter",
+    agentchatConfig: {
+      agents: [
+        {
+          name: "sakana-file",
+          adapter: "openai-compat-http",
+          roles: ["dreaming-rewriter"],
+          options: {
+            baseUrl: "https://api.sakana.ai/v1",
+            model: "sakana-rewriter",
+            provider: "sakana",
+            apiKeyFile: "/tmp/penumbra-test-sakana-key",
+          },
+        },
+      ],
+    },
+  }) as { auth: unknown }[];
+
+  expect(candidates[0]?.auth).toEqual({
+    source: "file",
+    path: "/tmp/penumbra-test-sakana-key",
+  });
+});
+
+test("drops external HTTP candidates that have no auth source", () => {
+  const warn = spyOn(console, "warn").mockImplementation(mock(() => {}));
+  try {
+    const candidates = llmCandidates.resolveLlmCandidates({
+      purpose: "generation",
+      candidates: [
+        {
+          name: "sakana-missing-auth",
+          baseUrl: "https://api.sakana.ai/v1",
+          model: "sakana-rewriter",
+          provider: "sakana",
+          auth: { source: "none" },
+          adapter: "openai-compat-http",
+        },
+        {
+          name: "local",
+          baseUrl: "http://127.0.0.1:7944/v1",
+          model: "local",
+          provider: "local",
+          auth: { source: "none" },
+          adapter: "openai-compat-http",
+        },
+      ],
+    });
+
+    expect(candidates.map(({ name, tier }) => ({ name, tier }))).toEqual([
+      { name: "local", tier: "primary" },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("sakana-missing-auth"),
+      expect.stringContaining("missing_auth_for_external_http"),
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test("drops non-loopback HTTP candidates without auth even when provider is local", () => {
+  const warn = spyOn(console, "warn").mockImplementation(mock(() => {}));
+  try {
+    expect(() =>
+      llmCandidates.resolveLlmCandidates({
+        purpose: "generation",
+        candidates: [
+          {
+            name: "external-mislabeled-local",
+            baseUrl: "https://example.invalid/v1",
+            model: "external",
+            provider: "local",
+            auth: { source: "none" },
+            adapter: "openai-compat-http",
+          },
+        ],
+      }),
+    ).toThrow(/no eligible LLM candidate/i);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("external-mislabeled-local"),
+      expect.stringContaining("missing_auth_for_external_http"),
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test("rejects disallowed adapter-backed providers before invocation", () => {
+  expect(() =>
+    llmCandidates.resolveLlmCandidates({
+      purpose: "generation",
+      candidates: [
+        {
+          name: "claude-acp",
+          baseUrl: "adapter://claude-acp",
+          model: "claude",
+          provider: "anthropic",
+          auth: { source: "none" },
+          adapter: "stdio-acp",
+        },
+      ],
+    }),
+  ).toThrow(/provider.*anthropic.*not allowed/i);
+});
+
+test("rejects unknown providers before invocation", () => {
+  expect(() =>
+    llmCandidates.resolveLlmCandidates({
+      purpose: "generation",
+      candidates: [
+        {
+          name: "unknown-acp",
+          baseUrl: "adapter://unknown-acp",
+          model: "unknown",
+          provider: "unknown",
+          auth: { source: "none" },
+          adapter: "stdio-acp",
+        },
+      ],
+    }),
+  ).toThrow(/provider.*unknown.*not allowed/i);
+});
+
+test("assigns primary tier after routing exclusions", () => {
+  const candidates = llmCandidates.resolveLlmCandidates({
+    purpose: "generation",
+    candidates: [
+      {
+        name: "local-excluded",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "local",
+        provider: "local",
+        auth: { source: "none" },
+        adapter: "openai-compat-http",
+      },
+      {
+        name: "sakana-survivor",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+        auth: { source: "bearer", token: "token" },
+        adapter: "openai-compat-http",
+      },
+    ],
+    activeBiases: [
+      {
+        scope: "agent",
+        value: "local-excluded",
+        mode: "exclude",
+        expires_at: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+    now: new Date("2026-08-18T12:00:00.000Z"),
+  });
+
+  expect(candidates.map(({ name, tier }) => ({ name, tier }))).toEqual([
+    { name: "sakana-survivor", tier: "primary" },
   ]);
 });
 

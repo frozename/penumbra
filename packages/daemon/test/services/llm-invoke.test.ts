@@ -389,7 +389,7 @@ test("unreachable HTTP rung falls through to a healthy candidate of a different 
 
 test("advances past HTTP 502 and reports the fallback candidate that served", async () => {
   const fetchMock = mock((url: string): Promise<Response> => {
-    if (url.startsWith("http://primary")) {
+    if (url.startsWith("http://127.0.0.1:7944")) {
       return Promise.resolve(new Response("down", { status: 502 }));
     }
     return Promise.resolve(
@@ -401,7 +401,7 @@ test("advances past HTTP 502 and reports the fallback candidate that served", as
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const result = await llmInvoke({
-    baseUrl: "http://primary",
+    baseUrl: "http://127.0.0.1:7944",
     model: "granite",
     provider: "local",
     auth: { source: "none" },
@@ -432,7 +432,7 @@ test("advances past HTTP 502 and reports the fallback candidate that served", as
 
 test("advances past a per-attempt timeout", async () => {
   const fetchMock = mock((url: string, init?: RequestInit): Promise<Response> => {
-    if (url.startsWith("http://primary")) {
+    if (url.startsWith("http://127.0.0.1:7944")) {
       return new Promise((_resolve, reject) => {
         init?.signal?.addEventListener(
           "abort",
@@ -450,7 +450,7 @@ test("advances past a per-attempt timeout", async () => {
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const result = await llmInvoke({
-    baseUrl: "http://primary",
+    baseUrl: "http://127.0.0.1:7944",
     model: "granite",
     provider: "local",
     auth: { source: "none" },
@@ -484,7 +484,9 @@ test("advances past HTTP 200 with whitespace-only content", async () => {
             choices: [
               {
                 message: {
-                  content: url.startsWith("http://primary") ? " \n\t " : '{"answer":"cloud"}',
+                  content: url.startsWith("http://127.0.0.1:7944")
+                    ? " \n\t "
+                    : '{"answer":"cloud"}',
                 },
               },
             ],
@@ -496,7 +498,7 @@ test("advances past HTTP 200 with whitespace-only content", async () => {
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const result = await llmInvoke({
-    baseUrl: "http://primary",
+    baseUrl: "http://127.0.0.1:7944",
     model: "granite",
     provider: "local",
     auth: { source: "none" },
@@ -628,6 +630,7 @@ test("role-resolved candidates skip an unreachable local seat and serve from the
         baseUrl: "https://api.sakana.ai/v1",
         model: "sakana-rewriter",
         provider: "sakana",
+        apiKey: "test-token",
       },
     },
     {
