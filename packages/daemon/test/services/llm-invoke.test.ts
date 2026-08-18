@@ -1,13 +1,47 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
+import { clearCustomAdapters, registerAdapter } from "../../../agentchat/src/adapters/registry.js";
+import type { Adapter, DispatchInput, DispatchOutput } from "../../../agentchat/src/sdk/adapter.js";
+import {
+  resolveRoleLlmCandidates,
+  type LlmCandidate,
+} from "../../../core/src/services/llm-candidates.js";
 import { llmInvoke } from "../../src/services/llm-invoke.js";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  clearCustomAdapters();
 });
+
+function roleCandidates(agents: unknown[]): LlmCandidate[] {
+  return resolveRoleLlmCandidates({
+    roleTag: "test-role",
+    agentchatConfig: { agents } as Parameters<
+      typeof resolveRoleLlmCandidates
+    >[0]["agentchatConfig"],
+  });
+}
+
+function rolePoolInput(
+  candidates: LlmCandidate[],
+): Pick<
+  Parameters<typeof llmInvoke>[0],
+  "baseUrl" | "model" | "provider" | "auth" | "candidateName" | "fallbackCandidates"
+> {
+  const [primary, ...fallbackCandidates] = candidates;
+  if (!primary) throw new Error("test role has no candidates");
+  return {
+    baseUrl: primary.baseUrl,
+    model: primary.model,
+    provider: primary.provider,
+    auth: primary.auth,
+    candidateName: primary.name,
+    fallbackCandidates,
+  };
+}
 
 test("happy path returns parsed payload and raw content", async () => {
   const fetchMock = mock(
@@ -250,6 +284,109 @@ test("request payload includes model, messages, temperature default, and respons
   });
 });
 
+test("mixed-adapter candidates dispatch through the adapter abstraction", async () => {
+  const dispatches: { kind: string; prompt: string }[] = [];
+  registerAdapter(
+    "test-llm-down",
+    (options: Record<string, unknown>): Adapter => ({
+      kind: "test-llm-down",
+      dispatch(input: DispatchInput): Promise<DispatchOutput> {
+        dispatches.push({ kind: String(options.kindLabel), prompt: input.prompt });
+        throw new Error("adapter down");
+      },
+    }),
+  );
+  registerAdapter(
+    "test-llm-up",
+    (options: Record<string, unknown>): Adapter => ({
+      kind: "test-llm-up",
+      dispatch(input: DispatchInput): Promise<DispatchOutput> {
+        dispatches.push({ kind: String(options.kindLabel), prompt: input.prompt });
+        return Promise.resolve({ text: '{"answer":"adapter"}' });
+      },
+    }),
+  );
+
+  const result = await llmInvoke({
+    baseUrl: "adapter://down",
+    model: "adapter-down",
+    provider: "local",
+    auth: { source: "none" },
+    candidateName: "first-adapter",
+    adapter: "test-llm-down",
+    options: { kindLabel: "first" },
+    fallbackCandidates: [
+      {
+        name: "second-adapter",
+        baseUrl: "adapter://up",
+        model: "adapter-up",
+        provider: "sakana",
+        auth: { source: "none" },
+        adapter: "test-llm-up",
+        options: { kindLabel: "second" },
+      },
+    ],
+    messages: [{ role: "user", content: "hello" }],
+    schema: z.object({ answer: z.string() }),
+  } as Parameters<typeof llmInvoke>[0] & {
+    adapter: string;
+    options: Record<string, unknown>;
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.failureMessage);
+  expect(result.value).toEqual({ answer: "adapter" });
+  expect(result.candidate.name).toBe("second-adapter");
+  expect(dispatches).toEqual([
+    { kind: "first", prompt: "hello" },
+    { kind: "second", prompt: "hello" },
+  ]);
+});
+
+test("unreachable HTTP rung falls through to a healthy candidate of a different adapter kind", async () => {
+  const dispatches: string[] = [];
+  const fetchMock = mock((): Promise<Response> => Promise.reject(new Error("ECONNREFUSED")));
+  registerAdapter(
+    "test-healthy-adapter",
+    (): Adapter => ({
+      kind: "test-healthy-adapter",
+      dispatch(input: DispatchInput): Promise<DispatchOutput> {
+        dispatches.push(input.prompt);
+        return Promise.resolve({ text: '{"answer":"fallback"}' });
+      },
+    }),
+  );
+
+  const result = await llmInvoke({
+    baseUrl: "http://127.0.0.1:7944/v1",
+    model: "local-dead",
+    provider: "local",
+    auth: { source: "none" },
+    candidateName: "local-dead",
+    fallbackCandidates: [
+      {
+        name: "acp-healthy",
+        baseUrl: "adapter://acp-healthy",
+        model: "claude",
+        provider: "sakana",
+        auth: { source: "none" },
+        adapter: "test-healthy-adapter",
+        options: {},
+      },
+    ],
+    messages: [{ role: "user", content: "hello" }],
+    schema: z.object({ answer: z.string() }),
+    fetchFn: fetchMock as unknown as typeof fetch,
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.failureMessage);
+  expect(result.value.answer).toBe("fallback");
+  expect(result.candidate.name).toBe("acp-healthy");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(dispatches).toEqual(["hello"]);
+});
+
 test("advances past HTTP 502 and reports the fallback candidate that served", async () => {
   const fetchMock = mock((url: string): Promise<Response> => {
     if (url.startsWith("http://primary")) {
@@ -270,10 +407,10 @@ test("advances past HTTP 502 and reports the fallback candidate that served", as
     auth: { source: "none" },
     fallbackCandidates: [
       {
-        name: "nim-llama",
-        baseUrl: "https://integrate.api.nvidia.com/v1",
-        model: "meta/llama-3.1-8b-instruct",
-        provider: "nvidia-nim",
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
         auth: { source: "bearer", token: "test-token" },
       },
     ],
@@ -286,8 +423,8 @@ test("advances past HTTP 502 and reports the fallback candidate that served", as
   if (!result.ok) throw new Error(result.failureMessage);
   expect(result.value).toEqual({ answer: "cloud" });
   expect(result.candidate).toMatchObject({
-    name: "nim-llama",
-    provider: "nvidia-nim",
+    name: "sakana-rewriter",
+    provider: "sakana",
     tier: "fallback",
   });
   expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -319,10 +456,10 @@ test("advances past a per-attempt timeout", async () => {
     auth: { source: "none" },
     fallbackCandidates: [
       {
-        name: "nim-llama",
-        baseUrl: "https://integrate.api.nvidia.com/v1",
-        model: "meta/llama-3.1-8b-instruct",
-        provider: "nvidia-nim",
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
         auth: { source: "bearer", token: "test-token" },
       },
     ],
@@ -334,7 +471,7 @@ test("advances past a per-attempt timeout", async () => {
 
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(result.failureMessage);
-  expect(result.candidate.name).toBe("nim-llama");
+  expect(result.candidate.name).toBe("sakana-rewriter");
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
@@ -365,10 +502,10 @@ test("advances past HTTP 200 with whitespace-only content", async () => {
     auth: { source: "none" },
     fallbackCandidates: [
       {
-        name: "nim-llama",
-        baseUrl: "https://integrate.api.nvidia.com/v1",
-        model: "meta/llama-3.1-8b-instruct",
-        provider: "nvidia-nim",
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
         auth: { source: "bearer", token: "test-token" },
       },
     ],
@@ -421,14 +558,14 @@ test("never re-admits a bias-excluded provider when it is the last candidate", a
 
   await expect(
     llmInvoke({
-      baseUrl: "https://integrate.api.nvidia.com/v1",
-      model: "meta/llama-3.1-8b-instruct",
-      provider: "nvidia-nim",
+      baseUrl: "https://api.sakana.ai/v1",
+      model: "sakana-rewriter",
+      provider: "sakana",
       auth: { source: "bearer", token: "test-token" },
       activeBiases: [
         {
           scope: "provider",
-          value: "nvidia-nim",
+          value: "sakana",
           mode: "exclude",
           expires_at: "2026-09-01T00:00:00.000Z",
         },
@@ -476,5 +613,142 @@ test("embedding purpose never admits fallback candidates", async () => {
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
   ).rejects.toThrow(/embedding.*fallback/i);
+  expect(fetchMock).toHaveBeenCalledTimes(0);
+});
+
+test("role-resolved candidates skip an unreachable local seat and serve from the next seat", async () => {
+  const candidates = roleCandidates([
+    {
+      name: "cloud-healthy",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      pricing_mode: "subscription",
+      subscription_provider: "sakana",
+      options: {
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+      },
+    },
+    {
+      name: "local-dead",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      options: { baseUrl: "http://127.0.0.1:7944/v1", model: "retired-local" },
+    },
+  ]);
+  const fetchMock = mock((url: string): Promise<Response> => {
+    if (url.startsWith("http://127.0.0.1")) return Promise.reject(new Error("ECONNREFUSED"));
+    return Promise.resolve(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"served"}' } }] }), {
+        status: 200,
+      }),
+    );
+  });
+
+  const result = await llmInvoke({
+    ...rolePoolInput(candidates),
+    messages: [{ role: "user", content: "hello" }],
+    schema: z.object({ answer: z.string() }),
+    fetchFn: fetchMock as unknown as typeof fetch,
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.failureMessage);
+  expect(result.candidate.name).toBe("cloud-healthy");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test("role-resolved candidates reject a disallowed provider before transport", async () => {
+  const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const candidates = roleCandidates([
+    {
+      name: "openai-seat",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      options: {
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-4o",
+        provider: "openai",
+      },
+    },
+  ]);
+
+  await expect(
+    llmInvoke({
+      ...rolePoolInput(candidates),
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({ answer: z.string() }),
+      fetchFn: fetchMock as unknown as typeof fetch,
+    }),
+  ).rejects.toThrow(/provider.*openai.*not allowed/i);
+  expect(fetchMock).toHaveBeenCalledTimes(0);
+});
+
+test("role-resolved candidates do not re-admit a bias-excluded provider", async () => {
+  const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
+  const candidates = roleCandidates([
+    {
+      name: "sakana-seat",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      pricing_mode: "subscription",
+      subscription_provider: "sakana",
+      options: {
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+      },
+    },
+  ]);
+
+  await expect(
+    llmInvoke({
+      ...rolePoolInput(candidates),
+      activeBiases: [
+        {
+          scope: "provider",
+          value: "sakana",
+          mode: "exclude",
+          expires_at: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+      now: new Date("2026-08-18T12:00:00.000Z"),
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({ answer: z.string() }),
+      fetchFn: fetchMock as unknown as typeof fetch,
+    }),
+  ).rejects.toThrow(/no eligible.*candidate/i);
+  expect(fetchMock).toHaveBeenCalledTimes(0);
+});
+
+test("embedding rejects a role-resolved fallback pool before transport", async () => {
+  const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
+  const candidates = roleCandidates([
+    {
+      name: "local-a",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      options: { baseUrl: "http://127.0.0.1:7944/v1", model: "embed-a" },
+    },
+    {
+      name: "local-b",
+      adapter: "openai-compat-http",
+      roles: ["test-role"],
+      options: { baseUrl: "http://localhost:8080/v1", model: "embed-b" },
+    },
+  ]);
+
+  await expect(
+    llmInvoke({
+      ...rolePoolInput(candidates),
+      purpose: "embedding",
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({ answer: z.string() }),
+      fetchFn: fetchMock as unknown as typeof fetch,
+    }),
+  ).rejects.toThrow(/embedding fallback candidates are forbidden/i);
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });

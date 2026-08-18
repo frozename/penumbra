@@ -125,13 +125,13 @@ test("resolveJudgeConfig honors extraModelEnv first", () => {
   expect(cfg.model).toBe("refiner-special");
 });
 
-test("resolveJudgeConfig derives NVIDIA NIM and rejects a billed provider", () => {
+test("resolveJudgeConfig derives sakana and rejects a billed provider", () => {
   expect(
     resolveJudgeConfig({
-      PENUMBRA_JUDGE_BASE_URL: "https://integrate.api.nvidia.com/v1",
-      PENUMBRA_JUDGE_MODEL: "meta/llama-3.1-8b-instruct",
+      PENUMBRA_JUDGE_BASE_URL: "https://api.sakana.ai/v1",
+      PENUMBRA_JUDGE_MODEL: "sakana-rewriter",
     }).provider,
-  ).toBe("nvidia-nim");
+  ).toBe("sakana");
 
   expect(() =>
     resolveJudgeConfig({
@@ -200,10 +200,10 @@ test("createJudgeChat advances past whitespace-only content to the cloud rung", 
       provider: "local",
       fallbackCandidates: [
         {
-          name: "nim-llama",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
-          model: "meta/llama-3.1-8b-instruct",
-          provider: "nvidia-nim",
+          name: "sakana-rewriter",
+          baseUrl: "https://api.sakana.ai/v1",
+          model: "sakana-rewriter",
+          provider: "sakana",
           auth: { source: "bearer", token: "test-token" },
         },
       ],

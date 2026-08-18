@@ -418,7 +418,6 @@ export {
   attemptCandidatesInOrder,
   attemptLlmCandidates,
   buildChatCompletionsUrl,
-  createNvidiaNimFallbackCandidate,
   describeLlmCandidate,
   type LlmAuthSource,
   type LlmCandidate,
@@ -428,11 +427,14 @@ export {
   type LlmPurpose,
   type LlmRoutingBias,
   type LlmServingCandidate,
+  type RoleLlmCandidate,
   type ResolvedLlmCandidate,
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
   resolveLlmCandidates,
   resolveLlmProvider,
+  resolveRoleLlmCandidates,
+  tryResolveLlmProvider,
 } from "./services/llm-candidates.js";
 export {
   collectLlamactlInventory,

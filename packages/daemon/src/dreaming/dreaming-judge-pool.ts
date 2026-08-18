@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
+
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
@@ -174,31 +176,19 @@ export function createDreamingJudgePoolFromAgentchat(
   }
 
   const roleTag = process.env["PENUMBRA_DREAMING_JUDGE_ROLE"] ?? "dreaming-judge";
-  const eligible = cfg.agents.filter(
-    (agent) =>
-      agent.adapter === "openai-compat-http" &&
-      Array.isArray(agent.roles) &&
-      agent.roles.includes(roleTag) &&
-      typeof agent.options.baseUrl === "string" &&
-      agent.options.baseUrl.length > 0,
-  );
+  const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
 
   // Require ≥2 agents: P1 auto-promote threshold is ceil(total*2/3) with
   // autoPromoteMinJudges=2 — a single judge can never reach quorum.
-  if (eligible.length < 2) return null;
+  if (candidates.length < 2) return null;
 
-  const judges: DreamingJudgeEntry[] = [];
-  for (const agent of eligible) {
-    const baseUrl = agent.options.baseUrl;
-    if (!baseUrl) continue;
-    judges.push({
-      name: agent.name,
-      baseUrl,
-      apiKey: agent.options.apiKey ?? "",
-      model: agent.options.model ?? "local",
-      caPath: agent.options.caPath,
-    });
-  }
+  const judges: DreamingJudgeEntry[] = candidates.map((candidate) => ({
+    name: candidate.name,
+    baseUrl: candidate.baseUrl,
+    apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+    model: candidate.model,
+    caPath: candidate.caPath,
+  }));
 
   if (judges.length < 2) return null;
 

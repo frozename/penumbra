@@ -186,7 +186,7 @@ describe("POST /routing/bias (set)", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         scope: "provider",
-        value: "nvidia-nim",
+        value: "sakana",
         mode: "divert",
         ttl_seconds: 3600,
       }),
@@ -194,7 +194,7 @@ describe("POST /routing/bias (set)", () => {
     const res = await routingBiasSetRoute(req, services);
     expect(res.status).toBe(200);
     const body = await readSetBody(res);
-    expect(body.value).toBe("nvidia-nim");
+    expect(body.value).toBe("sakana");
   });
 
   it("leaves agent-scope values unconstrained (agent names need not be canonical)", async () => {

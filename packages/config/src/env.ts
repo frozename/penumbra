@@ -275,6 +275,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Model for task refiner.",
   },
+  PENUMBRA_REFINER_ROLE: {
+    schema: OptStr,
+    description: "Role used to resolve task-refiner LLM candidates.",
+  },
   PENUMBRA_REFINER_TIMEOUT_MS: {
     schema: PosInt,
     default: 90_000,
@@ -530,6 +534,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: z.string(),
     default: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
     description: "Model for the dreaming rewriter.",
+  },
+  PENUMBRA_DREAMING_REWRITER_ROLE: {
+    schema: OptStr,
+    description: "Role used to resolve dreaming query-rewriter LLM candidates.",
   },
   PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS: {
     schema: NonNegInt,

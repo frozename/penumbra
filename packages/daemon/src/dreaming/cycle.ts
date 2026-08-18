@@ -20,9 +20,9 @@ import {
   llmInvoke as realLlmInvoke,
 } from "../services/llm-invoke.js";
 import {
-  createNvidiaNimFallbackCandidate,
+  type LlmCandidate,
   type LlmServingCandidate,
-  resolveLlmProvider,
+  tryResolveLlmProvider,
 } from "../../../core/src/services/llm-candidates.js";
 import { readRoutingBiases } from "../../../core/src/readers/routing-bias.js";
 import { recordSubsystemOutcome } from "../services/subsystem-health.js";
@@ -152,6 +152,7 @@ export interface DreamCycleDeps {
   onReembed?: (memory_id: string, text: string) => Promise<Float32Array>;
   briefSynthesizer?: BriefSynthesizer;
   contentQualityJudge?: ContentQualityJudge;
+  rewriterCandidates?: LlmCandidate[];
   llmInvoke?: RewriteLlmInvoker;
   dispatchEventLog?: {
     record(event: DispatchEventInput): void;
@@ -176,6 +177,7 @@ interface CycleCtx {
   hasT2ProjectId: boolean;
   seenLegacyProjectlessMemoryIds: Set<string>;
   rewriterEnabled: boolean;
+  rewriterCandidates: LlmCandidate[];
   rewriterModel: string;
   rewriterBaseUrl: string;
   rewriterTimeoutMs: number;
@@ -328,6 +330,21 @@ function buildCycleCtx(
     });
   };
 
+  const rewriterCandidates: LlmCandidate[] = deps.rewriterCandidates?.length
+    ? deps.rewriterCandidates
+    : config.rewriterBaseUrl && config.rewriterModel
+      ? [
+          {
+            name: config.rewriterModel,
+            baseUrl: config.rewriterBaseUrl,
+            model: config.rewriterModel,
+            provider: tryResolveLlmProvider(config.rewriterBaseUrl) ?? "unknown",
+            auth: { source: "none" },
+          },
+        ]
+      : [];
+  const rewriterPrimary = rewriterCandidates[0];
+
   return {
     cycleId,
     nowMs,
@@ -344,8 +361,9 @@ function buildCycleCtx(
     hasT2ProjectId,
     seenLegacyProjectlessMemoryIds: new Set<string>(),
     rewriterEnabled: config.rewriterEnabled,
-    rewriterModel: config.rewriterModel,
-    rewriterBaseUrl: config.rewriterBaseUrl,
+    rewriterCandidates,
+    rewriterModel: rewriterPrimary?.model ?? config.rewriterModel ?? "",
+    rewriterBaseUrl: rewriterPrimary?.baseUrl ?? config.rewriterBaseUrl ?? "",
     rewriterTimeoutMs: config.rewriterTimeoutMs,
     rewriterCacheTtlMs: config.rewriterCacheTtlMs,
     rewriterConcurrency: Math.max(1, Math.trunc(config.rewriterConcurrency)),
@@ -1133,7 +1151,7 @@ function primaryRewriteCandidate(ctx: CycleCtx): LlmServingCandidate {
     name: ctx.rewriterModel,
     baseUrl: ctx.rewriterBaseUrl,
     model: ctx.rewriterModel,
-    provider: resolveLlmProvider(ctx.rewriterBaseUrl),
+    provider: tryResolveLlmProvider(ctx.rewriterBaseUrl) ?? "unknown",
     authSource: "none",
     tier: "primary",
   };
@@ -1204,14 +1222,17 @@ async function fetchRewriteFromLlm(
 ): Promise<ResolvedQuery | null> {
   if (!ctx.costMeter.canAfford("P4", "llm", ctx.phaseCostEstimates.p4RewriterLlmUsd)) return null;
 
+  const [primaryCandidate, ...fallbackCandidates] = ctx.rewriterCandidates;
+  if (!primaryCandidate) throw new Error("dreaming rewriter has no configured candidates");
   const prompt = buildDreamQueryRewritePrompt({ title: memory.title, bodyFirst200: memory.body });
   const rewriteStart = Date.now();
   const rewriteResult = await ctx.invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
-    baseUrl: ctx.rewriterBaseUrl,
-    model: ctx.rewriterModel,
-    provider: resolveLlmProvider(ctx.rewriterBaseUrl),
-    auth: { source: "none" },
-    fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+    baseUrl: primaryCandidate.baseUrl,
+    model: primaryCandidate.model,
+    provider: primaryCandidate.provider,
+    auth: primaryCandidate.auth,
+    candidateName: primaryCandidate.name,
+    fallbackCandidates,
     activeBiases: readRoutingBiases(db),
     messages: prompt,
     schema: REWRITE_RESPONSE_SCHEMA,

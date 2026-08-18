@@ -30,7 +30,7 @@ const SetInputSchema = z
   // provider-format. Agent-scope values are agent names, left unconstrained.
   .refine((data) => data.scope !== "provider" || isCanonicalProviderValue(data.value), {
     path: ["value"],
-    message: 'provider bias value must be canonical lowercase-hyphen (e.g. "openai", "nvidia-nim")',
+    message: 'provider bias value must be canonical lowercase-hyphen (e.g. "openai", "sakana")',
   });
 
 const ListInputSchema = z.object({

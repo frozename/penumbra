@@ -113,10 +113,33 @@ test("serve leaves process signal handling to direct embedders by default", asyn
   }
 });
 
-test("dispatch refiner falls back from empty local content to NIM and records health", async () => {
+test("dispatch refiner fails over from a dead role-resolved local seat and records health", async () => {
   process.env.PENUMBRA_JUDGE_BASE_URL = "http://127.0.0.1:7944";
   process.env.PENUMBRA_REFINER_MODEL = "lfm2-generator";
   const services = makeServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "refiner-local-dead",
+        adapter: "openai-compat-http",
+        roles: ["refiner"],
+        options: { baseUrl: "http://127.0.0.1:7944/v1", model: "retired-local" },
+      },
+      {
+        name: "refiner-sakana-healthy",
+        adapter: "openai-compat-http",
+        roles: ["refiner"],
+        pricing_mode: "subscription",
+        subscription_provider: "sakana",
+        options: {
+          baseUrl: "https://api.sakana.ai/v1",
+          model: "sakana-rewriter",
+          provider: "sakana",
+          apiKey: "role-sakana-token",
+        },
+      },
+    ],
+  };
   const fetchMock = mock(
     (url: string): Promise<Response> =>
       Promise.resolve(
@@ -141,7 +164,6 @@ test("dispatch refiner falls back from empty local content to NIM and records he
     token: "test-token",
     allowRemote: true,
     llmFetchFn: fetchMock as unknown as typeof fetch,
-    resolveLlmKeychain: () => "test-nvidia-token",
   });
 
   try {
@@ -163,7 +185,7 @@ test("dispatch refiner falls back from empty local content to NIM and records he
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, fallbackInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(fallbackInit.headers).toMatchObject({
-      authorization: "Bearer test-nvidia-token",
+      authorization: "Bearer role-sakana-token",
     });
     const health = services.db
       .query<{ tier: string; seat: string; model: string; host: string }, []>(
@@ -174,9 +196,9 @@ test("dispatch refiner falls back from empty local content to NIM and records he
       .get();
     expect(health).toEqual({
       tier: "fallback",
-      seat: "nvidia-nim-llama-3.1-8b-instruct",
-      model: "meta/llama-3.1-8b-instruct",
-      host: "integrate.api.nvidia.com",
+      seat: "refiner-sakana-healthy",
+      model: "sakana-rewriter",
+      host: "api.sakana.ai",
     });
   } finally {
     services.supervisor.stopAll();

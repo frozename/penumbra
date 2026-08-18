@@ -308,7 +308,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
     }
   });
 
-  it("allows public API endpoints when PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC=1", () => {
+  it("does not admit a public API endpoint even when the legacy override is set", () => {
     writeConfig(
       `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
     );
@@ -318,7 +318,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
     process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC"] = "1";
     try {
       const synth = createBriefSynthesizerFromAgentchat();
-      expect(synth).not.toBeNull();
+      expect(synth).toBeNull();
     } finally {
       if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
       else process.env["PENUMBRA_CONFIG_DIR"] = saved;

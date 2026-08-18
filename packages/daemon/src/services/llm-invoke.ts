@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { buildAdapter, type DispatchInput } from "@penumbra/agentchat";
 import {
   attemptLlmCandidates,
   buildChatCompletionsUrl,
@@ -12,7 +13,7 @@ import {
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
   resolveLlmCandidates,
-  resolveLlmProvider,
+  tryResolveLlmProvider,
   type ResolvedLlmCandidate,
 } from "../../../core/src/services/llm-candidates.js";
 
@@ -22,6 +23,8 @@ export interface LlmInvokeInput<T extends z.ZodType> {
   provider?: string;
   auth?: LlmAuthSource;
   candidateName?: string;
+  adapter?: string;
+  options?: Record<string, unknown>;
   fallbackCandidates?: LlmCandidate[];
   activeBiases?: LlmRoutingBias[];
   purpose?: LlmPurpose;
@@ -141,8 +144,10 @@ export async function llmInvoke<T extends z.ZodType>(
         name: input.candidateName ?? input.model,
         baseUrl: input.baseUrl,
         model: input.model,
-        provider: resolveLlmProvider(input.baseUrl, input.provider),
+        provider: tryResolveLlmProvider(input.baseUrl, input.provider) ?? "unknown",
         auth: input.auth ?? { source: "none" },
+        adapter: input.adapter ?? "openai-compat-http",
+        options: input.options,
       },
       ...(input.fallbackCandidates ?? []),
     ],
@@ -178,6 +183,10 @@ async function invokeCandidate<T extends z.ZodType>(
   timeoutMs: number,
   maxResponseBytes: number,
 ): Promise<SingleCandidateResult<T>> {
+  if ((candidate.adapter ?? "openai-compat-http") !== "openai-compat-http") {
+    return await invokeAdapterCandidate(input, candidate, timeoutMs);
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort(new DOMException("Request timed out", "AbortError"));
@@ -216,4 +225,47 @@ async function invokeCandidate<T extends z.ZodType>(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function invokeAdapterCandidate<T extends z.ZodType>(
+  input: LlmInvokeInput<T>,
+  candidate: ResolvedLlmCandidate,
+  timeoutMs: number,
+): Promise<SingleCandidateResult<T>> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException("Request timed out", "AbortError"));
+  }, timeoutMs);
+
+  try {
+    const adapter = buildAdapter(
+      candidate.adapter ?? "openai-compat-http",
+      candidate.options ?? {},
+    );
+    const output = await adapter.dispatch({
+      prompt: promptFromMessages(input.messages),
+      conversation: { id: `llm-invoke-${candidate.name}`, project_id: null },
+      config: {},
+      signal: controller.signal,
+      trust_mode: "all",
+    } satisfies DispatchInput);
+    if (typeof output.text !== "string" || output.text.trim().length === 0) {
+      return { ok: false, reason: "empty_response", failureMessage: "no response content" };
+    }
+    return parseContent(output.text, input.schema);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      return { ok: false, reason: "timeout", failureMessage: "Request timed out" };
+    }
+    return httpError(0, error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function promptFromMessages(
+  messages: { role: "system" | "user" | "assistant"; content: string }[],
+): string {
+  if (messages.length === 1 && messages[0]?.role === "user") return messages[0].content;
+  return messages.map((message) => `${message.role}: ${message.content}`).join("\n\n");
 }

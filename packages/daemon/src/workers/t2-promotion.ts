@@ -3,6 +3,8 @@ import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 
 import { buildT2EmbedText, T2Promotion } from "@penumbra/core";
 
+import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
+
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
   createJudgePool,
@@ -557,25 +559,6 @@ export function createDefaultLLMJudge(
   };
 }
 
-interface EligibleAgentOptions {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  caPath?: string;
-}
-
-function extractAgentOptions(
-  options: Record<string, unknown> | undefined,
-): EligibleAgentOptions | null {
-  if (!options) return null;
-  const baseUrl = options.baseUrl;
-  if (typeof baseUrl !== "string" || baseUrl.length === 0) return null;
-  const apiKey = typeof options.apiKey === "string" ? options.apiKey : "";
-  const model = typeof options.model === "string" ? options.model : "local";
-  const caPath = typeof options.caPath === "string" ? options.caPath : undefined;
-  return { baseUrl, apiKey, model, caPath };
-}
-
 function loadAgentChatConfigSafe(services: Services, configDir: string): AgentChatConfig | null {
   try {
     return loadAgentChatConfig();
@@ -597,14 +580,15 @@ function createJudgePoolFromAgentchat(
   if (!cfg) return null;
 
   const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
-  const judges: JudgeEntry[] = [];
-  for (const agent of cfg.agents) {
-    if (agent.adapter !== "openai-compat-http") continue;
-    if (!Array.isArray(agent.roles) || !agent.roles.includes(roleTag)) continue;
-    const opts = extractAgentOptions(agent.options);
-    if (!opts) continue;
-    judges.push({ name: agent.name, ...opts });
-  }
+  const judges: JudgeEntry[] = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg }).map(
+    (candidate) => ({
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+      model: candidate.model,
+      caPath: candidate.caPath,
+    }),
+  );
   if (judges.length === 0) return null;
 
   const pool = createJudgePool({

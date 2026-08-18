@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 
-export const ALLOWED_LLM_PROVIDERS = ["local", "nvidia-nim", "sakana"] as const;
+export const ALLOWED_LLM_PROVIDERS = ["local", "sakana"] as const;
 
-export type LlmProvider = (typeof ALLOWED_LLM_PROVIDERS)[number];
+export type LlmProvider = string;
 export type LlmPurpose = "generation" | "embedding";
 
 export type LlmAuthSource =
@@ -16,6 +16,35 @@ export interface LlmCandidate {
   model: string;
   provider: string;
   auth: LlmAuthSource;
+  adapter?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface RoleLlmCandidate extends LlmCandidate {
+  caPath?: string;
+}
+
+export interface ResolveRoleLlmCandidatesInput {
+  roleTag: string;
+  agentchatConfig: {
+    agents?: {
+      name: string;
+      adapter?: string;
+      roles?: string[];
+      pricing_mode?: "api" | "subscription";
+      subscription_provider?: string;
+      api_provider?: string;
+      options?: {
+        apiKey?: string;
+        baseUrl?: string;
+        caPath?: string;
+        model?: string;
+        provider?: string;
+        [key: string]: unknown;
+      };
+    }[];
+  };
+  fallbackCandidates?: RoleLlmCandidate[];
 }
 
 export interface LlmRoutingBias {
@@ -64,6 +93,55 @@ export type ResolveKeychainSecret = (service: string, account: string) => string
 
 const ALLOWED_PROVIDER_SET = new Set<string>(ALLOWED_LLM_PROVIDERS);
 
+/**
+ * Converts the configured seats for a role into the ordered candidate shape
+ * consumed by special-task LLM callers. Config order is stable within a tier;
+ * local HTTP seats precede subscription HTTP seats, which precede process-backed
+ * adapters. Provider policy is enforced at invocation time.
+ */
+export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): RoleLlmCandidate[] {
+  const candidates = (input.agentchatConfig.agents ?? []).flatMap((agent) => {
+    const options = agent.options;
+    const adapter = agent.adapter ?? "openai-compat-http";
+    if (!agent.roles?.includes(input.roleTag)) {
+      return [];
+    }
+    if (adapter === "openai-compat-http" && !options?.baseUrl) {
+      return [];
+    }
+    const baseUrl = options?.baseUrl ?? `adapter://${encodeURIComponent(agent.name)}`;
+    return [
+      {
+        name: agent.name,
+        baseUrl,
+        model: options?.model ?? agent.name,
+        provider: resolveCandidateProvider({
+          baseUrl,
+          explicitProvider: options?.provider,
+          pricingMode: agent.pricing_mode,
+          subscriptionProvider: agent.subscription_provider,
+          apiProvider: agent.api_provider,
+        }),
+        auth: options?.apiKey
+          ? { source: "bearer" as const, token: options.apiKey }
+          : { source: "none" as const },
+        caPath: options?.caPath,
+        adapter,
+        options: options ? { ...options } : {},
+      },
+    ];
+  });
+  if (candidates.length === 0) return input.fallbackCandidates ?? [];
+
+  return candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => {
+      const tierDelta = candidateCostTier(left.candidate) - candidateCostTier(right.candidate);
+      return tierDelta === 0 ? left.index - right.index : tierDelta;
+    })
+    .map(({ candidate }) => candidate);
+}
+
 export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): ResolvedLlmCandidate[] {
   if (input.candidates.length === 0) {
     throw new Error("no LLM candidates configured");
@@ -73,7 +151,7 @@ export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): Resolved
   }
 
   const resolved = input.candidates.map((candidate, index): ResolvedLlmCandidate => {
-    if (!ALLOWED_PROVIDER_SET.has(candidate.provider)) {
+    if (isDirectHttpCandidate(candidate) && !ALLOWED_PROVIDER_SET.has(candidate.provider)) {
       throw new Error(`LLM provider '${candidate.provider}' is not allowed`);
     }
     return {
@@ -123,9 +201,21 @@ export function resolveLlmProvider(baseUrl: string, explicitProvider?: string): 
   ) {
     return "local";
   }
-  if (hostname === "integrate.api.nvidia.com") return "nvidia-nim";
   if (hostname === "sakana.ai" || hostname.endsWith(".sakana.ai")) return "sakana";
   throw new Error(`LLM provider is required for unrecognized host '${hostname}'`);
+}
+
+export function tryResolveLlmProvider(
+  baseUrl: string | undefined,
+  explicitProvider?: string,
+): LlmProvider | null {
+  if (explicitProvider !== undefined && explicitProvider !== "") return explicitProvider;
+  if (!baseUrl) return null;
+  try {
+    return resolveLlmProvider(baseUrl);
+  } catch {
+    return null;
+  }
 }
 
 export async function attemptLlmCandidates<T, E>(
@@ -180,19 +270,37 @@ export function buildChatCompletionsUrl(baseUrl: string): string {
   return trimmed.endsWith("/v1") ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
 }
 
-export function createNvidiaNimFallbackCandidate(): LlmCandidate {
-  return {
-    name: "nvidia-nim-llama-3.1-8b-instruct",
-    baseUrl: "https://integrate.api.nvidia.com/v1",
-    model: "meta/llama-3.1-8b-instruct",
-    provider: "nvidia-nim",
-    auth: { source: "keychain", service: "llamactl", account: "nvidia" },
-  };
-}
-
 function defaultResolveKeychainSecret(service: string, account: string): string {
   return execFileSync("security", ["find-generic-password", "-s", service, "-a", account, "-w"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+function resolveCandidateProvider(input: {
+  baseUrl: string;
+  explicitProvider?: string;
+  pricingMode?: "api" | "subscription";
+  subscriptionProvider?: string;
+  apiProvider?: string;
+}): string {
+  const inferred = tryResolveLlmProvider(input.baseUrl, input.explicitProvider);
+  if (inferred) return inferred;
+  if (input.pricingMode === "subscription" && input.subscriptionProvider) {
+    return input.subscriptionProvider;
+  }
+  return input.apiProvider ?? input.subscriptionProvider ?? "unknown";
+}
+
+function candidateCostTier(candidate: LlmCandidate): number {
+  if (isDirectHttpCandidate(candidate)) {
+    if (candidate.provider === "local") return 0;
+    if (candidate.provider === "sakana") return 1;
+    return 1;
+  }
+  return 2;
+}
+
+function isDirectHttpCandidate(candidate: Pick<LlmCandidate, "adapter">): boolean {
+  return (candidate.adapter ?? "openai-compat-http") === "openai-compat-http";
 }

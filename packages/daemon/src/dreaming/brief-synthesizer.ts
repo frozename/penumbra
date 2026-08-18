@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 
-import { attemptCandidatesInOrder } from "../../../core/src/services/llm-candidates.js";
+import {
+  attemptCandidatesInOrder,
+  resolveRoleLlmCandidates,
+} from "../../../core/src/services/llm-candidates.js";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 
@@ -34,21 +37,6 @@ type BriefSynthesizerState = BriefSynthesizerEntry & { caPem?: string };
 
 interface ChatCompletionResponse {
   choices?: { message?: { content?: string } }[];
-}
-
-const PUBLIC_API_HOSTS = [
-  "api.anthropic.com",
-  "api.openai.com",
-  "generativelanguage.googleapis.com",
-];
-
-function isPublicEndpoint(baseUrl: string): boolean {
-  try {
-    const u = new URL(baseUrl.replace(/\/+$/, ""));
-    return PUBLIC_API_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith("." + h));
-  } catch {
-    return false;
-  }
 }
 
 export function buildBriefPrompt(input: BriefSynthesizerInput): string {
@@ -192,39 +180,37 @@ export function createBriefSynthesizerFromAgentchat(
   }
 
   const roleTag = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE"] ?? "brief-synthesizer";
-  const eligible = cfg.agents.filter(
-    (agent) =>
-      agent.adapter === "openai-compat-http" &&
-      Array.isArray(agent.roles) &&
-      agent.roles.includes(roleTag) &&
-      typeof agent.options.baseUrl === "string" &&
-      agent.options.baseUrl.length > 0,
-  );
-
-  if (eligible.length === 0) return null;
-
-  const allowPublic = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC"] === "1";
-  const agents: BriefSynthesizerEntry[] = [];
-  for (const agent of eligible) {
-    const baseUrl = agent.options.baseUrl;
-    if (!baseUrl) continue;
-    if (isPublicEndpoint(baseUrl) && !allowPublic) {
-      services?.log?.warn(
-        { agent: agent.name, baseUrl },
-        "dreaming: brief synthesizer endpoint is a public API — skipping to protect memory privacy. Set PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC=1 to override.",
-      );
-      continue;
-    }
-    agents.push({
-      name: agent.name,
-      baseUrl,
-      apiKey: agent.options.apiKey ?? "",
-      model: agent.options.model ?? "local",
-      caPath: agent.options.caPath,
-    });
+  let candidates;
+  try {
+    candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
+  } catch (err) {
+    services?.log?.warn({ err }, "dreaming: brief synthesizer role has no allowed LLM candidates");
+    return null;
   }
+  const agents: BriefSynthesizerEntry[] = candidates
+    .filter((candidate) => isAllowedBriefSynthesizerHttpCandidate(candidate))
+    .map((candidate) => ({
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+      model: candidate.model,
+      caPath: candidate.caPath,
+    }));
 
   if (agents.length === 0) return null;
 
   return new BriefSynthesizerImpl(agents, fetchImpl);
+}
+
+function isAllowedBriefSynthesizerHttpCandidate(candidate: {
+  baseUrl: string;
+  provider: string;
+}): boolean {
+  if (candidate.provider === "local" || candidate.provider === "sakana") return true;
+  try {
+    const hostname = new URL(candidate.baseUrl).hostname.toLowerCase();
+    return !hostname.includes(".");
+  } catch {
+    return false;
+  }
 }

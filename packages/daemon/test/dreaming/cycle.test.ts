@@ -1667,7 +1667,7 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
   expect(cacheRow?.query).toBe("something searchable and useful query terms");
 });
 
-it("P4 wires the NIM rung and records the fallback candidate that served", async () => {
+it("P4 wires the subscription HTTP rung and records the fallback candidate that served", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-cloud-fallback";
   seedT2MemoryWithProjectId(db, {
@@ -1681,6 +1681,22 @@ it("P4 wires the NIM rung and records the fallback candidate that served", async
 
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
+    rewriterCandidates: [
+      {
+        name: "local-rewriter",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "local-rewriter",
+        provider: "local",
+        auth: { source: "none" },
+      },
+      {
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+        auth: { source: "bearer", token: "test-sakana-token" },
+      },
+    ],
     llmInvoke: (input) => {
       invokeInput = input as unknown as Record<string, unknown>;
       return Promise.resolve({
@@ -1688,11 +1704,11 @@ it("P4 wires the NIM rung and records the fallback candidate that served", async
         value: { kind: "query" as const, query: "something searchable and useful query terms" },
         raw: '{"kind":"query","query":"something searchable and useful query terms"}',
         candidate: {
-          name: "nvidia-nim-llama-3.1-8b-instruct",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
-          model: "meta/llama-3.1-8b-instruct",
-          provider: "nvidia-nim" as const,
-          authSource: "keychain" as const,
+          name: "sakana-rewriter",
+          baseUrl: "https://api.sakana.ai/v1",
+          model: "sakana-rewriter",
+          provider: "sakana" as const,
+          authSource: "bearer" as const,
           tier: "fallback" as const,
         },
       });
@@ -1701,11 +1717,11 @@ it("P4 wires the NIM rung and records the fallback candidate that served", async
 
   expect(invokeInput?.fallbackCandidates).toEqual([
     {
-      name: "nvidia-nim-llama-3.1-8b-instruct",
-      baseUrl: "https://integrate.api.nvidia.com/v1",
-      model: "meta/llama-3.1-8b-instruct",
-      provider: "nvidia-nim",
-      auth: { source: "keychain", service: "llamactl", account: "nvidia" },
+      name: "sakana-rewriter",
+      baseUrl: "https://api.sakana.ai/v1",
+      model: "sakana-rewriter",
+      provider: "sakana",
+      auth: { source: "bearer", token: "test-sakana-token" },
     },
   ]);
   expect(invokeInput?.activeBiases).toEqual([]);
@@ -1718,9 +1734,9 @@ it("P4 wires the NIM rung and records the fallback candidate that served", async
     .get();
   expect(health).toEqual({
     tier: "fallback",
-    seat: "nvidia-nim-llama-3.1-8b-instruct",
-    model: "meta/llama-3.1-8b-instruct",
-    host: "integrate.api.nvidia.com",
+    seat: "sakana-rewriter",
+    model: "sakana-rewriter",
+    host: "api.sakana.ai",
   });
 });
 

@@ -35,11 +35,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
-  createNvidiaNimFallbackCandidate,
+  resolveRoleLlmCandidates,
+  type LlmCandidate,
   type LlmServingCandidate,
   type ResolveKeychainSecret,
 } from "../../core/src/services/llm-candidates.js";
-import { createJudgeChat, resolveJudgeConfig } from "../../core/src/services/judge-chat.js";
+import {
+  createJudgeChat,
+  resolveJudgeConfig,
+  type ResolvedJudgeConfig,
+} from "../../core/src/services/judge-chat.js";
 
 import type { GhClient } from "./services/gh-client.js";
 
@@ -1038,6 +1043,13 @@ export function createDaemonFetchHandler(opts: {
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = ((): ReturnType<typeof makeDispatchRefineRoute> => {
     const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] });
+    const candidates = resolveJudgeRoleCandidates(
+      opts.services.agentchatConfig,
+      process.env.PENUMBRA_REFINER_ROLE ?? "refiner",
+      cfg,
+    );
+    const [primaryCandidate, ...fallbackCandidates] = candidates;
+    if (!primaryCandidate) throw new Error("dispatch-refine has no configured LLM candidate");
     // The refiner may use a reasoning model (e.g. lfm2) that emits a long
     // chain-of-thought before the answer, so it needs a larger ceiling than the
     // fast classification judge's 30s default. Configurable via
@@ -1048,8 +1060,8 @@ export function createDaemonFetchHandler(opts: {
       opts.services,
       {
         component: "dispatch-refine",
-        baseUrl: cfg.baseUrl,
-        model: cfg.model,
+        baseUrl: primaryCandidate.baseUrl,
+        model: primaryCandidate.model,
         timeoutMs: refinerTimeoutMs,
         usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
         usedDefaultModel: cfg.usedDefaultModel,
@@ -1057,11 +1069,12 @@ export function createDaemonFetchHandler(opts: {
       "dispatch-refine: judge endpoint resolved",
     );
     const chat = createJudgeChat({
-      baseUrl: cfg.baseUrl,
-      token: cfg.token,
+      baseUrl: primaryCandidate.baseUrl,
       timeoutMs: refinerTimeoutMs,
-      provider: cfg.provider,
-      fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+      provider: primaryCandidate.provider,
+      auth: primaryCandidate.auth,
+      candidateName: primaryCandidate.name,
+      fallbackCandidates,
       activeBiases: () => readRoutingBiases(opts.services.db),
       fetchFn: opts.llmFetchFn,
       resolveKeychain: opts.resolveLlmKeychain,
@@ -1069,7 +1082,7 @@ export function createDaemonFetchHandler(opts: {
         recordJudgeOutcome(opts.services.db, "dispatch.refiner", outcome);
       },
     });
-    return makeDispatchRefineRoute({ chat, model: cfg.model });
+    return makeDispatchRefineRoute({ chat, model: primaryCandidate.model });
   })();
   const ctx: RouteCtx = {
     services: opts.services,
@@ -1501,21 +1514,29 @@ function createEfficacyJobRunnerEntry(
   opts: ServeOpts,
 ): ReturnType<typeof createMemoryEfficacyJobRunner> {
   const cfg = resolveJudgeConfig();
+  const candidates = resolveJudgeRoleCandidates(
+    opts.services.agentchatConfig,
+    process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner",
+    cfg,
+  );
+  const [primaryCandidate, ...fallbackCandidates] = candidates;
+  if (!primaryCandidate) throw new Error("memory-efficacy has no configured LLM candidate");
   opts.services.log.info(
     {
       component: "memory-efficacy",
-      baseUrl: cfg.baseUrl,
-      model: cfg.model,
+      baseUrl: primaryCandidate.baseUrl,
+      model: primaryCandidate.model,
       usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
       usedDefaultModel: cfg.usedDefaultModel,
     },
     "memory-efficacy: judge endpoint resolved",
   );
   const judgeChat = createJudgeChat({
-    baseUrl: cfg.baseUrl,
-    token: cfg.token,
-    provider: cfg.provider,
-    fallbackCandidates: [createNvidiaNimFallbackCandidate()],
+    baseUrl: primaryCandidate.baseUrl,
+    provider: primaryCandidate.provider,
+    auth: primaryCandidate.auth,
+    candidateName: primaryCandidate.name,
+    fallbackCandidates,
     activeBiases: () => readRoutingBiases(opts.services.db),
     onOutcome: (outcome) => {
       recordJudgeOutcome(opts.services.db, "memory.efficacy_judge", outcome);
@@ -1525,12 +1546,34 @@ function createEfficacyJobRunnerEntry(
     db: opts.services.db,
     services: opts.services,
     judgeChat,
-    model: cfg.model,
+    model: primaryCandidate.model,
     intervalMs: 5000,
     pressureGuardEnabled:
       process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "1" ||
       process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "true",
     log: opts.services.log,
+  });
+}
+
+function resolveJudgeRoleCandidates(
+  agentchatConfig: CoreServices["agentchatConfig"],
+  roleTag: string,
+  legacy: ResolvedJudgeConfig,
+): LlmCandidate[] {
+  return resolveRoleLlmCandidates({
+    roleTag,
+    agentchatConfig: (agentchatConfig ?? {}) as Parameters<
+      typeof resolveRoleLlmCandidates
+    >[0]["agentchatConfig"],
+    fallbackCandidates: [
+      {
+        name: legacy.model,
+        baseUrl: legacy.baseUrl,
+        model: legacy.model,
+        provider: legacy.provider,
+        auth: legacy.token ? { source: "bearer", token: legacy.token } : { source: "none" },
+      },
+    ],
   });
 }
 

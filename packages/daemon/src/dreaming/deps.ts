@@ -8,6 +8,12 @@ import type { DreamCycleDeps, ProjectRegistryEntry } from "./cycle.js";
 
 import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
+import {
+  resolveRoleLlmCandidates,
+  type LlmCandidate,
+  tryResolveLlmProvider,
+} from "../../../core/src/services/llm-candidates.js";
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
@@ -21,6 +27,38 @@ interface DreamingResearchConfig {
 interface ProjectRegistryLike {
   get(id: string): ProjectRegistryEntry | undefined;
   list(): ProjectRegistryEntry[];
+}
+
+export function createDreamingRewriterCandidates(
+  dreamConfig: DreamConfig,
+  log?: Logger,
+): LlmCandidate[] {
+  const fallbackCandidates =
+    dreamConfig.rewriterBaseUrl && dreamConfig.rewriterModel
+      ? [
+          {
+            name: dreamConfig.rewriterModel,
+            baseUrl: dreamConfig.rewriterBaseUrl,
+            model: dreamConfig.rewriterModel,
+            provider: tryResolveLlmProvider(dreamConfig.rewriterBaseUrl) ?? "unknown",
+            auth: { source: "none" as const },
+          },
+        ]
+      : [];
+  const roleTag = process.env["PENUMBRA_DREAMING_REWRITER_ROLE"] ?? "dreaming-rewriter";
+  try {
+    return resolveRoleLlmCandidates({
+      roleTag,
+      agentchatConfig: loadAgentChatConfig(),
+      fallbackCandidates,
+    });
+  } catch (err) {
+    log?.warn(
+      { err, configDir: resolveAgentChatConfigPath(), roleTag },
+      "dreaming: failed to resolve rewriter role candidates; using legacy environment candidate",
+    );
+    return fallbackCandidates;
+  }
 }
 
 export function buildDreamCycleDeps(
@@ -63,6 +101,7 @@ export function buildDreamCycleDeps(
   const judgePool = realJudgePool ?? new StubJudgePool();
 
   const briefSynthesizer = createBriefSynthesizerFromAgentchat();
+  const rewriterCandidates = createDreamingRewriterCandidates(dreamConfig, services.log);
 
   const contentQualityJudge =
     dreamConfig.contentQualityThreshold > 0
@@ -86,6 +125,7 @@ export function buildDreamCycleDeps(
     memoryObserve,
     judgePool,
     briefSynthesizer: briefSynthesizer ?? undefined,
+    rewriterCandidates,
     contentQualityJudge,
     pressureGuard: {
       check: (): Promise<{ anyThrottled: boolean }> =>
