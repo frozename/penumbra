@@ -170,7 +170,7 @@ function buildSummaries(db: Database, rows: DispatchEvent[]): DispatchSummary[] 
     new Set(actionable.map((row) => row.handoff_id).filter((id) => id.length > 0)),
   );
   const agentByHandoff = loadAgentByHandoff(db, handoffIds);
-  const byHandoff = groupByHandoff(actionable);
+  const byHandoff = groupByHandoff(actionable.filter((row) => agentByHandoff.has(row.handoff_id)));
   const summaries: DispatchSummary[] = [];
   for (const [handoff_id, events] of byHandoff.entries()) {
     summaries.push(summarizeOne(handoff_id, events, agentByHandoff));

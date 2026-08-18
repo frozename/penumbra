@@ -152,6 +152,20 @@ test("dispatch_events outcomes_only=true keeps failed kinds for successful termi
   expect(out.summaries?.[0]?.failed_event_kinds).toEqual(["agent.tool_call.failed"]);
 });
 
+test("dispatch_events outcomes_only=true omits dream events without a matching handoff", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.run(`
+    INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
+    VALUES (1, 'dream-cycle-1', 'daemon', 'dream_p4_query_rewrite_failed', '2026-05-07T10:00:00Z', '{}');
+  `);
+
+  const out = runDispatchEventsSource({ db, args: { outcomes_only: true } });
+  expect(out.summaries).toEqual([]);
+});
+
 test("dispatch_events outcomes_only=true marks cancel kinds as failed", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
