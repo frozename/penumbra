@@ -1252,6 +1252,35 @@ it("P4 seeds research_query actions for projects with research_provider != off",
   }
 });
 
+it("P4 rotates research_query candidates across cycles instead of repeating the newest two", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rotation";
+  for (const title of [
+    "Qwen3 8 27B benchmark routing comparison",
+    "Codex ACP timeout recovery behavior",
+    "Gemini flash dispatch reliability analysis",
+    "OpenAI compatible gateway cache policy",
+    "Local memory recall ranking calibration",
+  ]) {
+    seedT2MemoryWithProjectId(db, { project_id: projectId, title });
+  }
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT json_extract(payload_json, '$.source_memory_id')) AS n
+       FROM dream_actions
+       WHERE phase='P4' AND action_type='research_query'`,
+    )
+    .get() as { n: number };
+  expect(row.n).toBeGreaterThanOrEqual(3);
+});
+
 it("P4 skips research_query for projects with research_provider=off or no dreaming config", async () => {
   const db = openTestDb();
   seedT2MemoryWithProjectId(db, { project_id: "proj-off", title: "some topic" });

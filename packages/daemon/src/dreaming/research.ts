@@ -140,7 +140,7 @@ function writeResultCache(
   now: number,
 ): void {
   db.prepare(
-    `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
+    `INSERT OR REPLACE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     cacheKey,
@@ -220,6 +220,21 @@ function insertEnrichmentAction(
   result: WebResearchResult,
   verdict: ContentQualityVerdict | null,
 ): void {
+  const targetIds = JSON.stringify([projectId]);
+  const existing = db
+    .prepare(
+      `SELECT 1
+       FROM dream_actions
+       WHERE phase='P5'
+         AND action_type='research_enrichment'
+         AND target_ids=?
+         AND json_extract(payload_json, '$.source_url')=?
+         AND reverted_by IS NULL
+       LIMIT 1`,
+    )
+    .get(targetIds, result.url);
+  if (existing) return;
+
   const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });
   const block = buildJudgePromptBlock({
     url: result.url,
@@ -227,8 +242,14 @@ function insertEnrichmentAction(
     provider: result.source_provider,
   });
 
-  const payload: { markdown: string; quality_score?: number; low_quality?: boolean } = {
+  const payload: {
+    markdown: string;
+    source_url: string;
+    quality_score?: number;
+    low_quality?: boolean;
+  } = {
     markdown: block,
+    source_url: result.url,
   };
 
   if (verdict !== null) {
@@ -241,7 +262,7 @@ function insertEnrichmentAction(
   db.prepare(
     `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
      VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`,
-  ).run(crypto.randomUUID(), cycleId, JSON.stringify([projectId]), JSON.stringify(payload));
+  ).run(crypto.randomUUID(), cycleId, targetIds, JSON.stringify(payload));
 }
 
 interface ActionContext {

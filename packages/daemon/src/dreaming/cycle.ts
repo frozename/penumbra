@@ -188,11 +188,13 @@ interface CycleCtx {
   p4QueueCountStmt: ReturnType<Database["prepare"]>;
   p4NegativeSentinelStmt: ReturnType<Database["prepare"]> | null;
   p4MemoryByProjectStmt: ReturnType<Database["prepare"]>;
-  p4QueuedQueryExistsStmt: ReturnType<Database["prepare"]>;
+  p4RecentMemoryResearchStmt: ReturnType<Database["prepare"]>;
   p2QueuedLinkExistsStmt: ReturnType<Database["prepare"]>;
   p1QueuedPromoteExistsStmt: ReturnType<Database["prepare"]>;
   emitDreamEvent: (kind: DispatchEventInput["kind"], meta: Record<string, unknown>) => void;
 }
+
+const P4_RESEARCH_MEMORY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 export async function runDreamCycle(
   db: Database,
@@ -298,8 +300,14 @@ function buildCycleCtx(
   const p4QueueCountStmt = db.prepare(
     `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`,
   );
-  const p4QueuedQueryExistsStmt = db.prepare(
-    `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status IN ('queued', 'approved') AND target_ids=? LIMIT 1`,
+  const p4RecentMemoryResearchStmt = db.prepare(
+    `SELECT 1
+     FROM dream_actions
+     WHERE phase='P4'
+       AND action_type='research_query'
+       AND json_extract(payload_json, '$.source_memory_id')=?
+       AND COALESCE(decided_at, ?) > ?
+     LIMIT 1`,
   );
   const p2QueuedLinkExistsStmt = db.prepare(
     `SELECT 1 FROM dream_actions WHERE action_type='link' AND status='queued' AND target_ids IN (?, ?) LIMIT 1`,
@@ -309,10 +317,49 @@ function buildCycleCtx(
   );
   const p4MemoryByProjectStmt = hasT2ProjectId
     ? db.prepare(
-        `SELECT memory_id, title, SUBSTR(body, 1, 200) AS body, updated_at FROM t2_memories WHERE project_id = ? AND kind NOT IN ('brief') AND retired_at IS NULL AND title IS NOT NULL AND title != '' ORDER BY created_at DESC LIMIT 2`,
+        `SELECT
+           memory_id,
+           title,
+           SUBSTR(body, 1, 200) AS body,
+           updated_at,
+           (
+             SELECT MAX(COALESCE(da.decided_at, ?2))
+             FROM dream_actions da
+             WHERE da.phase='P4'
+               AND da.action_type='research_query'
+               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
+               AND COALESCE(da.decided_at, ?2) > ?3
+           ) AS last_researched_at
+         FROM t2_memories
+         WHERE project_id = ?1
+           AND kind NOT IN ('brief')
+           AND retired_at IS NULL
+           AND title IS NOT NULL
+           AND title != ''
+         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
+         LIMIT 2`,
       )
     : db.prepare(
-        `SELECT memory_id, title, SUBSTR(body, 1, 200) AS body, updated_at FROM t2_memories WHERE kind NOT IN ('brief') AND retired_at IS NULL AND title IS NOT NULL AND title != '' ORDER BY created_at DESC LIMIT 2`,
+        `SELECT
+           memory_id,
+           title,
+           SUBSTR(body, 1, 200) AS body,
+           updated_at,
+           (
+             SELECT MAX(COALESCE(da.decided_at, ?1))
+             FROM dream_actions da
+             WHERE da.phase='P4'
+               AND da.action_type='research_query'
+               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
+               AND COALESCE(da.decided_at, ?1) > ?2
+           ) AS last_researched_at
+         FROM t2_memories
+         WHERE kind NOT IN ('brief')
+           AND retired_at IS NULL
+           AND title IS NOT NULL
+           AND title != ''
+         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
+         LIMIT 2`,
       );
 
   const dispatchEventLog = deps.dispatchEventLog;
@@ -372,7 +419,7 @@ function buildCycleCtx(
     p4QueueCountStmt,
     p4NegativeSentinelStmt,
     p4MemoryByProjectStmt,
-    p4QueuedQueryExistsStmt,
+    p4RecentMemoryResearchStmt,
     p2QueuedLinkExistsStmt,
     p1QueuedPromoteExistsStmt,
     emitDreamEvent,
@@ -1010,9 +1057,13 @@ function enqueueProjectMemories(
   tasks: (() => Promise<void>)[],
 ): void {
   const projectIdJson = JSON.stringify([project.project_id]);
-  if (ctx.p4QueuedQueryExistsStmt.get(projectIdJson)) return;
+  const recentCutoffMs = ctx.nowMs - P4_RESEARCH_MEMORY_COOLDOWN_MS;
 
-  const memories = ctx.p4MemoryByProjectStmt.all(project.project_id) as {
+  const memories = (
+    ctx.hasT2ProjectId
+      ? ctx.p4MemoryByProjectStmt.all(project.project_id, ctx.nowMs, recentCutoffMs)
+      : ctx.p4MemoryByProjectStmt.all(ctx.nowMs, recentCutoffMs)
+  ) as {
     memory_id: string;
     title: string;
     body: string;
@@ -1072,6 +1123,15 @@ async function runMemoryRewrite(
 
   const negKey = hashQuery(query, query);
   if (ctx.p4NegativeSentinelStmt?.get(negKey, ctx.nowMs)) return;
+  if (
+    ctx.p4RecentMemoryResearchStmt.get(
+      memory.memory_id,
+      ctx.nowMs,
+      ctx.nowMs - P4_RESEARCH_MEMORY_COOLDOWN_MS,
+    )
+  ) {
+    return;
+  }
 
   const queueCount = (ctx.p4QueueCountStmt.get() as { n: number }).n;
   if (queueCount >= ctx.p4QueueMax) return;

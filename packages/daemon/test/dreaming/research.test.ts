@@ -32,6 +32,11 @@ interface CacheNegativeRow {
   is_negative: number;
 }
 
+interface CacheStateRow {
+  is_negative: number;
+  url: string;
+}
+
 interface CacheUrlRow {
   url: string;
 }
@@ -490,6 +495,11 @@ describe("P5: Active Research", () => {
       .all() as { payload_json: string }[];
     expect(enrichment.length).toBe(1);
     expect(enrichment[0]!.payload_json).toContain("fresh body");
+
+    const cacheRow = db
+      .prepare("SELECT is_negative, url FROM dream_research_cache WHERE cache_key=?")
+      .get(cacheKey) as CacheStateRow | null;
+    expect(cacheRow).toEqual({ is_negative: 0, url: "https://example.com/fresh" });
   });
 
   test("search action results cache hits on a second cycle with the same query (no re-bill)", async () => {
@@ -535,5 +545,55 @@ describe("P5: Active Research", () => {
     await runP5Phase(db, "cycle2", testConfig(), deps);
 
     expect(searchMock.mock.calls.length).toBe(1);
+  });
+
+  test("P5 deduplicates enrichment actions for a repeated research URL", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle2', 2, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"repeated enrichment\"}')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"repeated enrichment\"}')",
+    ).run();
+
+    const searchMock = mock(
+      (): Promise<WebResearchResult[]> =>
+        Promise.resolve([
+          webfetchResult({
+            url: "https://example.com/repeated",
+            title: "Repeated",
+            markdown: "same body",
+          }),
+        ]),
+    );
+    const deps = depsWithAdapter(
+      {
+        search: searchMock,
+        scrape: unusedScrape,
+      },
+      { research_provider: "webfetch" },
+    );
+
+    await runP5Phase(db, "cycle1", testConfig(), deps);
+    await runP5Phase(db, "cycle2", testConfig(), deps);
+
+    expect(searchMock.mock.calls.length).toBe(1);
+    const rows = db
+      .prepare(
+        "SELECT payload_json FROM dream_actions WHERE phase='P5' AND action_type='research_enrichment'",
+      )
+      .all() as { payload_json: string }[];
+    expect(rows.length).toBe(1);
+    const payload = JSON.parse(rows[0]!.payload_json) as { source_url?: string };
+    expect(payload.source_url).toBe("https://example.com/repeated");
   });
 });
