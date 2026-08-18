@@ -5,7 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { getDreamingHealthAlerts } from "../../src/tools/dreaming-health.js";
 
 interface PreparedStub {
-  get: () => { c: number };
+  get: (...args: unknown[]) => { c: number };
 }
 
 function makeDb(prepareImpl: (sql: string) => PreparedStub): Database {
@@ -50,5 +50,19 @@ describe("dreaming-health", () => {
     );
     const res = getDreamingHealthAlerts(mockDb, { daemonUptimeMs: 1000 });
     expect(res.alerts).toContain("dream.health.crashed_high");
+  });
+
+  it("dream.health.rewrite_failing alert when rewrites only fail", (): void => {
+    const mockDb = makeDb(
+      (): PreparedStub => ({
+        get: (...args: unknown[]): { c: number } => {
+          if (args.includes("dream_p4_query_rewrite_failed")) return { c: 3 };
+          if (args.includes("dream_p4_query_rewritten")) return { c: 0 };
+          return { c: 1 };
+        },
+      }),
+    );
+    const res = getDreamingHealthAlerts(mockDb, { daemonUptimeMs: 1000 });
+    expect(res.alerts).toContain("dream.health.rewrite_failing");
   });
 });

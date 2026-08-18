@@ -9,6 +9,10 @@ import { fakeDaemon } from "../helpers.js";
 type PlanStartFn = DaemonClient["planStart"];
 type PlanStartResult = Awaited<ReturnType<PlanStartFn>>;
 
+function firstJson(result: { content: { text: string }[] }): unknown {
+  return JSON.parse(result.content[0]?.text ?? "null");
+}
+
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -23,8 +27,7 @@ test("plan.start happy path returns plan_id + status", async () => {
     Promise.resolve({ plan_id: "abc-123-1700000000", status: "running" });
   const handler = planStartHandler(fakeDaemon({ planStart }));
   const result = await handler({ file_path: "/tmp/plan.md" });
-  expect(result.plan_id).toBe("abc-123-1700000000");
-  expect(result.status).toBe("running");
+  expect(firstJson(result)).toEqual({ plan_id: "abc-123-1700000000", status: "running" });
 });
 
 test("plan.start surfaces validation_failed details", async () => {

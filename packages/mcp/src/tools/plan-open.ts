@@ -1,3 +1,4 @@
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,24 +21,19 @@ const DEFAULT_PREFERRED_AGENT = "openai-codex-fast-acp";
 type PlanOpenDaemon = Pick<DaemonClient, "planStart"> &
   Partial<Pick<DaemonClient, "listChainAgents" | "maestroCapabilities">>;
 
-interface PlanOpenError {
-  error: { code: string; field?: string };
-}
-type PlanOpenResult = Awaited<ReturnType<DaemonClient["planStart"]>> | PlanOpenError;
-
 export function planOpenHandler(
   daemon: PlanOpenDaemon,
-): (input: unknown) => Promise<PlanOpenResult> {
-  return async (input): Promise<PlanOpenResult> => {
+): (input: unknown) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     const parsed = PlanOpenInputSchema.parse(input ?? {});
     const unsafeField = findUnsafeField(parsed.goal, parsed.steps ?? []);
     if (unsafeField) {
-      return { error: { code: "unsafe_input", field: unsafeField } };
+      return toTextContent({ error: { code: "unsafe_input", field: unsafeField } });
     }
 
     const resolvedAgents = await resolveDefaultAgents(daemon);
     if ("error" in resolvedAgents) {
-      return resolvedAgents;
+      return toTextContent(resolvedAgents);
     }
     const [preferredAgent, fallbackAgent] = resolvedAgents;
 
@@ -48,7 +44,7 @@ export function planOpenHandler(
       fallbackAgent,
     });
     try {
-      return await daemon.planStart({ file_path: tmp.filePath });
+      return toTextContent(await daemon.planStart({ file_path: tmp.filePath }));
     } finally {
       await rm(tmp.root, { recursive: true, force: true });
     }

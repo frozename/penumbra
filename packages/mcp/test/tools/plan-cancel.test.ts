@@ -10,6 +10,10 @@ type PlanCancelFn = DaemonClient["planCancel"];
 type PlanCancelReq = Parameters<PlanCancelFn>[0];
 type PlanCancelResult = Awaited<ReturnType<PlanCancelFn>>;
 
+function firstJson(result: { content: { text: string }[] }): unknown {
+  return JSON.parse(result.content[0]?.text ?? "null");
+}
+
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -28,8 +32,11 @@ test("plan.cancel happy path returns plan_id + cancelled status", async () => {
     });
   const handler = planCancelHandler(fakeDaemon({ planCancel }));
   const result = await handler({ plan_id: "abc-1700000000" });
-  expect(result.plan_id).toBe("abc-1700000000");
-  expect(result.status).toBe("cancelled");
+  expect(firstJson(result)).toEqual({
+    plan_id: "abc-1700000000",
+    status: "cancelled",
+    cancelled_running_count: 2,
+  });
 });
 
 test("plan.cancel translates 404 into a not found error", async () => {

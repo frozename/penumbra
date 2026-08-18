@@ -497,7 +497,7 @@ export function agentsFleetLatencyRoute(req: Request, services: Services): Respo
 }
 
 function logTaskTypeDeprecation(services: Services): void {
-  const logger = (typeof (services.log as { info?: unknown }).info === "function"
+  const logger = (typeof (services.log as { info?: unknown } | undefined)?.info === "function"
     ? services.log
     : console) as unknown as AgentRecommendDeprecationLogger;
   if (!taskTypeDeprecationLogged.has(logger)) {

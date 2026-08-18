@@ -1,4 +1,5 @@
 import { ProjectRegistry } from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +8,10 @@ import { join } from "node:path";
 import type { DaemonClient } from "../../src/daemon-client.js";
 import type { ToolDef } from "../../src/tools/registry.js";
 
+import { HandleStore } from "../../src/handle-store.js";
+import { setLongLivedRuntimeContextFromEnv } from "../../src/long-lived-context.js";
 import { fakeDaemon } from "../helpers.js";
+import { insertLongLivedTick, seedLongLivedAgent } from "./long-lived-fixtures.js";
 
 type RegistryModule = typeof import("../../src/tools/registry.js");
 type ToolRegistry = RegistryModule["TOOL_REGISTRY"];
@@ -289,6 +293,268 @@ interface ActingOnEnvelope {
   content: { text: string }[];
 }
 
+type ToolResultEnvelope = { content?: unknown };
+type ZodLike = {
+  _def?: Record<string, unknown>;
+  def?: Record<string, unknown>;
+  shape?: Record<string, unknown>;
+  options?: unknown[];
+  isOptional?: () => boolean;
+};
+
+const TEST_ID = "registry-envelope-test";
+
+function makeRegistryDaemon(): DaemonClient {
+  const daemon = new Proxy(
+    {},
+    {
+      get(_target, prop): unknown {
+        if (prop === "resolve") {
+          return () => ({ baseUrl: "http://daemon.test", token: "test-token" });
+        }
+        if (prop === "maestroCapabilities") {
+          return async () => ({
+            agents: [
+              { name: "codex-acp-fast", maestro_capable: true, task_types: ["plan_refine"] },
+            ],
+            task_types: ["debug_diagnose"],
+            workflows: ["brainstorm"],
+          });
+        }
+        if (prop === "listChainAgents") {
+          return async () => ({ agents: [{ name: "codex-acp-fast" }] });
+        }
+        if (prop === "maestroSessionStartAdhoc") {
+          return async () => ({
+            status: "dispatched",
+            agent_name: "codex-acp-fast",
+            chain_handoff_id: TEST_ID,
+            conversation_id: "conversation-1",
+            session: registryDaemonPayload().session,
+          });
+        }
+        return async () => registryDaemonPayload();
+      },
+    },
+  );
+  return daemon as DaemonClient;
+}
+
+function registryDaemonPayload(): Record<string, unknown> {
+  return {
+    ok: true,
+    id: TEST_ID,
+    status: "dispatched",
+    result: {},
+    results: [],
+    agents: [],
+    agent_id: "codex-acp-fast",
+    agent_name: "codex-acp-fast",
+    by_provider: [],
+    chain_handoff_id: TEST_ID,
+    conversation_id: "conversation-1",
+    cost_budget_cents: 1,
+    cost_consumed_cents: 0,
+    decision: "approve",
+    events: [],
+    gate_status: "passed",
+    handoff_id: TEST_ID,
+    handoff: {
+      handoff_id: TEST_ID,
+      status: "pending",
+      conversation_id: "conversation-1",
+      from_agent: "user",
+      to_agent: "codex-acp-fast",
+    },
+    handoff_count: 0,
+    handoffs: [],
+    history: [],
+    implementer_handoff: "handoff-implementer",
+    messages: [],
+    permissions: [],
+    permission_id: TEST_ID,
+    plans: [],
+    reliability: {
+      status: "complete",
+      trustworthy: true,
+      recommended_action: "accept",
+      summary: "ok",
+    },
+    responses: [{ agent: "codex-acp-fast", text: "ok", ts: "2026-01-01T00:00:00.000Z" }],
+    session: {
+      task_id: TEST_ID,
+      chain_handoff_id: TEST_ID,
+      agent_id: "codex-acp-fast",
+      started_at: 1,
+      wall_clock_budget_ms: 1000,
+      cost_budget_cents: 1,
+      sub_dispatch_budget: 1,
+      cost_consumed_cents: 0,
+      sub_dispatches_consumed: 0,
+      soft_warned_at: null,
+      terminated_at: null,
+      termination_reason: null,
+    },
+    soft_warned_at: null,
+    started_at: 1,
+    sub_dispatch_budget: 1,
+    sub_dispatches_consumed: 0,
+    task_id: TEST_ID,
+    tasks: [],
+    terminated_at: null,
+    termination_reason: null,
+    wall_clock_budget_ms: 1000,
+    window: {
+      from: "2026-01-01T00:00:00.000Z",
+      to: "2026-01-02T00:00:00.000Z",
+    },
+    worktrees: [],
+  };
+}
+
+function seedRuntimeDb(storageRoot: string): void {
+  const db = new Database(join(storageRoot, "db.sqlite"));
+  try {
+    seedLongLivedAgent(db, { name: "registry-agent" });
+    insertLongLivedTick(db, { tick_id: "registry-tick", agent_id: "registry-agent" });
+  } finally {
+    db.close();
+  }
+}
+
+function sampleArgsForInputSchema(inputSchema: unknown): unknown {
+  if (isZodObject(inputSchema)) {
+    return sampleObjectFromShape(getZodObjectShape(inputSchema));
+  }
+  if (isPlainObject(inputSchema)) {
+    return sampleObjectFromShape(inputSchema);
+  }
+  return {};
+}
+
+function sampleArgsForTool(name: string, inputSchema: unknown): unknown {
+  if (name === "agent_recommend") return { workload: "debug_diagnose" };
+  if (name === "chain_start" || name === "chain_start_refined" || name === "chain_start_simple") {
+    return {
+      initial_agent: "codex-acp-fast",
+      message: "test",
+      conversation_id: "conversation-1",
+      project_id: "penumbra",
+      task_class: "STANDARD",
+      workload: "debug_diagnose",
+    };
+  }
+  if (name === "chain_wait") return { conversation_id: "conversation-1", timeout_ms: 1 };
+  if (name === "long_lived_self_state_set") return { intent_summary: "test" };
+  if (name === "routing_bias_set") {
+    return { scope: "agent", value: "codex-acp-fast", mode: "boost", ttl_seconds: 60 };
+  }
+  if (name === "routing_bias_clear") return { all: true, confirm: true };
+  if (name === "workflow_wait") return { workflow_run_id: TEST_ID, timeout_ms: 1 };
+  return sampleArgsForInputSchema(inputSchema);
+}
+
+function sampleObjectFromShape(shape: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, schema] of Object.entries(shape)) {
+    if (isOptionalSchema(schema)) continue;
+    out[key] = sampleValue(schema, key);
+  }
+  return out;
+}
+
+function sampleValue(schema: unknown, key: string): unknown {
+  const zod = schema as ZodLike;
+  const def = zod._def ?? zod.def;
+  if (!def) return fallbackValueForKey(key);
+
+  switch (def.type) {
+    case "optional":
+    case "default":
+    case "catch":
+      return sampleValue(def.innerType, key);
+    case "nullable":
+      return sampleValue(def.innerType, key);
+    case "string":
+      return fallbackValueForKey(key);
+    case "number":
+      return 1;
+    case "boolean":
+      return true;
+    case "literal": {
+      const values = def.values;
+      if (Array.isArray(values) && values.length > 0) return values[0];
+      return def.value ?? true;
+    }
+    case "enum":
+      return (
+        Object.values((def.entries ?? {}) as Record<string, unknown>)[0] ?? fallbackValueForKey(key)
+      );
+    case "array":
+      return [sampleValue(def.element, key)];
+    case "object":
+      return sampleObjectFromShape(getZodObjectShape(schema));
+    case "record":
+      return {};
+    case "union": {
+      const options = (def.options as unknown[] | undefined) ?? zod.options;
+      return sampleValue(options?.[0], key);
+    }
+    case "pipe":
+      return sampleValue(def.in, key);
+    default:
+      return fallbackValueForKey(key);
+  }
+}
+
+function fallbackValueForKey(key: string): string {
+  if (key.endsWith("_at") || key === "since" || key === "now") {
+    return "2026-01-01T00:00:00.000Z";
+  }
+  if (key === "task_type" || key === "workload") return "debug_diagnose";
+  if (key === "task_class") return "STANDARD";
+  if (key === "trust_mode") return "config";
+  if (key === "dispatch_kind") return "chain";
+  if (key === "gate_status" || key === "verdict") return "passed";
+  if (key === "decision") return "approve";
+  if (key === "mode") return "boost";
+  if (key === "scope") return "agent";
+  if (key === "source") return "mcp";
+  if (key === "event_type") return "message";
+  if (key === "lane") return "local";
+  if (key === "command") return "true";
+  if (key === "path" || key === "file_path") return "/tmp/penumbra-registry-envelope-test";
+  if (key === "pattern") return "**/*.ts";
+  if (key === "query" || key === "message" || key === "goal" || key === "body") return "test";
+  return TEST_ID;
+}
+
+function isOptionalSchema(schema: unknown): boolean {
+  const zod = schema as ZodLike;
+  if (typeof zod.isOptional === "function" && zod.isOptional()) return true;
+  const type = zod._def?.type ?? zod.def?.type;
+  return type === "optional" || type === "default" || type === "catch";
+}
+
+function isZodObject(value: unknown): boolean {
+  const zod = value as ZodLike;
+  return (zod._def?.type ?? zod.def?.type) === "object";
+}
+
+function getZodObjectShape(schema: unknown): Record<string, unknown> {
+  const zod = schema as ZodLike;
+  const shape = zod.shape ?? zod._def?.shape ?? zod.def?.shape;
+  if (typeof shape === "function") return shape() as Record<string, unknown>;
+  if (isPlainObject(shape)) return shape;
+  return {};
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
 describe("TOOL_REGISTRY", () => {
   it("module loads", () => {
     expect(importError).toBeNull();
@@ -328,6 +594,75 @@ describe("TOOL_REGISTRY", () => {
     for (const name of MUTATING_TOOL_NAMES) {
       expect(TOOL_REGISTRY[name]?.readOnly).toBe(false);
     }
+  });
+
+  it("all registered handlers return MCP content envelopes", async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = makeRegistryDaemon();
+    const handleStore = new HandleStore();
+    const missingContent: string[] = [];
+    const previousRequireProjectId = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    const previousStorageRoot = process.env.PENUMBRA_STORAGE_ROOT;
+    const previousLongLivedAgent = process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+    const previousLongLivedTick = process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+    const originalFetch = globalThis.fetch;
+    const storageRoot = mkdtempSync(join(tmpdir(), "penumbra-registry-envelope-storage-"));
+    try {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+      process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
+      process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "registry-agent";
+      process.env.PENUMBRA_LONG_LIVED_TICK_ID = "registry-tick";
+      setLongLivedRuntimeContextFromEnv(process.env);
+      seedRuntimeDb(storageRoot);
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify(registryDaemonPayload()), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      for (const [name, entry] of Object.entries(TOOL_REGISTRY)) {
+        const handler = entry.makeHandler(daemon, { handleStore });
+        let result: ToolResultEnvelope | undefined;
+        try {
+          result = (await handler(sampleArgsForTool(name, entry.descriptor.inputSchema))) as
+            | ToolResultEnvelope
+            | undefined;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`${name} handler threw during envelope guard: ${message}`);
+        }
+        if (!Array.isArray(result?.content)) {
+          missingContent.push(name);
+        }
+      }
+    } finally {
+      if (previousRequireProjectId === undefined) {
+        delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+      } else {
+        process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = previousRequireProjectId;
+      }
+      if (previousStorageRoot === undefined) {
+        delete process.env.PENUMBRA_STORAGE_ROOT;
+      } else {
+        process.env.PENUMBRA_STORAGE_ROOT = previousStorageRoot;
+      }
+      if (previousLongLivedAgent === undefined) {
+        delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+      } else {
+        process.env.PENUMBRA_LONG_LIVED_AGENT_ID = previousLongLivedAgent;
+      }
+      if (previousLongLivedTick === undefined) {
+        delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+      } else {
+        process.env.PENUMBRA_LONG_LIVED_TICK_ID = previousLongLivedTick;
+      }
+      setLongLivedRuntimeContextFromEnv(process.env);
+      globalThis.fetch = originalFetch;
+      handleStore.close();
+      rmSync(storageRoot, { recursive: true, force: true });
+    }
+
+    expect(missingContent).toEqual([]);
   });
 
   it("wraps handoff_get results with acting_on for handoff_id inputs", async () => {

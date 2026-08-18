@@ -361,7 +361,10 @@ export function chainStartHandler(
     let effectiveProjectId: string | null | undefined = input.project_id;
     let resolutionWarning: ResolutionWarning | undefined;
 
-    if (effectiveProjectId === undefined && input.caller_cwd !== undefined) {
+    if (
+      (effectiveProjectId === undefined || effectiveProjectId === null) &&
+      input.caller_cwd !== undefined
+    ) {
       const { projectId, warning } = resolveProjectFromCallerCwd(
         input.caller_cwd,
         opts.resolveProjectIdFromPath,

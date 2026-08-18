@@ -1,3 +1,4 @@
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -14,9 +15,9 @@ export type MemoryDreamActionRevertInput = z.infer<typeof MemoryDreamActionRever
 
 export function memoryDreamActionRevertHandler(
   daemon: DaemonClient,
-): (args: unknown) => Promise<Awaited<ReturnType<DaemonClient["memoryDreamActionRevert"]>>> {
-  return async (args): Promise<Awaited<ReturnType<DaemonClient["memoryDreamActionRevert"]>>> => {
+): (args: unknown) => Promise<TextContentEnvelope> {
+  return async (args): Promise<TextContentEnvelope> => {
     const input = MemoryDreamActionRevertInputShape.parse(args);
-    return await daemon.memoryDreamActionRevert(input);
+    return toTextContent(await daemon.memoryDreamActionRevert(input));
   };
 }

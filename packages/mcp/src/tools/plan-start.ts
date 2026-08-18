@@ -1,3 +1,4 @@
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -10,10 +11,10 @@ export const PlanStartInputShape = {
 
 export function planStartHandler(
   daemon: Pick<DaemonClient, "planStart">,
-): (input: { file_path: string }) => Promise<Awaited<ReturnType<DaemonClient["planStart"]>>> {
-  return async (input): Promise<Awaited<ReturnType<DaemonClient["planStart"]>>> => {
+): (input: { file_path: string }) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     try {
-      return await daemon.planStart({ file_path: input.file_path });
+      return toTextContent(await daemon.planStart({ file_path: input.file_path }));
     } catch (err) {
       if (isValidationFailed(err)) {
         throw new Error(formatValidationFailedMessage(err));

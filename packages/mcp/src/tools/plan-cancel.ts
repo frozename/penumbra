@@ -1,3 +1,4 @@
+import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -10,10 +11,10 @@ export const PlanCancelInputShape = {
 
 export function planCancelHandler(
   daemon: Pick<DaemonClient, "planCancel">,
-): (input: { plan_id: string }) => Promise<Awaited<ReturnType<DaemonClient["planCancel"]>>> {
-  return async (input): Promise<Awaited<ReturnType<DaemonClient["planCancel"]>>> => {
+): (input: { plan_id: string }) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
     try {
-      return await daemon.planCancel(input);
+      return toTextContent(await daemon.planCancel(input));
     } catch (err) {
       if (isPlanNotFound(err)) {
         throw new Error(`plan.cancel plan not found: ${input.plan_id}`);
