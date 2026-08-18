@@ -85,6 +85,12 @@ interface RegisteredTool {
 }
 interface RegisteredServer {
   _registeredTools: Record<string, RegisteredTool>;
+  server: {
+    _serverInfo: {
+      name: string;
+      version: string;
+    };
+  };
   close: () => Promise<void>;
 }
 
@@ -121,6 +127,18 @@ function constantMakeHandler(value: unknown): ToolDef["makeHandler"] {
 }
 
 describe("buildServer tool registration", () => {
+  it("reports the MCP package version with an in-band build identity", async () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(import.meta.dir, "../package.json"), "utf8"),
+    ) as {
+      version: string;
+    };
+    const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
+
+    expect(server.server._serverInfo.version).not.toBe("0.0.0");
+    expect(server.server._serverInfo.version).toStartWith(`${packageJson.version}+`);
+  });
+
   it("registers only allowlisted tools when PENUMBRA_MCP_TOOL_ALLOWLIST is set", async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = "cost_recent,long_lived_self_state_get";
     const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));

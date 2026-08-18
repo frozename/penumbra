@@ -3,6 +3,7 @@ import { getMcpResponseBudgetTokens, isMcpInvocationLogEnabled } from "@penumbra
 
 import type { DaemonClient } from "./daemon-client.js";
 
+import { MCP_SERVER_VERSION } from "./build-identity.js";
 import { registerFederatedTools } from "./federation/client.js";
 import { DEFAULT_HANDLE_STORE_MAX_TOTAL_BYTES, HandleStore } from "./handle-store.js";
 import { instrumentHandler } from "./instrumentation.js";
@@ -163,7 +164,7 @@ interface AssembleOptions {
 
 async function assembleServer(opts: AssembleOptions): Promise<McpServer> {
   const { daemon, allowlist, invocationLogEnabled, responseBudgetTokens } = opts;
-  const server = new McpServer({ name: "penumbra", version: "0.0.0" });
+  const server = new McpServer({ name: "penumbra", version: MCP_SERVER_VERSION });
   const handleStore = new HandleStore({ maxTotalBytes: DEFAULT_HANDLE_STORE_MAX_TOTAL_BYTES });
   const serverCtx: ToolBuildContext = { handleStore };
   registerRegistryTools({
