@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   computeSubsystemAlerts,
+  DREAM_QUERY_REWRITE_SUBSYSTEM,
   readSubsystemHealth,
   recordSubsystemOutcome,
 } from "../../src/services/subsystem-health.js";
@@ -108,5 +109,28 @@ describe("subsystem health", () => {
     expect(computeSubsystemAlerts(db, { now: new Date("2026-08-18T12:00:00.000Z") })).toContain(
       "dream.health.rewrite_permanent_fallback",
     );
+  });
+
+  test("alerts on consecutive query rewrite failures before the 24h rate crosses the alert threshold", () => {
+    const db = setupDb();
+
+    for (let i = 0; i < 4; i += 1) {
+      recordSubsystemOutcome(db, {
+        subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+        tier: "fallback",
+        ok: false,
+        ts: `2026-08-18T12:0${i}:00.000Z`,
+        reason: "timeout",
+      });
+    }
+
+    expect(
+      computeSubsystemAlerts(db, {
+        now: new Date("2026-08-18T12:05:00.000Z"),
+        queryRewriteFailed24h: 4,
+        queryRewriteSuccess24h: 100,
+        queryRewriteConsecutiveFailuresAlertThreshold: 3,
+      }),
+    ).toContain("dream.health.rewrite_failing");
   });
 });
