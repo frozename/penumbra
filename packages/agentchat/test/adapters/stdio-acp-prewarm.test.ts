@@ -17,7 +17,7 @@ import {
 
 /**
  * Phase 2 — prewarm() connects handshake-only (startServer + initialize +
- * authenticate + deposit) and issues NO session/new or session/prompt, sharing
+ * deposit) and issues NO session/new or session/prompt, sharing
  * the same connection code path as a cold dispatch so the deposited connection
  * is byte-identical and immediately acquirable.
  */
@@ -44,7 +44,7 @@ function makeServer(): MockAcpHandle {
 }
 
 describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
-  it("connects handshake-only (initialize+authenticate once, no session) and deposits an acquirable entry", async () => {
+  it("does not authenticate an already-authenticated agent that advertises auth methods", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const calls: { method: string }[] = [];
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>((method) => {
@@ -77,7 +77,7 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
 
     expect(startServer).toHaveBeenCalledTimes(1);
     expect(calls.filter((c) => c.method === "initialize")).toHaveLength(1);
-    expect(calls.filter((c) => c.method === "authenticate")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "authenticate")).toHaveLength(0);
     expect(calls.filter((c) => c.method === "session/new")).toHaveLength(0); // handshake-only
     expect(calls.filter((c) => c.method === "session/prompt")).toHaveLength(0);
 
@@ -147,22 +147,32 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     ).toBeNull();
   });
 
-  it("a dispatch after prewarm is a reuse hit: no second startServer, fresh session/new at the dispatch cwd, storage root re-injected", async () => {
+  it("authenticates a prewarmed connection only after session/new reports auth required", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const storageRoots: (string | undefined)[] = [];
     const calls: { method: string; cwd?: string }[] = [];
+    let sessionNewAttempts = 0;
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
       (method, params) => {
         const narrowed = asSessionNewParams(params);
         calls.push({ method, cwd: narrowed.cwd });
         if (method === "initialize") {
-          return Promise.resolve({ protocolVersion: 1, authMethods: [] });
+          return Promise.resolve({
+            protocolVersion: 1,
+            authMethods: [{ id: "chat-gpt", type: "agent" }],
+          });
         }
         if (method === "session/new") {
+          sessionNewAttempts += 1;
           const servers = narrowed.mcpServers ?? [];
           const penumbra = servers.find((s) => s.name.includes("penumbra"));
           const sr = (penumbra?.env ?? []).find((e) => e.name === "PENUMBRA_STORAGE_ROOT");
           storageRoots.push(sr?.value);
+          if (sessionNewAttempts === 1) {
+            return Promise.reject(
+              new Error("stdio-acp-client: Authentication required (code: -32000)"),
+            );
+          }
           return Promise.resolve({ sessionId: `s-${String(calls.length)}` });
         }
         if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
@@ -189,6 +199,7 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     };
 
     await mk().prewarm();
+    expect(calls.filter((c) => c.method === "authenticate")).toHaveLength(0);
     const events: DispatchEventInput[] = [];
     const dispatchInput: DispatchInput = {
       prompt: "go",
@@ -207,8 +218,9 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     expect(events.filter((e) => e.kind === "acp.session.reuse")).toHaveLength(1);
     expect(events.filter((e) => e.kind === "acp.server.start")).toHaveLength(0);
     const sessionNews = calls.filter((c) => c.method === "session/new");
-    expect(sessionNews).toHaveLength(1); // exactly one fresh session, on the dispatch
-    expect(sessionNews[0]?.cwd).toBe("/repo/wt-a");
-    expect(storageRoots).toEqual(["/repo/wt-a/.test-storage"]); // re-injected per dispatch
+    expect(sessionNews).toHaveLength(2); // one auth-required attempt, then exactly one retry
+    expect(sessionNews.map((call) => call.cwd)).toEqual(["/repo/wt-a", "/repo/wt-a"]);
+    expect(calls.filter((c) => c.method === "authenticate")).toHaveLength(1);
+    expect(storageRoots).toEqual(["/repo/wt-a/.test-storage", "/repo/wt-a/.test-storage"]);
   });
 });

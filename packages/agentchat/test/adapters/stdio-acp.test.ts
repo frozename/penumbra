@@ -1355,7 +1355,7 @@ describe("StdioAcpAdapter", () => {
     expect(handle.kill).toHaveBeenCalledTimes(1);
   });
 
-  it("merges env and drops unsetEnv keys, affecting auth method fallback", async () => {
+  it("does not authenticate solely because an agent advertises auth methods", async () => {
     const handle = makeMockAcpHandle();
     const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
     startServer.mockResolvedValue(handle);
@@ -1394,8 +1394,104 @@ describe("StdioAcpAdapter", () => {
     expect(passedEnv.FOO).toBe("bar");
     expect(passedEnv.OPENAI_API_KEY).toBeUndefined();
 
-    expect(mockClientRequest).toHaveBeenCalledWith("authenticate", { methodId: "chatgpt" });
+    expect(mockClientRequest).not.toHaveBeenCalledWith("authenticate", { methodId: "chatgpt" });
     expect(handle.kill).toHaveBeenCalled();
+  });
+
+  it("authenticates once and retries session/new after the ACP auth-required error", async () => {
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
+    let sessionNewAttempts = 0;
+    const mockClientRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+      async (method) => {
+        if (method === "initialize") {
+          return {
+            protocolVersion: 1,
+            authMethods: [
+              { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
+            ],
+          };
+        }
+        if (method === "session/new") {
+          sessionNewAttempts += 1;
+          if (sessionNewAttempts === 1) {
+            throw new Error("stdio-acp-client: Authentication required (code: -32000)");
+          }
+          return { sessionId: "session-after-auth" };
+        }
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        return {};
+      },
+    );
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", env: { OPENAI_API_KEY: "test-key" } },
+      {
+        startServer,
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+            on: vi.fn<StdioAcpClient["on"]>(),
+            request: mockClientRequest,
+          }),
+      },
+    );
+
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+
+    expect(mockClientRequest).toHaveBeenCalledWith("authenticate", { methodId: "openai-api-key" });
+    expect(
+      mockClientRequest.mock.calls.filter(([method]) => method === "authenticate"),
+    ).toHaveLength(1);
+    expect(sessionNewAttempts).toBe(2);
+  });
+
+  it("propagates authenticate failure without retrying session/new again", async () => {
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
+    let sessionNewAttempts = 0;
+    const mockClientRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+      async (method) => {
+        if (method === "initialize") {
+          return { protocolVersion: 1, authMethods: [{ id: "chat-gpt", type: "agent" }] };
+        }
+        if (method === "session/new") {
+          sessionNewAttempts += 1;
+          throw new Error("stdio-acp-client: Authentication required (code: -32000)");
+        }
+        if (method === "authenticate") throw new Error("authentication rejected");
+        return {};
+      },
+    );
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp" },
+      {
+        startServer,
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+            on: vi.fn<StdioAcpClient["on"]>(),
+            request: mockClientRequest,
+          }),
+      },
+    );
+
+    await expectRejection(
+      dispatch(adapter, {
+        prompt: "hello",
+        signal: new AbortController().signal,
+      }),
+      "authentication rejected",
+    );
+
+    expect(
+      mockClientRequest.mock.calls.filter(([method]) => method === "authenticate"),
+    ).toHaveLength(1);
+    expect(sessionNewAttempts).toBe(1);
   });
 
   it("claude-agent-acp binary strips host env", async () => {
@@ -1532,7 +1628,7 @@ describe("StdioAcpAdapter", () => {
     expect(handle.kill).toHaveBeenCalled();
   });
 
-  it("respects authMethodId manual override", async () => {
+  it("does not use authMethodId until an operation requires authentication", async () => {
     const handle = makeMockAcpHandle();
     const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
     startServer.mockResolvedValue(handle);
@@ -1565,7 +1661,7 @@ describe("StdioAcpAdapter", () => {
       signal: new AbortController().signal,
     });
 
-    expect(mockClientRequest).toHaveBeenCalledWith("authenticate", { methodId: "custom-auth" });
+    expect(mockClientRequest).not.toHaveBeenCalledWith("authenticate", { methodId: "custom-auth" });
   });
 
   it("sends prompt as ContentBlock array per ACP spec", async () => {

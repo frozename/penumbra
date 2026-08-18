@@ -4,9 +4,10 @@ import type { StdioAcpHandle } from "./stdio-acp-server.js";
 export interface AcpWarmPoolEntry {
   handle: StdioAcpHandle;
   client: StdioAcpClient;
+  authMethods?: AcpAuthMethod[];
   /**
    * Vestigial. Under the connection-pool model (Option B) the pool holds a warm
-   * process + initialized/authenticated client, NOT a session — each dispatch
+   * process + initialized client, NOT a session — each dispatch
    * issues its own session/new at its own cwd. Kept optional only so older
    * deposit call sites compile; the adapter no longer reads it on reuse.
    */
@@ -29,9 +30,16 @@ export interface AcpWarmPoolEntry {
 export interface AcpWarmPoolDeposit {
   handle: StdioAcpHandle;
   client: StdioAcpClient;
+  authMethods?: AcpAuthMethod[];
   sessionId?: string;
   specHash: string;
   pinned?: boolean;
+}
+
+interface AcpAuthMethod {
+  id: string;
+  type?: string;
+  vars?: { name: string }[];
 }
 
 export interface AcpWarmPool {

@@ -683,6 +683,13 @@ function selectAuthMethodId(
   return fallback.id;
 }
 
+function isAuthenticationRequiredError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /^stdio-acp-client: Authentication required(?:|: .+) \(code: -32000\)$/.test(err.message)
+  );
+}
+
 interface DispatchTurnContext {
   cwd: string;
   client: StdioAcpClient;
@@ -1128,6 +1135,11 @@ export class StdioAcpAdapter implements Adapter {
       env: mergedEnv,
       signal,
     });
+    // Begin tracking process liveness as soon as the handle exists. The
+    // registry installs the sole `exited` handler, and deferring it until
+    // session setup made "is the process still alive" depend on how many
+    // awaits happened to precede the first check.
+    getOrCreateServerExitRegistry(server);
     const client = this.deps.createClient(server);
     return { server, client };
   }
@@ -1182,6 +1194,7 @@ export class StdioAcpAdapter implements Adapter {
   private maybeDepositWarm(args: {
     server: StdioAcpHandle;
     client: StdioAcpClient;
+    authMethods: AcpAuthMethod[];
     warmPoolEnabled: boolean;
     poolKey: string;
     specHash: string;
@@ -1191,13 +1204,14 @@ export class StdioAcpAdapter implements Adapter {
       this.deps.pool.deposit(args.poolKey, {
         handle: args.server,
         client: args.client,
+        authMethods: args.authMethods,
         specHash: args.specHash,
       }) ?? null
     );
   }
 
   /**
-   * Initialize + authenticate the connection, then deposit the warm connection
+   * Initialize the connection, then deposit the warm connection
    * into the pool (when enabled). Returns the deposited entry, or null when the
    * pool is disabled. Issues NO session/new. Shared by the cold dispatch path
    * and prewarm so both produce a byte-identical warm connection.
@@ -1227,17 +1241,12 @@ export class StdioAcpAdapter implements Adapter {
       },
     );
     const authMethods = initResponse.authMethods ?? [];
-    if (authMethods.length > 0) {
-      const chosenAuthId = selectAuthMethodId(authMethods, this.opts.authMethodId, args.mergedEnv);
-      await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
-        methodId: chosenAuthId,
-      });
-    }
     if (!args.warmPoolEnabled || !this.deps.pool) return null;
     return (
       this.deps.pool.deposit(args.poolKey, {
         handle: server,
         client,
+        authMethods,
         specHash: args.specHash,
         pinned: args.pinned,
       }) ?? null
@@ -1354,6 +1363,7 @@ export class StdioAcpAdapter implements Adapter {
     cwd: string,
     input: DispatchInput,
     mergedEnv: Record<string, string>,
+    authMethods: AcpAuthMethod[],
   ): Promise<string> {
     const mcpServers = this.opts.mcpServers ?? [];
     // Scope dispatch identity env injection to the penumbra-mcp server only —
@@ -1371,13 +1381,29 @@ export class StdioAcpAdapter implements Adapter {
       meta.permission = { mode };
     }
     if (Object.keys(meta).length > 0) sessionParams._meta = meta;
-    const session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
-      server,
-      client,
-      bootDeadline,
-      "session/new",
-      sessionParams,
-    );
+    let session: AcpSessionNewResponse;
+    try {
+      session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
+        server,
+        client,
+        bootDeadline,
+        "session/new",
+        sessionParams,
+      );
+    } catch (err) {
+      if (!isAuthenticationRequiredError(err) || authMethods.length === 0) throw err;
+      const chosenAuthId = selectAuthMethodId(authMethods, this.opts.authMethodId, mergedEnv);
+      await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
+        methodId: chosenAuthId,
+      });
+      session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
+        server,
+        client,
+        bootDeadline,
+        "session/new",
+        sessionParams,
+      );
+    }
     return session.sessionId;
   }
 
@@ -1573,6 +1599,7 @@ export class StdioAcpAdapter implements Adapter {
       const { client, server } = { client: acquired.client, server: acquired.server };
       state.server = server;
       state.pooledEntry = acquired.pooledEntry;
+      let authMethods = acquired.pooledEntry?.authMethods ?? [];
 
       const armPromptTimeout = (): void => {
         armPromptTimeoutImpl(state, server, requestTimeoutMs);
@@ -1602,16 +1629,11 @@ export class StdioAcpAdapter implements Adapter {
             clientInfo: { name: "penumbra", version: "1.0.0" },
           },
         );
-        const authMethods = initResponse.authMethods ?? [];
-        if (authMethods.length > 0) {
-          const chosenAuthId = selectAuthMethodId(authMethods, this.opts.authMethodId, mergedEnv);
-          await this.requestWithBootDeadline(server, client, bootDeadline, "authenticate", {
-            methodId: chosenAuthId,
-          });
-        }
+        authMethods = initResponse.authMethods ?? [];
         state.pooledEntry = this.maybeDepositWarm({
           server,
           client,
+          authMethods,
           warmPoolEnabled,
           poolKey,
           specHash,
@@ -1619,15 +1641,17 @@ export class StdioAcpAdapter implements Adapter {
         state.pooledEntry?.refs.add(holderId);
       }
 
-      const session = await this.requestWithBootDeadline<AcpSessionNewResponse>(
+      const createdSessionId = await this.createSession(
         server,
         client,
         bootDeadline,
-        "session/new",
-        buildSessionNewParams(this.opts, cwd, input, mergedEnv),
+        cwd,
+        input,
+        mergedEnv,
+        authMethods,
       );
       const sessionId = handleSessionCreated({
-        session,
+        session: { sessionId: createdSessionId },
         adapterKind: this.kind,
         input,
         client,
