@@ -8,6 +8,7 @@ import {
   type ReconcilerDeps,
   type ReconcilerVerdict,
 } from "../../src/worker/merge-reconciler.js";
+import { parseBunTestReport } from "../../src/worker/bun-test-output.js";
 
 interface ExecResult {
   stdout: string;
@@ -48,6 +49,26 @@ const healthyBranchRaw = readFileSync(
   new URL("../fixtures/merge-reconciler/healthy-branch-raw.txt", import.meta.url),
   "utf8",
 );
+
+test("parses zero passes from the captured broken baseline summary", () => {
+  const report = parseBunTestReport(brokenBaselineRaw);
+
+  expect(report.pass).toBe(0);
+  expect(report.reachedSummary).toBe(true);
+});
+
+test("parses passes from the captured healthy branch summary", () => {
+  const report = parseBunTestReport(healthyBranchRaw);
+
+  expect(report.pass).toBe(1212);
+  expect(report.reachedSummary).toBe(true);
+});
+
+test("reports an unknown pass count when the output has no pass line", () => {
+  const report = parseBunTestReport("Ran 0 tests across 0 files. [1.00ms]\n");
+
+  expect(report.pass).toBeNull();
+});
 
 function makeHandoffRow(overrides: Partial<HandoffRow> = {}): HandoffRow {
   return {
