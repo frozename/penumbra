@@ -161,6 +161,20 @@ it("P0 treats zero USD caps as unlimited and still runs P7", async () => {
   expect(phasesRun).toContain("P7");
 });
 
+it("defaults an omitted skipPhases to run P7", async () => {
+  const db = openTestDb();
+  const { skipPhases: _skipPhases, ...configWithoutSkipPhases } = testConfig();
+
+  const cyclePromise = runDreamCycle(db, configWithoutSkipPhases as DreamConfig);
+  await expect(cyclePromise).resolves.toEqual(expect.any(String));
+  const cycleId = await cyclePromise;
+
+  const row = db.prepare(`SELECT phases_run FROM dream_cycles WHERE cycle_id = ?`).get(cycleId) as {
+    phases_run: string;
+  };
+  expect(JSON.parse(row.phases_run) as string[]).toContain("P7");
+});
+
 it("P0 bails when per-cycle LLM cap exceeded", async () => {
   const db = openTestDb();
   const cycleId = await runDreamCycle(db, testConfig({ perCycleUsd: 0.001 }));

@@ -190,6 +190,7 @@ export async function runDreamCycle(
   config: DreamConfig,
   deps: DreamCycleDeps = {},
 ): Promise<string> {
+  config = { ...config, skipPhases: config.skipPhases ?? new Set<string>() };
   const cycleId = crypto.randomUUID();
   const nowMs = Date.now();
 
