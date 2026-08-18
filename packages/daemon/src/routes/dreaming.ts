@@ -18,6 +18,19 @@ const RevertBodySchema = z.object({
   action_id: z.string().min(1),
   cascade: z.enum(["none", "force"]).default("none"),
 });
+const HEALTH_RECENCY_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+function statusFromRecentFailure(
+  totalFailures: number,
+  recentFailures: number,
+  recentSuccesses: number,
+): "active_failure" | "healthy" | "recovered" | "stale_failure_history" | "unknown" {
+  if (recentFailures > 0) return "active_failure";
+  if (totalFailures > 0 && recentSuccesses > 0) return "recovered";
+  if (totalFailures > 0) return "stale_failure_history";
+  if (recentSuccesses > 0) return "healthy";
+  return "unknown";
+}
 
 export function dreamingPendingActionsRoute(req: Request, services: Services): Response {
   const url = new URL(req.url);
@@ -50,6 +63,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
     : null;
 
   const yesterdayMs = now - 24 * 60 * 60 * 1000;
+  const recencyMs = now - HEALTH_RECENCY_WINDOW_MS;
 
   const cycles_in_last_24h = (
     db.prepare("SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ?").get(yesterdayMs) as {
@@ -65,7 +79,27 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       .get(yesterdayMs) as { c: number }
   ).c;
 
+  const cycles_crashed_recent = (
+    db
+      .prepare(
+        'SELECT COUNT(*) as c FROM dream_cycles WHERE started_at >= ? AND outcome = "crashed"',
+      )
+      .get(recencyMs) as { c: number }
+  ).c;
+
+  const cycles_completed_recent = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dream_cycles
+         WHERE started_at >= ?
+           AND outcome IN ('completed', 'completed_with_curator_error')`,
+      )
+      .get(recencyMs) as { c: number }
+  ).c;
+
   const yesterdayIso = new Date(yesterdayMs).toISOString();
+  const recencyIso = new Date(recencyMs).toISOString();
   const query_rewrite_failed_24h = (
     db
       .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
@@ -81,6 +115,22 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
       .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
+  ).c;
+  const query_rewrite_failed_recent = (
+    db
+      .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
+      .get(recencyIso, "dream_p4_query_rewrite_failed") as { c: number }
+  ).c;
+  const query_rewritten_recent = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
+      )
+      .get(recencyIso, "dream_p4_query_rewritten") as { c: number }
   ).c;
   const subsystemHealth = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
   const subsystem_health = subsystemHealth
@@ -100,7 +150,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
   if (uptimeMs > 24 * 60 * 60 * 1000 && cycles_in_last_24h === 0) {
     alerts.push("dream.health.no_cycles_24h");
   }
-  if (cycles_crashed_24h >= 3) {
+  if (cycles_crashed_24h >= 3 && cycles_crashed_recent > 0) {
     alerts.push("dream.health.crashed_high");
   }
   alerts.push(
@@ -108,15 +158,31 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       now: new Date(now),
       queryRewriteFailed24h: query_rewrite_failed_24h,
       queryRewriteSuccess24h: query_rewritten_24h,
+      queryRewriteFailedRecent: query_rewrite_failed_recent,
     }),
   );
 
   return json({
     current_running_cycle,
+    health_recency_window_ms: HEALTH_RECENCY_WINDOW_MS,
     cycles_in_last_24h,
     cycles_crashed_24h,
+    cycles_crashed_recent,
+    cycles_completed_recent,
+    cycles_crash_status: statusFromRecentFailure(
+      cycles_crashed_24h,
+      cycles_crashed_recent,
+      cycles_completed_recent,
+    ),
     query_rewrite_failed_24h,
     query_rewritten_24h,
+    query_rewrite_failed_recent,
+    query_rewritten_recent,
+    query_rewrite_status: statusFromRecentFailure(
+      query_rewrite_failed_24h,
+      query_rewrite_failed_recent,
+      query_rewritten_recent,
+    ),
     subsystem_health,
     alerts,
   });

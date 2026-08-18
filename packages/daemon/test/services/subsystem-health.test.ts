@@ -58,6 +58,7 @@ describe("subsystem health", () => {
     expect(row).not.toBeNull();
     expect(row?.tier).toBe("fallback");
     expect(row?.consecutive_failures).toBe(1);
+    expect(row?.last_failure_ts).toBe("2026-08-18T10:00:00.000Z");
     expect(row?.last_failure_reason).toBe("http_error");
     expect(row?.last_failure_status).toBe(503);
     expect(row?.first_non_primary_ts).toBe("2026-08-18T10:00:00.000Z");
@@ -132,5 +133,34 @@ describe("subsystem health", () => {
         queryRewriteConsecutiveFailuresAlertThreshold: 3,
       }),
     ).toContain("dream.health.rewrite_failing");
+  });
+
+  test("does not alert on recovered query rewrite failure volume with no recent failures", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: false,
+      ts: "2026-08-18T03:00:00.000Z",
+      reason: "timeout",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: true,
+      ts: "2026-08-18T12:00:00.000Z",
+      model: "rewriter-a",
+    });
+
+    const opts = {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 200,
+      queryRewriteSuccess24h: 10,
+      queryRewriteFailedRecent: 0,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    };
+
+    expect(computeSubsystemAlerts(db, opts)).not.toContain("dream.health.rewrite_failing");
   });
 });
