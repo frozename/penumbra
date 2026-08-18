@@ -28,8 +28,8 @@ describe("executeGlob", () => {
     fs.writeFileSync(path.join(tmp, "async.ts"), "x");
     fs.writeFileSync(path.join(tmp, "skip.md"), "y");
 
-    const originalScanSync = Bun.Glob.prototype.scanSync.bind(Bun.Glob.prototype);
-    const originalScan = Bun.Glob.prototype.scan.bind(Bun.Glob.prototype);
+    const originalScanSync = Bun.Glob.prototype.scanSync;
+    const originalScan = Bun.Glob.prototype.scan;
     Bun.Glob.prototype.scanSync = (): never => {
       throw new Error("scanSync should not be called");
     };

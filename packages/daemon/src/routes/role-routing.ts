@@ -36,7 +36,7 @@ export function resolveSingleRoute(
   const resolvedTaskType = taskType ?? inferAgentTaskTypeForRole(message, role);
   let pressure: ReturnType<typeof readSubscriptionPressure> | undefined;
   try {
-    pressure = readSubscriptionPressure(services.db);
+    pressure = readSubscriptionPressure(services.db, { now: services.clock });
   } catch {
     // degrade gracefully
   }
