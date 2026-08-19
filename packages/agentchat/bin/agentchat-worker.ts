@@ -100,6 +100,7 @@ import {
   resolveAgentProvider,
   type RoutingBiasLike,
   selectRetryAgent,
+  shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
 } from "../src/worker/silent-failure-retry.js";
@@ -758,20 +759,37 @@ async function maybeCaptureDispatchOutcome(
   //      dispatch.end terminal event).
   // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
   // recovery handoff message; further captures on retry handoffs are skipped.
-  if (shouldRetryHandoffForSilentFailure(handoff, perf)) {
-    if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
-      log.warn(
+  if (!shouldRetryHandoffForSilentFailure(handoff, perf)) {
+    if (
+      shouldRetryForSilentFailure(perf) &&
+      (handoff.chain_task_type === "smoke_test" || handoff.chain_task_type === "health_check")
+    ) {
+      log.info(
         {
           handoff_id: handoff.handoff_id,
           agent: handoff.to_agent,
+          task_type: handoff.chain_task_type,
           reliability_status: perf.reliability_status ?? null,
+          reason: "workload_expects_no_changes",
         },
-        "silent-failure retry produced another silent failure — not retrying again",
+        "silent-failure retry suppressed for workload that expects no worktree changes",
       );
-      return;
     }
-    await tryAutoRetrySilentFailure(handoff, perf.task_type);
+    return;
   }
+
+  if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
+    log.warn(
+      {
+        handoff_id: handoff.handoff_id,
+        agent: handoff.to_agent,
+        reliability_status: perf.reliability_status ?? null,
+      },
+      "silent-failure retry produced another silent failure — not retrying again",
+    );
+    return;
+  }
+  await tryAutoRetrySilentFailure(handoff, perf.task_type);
 }
 
 async function tryAutoRetrySilentFailure(
@@ -833,6 +851,7 @@ async function tryAutoRetrySilentFailure(
       conversation_id: failedHandoff.conversation_id,
       project_id: failedHandoff.project_id,
       task_type: failedHandoff.chain_task_type ?? undefined,
+      branch_name: failedHandoff.branch_name ?? null,
       message: failedHandoff.message,
       next_agent: nextAgent,
     });

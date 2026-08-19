@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { slugifyBranchSegment } from "@penumbra/core";
+
 import {
   buildRetryPayloadOrNull,
   buildSilentRetryPayload,
@@ -131,6 +133,19 @@ describe("shouldRetryHandoffForSilentFailure", () => {
       ),
     ).toBe(false);
   });
+
+  test.each(["smoke_test", "health_check"])(
+    "returns false for %s workloads that can complete without worktree changes",
+    (chain_task_type) => {
+      const handoff = { dispatch_kind: null, chain_task_type };
+      expect(shouldRetryHandoffForSilentFailure(handoff, perfThatRetries)).toBe(false);
+    },
+  );
+
+  test("continues retrying implement_small silent failures", () => {
+    const handoff = { dispatch_kind: null, chain_task_type: "implement_small" };
+    expect(shouldRetryHandoffForSilentFailure(handoff, perfThatRetries)).toBe(true);
+  });
 });
 
 describe("buildSilentRetryPayload", () => {
@@ -166,6 +181,36 @@ describe("buildSilentRetryPayload", () => {
     expect(p.project_id).toBe("penumbra");
     expect(p.task_type).toBe("implement_small");
     expect(p.initial_agent).toBe("codex-acp-fast");
+  });
+
+  test("derives branch_type and task_name from a named workload branch", () => {
+    const input = { ...base, branch_name: "chore/branch-naming-smoke" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("chore");
+    expect(p.task_name).toBe("branch naming smoke");
+    expect(slugifyBranchSegment(p.task_name ?? "")).toBe("branch-naming-smoke");
+  });
+
+  test("strips a trailing collision suffix when deriving task_name", () => {
+    const input = { ...base, branch_name: "chore/branch-naming-smoke-2" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("chore");
+    expect(p.task_name).toBe("branch naming smoke");
+    expect(slugifyBranchSegment(p.task_name ?? "")).toBe("branch-naming-smoke");
+  });
+
+  test("omits branch_type and task_name for legacy agent branches", () => {
+    const input = { ...base, branch_name: "agent/5192186a-222a-441f-b9d1-3f9429b55bbc" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBeUndefined();
+    expect(p.task_name).toBeUndefined();
+  });
+
+  test("omits branch_type and task_name when original branch_name is null", () => {
+    const input = { ...base, branch_name: null };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBeUndefined();
+    expect(p.task_name).toBeUndefined();
   });
 });
 

@@ -12,6 +12,7 @@ export interface RetryHandoffContext {
     | "orchestrate"
     | null
     | undefined;
+  chain_task_type?: string | null | undefined;
 }
 
 export interface SilentRetryPayloadInput {
@@ -20,6 +21,7 @@ export interface SilentRetryPayloadInput {
   conversation_id: string;
   project_id: string | null;
   task_type: string | undefined;
+  branch_name?: string | null;
   message: string;
   next_agent: string;
 }
@@ -30,6 +32,8 @@ export interface SilentRetryPayload {
   conversation_id: string;
   project_id: string | null;
   task_type: string | undefined;
+  task_name?: string;
+  branch_type?: string;
   use_worktree: true;
   trust_mode: "all";
 }
@@ -155,6 +159,9 @@ export function shouldRetryHandoffForSilentFailure(
   perf: PerformanceForRetry | null | undefined,
 ): boolean {
   if (handoff.dispatch_kind === "long_lived_tick") return false;
+  if (handoff.chain_task_type === "smoke_test" || handoff.chain_task_type === "health_check") {
+    return false;
+  }
   return shouldRetryForSilentFailure(perf);
 }
 
@@ -166,13 +173,30 @@ export function buildRetryPayloadOrNull(input: SilentRetryPayloadInput): SilentR
 }
 
 export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentRetryPayload {
+  const branchFields = retryBranchFields(input.branch_name);
   return {
     initial_agent: input.next_agent,
     message: `${SILENT_RETRY_PREFIX} retry_of=${input.failed_handoff_id} prior_agent=${input.failed_to_agent}\n\n${input.message}`,
     conversation_id: input.conversation_id,
     project_id: input.project_id,
     task_type: input.task_type,
+    ...branchFields,
     use_worktree: true,
     trust_mode: "all",
   };
+}
+
+function retryBranchFields(
+  branchName: string | null | undefined,
+): Pick<SilentRetryPayload, "task_name" | "branch_type"> {
+  if (typeof branchName !== "string") return {};
+  const match = /^([a-z][a-z0-9-]{0,19})\/(.+)$/.exec(branchName);
+  if (!match) return {};
+  const branchType = match[1];
+  const slugWithSuffix = match[2];
+  if (branchType === undefined || slugWithSuffix === undefined) return {};
+  if (branchType === "agent") return {};
+  const slug = slugWithSuffix.replace(/-\d+$/, "");
+  const taskName = slug.replace(/-/g, " ");
+  return { branch_type: branchType, task_name: taskName };
 }

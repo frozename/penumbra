@@ -90,6 +90,8 @@ type ChainStartInput = {
   trust_mode?: "all" | "config";
   use_worktree?: boolean | number | null;
   task_type?: string;
+  task_name?: string;
+  branch_type?: string;
   parent_handoff_id?: string;
   branch_base?: string;
   open_pr_on_review?: boolean;
