@@ -33,7 +33,18 @@ describe("runDispatchLand", () => {
       mode: "squash",
       deleteBranch: true,
       fetch: (url, init) => {
-        calls.push({ url: urlToString(url), init });
+        const requestUrl = urlToString(url);
+        calls.push({ url: requestUrl, init });
+        if (requestUrl === "http://127.0.0.1:4242/handoffs/h-editor") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                handoff: { handoff_id: "h-editor", branch_name: "feature/editor" },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -58,10 +69,11 @@ describe("runDispatchLand", () => {
       },
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("http://127.0.0.1:4242/dispatch/land");
-    expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer tok");
-    const body = parseJson(bodyString(calls[0]?.init));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe("http://127.0.0.1:4242/handoffs/h-editor");
+    expect(calls[1]?.url).toBe("http://127.0.0.1:4242/dispatch/land");
+    expect(new Headers(calls[1]?.init?.headers).get("authorization")).toBe("Bearer tok");
+    const body = parseJson(bodyString(calls[1]?.init));
     expect(body).toMatchObject({
       handoff_id: "h-editor",
       commit_message: "feat(core): curated subject\n\nBody line",
@@ -121,7 +133,16 @@ describe("runDispatchLand", () => {
       storageRoot,
       message: "feat: retry",
       fetch: (url, init) => {
-        calls.push({ url: urlToString(url), init });
+        const requestUrl = urlToString(url);
+        calls.push({ url: requestUrl, init });
+        if (requestUrl === "http://127.0.0.1:4242/handoffs/h-retry") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ handoff: { handoff_id: "h-retry", branch_name: "feature/retry" } }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
         if (calls.length === 1) {
           return Promise.resolve(
             new Response(
@@ -158,12 +179,14 @@ describe("runDispatchLand", () => {
     });
 
     expect(confirmCalls).toBe(1);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     const first = parseJson(bodyString(calls[0]?.init)) as { force: boolean };
     const second = parseJson(bodyString(calls[1]?.init)) as { force: boolean };
     expect(first.force).toBe(false);
     expect(second.force).toBe(true);
+    expect(calls[2]?.url).toBe("http://127.0.0.1:4242/handoffs/h-retry");
     expect(printed.join("\n")).toContain("verdict failed");
+    expect(printed.join("\n")).toContain("PR closed for feature/retry");
   });
 
   test("merge_conflict prints files and throws with rebase hint", async () => {

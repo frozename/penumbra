@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 
+import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
+
 export interface DispatchTimelineEvent {
   handoff_id: string;
   worker_id: string | null;
@@ -48,6 +50,23 @@ interface DispatchLandConflictError {
   files?: unknown;
   hint?: unknown;
   verdict?: Record<string, unknown>;
+}
+
+interface HandoffGetResponse {
+  handoff: {
+    handoff_id: string;
+    branch_name?: string | null;
+  };
+}
+
+function isHandoffGetResponse(value: unknown): value is HandoffGetResponse {
+  if (value === null || typeof value !== "object") return false;
+  const handoff = (value as { handoff?: unknown }).handoff;
+  return (
+    handoff !== null &&
+    typeof handoff === "object" &&
+    typeof (handoff as { handoff_id?: unknown }).handoff_id === "string"
+  );
 }
 
 interface ReconcilerVerdictsResponse {
@@ -143,8 +162,7 @@ function runGitRead(args: string[]): string {
   return proc.stdout.toString();
 }
 
-function buildEditorTemplate(handoffId: string): string {
-  const branch = `agent/${handoffId}`;
+function buildEditorTemplate(handoffId: string, branch: string): string {
   let recentCommits = "(unable to read git log)";
   let diffStat = "(unable to read git diff --stat)";
   try {
@@ -183,10 +201,11 @@ function buildEditorTemplate(handoffId: string): string {
 
 async function openEditorAndReadMessage(opts: {
   handoffId: string;
+  branch: string;
   editor?: string;
   editCommitMessage?: (template: string) => Promise<string>;
 }): Promise<string> {
-  const template = buildEditorTemplate(opts.handoffId);
+  const template = buildEditorTemplate(opts.handoffId, opts.branch);
   if (opts.editCommitMessage) {
     const edited = await opts.editCommitMessage(template);
     const cleaned = stripEditorCommentsAndTrim(edited);
@@ -217,6 +236,30 @@ async function openEditorAndReadMessage(opts: {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+async function resolveDispatchBranchName(opts: {
+  fetcher: typeof fetch;
+  daemon: { baseUrl: string; token: string };
+  handoffId: string;
+}): Promise<string> {
+  const res = await opts.fetcher(
+    `${opts.daemon.baseUrl}/handoffs/${encodeURIComponent(opts.handoffId)}`,
+    {
+      headers: { authorization: `Bearer ${opts.daemon.token}` },
+    },
+  );
+  if (!res.ok) {
+    return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
+  }
+  const body = (await res.json()) as unknown;
+  if (!isHandoffGetResponse(body)) {
+    return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
+  }
+  return resolveHandoffBranchName({
+    handoff_id: body.handoff.handoff_id,
+    branch_name: body.handoff.branch_name ?? null,
+  });
 }
 
 async function defaultConfirm(prompt: string): Promise<boolean> {
@@ -324,10 +367,15 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
   const daemon = resolveDaemon(opts.storageRoot);
   const mode = opts.mode ?? "squash";
   const deleteBranch = opts.deleteBranch ?? true;
+  const branch =
+    opts.message === undefined
+      ? await resolveDispatchBranchName({ fetcher, daemon, handoffId: opts.handoffId })
+      : resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
   const message =
     opts.message ??
     (await openEditorAndReadMessage({
       handoffId: opts.handoffId,
+      branch,
       editor: opts.editor,
       editCommitMessage: opts.editCommitMessage,
     }));
@@ -382,7 +430,11 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
 
   print(`Landed: ${terminalBody.commit_sha} "${terminalBody.message_subject}"`);
   if (terminalBody.pr_closed) {
-    print(`PR closed for agent/${opts.handoffId}`);
+    const closedBranch =
+      opts.message === undefined
+        ? branch
+        : await resolveDispatchBranchName({ fetcher, daemon, handoffId: opts.handoffId });
+    print(`PR closed for ${closedBranch}`);
   }
 }
 

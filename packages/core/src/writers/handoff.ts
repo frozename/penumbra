@@ -300,6 +300,13 @@ export class HandoffWriter {
     return changes.changes > 0;
   }
 
+  recordBranchName(handoff_id: string, branch_name: string): boolean {
+    const changes = this.db
+      .query<unknown, [string, string]>(`UPDATE handoffs SET branch_name = ? WHERE handoff_id = ?`)
+      .run(branch_name, handoff_id);
+    return changes.changes > 0;
+  }
+
   /** CAS reclaim — transitions a dispatched row back to approved and clears worker_id. */
   requeueOrphanedDispatch(handoffId: string, deadWorkerId: string): boolean {
     const changes = this.db

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 
-// 38 = durable subsystem health gauge.
-export const SCHEMA_VERSION = 38;
+// 39 = persisted handoff branch names.
+export const SCHEMA_VERSION = 39;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -163,6 +163,7 @@ const SCHEMA_DDL_BLOCK_01 = `
         isolated_install        INTEGER,
         open_pr_on_review       INTEGER,
         branch_base             TEXT,
+        branch_name             TEXT,
         error_message           TEXT,
         cancel_requested_at     TEXT,
         worker_id               TEXT
@@ -935,6 +936,7 @@ const HANDOFFS_ADDITIVE_COLUMNS: [string, string][] = [
   ["isolated_install", "INTEGER"],
   ["open_pr_on_review", "INTEGER"],
   ["branch_base", "TEXT"],
+  ["branch_name", "TEXT"],
   ["resolution_reason", "TEXT"],
   ["error_message", "TEXT"],
   ["cancel_requested_at", "TEXT"],

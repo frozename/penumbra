@@ -564,6 +564,7 @@ export {
   mirrorNodeModuleSymlinks,
   type WorktreeMode,
 } from "./worktree/manager.js";
+export { type HandoffBranchNameInput, resolveHandoffBranchName } from "./worktree/branch-name.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,

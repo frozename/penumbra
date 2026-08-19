@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
+import { resolveHandoffBranchName } from "./branch-name.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 
 const execFile = promisify(execFileCb);
@@ -71,12 +72,14 @@ export interface CreateOpts {
 }
 
 export type ResolveProjectRoot = (project_id: string) => string | undefined;
+export type ResolveHandoffBranchNameById = (handoff_id: string) => string | null | undefined;
 
 interface WorktreeManagerOpts {
   rootDir?: string;
   mainRepoDir?: string;
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
+  resolveBranchName?: ResolveHandoffBranchNameById;
   runner?: WorktreeCommandRunner;
   mainBranch?: string;
 }
@@ -175,6 +178,7 @@ export class WorktreeManager {
   #mainRepoDir: string;
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
+  private resolveBranchName?: ResolveHandoffBranchNameById;
   private runner: WorktreeCommandRunner;
   private mainBranch: string;
 
@@ -182,6 +186,7 @@ export class WorktreeManager {
     this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
+    this.resolveBranchName = opts?.resolveBranchName;
     this.runner = opts?.runner ?? defaultRunner;
     this.mainBranch = opts?.mainBranch ?? process.env["PENUMBRA_MAIN_BRANCH"] ?? "main";
     this.rootDir =
@@ -225,6 +230,13 @@ export class WorktreeManager {
     return undefined;
   }
 
+  private branchNameFor(handoffId: string): string {
+    return resolveHandoffBranchName({
+      handoff_id: handoffId,
+      branch_name: this.resolveBranchName?.(handoffId) ?? null,
+    });
+  }
+
   private discoveryBases(): string[] {
     return [...new Set([this.baseFor(undefined)])];
   }
@@ -234,7 +246,7 @@ export class WorktreeManager {
     const handoffId = entry.name;
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return;
-    const branchName = `agent/${handoffId}`;
+    const branchName = this.branchNameFor(handoffId);
     const storageRoot = path.join(wtPath, ".test-storage");
     const worktreeMode = inferWorktreeMode(wtPath);
     if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return;
@@ -315,7 +327,7 @@ export class WorktreeManager {
     }
 
     const wtPath = path.join(base, handoffId);
-    const branchName = `agent/${handoffId}`;
+    const branchName = this.branchNameFor(handoffId);
     const baseRef = opts?.baseRef ?? "HEAD";
     const worktreeMode: WorktreeMode = opts?.isolated_install
       ? "isolated_install"
@@ -500,7 +512,7 @@ export class WorktreeManager {
     if (!fs.existsSync(path.join(wtPath, ".git"))) return null;
     const worktreeMode = inferWorktreeMode(wtPath);
     if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return null;
-    const branchName = `agent/${handoffId}`;
+    const branchName = this.branchNameFor(handoffId);
     const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
     try {
@@ -586,7 +598,7 @@ export class WorktreeManager {
     return {
       handoffId,
       path: wtPath,
-      branchName: `agent/${handoffId}`,
+      branchName: this.branchNameFor(handoffId),
       storageRoot: path.join(wtPath, ".test-storage"),
       createdAt,
       status: "created",

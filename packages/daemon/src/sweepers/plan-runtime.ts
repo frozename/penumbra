@@ -13,6 +13,8 @@ import { parsePlanMetaFile } from "@penumbra/workflows";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
+import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
+
 type StageMergedBaseWorktreeManager = {
   stageMergedBase(
     handoffId: string,
@@ -111,12 +113,20 @@ interface AncestorEntry {
 function resolveHandoff(db: Database, task: PlanTaskRecord | undefined): string | undefined {
   if (task?.task_id_in_board === null || task?.task_id_in_board === undefined) return undefined;
   const handoffRow = db
-    .query<
-      { chain_handoff_id: string },
-      [string]
-    >("SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1")
+    .query<{ chain_handoff_id: string; branch_name: string | null }, [string]>(
+      `SELECT m.chain_handoff_id, h.branch_name
+         FROM maestro_sessions m
+         LEFT JOIN handoffs h ON h.handoff_id = m.chain_handoff_id
+        WHERE m.task_id = ?
+        LIMIT 1`,
+    )
     .get(task.task_id_in_board);
-  return handoffRow ? `agent/${handoffRow.chain_handoff_id}` : undefined;
+  return handoffRow
+    ? resolveHandoffBranchName({
+        handoff_id: handoffRow.chain_handoff_id,
+        branch_name: handoffRow.branch_name,
+      })
+    : undefined;
 }
 
 function collectSameProjectAncestors(ctx: BranchBaseCtx): AncestorEntry[] {

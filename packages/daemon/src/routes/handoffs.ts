@@ -865,6 +865,53 @@ export async function handoffsClaimRoute(
   return json({ handoff_id, status: "dispatched" });
 }
 
+export async function handoffsRecordBranchRoute(
+  req: Request,
+  handoff_id: string,
+  services: DaemonServices,
+): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) {
+    return json(
+      { error: { code: "invalid_json", message: "request body was not valid JSON" } },
+      400,
+    );
+  }
+
+  const body = z
+    .object({
+      worker_id: z.string().min(1),
+      branch_name: z.string().min(1),
+    })
+    .safeParse(raw);
+  if (!body.success) {
+    return json(
+      {
+        error: {
+          code: "validation_error",
+          message: "body failed schema validation",
+          field_errors: body.error.issues.map((i) => ({ path: i.path, message: i.message })),
+        },
+      },
+      400,
+    );
+  }
+
+  const principalErr = requireWorkerPrincipalMatch(req, body.data.worker_id);
+  if (principalErr !== null) return principalErr;
+
+  const cur = services.handoffReader.get(handoff_id);
+  if (!cur) {
+    return json(
+      { error: { code: "not_found", message: `handoff ${handoff_id} does not exist` } },
+      404,
+    );
+  }
+
+  services.handoffWriter.recordBranchName(handoff_id, body.data.branch_name);
+  return json({ handoff_id, branch_name: body.data.branch_name });
+}
+
 type ResolvedExpectedWorker =
   | { kind: "ok"; expected_worker_id: string | undefined }
   | { kind: "mismatch" };

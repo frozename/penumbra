@@ -39,6 +39,7 @@ export const HandoffRowSchema = z
     isolated_install: NumericBoolean.nullable().optional(),
     open_pr_on_review: NumericBoolean.nullable().optional(),
     branch_base: z.string().nullable().optional(),
+    branch_name: z.string().nullable().optional(),
     error_message: z.string().nullable(),
     cancel_requested_at: z.string().nullable(),
     worker_id: z.string().nullable(),

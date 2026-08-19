@@ -129,6 +129,7 @@ import {
   handoffsGetRoute,
   handoffsLatestRoute,
   handoffsListPendingRoute,
+  handoffsRecordBranchRoute,
   handoffsStatusRoute,
 } from "./routes/handoffs.js";
 import { healthRoute } from "./routes/health.js";
@@ -896,6 +897,9 @@ const ROUTES: Route[] = [
   ),
   regexRoute("POST", /^\/handoffs\/([^/]+)\/claim$/, (req, ctx, id) =>
     handoffsClaimRoute(req, id, ctx.daemonServices),
+  ),
+  regexRoute("POST", /^\/handoffs\/([^/]+)\/branch$/, (req, ctx, id) =>
+    handoffsRecordBranchRoute(req, id, ctx.daemonServices),
   ),
   regexRoute("GET", /^\/handoffs\/([^/]+)\/status$/, (req, ctx, id) =>
     handoffsStatusRoute(req, id, ctx.services),

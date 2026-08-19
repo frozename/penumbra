@@ -51,6 +51,7 @@ export const HandoffRowSchema = z.object({
     z.boolean().nullable().optional(),
   ),
   branch_base: z.string().nullable().optional(),
+  branch_name: z.string().nullable().optional(),
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
   worker_id: z.string().nullable(),

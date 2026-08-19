@@ -333,6 +333,13 @@ export function buildServices(opts: BuildServicesOpts): Services {
     resolveProjectRoot: shouldResolveProjectRoot
       ? (id: string): string | undefined => opts.projectRegistry?.get(id)?.root_path
       : undefined,
+    resolveBranchName: (handoff_id: string): string | null | undefined =>
+      opts.db
+        .query<
+          { branch_name: string | null },
+          [string]
+        >(`SELECT branch_name FROM handoffs WHERE handoff_id = ?`)
+        .get(handoff_id)?.branch_name,
   });
   const watchdog: Watchdog = {
     recordHeartbeat: () => undefined,

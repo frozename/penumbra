@@ -113,12 +113,20 @@ function errorCause(err: unknown): unknown {
 
 test("Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injected", async () => {
   const wtm = makeMockWorktreeManager();
+  const recorded: { handoffId: string; branchName: string }[] = [];
   const { overrideConfig, handle, worktreePromptRewrite } = await applyWorktreeOverride(
     { handoff_id: "h1", to_agent: "gemini", use_worktree: true },
     baseConfig,
     "/storage",
     wtm,
     mainRepoPath,
+    undefined,
+    {
+      recordBranchName: (handoffId, branchName) => {
+        recorded.push({ handoffId, branchName });
+        return Promise.resolve();
+      },
+    },
   );
   expect(worktreePromptRewrite).toEqual({
     mainRepoPath,
@@ -137,6 +145,7 @@ test("Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injecte
   const opts = cliOptions(agent);
   expect(opts.cwd).toBe("/fake/worktree/h1");
   expect(opts.env?.PENUMBRA_STORAGE_ROOT).toBe("/fake/worktree/h1/.test-storage");
+  expect(recorded).toEqual([{ handoffId: "h1", branchName: "agent/h1" }]);
 });
 
 test("Dispatch with adapter kind openai-compat-http -> NO worktree created", async () => {

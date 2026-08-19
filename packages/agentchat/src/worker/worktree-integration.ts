@@ -18,6 +18,10 @@ export interface WorktreeSetupContext {
   signal?: AbortSignal;
 }
 
+export interface WorktreeOverrideDeps {
+  recordBranchName?: (handoffId: string, branchName: string) => Promise<void>;
+}
+
 /**
  * Subset of HandoffRow fields consumed by applyWorktreeOverride. Narrow shape
  * lets tests construct stub handoffs without filling every column on the full
@@ -83,6 +87,7 @@ export async function applyWorktreeOverride(
   worktreeManager: WorktreeManager,
   mainRepoPath = process.cwd(),
   setupContext?: WorktreeSetupContext,
+  deps?: WorktreeOverrideDeps,
 ): Promise<WorktreeOverrideResult> {
   const targetAgent = config.agents.find((a) => a.name === handoff.to_agent);
   const useWorktree = handoff.use_worktree ?? true;
@@ -100,6 +105,7 @@ export async function applyWorktreeOverride(
       mainRepoPath,
       setupContext,
       targetAgent,
+      deps,
     });
   }
 
@@ -131,12 +137,13 @@ interface CreateWorktreeOverrideArgs {
   mainRepoPath: string;
   setupContext: WorktreeSetupContext | undefined;
   targetAgent: AgentInConfig;
+  deps: WorktreeOverrideDeps | undefined;
 }
 
 async function createWorktreeOverride(
   args: CreateWorktreeOverrideArgs,
 ): Promise<WorktreeOverrideResult> {
-  const { handoff, config, worktreeManager, mainRepoPath, setupContext, targetAgent } = args;
+  const { handoff, config, worktreeManager, mainRepoPath, setupContext, targetAgent, deps } = args;
   let handle: WorktreeHandle;
   try {
     handle = await worktreeManager.createWorktree(handoff.handoff_id, {
@@ -151,6 +158,7 @@ async function createWorktreeOverride(
       { cause: err instanceof Error ? err : new Error(String(err)) },
     );
   }
+  await deps?.recordBranchName?.(handoff.handoff_id, handle.branchName);
 
   const guardText =
     "This dispatch is isolated to the assigned worktree only.\n" +

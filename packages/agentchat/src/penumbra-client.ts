@@ -308,6 +308,13 @@ export class PenumbraClient {
   ): Promise<{ handoff_id: string; status: string }> {
     return await this.postWorker(`/handoffs/${id}/claim`, { worker_id });
   }
+  async recordHandoffBranchName(
+    id: string,
+    branch_name: string,
+    worker_id: string,
+  ): Promise<{ handoff_id: string; branch_name: string }> {
+    return await this.postWorker(`/handoffs/${id}/branch`, { worker_id, branch_name });
+  }
   async completeHandoff(
     id: string,
     worker_id?: string,

@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 
+import { resolveHandoffBranchName } from "./branch-name.js";
 import type { OrphanWorktreeHandle, WorktreeHandle } from "./manager.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
@@ -20,7 +21,12 @@ export interface WorktreeGcCandidate {
 }
 
 interface HandoffLookup {
-  get(handoffId: string): { status: string; resolved_at: string | null } | null;
+  get(handoffId: string): {
+    handoff_id?: string;
+    branch_name?: string | null;
+    status: string;
+    resolved_at: string | null;
+  } | null;
 }
 
 export interface SelectWorktreeGcCandidatesOpts {
@@ -77,7 +83,10 @@ function pushOrphanCandidate(
     if (!terminal) return;
     candidates.push({
       handoff_id: orphan.handoffId,
-      branch: `agent/${orphan.handoffId}`,
+      branch: resolveHandoffBranchName({
+        handoff_id: handoff.handoff_id ?? orphan.handoffId,
+        branch_name: handoff.branch_name ?? null,
+      }),
       status: terminal.status,
       resolved_at: terminal.resolved_at,
       path: orphan.path,
@@ -97,7 +106,7 @@ function pushOrphanCandidate(
 
   candidates.push({
     handoff_id: orphan.handoffId,
-    branch: `agent/${orphan.handoffId}`,
+    branch: resolveHandoffBranchName({ handoff_id: orphan.handoffId, branch_name: null }),
     status: "missing",
     resolved_at: new Date(mtimeMs).toISOString(),
     path: orphan.path,

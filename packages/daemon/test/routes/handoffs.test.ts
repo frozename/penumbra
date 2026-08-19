@@ -1840,6 +1840,38 @@ test("POST /handoffs/<id>/claim flips approved → dispatched and returns 200", 
   expect(row?.status).toBe("dispatched");
 });
 
+test("POST /handoffs/<id>/branch stores the created agent branch name", async () => {
+  const { services, db } = buildClaimTestServices();
+  const TOKEN = "test-token";
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  const id = await seedAndApprove(services);
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: TOKEN,
+    worker_id: "test-worker",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request(`http://x/handoffs/${id}/branch`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "test-worker", branch_name: `agent/${id}` }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<ClaimBody>(res);
+  expect(body).toEqual({ handoff_id: id, branch_name: `agent/${id}` });
+
+  const row = db
+    .query<
+      { branch_name: string | null },
+      [string]
+    >(`SELECT branch_name FROM handoffs WHERE handoff_id = ?`)
+    .get(id);
+  expect(row?.branch_name).toBe(`agent/${id}`);
+});
+
 test("POST /handoffs/<id>/claim a second time returns 409 with current_status", async () => {
   const { services } = buildClaimTestServices();
   const TOKEN = "test-token";

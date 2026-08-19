@@ -71,6 +71,31 @@ test("applySchema creates handoffs table with status index", () => {
   db.close();
 });
 
+test("applySchema adds nullable handoffs.branch_name and is idempotent", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  applySchema(db);
+
+  const columns = db
+    .query<{ name: string; type: string; notnull: number }, []>(`PRAGMA table_info('handoffs')`)
+    .all();
+  const branchName = columns.find((column) => column.name === "branch_name");
+  expect(branchName).toBeDefined();
+  expect(branchName?.type).toBe("TEXT");
+  expect(branchName?.notnull).toBe(0);
+
+  applySchema(db);
+  const count = db
+    .query<
+      { c: number },
+      []
+    >(`SELECT COUNT(*) AS c FROM pragma_table_info('handoffs') WHERE name = 'branch_name'`)
+    .get();
+  expect(count?.c).toBe(1);
+  db.close();
+});
+
 test("applySchema adds t2_promoted_at to t1_rollups", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

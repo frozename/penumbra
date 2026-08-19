@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 
 import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
+import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
 import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 import { createGhCliClient, type GhClient } from "../services/gh-client.js";
@@ -560,7 +561,7 @@ export async function dispatchLandRoute(
   const repoDir = resolveLandRepoDir(services, handoff);
   const routeDeps = deps ?? createDefaultDeps(services, repoDir);
 
-  const branch = `agent/${handoff_id}`;
+  const branch = resolveHandoffBranchName(handoff);
   const verdict = readLatestVerdict(services, handoff_id);
   const verdictGateResponse = await evaluateLandVerdictGates({
     services,
@@ -798,13 +799,13 @@ async function performLandSquashFlow(
 
 async function performLandFfFlow(
   deps: DispatchLandDeps,
-  handoffId: string,
+  branch: string,
 ): Promise<DispatchLandFailure | null> {
   const dirtyFailure = await verifyCleanBeforeLand(deps);
   if (dirtyFailure) return dirtyFailure;
   const checkoutFailure = await performLandCheckoutMain(deps);
   if (checkoutFailure) return checkoutFailure;
-  const merge = await deps.runGit(["merge", "--ff-only", `agent/${handoffId}`]);
+  const merge = await deps.runGit(["merge", "--ff-only", branch]);
   if (merge.code !== 0) {
     return {
       status: 500,
@@ -881,7 +882,6 @@ interface PerformLandGitOpsResult {
 
 async function performLandGitOps(
   deps: DispatchLandDeps,
-  handoff_id: string,
   branch: string,
   mode: "squash" | "ff",
   resolvedCommitMessage: string,
@@ -895,7 +895,7 @@ async function performLandGitOps(
     if ("error" in squash) return squash;
     already_landed = squash.already_landed;
   } else {
-    const ff = await performLandFfFlow(deps, handoff_id);
+    const ff = await performLandFfFlow(deps, branch);
     if (ff) return ff;
   }
 
@@ -1095,7 +1095,7 @@ async function executeLand(input: {
     };
   }
 
-  const branch = `agent/${handoff_id}`;
+  const branch = resolveHandoffBranchName(handoff);
   const messageResult = await resolveLandCommitMessage(deps, branch, commit_message);
   if ("error" in messageResult) return messageResult;
   const resolvedCommitMessage = messageResult.message;
@@ -1109,7 +1109,7 @@ async function executeLand(input: {
   const releaseLock = await lifecycleLock.acquire(handoff_id);
   let gitOpsOutcome: PerformLandGitOpsResult | DispatchLandFailure;
   try {
-    gitOpsOutcome = await performLandGitOps(deps, handoff_id, branch, mode, resolvedCommitMessage);
+    gitOpsOutcome = await performLandGitOps(deps, branch, mode, resolvedCommitMessage);
   } finally {
     const held_ms = Date.now() - lockAcquiredAt;
     releaseLock();

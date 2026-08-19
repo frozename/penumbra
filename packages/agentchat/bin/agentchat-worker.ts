@@ -1362,6 +1362,11 @@ async function setUpDispatchWorktree(
     worktreeManager,
     process.cwd(),
     { signal },
+    {
+      recordBranchName: async (handoffId, branchName) => {
+        await client.recordHandoffBranchName(handoffId, branchName, workerId);
+      },
+    },
   );
   if (result.handle) {
     onEvent(
