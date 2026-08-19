@@ -45,6 +45,7 @@ const fullAgentOptions = {
   permission_ttl_s: 60,
   provider: "openai-compat",
   repoRoot: "/tmp/repo",
+  requestExtras: { chat_template_kwargs: { enable_thinking: false } },
   requestTimeoutMs: 60000,
   sanitizeClaudeHostEnv: true,
   strip_patterns: ["secret"],
