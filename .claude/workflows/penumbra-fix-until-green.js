@@ -46,8 +46,9 @@ const RUBRIC_RESULT = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['criterion', 'pass', 'evidence'],
+        required: ['index', 'criterion', 'pass', 'evidence'],
         properties: {
+          index: { type: 'integer' },
           criterion: { type: 'string' },
           pass: { type: 'boolean' },
           evidence: { type: 'string' },
@@ -99,14 +100,76 @@ function rubricPrompt(branch, handoffId) {
     `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and any read-only git commands needed to understand the branch. Grade every rubric criterion below against the actual diff and task intent.`,
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
-    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with one item per criterion.`,
+    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
   ].join('\n')
 }
 
+// rubric-match:begin
+function normalizeRubricCriterion(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^\s*\d+\s*[.):-]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.$/, '')
+    .trim()
+}
+
+function matchRubricGrade(rubric, grade) {
+  const normalizedRubric = rubric.map((criterion) => normalizeRubricCriterion(criterion))
+  const buckets = rubric.map(() => [])
+  const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
+
+  for (const item of criteria) {
+    const index = item && Number.isInteger(item.index) && item.index >= 1 && item.index <= rubric.length ? item.index - 1 : -1
+    let matchIndex = index
+
+    if (matchIndex < 0) {
+      const normalizedCriterion = normalizeRubricCriterion(item && item.criterion)
+      matchIndex = normalizedRubric.findIndex((criterion) => criterion && criterion === normalizedCriterion)
+
+      if (matchIndex < 0 && normalizedCriterion) {
+        const containmentMatches = normalizedRubric
+          .map((criterion, rubricIndex) => ({ criterion, rubricIndex }))
+          .filter(({ criterion }) => criterion && (criterion.includes(normalizedCriterion) || normalizedCriterion.includes(criterion)))
+        if (containmentMatches.length === 1) {
+          matchIndex = containmentMatches[0].rubricIndex
+        }
+      }
+    }
+
+    if (matchIndex >= 0) {
+      buckets[matchIndex].push(item)
+    }
+  }
+
+  const missing = []
+  const results = rubric.map((criterion, rubricIndex) => {
+    const items = buckets[rubricIndex]
+    if (!items.length) {
+      missing.push(criterion)
+      return { index: rubricIndex + 1, criterion, pass: false, evidence: '' }
+    }
+    return {
+      index: rubricIndex + 1,
+      criterion,
+      pass: items.every((item) => item && item.pass === true),
+      evidence: items
+        .map((item) => String((item && item.evidence) || '').trim())
+        .filter((evidence) => evidence.length > 0)
+        .join('; '),
+    }
+  })
+
+  return { results, missing }
+}
+// rubric-match:end
+
 function rubricFailureOutput(grade) {
-  const failed = ((grade && grade.criteria) || []).filter((c) => !c.pass)
-  const seen = new Set(((grade && grade.criteria) || []).map((c) => c.criterion))
-  const missing = rubric.filter((c) => !seen.has(c))
+  const matched = matchRubricGrade(rubric, grade)
+  const missing = matched.missing
+  const missingSet = new Set(missing)
+  const failed = matched.results.filter((c) => !c.pass && !missingSet.has(c.criterion))
   if (!failed.length && !missing.length) return ''
   return [
     'The check command passed, but independent rubric grading failed these criteria:',
