@@ -30,6 +30,8 @@ function emitLifecycle(
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+const DEFAULT_OPEN_SESSION_TIMEOUT_MS = 60_000;
+const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 120_000;
 const LONG_LIVED_SELF_TOOL_NAMES = [
   "long_lived_self_state_get",
   "long_lived_self_state_set",
@@ -100,6 +102,8 @@ export interface OpencodeAcpOptions {
   opencodeBinary?: string;
   bootTimeoutMs?: number;
   requestTimeoutMs?: number;
+  openSessionTimeoutMs?: number;
+  firstEventTimeoutMs?: number;
   mcpServers?: McpServer[];
 }
 
@@ -161,6 +165,107 @@ function readSessionErrorMessage(props: OpencodeWireEventProps | undefined): str
   const fromName = props?.error?.name;
   if (typeof fromName === "string") return fromName;
   return "unknown";
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function truncateReason(reason: string): string {
+  return reason.length > 300 ? reason.slice(0, 300) : reason;
+}
+
+function emitDispatchError(
+  input: DispatchInput,
+  stage: "server_boot" | "session_open" | "stream",
+  err: unknown,
+): void {
+  emitLifecycle(input, "http.dispatch.error", {
+    stage,
+    reason: truncateReason(errorMessage(err)),
+  });
+}
+
+interface PhaseAbortHandle {
+  signal: AbortSignal;
+  clearTimer: () => void;
+  cleanup: () => void;
+}
+
+function createPhaseAbortSignal(
+  parent: AbortSignal,
+  timeoutMs: number,
+  makeTimeoutError: (elapsedMs: number) => Error,
+): PhaseAbortHandle {
+  if (timeoutMs <= 0) {
+    return {
+      signal: parent,
+      clearTimer(): void {
+        /* no timer */
+      },
+      cleanup(): void {
+        /* no resources */
+      },
+    };
+  }
+
+  const started = Date.now();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const abortWith = (reason?: unknown): void => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+
+  const onParentAbort = (): void => {
+    abortWith(parent.reason);
+  };
+
+  if (parent.aborted) {
+    onParentAbort();
+  } else {
+    parent.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  timer = setTimeout(() => {
+    const err = makeTimeoutError(Date.now() - started);
+    err.name = "AbortError";
+    abortWith(err);
+  }, timeoutMs);
+
+  const clearTimer = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+
+  return {
+    signal: controller.signal,
+    clearTimer,
+    cleanup(): void {
+      clearTimer();
+      parent.removeEventListener("abort", onParentAbort);
+    },
+  };
+}
+
+async function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    const reason = signal.reason;
+    throw reason instanceof Error ? reason : new Error("opencode-acp: operation aborted");
+  }
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      const reason = signal.reason;
+      reject(reason instanceof Error ? reason : new Error("opencode-acp: operation aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 export class OpencodeAcpAdapter implements Adapter {
@@ -252,38 +357,81 @@ export class OpencodeAcpAdapter implements Adapter {
     requestAbort: DispatchAbortHandle,
     lifecycle: { server: AcpServerHandle | null; xdgCleanup: (() => Promise<void>) | null },
   ): AsyncIterable<DispatchEvent> {
-    lifecycle.server = await this.deps.startServer({
-      cwd,
-      pure: true,
-      signal: requestAbort.signal,
-      opencodeBinary: this.opts.opencodeBinary ?? "opencode",
-      bootTimeoutMs: this.opts.bootTimeoutMs,
-      ...(extraEnv ? { env: extraEnv } : {}),
-    });
+    try {
+      lifecycle.server = await this.deps.startServer({
+        cwd,
+        pure: true,
+        signal: requestAbort.signal,
+        opencodeBinary: this.opts.opencodeBinary ?? "opencode",
+        bootTimeoutMs: this.opts.bootTimeoutMs,
+        ...(extraEnv ? { env: extraEnv } : {}),
+      });
+    } catch (err) {
+      emitDispatchError(input, "server_boot", err);
+      throw err;
+    }
     emitLifecycle(input, "http.server.start", {
       adapter: this.kind,
       binary: this.opts.opencodeBinary ?? "opencode",
       base_url: lifecycle.server.baseUrl,
     });
 
-    const client = this.deps.createClient({
-      baseUrl: lifecycle.server.baseUrl,
-      signal: requestAbort.signal,
-    });
     const sessionReq: AcpCreateSessionRequest = { cwd };
-    const { sessionId, workspaceId } = await client.openSession(sessionReq);
+    let sessionId: string;
+    let workspaceId: string | undefined;
+    const openSessionTimeoutMs = this.opts.openSessionTimeoutMs ?? DEFAULT_OPEN_SESSION_TIMEOUT_MS;
+    const openAbort = createPhaseAbortSignal(
+      requestAbort.signal,
+      openSessionTimeoutMs,
+      (elapsedMs) => {
+        emitLifecycle(input, "http.session.open_timeout", {
+          adapter: this.kind,
+          elapsed_ms: elapsedMs,
+        });
+        return new Error(
+          `opencode-acp: session open timed out after ${String(openSessionTimeoutMs)}ms`,
+        );
+      },
+    );
+    try {
+      const client = this.deps.createClient({
+        baseUrl: lifecycle.server.baseUrl,
+        signal: openAbort.signal,
+      });
+      const opened = await awaitWithSignal(client.openSession(sessionReq), openAbort.signal);
+      sessionId = opened.sessionId;
+      workspaceId = opened.workspaceId;
+    } catch (err) {
+      emitDispatchError(input, "session_open", err);
+      throw err;
+    } finally {
+      openAbort.cleanup();
+    }
     emitLifecycle(input, "http.session.start", {
       adapter: this.kind,
       session_id: sessionId,
       workspace_id: workspaceId,
     });
 
-    yield* this.consumeMessageStream(input, client, sessionId, workspaceId, cwd);
+    try {
+      yield* this.consumeMessageStream(
+        input,
+        lifecycle.server.baseUrl,
+        requestAbort,
+        sessionId,
+        workspaceId,
+        cwd,
+      );
+    } catch (err) {
+      emitDispatchError(input, "stream", err);
+      throw err;
+    }
   }
 
   private async *consumeMessageStream(
     input: DispatchInput,
-    client: AcpClientLike,
+    baseUrl: string,
+    requestAbort: DispatchAbortHandle,
     sessionId: string,
     workspaceId: string | undefined,
     cwd: string,
@@ -296,45 +444,90 @@ export class OpencodeAcpAdapter implements Adapter {
     // Stream ends on session.idle (turn complete) or session.error.
     const partTypeById = new Map<string, string>();
     let text = "";
+    let sawEvent = false;
+    let sawIdle = false;
+    let lastEventType = "none";
+    const firstEventTimeoutMs = this.opts.firstEventTimeoutMs ?? DEFAULT_FIRST_EVENT_TIMEOUT_MS;
+    const streamAbort = createPhaseAbortSignal(
+      requestAbort.signal,
+      firstEventTimeoutMs,
+      (elapsedMs) => {
+        emitLifecycle(input, "http.stream.first_event_timeout", {
+          adapter: this.kind,
+          session_id: sessionId,
+          elapsed_ms: elapsedMs,
+        });
+        return new Error(`opencode-acp: no stream events within ${String(firstEventTimeoutMs)}ms`);
+      },
+    );
+    const client = this.deps.createClient({
+      baseUrl,
+      signal: streamAbort.signal,
+    });
     const messageStream = client.sendMessage(sessionId, input.prompt, {
       model: this.opts.model,
       tools: [],
       directory: cwd,
       workspace: workspaceId,
     });
-    streamLoop: for await (const evtRaw of messageStream) {
-      const evt = asWireEvent(evtRaw);
-      const props = evt.properties;
-      switch (evt.type) {
-        case "message.part.updated": {
-          const update = readPartUpdate(props);
-          if (update) partTypeById.set(update.id, update.type);
-          break;
-        }
-        case "message.part.delta": {
-          const delta = readPartDelta(props, partTypeById);
-          if (!delta) break;
-          text += delta;
-          yield { type: "delta", text: delta };
-          break;
-        }
-        case "session.error": {
-          throw new Error(`opencode-acp: session.error — ${readSessionErrorMessage(props)}`);
-        }
-        case "session.idle":
-          // Turn finished cleanly. Stop consuming the stream.
-          // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
-          emitLifecycle(input, "http.session.end", {
-            adapter: this.kind,
-            session_id: sessionId,
-            stop_reason: "idle",
-          });
-          break streamLoop;
-        default:
-          // Other events (server.connected, session.status, session.diff,
-          // server.heartbeat, etc.) are ignored.
-          break;
+    const iterator = messageStream[Symbol.asyncIterator]();
+    const nextEvent = async (): Promise<IteratorResult<AcpEvent, void>> => {
+      if (sawEvent) return await iterator.next();
+      try {
+        return await awaitWithSignal(iterator.next(), streamAbort.signal);
+      } catch (err) {
+        void iterator.return?.();
+        throw err;
       }
+    };
+    try {
+      streamLoop: while (true) {
+        const next = await nextEvent();
+        if (next.done) break;
+        sawEvent = true;
+        streamAbort.clearTimer();
+        const evtRaw = next.value;
+        const evt = asWireEvent(evtRaw);
+        const props = evt.properties;
+        lastEventType = typeof evt.type === "string" ? evt.type : "unknown";
+        switch (evt.type) {
+          case "message.part.updated": {
+            const update = readPartUpdate(props);
+            if (update) partTypeById.set(update.id, update.type);
+            break;
+          }
+          case "message.part.delta": {
+            const delta = readPartDelta(props, partTypeById);
+            if (!delta) break;
+            text += delta;
+            yield { type: "delta", text: delta };
+            break;
+          }
+          case "session.error": {
+            throw new Error(`opencode-acp: session.error — ${readSessionErrorMessage(props)}`);
+          }
+          case "session.idle":
+            // Turn finished cleanly. Stop consuming the stream.
+            // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
+            sawIdle = true;
+            emitLifecycle(input, "http.session.end", {
+              adapter: this.kind,
+              session_id: sessionId,
+              stop_reason: "idle",
+            });
+            break streamLoop;
+          default:
+            // Other events (server.connected, session.status, session.diff,
+            // server.heartbeat, etc.) are ignored.
+            break;
+        }
+      }
+    } finally {
+      streamAbort.cleanup();
+    }
+
+    if (!sawIdle && text.length === 0) {
+      throw new Error(`opencode-acp: stream ended without session.idle after ${lastEventType}`);
     }
 
     yield { type: "done", result: { text } };

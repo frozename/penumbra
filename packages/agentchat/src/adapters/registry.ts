@@ -178,6 +178,8 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
       opencodeBinary: opts.opencodeBinary,
       bootTimeoutMs: opts.bootTimeoutMs,
       requestTimeoutMs: opts.requestTimeoutMs,
+      openSessionTimeoutMs: opts.openSessionTimeoutMs,
+      firstEventTimeoutMs: opts.firstEventTimeoutMs,
       mcpServers: opts.mcpServers,
     });
   },

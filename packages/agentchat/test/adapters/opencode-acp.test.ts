@@ -18,6 +18,7 @@ import type { DispatchInput } from "../../src/sdk/adapter.js";
 import { OpencodeAcpAdapter } from "../../src/adapters/opencode-acp.js";
 
 type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
+type ObservedDispatchEvent = Parameters<NonNullable<DispatchInput["onEvent"]>>[0];
 
 interface SendMessageOpts {
   tools?: AcpTool[];
@@ -59,6 +60,23 @@ function createInput(prompt = "ping"): DispatchInput {
   };
 }
 
+function createObservedInput(events: ObservedDispatchEvent[]): {
+  input: DispatchInput;
+  events: ObservedDispatchEvent[];
+} {
+  return {
+    input: {
+      ...createInput(),
+      handoff_id: "handoff-1",
+      eventContext: { handoffId: "handoff-1", workerId: "worker-1" },
+      onEvent: (event): void => {
+        events.push(event);
+      },
+    },
+    events,
+  };
+}
+
 type ServerHandleWithKill = AcpServerHandle & {
   kill: ReturnType<typeof mock<(timeoutMs?: number) => Promise<void>>>;
 };
@@ -81,6 +99,12 @@ async function* yieldEvents(events: readonly unknown[]): AsyncGenerator<AcpEvent
   for (const event of events) {
     yield asAcpEvent(event);
   }
+}
+
+async function* neverYieldEvents(): AsyncGenerator<AcpEvent, void, undefined> {
+  await new Promise<void>(() => {
+    /* intentionally never resolves */
+  });
 }
 
 interface ClientMock extends AcpClientLike {
@@ -106,6 +130,15 @@ function createClient(events: readonly unknown[]): ClientMock {
       yieldEvents(events),
   );
   return { openSession, sendMessage };
+}
+
+function createNeverStreamClient(): ClientMock {
+  const client = createClient([]);
+  client.sendMessage = mock(
+    (_sessionId: string, _content: string, _opts?: SendMessageOpts): AsyncIterable<AcpEvent> =>
+      neverYieldEvents(),
+  );
+  return client;
 }
 
 async function expectRejectionMatching(p: Promise<unknown>, expected: string): Promise<void> {
@@ -204,6 +237,161 @@ test("opencode-acp concatenates SSE text deltas into a single response", async (
     workspace: ".",
   });
   expect(handle.kill).toHaveBeenCalledTimes(1);
+});
+
+test("opencode-acp times out stalled session opens and emits lifecycle events", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([]);
+  client.openSession = mock(
+    (_req?: AcpCreateSessionRequest): Promise<{ sessionId: string; workspaceId?: string }> =>
+      new Promise(() => {
+        /* intentionally never resolves */
+      }),
+  );
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      openSessionTimeoutMs: 20,
+      requestTimeoutMs: 5_000,
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  await expectRejectionMatching(
+    adapter.dispatch(input),
+    "opencode-acp: session open timed out after 20ms",
+  );
+
+  expect(client.sendMessage).not.toHaveBeenCalled();
+  expect(events.some((event) => event.kind === "http.session.open_timeout")).toBe(true);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "http.dispatch.error" &&
+        event.meta?.stage === "session_open" &&
+        typeof event.meta.reason === "string" &&
+        event.meta.reason.includes("session open timed out"),
+    ),
+  ).toBe(true);
+  expect(handle.kill).toHaveBeenCalledTimes(1);
+});
+
+test("opencode-acp times out streams that emit no events", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createNeverStreamClient();
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      firstEventTimeoutMs: 20,
+      requestTimeoutMs: 5_000,
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  await expectRejectionMatching(
+    adapter.dispatch(input),
+    "opencode-acp: no stream events within 20ms",
+  );
+
+  expect(events.some((event) => event.kind === "http.stream.first_event_timeout")).toBe(true);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "http.dispatch.error" &&
+        event.meta?.stage === "stream" &&
+        typeof event.meta.reason === "string" &&
+        event.meta.reason.includes("no stream events within"),
+    ),
+  ).toBe(true);
+  expect(handle.kill).toHaveBeenCalledTimes(1);
+});
+
+test("opencode-acp rejects empty streams that end without session idle", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "reasoning" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "hidden" },
+    },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", firstEventTimeoutMs: 20 },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  await expectRejectionMatching(
+    adapter.dispatch(createInput()),
+    "opencode-acp: stream ended without session.idle after message.part.delta",
+  );
+});
+
+test("opencode-acp preserves accumulated text when a non-idle stream ends", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "partial" },
+    },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", firstEventTimeoutMs: 20 },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  const out = await adapter.dispatch(createInput());
+
+  expect(out).toEqual({ text: "partial" });
+});
+
+test("opencode-acp still surfaces session.error events", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    {
+      type: "session.error",
+      properties: { error: { data: { message: "provider policy denied" } } },
+    },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", firstEventTimeoutMs: 20 },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  await expectRejectionMatching(
+    adapter.dispatch(createInput()),
+    "opencode-acp: session.error — provider policy denied",
+  );
 });
 
 test("opencode-acp rejects when ACP requests a tool call", async () => {

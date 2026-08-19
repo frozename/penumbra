@@ -159,49 +159,32 @@ serviceTest("startAcpServer rejects spawn errors through the boot promise", asyn
 
 test("startAcpServer logs child errors after boot settles", async () => {
   const child = new FakeChildProcess(5433);
-  let assignedPort = 0;
-  const dummyServer = net.createServer((socket) => socket.destroy());
-  const warn = console.warn;
-  const warnings: unknown[][] = [];
-  console.warn = mock((...args: unknown[]) => {
-    warnings.push(args);
+  const assignedPort = 43_333;
+  const warnings: Error[] = [];
+
+  const spawn = createSpawn(child, (args) => {
+    const portIdx = args.indexOf("--port") + 1;
+    expect(Number(args[portIdx])).toBe(assignedPort);
   });
 
-  try {
-    const spawn = createSpawn(child, (args) => {
-      const portIdx = args.indexOf("--port") + 1;
-      assignedPort = Number(args[portIdx]);
-      dummyServer.listen(assignedPort, "127.0.0.1");
-    });
+  const handle = await startAcpServer({
+    cwd: "/tmp/penumbra-acp",
+    spawn,
+    bootTimeoutMs: 250,
+    getPort: () => Promise.resolve(assignedPort),
+    waitForPort: () => Promise.resolve(),
+    onChildErrorAfterBoot: (err) => {
+      warnings.push(err);
+    },
+  });
 
-    const handle = await startAcpServer({
-      cwd: "/tmp/penumbra-acp",
-      spawn,
-      bootTimeoutMs: 250,
-    });
+  child.emit("error", new Error("post-boot EIO"));
+  await new Promise((resolve) => {
+    queueMicrotask(resolve);
+  });
 
-    child.emit("error", new Error("post-boot EIO"));
-    await new Promise((resolve) => {
-      queueMicrotask(resolve);
-    });
-
-    expect(warnings.some((args) => args.some((arg) => String(arg).includes("post-boot EIO")))).toBe(
-      true,
-    );
-    await new Promise<void>((resolve) => {
-      dummyServer.close(() => {
-        resolve();
-      });
-    });
-    await handle.kill();
-  } finally {
-    console.warn = warn;
-    try {
-      dummyServer.close();
-    } catch {
-      /* already closed */
-    }
-  }
+  expect(warnings.some((err) => err.message.includes("post-boot EIO"))).toBe(true);
+  await handle.kill();
 });
 
 const integrationEnabled =

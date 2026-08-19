@@ -184,25 +184,28 @@ async function verifyArtifact(
   scenario: AcpPromotionScenario,
 ): Promise<{ path: string; expected: string; actual: string | null } | null> {
   if (!scenario.expectedArtifact) return null;
+  const expectedArtifact = scenario.expectedArtifact;
   if (!client.grepInWorktree) {
     return {
-      path: scenario.expectedArtifact.path,
-      expected: scenario.expectedArtifact.content,
+      path: expectedArtifact.path,
+      expected: expectedArtifact.content,
       actual: null,
     };
   }
-  const grep = await client
-    .grepInWorktree(handoffId, {
-      path: scenario.expectedArtifact.path,
-      pattern: scenario.expectedArtifact.content,
-      output_mode: "content",
-      max_results: 1,
-    })
+  const grep = await Promise.resolve()
+    .then(() =>
+      client.grepInWorktree?.(handoffId, {
+        path: expectedArtifact.path,
+        pattern: expectedArtifact.content,
+        output_mode: "content",
+        max_results: 1,
+      }),
+    )
     .catch(() => null);
   if (!grep) {
     return {
-      path: scenario.expectedArtifact.path,
-      expected: scenario.expectedArtifact.content,
+      path: expectedArtifact.path,
+      expected: expectedArtifact.content,
       actual: null,
     };
   }
@@ -211,8 +214,8 @@ async function verifyArtifact(
     : null;
   const actual = typeof first?.text === "string" ? first.text : null;
   return {
-    path: scenario.expectedArtifact.path,
-    expected: scenario.expectedArtifact.content,
+    path: expectedArtifact.path,
+    expected: expectedArtifact.content,
     actual,
   };
 }

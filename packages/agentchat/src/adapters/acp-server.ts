@@ -19,6 +19,8 @@ export type AcpServerSpawner = (
   options: NonNullable<Parameters<typeof spawn>[2]>,
 ) => ChildProcessWithoutNullStreams;
 
+type AcpServerPortWaiter = (port: number, timeoutMs: number, signal?: AbortSignal) => Promise<void>;
+
 export interface StartAcpServerOptions {
   cwd: string;
   pure?: boolean;
@@ -27,6 +29,9 @@ export interface StartAcpServerOptions {
   bootTimeoutMs?: number;
   env?: Record<string, string>;
   spawn?: AcpServerSpawner;
+  getPort?: () => Promise<number>;
+  waitForPort?: AcpServerPortWaiter;
+  onChildErrorAfterBoot?: (err: Error) => void;
 }
 
 function noop(): void {
@@ -148,7 +153,12 @@ interface ChildErrorBridge {
   isBootSettled: () => boolean;
 }
 
-function installChildErrorBridge(child: ChildProcessWithoutNullStreams): ChildErrorBridge {
+function installChildErrorBridge(
+  child: ChildProcessWithoutNullStreams,
+  onChildErrorAfterBoot: (err: Error) => void = (err) => {
+    console.warn("[acp-server] child process error after boot", err);
+  },
+): ChildErrorBridge {
   let bootSettled = false;
   let rejectChildError!: (err: Error) => void;
   const childError = new Promise<never>((_, reject) => {
@@ -163,7 +173,7 @@ function installChildErrorBridge(child: ChildProcessWithoutNullStreams): ChildEr
     if (!bootSettled) {
       rejectChildError(err);
     } else {
-      console.warn("[acp-server] child process error after boot", err);
+      onChildErrorAfterBoot(err);
     }
   };
   child.on("error", onChildError);
@@ -237,14 +247,14 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     throw createAbortError(opts.signal.reason);
   }
 
-  const port = await getFreePort();
+  const port = await (opts.getPort ?? getFreePort)();
   if (opts.signal?.aborted) {
     throw createAbortError(opts.signal.reason);
   }
 
   const child = spawnAcpChild(opts, port);
 
-  const bridge = installChildErrorBridge(child);
+  const bridge = installChildErrorBridge(child, opts.onChildErrorAfterBoot);
 
   if (child.pid === undefined) {
     throw new Error("ACP server failed to start: child process has no pid");
@@ -261,7 +271,16 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   const kill = createKiller(child, exited);
 
   const bootTimeoutMs = opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
-  await runBootRace(child, port, bootTimeoutMs, opts.signal, bridge, kill, exited);
+  await runBootRace(
+    child,
+    port,
+    bootTimeoutMs,
+    opts.signal,
+    bridge,
+    kill,
+    exited,
+    opts.waitForPort ?? waitForPort,
+  );
 
   return {
     port,
@@ -298,6 +317,7 @@ async function runBootRace(
   bridge: ChildErrorBridge,
   kill: (timeoutMs?: number) => Promise<void>,
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
+  waitForPortFn: AcpServerPortWaiter,
 ): Promise<void> {
   let bootOutput = "";
 
@@ -313,7 +333,7 @@ async function runBootRace(
 
   try {
     await Promise.race([
-      waitForPort(port, bootTimeoutMs, signal),
+      waitForPortFn(port, bootTimeoutMs, signal),
       bridge.childError,
       exited.then((info) => {
         // Only an exit DURING boot is a boot failure. After a successful boot
