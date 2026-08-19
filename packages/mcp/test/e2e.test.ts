@@ -20,15 +20,53 @@ try {
 
 let dir = "";
 let handle: Awaited<ReturnType<typeof runStart>> | null = null;
+let embedderServer: ReturnType<typeof Bun.serve> | null = null;
+let previousEmbedderEnv: Record<string, string | undefined> = {};
+
+function setEnv(name: string, value: string): void {
+  previousEmbedderEnv[name] = process.env[name];
+  process.env[name] = value;
+}
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "penumbra-e2e-"));
-  await runInit({ storageRoot: dir, uuid: () => "t" });
+  previousEmbedderEnv = {};
+  setEnv("AGENTCHAT_CONFIG", join(dir, "agentchat.yaml"));
+  setEnv("PENUMBRA_CONFIG_DIR", join(dir, "config"));
+  setEnv("PENUMBRA_PROJECTS_YAML", join(dir, "projects.yaml"));
+  embedderServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname !== "/v1/embeddings") return new Response("not found", { status: 404 });
+      const body = (await req.json()) as { input?: string[] | string };
+      const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ""];
+      return Response.json({
+        data: inputs.map((input, index) => ({
+          index,
+          embedding: Array.from({ length: 384 }, (_, i) => (i === 0 ? input.length / 100 : 0)),
+        })),
+      });
+    },
+  });
+  setEnv("PENUMBRA_EMBEDDINGS_MODE", "remote");
+  setEnv("PENUMBRA_EMBEDDINGS_BASE_URL", embedderServer.url.origin);
+  setEnv("PENUMBRA_EMBEDDINGS_MODEL", "test-embedder");
+  setEnv("PENUMBRA_EMBEDDINGS_DIM", "384");
+  setEnv("PENUMBRA_EMBEDDINGS_HEALTH_PATH", "");
+  await runInit({ storageRoot: dir, uuid: () => "t", claudeUserDir: join(dir, "claude") });
   handle = await runStart({ storageRoot: dir });
 });
 
 afterEach(async () => {
   if (handle) await runStop({ storageRoot: dir, handle });
+  embedderServer?.stop(true);
+  embedderServer = null;
+  for (const [name, value] of Object.entries(previousEmbedderEnv)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  previousEmbedderEnv = {};
   rmSync(dir, { recursive: true, force: true });
 });
 

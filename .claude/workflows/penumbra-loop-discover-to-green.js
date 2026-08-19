@@ -372,6 +372,8 @@ for (let i = 0; i < maxFixRounds; i++) {
   roundsUsed = i + 1;
   const t = {
     label: `impl#${i + 1}:${fixAgent}`,
+    task_name: top.title || plan.summary || `improvement-round-${i + 1}`,
+    branch_type: 'fix',
     initial_agent: fixAgent,
     task_class: "STANDARD",
     task_type: "implement_small",

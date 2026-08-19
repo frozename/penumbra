@@ -91,13 +91,13 @@ const execMock = mock((argv: string[], _opts: { cwd: string }): Promise<ExecResu
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }
-  if (worktreePath !== null && cmd === "git rev-parse HEAD") {
+  if (cmd === "git rev-parse HEAD") {
     return Promise.resolve({ stdout: "branch-head\n", stderr: "" });
   }
-  if (worktreePath !== null && cmd === "git rev-parse main") {
+  if (cmd === "git rev-parse main") {
     return Promise.resolve({ stdout: "base-head\n", stderr: "" });
   }
-  if (worktreePath !== null && cmd === "git merge-base base-head branch-head") {
+  if (cmd === "git merge-base base-head branch-head") {
     return Promise.resolve({ stdout: "merge-base\n", stderr: "" });
   }
   return Promise.resolve({ stdout: "", stderr: "" });
@@ -245,7 +245,7 @@ test("falls back to full-tree typecheck when git diff fails", async () => {
 
   await reconciler("h1");
 
-  expect(execHistory).toContain("bun run typecheck");
+  expect(execHistory).toContain("bun tsc -b");
 });
 
 test("reports scoped typecheck failures with affected packages in the regression summary", async () => {

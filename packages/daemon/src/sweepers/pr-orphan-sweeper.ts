@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { spawn } from "node:child_process";
 
+import { HandoffReader } from "../../../core/src/readers/handoff.js";
 import { isAncestorOf, isThreeDotDiffEmpty } from "../../../core/src/worktree/branch-land-probe.js";
 import {
   type GhClient as CanonicalGhClient,
@@ -47,9 +48,14 @@ export interface SweeperEventWriter {
   write(row: unknown): void;
 }
 
+export interface FleetBranchReader {
+  findByBranchName(name: string): unknown | null;
+}
+
 export interface PrOrphanSweeperDeps {
   ghClient: GhClient;
   gitClient: GitClient;
+  handoffReader?: FleetBranchReader;
   t0Writer: SweeperEventWriter;
   uuid: () => string;
   clock: () => Date;
@@ -528,6 +534,13 @@ function recordPrRowResults(ctx: PrSweepContext, results: PrRowResult[]): number
   return errored;
 }
 
+function isFleetBranch(headRefName: string, handoffReader?: FleetBranchReader): boolean {
+  if (handoffReader !== undefined && handoffReader.findByBranchName(headRefName) !== null) {
+    return true;
+  }
+  return AGENT_HEAD_RE.test(headRefName);
+}
+
 async function processPrRowsBatched(ctx: PrSweepContext, prs: OpenPullRequest[]): Promise<number> {
   let errored = 0;
   for (let i = 0; i < prs.length; i += SWEEP_BATCH_SIZE) {
@@ -547,7 +560,7 @@ export async function runPrOrphanSweep(deps: PrOrphanSweeperDeps): Promise<PrSwe
   const actions: PrSweepAction[] = [];
   let scanned = 0;
   const prs = (await deps.ghClient.listOpenPullRequests()).filter((row) =>
-    AGENT_HEAD_RE.test(row.headRefName),
+    isFleetBranch(row.headRefName, deps.handoffReader),
   );
   scanned = prs.length;
 
@@ -572,6 +585,7 @@ export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop
   const dryRun = opts.dryRun ?? opts.applyDefault !== false;
   const ghClient = opts.ghClient ?? (createGhCliClient({ repoDir: opts.repoDir }) as GhClient);
   const gitClient = opts.gitClient ?? createGitCliClient({ repoDir: opts.repoDir });
+  const handoffReader = new HandoffReader({ db: opts.db });
 
   let inFlight = false;
   const timer = setInterval(() => {
@@ -586,6 +600,7 @@ export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop
     void runPrOrphanSweep({
       ghClient,
       gitClient,
+      handoffReader,
       t0Writer: opts.t0Writer,
       uuid: opts.uuid,
       clock: opts.clock,

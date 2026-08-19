@@ -6,6 +6,7 @@ import {
   type CapCheckRefuse,
   type ChainStartRequest,
   ChainStartRequestSchema,
+  buildHandoffBranchName,
   checkPressureCap,
   HandoffStatusSchema,
   inferAgentTaskTypeForRole,
@@ -18,6 +19,7 @@ import {
   type Services,
   type TaskClass,
 } from "@penumbra/core";
+import { execFileSync } from "node:child_process";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -1161,6 +1163,7 @@ interface PersistChainStartArgs {
   taskClass: TaskClass | undefined;
   recalled_memory_ids: string[];
   recalled_query: string | null;
+  branchName: string | null;
 }
 
 function persistChainStart(args: PersistChainStartArgs): void {
@@ -1183,6 +1186,7 @@ function persistChainStart(args: PersistChainStartArgs): void {
     taskClass,
     recalled_memory_ids,
     recalled_query,
+    branchName,
   } = args;
   services.db.transaction(() => {
     services.t0Writer.write({
@@ -1232,6 +1236,7 @@ function persistChainStart(args: PersistChainStartArgs): void {
       isolated_install: isolatedInstall,
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
+      branch_name: branchName,
     });
     if (openPrOnReviewBool !== undefined) {
       services.db
@@ -1258,6 +1263,7 @@ interface BuildChainStartResponseArgs {
   services: Services;
   conversation_id: string;
   handoff_id: string;
+  branchName: string | null;
   taskClass: TaskClass | undefined;
   lane_id: string | null;
   recalled_memory_ids: string[];
@@ -1275,6 +1281,7 @@ function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
   const body = {
     conversation_id: args.conversation_id,
     handoff_id: args.handoff_id,
+    branch_name: args.branchName,
     ...(args.taskClass !== undefined
       ? {
           task_class: args.taskClass,
@@ -1457,6 +1464,51 @@ function resolveRoutingWithFallbacks(
   };
 }
 
+function gitBranchExists(repoRoot: string, branchName: string): boolean {
+  try {
+    execFileSync(
+      "git",
+      ["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
+      { stdio: "ignore" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function availableBranchNameBestEffort(
+  repoRoot: string | undefined,
+  requestedName: string,
+): string {
+  if (repoRoot === undefined) return requestedName;
+  try {
+    execFileSync("git", ["-C", repoRoot, "rev-parse", "--git-dir"], { stdio: "ignore" });
+    if (!gitBranchExists(repoRoot, requestedName)) return requestedName;
+    for (let suffix = 2; suffix <= 99; suffix += 1) {
+      const candidate = `${requestedName}-${String(suffix)}`;
+      if (!gitBranchExists(repoRoot, candidate)) return candidate;
+    }
+  } catch {
+    return requestedName;
+  }
+  throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
+}
+
+function projectRootForBranchPrecheck(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  projectRegistryEntries: { project_id: string; root_path: string }[] | undefined,
+): string | undefined {
+  if (input.project_id) {
+    const registryRoot = projectRegistryEntries?.find(
+      (entry) => entry.project_id === input.project_id,
+    )?.root_path;
+    return registryRoot ?? services.worktreeManager.projectRootFor(input.project_id);
+  }
+  return services.worktreeManager.mainRepoDir;
+}
+
 export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1487,6 +1539,19 @@ export async function chainStartInternal(
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
   const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
+  const branchName = (() => {
+    if (input.use_worktree === false) return null;
+    const requestedName = buildHandoffBranchName({
+      handoff_id,
+      task_name: input.task_name,
+      branch_type: input.branch_type,
+      workload: route?.taskType ?? input.task_type ?? undefined,
+    });
+    return availableBranchNameBestEffort(
+      projectRootForBranchPrecheck(input, services, projectRegistryEntries),
+      requestedName,
+    );
+  })();
   if (taskClass !== undefined) {
     services.log.debug(
       { event: "dispatch.task_class", task_class: taskClass },
@@ -1520,12 +1585,14 @@ export async function chainStartInternal(
     taskClass,
     recalled_memory_ids,
     recalled_query,
+    branchName,
   });
 
   return buildChainStartResponse({
     services,
     conversation_id,
     handoff_id,
+    branchName,
     taskClass,
     lane_id,
     recalled_memory_ids,

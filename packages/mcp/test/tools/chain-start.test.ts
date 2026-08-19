@@ -138,6 +138,23 @@ test("chain.start handler forwards branch_base when supplied", async () => {
   });
 });
 
+test("chain.start handler forwards branch naming hints when supplied", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+  await handler({
+    initial_agent: "executor",
+    message: "hi",
+    task_name: "Full task pool",
+    branch_type: "feat",
+  });
+  expect(startChain).toHaveBeenCalledWith({
+    initial_agent: "executor",
+    message: "hi",
+    task_name: "Full task pool",
+    branch_type: "feat",
+  });
+});
+
 test("chain.start handler forwards open_pr_on_review when supplied", async () => {
   const { daemon, startChain } = makeStartChain();
   const handler = chainStartHandler(daemon);

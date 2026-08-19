@@ -2,11 +2,12 @@
 # PreToolUse(Bash) guard: block destruction of UNLANDED penumbra agent work.
 #
 # Origin: a `dispatch_land` once failed (missing arg) while a bundled
-# `git branch -D agent/<id>` + `git worktree remove` ran anyway, deleting a
+# `git branch -D <handoff-branch>` + `git worktree remove` ran anyway, deleting a
 # branch whose commit was not yet in the integration branch. This guard makes
 # that class of mistake deterministically impossible: any command whose INTENT
-# is to delete an `agent/<uuid>` ref or its worktree is BLOCKED unless that
-# branch's work is provably already in the base branch.
+# is to delete a fleet branch (DB membership by `handoffs.branch_name`, plus
+# legacy `agent/<uuid>` fallback) or its worktree is BLOCKED unless that branch's
+# work is provably already in the base branch.
 #
 # Three independent "safe" conditions (any one allows the delete):
 #   1. tip is an ancestor of the base (fast-forward / merge land)
@@ -16,7 +17,7 @@
 #
 # Override (any one), for intentional GC of merged/abandoned work:
 #   - export PENUMBRA_ALLOW_AGENT_GC=1            (in the hook's environment)
-#   - inline token:  PENUMBRA_ALLOW_AGENT_GC=1 git branch -D agent/<uuid>
+#   - inline token:  PENUMBRA_ALLOW_AGENT_GC=1 git branch -D <handoff-branch>
 #       (parsed from the command string — works across the hook process boundary)
 #   - sentinel file present + fresh (<=300s):  touch ~/.claude/.penumbra-allow-agent-gc
 #       (override path configurable via $PENUMBRA_ALLOW_AGENT_GC_SENTINEL)
@@ -80,7 +81,7 @@ fi
 # Covers branch force/normal delete, worktree removal, low-level ref deletion,
 # and remote ref deletion (git push origin :ref / --delete ref).
 case "$cmd" in
-  *"git branch -D"*|*"git branch -d"*) : ;;
+  *"git branch -D"*|*"git branch -d"*|*"git branch"*" --delete"*) : ;;
   *"git worktree remove"*|*"worktree remove --force"*) : ;;
   *"git update-ref -d"*|*"update-ref --delete"*) : ;;
   *"git push"*" --delete"*|*"git push"*" -d "*) : ;;
@@ -88,15 +89,145 @@ case "$cmd" in
   *) exit 0 ;;
 esac
 
-# --- which agent/<uuid> refs does the command touch? --------------------------
-uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-refs="$(printf '%s' "$cmd" | grep -oE "agent/${uuid}" | sort -u)"
-[ -n "$refs" ] || exit 0
-
 # --- resolve the repo dir (hook cwd, else the surrounding git checkout) -------
 repo="${cwd:-}"
 [ -d "$repo/.git" ] || repo="${PENUMBRA_REPO:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -d "$repo/.git" ] || exit 0   # can't verify → fail-open
+
+# --- which branch refs does the destructive command touch? --------------------
+clean_ref_token() {
+  local ref=$1
+  ref=${ref#\"}; ref=${ref%\"}
+  ref=${ref#\'}; ref=${ref%\'}
+  while :; do
+    case "$ref" in
+      *$'\r') ref=${ref%$'\r'} ;;
+      *';'|*')'|*'&'|*'|'|*'`') ref=${ref%?} ;;
+      *) break ;;
+    esac
+  done
+  ref=${ref#:}
+  ref=${ref#refs/heads/}
+  printf '%s\n' "$ref"
+}
+
+split_ref_token() {
+  local token=$1
+  token=${token//&&/$'\n'}
+  token=${token//\|\|/$'\n'}
+  token=${token//;/$'\n'}
+  printf '%s\n' "$token"
+}
+
+extract_candidate_refs() {
+  local token raw prev="" branch_mode=0 push_delete_mode=0 worktree_path_next=0 restore_glob=0
+  case $- in
+    *f*) : ;;
+    *) set -f; restore_glob=1 ;;
+  esac
+  for raw in $cmd; do
+    while IFS= read -r token; do
+      [ -n "$token" ] || continue
+      raw=$token
+      token="$(clean_ref_token "$token")"
+
+      if [ "$worktree_path_next" = 1 ]; then
+        case "$token" in
+          -*) : ;;
+          *)
+            git -C "$token" rev-parse --abbrev-ref HEAD 2>/dev/null || true
+            worktree_path_next=0
+            ;;
+        esac
+        prev="$token"
+        continue
+      fi
+
+      if [ "$branch_mode" = 1 ]; then
+        case "$token" in
+          branch|-D|-d|--delete|-*) : ;;
+          *) printf '%s\n' "$token" ;;
+        esac
+      fi
+
+      if [ "$push_delete_mode" = 1 ]; then
+        case "$token" in
+          -*) : ;;
+          *) printf '%s\n' "$token" ;;
+        esac
+      fi
+
+      case "$token" in
+        branch) branch_mode=1 ;;
+        update-ref) prev="update-ref"; continue ;;
+        -d|--delete)
+          if [ "$prev" = "update-ref" ]; then
+            prev="update-ref-delete"
+            continue
+          fi
+          push_delete_mode=1
+          ;;
+        worktree) prev="worktree"; continue ;;
+        remove)
+          if [ "$prev" = "worktree" ]; then
+            worktree_path_next=1
+            prev="$token"
+            continue
+          fi
+          ;;
+        *)
+          case "$raw" in
+            :*) clean_ref_token "$raw" ;;
+          esac
+          if [ "$prev" = "update-ref-delete" ]; then
+            printf '%s\n' "$token"
+            prev="$token"
+            continue
+          fi
+          ;;
+      esac
+      prev="$token"
+    done <<EOF
+$(split_ref_token "$raw")
+EOF
+  done
+  [ "$restore_glob" = 1 ] && set +f
+}
+
+extract_legacy_agent_refs() {
+  local uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  printf '%s' "$cmd" | grep -oE "agent/${uuid}" 2>/dev/null || true
+}
+
+sqlite_escape() {
+  local value=$1
+  value=${value//\'/\'\'}
+  printf '%s\n' "$value"
+}
+
+is_db_member_branch() {
+  local ref=$1 db=${PENUMBRA_DB:-$HOME/.penumbra/db.sqlite} escaped out
+  command -v sqlite3 >/dev/null 2>&1 || return 1
+  [ -f "$db" ] || return 1
+  escaped="$(sqlite_escape "$ref")"
+  out="$(sqlite3 -readonly "file:${db}?mode=ro" "SELECT 1 FROM handoffs WHERE branch_name = '$escaped' LIMIT 1" 2>/dev/null)" || return 1
+  [ "$out" = "1" ]
+}
+
+is_fleet_ref() {
+  local ref=$1
+  uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  printf '%s\n' "$ref" | grep -Eq "^agent/${uuid}$" && return 0
+  is_db_member_branch "$ref"
+}
+
+refs="$(
+  { extract_candidate_refs; extract_legacy_agent_refs; } | while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    is_fleet_ref "$ref" && printf '%s\n' "$ref"
+  done | sort -u
+)"
+[ -n "$refs" ] || exit 0
 
 # --- resolve the integration base branch -------------------------------------
 # Hardcoding "main" fails OPEN in any repo whose default branch differs:

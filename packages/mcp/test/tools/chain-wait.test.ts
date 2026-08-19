@@ -29,7 +29,12 @@ test("chainWaitHandler polls until completed", async () => {
         handoff: { handoff_id: "h1", status: "dispatched", conversation_id: "conv1" },
       });
     return Promise.resolve({
-      handoff: { handoff_id: "h1", status: "completed", conversation_id: "conv1" },
+      handoff: {
+        handoff_id: "h1",
+        status: "completed",
+        conversation_id: "conv1",
+        branch_name: "feat/x-2",
+      },
     });
   };
   const daemon = fakeDaemon({ getLatestHandoff });
@@ -43,6 +48,7 @@ test("chainWaitHandler polls until completed", async () => {
   expect(text).toMatch(/^[●◑] chain_wait {2}/);
   expect(text).toContain('"status": "completed"');
   expect(text).toContain('"last_handoff_id": "h1"');
+  expect(text).toContain('"branch_name": "feat/x-2"');
 });
 
 test("chainWaitHandler returns timeout if timeout_ms is reached", async () => {

@@ -895,7 +895,17 @@ async function loadConversationTranscript(
 // Use a mutable pointer that gets filled in below.
 let eventSourceRef: { forget(id: string): void } | null = null;
 
-const worktreeManager = createWorkerWorktreeManager();
+const handoffBranchNameCache = new Map<string, string>();
+
+function rememberHandoffBranchName(handoff: Pick<HandoffRow, "handoff_id" | "branch_name">): void {
+  if (typeof handoff.branch_name === "string" && handoff.branch_name.length > 0) {
+    handoffBranchNameCache.set(handoff.handoff_id, handoff.branch_name);
+  }
+}
+
+const worktreeManager = createWorkerWorktreeManager({
+  resolveBranchName: (handoffId) => handoffBranchNameCache.get(handoffId),
+});
 
 // ---------------------------------------------------------------------------
 // Warm-pool pre-warm loop (warm_pool_multiworker integration, Phase 3+4).
@@ -1355,6 +1365,7 @@ async function setUpDispatchWorktree(
   executor: WriteToolsExecutor;
 }> {
   const worktreeSetupStart = Date.now();
+  rememberHandoffBranchName(handoff);
   const result = await applyWorktreeOverride(
     handoff,
     scopedConfig,

@@ -1086,6 +1086,7 @@ export function handoffsStatusRoute(
     handoff_id,
     status: row.status,
     error_summary,
+    branch_name: row.branch_name ?? null,
     worker_id: row.worker_id ?? null,
     started_at,
     resolved_at,

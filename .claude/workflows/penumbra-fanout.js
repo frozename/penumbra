@@ -1,7 +1,7 @@
 export const meta = {
   name: 'penumbra-fanout',
   description: 'Fan out N tasks to the penumbra fleet via chain_start (one dispatch per task), wait for each to terminate, and collect every worker result',
-  whenToUse: 'When you have several independent tasks to run on the penumbra fleet at once and want the fan-out, waiting, and result collection codified as a rerunnable script. Pass args.tasks. Landing the resulting agent/<id> branches stays with the orchestrator.',
+  whenToUse: 'When you have several independent tasks to run on the penumbra fleet at once and want the fan-out, waiting, and result collection codified as a rerunnable script. Pass args.tasks. Landing the resulting handoff branch_name branches stays with the orchestrator.',
   phases: [
     { title: 'Dispatch', detail: 'one penumbra chain_start per task; wait for terminal; collect final response' },
   ],
@@ -10,7 +10,7 @@ export const meta = {
 // args shape:
 // {
 //   defaults?: { initial_agent?, task_class?, task_type?, trust_mode?, use_worktree?, max_hops?, timeout_ms? },
-//   tasks: [ { label?, initial_agent?, task_class?, task_type?, trust_mode?, use_worktree?, max_hops?, timeout_ms?, message } ],
+//   tasks: [ { label?, name?, title?, task_name?, branch_type?, initial_agent?, task_class?, task_type?, trust_mode?, use_worktree?, max_hops?, timeout_ms?, message } ],
 //   agentType?: 'penumbra-dispatcher'   // set once the subagent is registered (needs a session restart to load)
 // }
 
@@ -59,7 +59,7 @@ const DISPATCH_RESULT = {
     initial_agent: { type: 'string', description: 'the agent actually dispatched to (resolved if AUTO)' },
     conversation_id: { type: 'string' },
     handoff_id: { type: 'string' },
-    branch: { type: 'string', description: 'agent/<handoff_id> if a worktree branch was created' },
+    branch: { type: 'string', description: 'handoff branch_name if a worktree branch was created' },
     response: { type: 'string', description: 'final worker response text (may be truncated)' },
     error_summary: { type: 'string', description: 'short reason when ok=false' },
     latency_seconds: { type: 'number' },
@@ -77,6 +77,10 @@ function buildSpec(t) {
     timeout_ms: t.timeout_ms || defaults.timeout_ms || 1800000,
     message: t.message,
   }
+  const taskName = t.task_name || t.label || t.name || t.title || defaults.task_name
+  if (taskName) spec.task_name = taskName
+  const branchType = t.branch_type || defaults.branch_type
+  if (branchType) spec.branch_type = branchType
   // Optional: base the worktree on a prior agent branch (enables iterative loops
   // like fix-until-green that build on the previous round's branch).
   const branchBase = t.branch_base || defaults.branch_base
@@ -98,10 +102,10 @@ function buildPrompt(t) {
     '',
     'Protocol:',
     '1. If initial_agent is "AUTO", call mcp__penumbra__agent_recommend({ task_type }) and use the top candidate; else use it verbatim.',
-    '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, and branch_base if present in the spec. Capture conversation_id and handoff_id from the result.',
-    '3. Poll with SHORT waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 }) — each returns within ~90s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / 90000) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed.',
+    '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, task_name, branch_type, and branch_base if present in the spec. Capture conversation_id, handoff_id, and provisional branch_name from the result; the chain_start value is provisional because a collision suffix may be applied by the worker.',
+    '3. Poll with SHORT waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 }) — each returns within ~90s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / 90000) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.',
     '4. Call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) for the worker response.',
-    '5. Return StructuredOutput per schema. ok=true only on a completed terminal state; otherwise ok=false with status and error_summary. Report branch as agent/<handoff_id> if a worktree was created. Do not retry.',
+    '5. Return StructuredOutput per schema. ok=true only on a completed terminal state; otherwise ok=false with status and error_summary. Report branch as the FINAL branch_name if a worktree was created. Do not retry.',
   ].join('\n')
 }
 

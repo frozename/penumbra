@@ -19,7 +19,7 @@ fresh machine or a fresh clone has to be reconstituted from here.
 1. **Anti-fabrication protocol** → copy `CLAUDE.md` to `~/.claude/CLAUDE.md`. *(Contains personal
    operating instructions — review before sharing publicly; do not commit to a public mirror verbatim.)*
 2. **GC guard hook** → copy `hooks/penumbra-agent-gc-guard.sh` to `~/.claude/hooks/` (`chmod +x`),
-   and its regression test to `~/.claude/hooks/test/`. Run the test to confirm: `bash ~/.claude/hooks/test/penumbra-agent-gc-guard.test.sh`.
+   and its regression test to `~/.claude/hooks/test/`. The hook protects fleet branches by `handoffs.branch_name` DB membership, with a legacy `agent/<uuid>` regex fallback when the DB or sqlite3 is unavailable. Run the test to confirm: `GUARD=docs/cc-setup/hooks/penumbra-agent-gc-guard.sh bash docs/cc-setup/hooks/test/penumbra-agent-gc-guard.test.sh`.
 3. **Settings** → merge `settings.snippet.json` into `~/.claude/settings.json` (the `ultracode`
    flag + the PreToolUse(Bash) hook wiring). The full `settings.json` is intentionally NOT copied
    here — it holds credentials.

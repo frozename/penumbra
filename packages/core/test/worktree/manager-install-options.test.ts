@@ -61,6 +61,9 @@ async function expectResolvesEqual<T>(promise: Promise<T>, expected: T): Promise
 function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean }): Runner {
   return (cmd: string, args: string[], runnerOpts: RunnerOptions = {}): Promise<RunnerResult> => {
     calls.push({ cmd, args, opts: runnerOpts });
+    if (cmd === "git" && args[0] === "show-ref" && args[1] === "--verify") {
+      return Promise.reject(new Error(`missing ref ${args[2] ?? ""}`));
+    }
     if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
       fs.mkdirSync(args[3]!, { recursive: true });
       fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
@@ -158,6 +161,9 @@ test("isolated install writes readiness marker only after bun install succeeds",
       runnerOpts: RunnerOptions = {},
     ): Promise<RunnerResult> => {
       calls.push({ cmd, args, opts: runnerOpts });
+      if (cmd === "git" && args[0] === "show-ref" && args[1] === "--verify") {
+        return Promise.reject(new Error(`missing ref ${args[2] ?? ""}`));
+      }
       if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
         fs.mkdirSync(args[3]!, { recursive: true });
         fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");

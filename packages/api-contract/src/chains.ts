@@ -81,10 +81,27 @@ export const ChainRoutingAdvisorySchema = z
   .strict();
 export type ChainRoutingAdvisory = z.infer<typeof ChainRoutingAdvisorySchema>;
 
+export const ChainStartRequestSchema = z
+  .object({
+    initial_agent: z.string().min(1),
+    message: z.string().min(1),
+    task_name: z.string().min(1).max(120).optional(),
+    branch_type: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,19}$/)
+      .refine((value) => value !== "agent", {
+        message: "branch_type 'agent' is reserved for legacy handoff branches",
+      })
+      .optional(),
+  })
+  .loose();
+export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;
+
 export const ChainStartResponseSchema = z
   .object({
     conversation_id: z.string(),
     handoff_id: z.string(),
+    branch_name: z.string().nullable().optional(),
     task_class: z.string().optional(),
     lane_id: z.string().nullable().optional(),
     recalled_memory_ids: z.array(z.string()).optional(),

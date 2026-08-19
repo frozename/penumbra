@@ -104,6 +104,15 @@ const execMock = mock((argv: string[], _opts: { cwd: string }): Promise<ExecResu
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }
+  if (cmd === "git rev-parse HEAD") {
+    return Promise.resolve({ stdout: "branch-head\n", stderr: "" });
+  }
+  if (cmd === "git rev-parse main") {
+    return Promise.resolve({ stdout: "base-head\n", stderr: "" });
+  }
+  if (cmd === "git merge-base base-head branch-head") {
+    return Promise.resolve({ stdout: "merge-base\n", stderr: "" });
+  }
   return Promise.resolve(nextExecResult);
 });
 
@@ -297,7 +306,7 @@ test("parse failures fall back to raw typecheck output", async () => {
 test("full-tree fallback attributes any package diagnostic", async () => {
   diffOutput = "packages/daemon/src/routes/handoffs.ts\n../scripts/tool.ts\n";
   execFailures.set(
-    "bun run typecheck",
+    "bun tsc -b",
     new ExecCommandError({
       stderr:
         'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n' +

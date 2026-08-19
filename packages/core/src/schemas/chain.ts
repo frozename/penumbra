@@ -4,9 +4,18 @@ import { AgentTaskTypeSchema } from "./agent-performance.js";
 import { SafeProjectIdSchema } from "./project-id.js";
 import { TaskClassSchema } from "./task-class.js";
 
+const BranchTypeSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9-]{0,19}$/)
+  .refine((value) => value !== "agent", {
+    message: "branch_type 'agent' is reserved for legacy handoff branches",
+  });
+
 export const ChainStartRequestSchema = z.object({
   initial_agent: z.string().min(1),
   message: z.string().min(1),
+  task_name: z.string().min(1).max(120).optional(),
+  branch_type: BranchTypeSchema.optional(),
   conversation_id: z.string().min(1).optional(),
   project_id: SafeProjectIdSchema.nullable().optional(),
   max_hops: z.number().int().positive().optional(),

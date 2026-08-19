@@ -565,6 +565,7 @@ export class DaemonClient {
     handoff_id: string;
     status: string;
     error_summary: string | null;
+    branch_name: string | null;
     worker_id: string | null;
     started_at: string | null;
     resolved_at: string | null;
@@ -587,6 +588,7 @@ export class DaemonClient {
       handoff_id: string;
       status: string;
       error_summary: string | null;
+      branch_name: string | null;
       worker_id: string | null;
       started_at: string | null;
       resolved_at: string | null;

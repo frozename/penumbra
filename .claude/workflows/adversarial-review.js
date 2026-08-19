@@ -91,7 +91,7 @@ const FIX_SCHEMA = {
   required: ["handoff_id", "branch", "commit_count", "status"],
   properties: {
     handoff_id: { type: "string" },
-    branch: { type: "string", description: "agent/<handoff_id> or MISSING" },
+    branch: { type: "string", description: "handoff branch_name or MISSING" },
     branch_tip: { type: "string" },
     commit_count: { type: "integer" },
     status: { type: "string" },
@@ -185,11 +185,11 @@ if (fixRound && review.high.length > 0) {
   fix = await agent(
     [
       `Dispatch ONE fix task to the penumbra fleet for the HIGH adversarial-review findings below, then report verbatim branch facts.`,
-      `STEP 1: mcp__penumbra__chain_start initial_agent="${fixAgent}", task_class="BOUNDARY", task_type="implement_small", caller_cwd="${REPO}", branch_base="${target_ref}", message = a contract that: addresses ONLY these HIGH findings, writes/updates a failing test first, keeps scope tight, commits with a NEUTRAL message (zero AI/assistant/co-authored attribution), and runs its own typecheck + tests. Findings:`,
+      `STEP 1: mcp__penumbra__chain_start initial_agent="${fixAgent}", task_class="BOUNDARY", task_type="implement_small", task_name="review-fixes", caller_cwd="${REPO}", branch_base="${target_ref}", branch_type="fix", message = a contract that: addresses ONLY these HIGH findings, writes/updates a failing test first, keeps scope tight, commits with a NEUTRAL message (zero AI/assistant/co-authored attribution), and runs its own typecheck + tests. Findings:`,
       highList,
-      `STEP 2: copy handoff_id verbatim.`,
-      `STEP 3 (watchdog-safe): poll mcp__penumbra__chain_status / chain_wait (<=150s per call) until terminal.`,
-      `STEP 4: in ${REPO}: git rev-parse --verify --quiet agent/<handoff_id> (branch_tip; "MISSING" if absent); git rev-list --count main..agent/<handoff_id> (commit_count).`,
+      `STEP 2: copy handoff_id and provisional branch_name verbatim from the chain_start result; the chain_start value is provisional because a collision suffix may be applied by the worker.`,
+      `STEP 3 (watchdog-safe): poll mcp__penumbra__chain_status / chain_wait (<=150s per call) until terminal. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
+      `STEP 4: in ${REPO}: git rev-parse --verify --quiet <branch_name> (branch_tip; "MISSING" if absent); git rev-list --count main..<branch_name> (commit_count).`,
       `Return FIX_SCHEMA with verbatim values.`,
     ].join("\n"),
     { label: "fix:round1", phase: "Fix", schema: FIX_SCHEMA, model: "sonnet" },

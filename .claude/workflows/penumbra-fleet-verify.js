@@ -18,7 +18,7 @@ export const meta = {
 //   taskClass       - BOUNDARY | STANDARD | TRIVIAL (default STANDARD)
 //   verifyChecklist - extra free-text checks the verifier should measure/report
 //   branchBase      - optional git ref to base the worktree on (e.g. an unlanded
-//                     agent/<id> branch for a fix-round building on prior work);
+//                     handoff branch_name for a fix-round building on prior work);
 //                     defaults to main. Verify uses merge-base, so the squash-land
 //                     of the resulting branch carries the full base+fix footprint.
 let a = args
@@ -51,7 +51,7 @@ const DISPATCH_SCHEMA = {
     conversation_id: { type: 'string' },
     status: { type: 'string', description: 'terminal status from chain_status' },
     reliability_action: { type: 'string' },
-    branch: { type: 'string', description: 'agent/<handoff_id>, or "MISSING"' },
+    branch: { type: 'string', description: 'handoff branch_name, or "MISSING"' },
     branch_tip: { type: 'string' },
     commit_count: { type: 'integer' },
     worktree_path: { type: 'string' },
@@ -85,13 +85,13 @@ const results = await pipeline(
     agent(
       [
         `Dispatch ONE task to the penumbra fleet; report ONLY verbatim tool-output values. Never invent an id or SHA.`,
-        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'openai-codex-deep-acp'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}message = the EXACT contract below.`,
+        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'openai-codex-deep-acp'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}message = the EXACT contract below.`,
         `--- CONTRACT (verbatim) ---`,
         t.dispatchPrompt,
         `--- END CONTRACT ---`,
-        `STEP 2: copy handoff_id + conversation_id verbatim from the result.`,
-        `STEP 3: poll mcp__penumbra__chain_status until terminal; chain_wait <=150s per call, one wait per step.`,
-        `STEP 4: in ${REPO}: git rev-parse --verify --quiet agent/<handoff_id> (branch_tip, "MISSING" if absent); git rev-list --count main..agent/<handoff_id> (commit_count); git worktree list | grep <handoff_id> (worktree_path).`,
+        `STEP 2: copy handoff_id + conversation_id + provisional branch_name verbatim from the chain_start result; the chain_start value is provisional because a collision suffix may be applied by the worker.`,
+        `STEP 3: poll mcp__penumbra__chain_status until terminal; chain_wait <=150s per call, one wait per step. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
+        `STEP 4: in ${REPO}: git rev-parse --verify --quiet <branch_name> (branch_tip, "MISSING" if absent); git rev-list --count main..<branch_name> (commit_count); git worktree list | grep <handoff_id> (worktree_path).`,
         `Set name="${t.name}". Return the structured object; every value from a tool result you saw this turn.`,
       ].join('\n'),
       // dispatch driver is mechanical glue (chain_start + poll + git facts) — runs on a

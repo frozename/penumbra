@@ -62,4 +62,19 @@ describe("createWorkerWorktreeManager", () => {
     ).toBe(tempRoot);
     expect(warn).toHaveBeenCalled();
   });
+
+  it("resolves persisted handoff branch names from the injected cache", () => {
+    const manager = createWorkerWorktreeManager({
+      rootDir: tempRoot,
+      mainRepoDir: process.cwd(),
+      resolveBranchName: (handoffId) => (handoffId === "h1" ? "feat/full-task-pool" : undefined),
+    });
+
+    expect(
+      (manager as unknown as { branchNameFor(handoffId: string): string }).branchNameFor("h1"),
+    ).toBe("feat/full-task-pool");
+    expect(
+      (manager as unknown as { branchNameFor(handoffId: string): string }).branchNameFor("h2"),
+    ).toBe("agent/h2");
+  });
 });

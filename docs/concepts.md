@@ -108,7 +108,7 @@ The stored handoff records its mode in `chain_trust_mode` (`"all" | "config"`), 
 
 ### Recoverable worktree + branch + audit trail
 
-When `use_worktree` is true, the worker runs in an **isolated git worktree** on its own branch, named `agent/<handoff_id>` (`packages/core/src/worktree/manager.ts`). Nothing is merged automatically — the worker's changes sit on that branch until you review them. Because each dispatch is its own worktree and branch, a failed or abandoned dispatch never corrupts your working tree, and a recoverable one can be inspected before you decide.
+When `use_worktree` is true, the worker runs in an **isolated git worktree** on its own recorded `branch_name`, normally `<type>/<slug>` such as `feat/full-task-pool` (`packages/core/src/worktree/manager.ts`). Collisions get a `-N` suffix. Legacy rows with no `branch_name` still resolve to `agent/<handoff_id>`. Nothing is merged automatically — the worker's changes sit on that branch until you review them. Because each dispatch is its own worktree and branch, a failed or abandoned dispatch never corrupts your working tree, and a recoverable one can be inspected before you decide.
 
 The chain's lifecycle is recorded as `dispatch_events` rows (`acp.session.start`, `agent.thought`, `agent.heartbeat`, `agent.tool_call.failed`, `acp.session.end`, `dispatch.start`/`dispatch.end`). You read this trail with `mcp__penumbra__dispatch_audit` and `dispatch_timeline`, and inspect the worktree with `worktree_inspect`.
 
@@ -225,4 +225,3 @@ To keep the sweepers' liveness signal accurate for agents that don't naturally s
   mcp__penumbra__workflow_list
   mcp__penumbra__long_lived_list
   ```
-

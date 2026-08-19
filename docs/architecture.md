@@ -44,7 +44,7 @@ Penumbra is **local-first and single-daemon**. One long-running HTTP server (`@p
    Dispatch execution (out of the daemon process):
 
    daemon ──spawn──► agentchat worker ──ACP/CLI adapter──► agent subprocess
-                     (runs in git worktree agent/<handoff_id>)
+                     (runs in git worktree on handoff branch_name)
                      emits dispatch_events back to the daemon over HTTP
 ```
 
@@ -63,7 +63,7 @@ The repo is a Bun + TypeScript monorepo (`bun` workspaces; see root [`package.js
 - **Writers** — `src/writers`: `T0Writer` (raw event ingest), `T1Rollup`, `T2Writer`, `HandoffWriter`, `agent-performance`, `permission`, `routing-bias`, and others. `T0Writer.write()` (`src/writers/t0.ts`) is a single prepared `INSERT … ON CONFLICT(event_id) DO NOTHING RETURNING event_id` — ingest is idempotent on `event_id`.
 - **Readers** — `src/readers`: `RecallReader` (`src/readers/recall.ts`), plus readers for chains, cost, handoffs, timeline, search, quality status, subscription pressure, and more.
 - **Event bus** — `src/events`. `HandoffEventBus` (`src/events/handoff-events.ts`) is a tiny in-memory pub/sub (`subscribe`/`emit`) that fans handoff row changes to subscribers, including the daemon's SSE routes, with one bad subscriber isolated from the rest.
-- **`WorktreeManager`** — `src/worktree/manager.ts`. Creates, hydrates, and tears down per-dispatch git worktrees on the `agent/<handoff_id>` branch convention.
+- **`WorktreeManager`** — `src/worktree/manager.ts`. Creates, hydrates, and tears down per-dispatch git worktrees on the recorded handoff `branch_name` (`<type>/<slug>`, with `-N` collision suffixes; legacy null rows fall back to `agent/<handoff_id>`).
 - **Dispatch-reliability classifier** — `src/services/dispatch-reliability.ts`. `classifyDispatchReliability()` reads a handoff's status plus its `dispatch_events` and returns a `DispatchReliabilityReport` with a `status` (`complete` / `non_terminal_stale` / `non_terminal_recoverable` / `cancel_completed` / …) and a `recommended_action` (`accept` / `wait` / `cancel` / `inspect_worktree`).
 - **Supervisor** — `src/supervisor`. The interface (`interface.ts`) and an in-process implementation (`in-process.ts`) that the daemon uses to run periodic workers.
 - **Long-lived state** — `src/long-lived`, including the working-memory writer with server-side notes tail-truncation.
@@ -140,7 +140,7 @@ A dispatch is the lifecycle from a `chain_start` tool call to a merged branch. E
 
 1. **`chain_start`.** The harness calls `mcp__penumbra__chain_start` with `initial_agent`, `message`, and optional `trust_mode`, `max_hops`, `use_worktree` (default true), and a `workload`/`task_type` hint (see `packages/mcp/src/tools/chain-start.ts`). The MCP tool forwards to the daemon's `chainStartInternal` (`packages/daemon/src/routes/chains.ts`), which runs a routing guard, resolves the target agent, and writes a `handoffs` row (status, conversation, from/to agent, trust mode, max hops, task class, branch base).
 
-2. **Worktree + branch.** With `use_worktree` on, `WorktreeManager.createWorktree()` (`packages/core/src/worktree/manager.ts`) creates an isolated git worktree on a fresh branch `agent/<handoff_id>` — `git worktree add --detach <path> <baseRef>` then `git checkout -b agent/<handoff_id>`. The worker runs against this worktree, so concurrent dispatches never collide on the working tree.
+2. **Worktree + branch.** With `use_worktree` on, `WorktreeManager.createWorktree()` (`packages/core/src/worktree/manager.ts`) creates an isolated git worktree on the handoff's recorded `branch_name` — normally `<type>/<slug>`, with `-N` added on collision. Legacy null rows still resolve to `agent/<handoff_id>`. The worker runs against this worktree, so concurrent dispatches never collide on the working tree.
 
 3. **Execution + events.** The daemon hands the approved handoff to the `agentchat-worker` process, which drives the chosen ACP/CLI adapter against the agent subprocess in the worktree. Throughout, lifecycle events stream back into `dispatch_events` over HTTP: `acp.session.start`, `agent.thought`, `agent.heartbeat`, `agent.tool_call.failed`, `acp.session.end`, `dispatch.start`/`dispatch.end`. These events are what the reliability classifier and the sweepers read.
 
@@ -148,7 +148,7 @@ A dispatch is the lifecycle from a `chain_start` tool call to a merged branch. E
 
 5. **Inspect.** The orchestrator can call `dispatch_audit` / `dispatch_timeline` (which run `classifyDispatchReliability` over the events) and `worktree_inspect` to verify the branch state actually matches the request before landing.
 
-6. **`dispatch_land`.** The supported merge path (`packages/daemon/src/routes/dispatch-land.ts`): given a `handoff_id`, it operates on branch `agent/<handoff_id>`, performs the merge into the target (`git merge --squash` or `--ff-only` depending on mode), and on a clean merge tears down the worktree and deletes the branch inline, while re-stamping the `agent_performance.outcome` attribution. On conflict it returns a `merge_conflict` error with a rebase hint and leaves the branch intact. This is why [`AGENTS.md`](../AGENTS.md#conventions) mandates `dispatch_land` over a manual `git merge --ff-only`: the manual path skips both the attribution stamp and the worktree teardown.
+6. **`dispatch_land`.** The supported merge path (`packages/daemon/src/routes/dispatch-land.ts`): given a `handoff_id`, it resolves the handoff `branch_name`, performs the merge into the target (`git merge --squash` or `--ff-only` depending on mode), and on a clean merge tears down the worktree and deletes the branch inline, while re-stamping the `agent_performance.outcome` attribution. On conflict it returns a `merge_conflict` error with a rebase hint and leaves the branch intact. This is why [`AGENTS.md`](../AGENTS.md#conventions) mandates `dispatch_land` over a manual `git merge --ff-only`: the manual path skips both the attribution stamp and the worktree teardown.
 
 The outcome feeds `agent_recommend` ranking, so over time the system learns which agent suits which `task_type`.
 
@@ -180,5 +180,5 @@ The **long-lived reactor** (`packages/daemon/src/reactors/long-lived-reactor.ts`
 
 - **One daemon, one DB.** A single writer means no cross-process coordination on the store, and every harness sees a consistent view. The `port`+`token` file pair is the entire connection bootstrap — no service discovery, no network config.
 - **MCP as the universal client.** Putting the whole surface behind one MCP server means a new harness needs exactly one registration to get memory, dispatch, workflows, routing, and tasks — and agents reach the system through tools, not through copy-paste between tabs.
-- **Worktree-per-dispatch.** Branch `agent/<handoff_id>` plus an isolated worktree is what makes parallel fan-out safe and every dispatch independently recoverable, auditable, and landable.
+- **Worktree-per-dispatch.** A recorded `branch_name` plus an isolated worktree is what makes parallel fan-out safe and every dispatch independently recoverable, auditable, and landable.
 - **Events as the source of truth for liveness.** Because the dispatch lifecycle is recorded as `dispatch_events`, the classifier and sweepers can tell "thinking" from "wedged" instead of guessing from wall-clock time alone.

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { WorktreeManager } from "../../src/worktree/manager.js";
+import { type WorktreeCommandRunner, WorktreeManager } from "../../src/worktree/manager.js";
 
 type ExecResult = { stdout: string; stderr: string };
 type ExecOpts = { cwd?: string };
@@ -93,5 +93,133 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
     expect(branch.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
 
     await winner.teardownWorktree(handoffId, true);
+  });
+
+  it("suffixes branch names when the requested branch already exists", async () => {
+    const existingRefs = new Set(["refs/heads/feat/full-task-pool"]);
+    const checkouts: string[] = [];
+    const runner: WorktreeCommandRunner = async (_cmd, args) => {
+      if (args[0] === "worktree" && args[1] === "add") {
+        const wtPath = args[3];
+        if (!wtPath) throw new Error("missing worktree path");
+        fs.mkdirSync(wtPath, { recursive: true });
+        fs.writeFileSync(path.join(wtPath, ".git"), "gitdir: fake\n");
+        return { stdout: "", stderr: "" };
+      }
+      if (args[0] === "show-ref" && args[1] === "--verify" && args[2]) {
+        if (existingRefs.has(args[2])) return { stdout: "sha\n", stderr: "" };
+        throw new Error(`missing ref ${args[2]}`);
+      }
+      if (args[0] === "-C" && args[2] === "checkout" && args[3] === "-b" && args[4]) {
+        checkouts.push(args[4]);
+        existingRefs.add(`refs/heads/${args[4]}`);
+        return { stdout: "", stderr: "" };
+      }
+      if (
+        args[0] === "-C" &&
+        args[2] === "checkout" &&
+        args[3] === "--" &&
+        args[4] === "bun.lock"
+      ) {
+        return { stdout: "", stderr: "" };
+      }
+      if (args[0] === "rev-parse") {
+        throw new Error("not a worktree");
+      }
+      return { stdout: "", stderr: "" };
+    };
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner,
+      resolveBranchName: () => "feat/full-task-pool",
+    });
+
+    const handle1 = await manager.createWorktree("handoff-a");
+    const handle2 = await manager.createWorktree("handoff-b");
+
+    expect(handle1.branchName).toBe("feat/full-task-pool-2");
+    expect(handle2.branchName).toBe("feat/full-task-pool-3");
+    expect(checkouts).toEqual(["feat/full-task-pool-2", "feat/full-task-pool-3"]);
+  });
+
+  it("retries the next suffix when checkout loses a branch-name race", async () => {
+    const existingRefs = new Set<string>();
+    const checkouts: string[] = [];
+    const runner: WorktreeCommandRunner = async (_cmd, args) => {
+      if (args[0] === "worktree" && args[1] === "add") {
+        const wtPath = args[3];
+        if (!wtPath) throw new Error("missing worktree path");
+        fs.mkdirSync(wtPath, { recursive: true });
+        fs.writeFileSync(path.join(wtPath, ".git"), "gitdir: fake\n");
+        return { stdout: "", stderr: "" };
+      }
+      if (args[0] === "show-ref" && args[1] === "--verify" && args[2]) {
+        if (existingRefs.has(args[2])) return { stdout: "sha\n", stderr: "" };
+        throw new Error(`missing ref ${args[2]}`);
+      }
+      if (args[0] === "-C" && args[2] === "checkout" && args[3] === "-b" && args[4]) {
+        checkouts.push(args[4]);
+        if (args[4] === "feat/x") {
+          existingRefs.add("refs/heads/feat/x");
+          throw new Error("fatal: a branch named 'feat/x' already exists");
+        }
+        existingRefs.add(`refs/heads/${args[4]}`);
+        return { stdout: "", stderr: "" };
+      }
+      if (
+        args[0] === "-C" &&
+        args[2] === "checkout" &&
+        args[3] === "--" &&
+        args[4] === "bun.lock"
+      ) {
+        return { stdout: "", stderr: "" };
+      }
+      if (args[0] === "rev-parse") {
+        throw new Error("not a worktree");
+      }
+      return { stdout: "", stderr: "" };
+    };
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner,
+      resolveBranchName: () => "feat/x",
+    });
+
+    const handle = await manager.createWorktree("handoff-race");
+
+    expect(handle.branchName).toBe("feat/x-2");
+    expect(checkouts).toEqual(["feat/x", "feat/x-2"]);
+  });
+
+  it("rediscovers the actual checked-out branch and reports stored-name drift", () => {
+    const handoffId = "handoff-drift";
+    const wtPath = path.join(homeRoot, handoffId);
+    const gitDir = path.join(homeRoot, ".git", "worktrees", handoffId);
+    const drift: { handoffId: string; actual: string; stored: string }[] = [];
+    fs.mkdirSync(gitDir, { recursive: true });
+    fs.mkdirSync(wtPath, { recursive: true });
+    fs.writeFileSync(path.join(wtPath, ".git"), `gitdir: ${gitDir}\n`);
+    fs.writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/feat/full-task-pool-2\n");
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      resolveBranchName: () => "feat/full-task-pool",
+      onBranchNameDrift: (id, actual, stored) => {
+        drift.push({ handoffId: id, actual, stored });
+      },
+    });
+    const handle = manager.getWorktree(handoffId);
+
+    expect(handle?.branchName).toBe("feat/full-task-pool-2");
+    expect(drift).toEqual([
+      {
+        handoffId,
+        actual: "feat/full-task-pool-2",
+        stored: "feat/full-task-pool",
+      },
+    ]);
   });
 });

@@ -73,6 +73,11 @@ export interface CreateOpts {
 
 export type ResolveProjectRoot = (project_id: string) => string | undefined;
 export type ResolveHandoffBranchNameById = (handoff_id: string) => string | null | undefined;
+export type BranchNameDriftHandler = (
+  handoffId: string,
+  actualBranchName: string,
+  storedBranchName: string,
+) => void;
 
 interface WorktreeManagerOpts {
   rootDir?: string;
@@ -80,6 +85,7 @@ interface WorktreeManagerOpts {
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
   resolveBranchName?: ResolveHandoffBranchNameById;
+  onBranchNameDrift?: BranchNameDriftHandler;
   runner?: WorktreeCommandRunner;
   mainBranch?: string;
 }
@@ -179,6 +185,7 @@ export class WorktreeManager {
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
   private resolveBranchName?: ResolveHandoffBranchNameById;
+  private onBranchNameDrift?: BranchNameDriftHandler;
   private runner: WorktreeCommandRunner;
   private mainBranch: string;
 
@@ -187,6 +194,7 @@ export class WorktreeManager {
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.resolveBranchName = opts?.resolveBranchName;
+    this.onBranchNameDrift = opts?.onBranchNameDrift;
     this.runner = opts?.runner ?? defaultRunner;
     this.mainBranch = opts?.mainBranch ?? process.env["PENUMBRA_MAIN_BRANCH"] ?? "main";
     this.rootDir =
@@ -237,6 +245,94 @@ export class WorktreeManager {
     });
   }
 
+  private async branchExists(repoRoot: string, branchName: string): Promise<boolean> {
+    try {
+      await this.git(["show-ref", "--verify", `refs/heads/${branchName}`], { cwd: repoRoot });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private branchNameWithSuffix(requestedName: string, suffix: number): string {
+    return suffix === 1 ? requestedName : `${requestedName}-${String(suffix)}`;
+  }
+
+  private async availableBranchName(
+    repoRoot: string,
+    requestedName: string,
+    minSuffix = 1,
+  ): Promise<string> {
+    for (let suffix = minSuffix; suffix <= 99; suffix += 1) {
+      const candidate = this.branchNameWithSuffix(requestedName, suffix);
+      if (!(await this.branchExists(repoRoot, candidate))) return candidate;
+    }
+    throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
+  }
+
+  private suffixAfter(requestedName: string, candidate: string): number {
+    if (candidate === requestedName) return 2;
+    const prefix = `${requestedName}-`;
+    if (!candidate.startsWith(prefix)) return 100;
+    const suffix = Number(candidate.slice(prefix.length));
+    return Number.isInteger(suffix) ? suffix + 1 : 100;
+  }
+
+  private isBranchAlreadyExistsCheckoutError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : String(err);
+    return /fatal:.*branch named .* already exists/i.test(message);
+  }
+
+  private async checkoutNewBranchWithCollisionRetry(
+    repoRoot: string,
+    wtPath: string,
+    requestedName: string,
+  ): Promise<string> {
+    let minSuffix = 1;
+    while (minSuffix <= 99) {
+      const branchName = await this.availableBranchName(repoRoot, requestedName, minSuffix);
+      try {
+        await this.git(["-C", wtPath, "checkout", "-b", branchName]);
+        return branchName;
+      } catch (err) {
+        if (!this.isBranchAlreadyExistsCheckoutError(err)) throw err;
+        minSuffix = this.suffixAfter(requestedName, branchName);
+      }
+    }
+    throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
+  }
+
+  private readActualBranchNameSync(wtPath: string): string | null {
+    try {
+      const dotGit = path.join(wtPath, ".git");
+      const dotGitStat = fs.statSync(dotGit);
+      let gitDir = dotGit;
+      if (dotGitStat.isFile()) {
+        const raw = fs.readFileSync(dotGit, "utf8").trim();
+        const match = /^gitdir:\s*(.+)$/i.exec(raw);
+        if (!match) return null;
+        const parsedGitDir = match[1];
+        if (parsedGitDir === undefined) return null;
+        gitDir = path.isAbsolute(parsedGitDir) ? parsedGitDir : path.resolve(wtPath, parsedGitDir);
+      }
+      const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
+      const prefix = "ref: refs/heads/";
+      return head.startsWith(prefix) ? head.slice(prefix.length) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private branchNameForWorktree(handoffId: string, wtPath: string): string {
+    const storedBranchName = this.branchNameFor(handoffId);
+    const actualBranchName = this.readActualBranchNameSync(wtPath);
+    if (actualBranchName && actualBranchName !== storedBranchName) {
+      this.onBranchNameDrift?.(handoffId, actualBranchName, storedBranchName);
+      return actualBranchName;
+    }
+    return actualBranchName ?? storedBranchName;
+  }
+
   private discoveryBases(): string[] {
     return [...new Set([this.baseFor(undefined)])];
   }
@@ -246,7 +342,7 @@ export class WorktreeManager {
     const handoffId = entry.name;
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return;
-    const branchName = this.branchNameFor(handoffId);
+    const branchName = this.branchNameForWorktree(handoffId, wtPath);
     const storageRoot = path.join(wtPath, ".test-storage");
     const worktreeMode = inferWorktreeMode(wtPath);
     if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return;
@@ -327,7 +423,7 @@ export class WorktreeManager {
     }
 
     const wtPath = path.join(base, handoffId);
-    const branchName = this.branchNameFor(handoffId);
+    const requestedBranchName = this.branchNameFor(handoffId);
     const baseRef = opts?.baseRef ?? "HEAD";
     const worktreeMode: WorktreeMode = opts?.isolated_install
       ? "isolated_install"
@@ -347,8 +443,14 @@ export class WorktreeManager {
     // state git left is reaped later by the grace-period GC.
     await this.git(["worktree", "add", "--detach", wtPath, baseRef], { cwd: repoRoot });
 
+    let createdBranchName: string | null = null;
     try {
-      await this.git(["-C", wtPath, "checkout", "-b", branchName]);
+      const branchName = await this.checkoutNewBranchWithCollisionRetry(
+        repoRoot,
+        wtPath,
+        requestedBranchName,
+      );
+      createdBranchName = branchName;
       this.copyBunLockIfNeeded(wtPath, repoRoot, worktreeMode);
       if (worktreeMode === "isolated_install") {
         configureIsolatedWorktreeLocalExcludes(wtPath);
@@ -374,7 +476,7 @@ export class WorktreeManager {
       this.worktrees.set(handoffId, handle);
       return handle;
     } catch (err) {
-      await this.removePartialWorktree(wtPath, repoRoot, branchName);
+      await this.removePartialWorktree(wtPath, repoRoot, createdBranchName);
       throw err;
     }
   }
@@ -382,7 +484,7 @@ export class WorktreeManager {
   private async removePartialWorktree(
     wtPath: string,
     repoRoot: string,
-    branchName: string,
+    branchName: string | null,
   ): Promise<void> {
     if (fs.existsSync(wtPath)) {
       try {
@@ -402,6 +504,7 @@ export class WorktreeManager {
         this.log.warn({ err: errMessage, wtPath }, "partial worktree cleanup failed");
       }
     }
+    if (branchName === null) return;
     try {
       await this.git(["branch", "-D", branchName], { cwd: repoRoot });
     } catch {
@@ -512,7 +615,7 @@ export class WorktreeManager {
     if (!fs.existsSync(path.join(wtPath, ".git"))) return null;
     const worktreeMode = inferWorktreeMode(wtPath);
     if (!isWorktreeReadySync(wtPath, worktreeMode, handoffId)) return null;
-    const branchName = this.branchNameFor(handoffId);
+    const branchName = this.branchNameForWorktree(handoffId, wtPath);
     const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
     try {
@@ -598,7 +701,7 @@ export class WorktreeManager {
     return {
       handoffId,
       path: wtPath,
-      branchName: this.branchNameFor(handoffId),
+      branchName: this.branchNameForWorktree(handoffId, wtPath),
       storageRoot: path.join(wtPath, ".test-storage"),
       createdAt,
       status: "created",

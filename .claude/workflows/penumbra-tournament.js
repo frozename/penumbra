@@ -58,6 +58,8 @@ const VERDICT = {
 phase('Compete')
 const tasks = agents.map((a) => ({
   label: `compete:${a}`,
+  task_name: task.task_name || task.label || task.name || task.title || 'tournament-candidate',
+  branch_type: task.branch_type || defaults.branch_type,
   initial_agent: a,
   task_class: task.task_class || defaults.task_class || 'STANDARD',
   task_type: task.task_type || defaults.task_type || 'implement_small',

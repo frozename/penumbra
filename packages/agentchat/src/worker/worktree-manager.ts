@@ -3,6 +3,7 @@ import { defaultProjectRegistryPath, loadProjectRegistry, WorktreeManager } from
 export function createWorkerWorktreeManager(options?: {
   rootDir?: string;
   mainRepoDir?: string;
+  resolveBranchName?: (handoff_id: string) => string | null | undefined;
 }): WorktreeManager {
   let projectRegistry: ReturnType<typeof loadProjectRegistry> | undefined;
   try {
@@ -23,5 +24,6 @@ export function createWorkerWorktreeManager(options?: {
     resolveProjectRoot: shouldResolveProjectRoot
       ? (project_id: string): string | undefined => projectRegistry?.get(project_id)?.root_path
       : undefined,
+    resolveBranchName: options?.resolveBranchName,
   });
 }

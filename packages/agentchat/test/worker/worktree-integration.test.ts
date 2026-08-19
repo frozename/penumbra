@@ -148,6 +148,48 @@ test("Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injecte
   expect(recorded).toEqual([{ handoffId: "h1", branchName: "agent/h1" }]);
 });
 
+test("Dispatch records the final created branch_name after suffix allocation", async () => {
+  const handle: WorktreeHandle = {
+    handoffId: "h-suffix",
+    branchName: "feat/x-2",
+    createdAt: "",
+    status: "created",
+    path: "/fake/worktree/h-suffix",
+    storageRoot: "/fake/worktree/h-suffix/.test-storage",
+    worktreeMode: "symlink_mirror",
+  };
+  const recorded: { handoffId: string; branchName: string }[] = [];
+  const wtm = asWorktreeManager({
+    createWorktree: (id) => {
+      expect(id).toBe("h-suffix");
+      return Promise.resolve(handle);
+    },
+    getWorktree: () => handle,
+  });
+
+  const result = await applyWorktreeOverride(
+    {
+      handoff_id: "h-suffix",
+      to_agent: "gemini",
+      use_worktree: true,
+    },
+    baseConfig,
+    "/storage",
+    wtm,
+    mainRepoPath,
+    undefined,
+    {
+      recordBranchName: (handoffId, branchName) => {
+        recorded.push({ handoffId, branchName });
+        return Promise.resolve();
+      },
+    },
+  );
+
+  expect(result.handle?.branchName).toBe("feat/x-2");
+  expect(recorded).toEqual([{ handoffId: "h-suffix", branchName: "feat/x-2" }]);
+});
+
 test("Dispatch with adapter kind openai-compat-http -> NO worktree created", async () => {
   const wtm = makeMockWorktreeManager();
   const { overrideConfig, handle, worktreePromptRewrite } = await applyWorktreeOverride(

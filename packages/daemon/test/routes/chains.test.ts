@@ -13,6 +13,10 @@ import {
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
 import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
@@ -28,6 +32,8 @@ import {
   handoffsApproveRoute,
   handoffsCompleteRoute,
   handoffsCreateRoute,
+  handoffsLatestRoute,
+  handoffsStatusRoute,
 } from "../../src/routes/handoffs.js";
 import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
@@ -44,6 +50,7 @@ type ChainResponseBody = {
   ok?: boolean;
   conversation_id?: string;
   handoff_id?: string;
+  branch_name?: string | null;
   requested_agent?: string;
   resolved_agent?: string;
   routed_agent?: string;
@@ -108,6 +115,7 @@ type HandoffRawRow = {
   use_worktree: number | null;
   isolated_install: number | null;
   open_pr_on_review: number | null;
+  branch_name: string | null;
   dispatch_kind: string | null;
   long_lived_agent_id: string | null;
   long_lived_tick_id: string | null;
@@ -2310,6 +2318,141 @@ test("POST /chains/start defaults use_worktree to true if omitted", async () => 
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.use_worktree).toBe(1);
+});
+
+test("POST /chains/start stores a human-readable branch name when worktree is enabled", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        workload: "implement_substantial",
+        task_name: "Full task pool",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.branch_name).toBe("feat/full-task-pool");
+});
+
+test("POST /chains/start suffixes branch_name when the project root already has the candidate", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-chain-branch-"));
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "test"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "README.md"), "# test\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
+    execFileSync("git", ["branch", "feat/full-task-pool"], { cwd: repo });
+
+    const services = tempServices({
+      projectRegistry: new ProjectRegistry(
+        new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+      ),
+    });
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "planner",
+          message: "hi",
+          project_id: "penumbra",
+          workload: "implement_substantial",
+          task_name: "Full task pool",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await readJsonBody<ChainResponseBody>(res);
+    const handoff = selectHandoff(services, body.handoff_id!);
+    expect(body.branch_name).toBe("feat/full-task-pool-2");
+    expect(handoff.branch_name).toBe("feat/full-task-pool-2");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("chain_status reports final branch_name after recordBranchName write-back", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        conversation_id: "conv-final-branch-status",
+        initial_agent: "planner",
+        message: "hi",
+        task_name: "X",
+      }),
+    }),
+    services,
+  );
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoffId = body.handoff_id!;
+  services.handoffWriter.recordBranchName(handoffId, "feat/x-2");
+
+  const statusRes = handoffsStatusRoute(
+    new Request(`http://x/handoffs/${handoffId}/status`),
+    handoffId,
+    services,
+  );
+  expect(statusRes.status).toBe(200);
+  const statusBody = await readJsonBody<{ branch_name: string | null }>(statusRes);
+  expect(statusBody.branch_name).toBe("feat/x-2");
+});
+
+test("chain_wait terminal lookup reports final branch_name after recordBranchName write-back", async () => {
+  const services = tempServices();
+  const startRes = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        conversation_id: "conv-final-branch-wait",
+        initial_agent: "planner",
+        message: "hi",
+        task_name: "X",
+      }),
+    }),
+    services,
+  );
+  const startBody = await readJsonBody<ChainResponseBody>(startRes);
+  const handoffId = startBody.handoff_id!;
+  services.handoffWriter.recordBranchName(handoffId, "feat/x-2");
+  services.handoffWriter.claimDispatch(handoffId, "worker-final-branch");
+  services.handoffWriter.markCompleted(handoffId, { ts: "2026-04-28T00:00:10Z" });
+
+  const latestRes = handoffsLatestRoute(
+    new Request("http://x/handoffs/latest?conversation_id=conv-final-branch-wait"),
+    services,
+  );
+  expect(latestRes.status).toBe(200);
+  const latestBody = await readJsonBody<{ handoff: { branch_name: string | null } }>(latestRes);
+  expect(latestBody.handoff.branch_name).toBe("feat/x-2");
+});
+
+test("POST /chains/start defaults unnamed worktree branch names to task id prefix", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "hi" }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.branch_name).toBe(
+    `task/${body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8)}`,
+  );
+  expect(handoff.branch_name?.startsWith("agent/")).toBe(false);
 });
 
 test("POST /chains/start persists open_pr_on_review: true", async () => {

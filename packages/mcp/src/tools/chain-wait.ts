@@ -12,6 +12,7 @@ export const ChainWaitInputShape = {
 interface WaitPayload {
   status: string;
   last_handoff_id?: string;
+  branch_name?: string;
   error?: string;
   code?: number;
   message?: string;
@@ -77,6 +78,7 @@ export const chainWaitHandler =
           const payload: WaitPayload = {
             status: handoff.status,
             last_handoff_id: lastHandoffId,
+            branch_name: typeof handoff.branch_name === "string" ? handoff.branch_name : undefined,
             error: handoff.error_message ?? undefined,
           };
           return makeResult(payload, Date.now() - start);

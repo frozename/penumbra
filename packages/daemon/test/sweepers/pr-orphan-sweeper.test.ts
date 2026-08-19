@@ -157,6 +157,51 @@ test("superseded agent PRs are closed and unlanded stale agent PRs are labeled",
   ]);
 });
 
+test("fleet PRs are identified by handoff branch_name membership with legacy agent fallback", async () => {
+  const { deps } = makeDeps({
+    handoffReader: {
+      findByBranchName: (name: string) =>
+        name === "feat/full-task-pool" ? ({ handoff_id: "h-feat" } as never) : null,
+    },
+    ghClient: {
+      listOpenPullRequests: () =>
+        Promise.resolve([
+          pr({
+            number: 14,
+            headRefName: "feat/full-task-pool",
+            headRefOid: "sha-member",
+            updatedAt: "2026-05-05T00:00:00.000Z",
+          }),
+          pr({
+            number: 15,
+            headRefName: "feat/manual-pr",
+            headRefOid: "sha-manual",
+            updatedAt: "2026-05-05T00:00:00.000Z",
+          }),
+          pr({
+            number: 16,
+            headRefName: "agent/44444444-4444-4444-4444-444444444444",
+            headRefOid: "sha-legacy",
+            updatedAt: "2026-05-05T00:00:00.000Z",
+          }),
+        ]),
+      closePullRequest: () => Promise.resolve(),
+    },
+    gitClient: {
+      resolveMainSha: () => Promise.resolve("main-sha-1"),
+      isAncestorOfMain: () => Promise.resolve(true),
+    },
+  } as Partial<PrOrphanSweeperDeps>);
+
+  const result = await runPrOrphanSweep(deps);
+
+  expect(result.scanned).toBe(2);
+  expect(result.actions.map((a) => a.head_ref)).toEqual([
+    "feat/full-task-pool",
+    "agent/44444444-4444-4444-4444-444444444444",
+  ]);
+});
+
 test("dry-run mode emits events and report actions but does not close PRs", async () => {
   const closed: number[] = [];
   const { deps, events } = makeDeps({

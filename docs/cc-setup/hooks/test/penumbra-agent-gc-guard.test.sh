@@ -5,15 +5,17 @@
 #
 # Exit 0 = guard ALLOWS the command through; exit 2 = guard BLOCKS it.
 #
-# Run: bash ~/.claude/hooks/test/penumbra-agent-gc-guard.test.sh
+# Run: bash docs/cc-setup/hooks/test/penumbra-agent-gc-guard.test.sh
 # Env: GUARD=/path/to/guard.sh to override the hook under test.
 
 set -uo pipefail
 
-GUARD="${GUARD:-$HOME/.claude/hooks/penumbra-agent-gc-guard.sh}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+GUARD="${GUARD:-$SCRIPT_DIR/../penumbra-agent-gc-guard.sh}"
 PASS=0
 FAIL=0
 UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+DBMEMBER_BRANCH="feat/foo"
 
 if [ ! -x "$GUARD" ]; then
   echo "FATAL: guard not executable at $GUARD" >&2
@@ -110,6 +112,36 @@ mk_repo_unlanded() {
   printf '%s' "$d"
 }
 
+mk_repo_unlanded_named() {
+  local branch=$1
+  local d; d=$(mktemp -d)
+  git -C "$d" init -q
+  git -C "$d" config user.email t@t && git -C "$d" config user.name t
+  git -C "$d" commit -q --allow-empty -m base
+  git -C "$d" checkout -q -b "$branch"
+  printf 'unlanded\n' > "$d/u.txt"; git -C "$d" add u.txt; git -C "$d" commit -q -m unlanded
+  git -C "$d" checkout -q master 2>/dev/null || git -C "$d" checkout -q main 2>/dev/null
+  printf '%s' "$d"
+}
+
+mk_repo_ancestor_named() {
+  local branch=$1
+  local d; d=$(mktemp -d)
+  git -C "$d" init -q
+  git -C "$d" config user.email t@t && git -C "$d" config user.name t
+  git -C "$d" commit -q --allow-empty -m base
+  git -C "$d" branch "$branch"
+  printf '%s' "$d"
+}
+
+mk_db_with_branch() {
+  local branch=$1
+  local db; db=$(mktemp)
+  rm -f "$db"
+  sqlite3 "$db" "CREATE TABLE handoffs(handoff_id TEXT, branch_name TEXT); INSERT INTO handoffs(handoff_id, branch_name) VALUES ('h1', '$branch');"
+  printf '%s' "$db"
+}
+
 DEL="git branch -D agent/$UUID"
 
 # --- characterization cases (current hook behavior) --------------------------
@@ -118,6 +150,43 @@ R=$(mk_repo_ancestor);  run_case "ancestor/ff branch -> ALLOW" 0 "$DEL" "$R"; rm
 R=$(mk_repo_squashed);  run_case "squash empty-diff -> ALLOW"  0 "$DEL" "$R"; rm -rf "$R"
 R=$(mk_repo_stalebase); run_case "stale-base own-files-in-main -> ALLOW" 0 "$DEL" "$R"; rm -rf "$R"
 R=$(mk_repo_unlanded);  run_case "genuinely unlanded -> BLOCK" 2 "$DEL" "$R"; rm -rf "$R"
+
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch unlanded -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch --delete unlanded -> BLOCK" 2 "git branch --delete $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch --delete --force unlanded -> BLOCK" 2 "git branch --delete --force $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_ancestor_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch ancestor -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
+  run_case "non-member named branch unlanded -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R"; \
+  rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
+  run_case "non-member named branch --delete unlanded -> ALLOW" 0 "git branch --delete $DBMEMBER_BRANCH" "$R"; \
+  rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
+  run_case "no DB named branch uses regex-only behavior -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=/tmp/missing-penumbra-db-$$.sqlite"; \
+  rm -rf "$R"
+R=$(mk_repo_unlanded); \
+  run_case "legacy uuid glued to semicolon before worktree prune -> BLOCK" 2 "git branch -D agent/$UUID; git worktree prune" "$R"; \
+  rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member glued to semicolon before worktree prune -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH; git worktree prune" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member glued to subshell close -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH)" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member glued to && separator -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH&&echo x" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "feat/bar"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "non-member glued to semicolon -> ALLOW" 0 "git branch -D feat/bar;" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
 
 # non-destructive command -> ALLOW
 R=$(mk_repo_unlanded);  run_case "non-destructive (git status) -> ALLOW" 0 "git status" "$R"; rm -rf "$R"
@@ -128,9 +197,10 @@ R=$(mk_repo_ancestor);  run_case "branch absent -> ALLOW (fail-open)" 0 "git bra
 # fail-open: not a git repo -> ALLOW
 NOREPO=$(mktemp -d);    run_case "no git repo -> ALLOW (fail-open)" 0 "$DEL" "$NOREPO"; rm -rf "$NOREPO"
 
-# worktree remove on an unlanded branch's worktree -> BLOCK (matcher covers it)
-# (use the unlanded repo; the command references the agent uuid)
-R=$(mk_repo_unlanded);  run_case "worktree remove unlanded -> BLOCK" 2 "git worktree remove --force /tmp/x/agent/$UUID" "$R"; rm -rf "$R"
+# worktree remove derives the protected branch from the actual worktree path.
+R=$(mk_repo_unlanded); WT=$(mktemp -d); rmdir "$WT"; git -C "$R" worktree add -q "$WT" "agent/$UUID"; \
+  run_case "worktree remove unlanded -> BLOCK" 2 "git worktree remove --force $WT" "$R"; \
+  git -C "$R" worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; rm -rf "$R"
 
 # --- B5: broadened ref-deletion-intent matcher (these bypass git branch -D) ---
 R=$(mk_repo_unlanded);  run_case "update-ref -d unlanded -> BLOCK" 2 "git update-ref -d refs/heads/agent/$UUID" "$R"; rm -rf "$R"

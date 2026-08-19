@@ -1,7 +1,7 @@
 export const meta = {
   name: 'penumbra-swarm',
   description: 'Decompose a high-level goal into N independent penumbra task specs with a planner agent, then fan them out to the fleet via chain_start and collect every result',
-  whenToUse: 'When you have a goal but not a task list yet. A planner breaks it into independent, parallelizable penumbra dispatches; penumbra-fanout runs them on the fleet; results are collected. Tasks MUST be independent (isolated worktrees, run in parallel). Landing the agent/<id> branches stays with the orchestrator. Pass the goal as args (string) or args.goal.',
+  whenToUse: 'When you have a goal but not a task list yet. A planner breaks it into independent, parallelizable penumbra dispatches; penumbra-fanout runs them on the fleet; results are collected. Tasks MUST be independent (isolated worktrees, run in parallel). Landing the handoff branch_name branches stays with the orchestrator. Pass the goal as args (string) or args.goal.',
   phases: [
     { title: 'Plan', detail: 'one planner agent decomposes the goal into independent task specs' },
     { title: 'Dispatch', detail: 'delegate to penumbra-fanout: one chain_start per task; wait; collect' },
@@ -57,6 +57,8 @@ const PLAN_SCHEMA = {
         required: ['task_class', 'task_type', 'message'],
         properties: {
           label: { type: 'string' },
+          task_name: { type: 'string', description: 'short human-readable branch slug source' },
+          branch_type: { type: 'string', description: 'optional branch type prefix such as feat, fix, docs, review, plan, chore, or task' },
           initial_agent: { type: 'string', description: 'penumbra fleet agent id, or "AUTO"' },
           task_class: { type: 'string', enum: ['BOUNDARY', 'STANDARD', 'TRIVIAL'] },
           task_type: { type: 'string', description: 'implement_small | implement_substantial | review_adversarial | docs_mechanical | debug_diagnose | plan_refine | smoke_test | health_check | unknown' },

@@ -228,7 +228,7 @@ The seam: a Claude Code workflow's `agent()` spawns a subagent, and subagents ca
 Two artifacts ship this (both work without the penumbra runtime — they use the MCP surface):
 
 - `plugin/agents/penumbra-dispatcher.md` — the proxy subagent, shipped via the penumbra plugin so its `agentType` resolves in **every** project (the plugin is enabled user-global). Tool-restricted to the `chain_*` / `agent_recommend` / `worktree_inspect` MCP tools, `model: haiku` (it only brokers, never implements). Referenced via `agent(..., { agentType: 'penumbra-dispatcher' })`. Plugin/agent files load at session start, so a new session is needed before `agentType` resolves.
-- `.claude/workflows/penumbra-fanout.js` — the fan-out script. `parallel()` over `args.tasks`, one penumbra dispatch each, collects every result + the list of `agent/<id>` branches. Its `agent()` prompt is fully self-contained, so it runs in any session even before the subagent is registered (it falls back to the default workflow subagent, which inherits the penumbra MCP tools); set `args.agentType = 'penumbra-dispatcher'` once registered to get the cheaper, tool-locked proxy.
+- `.claude/workflows/penumbra-fanout.js` — the fan-out script. `parallel()` over `args.tasks`, one penumbra dispatch each, collects every result + the list of handoff `branch_name` branches. Its `agent()` prompt is fully self-contained, so it runs in any session even before the subagent is registered (it falls back to the default workflow subagent, which inherits the penumbra MCP tools); set `args.agentType = 'penumbra-dispatcher'` once registered to get the cheaper, tool-locked proxy.
 
 Invoke from the orchestrator (maestro) with a structured `args` object:
 
@@ -245,14 +245,14 @@ Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
 Boundaries baked into the design (do not loosen without intent):
 
 - **`trust_mode: all` by default.** Background workflows cannot surface penumbra's human approval gate mid-run (no mid-run user input), so unattended fan-out auto-approves every hop. Restrict fan-out to STANDARD/TRIVIAL work; route BOUNDARY tasks through maestro with the normal `dispatch-quality-gates` review fan-out.
-- **The workflow never lands.** It stops at "dispatched + responses collected + `agent/<id>` branches ready". Review + `dispatch_land` stays with maestro (worktree-state-audit, then the `land` skill), so `agent_performance` attribution and worktree teardown happen on the supported path.
+- **The workflow never lands.** It stops at "dispatched + responses collected + handoff `branch_name` branches ready". Review + `dispatch_land` stays with maestro (worktree-state-audit, then the `land` skill), so `agent_performance` attribution and worktree teardown happen on the supported path.
 - **Concurrency.** Claude Code caps at 16 concurrent agents; penumbra has its own worker-pool limits (`workers.yaml` extras). Excess tasks queue. Size `args.tasks` against live fleet capacity rather than firing dozens at once.
 
 **The workflow family** (`.claude/workflows/`, all route through the dispatch proxy / `chain_start`; none land — landing stays with maestro):
 
 | Workflow                          | Shape                                                                                                                                 | Key args                                                                                       |
 | :-------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------- |
-| `penumbra-fanout`                 | N independent tasks → fleet; collect results + `agent/<id>` branches                                                                  | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
+| `penumbra-fanout`                 | N independent tasks → fleet; collect results + handoff `branch_name` branches                                                         | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
 | `penumbra-swarm`                  | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')`                                                      | `goal` string, or `{ goal, maxTasks?, plannerModel? }`                                         |
 | `penumbra-tournament`             | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner                                         | `{ task: { message }, agents: [...], judgeModel? }`                                            |
 | `penumbra-fix-until-green`        | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }`                                        |

@@ -124,6 +124,8 @@ for (let i = 0; i < maxRounds; i++) {
   const agentForRound = i === maxRounds - 1 && escalateTo ? escalateTo : baseAgent
   const t = {
     label: `fix#${i + 1}:${agentForRound}`,
+    task_name: task.task_name || task.label || task.name || task.title || `fix-${i + 1}`,
+    branch_type: task.branch_type || defaults.branch_type,
     initial_agent: agentForRound,
     task_class: task.task_class || defaults.task_class || 'STANDARD',
     task_type: task.task_type || defaults.task_type || 'implement_small',

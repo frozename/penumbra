@@ -139,6 +139,13 @@ export class HandoffReader {
     return row ? normalizeHandoffRow(row) : null;
   }
 
+  findByBranchName(branch_name: string): HandoffRow | null {
+    const row = this.db
+      .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE branch_name=? LIMIT 1`)
+      .get(branch_name);
+    return row ? normalizeHandoffRow(row) : null;
+  }
+
   getLatestForConversation(conversation_id: string): HandoffRow | null {
     const row = this.db
       .query<

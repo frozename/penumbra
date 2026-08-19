@@ -25,6 +25,12 @@ function readCursor(db: Database): string {
   return cursorRow?.value ?? "";
 }
 
+function pc1BatchSize(config: DreamConfig): number {
+  return Number.isFinite(config.pc1BatchSize) && config.pc1BatchSize >= 0
+    ? config.pc1BatchSize
+    : 100;
+}
+
 export function runPC1Phase(
   db: Database,
   cycleId: string,
@@ -32,7 +38,7 @@ export function runPC1Phase(
   _deps: object,
 ): void {
   const autoRetireEnabled = isEnvTruthy(process.env.PENUMBRA_PC1_AUTORETIRE);
-  const batchSize = config.pc1BatchSize;
+  const batchSize = pc1BatchSize(config);
 
   const patternRows = db
     .prepare(`SELECT pattern FROM curator_ephemera_patterns WHERE status='approved' AND enabled=1`)

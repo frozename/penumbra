@@ -37,6 +37,20 @@ export function isEnvTruthy(value: string | undefined): boolean {
 export const ChainStartInputShape = {
   initial_agent: z.string().min(1).describe("The agent to receive the first hop of the chain"),
   message: z.string().min(1).describe("The user message that kicks off the chain"),
+  task_name: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe("Optional short human-readable task name for the worktree branch slug"),
+  branch_type: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]{0,19}$/)
+    .refine((value) => value !== "agent", {
+      message: "branch_type 'agent' is reserved for legacy handoff branches",
+    })
+    .optional()
+    .describe("Optional branch type prefix such as feat, fix, docs, review, plan, chore, or task"),
   conversation_id: z
     .string()
     .min(1)
@@ -178,6 +192,8 @@ export class CallerCwdNotRegisteredError extends Error {
 interface ChainStartInput {
   initial_agent: string;
   message: string;
+  task_name?: string;
+  branch_type?: string;
   conversation_id?: string;
   project_id?: string | null;
   max_hops?: number;
@@ -312,6 +328,8 @@ function resolveProjectFromCwd(
 
 const OPTIONAL_BODY_FIELDS = [
   "conversation_id",
+  "task_name",
+  "branch_type",
   "max_hops",
   "trust_mode",
   "use_worktree",

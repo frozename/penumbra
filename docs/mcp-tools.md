@@ -76,7 +76,7 @@ mcp__penumbra__memory_search  { query: "auth refactor decision" }
 
 ## Chain, handoff, and dispatch
 
-Cross-agent dispatch with a paper trail. `chain_start` kicks off an agentchat chain headlessly on the daemon; you poll/wait for the result, then land the resulting `agent/<handoff_id>` branch via `dispatch_land`.
+Cross-agent dispatch with a paper trail. `chain_start` kicks off an agentchat chain headlessly on the daemon; you poll/wait for the result, then land the resulting handoff `branch_name` via `dispatch_land`.
 
 ### Chain (start, observe, steer)
 
@@ -108,7 +108,7 @@ Cross-agent dispatch with a paper trail. `chain_start` kicks off an agentchat ch
 | --- | --- |
 | `dispatch_timeline` | Ordered `dispatch_events` timeline for a `handoff_id`. |
 | `dispatch_audit` | Reliability audit report for one handoff. |
-| `dispatch_land` | Land an `agent/<handoff_id>` branch via curated squash or ff-only flow. `verdict_unverified` auto-passes when `dispatch_audit` is trustworthy+accept; `force` is a manual override. |
+| `dispatch_land` | Land the handoff's recorded `branch_name` via curated squash or ff-only flow. `verdict_unverified` auto-passes when `dispatch_audit` is trustworthy+accept; `force` is a manual override. |
 
 ```text
 mcp__penumbra__chain_start { initial_agent: "claude-acp-sonnet", message: "..." }
@@ -272,7 +272,7 @@ Cost, quota, and operational health, plus the daemon control and reconciler surf
 | `quality_status` | Composite quality snapshot: lane health, adversarial-review outcomes, agent recommendations, memory efficacy, subscription pressure. |
 | `session_end` | Trigger a synchronous T1 rollup for a named session; returns `rollup_id` (or null if nothing to roll up). |
 | `daemon_reload_config` | Reload the daemon configuration. |
-| `reconciler_sweep_orphan_prs` | Manually run the PR orphan sweeper: scan open `agent/<uuid>` PRs, classify superseded/stale, close per `dry_run`/`max_close`. |
+| `reconciler_sweep_orphan_prs` | Manually run the PR orphan sweeper: scan open fleet PRs by handoff `branch_name` membership plus legacy `agent/<uuid>` fallback, classify superseded/stale, close per `dry_run`/`max_close`. |
 | `reconciler_verdicts` | List recent reconciler verdict events joined with handoff metadata (useful for review/landing queues). |
 | `read_handle` | Resolve a result handle (e.g. from a truncated `workflow_wait`) back to its full payload. |
 
@@ -297,4 +297,3 @@ When the server runs inside a long-lived agent tick (it has a running agent id +
 ## Operator and CLI surface
 
 Most flows are reachable both as MCP tools (above) and through the `penumbra` CLI (`penumbra workflow run`, `penumbra plan start`, `penumbra task next`, …). For the operator surface, daemon architecture, and fleet integration, see [AGENTS.md](../AGENTS.md).
-

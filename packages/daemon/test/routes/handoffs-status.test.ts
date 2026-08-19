@@ -15,6 +15,7 @@ try {
 
 interface HandoffStatusResponse {
   message?: string;
+  branch_name?: string | null;
   error_summary?: string | null;
   reliability?: {
     status: string;
@@ -49,6 +50,7 @@ function insertHandoff(
     resolved_at?: string;
     worker_id?: string;
     resolution_reason?: string;
+    branch_name?: string | null;
     message?: string;
   },
 ): void {
@@ -56,8 +58,8 @@ function insertHandoff(
     .prepare(
       `
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent,
-      message, status, resolved_at, worker_id, resolution_reason)
-    VALUES (?, ?, 'c', 'a', 'b', ?, ?, ?, ?, ?)
+      message, status, resolved_at, worker_id, resolution_reason, branch_name)
+    VALUES (?, ?, 'c', 'a', 'b', ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
@@ -68,6 +70,7 @@ function insertHandoff(
       h.resolved_at ?? null,
       h.worker_id ?? null,
       h.resolution_reason ?? null,
+      h.branch_name ?? null,
     );
 }
 
@@ -79,6 +82,7 @@ test("handoffsStatusRoute returns lean shape for completed handoff", async () =>
     ts: "2026-04-28T00:00:00Z",
     resolved_at: "2026-04-28T00:00:30Z",
     worker_id: "worker-c",
+    branch_name: "feat/x-2",
   });
   const res = handoffsStatusRoute(new Request("http://x/handoffs/h-1/status"), "h-1", services);
   expect(res.status).toBe(200);
@@ -87,6 +91,7 @@ test("handoffsStatusRoute returns lean shape for completed handoff", async () =>
     handoff_id: "h-1",
     status: "completed",
     error_summary: null,
+    branch_name: "feat/x-2",
     worker_id: "worker-c",
     started_at: "2026-04-28T00:00:00Z",
     resolved_at: "2026-04-28T00:00:30Z",

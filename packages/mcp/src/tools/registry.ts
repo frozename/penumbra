@@ -1011,7 +1011,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   dispatch_land: {
     descriptor: {
       description:
-        "Land an agent/<handoff_id> branch via curated squash or ff-only flow. verdict_unverified auto-passes when dispatch_audit is trustworthy+accept; force remains a manual override.",
+        "Land the handoff's recorded branch_name via curated squash or ff-only flow. verdict_unverified auto-passes when dispatch_audit is trustworthy+accept; force remains a manual override.",
       inputSchema: DispatchLandInputShape,
     },
     makeHandler: dispatchLandHandler as unknown as ToolDef["makeHandler"],
@@ -1251,7 +1251,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   reconciler_sweep_orphan_prs: {
     descriptor: {
       description:
-        "Manually run the reconciler PR orphan sweeper. Scans open agent/<uuid> PRs, classifies superseded/stale, and closes according to dry_run/max_close.",
+        "Manually run the reconciler PR orphan sweeper. Scans open fleet PRs by handoff branch_name membership plus legacy agent/<uuid> fallback, classifies superseded/stale, and closes according to dry_run/max_close.",
       inputSchema: ReconcilerSweepOrphanPrsInputShape,
     },
     makeHandler: reconcilerSweepOrphanPrsHandler as unknown as ToolDef["makeHandler"],

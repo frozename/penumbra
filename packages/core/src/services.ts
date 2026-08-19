@@ -340,6 +340,18 @@ export function buildServices(opts: BuildServicesOpts): Services {
           [string]
         >(`SELECT branch_name FROM handoffs WHERE handoff_id = ?`)
         .get(handoff_id)?.branch_name,
+    onBranchNameDrift: (handoff_id, actualBranchName, storedBranchName): void => {
+      opts.db
+        .query<
+          unknown,
+          [string, string]
+        >(`UPDATE handoffs SET branch_name = ? WHERE handoff_id = ?`)
+        .run(actualBranchName, handoff_id);
+      log.warn(
+        { handoff_id, actual_branch_name: actualBranchName, stored_branch_name: storedBranchName },
+        "worktree branch_name drift repaired",
+      );
+    },
   });
   const watchdog: Watchdog = {
     recordHeartbeat: () => undefined,

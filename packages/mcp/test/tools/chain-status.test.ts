@@ -16,6 +16,7 @@ test("chainStatusHandler forwards handoff_id and returns the daemon response as 
       status: "completed",
       error_summary: null,
       worker_id: "worker-c",
+      branch_name: "feat/x-2",
       started_at: "2026-04-28T00:00:00Z",
       resolved_at: "2026-04-28T00:00:05Z",
       latency_seconds: 5,
@@ -36,6 +37,7 @@ test("chainStatusHandler forwards handoff_id and returns the daemon response as 
   if (typeof text !== "string") throw new Error("expected text content");
   expect(text).toMatch(/^[◌◐●◑] chain_status {2}/);
   expect(text).toContain('"status": "completed"');
+  expect(text).toContain('"branch_name": "feat/x-2"');
   expect(text).toContain('"reliability": {');
   expect(text).toContain('"recommended_action": "accept"');
 });

@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { DaemonClient } from "../daemon-client.js";
 
 export const DispatchLandInputShape = {
-  handoff_id: z.string().min(1).describe("The handoff_id to land from agent/<handoff_id>."),
+  handoff_id: z
+    .string()
+    .min(1)
+    .describe("The handoff_id whose recorded branch_name should be landed."),
   commit_message: z.string().min(1).describe("Curated commit message used for squash commits."),
   mode: z
     .enum(["squash", "ff"])
@@ -14,7 +17,7 @@ export const DispatchLandInputShape = {
     .boolean()
     .optional()
     .default(true)
-    .describe("Delete agent/<handoff_id> after landing. Default true."),
+    .describe("Delete the handoff branch_name after landing. Default true."),
   force: z
     .boolean()
     .optional()
