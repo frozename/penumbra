@@ -1,3 +1,4 @@
+import { serve } from "bun";
 import { type Services, type T2MemoryExtraction } from "@penumbra/core";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,6 +8,8 @@ import { join } from "node:path";
 import {
   createDefaultLLMJudge,
   createT2PromotionWorker,
+  extractT2JudgeRequestExtras,
+  resolveT2ExtractionJudge,
   stripJsonFence,
   wrapJudgeWithChunking,
 } from "../src/workers/t2-promotion.js";
@@ -33,6 +36,17 @@ interface LoggerStub {
   info: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
   warn: (...args: unknown[]) => void;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function serverPort(port: number | undefined): number {
+  if (port === undefined) {
+    throw new Error("test server did not expose a port");
+  }
+  return port;
 }
 
 // createDefaultLLMJudge only reads `services.log`. The full Services interface
@@ -418,6 +432,17 @@ test("wrapJudgeWithChunking preserves order of extractions across chunks", async
   ]);
 });
 
+test("extractT2JudgeRequestExtras accepts only plain requestExtras objects", () => {
+  expect(
+    extractT2JudgeRequestExtras({
+      requestExtras: { max_tokens: 64, chat_template_kwargs: { enable_thinking: false } },
+    }),
+  ).toEqual({ max_tokens: 64, chat_template_kwargs: { enable_thinking: false } });
+  expect(extractT2JudgeRequestExtras({ requestExtras: null })).toBeUndefined();
+  expect(extractT2JudgeRequestExtras({ requestExtras: ["bad"] })).toBeUndefined();
+  expect(extractT2JudgeRequestExtras({ requestExtras: new Date() })).toBeUndefined();
+});
+
 serviceTest(
   "t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)",
   async () => {
@@ -480,12 +505,26 @@ serviceTest(
   },
 );
 
-serviceTest("worker uses agentchat-based pool when memory-refiner agents exist", () => {
-  const d = makeTempDaemon();
-  d.services.supervisor.stopAll();
+test("agentchat-based pool passes requestExtras from memory-refiner agents", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
   const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
   const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const seenBodies: Record<string, unknown>[] = [];
+  const server = serve({
+    port: 0,
+    async fetch(req) {
+      const parsed = (await req.json()) as unknown;
+      if (!isRecord(parsed)) {
+        throw new Error("expected JSON object request body");
+      }
+      seenBodies.push(parsed);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+        { status: 200 },
+      );
+    },
+  });
+  const port = serverPort(server.port);
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   process.env.PENUMBRA_CONFIG_DIR = dir;
   writeFileSync(
@@ -495,8 +534,12 @@ agents:
   - name: judge-a
     adapter: openai-compat-http
     options:
-      baseUrl: http://judge-a
+      baseUrl: http://localhost:${String(port)}
       model: granite
+      requestExtras:
+        max_tokens: 64
+        chat_template_kwargs:
+          enable_thinking: false
     roles: [memory-refiner]
   - name: judge-b
     adapter: openai-compat-http
@@ -508,20 +551,30 @@ agents:
   );
   writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
   writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
-  const infoSpy = spyOn(d.services.log, "info").mockImplementation(() => undefined);
   try {
-    createT2PromotionWorker({ services: d.services, delayHours: 24 });
-    expect(
-      infoSpy.mock.calls.some((call) => String(call[1]).includes("judge pool configured")),
-    ).toBe(true);
+    const judge = resolveT2ExtractionJudge(
+      makeServicesStub({
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      }),
+    );
+    if (!judge) {
+      throw new Error("expected agentchat judge pool");
+    }
+
+    await judge("transcript");
+
+    expect(seenBodies).toHaveLength(1);
+    expect(seenBodies[0]?.max_tokens).toBe(64);
+    expect(seenBodies[0]?.chat_template_kwargs).toEqual({ enable_thinking: false });
   } finally {
-    infoSpy.mockRestore();
+    await server.stop(true);
     if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
     else delete process.env.PENUMBRA_CONFIG_DIR;
     if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
     else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
     rmSync(dir, { recursive: true, force: true });
-    d.stop();
   }
 });
 

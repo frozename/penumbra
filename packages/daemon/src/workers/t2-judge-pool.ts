@@ -8,6 +8,7 @@ export interface JudgeEntry {
   apiKey: string;
   model: string;
   caPath?: string;
+  requestExtras?: Record<string, unknown>;
 }
 
 type JudgeLogFn = (...a: unknown[]) => void;
@@ -120,11 +121,12 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: judge.model,
-        messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_tokens: maxTokens,
         temperature: 0,
+        ...(judge.requestExtras ?? {}),
+        model: judge.model,
+        messages: [{ role: "user", content: prompt }],
       }),
       signal: AbortSignal.timeout(timeoutMs),
     };

@@ -207,6 +207,64 @@ test("single-judge pool degenerates to that one judge", async () => {
   expect(seen).toEqual(["1", "2", "3"]);
 });
 
+test("judge requestExtras override request defaults but not model or messages", async () => {
+  let seenBody: Record<string, unknown> | undefined;
+  const pool = createJudgePool({
+    judges: [
+      {
+        ...makeJudge("a", "http://a", "canonical-model"),
+        requestExtras: {
+          max_tokens: 64,
+          response_format: { type: "text" },
+          chat_template_kwargs: { enable_thinking: false },
+          model: "wrong-model",
+          messages: [{ role: "system", content: "wrong prompt" }],
+        },
+      },
+    ],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      seenBody = readRequestBody(init);
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
+    promptBuilder: (transcript) => `prompt:${transcript}`,
+    parseResponse: () => [],
+  });
+
+  await pool.invoke("hello");
+
+  expect(seenBody?.max_tokens).toBe(64);
+  expect(seenBody?.response_format).toEqual({ type: "text" });
+  expect(seenBody?.chat_template_kwargs).toEqual({ enable_thinking: false });
+  expect(seenBody?.temperature).toBe(0);
+  expect(seenBody?.model).toBe("canonical-model");
+  expect(seenBody?.messages).toEqual([{ role: "user", content: "prompt:hello" }]);
+});
+
+test("judge without requestExtras sends the default request body", async () => {
+  let seenBody: Record<string, unknown> | undefined;
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a", "judge-model")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      seenBody = readRequestBody(init);
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
+    promptBuilder: (transcript) => `prompt:${transcript}`,
+    parseResponse: () => [],
+  });
+
+  await pool.invoke("hello");
+
+  expect(seenBody).toEqual({
+    response_format: { type: "json_object" },
+    max_tokens: 16384,
+    temperature: 0,
+    model: "judge-model",
+    messages: [{ role: "user", content: "prompt:hello" }],
+  });
+});
+
 test("parseResponse error counts as judge failure", async () => {
   const seen: string[] = [];
   const pool = createJudgePool({

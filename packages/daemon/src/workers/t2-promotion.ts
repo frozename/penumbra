@@ -571,6 +571,18 @@ function loadAgentChatConfigSafe(services: Services, configDir: string): AgentCh
   }
 }
 
+// Accept only a real plain object. Malformed per-seat extras are ignored so one
+// bad config entry does not disable the whole judge pool.
+export function extractT2JudgeRequestExtras(
+  options: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const value = options?.["requestExtras"];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const prototype = Reflect.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  return value as Record<string, unknown>;
+}
+
 function createJudgePoolFromAgentchat(
   services: Services,
   onPool: (pool: JudgePool) => void,
@@ -581,13 +593,17 @@ function createJudgePoolFromAgentchat(
 
   const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
   const judges: JudgeEntry[] = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg }).map(
-    (candidate) => ({
-      name: candidate.name,
-      baseUrl: candidate.baseUrl,
-      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
-      model: candidate.model,
-      caPath: candidate.caPath,
-    }),
+    (candidate) => {
+      const requestExtras = extractT2JudgeRequestExtras(candidate.options);
+      return {
+        name: candidate.name,
+        baseUrl: candidate.baseUrl,
+        apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+        model: candidate.model,
+        caPath: candidate.caPath,
+        ...(requestExtras ? { requestExtras } : {}),
+      };
+    },
   );
   if (judges.length === 0) return null;
 
