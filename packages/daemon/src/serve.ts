@@ -282,7 +282,13 @@ import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker } from "./workers/t2-promotion.js";
-import { recordSubsystemOutcome } from "./services/subsystem-health.js";
+import {
+  buildRequiredLlmRoleFloors,
+  evaluateLlmRoleFloors,
+  type LlmRoleFloorEvaluation,
+  logLlmRoleFloorViolations,
+  recordSubsystemOutcome,
+} from "./services/subsystem-health.js";
 
 type Services = CoreServices;
 
@@ -313,6 +319,7 @@ export type DaemonServices = CoreServices & {
   extraWorkerSupervisor?: ExtraWorkerSupervisor;
   workerAuthz?: Map<string, { project_id?: string; isolation: ExtraWorkerConfig["isolation"] }>;
   workerHealthProbe?: WorkerHealthProbe;
+  llmRoleFloorEvaluation?: LlmRoleFloorEvaluation;
 };
 
 // Returns the single captured group from `pattern.exec(input)`, or undefined.
@@ -358,6 +365,18 @@ function safeLogInfo(services: Services, payload: Record<string, unknown>, msg: 
   // `as unknown as Services`. Cast to unknown first to allow optional access.
   const log = (services as unknown as { log?: { info?: (obj: unknown, m: string) => void } }).log;
   log?.info?.(payload, msg);
+}
+
+function evaluateStartupLlmRoleFloors(opts: ServeOpts, dreamConfig: DreamConfig): void {
+  const daemonServices = opts.services as DaemonServices;
+  const evaluation = evaluateLlmRoleFloors({
+    agentchatConfig: opts.services.agentchatConfig,
+    requiredRoles: buildRequiredLlmRoleFloors({
+      dreamingAutoPromoteMinJudges: dreamConfig.autoPromoteMinJudges,
+    }),
+  });
+  daemonServices.llmRoleFloorEvaluation = evaluation;
+  logLlmRoleFloorViolations({ log: opts.services.log, evaluation });
 }
 
 async function runWorkflowTriggerEntry(
@@ -1105,6 +1124,7 @@ export function createDaemonFetchHandler(opts: {
         sampler: opts.lagSampler,
         db: opts.services.db,
         now: opts.services.clock,
+        llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
       });
     }
     // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
@@ -2099,6 +2119,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       "dreaming: auto-resumed cron because historical cycles exist and PENUMBRA_DREAMING_ENABLED is not explicitly set",
     );
   }
+  evaluateStartupLlmRoleFloors(opts, runtimeDreamConfig);
   const { probeRef, extraWorkerSupervisor } = setupExtraWorkerSupervisor(opts, daemonServices);
   // Opt-in local-seat health-gating (default off). When enabled via routing.yaml
   // role_routing.local_seat_health_gate, the daemon probes local openai-compat

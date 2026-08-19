@@ -3,8 +3,10 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildRequiredLlmRoleFloors,
   computeSubsystemAlerts,
   DREAM_QUERY_REWRITE_SUBSYSTEM,
+  evaluateLlmRoleFloors,
   readSubsystemHealth,
   recordSubsystemOutcome,
 } from "../../src/services/subsystem-health.js";
@@ -162,5 +164,162 @@ describe("subsystem health", () => {
     };
 
     expect(computeSubsystemAlerts(db, opts)).not.toContain("dream.health.rewrite_failing");
+  });
+
+  test("alerts when a required LLM role has zero holders", () => {
+    const db = setupDb();
+
+    expect(
+      computeSubsystemAlerts(db, {
+        requiredLlmRoleFloors: [
+          {
+            role: "brief-synthesizer",
+            consumer: "dreaming.brief_synthesizer",
+            minimumHolders: 1,
+          },
+        ],
+        agentchatConfig: { agents: [{ name: "judge", roles: ["dreaming-judge"] }] },
+      }),
+    ).toContain("llm.role_floor.brief-synthesizer.required_1.actual_0");
+  });
+
+  test("alerts when a required LLM role has fewer holders than its consumer quorum", () => {
+    const db = setupDb();
+
+    expect(
+      computeSubsystemAlerts(db, {
+        requiredLlmRoleFloors: [
+          { role: "memory-refiner", consumer: "t2.promotion", minimumHolders: 2 },
+        ],
+        agentchatConfig: { agents: [{ name: "solo-refiner", roles: ["memory-refiner"] }] },
+      }),
+    ).toContain("llm.role_floor.memory-refiner.required_2.actual_1");
+  });
+
+  test("uses the real t2 promotion memory-refiner floor of one holder", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      requiredLlmRoleFloors: buildRequiredLlmRoleFloors({
+        dreamingAutoPromoteMinJudges: 2,
+      }),
+      agentchatConfig: {
+        agents: [
+          { name: "brief-synthesizer-1", roles: ["brief-synthesizer"] },
+          { name: "memory-refiner-1", roles: ["memory-refiner"] },
+          { name: "dreaming-judge-1", roles: ["dreaming-judge"] },
+          { name: "dreaming-judge-2", roles: ["dreaming-judge"] },
+          { name: "dreaming-rewriter-1", roles: ["dreaming-rewriter"] },
+          { name: "refiner-1", roles: ["refiner"] },
+        ],
+      },
+    });
+
+    expect(alerts.filter((alert) => alert.startsWith("llm.role_floor."))).toEqual([]);
+  });
+
+  test("does not alert when a required LLM role is at or above its floor", () => {
+    const db = setupDb();
+
+    expect(
+      computeSubsystemAlerts(db, {
+        requiredLlmRoleFloors: [
+          { role: "dreaming-judge", consumer: "dreaming.p1_auto_promote", minimumHolders: 2 },
+        ],
+        agentchatConfig: {
+          agents: [
+            { name: "judge-a", roles: ["dreaming-judge"] },
+            { name: "judge-b", roles: ["dreaming-judge"] },
+            { name: "judge-c", roles: ["dreaming-judge"] },
+          ],
+        },
+      }),
+    ).not.toContain("llm.role_floor.dreaming-judge.required_2.actual_3");
+  });
+
+  test("does not alert for the current live production role floor counts", () => {
+    const db = setupDb();
+    const agents = [
+      { name: "brief-synthesizer-1", roles: ["brief-synthesizer"] },
+      { name: "memory-refiner-1", roles: ["memory-refiner"] },
+      { name: "dreaming-judge-1", roles: ["dreaming-judge"] },
+      { name: "dreaming-judge-2", roles: ["dreaming-judge"] },
+      { name: "dreaming-judge-3", roles: ["dreaming-judge"] },
+      { name: "dreaming-rewriter-1", roles: ["dreaming-rewriter"] },
+      { name: "dreaming-rewriter-2", roles: ["dreaming-rewriter"] },
+      { name: "dreaming-rewriter-3", roles: ["dreaming-rewriter"] },
+      { name: "refiner-1", roles: ["refiner"] },
+      { name: "refiner-2", roles: ["refiner"] },
+      { name: "refiner-3", roles: ["refiner"] },
+      { name: "embedder-1", roles: ["embedder"] },
+      ...Array.from({ length: 35 }, (_, idx) => ({
+        name: `non-role-seat-${String(idx + 1)}`,
+        roles: ["executor"],
+      })),
+    ];
+
+    const alerts = computeSubsystemAlerts(db, {
+      requiredLlmRoleFloors: buildRequiredLlmRoleFloors({
+        dreamingAutoPromoteMinJudges: 2,
+      }),
+      agentchatConfig: { agents },
+    });
+
+    expect(agents).toHaveLength(47);
+    expect(alerts.filter((alert) => alert.startsWith("llm.role_floor."))).toEqual([]);
+  });
+
+  test("default role floors include only source-consumed LLM roles", () => {
+    expect(
+      buildRequiredLlmRoleFloors({
+        env: {},
+        dreamingAutoPromoteMinJudges: 2,
+      }),
+    ).toEqual([
+      { role: "brief-synthesizer", consumer: "dreaming.brief_synthesizer", minimumHolders: 1 },
+      { role: "memory-refiner", consumer: "t2.promotion", minimumHolders: 1 },
+      { role: "dreaming-judge", consumer: "dreaming.p1_auto_promote", minimumHolders: 2 },
+      { role: "dreaming-rewriter", consumer: "dreaming.p4_query_rewrite", minimumHolders: 1 },
+      { role: "refiner", consumer: "dispatch.refiner", minimumHolders: 1 },
+    ]);
+  });
+
+  test("alerts when the dispatch refiner role consumer has no holders", () => {
+    const evaluation = evaluateLlmRoleFloors({
+      requiredRoles: buildRequiredLlmRoleFloors({
+        env: {},
+        dreamingAutoPromoteMinJudges: 2,
+      }),
+      agentchatConfig: {
+        agents: [
+          { name: "brief-synthesizer-1", roles: ["brief-synthesizer"] },
+          { name: "memory-refiner-1", roles: ["memory-refiner"] },
+          { name: "dreaming-judge-1", roles: ["dreaming-judge"] },
+          { name: "dreaming-judge-2", roles: ["dreaming-judge"] },
+          { name: "dreaming-rewriter-1", roles: ["dreaming-rewriter"] },
+        ],
+      },
+    });
+
+    expect(evaluation.violations).toContainEqual({
+      role: "refiner",
+      consumer: "dispatch.refiner",
+      requiredHolders: 1,
+      actualHolders: 0,
+      holderNames: [],
+    });
+  });
+
+  test("alerts fail-closed when the role registry is unparseable", () => {
+    const db = setupDb();
+
+    expect(
+      computeSubsystemAlerts(db, {
+        requiredLlmRoleFloors: [
+          { role: "memory-refiner", consumer: "t2.promotion", minimumHolders: 2 },
+        ],
+        agentchatConfig: { agents: [{ name: "broken", roles: "memory-refiner" }] },
+      }),
+    ).toContain("llm.role_floor.memory-refiner.required_2.actual_0");
   });
 });

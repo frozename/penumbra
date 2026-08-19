@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
 
+import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "./config.js";
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
@@ -196,7 +197,7 @@ export function createDreamingJudgePoolFromAgentchat(
 
   // Require ≥2 agents: P1 auto-promote threshold is ceil(total*2/3) with
   // autoPromoteMinJudges=2 — a single judge can never reach quorum.
-  if (candidates.length < 2) return null;
+  if (candidates.length < DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES) return null;
 
   const judges: DreamingJudgeEntry[] = candidates.map((candidate) => {
     const requestExtras = asPlainObject(candidate.options?.["requestExtras"]);
@@ -210,7 +211,7 @@ export function createDreamingJudgePoolFromAgentchat(
     };
   });
 
-  if (judges.length < 2) return null;
+  if (judges.length < DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES) return null;
 
   return new DreamingJudgePoolImpl(judges, fetchImpl);
 }

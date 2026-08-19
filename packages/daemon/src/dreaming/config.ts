@@ -1,5 +1,7 @@
 import type { ConfigBundle } from "@penumbra/config";
 
+export const DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2;
+
 export interface JudgePoolConfig {
   kind: "stub" | "real";
 }

@@ -1,11 +1,13 @@
 import type { Database } from "bun:sqlite";
 
 import type { LagSampler } from "../lag-sampler.js";
+import type { LlmRoleFloorEvaluation } from "../services/subsystem-health.js";
 
 type HealthRouteOpts = {
   sampler?: LagSampler;
   db?: Database;
   now?: () => Date;
+  llmRoleFloors?: LlmRoleFloorEvaluation;
 };
 
 export function healthRoute(opts: HealthRouteOpts = {}): Response {
@@ -36,6 +38,9 @@ export function healthRoute(opts: HealthRouteOpts = {}): Response {
   }
   if (opts.sampler) {
     payload.lagMs = opts.sampler.maxLagMs;
+  }
+  if (opts.llmRoleFloors) {
+    payload.llmRoleFloors = opts.llmRoleFloors;
   }
   return Response.json(payload);
 }

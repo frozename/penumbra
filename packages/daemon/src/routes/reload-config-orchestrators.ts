@@ -1,5 +1,5 @@
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
-import { reloadAgentChatConfig } from "@penumbra/config";
+import { getConfig, reloadAgentChatConfig } from "@penumbra/config";
 import {
   defaultProjectRegistryPath,
   loadProjectRegistry,
@@ -18,6 +18,12 @@ import {
   loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
 } from "../agentchat-config.js";
+import { buildDreamingConfig } from "../dreaming/config.js";
+import {
+  buildRequiredLlmRoleFloors,
+  evaluateLlmRoleFloors,
+  logLlmRoleFloorViolations,
+} from "../services/subsystem-health.js";
 import { type ExtraWorkersConfig, loadExtraWorkersConfig } from "../workers/config.js";
 
 export type ReloadSubsystemName =
@@ -287,6 +293,17 @@ export function commitAgentChatConfigSubsystem(
   services.providerQuotas = snapshot.providerQuotas;
   services.agentchatConfig = snapshot.agentchatConfig;
   services.shellConfig = snapshot.shellConfig;
+  const dreamConfig = buildDreamingConfig(getConfig());
+  services.llmRoleFloorEvaluation = evaluateLlmRoleFloors({
+    agentchatConfig: services.agentchatConfig,
+    requiredRoles: buildRequiredLlmRoleFloors({
+      dreamingAutoPromoteMinJudges: dreamConfig.autoPromoteMinJudges,
+    }),
+  });
+  logLlmRoleFloorViolations({
+    log: services.log,
+    evaluation: services.llmRoleFloorEvaluation,
+  });
 }
 
 export async function reloadWorkflowAndProjectRegistrySubsystem(

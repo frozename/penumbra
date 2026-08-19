@@ -5,10 +5,11 @@ import { buildT2EmbedText, retireNonDirectMemory } from "@penumbra/core";
 import { z } from "zod";
 
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
-import type {
-  DreamConfig,
-  DreamPhaseBudgetFractions,
-  DreamPhaseCostEstimatesUsd,
+import {
+  DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES,
+  type DreamConfig,
+  type DreamPhaseBudgetFractions,
+  type DreamPhaseCostEstimatesUsd,
 } from "./config.js";
 import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { ResearchDeps } from "./research.js";
@@ -591,7 +592,8 @@ async function runCycleP1(
   config: DreamConfig,
 ): Promise<void> {
   const p1Start = phaseStart(ctx, "P1");
-  const autoPromoteMinJudges = config.autoPromoteMinJudges ?? 2;
+  const autoPromoteMinJudges =
+    config.autoPromoteMinJudges ?? DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES;
   const longLivedFilter = KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.length
     ? `AND (user_id IS NULL OR user_id NOT IN (${KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.map(() => "?").join(",")}))`
     : "";

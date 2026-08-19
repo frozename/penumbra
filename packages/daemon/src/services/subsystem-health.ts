@@ -1,10 +1,41 @@
 import type { Database } from "bun:sqlite";
 
+import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "../dreaming/config.js";
+
 const PRIMARY_TIER = "primary";
 export const DREAM_QUERY_REWRITE_SUBSYSTEM = "dream.query_rewrite";
 const PERMANENT_FALLBACK_AFTER_MS = 6 * 60 * 60_000;
 const QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD = 0.9;
 const QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD = 3;
+
+export interface LlmRoleFloorSpec {
+  role: string;
+  consumer: string;
+  minimumHolders: number;
+}
+
+export interface LlmRoleFloorViolation {
+  role: string;
+  consumer: string;
+  requiredHolders: number;
+  actualHolders: number;
+  holderNames: string[];
+  reason?: string;
+}
+
+export interface LlmRoleFloorEvaluation {
+  ok: boolean;
+  violations: LlmRoleFloorViolation[];
+}
+
+interface LlmRoleAgent {
+  name?: unknown;
+  roles?: unknown;
+}
+
+interface LlmRoleAgentchatConfig {
+  agents?: unknown;
+}
 
 export interface RecordSubsystemOutcomeInput {
   subsystem: string;
@@ -41,6 +72,120 @@ export interface ComputeSubsystemAlertsOptions {
   queryRewriteFailedRecent?: number;
   queryRewriteFailureRateAlertThreshold?: number;
   queryRewriteConsecutiveFailuresAlertThreshold?: number;
+  requiredLlmRoleFloors?: LlmRoleFloorSpec[];
+  agentchatConfig?: LlmRoleAgentchatConfig | null;
+}
+
+export interface BuildRequiredLlmRoleFloorsOptions {
+  env?: Record<string, string | undefined>;
+  dreamingAutoPromoteMinJudges?: number;
+}
+
+function envRole(env: Record<string, string | undefined>, key: string, fallback: string): string {
+  const value = env[key]?.trim();
+  return value && value.length > 0 ? value : fallback;
+}
+
+function minimumHolders(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? Math.ceil(value) : fallback;
+}
+
+export function buildRequiredLlmRoleFloors(
+  opts: BuildRequiredLlmRoleFloorsOptions = {},
+): LlmRoleFloorSpec[] {
+  const env = opts.env ?? process.env;
+  return [
+    {
+      role: envRole(env, "PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE", "brief-synthesizer"),
+      consumer: "dreaming.brief_synthesizer",
+      minimumHolders: 1,
+    },
+    {
+      role: envRole(env, "PENUMBRA_JUDGE_ROLE", "memory-refiner"),
+      consumer: "t2.promotion",
+      minimumHolders: 1,
+    },
+    {
+      role: envRole(env, "PENUMBRA_DREAMING_JUDGE_ROLE", "dreaming-judge"),
+      consumer: "dreaming.p1_auto_promote",
+      minimumHolders: minimumHolders(
+        opts.dreamingAutoPromoteMinJudges,
+        DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES,
+      ),
+    },
+    {
+      role: envRole(env, "PENUMBRA_DREAMING_REWRITER_ROLE", "dreaming-rewriter"),
+      consumer: "dreaming.p4_query_rewrite",
+      minimumHolders: 1,
+    },
+    {
+      role: envRole(env, "PENUMBRA_REFINER_ROLE", "refiner"),
+      consumer: "dispatch.refiner",
+      minimumHolders: 1,
+    },
+  ];
+}
+
+export function evaluateLlmRoleFloors(input: {
+  agentchatConfig?: LlmRoleAgentchatConfig | null;
+  requiredRoles: LlmRoleFloorSpec[];
+}): LlmRoleFloorEvaluation {
+  const violations: LlmRoleFloorViolation[] = [];
+  const agents = input.agentchatConfig?.agents;
+  if (!Array.isArray(agents)) {
+    return {
+      ok: false,
+      violations: input.requiredRoles.map((spec) => ({
+        role: spec.role,
+        consumer: spec.consumer,
+        requiredHolders: spec.minimumHolders,
+        actualHolders: 0,
+        holderNames: [],
+        reason: "unparseable_role_registry",
+      })),
+    };
+  }
+
+  const holdersByRole = new Map<string, string[]>();
+  let unparseable = false;
+  for (const rawAgent of agents as LlmRoleAgent[]) {
+    const name = typeof rawAgent.name === "string" && rawAgent.name ? rawAgent.name : "unknown";
+    if (!Array.isArray(rawAgent.roles)) {
+      unparseable = true;
+      continue;
+    }
+    for (const role of rawAgent.roles) {
+      if (typeof role !== "string" || role.length === 0) {
+        unparseable = true;
+        continue;
+      }
+      const holders = holdersByRole.get(role) ?? [];
+      holders.push(name);
+      holdersByRole.set(role, holders);
+    }
+  }
+
+  for (const spec of input.requiredRoles) {
+    const holderNames = holdersByRole.get(spec.role) ?? [];
+    if (unparseable || holderNames.length < spec.minimumHolders) {
+      violations.push({
+        role: spec.role,
+        consumer: spec.consumer,
+        requiredHolders: spec.minimumHolders,
+        actualHolders: unparseable ? 0 : holderNames.length,
+        holderNames: unparseable ? [] : holderNames,
+        ...(unparseable ? { reason: "unparseable_role_registry" } : {}),
+      });
+    }
+  }
+
+  return { ok: violations.length === 0, violations };
+}
+
+function roleFloorAlert(violation: LlmRoleFloorViolation): string {
+  return `llm.role_floor.${violation.role}.required_${String(
+    violation.requiredHolders,
+  )}.actual_${String(violation.actualHolders)}`;
 }
 
 function normalizeTs(ts: Date | string | undefined): string {
@@ -160,5 +305,34 @@ export function computeSubsystemAlerts(
     }
   }
 
+  if (opts.requiredLlmRoleFloors) {
+    const evaluation = evaluateLlmRoleFloors({
+      agentchatConfig: opts.agentchatConfig,
+      requiredRoles: opts.requiredLlmRoleFloors,
+    });
+    for (const violation of evaluation.violations) {
+      alerts.push(roleFloorAlert(violation));
+    }
+  }
+
   return alerts;
+}
+
+export function logLlmRoleFloorViolations(input: {
+  log: { error: (payload: Record<string, unknown>, msg: string) => void };
+  evaluation: LlmRoleFloorEvaluation;
+}): void {
+  for (const violation of input.evaluation.violations) {
+    input.log.error(
+      {
+        role: violation.role,
+        consumer: violation.consumer,
+        requiredHolders: violation.requiredHolders,
+        actualHolders: violation.actualHolders,
+        holderNames: violation.holderNames,
+        reason: violation.reason,
+      },
+      "LLM role floor violation",
+    );
+  }
 }

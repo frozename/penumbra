@@ -113,6 +113,40 @@ test("serve leaves process signal handling to direct embedders by default", asyn
   }
 });
 
+test("evaluateStartupLlmRoleFloors stores role floor state for health responses", async () => {
+  const services = makeServices();
+  let fetchHandler: ((req: Request) => Response | Promise<Response>) | undefined;
+  const serverStop = mock(() => undefined);
+  spyOn(Bun, "serve").mockImplementation((opts) => {
+    fetchHandler = opts.fetch as typeof fetchHandler;
+    return { port: 65530, stop: serverStop } as unknown as ReturnType<typeof Bun.serve>;
+  });
+  services.agentchatConfig = {
+    agents: [
+      { name: "brief-synthesizer-1", roles: ["brief-synthesizer"] },
+      { name: "memory-refiner-1", roles: ["memory-refiner"] },
+      { name: "dreaming-judge-1", roles: ["dreaming-judge"] },
+      { name: "dreaming-judge-2", roles: ["dreaming-judge"] },
+      { name: "dreaming-rewriter-1", roles: ["dreaming-rewriter"] },
+      { name: "refiner-1", roles: ["refiner"] },
+    ],
+  };
+  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+
+  const handle = serve({ services, token: "test-token", port: 0 });
+  try {
+    expect(fetchHandler).toBeFunction();
+    const res = await fetchHandler!(new Request("http://127.0.0.1/health"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.llmRoleFloors).toEqual({ ok: true, violations: [] });
+  } finally {
+    await handle.stop();
+    services.db.close();
+  }
+});
+
 test("dispatch refiner fails over from a dead role-resolved local seat and records health", async () => {
   process.env.PENUMBRA_JUDGE_BASE_URL = "http://127.0.0.1:7944";
   process.env.PENUMBRA_REFINER_MODEL = "lfm2-generator";
