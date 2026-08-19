@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
-import { isAncestorOf, isThreeDotDiffEmpty } from "./branch-land-probe.js";
+import { classifyBranchLandStatus } from "./branch-land-probe.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -659,9 +659,9 @@ export class WorktreeManager {
 
   // Fail-closed branch delete guard: only delete an agent branch when the
   // commit has actually landed on main (ancestor) or its work is already
-  // present there (empty three-dot diff after fetch/rebase). Any probe error
-  // skips the delete so a still-needed branch survives instead of being lost
-  // to a transient git failure or a worktree pruned out from under us.
+  // present there. Any probe error skips the delete so a still-needed branch
+  // survives instead of being lost to a transient git failure or a worktree
+  // pruned out from under us.
   private async verifyBranchDeleted(
     handle: WorktreeHandle,
     repoRoot: string,
@@ -672,25 +672,25 @@ export class WorktreeManager {
       return { deleted: true };
     }
 
-    let safe = false;
     try {
-      if (await isAncestorOf(this.runner, repoRoot, sha, this.mainBranch)) {
-        safe = true;
-      } else if (await isThreeDotDiffEmpty(this.runner, repoRoot, sha, this.mainBranch)) {
-        safe = true;
+      const landStatus = await classifyBranchLandStatus(
+        this.runner,
+        repoRoot,
+        sha,
+        this.mainBranch,
+      );
+      if (landStatus === "error") throw new Error("branch content land-status probe failed");
+      if (landStatus === "unlanded") {
+        this.log.warn(
+          { branch: handle.branchName, sha },
+          "branch carries commits not in main; preserving for inspection",
+        );
+        return { deleted: false, sha };
       }
     } catch (err) {
       this.log.warn(
         { branch: handle.branchName, sha, err: String(err) },
         "branch-land probe failed; preserving branch (fail-closed)",
-      );
-      return { deleted: false, sha };
-    }
-
-    if (!safe) {
-      this.log.warn(
-        { branch: handle.branchName, sha },
-        "branch carries commits not in main; preserving for inspection",
       );
       return { deleted: false, sha };
     }

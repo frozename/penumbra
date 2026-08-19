@@ -540,7 +540,13 @@ export type {
   RegistryError,
   WorkflowRegistry,
 } from "./workflows/registry-interface.js";
-export { isAncestorOf, isThreeDotDiffEmpty } from "./worktree/branch-land-probe.js";
+export {
+  classifyBranchByContent,
+  classifyBranchLandStatus,
+  isAncestorOf,
+  isThreeDotDiffEmpty,
+  type BranchLandStatus,
+} from "./worktree/branch-land-probe.js";
 export { FsPathError, resolveInsideWorktree };
 
 export {

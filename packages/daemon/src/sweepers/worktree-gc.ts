@@ -2,6 +2,10 @@ import { selectWorktreeGcCandidates, type DispatchEventInput, type Services } fr
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  classifyBranchLandStatus,
+  type BranchLandStatus as CoreBranchLandStatus,
+} from "../../../core/src/worktree/branch-land-probe.js";
 // Pinned to the worktree-local manager source so the new `branchSha` field on
 // teardownWorktree's return type is visible inside symlink_mirror worktrees;
 // the @penumbra/core resolution chain otherwise points back to the home repo.
@@ -20,7 +24,7 @@ function maybeUnref(timer: ReturnType<typeof setInterval>): void {
   if (typeof unrefable.unref === "function") unrefable.unref();
 }
 
-export type BranchLandStatus = "landed" | "unlanded" | "missing" | "error";
+export type BranchLandStatus = CoreBranchLandStatus | "missing";
 
 export interface WorktreeGcOpts {
   services: Services;
@@ -71,63 +75,17 @@ function buildDefaultBranchLandedCheck(
       if (code === 1) return "missing";
       return "error";
     }
-    try {
-      await execFile("git", ["-C", mainRepoDir, "merge-base", "--is-ancestor", branch, mainBranch]);
-      return "landed";
-    } catch (err) {
-      const code = (err as { code?: number | string | null }).code;
-      // Anything other than a clean "not an ancestor" (exit 1) is unexpected
-      // (128 missing ref, spawn failure, etc.) and must fail safe.
-      if (code !== 1) return "error";
-      // Not an ancestor — but dispatch_land uses SQUASH merges, so a landed
-      // branch's own commits are NOT ancestors of main even though its CONTENT
-      // is fully present in main. Fall back to a content-in-main probe before
-      // concluding the branch is genuinely unlanded.
-      return classifyBranchByContent(mainRepoDir, mainBranch, branch);
-    }
-  };
-}
-
-// Content-in-main probe for non-ancestor branches. Merges `branch` into
-// `mainBranch` in-memory (no working tree touched) and compares the resulting
-// tree to main's current tree. When they match, the merge introduces nothing
-// not already in main — the branch's work is preserved (safe to reap). When
-// they differ, or the merge conflicts, the branch carries real content missing
-// from main and must be kept (never reap and lose work).
-async function classifyBranchByContent(
-  mainRepoDir: string,
-  mainBranch: string,
-  branch: string,
-): Promise<BranchLandStatus> {
-  let mainTree: string;
-  try {
-    const { stdout } = await execFile("git", [
-      "-C",
+    return classifyBranchLandStatus(
+      (cmd, args, opts) =>
+        execFile(cmd, ["-C", mainRepoDir, ...args], {
+          ...opts,
+          encoding: opts?.encoding ?? "utf8",
+        }),
       mainRepoDir,
-      "rev-parse",
-      `${mainBranch}^{tree}`,
-    ]);
-    mainTree = stdout.trim();
-  } catch {
-    return "error";
-  }
-  try {
-    const { stdout } = await execFile("git", [
-      "-C",
-      mainRepoDir,
-      "merge-tree",
-      "--write-tree",
-      mainBranch,
       branch,
-    ]);
-    return stdout.trim() === mainTree ? "landed" : "unlanded";
-  } catch (err) {
-    const code = (err as { code?: number | string | null }).code;
-    // merge-tree exits 1 on merge conflicts: the branch diverges from main and
-    // is genuinely unlanded. Any other exit is a probe failure -> fail safe.
-    if (code === 1) return "unlanded";
-    return "error";
-  }
+      mainBranch,
+    );
+  };
 }
 
 // Fail-closed stage/* reaper. stageMergedBase leaks a stage/<handoffId> ref

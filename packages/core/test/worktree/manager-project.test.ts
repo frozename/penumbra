@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
+import type { Logger } from "../../src/logger.js";
 import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager.js";
 
 // node:util.promisify(child_process.exec)'s declaration overloads resolve to the
@@ -13,6 +15,7 @@ import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager
 type ExecResult = { stdout: string; stderr: string };
 type ExecOpts = { cwd?: string };
 const exec: (command: string, opts?: ExecOpts) => Promise<ExecResult> = promisify(execCb);
+const execFile = promisify(execFileCb);
 
 const INJECTION_CANARY = "/tmp/penumbra-injection-canary";
 
@@ -218,6 +221,73 @@ describe("WorktreeManager — project parameterization", () => {
     expect(result.branchDeleted).toBe(false);
     expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
     expect(fs.existsSync(handle.path)).toBe(false);
+    const branch = await exec(
+      `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
+    );
+    expect(branch.stdout.trim()).toBe(result.branchSha);
+    await exec(`git -C "${homeRepo}" branch -D "agent/${id}"`);
+  });
+
+  it("deletes a squash-landed agent branch whose tip is not an ancestor of main", async () => {
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id);
+
+    fs.writeFileSync(path.join(handle.path, "squashed.txt"), "landed by content\n");
+    await exec(`git -C "${handle.path}" add squashed.txt`);
+    await exec(`git -C "${handle.path}" -c user.email=t@t -c user.name=t commit -m "squashed"`);
+    await exec(`git -C "${homeRepo}" merge --squash "agent/${id}"`);
+    await exec(`git -C "${homeRepo}" -c user.email=t@t -c user.name=t commit -m "squash land"`);
+    await expectRejectsWith(
+      exec(`git -C "${homeRepo}" merge-base --is-ancestor "agent/${id}" main`),
+    );
+
+    const result = await manager.teardownWorktree(id, false);
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(fs.existsSync(handle.path)).toBe(false);
+    await expectRejectsWith(
+      exec(`git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`),
+    );
+  });
+
+  it("preserves an unlanded branch when the content probe fails unexpectedly", async () => {
+    const warns: { obj: unknown; msg?: string }[] = [];
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      log: {
+        warn: (obj: unknown, msg?: string): void => {
+          warns.push({ obj, msg });
+        },
+      } as Logger,
+      runner: (cmd, args, opts) => {
+        if (cmd === "git" && args[0] === "merge-tree") {
+          const err = new Error("synthetic merge-tree failure") as Error & { code?: number };
+          err.code = 2;
+          return Promise.reject(err);
+        }
+        return execFile(cmd, args, { ...opts, encoding: opts?.encoding ?? "utf8" });
+      },
+    });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id);
+
+    fs.writeFileSync(path.join(handle.path, "agent-only.txt"), "unlanded\n");
+    await exec(`git -C "${handle.path}" add agent-only.txt`);
+    await exec(`git -C "${handle.path}" -c user.email=t@t -c user.name=t commit -m "agent-only"`);
+
+    const result = await manager.teardownWorktree(id, false);
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(fs.existsSync(handle.path)).toBe(false);
+    expect(
+      warns.some(({ msg }) => msg === "branch-land probe failed; preserving branch (fail-closed)"),
+    ).toBe(true);
     const branch = await exec(
       `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
     );

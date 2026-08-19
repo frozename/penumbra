@@ -18,10 +18,10 @@ function extractStderr(err: unknown): string {
   return "";
 }
 
-// Shared land-status probes used by the worktree teardown branch-delete guard
-// and the PR orphan sweeper. Both checks are conservative — any unexpected exit
-// code rethrows so the caller can decide whether to defer (fail-closed) or
-// surface the error.
+// Shared land-status probes used by branch cleanup guards. The primitive checks
+// stay conservative: unexpected exits rethrow or return "error" so callers can
+// preserve branches fail-closed.
+export type BranchLandStatus = "landed" | "unlanded" | "error";
 
 export async function isAncestorOf(
   runner: WorktreeCommandRunner,
@@ -51,4 +51,52 @@ export async function isThreeDotDiffEmpty(
     cwd: repoDir,
   });
   return stdout.trim().length === 0;
+}
+
+export async function classifyBranchByContent(
+  runner: WorktreeCommandRunner,
+  repoDir: string,
+  baseRef: string,
+  candidateRef: string,
+): Promise<BranchLandStatus> {
+  // Squash lands create a new commit, so the branch tip is not an ancestor of
+  // main even when its tree is already present. merge-tree lets us compare the
+  // in-memory merge result without touching the working tree.
+  let baseTree: string;
+  try {
+    const { stdout } = await runner("git", ["rev-parse", `${baseRef}^{tree}`], { cwd: repoDir });
+    baseTree = stdout.trim();
+  } catch {
+    return "error";
+  }
+
+  try {
+    const { stdout } = await runner("git", ["merge-tree", "--write-tree", baseRef, candidateRef], {
+      cwd: repoDir,
+    });
+    return stdout.trim() === baseTree ? "landed" : "unlanded";
+  } catch (err) {
+    const code = extractExitCode(err);
+    if (code === 1) return "unlanded";
+    return "error";
+  }
+}
+
+export async function classifyBranchLandStatus(
+  runner: WorktreeCommandRunner,
+  repoDir: string,
+  candidateRef: string,
+  baseRef: string,
+): Promise<BranchLandStatus> {
+  try {
+    if (await isAncestorOf(runner, repoDir, candidateRef, baseRef)) {
+      return "landed";
+    }
+    if (await isThreeDotDiffEmpty(runner, repoDir, candidateRef, baseRef)) {
+      return "landed";
+    }
+    return classifyBranchByContent(runner, repoDir, baseRef, candidateRef);
+  } catch {
+    return "error";
+  }
 }
