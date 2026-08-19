@@ -57,7 +57,26 @@ describe("runReconcilerSweepTick", () => {
     const db = setupDb();
     const svc = makeServices(db, { prOrphanSweeperDryRun: true });
     const closePullRequest = mock(() => Promise.resolve());
-    const sweepFn = mock(({ dryRun }: { dryRun: boolean }) => {
+    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
+      if (!dryRun) {
+        await closePullRequest({ number: 10, comment: "", deleteBranch: true });
+      }
+      return makeSweepResult();
+    });
+
+    await runReconcilerSweepTick({ services: svc, runSweep: sweepFn, maxClose: 7 });
+
+    expect(sweepFn).toHaveBeenCalledTimes(1);
+    const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
+    expect(call.dryRun).toBe(true);
+    expect(closePullRequest).toHaveBeenCalledTimes(0);
+  });
+
+  test("defaults to dry-run when settings are missing", async () => {
+    const db = setupDb();
+    const svc = makeServices(db);
+    const closePullRequest = mock(() => Promise.resolve());
+    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
       if (!dryRun) {
         await closePullRequest({ number: 10, comment: "", deleteBranch: true });
       }

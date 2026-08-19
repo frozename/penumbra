@@ -60,6 +60,61 @@ export interface WorktreeGcTickResult {
 const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 
 const DEFAULT_GRACE_PERIOD_MS = 2 * 60 * 60_000;
+const UNLANDED_SKIPPED_SUMMARY_ID_LIMIT = 20;
+const previousUnlandedSkippedByServices = new WeakMap<Services, Set<string>>();
+
+function setsEqual(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+function recordUnlandedSkippedSummary(
+  services: Services,
+  handoffIds: string[],
+  ts: string,
+  log?: WorktreeGcOpts["log"],
+): void {
+  const current = new Set(handoffIds);
+  const previous = previousUnlandedSkippedByServices.get(services);
+  previousUnlandedSkippedByServices.set(services, current);
+
+  if (handoffIds.length === 0) return;
+  if (previous && setsEqual(previous, current)) {
+    log?.debug?.(
+      {
+        count: handoffIds.length,
+        handoff_ids: handoffIds.slice(0, UNLANDED_SKIPPED_SUMMARY_ID_LIMIT),
+      },
+      "worktree-gc skipped unlanded branch set unchanged",
+    );
+    return;
+  }
+
+  services.dispatchEventLog.record({
+    handoff_id: handoffIds[0] ?? "worktree-gc",
+    source: "daemon",
+    // Cast until `worktree.gc.unlanded_skipped` lands in the shared
+    // api-contract enum; the local schema in this branch already lists it.
+    kind: "worktree.gc.unlanded_skipped" as DispatchEventInput["kind"],
+    ts,
+    meta: {
+      count: handoffIds.length,
+      handoff_ids: handoffIds.slice(0, UNLANDED_SKIPPED_SUMMARY_ID_LIMIT),
+      truncated: handoffIds.length > UNLANDED_SKIPPED_SUMMARY_ID_LIMIT,
+    },
+  });
+  log?.warn?.(
+    {
+      count: handoffIds.length,
+      handoff_ids: handoffIds.slice(0, UNLANDED_SKIPPED_SUMMARY_ID_LIMIT),
+      truncated: handoffIds.length > UNLANDED_SKIPPED_SUMMARY_ID_LIMIT,
+    },
+    "worktree-gc skipped unlanded branch set",
+  );
+}
 
 function buildDefaultBranchLandedCheck(
   mainRepoDir: string,
@@ -240,28 +295,6 @@ export async function runWorktreeGcTick(
       if (landStatus === "unlanded" || landStatus === "error") {
         deferred.push(candidate.handoff_id);
         unlanded_skipped.push(candidate.handoff_id);
-        services.dispatchEventLog.record({
-          handoff_id: candidate.handoff_id,
-          source: "daemon",
-          // Cast until `worktree.gc.unlanded_skipped` lands in the shared
-          // api-contract enum; the local schema in this branch already lists it.
-          kind: "worktree.gc.unlanded_skipped" as DispatchEventInput["kind"],
-          ts: now().toISOString(),
-          meta: {
-            handoff_id: candidate.handoff_id,
-            branch: candidate.branch,
-            status: candidate.status,
-            land_status: landStatus,
-          },
-        });
-        opts.log?.warn?.(
-          {
-            handoff_id: candidate.handoff_id,
-            branch: candidate.branch,
-            land_status: landStatus,
-          },
-          "worktree-gc skipped unlanded branch",
-        );
         continue;
       }
 
@@ -307,6 +340,8 @@ export async function runWorktreeGcTick(
       failed.push(candidate.handoff_id);
     }
   }
+
+  recordUnlandedSkippedSummary(services, unlanded_skipped, now().toISOString(), opts.log);
 
   const stageResult = lifecycleLock.isHeld()
     ? { reaped: [] as string[], deferred: [] as string[] }
