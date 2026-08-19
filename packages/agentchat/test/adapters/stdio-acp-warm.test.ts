@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import type {
   AcpWarmPool,
   AcpWarmPoolDeposit,
+  AcpWarmPoolDepositOptions,
   AcpWarmPoolEntry,
 } from "../../src/adapters/acp-warm-pool.js";
 import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
@@ -112,7 +113,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     const pool = {
       acquire: vi.fn().mockReturnValue(null),
       deposit: vi.fn(
-        (_key: string, entry: AcpWarmPoolDeposit, opts?: { onReject?: "keep" | "kill" }) => {
+        (_key: string, entry: AcpWarmPoolDeposit, opts?: AcpWarmPoolDepositOptions) => {
           if (opts?.onReject !== "keep") entry.handle.kill();
           return null;
         },
@@ -147,6 +148,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
           return asAcpClient({ ...client.client, request });
         },
         pool,
+        totalPoolEntryCount: () => 9,
       },
     );
 
@@ -171,7 +173,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
 
     expect(result?.text).toBe("ok-1");
     expect(pool.deposit).toHaveBeenCalledTimes(1);
-    expect(pool.deposit.mock.calls[0]?.[2]).toEqual({ onReject: "keep" });
+    expect(pool.deposit.mock.calls[0]?.[2]).toMatchObject({ onReject: "keep" });
     expect(pool.release).not.toHaveBeenCalled();
     expect(pool.evict).not.toHaveBeenCalled();
     expect(handle.kill).toHaveBeenCalledTimes(1);
@@ -186,9 +188,82 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     expect(rejectedEvents).toHaveLength(1);
     expect(rejectedEvents[0]?.meta).toMatchObject({
       pool_key: "codex-acp-fast\0/repo",
-      total_entries: 4,
+      total_entries: 9,
+      agent_entries: 4,
       cap: 4,
       reason: "rejected",
+    });
+  });
+
+  test("emits a lifecycle event when a dispatch deposit evicts another agent's prewarm entry", async () => {
+    const lifecycle: DispatchEventInput[] = [];
+    const handle = createHandle();
+    const client = createClient();
+    const startServer = vi.fn().mockResolvedValue(handle);
+    const pool = {
+      acquire: vi.fn().mockReturnValue(null),
+      deposit: vi.fn(
+        (_key: string, entry: AcpWarmPoolDeposit, opts?: AcpWarmPoolDepositOptions) => {
+          opts?.onPrewarmEvicted?.({
+            evictedAgent: "other-agent",
+            evictedRepoRoot: "/repo-a",
+            depositorAgent: "codex-acp-fast",
+            idleMs: 1234,
+          });
+          return {
+            ...entry,
+            refs: new Set<string>(),
+            spawnedAt: 0,
+            lastReleaseAt: 0,
+          };
+        },
+      ),
+      release: vi.fn(),
+      evict: vi.fn(),
+      shutdown: vi.fn(),
+      size: vi.fn().mockReturnValue(1),
+      has: vi.fn().mockReturnValue(false),
+      liveEntryCount: vi.fn().mockReturnValue(0),
+      peekMissReason: vi.fn().mockReturnValue("no_entry"),
+      debugKeys: vi.fn().mockReturnValue([]),
+      _sweep: vi.fn(),
+    } satisfies AcpWarmPool;
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: "mock-acp",
+        cwd: "/repo-b",
+        model: "codex-acp-fast",
+        warmPool: true,
+        agentName: "codex-acp-fast",
+      },
+      {
+        startServer,
+        createClient: (): StdioAcpClient => asAcpClient(client.client),
+        pool,
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: "hello",
+      conversation: { id: "c1", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      handoff_id: "h-evict-prewarm",
+      eventContext: { handoffId: "h-evict-prewarm", workerId: "w1" },
+      onEvent: (event: DispatchEventInput): void => {
+        lifecycle.push(event);
+      },
+    });
+
+    const evictedEvents = lifecycle.filter(
+      (event) => event.kind === "acp.warm_pool.prewarm_evicted",
+    );
+    expect(evictedEvents).toHaveLength(1);
+    expect(evictedEvents[0]?.meta).toEqual({
+      evicted_agent: "other-agent",
+      evicted_repo_root: "/repo-a",
+      depositor_agent: "codex-acp-fast",
+      idle_ms: 1234,
     });
   });
 

@@ -7,6 +7,7 @@ export const DispatchEventKindSchema = z.enum([
   "dispatch.end",
   "acp.server.start",
   "acp.warm_pool.deposit_rejected",
+  "acp.warm_pool.prewarm_evicted",
   "acp.session.start",
   "acp.session.reuse",
   "acp.session.end",

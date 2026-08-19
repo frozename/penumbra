@@ -288,6 +288,170 @@ describe("ACP warm pool worker wiring", () => {
     expect(totalAcpWarmPoolEntryCount()).toBe(2);
   });
 
+  test("PENUMBRA_WARM_PREWARM_CAP evicts other-agent idle prewarm entries LRU after unpinned entries", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "3";
+    let now = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const depositor = getOrCreateAcpWarmPool("depositor", { warmPoolSize: 2 });
+      const other = getOrCreateAcpWarmPool("other", { warmPoolSize: 3 });
+
+      const oldPrewarm = handle();
+      const newPrewarm = handle();
+      const idle = handle();
+      now = 10;
+      other.deposit("other\0/old", {
+        handle: oldPrewarm,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+        pinned: true,
+        prewarm: true,
+      });
+      now = 20;
+      other.deposit("other\0/new", {
+        handle: newPrewarm,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+        pinned: true,
+        prewarm: true,
+      });
+      now = 30;
+      other.deposit("other\0/idle", {
+        handle: idle,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      });
+
+      const first = handle();
+      now = 40;
+      expect(
+        depositor.deposit("depositor\0/repo", {
+          handle: first,
+          client: asStdioAcpClient({}),
+          specHash: "spec-a",
+        }),
+      ).not.toBeNull();
+      expect(idle.kill).toHaveBeenCalledTimes(1);
+      expect(oldPrewarm.kill).not.toHaveBeenCalled();
+      expect(newPrewarm.kill).not.toHaveBeenCalled();
+      expect(depositor.acquire("holder", "depositor\0/repo", "spec-a")).not.toBeNull();
+
+      const second = handle();
+      const evictions: unknown[] = [];
+      now = 50;
+      expect(
+        depositor.deposit(
+          "depositor\0/other",
+          {
+            handle: second,
+            client: asStdioAcpClient({}),
+            specHash: "spec-a",
+          },
+          {
+            onPrewarmEvicted: (event) => {
+              evictions.push(event);
+            },
+          },
+        ),
+      ).not.toBeNull();
+      expect(oldPrewarm.kill).toHaveBeenCalledTimes(1);
+      expect(newPrewarm.kill).not.toHaveBeenCalled();
+      expect(first.kill).not.toHaveBeenCalled();
+      expect(second.kill).not.toHaveBeenCalled();
+      expect(evictions).toEqual([
+        {
+          evictedAgent: "other",
+          evictedRepoRoot: "/old",
+          depositorAgent: "depositor",
+          idleMs: 40,
+        },
+      ]);
+      expect(totalAcpWarmPoolEntryCount()).toBe(3);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("PENUMBRA_WARM_PREWARM_CAP never evicts same-agent pinned prewarm entries", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "1";
+    const pool = getOrCreateAcpWarmPool("same", { warmPoolSize: 2 });
+    const prewarm = handle();
+    pool.deposit("same\0/prewarm", {
+      handle: prewarm,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+      pinned: true,
+      prewarm: true,
+    });
+
+    const rejected = handle();
+    expect(
+      pool.deposit("same\0/dispatch", {
+        handle: rejected,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      }),
+    ).toBeNull();
+
+    expect(prewarm.kill).not.toHaveBeenCalled();
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+  });
+
+  test("PENUMBRA_WARM_PREWARM_CAP never evicts in-use prewarm entries", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "1";
+    const other = getOrCreateAcpWarmPool("other", { warmPoolSize: 2 });
+    const depositor = getOrCreateAcpWarmPool("depositor", { warmPoolSize: 2 });
+    const prewarm = handle();
+    other.deposit("other\0/prewarm", {
+      handle: prewarm,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+      pinned: true,
+      prewarm: true,
+    });
+    expect(other.acquire("holder", "other\0/prewarm", "spec-a")).not.toBeNull();
+
+    const rejected = handle();
+    expect(
+      depositor.deposit("depositor\0/repo", {
+        handle: rejected,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      }),
+    ).toBeNull();
+
+    expect(prewarm.kill).not.toHaveBeenCalled();
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+  });
+
+  test("PENUMBRA_WARM_PREWARM_CAP never evicts non-prewarm pinned entries", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "1";
+    const other = getOrCreateAcpWarmPool("other", { warmPoolSize: 2 });
+    const depositor = getOrCreateAcpWarmPool("depositor", { warmPoolSize: 2 });
+    const pinned = handle();
+    other.deposit("other\0/pinned", {
+      handle: pinned,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+      pinned: true,
+    });
+
+    const rejected = handle();
+    expect(
+      depositor.deposit("depositor\0/repo", {
+        handle: rejected,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      }),
+    ).toBeNull();
+
+    expect(pinned.kill).not.toHaveBeenCalled();
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+  });
+
   test("installAcpWarmPoolShutdownHandlers wires SIGTERM and SIGINT to shutdownAll", () => {
     const handlers = new Map<string, () => void>();
     const proc: Pick<NodeJS.Process, "on"> = {

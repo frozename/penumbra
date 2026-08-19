@@ -136,6 +136,7 @@ describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
     expect(entry).not.toBeNull();
     expect(entry?.specHash).toBe(specHash);
     expect(entry?.pinned).toBe(true); // pre-warmed: exempt from the idle-grace sweep
+    expect(entry?.prewarm).toBe(true);
     pool.release("h-test", poolKey);
   });
 

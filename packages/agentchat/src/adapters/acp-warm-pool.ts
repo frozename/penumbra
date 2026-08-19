@@ -25,6 +25,8 @@ export interface AcpWarmPoolEntry {
    * are still reaped once past max-age (the pre-warm loop replaces them first).
    */
   pinned?: boolean;
+  /** Set only by the eager prewarm path; pinned alone is not enough. */
+  prewarm?: boolean;
 }
 
 export interface AcpWarmPoolDeposit {
@@ -34,12 +36,21 @@ export interface AcpWarmPoolDeposit {
   sessionId?: string;
   specHash: string;
   pinned?: boolean;
+  prewarm?: boolean;
 }
 
 export type AcpWarmPoolDepositRejectAction = "kill" | "keep";
 
+export interface AcpWarmPoolPrewarmEviction {
+  evictedAgent: string;
+  evictedRepoRoot: string;
+  depositorAgent: string;
+  idleMs: number;
+}
+
 export interface AcpWarmPoolDepositOptions {
   onReject?: AcpWarmPoolDepositRejectAction;
+  onPrewarmEvicted?: (event: AcpWarmPoolPrewarmEviction) => void;
 }
 
 interface AcpAuthMethod {
@@ -79,6 +90,10 @@ export interface AcpWarmPool {
   oldestEvictableIdleAt?(): number | undefined;
   /** Evict the oldest idle, unpinned entry in this pool. */
   evictOldestEvictableIdle?(): boolean;
+  /** Oldest idle pinned prewarm entry not belonging to `depositorAgent`. */
+  oldestEvictablePrewarmAt?(depositorAgent: string): number | undefined;
+  /** Evict the oldest idle pinned prewarm entry not belonging to `depositorAgent`. */
+  evictOldestEvictablePrewarm?(depositorAgent: string): AcpWarmPoolPrewarmEviction | null;
   _sweep(): void;
 }
 
@@ -104,12 +119,18 @@ export interface AcpWarmPoolDeps {
   maxAgeMs?: number;
   maxEntries?: number;
   maxEntriesPerKey?: number;
-  canAddEntry?: () => boolean;
+  canAddEntry?: (input: AcpWarmPoolCanAddEntryInput) => boolean;
 }
 
 interface KeyedEntry {
   key: string;
   entry: AcpWarmPoolEntry;
+}
+
+export interface AcpWarmPoolCanAddEntryInput {
+  key: string;
+  entry: AcpWarmPoolDeposit;
+  onPrewarmEvicted?: (event: AcpWarmPoolPrewarmEviction) => void;
 }
 
 class AcpWarmPoolImpl implements AcpWarmPool {
@@ -118,7 +139,7 @@ class AcpWarmPoolImpl implements AcpWarmPool {
   private readonly maxAgeMs: number;
   private readonly maxEntries: number;
   private readonly maxEntriesPerKey: number;
-  private readonly canAddEntry?: () => boolean;
+  private readonly canAddEntry?: (input: AcpWarmPoolCanAddEntryInput) => boolean;
   private readonly entries = new Map<string, AcpWarmPoolEntry[]>();
   private readonly sweepTimer: NodeJS.Timeout;
   private closed = false;
@@ -166,7 +187,16 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     }
     if (!this.makeRoomForKey(key)) return rejectDeposit(depositEntry, opts);
     if (!this.makeRoomTotal()) return rejectDeposit(depositEntry, opts);
-    if (this.canAddEntry && !this.canAddEntry()) return rejectDeposit(depositEntry, opts);
+    if (
+      this.canAddEntry &&
+      !this.canAddEntry({
+        key,
+        entry: depositEntry,
+        onPrewarmEvicted: opts.onPrewarmEvicted,
+      })
+    ) {
+      return rejectDeposit(depositEntry, opts);
+    }
 
     const entry: AcpWarmPoolEntry = {
       ...depositEntry,
@@ -262,6 +292,25 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     return true;
   }
 
+  oldestEvictablePrewarmAt(depositorAgent: string): number | undefined {
+    const oldest = oldestIdle(this.evictablePrewarmEntries(depositorAgent));
+    return oldest ? idleSortAt(oldest.entry) : undefined;
+  }
+
+  evictOldestEvictablePrewarm(depositorAgent: string): AcpWarmPoolPrewarmEviction | null {
+    const oldest = oldestIdle(this.evictablePrewarmEntries(depositorAgent));
+    if (!oldest) return null;
+    const evicted = parsePoolKey(oldest.key);
+    const event: AcpWarmPoolPrewarmEviction = {
+      evictedAgent: evicted.agent,
+      evictedRepoRoot: evicted.repoRoot,
+      depositorAgent,
+      idleMs: Math.max(0, this.now() - idleSortAt(oldest.entry)),
+    };
+    this.teardown(oldest.key, oldest.entry);
+    return event;
+  }
+
   _sweep(): void {
     this.sweep();
   }
@@ -331,6 +380,13 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     return this.allIdleEntries().filter((candidate) => candidate.entry.pinned !== true);
   }
 
+  private evictablePrewarmEntries(depositorAgent: string): KeyedEntry[] {
+    return this.allIdleEntries().filter((candidate) => {
+      if (candidate.entry.pinned !== true || candidate.entry.prewarm !== true) return false;
+      return parsePoolKey(candidate.key).agent !== depositorAgent;
+    });
+  }
+
   private totalEntries(): number {
     let total = 0;
     for (const list of this.entries.values()) total += list.length;
@@ -349,7 +405,7 @@ class AcpWarmPoolImpl implements AcpWarmPool {
 
   private makeRoomTotal(): boolean {
     if (this.totalEntries() < this.maxEntries) return true;
-    const oldest = oldestIdle(this.allIdleEntries());
+    const oldest = oldestIdle(this.evictableIdleEntries());
     if (!oldest) return false;
     this.teardown(oldest.key, oldest.entry);
     return true;
@@ -388,6 +444,12 @@ function oldestIdle(candidates: KeyedEntry[]): KeyedEntry | undefined {
 
 function idleSortAt(entry: AcpWarmPoolEntry): number {
   return entry.lastReleaseAt ?? entry.spawnedAt;
+}
+
+function parsePoolKey(key: string): { agent: string; repoRoot: string } {
+  const separator = key.indexOf("\0");
+  if (separator === -1) return { agent: key, repoRoot: "" };
+  return { agent: key.slice(0, separator), repoRoot: key.slice(separator + 1) };
 }
 
 function rejectDeposit(entry: AcpWarmPoolDeposit, opts: AcpWarmPoolDepositOptions = {}): null {

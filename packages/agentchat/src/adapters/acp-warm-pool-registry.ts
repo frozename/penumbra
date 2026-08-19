@@ -1,4 +1,8 @@
-import { type AcpWarmPool, createAcpWarmPool } from "./acp-warm-pool.js";
+import {
+  type AcpWarmPool,
+  type AcpWarmPoolPrewarmEviction,
+  createAcpWarmPool,
+} from "./acp-warm-pool.js";
 
 export interface AcpWarmPoolRegistryOptions {
   warmPoolIdleGraceMs?: number;
@@ -40,9 +44,11 @@ export function getOrCreateAcpWarmPool(
     maxAgeMs: opts.warmPoolMaxAgeMs,
     maxEntries: resolveMaxEntries(opts),
     maxEntriesPerKey: opts.warmPoolSize,
-    canAddEntry: () =>
+    canAddEntry: ({ onPrewarmEvicted }) =>
       totalAcpWarmPoolEntryCount() < envCap ||
-      (evictOldestIdleAcrossPools() && totalAcpWarmPoolEntryCount() < envCap),
+      (evictOldestIdleAcrossPools() && totalAcpWarmPoolEntryCount() < envCap) ||
+      (evictOldestPrewarmAcrossPools(agent, onPrewarmEvicted) &&
+        totalAcpWarmPoolEntryCount() < envCap),
   });
   pools.set(agent, pool);
   return pool;
@@ -87,6 +93,26 @@ export function evictOldestIdleAcrossPools(): boolean {
     }
   }
   return oldestPool?.evictOldestEvictableIdle?.() === true;
+}
+
+export function evictOldestPrewarmAcrossPools(
+  depositorAgent: string,
+  onPrewarmEvicted?: (event: AcpWarmPoolPrewarmEviction) => void,
+): boolean {
+  let oldestPool: AcpWarmPool | undefined;
+  let oldestAt: number | undefined;
+  for (const pool of pools.values()) {
+    const candidateAt = pool.oldestEvictablePrewarmAt?.(depositorAgent);
+    if (candidateAt === undefined) continue;
+    if (oldestAt === undefined || candidateAt < oldestAt) {
+      oldestAt = candidateAt;
+      oldestPool = pool;
+    }
+  }
+  const event = oldestPool?.evictOldestEvictablePrewarm?.(depositorAgent) ?? null;
+  if (event === null) return false;
+  onPrewarmEvicted?.(event);
+  return true;
 }
 
 /**

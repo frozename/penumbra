@@ -11,9 +11,10 @@ import {
   acpSpecHash,
   type AcpWarmPool,
   type AcpWarmPoolEntry,
+  type AcpWarmPoolPrewarmEviction,
   poolKeyFor,
 } from "./acp-warm-pool.js";
-import { resolveWarmPrewarmCap } from "./acp-warm-pool-registry.js";
+import { resolveWarmPrewarmCap, totalAcpWarmPoolEntryCount } from "./acp-warm-pool-registry.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
   startStdioAcpServer,
@@ -371,6 +372,7 @@ interface StdioAcpAdapterDeps {
   startServer: (opts: StartStdioAcpServerOptions) => Promise<StdioAcpHandle>;
   createClient: (handle: StdioAcpHandle) => StdioAcpClient;
   pool?: AcpWarmPool;
+  totalPoolEntryCount?: () => number;
   thoughtCapture?: StdioAcpThoughtCapture;
 }
 
@@ -1074,6 +1076,18 @@ interface AcquireOrSpawnResult {
   reusedSession: boolean;
 }
 
+function emitPrewarmEvictedLifecycle(
+  input: DispatchInput,
+  event: AcpWarmPoolPrewarmEviction,
+): void {
+  emitLifecycle(input, "acp.warm_pool.prewarm_evicted", {
+    evicted_agent: event.evictedAgent,
+    evicted_repo_root: event.evictedRepoRoot,
+    depositor_agent: event.depositorAgent,
+    idle_ms: event.idleMs,
+  });
+}
+
 export class StdioAcpAdapter implements Adapter {
   readonly kind = "stdio-acp";
 
@@ -1211,13 +1225,19 @@ export class StdioAcpAdapter implements Adapter {
           authMethods: args.authMethods,
           specHash: args.specHash,
         },
-        { onReject: "keep" },
+        {
+          onReject: "keep",
+          onPrewarmEvicted: (event) => {
+            emitPrewarmEvictedLifecycle(args.input, event);
+          },
+        },
       ) ?? null;
     if (entry === null) {
       const meta = {
         adapter: this.kind,
         pool_key: args.poolKey,
-        total_entries: this.deps.pool.size(),
+        total_entries: this.deps.totalPoolEntryCount?.() ?? totalAcpWarmPoolEntryCount(),
+        agent_entries: this.deps.pool.size(),
         cap: resolveWarmPrewarmCap(),
         reason: "rejected",
       };
@@ -1242,6 +1262,7 @@ export class StdioAcpAdapter implements Adapter {
       poolKey: string;
       warmPoolEnabled: boolean;
       pinned?: boolean;
+      prewarm?: boolean;
       bootDeadline?: StdioAcpBootDeadline;
     },
   ): Promise<AcpWarmPoolEntry | null> {
@@ -1268,6 +1289,7 @@ export class StdioAcpAdapter implements Adapter {
           authMethods,
           specHash: args.specHash,
           pinned: args.pinned,
+          prewarm: args.prewarm,
         },
         { onReject: "kill" },
       ) ?? null
@@ -1307,6 +1329,7 @@ export class StdioAcpAdapter implements Adapter {
         poolKey,
         warmPoolEnabled,
         pinned: true,
+        prewarm: true,
         bootDeadline,
       });
       return { deposited: entry !== null, poolKey };
