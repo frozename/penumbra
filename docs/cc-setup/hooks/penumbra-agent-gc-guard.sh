@@ -77,34 +77,20 @@ if allow_override; then
   exit 0
 fi
 
-# --- match destructive INTENT, not one surface spelling ------------------------
-# Covers branch force/normal delete, worktree removal, low-level ref deletion,
-# and remote ref deletion (git push origin :ref / --delete ref).
-case "$cmd" in
-  *"git branch -D"*|*"git branch -d"*|*"git branch"*" --delete"*) : ;;
-  *"git worktree remove"*|*"worktree remove --force"*) : ;;
-  *"git update-ref -d"*|*"update-ref --delete"*) : ;;
-  *"git push"*" --delete"*|*"git push"*" -d "*) : ;;
-  *"git push"*" :"*) : ;;   # refspec deletion form: push <remote> :<ref>
-  *) exit 0 ;;
-esac
-
-# --- resolve the repo dir (hook cwd, else the surrounding git checkout) -------
-repo="${cwd:-}"
-[ -d "$repo/.git" ] || repo="${PENUMBRA_REPO:-$(git rev-parse --show-toplevel 2>/dev/null)}"
-[ -d "$repo/.git" ] || exit 0   # can't verify → fail-open
-
-# --- which branch refs does the destructive command touch? --------------------
 clean_ref_token() {
-  local ref=$1
-  ref=${ref#\"}; ref=${ref%\"}
-  ref=${ref#\'}; ref=${ref%\'}
+  local ref=$1 prev
   while :; do
+    prev=$ref
+    ref=${ref#\"}; ref=${ref%\"}
+    ref=${ref#\'}; ref=${ref%\'}
+    ref=${ref#\(}
     case "$ref" in
       *$'\r') ref=${ref%$'\r'} ;;
-      *';'|*')'|*'&'|*'|'|*'`') ref=${ref%?} ;;
-      *) break ;;
     esac
+    case "$ref" in
+      *';'|*')'|*'&'|*'|'|*'`') ref=${ref%?} ;;
+    esac
+    [ "$ref" = "$prev" ] && break
   done
   ref=${ref#:}
   ref=${ref#refs/heads/}
@@ -119,6 +105,113 @@ split_ref_token() {
   printf '%s\n' "$token"
 }
 
+has_command_separator() {
+  case "$1" in
+    *';'*|*'&&'*|*'||'*|*'|'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+has_git_branch_delete_intent() {
+  local token raw scan_cmd prev saw_git=0 branch_mode=0 restore_glob=0 found=1
+  case $- in
+    *f*) : ;;
+    *) set -f; restore_glob=1 ;;
+  esac
+  scan_cmd=$cmd
+  scan_cmd=${scan_cmd//&&/ ; }
+  scan_cmd=${scan_cmd//\|\|/ ; }
+  scan_cmd=${scan_cmd//;/ ; }
+  scan_cmd=${scan_cmd//|/ ; }
+  for raw in $scan_cmd; do
+    if [ "$raw" = ";" ]; then
+      saw_git=0
+      branch_mode=0
+      continue
+    fi
+
+    token=$raw
+    while :; do
+      prev=$token
+      token=${token#\"}; token=${token%\"}
+      token=${token#\'}; token=${token%\'}
+      token=${token#\(}
+      case "$token" in
+        *$'\r') token=${token%$'\r'} ;;
+      esac
+      case "$token" in
+        *')'|*'&'|*'|'|*'`') token=${token%?} ;;
+      esac
+      [ "$token" = "$prev" ] && break
+    done
+    token=${token#:}
+    token=${token#refs/heads/}
+    [ -n "$token" ] || continue
+
+    case "$token" in
+      git)
+        saw_git=1
+        branch_mode=0
+        ;;
+      branch)
+        if [ "$saw_git" = 1 ]; then
+          branch_mode=1
+          saw_git=0
+        fi
+        ;;
+      -d|-D|--delete)
+        if [ "$branch_mode" = 1 ]; then
+          found=0
+          break
+        fi
+        ;;
+    esac
+    if has_command_separator "$raw"; then
+      saw_git=0
+      branch_mode=0
+    fi
+  done
+  [ "$restore_glob" = 1 ] && set +f
+  return "$found"
+}
+
+# --- match destructive INTENT, not one surface spelling ------------------------
+# Covers branch force/normal delete, worktree removal, low-level ref deletion,
+# and remote ref deletion (git push origin :ref / --delete ref).
+has_non_branch_delete_intent() {
+  case "$cmd" in
+    *"git worktree remove"*|*"worktree remove --force"*) return 0 ;;
+    *"git update-ref -d"*|*"update-ref --delete"*) return 0 ;;
+    *"git push"*" --delete"*|*"git push"*" -d "*) return 0 ;;
+    *"git push"*" :"*) return 0 ;;   # refspec deletion form: push <remote> :<ref>
+    *) return 1 ;;
+  esac
+}
+
+case "$cmd" in
+  *branch*|*"git worktree remove"*|*"worktree remove --force"*|*"git update-ref -d"*|*"update-ref --delete"*|*"git push"*" --delete"*|*"git push"*" -d "*|*"git push"*" :"*) : ;;
+  *) exit 0 ;;
+esac
+
+branch_delete_intent=1
+case "$cmd" in
+  *branch*)
+    if has_git_branch_delete_intent; then
+      branch_delete_intent=0
+    fi
+    ;;
+esac
+
+if [ "$branch_delete_intent" != 0 ] && ! has_non_branch_delete_intent; then
+  exit 0
+fi
+
+# --- resolve the repo dir (hook cwd, else the surrounding git checkout) -------
+repo="${cwd:-}"
+[ -d "$repo/.git" ] || repo="${PENUMBRA_REPO:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+[ -d "$repo/.git" ] || exit 0   # can't verify → fail-open
+
+# --- which branch refs does the destructive command touch? --------------------
 extract_candidate_refs() {
   local token raw prev="" branch_mode=0 push_delete_mode=0 worktree_path_next=0 restore_glob=0
   case $- in

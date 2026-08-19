@@ -53,6 +53,62 @@ run_case() {
   fi
 }
 
+long_benign_command() {
+  local prefix=$1 width=${2:-0} cmd=$1 fill="" i=1
+  while [ "$i" -le "$width" ]; do
+    fill="${fill}x"
+    i=$((i + 1))
+  done
+  i=1
+  while [ "$i" -le 400 ]; do
+    cmd="$cmd ${fill}token$i"
+    i=$((i + 1))
+  done
+  printf '%s' "$cmd"
+}
+
+run_timing_case() {
+  local name=$1 cmd=$2 cwd=$3 max_seconds=$4
+  local result status got elapsed payload_file
+  payload_file=$(mktemp)
+  payload "$cmd" "$cwd" > "$payload_file"
+  result=$(python3 - "$GUARD" "$payload_file" "$max_seconds" <<'PY'
+import subprocess
+import sys
+import time
+
+guard = sys.argv[1]
+payload_path = sys.argv[2]
+max_seconds = float(sys.argv[3])
+
+with open(payload_path, "rb") as f:
+    payload = f.read()
+
+start = time.time()
+completed = subprocess.run(
+    [guard],
+    input=payload,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+elapsed = time.time() - start
+print(f"{completed.returncode} {elapsed:.6f}")
+sys.exit(0 if completed.returncode == 0 and elapsed < max_seconds else 1)
+PY
+  )
+  status=$?
+  rm -f "$payload_file"
+  got=${result%% *}
+  elapsed=${result#* }
+  if [ "$status" = 0 ]; then
+    echo "ok   - $name (exit $got, ${elapsed}s)"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL - $name (exit $got, ${elapsed}s, max ${max_seconds}s)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 # --- repo builders -----------------------------------------------------------
 
 # A repo whose agent/<uuid> branch tip IS main (ancestor / ff case).
@@ -160,6 +216,15 @@ R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBE
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
   run_case "DB-member named branch --delete --force unlanded -> BLOCK" 2 "git branch --delete --force $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch --force -d unlanded -> BLOCK" 2 "git branch --force -d $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch -f -d unlanded -> BLOCK" 2 "git branch -f -d $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member named branch -r -d unlanded -> BLOCK" 2 "git branch -r -d $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_ancestor_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
   run_case "DB-member named branch ancestor -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
@@ -169,6 +234,12 @@ R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
   run_case "non-member named branch --delete unlanded -> ALLOW" 0 "git branch --delete $DBMEMBER_BRANCH" "$R"; \
   rm -rf "$R"
+R=$(mk_repo_unlanded_named "some/unrelated"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "force-delete unrelated branch -> ALLOW" 0 "git branch --force -d some/unrelated" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "branch rename is non-destructive -> ALLOW" 0 "git branch -m old new" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
   run_case "no DB named branch uses regex-only behavior -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=/tmp/missing-penumbra-db-$$.sqlite"; \
   rm -rf "$R"
@@ -184,12 +255,27 @@ R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBE
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
   run_case "DB-member glued to && separator -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH&&echo x" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member double-quoted then subshell close -> BLOCK" 2 "git branch -D \"$DBMEMBER_BRANCH\")" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member single-quoted then semicolon -> BLOCK" 2 "git branch -D '$DBMEMBER_BRANCH';" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member double-quoted then && separator -> BLOCK" 2 "git branch -D \"$DBMEMBER_BRANCH\"&&echo x" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
+R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
+  run_case "DB-member leading paren then double quote -> BLOCK" 2 "git branch -D (\"$DBMEMBER_BRANCH\"" "$R" "PENUMBRA_DB=$DB"; \
+  rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "feat/bar"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
   run_case "non-member glued to semicolon -> ALLOW" 0 "git branch -D feat/bar;" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 
 # non-destructive command -> ALLOW
 R=$(mk_repo_unlanded);  run_case "non-destructive (git status) -> ALLOW" 0 "git status" "$R"; rm -rf "$R"
+
+R=$(mk_repo_unlanded);  run_timing_case "400-token benign command without branch skips scanner" "$(long_benign_command "echo" 800)" "$R" 0.3; rm -rf "$R"
+R=$(mk_repo_unlanded);  run_timing_case "400-token benign command with branch stays fast" "$(long_benign_command "echo branch")" "$R" 0.3; rm -rf "$R"
 
 # fail-open: branch absent (delete a uuid that doesn't exist) -> ALLOW
 R=$(mk_repo_ancestor);  run_case "branch absent -> ALLOW (fail-open)" 0 "git branch -D agent/00000000-0000-0000-0000-000000000000" "$R"; rm -rf "$R"
