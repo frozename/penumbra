@@ -287,3 +287,168 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
     }
   });
 });
+
+// --- pool: per-seat request extras ---
+
+function readRequestBody(init: RequestInit | undefined): Record<string, unknown> {
+  return JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+}
+
+const CANONICAL_BODY_KEYS = ["max_tokens", "messages", "model", "response_format", "temperature"];
+
+describe("DreamingJudgePool request extras", () => {
+  it("sends a seat's requestExtras in the POST body", async () => {
+    let body: Record<string, unknown> = {};
+    const fakeFetch: typeof fetch = (_input, init) => {
+      body = readRequestBody(init);
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    };
+    const pool = createDreamingJudgePool(
+      [
+        {
+          name: "gemma",
+          baseUrl: "http://localhost:1111/v1",
+          apiKey: "",
+          model: "gemma-cand",
+          requestExtras: { chat_template_kwargs: { enable_thinking: false } },
+        },
+      ],
+      fakeFetch,
+    );
+    await pool.judge({ body: "candidate", kind: "promote_t1" });
+    expect(body["chat_template_kwargs"]).toEqual({ enable_thinking: false });
+  });
+
+  it("FAIL-CLOSED: requestExtras cannot override the canonical request fields", async () => {
+    let body: Record<string, unknown> = {};
+    const fakeFetch: typeof fetch = (_input, init) => {
+      body = readRequestBody(init);
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    };
+    const pool = createDreamingJudgePool(
+      [
+        {
+          name: "hostile",
+          baseUrl: "http://localhost:1111/v1",
+          apiKey: "",
+          model: "real-model",
+          requestExtras: {
+            max_tokens: 99999,
+            model: "evil",
+            messages: [],
+            temperature: 2,
+            response_format: { type: "text" },
+          },
+        },
+      ],
+      fakeFetch,
+    );
+    await pool.judge({ body: "candidate", kind: "promote_t1" });
+    // The judge contract is owned by the code, not by agents.yaml.
+    expect(body["max_tokens"]).toBe(256);
+    expect(body["model"]).toBe("real-model");
+    expect(body["temperature"]).toBe(0);
+    expect(body["response_format"]).toEqual({ type: "json_object" });
+    expect(Array.isArray(body["messages"]) ? body["messages"].length : -1).toBe(1);
+  });
+
+  it("REGRESSION PIN: a seat without requestExtras sends exactly the canonical keys", async () => {
+    let body: Record<string, unknown> = {};
+    const fakeFetch: typeof fetch = (_input, init) => {
+      body = readRequestBody(init);
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    };
+    const pool = createDreamingJudgePool(
+      [{ name: "plain", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "m" }],
+      fakeFetch,
+    );
+    await pool.judge({ body: "candidate", kind: "promote_t1" });
+    expect(Object.keys(body).sort()).toEqual(CANONICAL_BODY_KEYS);
+  });
+
+  it("judgeAll inherits extras because it shares callJudge", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeFetch: typeof fetch = (_input, init) => {
+      bodies.push(readRequestBody(init));
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    };
+    const seats: DreamingJudgeEntry[] = [
+      {
+        name: "a",
+        baseUrl: "http://localhost:1111/v1",
+        apiKey: "",
+        model: "m",
+        requestExtras: { chat_template_kwargs: { enable_thinking: false } },
+      },
+      { name: "b", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "m" },
+    ];
+    const pool = createDreamingJudgePool(seats, fakeFetch);
+    await pool.judgeAll!({ body: "candidate", kind: "promote_t1" });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.["chat_template_kwargs"]).toEqual({ enable_thinking: false });
+    expect(Object.keys(bodies[1] ?? {}).sort()).toEqual(CANONICAL_BODY_KEYS);
+  });
+});
+
+describe("createDreamingJudgePoolFromAgentchat request extras", () => {
+  it("threads requestExtras from agent options into the POST body", async () => {
+    writeConfig(
+      [
+        `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras:\n        chat_template_kwargs:\n          enable_thinking: false`,
+        `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+      ].join("\n"),
+    );
+    const bodies = new Map<string, Record<string, unknown>>();
+    const fakeFetch: typeof fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      bodies.set(url, readRequestBody(init));
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    };
+    const saved = process.env["PENUMBRA_CONFIG_DIR"];
+    process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
+    try {
+      const pool = createDreamingJudgePoolFromAgentchat(undefined, fakeFetch);
+      expect(pool).not.toBeNull();
+      await pool?.judgeAll!({ body: "candidate", kind: "promote_t1" });
+      expect(
+        bodies.get("http://localhost:1111/v1/chat/completions")?.["chat_template_kwargs"],
+      ).toEqual({ enable_thinking: false });
+      expect(
+        Object.keys(bodies.get("http://localhost:2222/v1/chat/completions") ?? {}).sort(),
+      ).toEqual(CANONICAL_BODY_KEYS);
+    } finally {
+      if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
+      else process.env["PENUMBRA_CONFIG_DIR"] = saved;
+    }
+  });
+
+  it("ignores malformed requestExtras instead of taking the pool down", async () => {
+    const saved = process.env["PENUMBRA_CONFIG_DIR"];
+    process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
+    try {
+      for (const malformed of ["not-an-object", "[1, 2]", "null", "7"]) {
+        writeConfig(
+          [
+            `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras: ${malformed}`,
+            `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+          ].join("\n"),
+        );
+        const bodies: Record<string, unknown>[] = [];
+        const fakeFetch: typeof fetch = (_input, init) => {
+          bodies.push(readRequestBody(init));
+          return Promise.resolve(makeVoteResponse(true, 0.9));
+        };
+        const pool = createDreamingJudgePoolFromAgentchat(undefined, fakeFetch);
+        expect(pool).not.toBeNull();
+        await pool?.judgeAll!({ body: "candidate", kind: "promote_t1" });
+        expect(bodies).toHaveLength(2);
+        for (const body of bodies) {
+          expect(Object.keys(body).sort()).toEqual(CANONICAL_BODY_KEYS);
+        }
+      }
+    } finally {
+      if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
+      else process.env["PENUMBRA_CONFIG_DIR"] = saved;
+    }
+  });
+});

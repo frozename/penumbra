@@ -18,6 +18,7 @@ export interface DreamingJudgeEntry {
   apiKey: string;
   model: string;
   caPath?: string;
+  requestExtras?: Record<string, unknown>;
 }
 
 type DreamingJudgeState = DreamingJudgeEntry & { caPem?: string };
@@ -92,6 +93,11 @@ class DreamingJudgePoolImpl implements JudgePool {
       method: "POST",
       headers,
       body: JSON.stringify({
+        // Extras are spread FIRST so the canonical fields below always win.
+        // The judge contract is owned by this code, not by agents.yaml: a
+        // typo'd or hostile seat must not be able to rewrite the model,
+        // the prompt, the response format, the budget, or determinism.
+        ...(judge.requestExtras ?? {}),
         model: judge.model,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -159,6 +165,16 @@ export function createDreamingJudgePool(
   return new DreamingJudgePoolImpl(judges, fetchImpl);
 }
 
+// Accept only a real plain object. Anything else (string, number, array,
+// null, class instance) is ignored rather than thrown on, so one malformed
+// seat degrades to today's behaviour instead of failing the whole pool.
+function asPlainObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const prototype = Reflect.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  return value as Record<string, unknown>;
+}
+
 export function createDreamingJudgePoolFromAgentchat(
   services?: { log?: { warn: (...a: unknown[]) => void } },
   fetchImpl?: typeof fetch,
@@ -182,13 +198,17 @@ export function createDreamingJudgePoolFromAgentchat(
   // autoPromoteMinJudges=2 — a single judge can never reach quorum.
   if (candidates.length < 2) return null;
 
-  const judges: DreamingJudgeEntry[] = candidates.map((candidate) => ({
-    name: candidate.name,
-    baseUrl: candidate.baseUrl,
-    apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
-    model: candidate.model,
-    caPath: candidate.caPath,
-  }));
+  const judges: DreamingJudgeEntry[] = candidates.map((candidate) => {
+    const requestExtras = asPlainObject(candidate.options?.["requestExtras"]);
+    return {
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+      model: candidate.model,
+      caPath: candidate.caPath,
+      ...(requestExtras ? { requestExtras } : {}),
+    };
+  });
 
   if (judges.length < 2) return null;
 
