@@ -101,6 +101,15 @@ const execMock = mock((argv: string[], _opts: { cwd: string }): Promise<ExecResu
   for (const [pattern, error] of execFailures) {
     if (cmd.includes(pattern)) return Promise.reject(error);
   }
+  if (cmd === "git rev-parse HEAD") {
+    return Promise.resolve({ stdout: "branch-head\n", stderr: "" });
+  }
+  if (cmd === "git rev-parse main") {
+    return Promise.resolve({ stdout: "base-head\n", stderr: "" });
+  }
+  if (cmd === "git merge-base base-head branch-head") {
+    return Promise.resolve({ stdout: "merge-base\n", stderr: "" });
+  }
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }

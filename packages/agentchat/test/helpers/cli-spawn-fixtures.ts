@@ -20,7 +20,8 @@ export async function expectRejection(
   expect(caught).toBeDefined();
   const message = caught instanceof Error ? caught.message : String(caught);
   if (matcher instanceof RegExp) {
-    expect(message).toMatch(matcher);
+    matcher.lastIndex = 0;
+    expect(matcher.test(message)).toBe(true);
   } else if (typeof matcher === "string") {
     expect(message).toContain(matcher);
   }

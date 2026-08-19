@@ -36,6 +36,12 @@ export interface AcpWarmPoolDeposit {
   pinned?: boolean;
 }
 
+export type AcpWarmPoolDepositRejectAction = "kill" | "keep";
+
+export interface AcpWarmPoolDepositOptions {
+  onReject?: AcpWarmPoolDepositRejectAction;
+}
+
 interface AcpAuthMethod {
   id: string;
   type?: string;
@@ -44,7 +50,11 @@ interface AcpAuthMethod {
 
 export interface AcpWarmPool {
   acquire(holderId: string, key: string, specHash: string): AcpWarmPoolEntry | null;
-  deposit(key: string, entry: AcpWarmPoolDeposit): AcpWarmPoolEntry | null;
+  deposit(
+    key: string,
+    entry: AcpWarmPoolDeposit,
+    opts?: AcpWarmPoolDepositOptions,
+  ): AcpWarmPoolEntry | null;
   release(holderId: string, key: string): void;
   evict(key: string, entry?: AcpWarmPoolEntry): void;
   shutdown(): void;
@@ -64,6 +74,11 @@ export interface AcpWarmPool {
   /** Diagnostic (optional): every key currently holding entries — surfaces key
    *  drift (deposit under key A, acquire under key B → reuse never fires). */
   debugKeys?(): string[];
+  /** Oldest idle, unpinned entry timestamp that the registry may evict to make
+   *  room under the worker-wide global cap. */
+  oldestEvictableIdleAt?(): number | undefined;
+  /** Evict the oldest idle, unpinned entry in this pool. */
+  evictOldestEvictableIdle?(): boolean;
   _sweep(): void;
 }
 
@@ -141,13 +156,17 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     return null;
   }
 
-  deposit(key: string, depositEntry: AcpWarmPoolDeposit): AcpWarmPoolEntry | null {
+  deposit(
+    key: string,
+    depositEntry: AcpWarmPoolDeposit,
+    opts: AcpWarmPoolDepositOptions = {},
+  ): AcpWarmPoolEntry | null {
     if (this.closed) {
-      return rejectDeposit(depositEntry);
+      return rejectDeposit(depositEntry, opts);
     }
-    if (!this.makeRoomForKey(key)) return rejectDeposit(depositEntry);
-    if (!this.makeRoomTotal()) return rejectDeposit(depositEntry);
-    if (this.canAddEntry && !this.canAddEntry()) return rejectDeposit(depositEntry);
+    if (!this.makeRoomForKey(key)) return rejectDeposit(depositEntry, opts);
+    if (!this.makeRoomTotal()) return rejectDeposit(depositEntry, opts);
+    if (this.canAddEntry && !this.canAddEntry()) return rejectDeposit(depositEntry, opts);
 
     const entry: AcpWarmPoolEntry = {
       ...depositEntry,
@@ -231,6 +250,18 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     return [...this.entries.keys()];
   }
 
+  oldestEvictableIdleAt(): number | undefined {
+    const oldest = oldestIdle(this.evictableIdleEntries());
+    return oldest ? idleSortAt(oldest.entry) : undefined;
+  }
+
+  evictOldestEvictableIdle(): boolean {
+    const oldest = oldestIdle(this.evictableIdleEntries());
+    if (!oldest) return false;
+    this.teardown(oldest.key, oldest.entry);
+    return true;
+  }
+
   _sweep(): void {
     this.sweep();
   }
@@ -296,6 +327,10 @@ class AcpWarmPoolImpl implements AcpWarmPool {
     return out;
   }
 
+  private evictableIdleEntries(): KeyedEntry[] {
+    return this.allIdleEntries().filter((candidate) => candidate.entry.pinned !== true);
+  }
+
   private totalEntries(): number {
     let total = 0;
     for (const list of this.entries.values()) total += list.length;
@@ -348,17 +383,20 @@ class AcpWarmPoolImpl implements AcpWarmPool {
 }
 
 function oldestIdle(candidates: KeyedEntry[]): KeyedEntry | undefined {
-  return candidates.sort(
-    (a, b) =>
-      (a.entry.lastReleaseAt ?? a.entry.spawnedAt) - (b.entry.lastReleaseAt ?? b.entry.spawnedAt),
-  )[0];
+  return candidates.sort((a, b) => idleSortAt(a.entry) - idleSortAt(b.entry))[0];
 }
 
-function rejectDeposit(entry: AcpWarmPoolDeposit): null {
-  try {
-    entry.handle.kill();
-  } catch {
-    /* ignore */
+function idleSortAt(entry: AcpWarmPoolEntry): number {
+  return entry.lastReleaseAt ?? entry.spawnedAt;
+}
+
+function rejectDeposit(entry: AcpWarmPoolDeposit, opts: AcpWarmPoolDepositOptions = {}): null {
+  if ((opts.onReject ?? "kill") === "kill") {
+    try {
+      entry.handle.kill();
+    } catch {
+      /* ignore */
+    }
   }
   return null;
 }

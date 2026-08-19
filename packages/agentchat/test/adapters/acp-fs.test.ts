@@ -26,12 +26,12 @@ describe("executeReadTextFile", () => {
   it("rejects an absolute path outside the worktree", async () => {
     const err = await expectRejection(executeReadTextFile({ path: "/etc/passwd" }, tmp));
     expect(err).toBeInstanceOf(ReadTextFileError);
-    expect(err.message).toMatch(/outside worktree/i);
+    expect(err.message).toContain("outside the worktree");
   });
 
   it("rejects a relative path with .. that resolves outside the worktree", async () => {
     const escape = path.join(tmp, "..", "something.txt");
-    await expectRejection(executeReadTextFile({ path: escape }, tmp), /outside worktree/i);
+    await expectRejection(executeReadTextFile({ path: escape }, tmp), "outside the worktree");
   });
 
   it("rejects a symlink whose realpath is outside the worktree", async () => {
@@ -39,7 +39,7 @@ describe("executeReadTextFile", () => {
     fs.symlinkSync("/tmp/acp-fs-target.txt", path.join(tmp, "link"));
     await expectRejection(
       executeReadTextFile({ path: path.join(tmp, "link") }, tmp),
-      /outside worktree/i,
+      "outside the worktree",
     );
     fs.unlinkSync("/tmp/acp-fs-target.txt");
   });

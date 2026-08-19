@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import type { McpServerStdio } from "../../src/adapters/acp-types.js";
+import type { AcpWarmPoolDeposit } from "../../src/adapters/acp-warm-pool.js";
 import type {
   StartStdioAcpServerOptions,
   StdioAcpHandle,
@@ -137,7 +138,13 @@ function createWarmPoolHarness(opts: {
   startServer.mockResolvedValue(handle);
   const pool = {
     acquire: vi.fn().mockReturnValue(null),
-    deposit: vi.fn().mockReturnValue({ refs: new Set(), sessionId: "session-123" }),
+    deposit: vi.fn((_key: string, entry: AcpWarmPoolDeposit) => ({
+      ...entry,
+      refs: new Set<string>(),
+      sessionId: "session-123",
+      spawnedAt: 0,
+      lastReleaseAt: 0,
+    })),
     release: vi.fn(),
     evict: vi.fn(),
   };

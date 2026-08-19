@@ -203,12 +203,75 @@ describe("ACP warm pool worker wiring", () => {
     expect(totalAcpWarmPoolEntryCount()).toBe(1);
   });
 
+  test("PENUMBRA_WARM_PREWARM_CAP evicts the oldest idle entry across agent pools", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "1";
+    const a = getOrCreateAcpWarmPool("a", { warmPoolSize: 2 });
+    const b = getOrCreateAcpWarmPool("b", { warmPoolSize: 2 });
+    const aHandle = handle();
+    a.deposit("a\0/repo", {
+      handle: aHandle,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+    });
+
+    const bHandle = handle();
+    const deposited = b.deposit("b\0/repo", {
+      handle: bHandle,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+    });
+
+    expect(deposited).not.toBeNull();
+    expect(aHandle.kill).toHaveBeenCalledTimes(1);
+    expect(bHandle.kill).not.toHaveBeenCalled();
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+    expect(b.acquire("holder", "b\0/repo", "spec-a")).not.toBeNull();
+  });
+
+  test("PENUMBRA_WARM_PREWARM_CAP does not evict held entries across agent pools", () => {
+    process.env.PENUMBRA_WARM_PREWARM_CAP = "1";
+    const a = getOrCreateAcpWarmPool("a", { warmPoolSize: 2 });
+    const b = getOrCreateAcpWarmPool("b", { warmPoolSize: 2 });
+    const heldHandle = handle();
+    a.deposit("a\0/repo", {
+      handle: heldHandle,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+    });
+    a.acquire("holder", "a\0/repo", "spec-a");
+
+    const rejected = handle();
+    expect(
+      b.deposit("b\0/repo", {
+        handle: rejected,
+        client: asStdioAcpClient({}),
+        specHash: "spec-a",
+      }),
+    ).toBeNull();
+
+    expect(heldHandle.kill).not.toHaveBeenCalled();
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(totalAcpWarmPoolEntryCount()).toBe(1);
+  });
+
   test("PENUMBRA_WARM_PREWARM_CAP is a worker-wide cap across agent pools", () => {
     process.env.PENUMBRA_WARM_PREWARM_CAP = "2";
     const a = getOrCreateAcpWarmPool("a", { warmPoolSize: 2 });
     const b = getOrCreateAcpWarmPool("b", { warmPoolSize: 2 });
-    a.deposit("a\0/repo", { handle: handle(), client: asStdioAcpClient({}), specHash: "spec-a" });
-    b.deposit("b\0/repo", { handle: handle(), client: asStdioAcpClient({}), specHash: "spec-a" });
+    const aHandle = handle();
+    const bHandle = handle();
+    a.deposit("a\0/repo", {
+      handle: aHandle,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+      pinned: true,
+    });
+    b.deposit("b\0/repo", {
+      handle: bHandle,
+      client: asStdioAcpClient({}),
+      specHash: "spec-a",
+      pinned: true,
+    });
 
     const rejected = handle();
     expect(
@@ -219,6 +282,8 @@ describe("ACP warm pool worker wiring", () => {
       }),
     ).toBe(null);
 
+    expect(aHandle.kill).not.toHaveBeenCalled();
+    expect(bHandle.kill).not.toHaveBeenCalled();
     expect(rejected.kill).toHaveBeenCalledTimes(1);
     expect(totalAcpWarmPoolEntryCount()).toBe(2);
   });

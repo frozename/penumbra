@@ -48,6 +48,86 @@ function markDeadExitCode(target: MockAcpHandle, code: number): void {
 const key = poolKeyFor({ agent: "codex-acp-fast", cwd: "/repo" });
 
 describe("AcpWarmPool", () => {
+  test("keeps a rejected dispatch-owned deposit handle alive when canAddEntry refuses it", () => {
+    const pool = createAcpWarmPool({ now: () => 0, canAddEntry: () => false });
+    const rejected = handle();
+
+    expect(
+      pool.deposit(
+        key,
+        { handle: rejected, client, sessionId: "rejected", specHash: "spec-a" },
+        { onReject: "keep" },
+      ),
+    ).toBeNull();
+
+    expect(rejected.kill).not.toHaveBeenCalled();
+    expect(pool.size()).toBe(0);
+  });
+
+  test("kills a rejected prewarm-owned deposit handle when canAddEntry refuses it", () => {
+    const pool = createAcpWarmPool({ now: () => 0, canAddEntry: () => false });
+    const rejected = handle();
+
+    expect(
+      pool.deposit(
+        key,
+        { handle: rejected, client, sessionId: "rejected", specHash: "spec-a" },
+        { onReject: "kill" },
+      ),
+    ).toBeNull();
+
+    expect(rejected.kill).toHaveBeenCalledTimes(1);
+    expect(pool.size()).toBe(0);
+  });
+
+  test("applies keep rejection semantics when the pool is closed", () => {
+    const pool = createAcpWarmPool({ now: () => 0 });
+    pool.shutdown();
+    const rejected = handle();
+
+    expect(
+      pool.deposit(
+        key,
+        { handle: rejected, client, sessionId: "rejected", specHash: "spec-a" },
+        { onReject: "keep" },
+      ),
+    ).toBeNull();
+
+    expect(rejected.kill).not.toHaveBeenCalled();
+  });
+
+  test("applies keep and kill rejection semantics when a held per-key slot cannot be evicted", () => {
+    const keepPool = createAcpWarmPool({ now: () => 0, maxEntriesPerKey: 1 });
+    const held = handle();
+    keepPool.deposit(key, { handle: held, client, sessionId: "held", specHash: "spec-a" });
+    keepPool.acquire("holder", key, "spec-a");
+
+    const keepRejected = handle();
+    expect(
+      keepPool.deposit(
+        key,
+        { handle: keepRejected, client, sessionId: "keep-rejected", specHash: "spec-a" },
+        { onReject: "keep" },
+      ),
+    ).toBeNull();
+    expect(held.kill).not.toHaveBeenCalled();
+    expect(keepRejected.kill).not.toHaveBeenCalled();
+
+    const killPool = createAcpWarmPool({ now: () => 0, maxEntriesPerKey: 1 });
+    killPool.deposit(key, { handle: handle(), client, sessionId: "held", specHash: "spec-a" });
+    killPool.acquire("holder", key, "spec-a");
+
+    const killRejected = handle();
+    expect(
+      killPool.deposit(
+        key,
+        { handle: killRejected, client, sessionId: "kill-rejected", specHash: "spec-a" },
+        { onReject: "kill" },
+      ),
+    ).toBeNull();
+    expect(killRejected.kill).toHaveBeenCalledTimes(1);
+  });
+
   test("returns null for an empty key and reuses an idle deposited entry once", () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     expect(pool.acquire("h1", key, "spec-a")).toBeNull();

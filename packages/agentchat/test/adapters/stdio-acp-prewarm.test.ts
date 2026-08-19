@@ -3,6 +3,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 import { describe, expect, it, vi } from "bun:test";
 
 import type { McpServerStdio } from "../../src/adapters/acp-types.js";
+import type { AcpWarmPool, AcpWarmPoolDeposit } from "../../src/adapters/acp-warm-pool.js";
 import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 
@@ -44,6 +45,53 @@ function makeServer(): MockAcpHandle {
 }
 
 describe("StdioAcpAdapter.prewarm (Phase 2)", () => {
+  it("kills a spawned prewarm server when its pool deposit is rejected", async () => {
+    const server = makeServer();
+    const pool = {
+      acquire: vi.fn().mockReturnValue(null),
+      deposit: vi.fn(
+        (_key: string, entry: AcpWarmPoolDeposit, opts?: { onReject?: "keep" | "kill" }) => {
+          if (opts?.onReject === "kill") entry.handle.kill();
+          return null;
+        },
+      ),
+      release: vi.fn(),
+      evict: vi.fn(),
+      shutdown: vi.fn(),
+      size: vi.fn().mockReturnValue(0),
+      has: vi.fn().mockReturnValue(false),
+      liveEntryCount: vi.fn().mockReturnValue(0),
+      peekMissReason: vi.fn().mockReturnValue("no_entry"),
+      debugKeys: vi.fn().mockReturnValue([]),
+      _sweep: vi.fn(),
+    } satisfies AcpWarmPool;
+    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>((method) => {
+      if (method === "initialize") return Promise.resolve({ protocolVersion: 1, authMethods: [] });
+      return Promise.resolve({});
+    });
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: "mock-acp",
+        agentName: "codex-acp-fast",
+        warmPool: true,
+        repoRoot: "/repo",
+      },
+      {
+        startServer: vi.fn().mockResolvedValue(server),
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({ onRequest: vi.fn(), on: vi.fn(), request }),
+        pool,
+      },
+    );
+
+    const result = await adapter.prewarm();
+
+    expect(result.deposited).toBe(false);
+    expect(pool.deposit).toHaveBeenCalledTimes(1);
+    expect(pool.deposit.mock.calls[0]?.[2]).toEqual({ onReject: "kill" });
+    expect(server.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("does not authenticate an already-authenticated agent that advertises auth methods", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const calls: { method: string }[] = [];

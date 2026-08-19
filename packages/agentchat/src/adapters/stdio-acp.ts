@@ -13,6 +13,7 @@ import {
   type AcpWarmPoolEntry,
   poolKeyFor,
 } from "./acp-warm-pool.js";
+import { resolveWarmPrewarmCap } from "./acp-warm-pool-registry.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
   startStdioAcpServer,
@@ -1198,16 +1199,32 @@ export class StdioAcpAdapter implements Adapter {
     warmPoolEnabled: boolean;
     poolKey: string;
     specHash: string;
+    input: DispatchInput;
   }): AcpWarmPoolEntry | null {
     if (!args.warmPoolEnabled || !this.deps.pool) return null;
-    return (
-      this.deps.pool.deposit(args.poolKey, {
-        handle: args.server,
-        client: args.client,
-        authMethods: args.authMethods,
-        specHash: args.specHash,
-      }) ?? null
-    );
+    const entry =
+      this.deps.pool.deposit(
+        args.poolKey,
+        {
+          handle: args.server,
+          client: args.client,
+          authMethods: args.authMethods,
+          specHash: args.specHash,
+        },
+        { onReject: "keep" },
+      ) ?? null;
+    if (entry === null) {
+      const meta = {
+        adapter: this.kind,
+        pool_key: args.poolKey,
+        total_entries: this.deps.pool.size(),
+        cap: resolveWarmPrewarmCap(),
+        reason: "rejected",
+      };
+      console.warn("stdio-acp: warm-pool deposit rejected; continuing un-pooled", meta);
+      emitLifecycle(args.input, "acp.warm_pool.deposit_rejected", meta);
+    }
+    return entry;
   }
 
   /**
@@ -1243,13 +1260,17 @@ export class StdioAcpAdapter implements Adapter {
     const authMethods = initResponse.authMethods ?? [];
     if (!args.warmPoolEnabled || !this.deps.pool) return null;
     return (
-      this.deps.pool.deposit(args.poolKey, {
-        handle: server,
-        client,
-        authMethods,
-        specHash: args.specHash,
-        pinned: args.pinned,
-      }) ?? null
+      this.deps.pool.deposit(
+        args.poolKey,
+        {
+          handle: server,
+          client,
+          authMethods,
+          specHash: args.specHash,
+          pinned: args.pinned,
+        },
+        { onReject: "kill" },
+      ) ?? null
     );
   }
 
@@ -1637,6 +1658,7 @@ export class StdioAcpAdapter implements Adapter {
           warmPoolEnabled,
           poolKey,
           specHash,
+          input,
         });
         state.pooledEntry?.refs.add(holderId);
       }

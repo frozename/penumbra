@@ -17,11 +17,15 @@ function positiveInt(value: string | undefined): number | undefined {
 }
 
 function resolveMaxEntries(opts: AcpWarmPoolRegistryOptions): number {
-  const envCap = positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
+  const envCap = resolveWarmPrewarmCap();
   if (opts.warmPoolMaxEntries !== undefined) {
     return Math.min(opts.warmPoolMaxEntries, envCap);
   }
   return envCap;
+}
+
+export function resolveWarmPrewarmCap(): number {
+  return positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
 }
 
 export function getOrCreateAcpWarmPool(
@@ -30,13 +34,15 @@ export function getOrCreateAcpWarmPool(
 ): AcpWarmPool {
   const existing = pools.get(agent);
   if (existing) return existing;
-  const envCap = positiveInt(process.env.PENUMBRA_WARM_PREWARM_CAP) ?? DEFAULT_WARM_PREWARM_CAP;
+  const envCap = resolveWarmPrewarmCap();
   const pool = createAcpWarmPool({
     graceMs: opts.warmPoolIdleGraceMs,
     maxAgeMs: opts.warmPoolMaxAgeMs,
     maxEntries: resolveMaxEntries(opts),
     maxEntriesPerKey: opts.warmPoolSize,
-    canAddEntry: () => totalAcpWarmPoolEntryCount() < envCap,
+    canAddEntry: () =>
+      totalAcpWarmPoolEntryCount() < envCap ||
+      (evictOldestIdleAcrossPools() && totalAcpWarmPoolEntryCount() < envCap),
   });
   pools.set(agent, pool);
   return pool;
@@ -67,6 +73,20 @@ export function totalAcpWarmPoolEntryCount(): number {
   let total = 0;
   for (const pool of pools.values()) total += pool.size();
   return total;
+}
+
+export function evictOldestIdleAcrossPools(): boolean {
+  let oldestPool: AcpWarmPool | undefined;
+  let oldestAt: number | undefined;
+  for (const pool of pools.values()) {
+    const candidateAt = pool.oldestEvictableIdleAt?.();
+    if (candidateAt === undefined) continue;
+    if (oldestAt === undefined || candidateAt < oldestAt) {
+      oldestAt = candidateAt;
+      oldestPool = pool;
+    }
+  }
+  return oldestPool?.evictOldestEvictableIdle?.() === true;
 }
 
 /**

@@ -3,7 +3,11 @@ import type { DispatchEventInput } from "@penumbra/core";
 import { describe, expect, test, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import type { AcpWarmPoolEntry } from "../../src/adapters/acp-warm-pool.js";
+import type {
+  AcpWarmPool,
+  AcpWarmPoolDeposit,
+  AcpWarmPoolEntry,
+} from "../../src/adapters/acp-warm-pool.js";
 import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
 
@@ -21,7 +25,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 interface TestHandle extends StdioAcpHandle {
   resolveExit: (value: number | null) => void;
   exitCode: number | null;
-  kill: () => void;
+  kill: ReturnType<typeof vi.fn>;
 }
 
 function createHandle(): TestHandle {
@@ -100,6 +104,94 @@ function createClient(opts: { hangFirstPrompt?: boolean } = {}): ClientFixture {
 }
 
 describe("StdioAcpAdapter warm pool reuse", () => {
+  test("continues a cold dispatch on the spawned server when the warm-pool deposit is rejected", async () => {
+    const lifecycle: DispatchEventInput[] = [];
+    const handle = createHandle();
+    const client = createClient();
+    const startServer = vi.fn().mockResolvedValue(handle);
+    const pool = {
+      acquire: vi.fn().mockReturnValue(null),
+      deposit: vi.fn(
+        (_key: string, entry: AcpWarmPoolDeposit, opts?: { onReject?: "keep" | "kill" }) => {
+          if (opts?.onReject !== "keep") entry.handle.kill();
+          return null;
+        },
+      ),
+      release: vi.fn(),
+      evict: vi.fn(),
+      shutdown: vi.fn(),
+      size: vi.fn().mockReturnValue(4),
+      has: vi.fn().mockReturnValue(false),
+      liveEntryCount: vi.fn().mockReturnValue(0),
+      peekMissReason: vi.fn().mockReturnValue("no_entry"),
+      debugKeys: vi.fn().mockReturnValue([]),
+      _sweep: vi.fn(),
+    } satisfies AcpWarmPool;
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: "mock-acp",
+        cwd: "/repo",
+        model: "codex-acp-fast",
+        warmPool: true,
+        agentName: "codex-acp-fast",
+      },
+      {
+        startServer,
+        createClient: (): StdioAcpClient => {
+          const request = vi.fn().mockImplementation((method: string, params: unknown) => {
+            if (method === "session/new" && handle.kill.mock.calls.length > 0) {
+              throw new Error("server killed before session/new");
+            }
+            return client.client.request(method, params);
+          });
+          return asAcpClient({ ...client.client, request });
+        },
+        pool,
+      },
+    );
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<StdioAcpAdapter["dispatch"]>> | undefined;
+    try {
+      result = await adapter.dispatch({
+        prompt: "hello",
+        conversation: { id: "c1", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+        handoff_id: "h-rejected",
+        eventContext: { handoffId: "h-rejected", workerId: "w1" },
+        onEvent: (event: DispatchEventInput): void => {
+          lifecycle.push(event);
+        },
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(result?.text).toBe("ok-1");
+    expect(pool.deposit).toHaveBeenCalledTimes(1);
+    expect(pool.deposit.mock.calls[0]?.[2]).toEqual({ onReject: "keep" });
+    expect(pool.release).not.toHaveBeenCalled();
+    expect(pool.evict).not.toHaveBeenCalled();
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+    expect(client.calls.map((call) => call.method)).toEqual([
+      "initialize",
+      "session/new",
+      "session/prompt",
+    ]);
+    const rejectedEvents = lifecycle.filter(
+      (event) => event.kind === "acp.warm_pool.deposit_rejected",
+    );
+    expect(rejectedEvents).toHaveLength(1);
+    expect(rejectedEvents[0]?.meta).toMatchObject({
+      pool_key: "codex-acp-fast\0/repo",
+      total_entries: 4,
+      cap: 4,
+      reason: "rejected",
+    });
+  });
+
   test("reuses a warm connection for sequential dispatches and issues a fresh session per dispatch", async () => {
     const lifecycle: DispatchEventInput[] = [];
     const pool = createAcpWarmPool();
