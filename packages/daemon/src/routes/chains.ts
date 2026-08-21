@@ -16,7 +16,10 @@ import {
   MaestroSessionWriter,
   RecallRequestSchema,
   type RecallResult,
+  resolveBiasEffect,
+  resolveProvider,
   routeAgent,
+  type RoutingBias,
   type Services,
   slugifyBranchSegment,
   type TaskClass,
@@ -30,7 +33,7 @@ import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
 import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
-import { resolveSingleRoute } from "./role-routing.js";
+import { readActiveRoutingBiases, resolveSingleRoute } from "./role-routing.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -43,6 +46,7 @@ type AgentChatConfigLike = {
     pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
+    api_provider?: string;
   }[];
 };
 
@@ -1624,6 +1628,47 @@ export async function chainStartInternal(
   });
 }
 
+// NAMED SEAM: routeAgent(detail:"summary") (buildRecommendations in
+// agent-routing.ts) does not read RouteAgentInput.activeBiases at all today —
+// only detail:"rank"/"single" do. Forwarding activeBiases into the
+// routeAgent() calls below is therefore necessary-but-not-sufficient; this
+// post-filter is what closes the bypass for the summary path. If
+// buildRecommendations ever grows native bias support, delete this local
+// application point rather than applying routing biases twice.
+function applyRoutingBiasesToRecommendations(
+  recommendations: AgentRecommendation[],
+  cfg: AgentChatConfigLike,
+  biases: RoutingBias[] | undefined,
+): AgentRecommendation[] {
+  if (!biases || biases.length === 0) return recommendations;
+  const scored = recommendations.map((recommendation) => ({
+    recommendation,
+    effect: resolveBiasEffect(
+      recommendation.agent_name,
+      resolveProvider(
+        cfg.agents?.find((candidate) => candidate.name === recommendation.agent_name) ?? {},
+      ),
+      biases,
+    ),
+  }));
+  const kept = scored.filter((s) => !s.effect.exclude);
+  // Hard-prefer with safe fallback: honor exclude steers first; if that would
+  // leave no candidate at all, re-admit the excluded set rather than starve
+  // the fallback selector. Mirrors buildRank's re-admission in
+  // agent-routing.ts.
+  const visible = kept.length > 0 ? kept : scored;
+  return visible
+    .map((s) => ({
+      ...s,
+      // Summary recommendations expose success_rate, not buildRank's composite
+      // score. Closing this arithmetic divergence requires carrying the
+      // composite score (or its inputs) on AgentRecommendation.
+      biasedScore: s.recommendation.success_rate * s.effect.factor,
+    }))
+    .sort((a, b) => b.biasedScore - a.biasedScore)
+    .map((s) => s.recommendation);
+}
+
 function maybeSelectSubDispatchFallback(opts: {
   services: Services;
   input: ChainStartRequestWithLongLived;
@@ -1637,16 +1682,24 @@ function maybeSelectSubDispatchFallback(opts: {
 
   const refusedOutcomes: CapCheckRefuse[] = [];
 
+  // Same steering data resolveSingleRoute reads for the primary route — see
+  // readActiveRoutingBiases. Degrades to undefined on any read error.
+  const activeBiases = readActiveRoutingBiases(opts.services);
   const route = routeAgent({
     db: opts.services.db,
     detail: "summary",
     taskType: opts.input.task_type,
     windowDays: 7,
     now: opts.services.clock(),
+    activeBiases,
   });
   if (route.detail !== "summary")
     throw new Error("unexpected routeAgent detail for fallback recommendations");
-  const recommendations: AgentRecommendation[] = route.recommendations;
+  const recommendations: AgentRecommendation[] = applyRoutingBiasesToRecommendations(
+    route.recommendations,
+    opts.cfg,
+    activeBiases,
+  );
 
   if (recommendations.length === 0) {
     recordPressureFallbackEvent({
@@ -1797,18 +1850,27 @@ function maybeSelectClassifierDeclineFallback(opts: {
   cfg: AgentChatConfigLike;
 }): string | null {
   if (!opts.input.task_type) return null;
+  // Same steering data resolveSingleRoute reads for the primary route — see
+  // readActiveRoutingBiases. Degrades to undefined on any read error.
+  const activeBiases = readActiveRoutingBiases(opts.services);
   const route = routeAgent({
     db: opts.services.db,
     detail: "summary",
     taskType: opts.input.task_type,
     windowDays: 7,
     now: opts.services.clock(),
+    activeBiases,
   });
   if (route.detail !== "summary")
     throw new Error("unexpected routeAgent detail for classifier fallback recommendations");
 
   const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
-  const fallback = route.recommendations
+  const recommendations = applyRoutingBiasesToRecommendations(
+    route.recommendations,
+    opts.cfg,
+    activeBiases,
+  );
+  const fallback = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
     .find((recommendation) => configAgents.has(recommendation.agent_name));
   return fallback?.agent_name ?? null;

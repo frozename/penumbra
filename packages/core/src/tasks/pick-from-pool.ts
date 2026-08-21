@@ -87,6 +87,11 @@ export function pickFromPool(
       }
     : undefined;
 
+  // NAMED SEAM: bias-blind by omission. pickFromPool has no production
+  // caller today (only re-exported from index.ts and exercised by its own
+  // test), so this is not a live routing-bias bypass. If a production
+  // caller is ever wired up, forward activeBiases here the same way
+  // resolveSingleRoute (packages/daemon/src/routes/role-routing.ts) does.
   const out = routeAgent({
     db,
     detail: "rank",

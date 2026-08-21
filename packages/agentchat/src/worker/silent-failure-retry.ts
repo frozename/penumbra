@@ -1,3 +1,7 @@
+import { resolveBiasEffect, type RoutingBiasEffectInput } from "@penumbra/core";
+
+export { resolveProvider as resolveAgentProvider } from "@penumbra/core";
+
 export interface PerformanceForRetry {
   outcome?: string;
   notes?: string | null;
@@ -47,14 +51,10 @@ export interface RetryAgentCandidate {
 }
 
 /**
- * Structural subset of a routing-bias row (usage steering). Kept local so this
- * module stays dependency-free and unit-testable with plain object literals.
+ * Structural subset of a routing-bias row (usage steering), matching the
+ * canonical core bias-effect helper while staying easy to build in tests.
  */
-export interface RoutingBiasLike {
-  scope: string; // "provider" | "agent"
-  value: string;
-  mode: string; // "boost" | "divert" | "exclude"
-}
+export type RoutingBiasLike = RoutingBiasEffectInput;
 
 export interface SelectRetryAgentInput {
   /** agent_rank candidates, already ordered best-first. */
@@ -69,42 +69,12 @@ export interface SelectRetryAgentInput {
   activeBiases: readonly RoutingBiasLike[];
 }
 
-/**
- * Resolve an agent's provider the same way the daemon scorer does
- * (`resolveProvider` in @penumbra/core agent-routing): subscription agents key
- * off subscription_provider; otherwise api_provider, falling back to
- * subscription_provider. Kept in sync by hand — both honor the same biases.
- */
-export function resolveAgentProvider(agent: {
-  pricing_mode?: string;
-  subscription_provider?: string | null;
-  api_provider?: string | null;
-}): string | null {
-  if (agent.pricing_mode === "subscription") return agent.subscription_provider ?? null;
-  return agent.api_provider ?? agent.subscription_provider ?? null;
-}
-
-/**
- * Deliberate byte-for-byte mirror of the daemon scorer's exclude matching
- * (resolveBiasEffect in @penumbra/core agent-routing). Matching is strict
- * equality with NO normalization — kept identical so a retry never diverges from
- * first-pass routing. The canonical-provider invariant that makes strict `===`
- * correct is enforced at the write boundaries (config load + routing_bias_set),
- * so this module stays dependency-free.
- */
 function isBiasExcluded(
   agentName: string,
   provider: string | null,
   biases: readonly RoutingBiasLike[],
 ): boolean {
-  for (const bias of biases) {
-    if (bias.mode !== "exclude") continue;
-    const matches =
-      (bias.scope === "agent" && bias.value === agentName) ||
-      (bias.scope === "provider" && provider !== null && bias.value === provider);
-    if (matches) return true;
-  }
-  return false;
+  return resolveBiasEffect(agentName, provider, biases).exclude;
 }
 
 /**

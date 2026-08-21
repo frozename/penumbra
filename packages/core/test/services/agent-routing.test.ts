@@ -5,7 +5,7 @@ import type { RoutingBias } from "../../src/readers/routing-bias.js";
 import type { AgentRankOutput } from "../../src/schemas/agent-performance.js";
 import type { RouteAgentInput, RouteAgentOutput } from "../../src/services/agent-routing.js";
 
-import { loadSqliteVec, migrate, routeAgent } from "../../src/index.js";
+import { loadSqliteVec, migrate, resolveBiasEffect, routeAgent } from "../../src/index.js";
 import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
@@ -1801,6 +1801,35 @@ describe("routing bias (usage steering)", () => {
     defaultRoles: { coder: "alpha" },
     activeBiases,
     now: NOW,
+  });
+
+  test("exported resolveBiasEffect honors precedence, defaults, explicit weights, and cumulative factors", () => {
+    expect(resolveBiasEffect("alpha", "prov-a", [bias("agent", "alpha", "boost")])).toEqual({
+      factor: 1.25,
+      exclude: false,
+    });
+    expect(resolveBiasEffect("alpha", "prov-a", [bias("provider", "prov-a", "divert")])).toEqual({
+      factor: 0.5,
+      exclude: false,
+    });
+    expect(resolveBiasEffect("alpha", "prov-a", [bias("agent", "alpha", "boost", 2)])).toEqual({
+      factor: 2,
+      exclude: false,
+    });
+    expect(
+      resolveBiasEffect("alpha", "prov-a", [
+        bias("agent", "alpha", "boost"),
+        bias("provider", "prov-a", "divert"),
+        bias("agent", "alpha", "boost", 2),
+      ]),
+    ).toEqual({ factor: 1.25 * 0.5 * 2, exclude: false });
+    expect(
+      resolveBiasEffect("alpha", "prov-a", [
+        bias("agent", "alpha", "boost"),
+        bias("provider", "prov-a", "divert"),
+        bias("agent", "alpha", "exclude"),
+      ]),
+    ).toEqual({ factor: 1.25 * 0.5, exclude: true });
   });
 
   test("GUARD: empty biases produce byte-identical output to no biases (rank + single)", () => {

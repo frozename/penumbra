@@ -163,6 +163,16 @@ type AgentRouteAgentchatConfig = {
   };
 };
 
+export type ResolvableAgentProviderInput = {
+  pricing_mode?: "api" | "subscription" | string;
+  subscription_provider?: string | null;
+  api_provider?: string | null;
+};
+
+export type RoutingBiasEffectInput = Pick<RoutingBias, "scope" | "value" | "mode"> & {
+  weight?: number | null;
+};
+
 export type DetailMode = "rank" | "summary" | "single";
 
 export type RoleRoute = {
@@ -724,9 +734,7 @@ function combineScoreWeights(
   );
 }
 
-function resolveProvider(
-  agent: NonNullable<AgentRouteAgentchatConfig["agents"]>[number],
-): string | null {
+export function resolveProvider(agent: ResolvableAgentProviderInput): string | null {
   if (agent.pricing_mode === "subscription") return agent.subscription_provider ?? null;
   return agent.api_provider ?? agent.subscription_provider ?? null;
 }
@@ -809,10 +817,10 @@ function isOverPressure(
 const DEFAULT_BOOST_WEIGHT = 1.25;
 const DEFAULT_DIVERT_WEIGHT = 0.5;
 
-function resolveBiasEffect(
+export function resolveBiasEffect(
   agentName: string,
   provider: string | null,
-  biases: RoutingBias[] | undefined,
+  biases: readonly RoutingBiasEffectInput[] | undefined,
 ): { factor: number; exclude: boolean } {
   if (!biases || biases.length === 0) return { factor: 1, exclude: false };
   let factor = 1;

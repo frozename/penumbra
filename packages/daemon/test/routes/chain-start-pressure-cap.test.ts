@@ -5,6 +5,7 @@ import {
   loadSqliteVec,
   migrate,
   type ProviderQuota,
+  setRoutingBias,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
@@ -217,6 +218,24 @@ function seedParentHandoff(services: Services, input: { handoff_id: string; to: 
     use_worktree: null,
     parent_handoff_id: null,
     branch_base: null,
+  });
+}
+
+function writeBias(
+  services: Services,
+  scope: "provider" | "agent",
+  value: string,
+  mode: "boost" | "divert" | "exclude",
+  opts: { weight?: number } = {},
+): void {
+  setRoutingBias(services.db, {
+    scope,
+    value,
+    mode,
+    weight: opts.weight ?? null,
+    reason: "test",
+    ttl_seconds: 3600,
+    now: NOW,
   });
 }
 
@@ -633,6 +652,354 @@ test("classifier-declined parent falls back exactly once to the top recommendati
   expect((await readClassifierRetryError(retryRes)).error.code).toBe(
     "classifier_decline_retry_exhausted",
   );
+});
+
+test("pressure-cap fallback avoids a provider excluded by an active routing bias", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "groq" },
+      { name: "gemini", pricing_mode: "subscription", subscription_provider: "google" },
+    ],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "openai", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "groq", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "google", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-bias-exclude", to: "maestro" });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-bias-exclude-maestro",
+      provider: "anthropic",
+      window_label: "five_hour",
+      used_pct: 70,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-exclude-sub",
+      provider: "openai",
+      window_label: "five_hour",
+      used_pct: 96,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-exclude-codex",
+      provider: "groq",
+      window_label: "five_hour",
+      used_pct: 50,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-exclude-gemini",
+      provider: "google",
+      window_label: "five_hour",
+      used_pct: 40,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+  ]);
+  // codex ranks first on latency when unsteered — the bypass this test pins
+  // is that an active exclude on codex's provider must still be honored by
+  // the fallback selector, not just by the primary route.
+  seedPerformance(services, {
+    performance_id: "perf-bias-exclude-codex",
+    handoff_id: "handoff-bias-exclude-codex",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 800,
+  });
+  seedPerformance(services, {
+    performance_id: "perf-bias-exclude-gemini",
+    handoff_id: "handoff-bias-exclude-gemini",
+    agent_name: "gemini",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+  writeBias(services, "provider", "groq", "exclude");
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-bias-exclude",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.to_agent).toBe("gemini");
+});
+
+test("classifier-decline fallback avoids a provider excluded by an active routing bias", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "google" },
+      { name: "gemini", pricing_mode: "subscription", subscription_provider: "mistral" },
+    ],
+    providerQuotas: [],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-classifier-bias-exclude", to: "maestro" });
+  recordClassifierDecline(services, "h-parent-classifier-bias-exclude");
+  seedPerformance(services, {
+    performance_id: "perf-classifier-bias-exclude-codex",
+    handoff_id: "handoff-classifier-bias-exclude-codex",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 800,
+  });
+  seedPerformance(services, {
+    performance_id: "perf-classifier-bias-exclude-gemini",
+    handoff_id: "handoff-classifier-bias-exclude-gemini",
+    agent_name: "gemini",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+  writeBias(services, "provider", "google", "exclude");
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-classifier-bias-exclude",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.to_agent).toBe("gemini");
+});
+
+test("pressure-cap fallback re-admits excluded candidates rather than starve (safe fallback)", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "groq" },
+      { name: "gemini", pricing_mode: "subscription", subscription_provider: "google" },
+    ],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "openai", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "groq", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "google", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-bias-reAdmit", to: "maestro" });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-bias-readmit-maestro",
+      provider: "anthropic",
+      window_label: "five_hour",
+      used_pct: 70,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-readmit-sub",
+      provider: "openai",
+      window_label: "five_hour",
+      used_pct: 96,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-readmit-codex",
+      provider: "groq",
+      window_label: "five_hour",
+      used_pct: 50,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-readmit-gemini",
+      provider: "google",
+      window_label: "five_hour",
+      used_pct: 40,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+  ]);
+  seedPerformance(services, {
+    performance_id: "perf-bias-readmit-codex",
+    handoff_id: "handoff-bias-readmit-codex",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 800,
+  });
+  seedPerformance(services, {
+    performance_id: "perf-bias-readmit-gemini",
+    handoff_id: "handoff-bias-readmit-gemini",
+    agent_name: "gemini",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+  // Exclude every candidate's provider — the dispatch must not fail closed;
+  // the excluded set is re-admitted rather than starving the fallback.
+  writeBias(services, "provider", "groq", "exclude");
+  writeBias(services, "provider", "google", "exclude");
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-bias-reAdmit",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(["codex", "gemini"]).toContain(handoff?.to_agent);
+});
+
+test("a boost bias flips the pressure-cap fallback's chosen seat", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "groq" },
+      { name: "gemini", pricing_mode: "subscription", subscription_provider: "google" },
+    ],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "openai", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "groq", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "google", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-bias-boost", to: "maestro" });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-bias-boost-maestro",
+      provider: "anthropic",
+      window_label: "five_hour",
+      used_pct: 70,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-boost-sub",
+      provider: "openai",
+      window_label: "five_hour",
+      used_pct: 96,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-boost-codex",
+      provider: "groq",
+      window_label: "five_hour",
+      used_pct: 50,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-boost-gemini",
+      provider: "google",
+      window_label: "five_hour",
+      used_pct: 40,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+  ]);
+  // Without the boost, codex wins on latency (both have a 100% success rate,
+  // tie broken by faster avg latency). The boost on gemini's provider must
+  // flip that ordering.
+  seedPerformance(services, {
+    performance_id: "perf-bias-boost-codex",
+    handoff_id: "handoff-bias-boost-codex",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 800,
+  });
+  seedPerformance(services, {
+    performance_id: "perf-bias-boost-gemini",
+    handoff_id: "handoff-bias-boost-gemini",
+    agent_name: "gemini",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+  writeBias(services, "provider", "google", "boost");
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-bias-boost",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.to_agent).toBe("gemini");
+});
+
+test("pressure-cap fallback degrades to unsteered selection when the bias read fails", async () => {
+  const services = tempServices({
+    agents: [
+      { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
+      { name: "planner", pricing_mode: "subscription", subscription_provider: "openai" },
+      { name: "codex", pricing_mode: "subscription", subscription_provider: "google" },
+    ],
+    providerQuotas: [
+      { provider: "anthropic", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "openai", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: "google", pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: "h-parent-bias-read-failure", to: "maestro" });
+  seedSnapshots(services, [
+    {
+      event_id: "snap-bias-read-failure-maestro",
+      provider: "anthropic",
+      window_label: "five_hour",
+      used_pct: 70,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-read-failure-sub",
+      provider: "openai",
+      window_label: "five_hour",
+      used_pct: 96,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+    {
+      event_id: "snap-bias-read-failure-candidate",
+      provider: "google",
+      window_label: "five_hour",
+      used_pct: 40,
+      observed_at: "2026-05-08T00:50:00Z",
+    },
+  ]);
+  seedPerformance(services, {
+    performance_id: "perf-bias-read-failure",
+    handoff_id: "handoff-bias-read-failure",
+    agent_name: "codex",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    latency_ms: 1200,
+  });
+  services.db.run("DROP TABLE routing_bias");
+
+  const res = await startChain(services, {
+    initial_agent: "planner",
+    parent_handoff_id: "h-parent-bias-read-failure",
+    task_type: "implement_substantial",
+  });
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { handoff_id: string };
+  const handoff = services.db
+    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
+    .get(body.handoff_id);
+  expect(handoff?.to_agent).toBe("codex");
 });
 
 test("sub-agent refuse skips refused top-1 and selects top-2 fallback", async () => {

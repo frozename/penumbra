@@ -6,8 +6,24 @@ import {
   readSubscriptionPressure,
   type RoleRoute,
   routeAgent,
+  type RoutingBias,
   type Services,
 } from "@penumbra/core";
+
+/**
+ * Shared read for user-driven routing biases ("usage steering"). Degrades to
+ * undefined on any read error so a bias-store outage can never block a
+ * dispatch. Both the primary route (resolveSingleRoute below) and the
+ * chain-start fallback selectors in chains.ts call this, so all routing
+ * decisions for one dispatch see the same steering data.
+ */
+export function readActiveRoutingBiases(services: Services): RoutingBias[] | undefined {
+  try {
+    return readRoutingBiases(services.db, { now: services.clock() });
+  } catch {
+    return undefined;
+  }
+}
 
 type AgentRoutingWithRoleRouting = AgentRoutingConfig & {
   role_routing?: {
@@ -42,12 +58,7 @@ export function resolveSingleRoute(
   }
   // User-driven usage-steering biases. Degrade to unsteered routing on any read
   // error, mirroring the pressure read above.
-  let activeBiases: ReturnType<typeof readRoutingBiases> | undefined;
-  try {
-    activeBiases = readRoutingBiases(services.db, { now: services.clock() });
-  } catch {
-    // degrade gracefully
-  }
+  const activeBiases = readActiveRoutingBiases(services);
   let unhealthyAgents: ReadonlySet<string> | undefined;
   try {
     unhealthyAgents = services.localSeatHealth?.getUnhealthyAgents();
