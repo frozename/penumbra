@@ -567,6 +567,7 @@ export {
 export {
   buildHandoffBranchName,
   type BuildHandoffBranchNameInput,
+  deriveBranchNameFromMessage,
   type HandoffBranchNameInput,
   resolveHandoffBranchName,
   slugifyBranchSegment,

@@ -8,6 +8,7 @@ import {
   ChainStartRequestSchema,
   buildHandoffBranchName,
   checkPressureCap,
+  deriveBranchNameFromMessage,
   HandoffStatusSchema,
   inferAgentTaskTypeForRole,
   insertLane,
@@ -17,6 +18,7 @@ import {
   type RecallResult,
   routeAgent,
   type Services,
+  slugifyBranchSegment,
   type TaskClass,
 } from "@penumbra/core";
 import { execFileSync } from "node:child_process";
@@ -1541,12 +1543,27 @@ export async function chainStartInternal(
   const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
   const branchName = (() => {
     if (input.use_worktree === false) return null;
+    // input.message is the raw, pre-stamp/pre-recall message (stamped/handoffMessage
+    // are computed later, below) — naming off those would bake stamped retry
+    // metadata or injected recall context into the branch name.
     const requestedName = buildHandoffBranchName({
       handoff_id,
       task_name: input.task_name,
       branch_type: input.branch_type,
       workload: route?.taskType ?? input.task_type ?? undefined,
+      message: input.message,
     });
+    if (!slugifyBranchSegment(input.task_name ?? "")) {
+      services.log.info(
+        {
+          event: "dispatch.branch_name_derived",
+          handoff_id,
+          derived_slug: deriveBranchNameFromMessage(input.message) || null,
+          branch_name: requestedName,
+        },
+        "chain-start derived branch name from dispatch message",
+      );
+    }
     return availableBranchNameBestEffort(
       projectRootForBranchPrecheck(input, services, projectRegistryEntries),
       requestedName,

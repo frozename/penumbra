@@ -199,6 +199,42 @@ describe("buildSilentRetryPayload", () => {
     expect(slugifyBranchSegment(p.task_name ?? "")).toBe("branch-naming-smoke");
   });
 
+  test("strips a trailing id suffix (new branch-name format) when deriving task_name", () => {
+    const input = { ...base, branch_name: "feat/branch-naming-smoke_a1b2c3d4" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("feat");
+    expect(p.task_name).toBe("branch naming smoke");
+    expect(slugifyBranchSegment(p.task_name ?? "")).toBe("branch-naming-smoke");
+  });
+
+  test("old-format branch names (no id suffix) still parse unchanged", () => {
+    const input = { ...base, branch_name: "fix/plan-runtime-filing-retry" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("fix");
+    expect(p.task_name).toBe("plan runtime filing retry");
+  });
+
+  test("old-format branch names with a collision suffix still parse unchanged", () => {
+    const input = { ...base, branch_name: "fix/plan-runtime-filing-retry-2" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("fix");
+    expect(p.task_name).toBe("plan runtime filing retry");
+  });
+
+  test("strips a combined id suffix + trailing collision suffix in order", () => {
+    const input = { ...base, branch_name: "feat/branch-naming-smoke_a1b2c3d4-2" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("feat");
+    expect(p.task_name).toBe("branch naming smoke");
+  });
+
+  test("only strips ONE trailing id suffix, keeping hex-looking words that are part of the task name", () => {
+    const input = { ...base, branch_name: "fix/decode-cafebabe_a1b2c3d4" };
+    const p = buildSilentRetryPayload(input);
+    expect(p.branch_type).toBe("fix");
+    expect(p.task_name).toBe("decode cafebabe");
+  });
+
   test("omits branch_type and task_name for legacy agent branches", () => {
     const input = { ...base, branch_name: "agent/5192186a-222a-441f-b9d1-3f9429b55bbc" };
     const p = buildSilentRetryPayload(input);

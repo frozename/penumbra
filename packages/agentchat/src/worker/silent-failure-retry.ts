@@ -196,7 +196,8 @@ function retryBranchFields(
   const slugWithSuffix = match[2];
   if (branchType === undefined || slugWithSuffix === undefined) return {};
   if (branchType === "agent") return {};
-  const slug = slugWithSuffix.replace(/-\d+$/, "");
-  const taskName = slug.replace(/-/g, " ");
+  const withoutCollisionSuffix = slugWithSuffix.replace(/-\d+$/, "");
+  const withoutIdSuffix = withoutCollisionSuffix.replace(/_[0-9a-f]{6,16}$/i, "");
+  const taskName = withoutIdSuffix.replace(/-/g, " ");
   return { branch_type: branchType, task_name: taskName };
 }

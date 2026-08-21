@@ -2337,7 +2337,8 @@ test("POST /chains/start stores a human-readable branch name when worktree is en
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  expect(handoff.branch_name).toBe("feat/full-task-pool");
+  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  expect(handoff.branch_name).toBe(`feat/full-task-pool_${expectedId}`);
 });
 
 test("POST /chains/start suffixes branch_name when the project root already has the candidate", async () => {
@@ -2349,23 +2350,43 @@ test("POST /chains/start suffixes branch_name when the project root already has 
     fs.writeFileSync(path.join(repo, "README.md"), "# test\n");
     execFileSync("git", ["add", "."], { cwd: repo });
     execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
-    execFileSync("git", ["branch", "feat/full-task-pool"], { cwd: repo });
 
-    const services = tempServices({
-      projectRegistry: new ProjectRegistry(
-        new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
-      ),
-    });
+    const projectRegistry = new ProjectRegistry(
+      new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+    );
+    const requestBody = {
+      initial_agent: "planner",
+      message: "hi",
+      project_id: "penumbra",
+      workload: "implement_substantial",
+      task_name: "Full task pool",
+    };
+
+    // The id suffix makes the candidate name unique by construction, so a
+    // plain re-dispatch never collides. To still exercise the collision
+    // fallback in manager.ts, probe a fresh (identical, deterministic-uuid)
+    // dispatch to learn the exact candidate name, pre-create THAT branch,
+    // then dispatch again and assert the `-2` suffix appears.
+    const probeServices = tempServices({ projectRegistry });
+    const probeRes = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      }),
+      probeServices,
+    );
+    const probeBody = await readJsonBody<ChainResponseBody>(probeRes);
+    const candidateName = probeBody.branch_name;
+    if (typeof candidateName !== "string") {
+      throw new Error("probe dispatch did not return a branch_name");
+    }
+    execFileSync("git", ["branch", candidateName], { cwd: repo });
+
+    const services = tempServices({ projectRegistry });
     const res = await chainsStartRoute(
       new Request("http://x/chains/start", {
         method: "POST",
-        body: JSON.stringify({
-          initial_agent: "planner",
-          message: "hi",
-          project_id: "penumbra",
-          workload: "implement_substantial",
-          task_name: "Full task pool",
-        }),
+        body: JSON.stringify(requestBody),
       }),
       services,
     );
@@ -2373,8 +2394,8 @@ test("POST /chains/start suffixes branch_name when the project root already has 
     expect(res.status).toBe(200);
     const body = await readJsonBody<ChainResponseBody>(res);
     const handoff = selectHandoff(services, body.handoff_id!);
-    expect(body.branch_name).toBe("feat/full-task-pool-2");
-    expect(handoff.branch_name).toBe("feat/full-task-pool-2");
+    expect(body.branch_name).toBe(`${candidateName}-2`);
+    expect(handoff.branch_name).toBe(`${candidateName}-2`);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -2437,22 +2458,87 @@ test("chain_wait terminal lookup reports final branch_name after recordBranchNam
   expect(latestBody.handoff.branch_name).toBe("feat/x-2");
 });
 
-test("POST /chains/start defaults unnamed worktree branch names to task id prefix", async () => {
+test("POST /chains/start derives a human-readable branch name from the message when task_name is omitted", async () => {
   const services = tempServices();
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
-      body: JSON.stringify({ initial_agent: "planner", message: "hi" }),
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "Investigate the queue backlog for stuck handoffs",
+      }),
     }),
     services,
   );
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  expect(handoff.branch_name).toBe(
-    `task/${body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8)}`,
-  );
+  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  expect(handoff.branch_name).toBe(`task/investigate-the-queue-backlog-for-stuck_${expectedId}`);
   expect(handoff.branch_name?.startsWith("agent/")).toBe(false);
+  // the human-readable part must be real content, not the id repeated
+  expect(handoff.branch_name).not.toBe(`task/${expectedId}`);
+  expect(handoff.branch_name).not.toBe(`task/${expectedId}_${expectedId}`);
+});
+
+test("POST /chains/start does not name the branch after a silent-failure-retry stamp", async () => {
+  const services = tempServices();
+  const message =
+    "[silent-failure-retry] retry_of=11111111-1111-4111-9111-111111111111 prior_agent=codex\n\nInvestigate queue backlog";
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  expect(handoff.branch_name).toBe(`task/investigate-queue-backlog_${expectedId}`);
+  expect(handoff.branch_name).not.toContain("silent-failure-retry");
+  expect(handoff.branch_name).not.toContain("retry-of");
+});
+
+test("POST /chains/start falls back to a literal branch name for a whitespace-only message", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({ initial_agent: "planner", message: "   " }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  expect(handoff.branch_name).toBe(`task/handoff_${expectedId}`);
+  expect(handoff.branch_name?.startsWith("agent/")).toBe(false);
+  expect(() =>
+    execFileSync("git", ["check-ref-format", "--branch", handoff.branch_name!]),
+  ).not.toThrow();
+});
+
+test("POST /chains/start prefers an explicit task_name over a derived message slug", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "Investigate queue backlog",
+        task_name: "Full task pool",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  expect(handoff.branch_name).toBe(`task/full-task-pool_${expectedId}`);
 });
 
 test("POST /chains/start persists open_pr_on_review: true", async () => {
