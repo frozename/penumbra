@@ -30,6 +30,11 @@ export {
 } from "./files/agents.js";
 export { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "./files/load.js";
 export {
+  loadModelAliasMapFromDir,
+  type ModelAliasMap,
+  ModelAliasMapSchema,
+} from "./files/model-aliases.js";
+export {
   resolveLegacyOperatorConfigPath,
   resolveOperatorConfigPath,
 } from "./files/operator-paths.js";
@@ -40,6 +45,11 @@ export {
   QuotasConfigSchema,
 } from "./files/quotas.js";
 export { type RoutingConfig, RoutingConfigSchema } from "./files/routing.js";
+export {
+  loadTaskRouterConfigFromDir,
+  type TaskRouterConfig,
+  TaskRouterConfigSchema,
+} from "./files/task-router.js";
 export { type Workload, WORKLOADS, WorkloadSchema } from "./files/workload.js";
 export { type ConfigBundle, type ConfigSource, getConfig, resetConfigForTest } from "./load.js";
 export { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "./provider-format.js";
