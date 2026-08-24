@@ -1,16 +1,16 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker as NodeWorker } from "node:worker_threads";
 
 import type { RouteAgentOutput } from "../../src/services/agent-routing.js";
 import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
 import type { FileTaskInput } from "../../src/tasks/schema.js";
 
 import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applyRuntimePragmas, loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { pickPreferred as exportedPickPreferred } from "../../src/index.js";
 import { pickPreferred } from "../../src/tasks/auction.js";
 import { TaskWriter } from "../../src/tasks/writer.js";
@@ -35,11 +35,27 @@ function freshDbFile(): string {
   const dbPath = join(dir, "race.sqlite");
   const db = new Database(dbPath);
   loadSqliteVec(db);
+  applyRuntimePragmas(db);
   migrate(db, { embeddingDim: 384 });
   db.close();
   return dbPath;
 }
 const WRITER_URL = new URL("../../src/tasks/writer.js", import.meta.url).href;
+const PRAGMAS_URL = new URL("../../src/db/sqlite-vec.js", import.meta.url).href;
+
+// 16 worker threads are enough to exercise real SQLite lock contention while keeping the
+// isolation cost low: the race test measured 130-168ms across focused runs, so 30s
+// leaves broad-suite headroom without masking a genuine hang.
+const RACE_TEST_TIMEOUT_MS = 30_000;
+// Bounds the "wait for all N to signal ready" loop; must stay under RACE_TEST_TIMEOUT_MS
+// with room left for release + the actual next() calls + assertions.
+const RACE_BARRIER_READY_TIMEOUT_MS = 10_000;
+// Self-audit: once released, all workers should call next() within a tight window of each
+// other after a single Atomics.notify() release. A regression back to a staggered
+// wall-clock start would blow this out to hundreds/thousands of ms, so this threshold must
+// fail loudly if the barrier ever stops actually synchronizing the callers.
+const RACE_BARRIER_SPREAD_THRESHOLD_MS = 2_000;
+const RACE_CONCURRENCY = 16;
 
 function baseInput(overrides: Partial<FileTaskInput> = {}): FileTaskInput {
   return {
@@ -58,6 +74,48 @@ function defaultAgents(): AgentRegistry {
     ["B", { name: "B", tags: ["core"], tier: "standard", cost_cents_per_run: 25 }],
     ["C", { name: "C", tags: ["core"], tier: "premium", cost_cents_per_run: 50 }],
   ]);
+}
+
+function raceRouteAgentOutput(): RouteAgentOutput {
+  return {
+    detail: "rank" as const,
+    candidates: {
+      task_type: "implement_substantial",
+      window: { from: null, to: "" },
+      candidates: [
+        {
+          agent_name: "A",
+          samples: 1,
+          successes: 1,
+          failures: 0,
+          neutral: 0,
+          success_rate: 1,
+          avg_rounds: null,
+          avg_latency_ms: null,
+          cost_per_success_usd: null,
+          avg_reviewer_findings: null,
+          avg_trust_score: null,
+          score: 90,
+          last_outcome_at: "",
+        },
+        {
+          agent_name: "B",
+          samples: 1,
+          successes: 1,
+          failures: 0,
+          neutral: 0,
+          success_rate: 1,
+          avg_rounds: null,
+          avg_latency_ms: null,
+          cost_per_success_usd: null,
+          avg_reviewer_findings: null,
+          avg_trust_score: null,
+          score: 30,
+          last_outcome_at: "",
+        },
+      ],
+    },
+  };
 }
 
 describe("TaskWriter.next auction window", () => {
@@ -211,70 +269,41 @@ describe("TaskWriter.next auction window", () => {
     expect(rows!.n).toBe(1);
   });
 
-  test("50 concurrent next() calls: exactly one lease is created", async () => {
-    const dbPath = freshDbFile();
-    const dbDir = dbPath.slice(0, dbPath.lastIndexOf("/"));
-    const workerScript = join(tmpdir(), `penumbra-auction-race-${crypto.randomUUID()}.mjs`);
-    const startAt = Date.now() + 500;
-    const { task_id } = ((): { task_id: string } => {
-      const writer = new TaskWriter(new Database(dbPath), {
-        now: (): number => 10_000,
-        resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
-        routeAgent: (): RouteAgentOutput => ({
-          detail: "rank" as const,
-          candidates: {
-            task_type: "implement_substantial",
-            window: { from: null, to: "" },
-            candidates: [
-              {
-                agent_name: "A",
-                samples: 1,
-                successes: 1,
-                failures: 0,
-                neutral: 0,
-                success_rate: 1,
-                avg_rounds: null,
-                avg_latency_ms: null,
-                cost_per_success_usd: null,
-                avg_reviewer_findings: null,
-                avg_trust_score: null,
-                score: 90,
-                last_outcome_at: "",
-              },
-              {
-                agent_name: "B",
-                samples: 1,
-                successes: 1,
-                failures: 0,
-                neutral: 0,
-                success_rate: 1,
-                avg_rounds: null,
-                avg_latency_ms: null,
-                cost_per_success_usd: null,
-                avg_reviewer_findings: null,
-                avg_trust_score: null,
-                score: 30,
-                last_outcome_at: "",
-              },
-            ],
-          },
-        }),
-      });
-      const created = writer.file(baseInput());
-      return created;
-    })();
+  test(
+    "concurrent next() calls: exactly one lease is created",
+    async () => {
+      const dbPath = freshDbFile();
+      const dbDir = dbPath.slice(0, dbPath.lastIndexOf("/"));
+      const { task_id } = ((): { task_id: string } => {
+        const setupDb = new Database(dbPath);
+        const writer = new TaskWriter(setupDb, {
+          now: (): number => 10_000,
+          resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
+          routeAgent: (): RouteAgentOutput => raceRouteAgentOutput(),
+        });
+        try {
+          return writer.file(baseInput());
+        } finally {
+          setupDb.close();
+        }
+      })();
 
-    writeFileSync(
-      workerScript,
-      `import { Database } from "bun:sqlite";
+      const barrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+      const workerSource = `
+import { Database } from "bun:sqlite";
+import { parentPort, workerData } from "node:worker_threads";
+import { applyRuntimePragmas } from ${JSON.stringify(PRAGMAS_URL)};
 import { TaskWriter } from ${JSON.stringify(WRITER_URL)};
 
 try {
-  const dbPath = process.argv[2];
-  const startAt = Number(process.argv[3]);
-  const taskId = process.argv[4];
-  const agentId = process.argv[5];
+  const { dbPath, agentId, barrier } = workerData;
+  const state = new Int32Array(barrier);
   const db = new Database(dbPath);
+  // Every real production connection (daemon start, CLI init, MCP runtime) calls this
+  // right after opening -- busy_timeout is a per-connection setting, so without it here
+  // each worker's writer.next() would hit "database is locked" under real write
+  // contention instead of retrying like production does.
+  applyRuntimePragmas(db);
   const writer = new TaskWriter(db, {
     now: () => 10_000,
     resolveAgent: (name) => new Map([
@@ -321,71 +350,149 @@ try {
       },
     }),
   });
-  while (Date.now() < startAt) {}
+
+  // Real cross-thread barrier instead of a wall-clock guess: each worker opens its own
+  // SQLite connection, signals readiness, then blocks in Atomics.wait() until the parent
+  // releases all ${RACE_CONCURRENCY} contenders at once.
+  const readyAt = Date.now();
+  Atomics.add(state, 0, 1);
+  Atomics.notify(state, 0);
+  while (Atomics.load(state, 1) === 0) {
+    Atomics.wait(state, 1, 0);
+  }
+
+  const callStartAt = Date.now();
   const result = await writer.next({ agent_id: agentId });
-  console.log(JSON.stringify(result));
   db.close();
+  parentPort.postMessage({ result, readyAt, callStartAt });
 } catch (err) {
-  console.error(err instanceof Error ? err.stack ?? err.message : String(err));
-  process.exit(1);
-}
-`,
-    );
-
-    const attempts = Array.from(
-      { length: 50 },
-      (_, i) =>
-        new Promise<string | null>((resolve, reject) => {
-          const child = spawn(process.execPath, [
-            workerScript,
-            dbPath,
-            String(startAt),
-            task_id,
-            i % 2 === 0 ? "A" : "B",
-          ]);
-          let stdout = "";
-          let stderr = "";
-          child.stdout.on("data", (chunk: Buffer | string): void => {
-            stdout += chunk.toString();
-          });
-          child.stderr.on("data", (chunk: Buffer | string): void => {
-            stderr += chunk.toString();
-          });
-          child.on("exit", (code: number | null): void => {
-            if (code === 0) {
-              const trimmed = stdout.trim();
-              resolve(trimmed === "null" ? null : (JSON.parse(trimmed) as string));
-            } else {
-              reject(new Error(stderr || `worker exited ${String(code)}`));
-            }
-          });
-        }),
-    );
-
-    try {
-      const results = await Promise.allSettled(attempts);
-      const fulfilled = results
-        .filter((r): r is PromiseFulfilledResult<string | null> => r.status === "fulfilled")
-        .map((r) => r.value)
-        .filter((value): value is string => value !== null);
-
-      expect(fulfilled).toHaveLength(1);
-
-      const verificationDb = new Database(dbPath);
-      const openLeases = verificationDb
-        .query<
-          { n: number },
-          [string]
-        >(`SELECT COUNT(*) AS n FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
-        .get(task_id);
-      verificationDb.close();
-      expect(openLeases!.n).toBe(1);
-    } finally {
-      rmSync(workerScript, { force: true });
-      rmSync(dbPath, { force: true });
-      rmSync(dbDir, { recursive: true, force: true });
-    }
+  parentPort.postMessage({
+    error: err instanceof Error ? err.stack ?? err.message : String(err),
   });
+}
+`;
+
+      type WorkerOutcome = { result: unknown | null; readyAt: number; callStartAt: number };
+      type WorkerMessage = WorkerOutcome | { error: string };
+
+      const workerStates: { worker: NodeWorker; exited: boolean }[] = [];
+      const attempts = Array.from({ length: RACE_CONCURRENCY }, (_, i) => {
+        const worker = new NodeWorker(workerSource, {
+          eval: true,
+          workerData: {
+            dbPath,
+            agentId: i % 2 === 0 ? "A" : "B",
+            barrier,
+          },
+        });
+        const workerState = { worker, exited: false };
+        workerStates.push(workerState);
+        const attempt = new Promise<WorkerOutcome>((resolve, reject) => {
+          let received: WorkerMessage | null = null;
+          worker.once("message", (message: WorkerMessage): void => {
+            received = message;
+          });
+          worker.once("error", (err: Error): void => {
+            reject(err);
+          });
+          worker.once("exit", (code: number): void => {
+            workerState.exited = true;
+            if (code !== 0) {
+              reject(new Error(`worker exited ${code}`));
+              return;
+            }
+            if (received === null) {
+              reject(new Error("worker exited without a result"));
+              return;
+            }
+            if ("error" in received) {
+              reject(new Error(received.error));
+              return;
+            }
+            resolve(received);
+          });
+        });
+        // The barrier readiness check can fail before the test reaches result collection.
+        // Convert every worker attempt into a never-rejecting settled result immediately so
+        // late worker exits remain owned by this test instead of surfacing between files.
+        return attempt
+          .then((value): PromiseSettledResult<WorkerOutcome> => ({ status: "fulfilled", value }))
+          .catch(
+            (reason: unknown): PromiseSettledResult<WorkerOutcome> => ({
+              status: "rejected",
+              reason,
+            }),
+          );
+      });
+
+      const __testStart = Date.now();
+      try {
+        const barrierState = new Int32Array(barrier);
+        const readyDeadline = Date.now() + RACE_BARRIER_READY_TIMEOUT_MS;
+        while (Atomics.load(barrierState, 0) < RACE_CONCURRENCY) {
+          if (Date.now() >= readyDeadline) {
+            throw new Error(
+              `only ${Atomics.load(barrierState, 0)}/${RACE_CONCURRENCY} workers reached the barrier within ${RACE_BARRIER_READY_TIMEOUT_MS}ms`,
+            );
+          }
+          Atomics.wait(barrierState, 0, Atomics.load(barrierState, 0), 10);
+        }
+        console.error(`[calibration] ready-wait took ${Date.now() - __testStart}ms`);
+
+        const releaseAt = Date.now();
+        Atomics.store(barrierState, 1, 1);
+        Atomics.notify(barrierState, 1, RACE_CONCURRENCY);
+
+        const results = await Promise.all(attempts);
+        const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (rejected.length > 0) {
+          throw new Error(
+            `${rejected.length}/${RACE_CONCURRENCY} workers failed: ${rejected.map((r) => String(r.reason)).join("; ")}`,
+          );
+        }
+        const fulfilled = results
+          .filter((r): r is PromiseFulfilledResult<WorkerOutcome> => r.status === "fulfilled")
+          .map((r) => r.value);
+        expect(fulfilled).toHaveLength(RACE_CONCURRENCY);
+
+        // Self-audit: every worker must have signalled ready before the parent released,
+        // and must not have started its next() call before that release. If the barrier
+        // ever degenerates back into a staggered wall-clock guess, these fail loudly
+        // instead of the test silently passing without real contention.
+        for (const outcome of fulfilled) {
+          expect(outcome.readyAt).toBeLessThanOrEqual(releaseAt);
+          expect(outcome.callStartAt).toBeGreaterThanOrEqual(releaseAt);
+        }
+        const callStarts = fulfilled.map((o) => o.callStartAt);
+        const spread = Math.max(...callStarts) - Math.min(...callStarts);
+        expect(spread).toBeLessThan(RACE_BARRIER_SPREAD_THRESHOLD_MS);
+        console.error(`[calibration] barrier spread ${spread}ms`);
+
+        const leaseResults = fulfilled.map((o) => o.result).filter((v) => v !== null);
+        expect(leaseResults).toHaveLength(1);
+        console.error(`[calibration] total test took ${Date.now() - __testStart}ms`);
+
+        const verificationDb = new Database(dbPath);
+        const openLeases = verificationDb
+          .query<
+            { n: number },
+            [string]
+          >(`SELECT COUNT(*) AS n FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
+          .get(task_id);
+        verificationDb.close();
+        expect(openLeases!.n).toBe(1);
+      } finally {
+        await Promise.allSettled(
+          workerStates
+            .filter((workerState) => !workerState.exited)
+            .map((workerState) => workerState.worker.terminate()),
+        );
+        rmSync(dbPath, { force: true });
+        rmSync(dbDir, { recursive: true, force: true });
+      }
+    },
+    RACE_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("pickPreferred", () => {
