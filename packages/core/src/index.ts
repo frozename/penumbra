@@ -233,6 +233,7 @@ export {
 export { timeline } from "./readers/timeline.js";
 export { stripPrivacyTags } from "./redaction/privacy-tags.js";
 export { DEFAULT_REDACTION_RULES, type RedactionRule, RegexRedactor } from "./redaction/regex.js";
+export * from "./routing/index.js";
 export {
   MAX_WALKER_DEPTH,
   MAX_WALKER_STRING_BYTES,
