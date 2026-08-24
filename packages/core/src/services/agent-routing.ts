@@ -214,6 +214,17 @@ export interface RouteAgentInput {
   // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
   activeBiases?: RoutingBias[];
   unhealthyAgents?: ReadonlySet<string>;
+  // Non-re-admitting hard filter applied in getAllowedAgents beside unhealthyAgents.
+  // Silently no-ops when getAllowedAgents resolves null (no role and no registry),
+  // so production callers must pass a registry; unlike bias excludes, it does not
+  // safe-re-admit when it would otherwise empty the pool.
+  hardExcludedAgents?: ReadonlySet<string>;
+  // Multiplicative score factor applied in rankSummary for detail:"rank" and
+  // detail:"single" only. Inert in detail:"summary" because buildRecommendations
+  // is intentionally untouched here, mirroring the activeBiases gap. Factor 0
+  // soft-zeros the score but keeps the agent in the pool; use hardExcludedAgents
+  // for removal. Non-finite or negative factors are ignored.
+  priors?: Record<string, number>;
   // Per-agent ACP warm-pool session reuse rates from fleet-latency. Values in [0,1].
   // When warm_pool_reuse_weighting is enabled, agents with higher rates receive a
   // mild multiplicative score preference. Absent means no adjustment.
@@ -862,10 +873,14 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
     const registrySet = new Set(registryAgents);
     allowed = roleAgents.filter((name) => registrySet.has(name));
   }
-  if (!input.unhealthyAgents || input.unhealthyAgents.size === 0 || allowed === null) {
-    return allowed;
+  if (allowed === null) return allowed;
+  if (input.unhealthyAgents && input.unhealthyAgents.size > 0) {
+    allowed = allowed.filter((name) => !input.unhealthyAgents?.has(name));
   }
-  return allowed.filter((name) => !input.unhealthyAgents?.has(name));
+  if (input.hardExcludedAgents && input.hardExcludedAgents.size > 0) {
+    allowed = allowed.filter((name) => !input.hardExcludedAgents?.has(name));
+  }
+  return allowed;
 }
 
 function queryRows(
@@ -955,6 +970,17 @@ function applyToolFreeFactor(
   return clamp01(Math.round(score * TOOL_FREE_ACP_PENALTY * 10000) / 10000);
 }
 
+function applyPriorsFactor(
+  score: number,
+  summary: CandidateSummary,
+  input: RouteAgentInput,
+): number {
+  if (!Object.hasOwn(input.priors ?? {}, summary.agent_name)) return score;
+  const factor = input.priors?.[summary.agent_name];
+  if (typeof factor !== "number" || !Number.isFinite(factor) || factor < 0) return score;
+  return clamp01(Math.round(score * factor * 10000) / 10000);
+}
+
 function applyBiasFactor(
   score: number,
   summary: CandidateSummary,
@@ -1025,6 +1051,7 @@ function rankSummary(
   score = applyPressureFactor(score, summary, ctx.input);
   score = applyWarmPoolFactor(score, summary, ctx.input);
   score = applyToolFreeFactor(score, summary, ctx.input);
+  score = applyPriorsFactor(score, summary, ctx.input);
   const biased = applyBiasFactor(score, summary, ctx.input);
   return { candidate: summaryToCandidate(summary, biased.score), biasExclude: biased.biasExclude };
 }
@@ -1200,6 +1227,7 @@ function buildRecommendations(
     membership === null
       ? allowedFiltered
       : allowedFiltered.filter((row) => membership.has(row.agent_name));
+  // Summary recommendations intentionally remain bias-blind; priors share that documented gap.
   return filtered.map((r) => ({
     agent_name: r.agent_name,
     task_type: r.task_type,

@@ -1874,6 +1874,16 @@ describe("routing bias (usage steering)", () => {
     expect(cands(out).length).toBe(3);
   });
 
+  test("hardExcludedAgents never re-admits, even when it covers every candidate", () => {
+    const out = routeAgent({
+      ...singleInput(undefined),
+      hardExcludedAgents: new Set(AGENTS.map((agent) => agent.name)),
+    });
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toBeNull();
+  });
+
   test("single mode: exclude steers selection away from the excluded agent", () => {
     const out = routeAgent(singleInput([bias("agent", "alpha", "exclude")]));
     expect(out.detail).toBe("single");
@@ -1987,5 +1997,200 @@ describe("tool_free adapter-aware penalty", () => {
     expect(acp.score).toBeLessThan(http.score);
     // HTTP score must be unaffected (no adapter penalty).
     expect(http.score).toBeCloseTo(httpBase.score, 6);
+  });
+});
+
+describe("model-task-router phase 3 engine inputs", () => {
+  let db: Database;
+
+  const AGENTS = [
+    {
+      name: "alpha",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-a",
+      adapter: "stdio-acp",
+    },
+    {
+      name: "beta",
+      roles: ["coder"],
+      pricing_mode: "subscription" as const,
+      subscription_provider: "prov-b",
+      adapter: "openai-compat-http",
+    },
+  ];
+
+  const seed = (agent: string, n: number): void => {
+    new AgentPerformanceWriter(db).upsert({
+      performance_id: `phase3-${agent}-${String(n)}`,
+      ts: `2026-04-30T10:0${String(n)}:00.000Z`,
+      handoff_id: `h-phase3-${agent}-${String(n)}`,
+      conversation_id: `c-phase3-${agent}-${String(n)}`,
+      project_id: "proj",
+      agent_name: agent,
+      task_type: "implement_substantial",
+      outcome: "merged",
+      gate_outcome: "passed",
+      rounds: 1,
+      smoke_pass: "y",
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "reconciler",
+      notes: null,
+      metadata_json: "{}",
+    });
+  };
+
+  const routeInput = (detail: RouteAgentInput["detail"]): RouteAgentInput => ({
+    db,
+    detail,
+    taskType: "implement_substantial",
+    role: detail === "single" ? "coder" : undefined,
+    agentchatConfig: { agents: AGENTS },
+    agentRegistry: AGENTS.map((agent) => agent.name),
+    defaultRoles: { coder: "alpha" },
+    roleExplorationPolicy: "ranked-first",
+    now: NOW,
+  });
+
+  const visibleAgents = (out: RouteAgentOutput): string[] => {
+    if (out.detail === "rank") {
+      return out.candidates.candidates.map((candidate) => candidate.agent_name);
+    }
+    if (out.detail === "summary") {
+      return out.recommendations.map((recommendation) => recommendation.agent_name);
+    }
+    return out.route ? [out.route.agent] : [];
+  };
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    for (const agent of AGENTS) {
+      seed(agent.name, 1);
+      seed(agent.name, 2);
+    }
+  });
+
+  describe("hard exclusions", () => {
+    test("round-trips hard exclusions and priors through real rank, summary, and single outputs", () => {
+      const hardExcludedAgents = new Set(["alpha"]);
+      const priors = { beta: 0.5 };
+
+      const rank = routeAgent({ ...routeInput("rank"), hardExcludedAgents, priors });
+      expect(rank.detail).toBe("rank");
+      if (rank.detail !== "rank") return;
+      expect(rank.candidates.candidates.map((candidate) => candidate.agent_name)).toEqual(["beta"]);
+      const baseline = routeAgent(routeInput("rank"));
+      const baselineBeta = findCandidate(baseline, "beta");
+      expect(rank.candidates.candidates[0]?.score).toBe(
+        Math.round(baselineBeta.score * 0.5 * 10000) / 10000,
+      );
+
+      const summary = routeAgent({ ...routeInput("summary"), hardExcludedAgents, priors });
+      expect(summary.detail).toBe("summary");
+      if (summary.detail !== "summary") return;
+      expect(summary.recommendations.map((recommendation) => recommendation.agent_name)).toEqual([
+        "beta",
+      ]);
+
+      const single = routeAgent({ ...routeInput("single"), hardExcludedAgents, priors });
+      expect(single.detail).toBe("single");
+      if (single.detail !== "single") return;
+      expect(single.route?.agent).toBe("beta");
+    });
+
+    test("INERT DEFAULT: hardExcludedAgents and priors unset leave rank/single/summary output byte-identical", () => {
+      for (const detail of ["rank", "single", "summary"] as const) {
+        const without = routeAgent(routeInput(detail));
+        const explicitlyUndefined = routeAgent({
+          ...routeInput(detail),
+          hardExcludedAgents: undefined,
+          priors: undefined,
+        });
+        expect(explicitlyUndefined).toEqual(without);
+      }
+    });
+
+    test("hardExcludedAgents drops a candidate from rank, summary, and single detail modes identically", () => {
+      for (const detail of ["rank", "summary", "single"] as const) {
+        const out = routeAgent({
+          ...routeInput(detail),
+          hardExcludedAgents: new Set(["alpha"]),
+        });
+        expect(visibleAgents(out)).toEqual(["beta"]);
+      }
+    });
+
+    test("unhealthyAgents filtering happens upstream of scoring: priors cannot resurrect a filtered agent", () => {
+      const favored = routeAgent({
+        ...routeInput("rank"),
+        priors: { alpha: 0.1, beta: 100 },
+      });
+      expect(rankCandidates(favored)[0]?.agent_name).toBe("beta");
+
+      const out = routeAgent({
+        ...routeInput("rank"),
+        unhealthyAgents: new Set(["beta"]),
+        priors: { alpha: 0.1, beta: 100 },
+      });
+      expect(visibleAgents(out)).toEqual(["alpha"]);
+    });
+  });
+
+  describe("priors factor", () => {
+    test("priors isolates its term: twin agents differing only in priors[name] differ by exactly the priors multiplier", () => {
+      const baseline = routeAgent(routeInput("rank"));
+      const baselineAlpha = findCandidate(baseline, "alpha");
+      const baselineBeta = findCandidate(baseline, "beta");
+      expect(baselineAlpha.score).toBe(baselineBeta.score);
+
+      const out = routeAgent({ ...routeInput("rank"), priors: { alpha: 0.4 } });
+      const alpha = findCandidate(out, "alpha");
+      const beta = findCandidate(out, "beta");
+      expect(alpha.score).toBe(Math.round(baselineAlpha.score * 0.4 * 10000) / 10000);
+      expect(beta.score).toBe(baselineBeta.score);
+    });
+
+    test("priors is applied after tool_free and before bias — a boosted ACP agent still saturates before bias reweights it", () => {
+      const boost: RoutingBias = {
+        bias_id: "phase3-alpha-boost",
+        scope: "agent",
+        value: "alpha",
+        mode: "boost",
+        weight: 2,
+        reason: null,
+        created_at: "2026-04-30T00:00:00.000Z",
+        expires_at: "2099-01-01T00:00:00.000Z",
+      };
+      const out = routeAgent({
+        ...routeInput("rank"),
+        tool_free: true,
+        priors: { alpha: 0.8 },
+        activeBiases: [boost],
+      });
+      const alpha = findCandidate(out, "alpha");
+      const beta = findCandidate(out, "beta");
+      expect(alpha.score).toBe(1);
+      expect(beta.score).toBe(1);
+      expect(rankCandidates(out)[0]?.agent_name).toBe("alpha");
+    });
+
+    test.each([
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["negative", -1],
+    ])("applyPriorsFactor ignores %s priors", (_label, factor) => {
+      const baseline = routeAgent(routeInput("rank"));
+      const out = routeAgent({
+        ...routeInput("rank"),
+        priors: { alpha: factor },
+      });
+      expect(out).toEqual(baseline);
+    });
   });
 });
