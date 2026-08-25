@@ -6,6 +6,7 @@ import {
   reloadAgentChatConfig,
 } from "@penumbra/config";
 import {
+  createAaSnapshotStore,
   defaultProjectRegistryPath,
   loadProjectRegistry,
   type ProjectRegistry,
@@ -191,6 +192,7 @@ type AgentChatConfigSnapshot = {
 type TaskRouterConfigSnapshot = {
   taskRouterConfig: DaemonServices["taskRouterConfig"];
   modelAliasMap: DaemonServices["modelAliasMap"];
+  aaSnapshotStore: DaemonServices["aaSnapshotStore"];
 };
 
 type MissingRoutingAgent = {
@@ -336,13 +338,18 @@ export function commitAgentChatConfigSubsystem(
 }
 
 export function reloadTaskRouterConfigSubsystem(
-  _services: DaemonServices,
+  services: DaemonServices,
 ): TaskRouterConfigReloadResult {
   const configPath = resolveAgentChatConfigPath(process.env);
   try {
+    const taskRouterConfig = loadTaskRouterConfigFromDir(configPath);
     const snapshot: TaskRouterConfigSnapshot = {
-      taskRouterConfig: loadTaskRouterConfigFromDir(configPath),
+      taskRouterConfig,
       modelAliasMap: loadModelAliasMapFromDir(configPath),
+      aaSnapshotStore: createAaSnapshotStore({
+        ttlSeconds: taskRouterConfig.snapshot_ttl_seconds,
+        now: () => services.clock(),
+      }),
     };
     return {
       subsystem: "task_router_config",
@@ -364,8 +371,10 @@ export function commitTaskRouterConfigSubsystem(
   services: DaemonServices,
   snapshot: TaskRouterConfigSnapshot,
 ): void {
+  // Keep this three-field commit synchronous; inserting an await would expose a split router config.
   services.taskRouterConfig = snapshot.taskRouterConfig;
   services.modelAliasMap = snapshot.modelAliasMap;
+  services.aaSnapshotStore = snapshot.aaSnapshotStore;
 }
 
 export async function reloadWorkflowAndProjectRegistrySubsystem(

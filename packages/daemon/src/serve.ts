@@ -14,6 +14,7 @@ import {
   AgentPerformanceWriter,
   type ChainStartRequest,
   checkEmbeddingModelVersion,
+  createAaSnapshotStore,
   type Services as CoreServices,
   ledgerWriteToPerformanceRow,
   MaestroSessionWriter,
@@ -2139,6 +2140,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
   }
   daemonServices.taskRouterConfig = taskRouterConfig;
   daemonServices.modelAliasMap = modelAliasMap;
+  daemonServices.aaSnapshotStore = createAaSnapshotStore({
+    ttlSeconds: taskRouterConfig.snapshot_ttl_seconds,
+    now: () => opts.services.clock(),
+  });
   const configBundle = getConfig();
   const dreamConfig = buildDreamingConfig(configBundle);
   const dreamRuntime = resolveDreamRuntimeConfig(opts.services.db, configBundle, dreamConfig);

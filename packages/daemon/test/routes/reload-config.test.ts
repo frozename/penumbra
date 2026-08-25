@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import { loadAgentChatConfigFromDir } from "@penumbra/config";
 import {
+  type AaSnapshotStorePayload,
   buildServices,
   loadSqliteVec,
   migrate,
@@ -649,6 +650,62 @@ agents:
 `,
   );
 }
+
+function reloadAaSnapshotPayload(id: string): AaSnapshotStorePayload {
+  return {
+    provenance: { collectedAt: "2026-04-26T00:00:00Z" },
+    models: [
+      {
+        id: `aa:${id}`,
+        name: `Model ${id}`,
+        slug: `model-${id}`,
+        model_creator: { id: `creator:${id}`, name: `Creator ${id}`, slug: `creator-${id}` },
+        evaluations: {},
+        pricing: {},
+      },
+    ],
+  };
+}
+
+test("POST /agentchat/reload replaces the AA snapshot store with the active router TTL", async () => {
+  await withTempHome(async () => {
+    const services = tempServices();
+    const configDir = mkdtempSync(join(tmpdir(), "reload-router-aa-"));
+    tempDirs.push(configDir);
+    writeAgentchat(configDir);
+    writeFileSync(join(configDir, "router.yaml"), "mode: shadow\nsnapshot_ttl_seconds: 1\n");
+    process.env.PENUMBRA_CONFIG_DIR = configDir;
+
+    const bootStore = services.aaSnapshotStore;
+    const firstRes = await reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    expect(firstRes.status).toBe(200);
+    expect(services.aaSnapshotStore).not.toBe(bootStore);
+    await services.aaSnapshotStore.write(reloadAaSnapshotPayload("one"));
+    const firstRead = services.aaSnapshotStore.readSync();
+    expect(firstRead.state).toBe("available");
+    if (firstRead.state !== "available")
+      throw new Error("expected AA snapshot store to be readable");
+    expect(firstRead.snapshot.ttlSeconds).toBe(1);
+
+    const firstReloadStore = services.aaSnapshotStore;
+    writeFileSync(join(configDir, "router.yaml"), "mode: shadow\nsnapshot_ttl_seconds: 7200\n");
+    const secondRes = await reloadConfigRoute(
+      new Request("http://x/agentchat/reload", { method: "POST" }),
+      services,
+    );
+    expect(secondRes.status).toBe(200);
+    expect(services.aaSnapshotStore).not.toBe(firstReloadStore);
+    await services.aaSnapshotStore.write(reloadAaSnapshotPayload("two"));
+    const secondRead = services.aaSnapshotStore.readSync();
+    expect(secondRead.state).toBe("available");
+    if (secondRead.state !== "available")
+      throw new Error("expected reloaded AA snapshot store to be readable");
+    expect(secondRead.snapshot.ttlSeconds).toBe(7200);
+  });
+});
 
 test("POST /agentchat/reload rebuilds workflow registry from disk", async () => {
   const root = mkdtempSync(join(tmpdir(), "reload-cfg-wf-"));

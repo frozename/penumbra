@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -204,6 +204,102 @@ describe("Artificial Analysis snapshot store", () => {
     }
   });
 
+  test("read-time staleness follows the active store TTL when tightening and loosening", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aa-store-"));
+    try {
+      const path = join(dir, "aa-snapshot.json");
+      const first = createAaSnapshotStore({
+        path,
+        ttlSeconds: 3600,
+        now: () => new Date("2026-08-24T10:10:00.000Z"),
+      });
+      await first.write(snapshot("old"), {
+        fetchedAtIso: "2026-08-24T10:00:00.000Z",
+        ttlSeconds: 3600,
+      });
+
+      const tightened = createAaSnapshotStore({
+        path,
+        ttlSeconds: 60,
+        now: () => new Date("2026-08-24T10:10:00.000Z"),
+      }).readSync();
+
+      expect(tightened.state).toBe("available");
+      expect(tightened.stale).toBe(true);
+
+      await first.write(snapshot("old"), {
+        fetchedAtIso: "2026-08-24T10:00:00.000Z",
+        ttlSeconds: 60,
+      });
+
+      const loosened = createAaSnapshotStore({
+        path,
+        ttlSeconds: 3600,
+        now: () => new Date("2026-08-24T10:10:00.000Z"),
+      }).readSync();
+
+      expect(loosened.state).toBe("available");
+      expect(loosened.stale).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("readSync reuses the parsed snapshot until mtime and size change", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aa-store-"));
+    try {
+      const path = join(dir, "aa-snapshot.json");
+      const store = createAaSnapshotStore({
+        path,
+        ttlSeconds: 3600,
+        now: () => new Date("2026-08-24T10:10:00.000Z"),
+      });
+      await store.write(snapshot("old"), {
+        fetchedAtIso: "2026-08-24T10:00:00.000Z",
+        ttlSeconds: 3600,
+      });
+
+      const parseSpy = spyOn(JSON, "parse");
+      try {
+        const first = store.readSync();
+        const second = store.readSync();
+        expect(first.state).toBe("available");
+        expect(second.state).toBe("available");
+        expect(parseSpy).toHaveBeenCalledTimes(1);
+
+        writeFileSync(
+          path,
+          `${JSON.stringify(
+            {
+              fetchedAtIso: "2026-08-24T10:05:00.000Z",
+              ttlSeconds: 3600,
+              provenance: {
+                collectedAt: "2026-08-24T10:05:00.000Z",
+                dataVersion: "changed-long-enough-to-change-file-size",
+              },
+              models: snapshot("new").models,
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+
+        const third = store.readSync();
+        expect(third.state).toBe("available");
+        if (third.state !== "available") throw new Error("expected available snapshot");
+        expect(third.snapshot.provenance.dataVersion).toBe(
+          "changed-long-enough-to-change-file-size",
+        );
+        expect(parseSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        parseSpy.mockRestore();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("staleness is computed from an injected now(), not Date.now()", async () => {
     const dir = mkdtempSync(join(tmpdir(), "aa-store-"));
     try {
@@ -228,25 +324,56 @@ describe("Artificial Analysis snapshot store", () => {
     }
   });
 
-  test("an invalid fetchedAtIso is stale with unknown age, not treated as fresh", async () => {
+  test("readSync missing, corrupt, malformed, and oversized snapshots degrade without throwing", () => {
     const dir = mkdtempSync(join(tmpdir(), "aa-store-"));
     try {
-      const path = join(dir, "aa-snapshot.json");
-      const store = createAaSnapshotStore({
-        path,
-        ttlSeconds: 3600,
-        now: () => new Date("2026-08-24T10:00:00.000Z"),
-      });
-      await store.write(snapshot("old"), {
-        fetchedAtIso: "garbage",
-        ttlSeconds: 3600,
-      });
+      const cases: {
+        name: string;
+        write?: (path: string) => void;
+        state: "missing" | "corrupt";
+      }[] = [
+        { name: "missing", state: "missing" },
+        {
+          name: "corrupt-json",
+          state: "corrupt",
+          write: (path) => writeFileSync(path, '{"fetchedAtIso":', "utf8"),
+        },
+        {
+          name: "malformed-timestamp",
+          state: "corrupt",
+          write: (path) =>
+            writeFileSync(
+              path,
+              `${JSON.stringify({
+                fetchedAtIso: "garbage",
+                ttlSeconds: 3600,
+                provenance: { collectedAt: "2026-08-24T10:00:00.000Z" },
+                models: snapshot("old").models,
+              })}\n`,
+              "utf8",
+            ),
+        },
+        {
+          name: "oversized",
+          state: "corrupt",
+          write: (path) => writeFileSync(path, Buffer.alloc(4 * 1024 * 1024 + 1)),
+        },
+      ];
 
-      const result = await store.read();
+      for (const entry of cases) {
+        const path = join(dir, `${entry.name}.json`);
+        entry.write?.(path);
+        const store = createAaSnapshotStore({
+          path,
+          ttlSeconds: 3600,
+          now: () => new Date("2026-08-24T10:00:00.000Z"),
+        });
+        const result = store.readSync();
 
-      expect(result.state).toBe("available");
-      expect(result.stale).toBe(true);
-      expect(result.ageSeconds).toBe(Infinity);
+        expect(result.state).toBe(entry.state);
+        expect(result.stale).toBe(false);
+        expect(result.ageSeconds).toBeNull();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

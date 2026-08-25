@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFileSync, statSync } from "node:fs";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -29,6 +30,8 @@ export interface AaSnapshotStoreOptions {
   debugLogger?: (error: unknown) => void;
 }
 
+const MAX_AA_SNAPSHOT_BYTES = 4 * 1024 * 1024;
+
 export type AaSnapshotStoreReadResult =
   | {
       state: "available";
@@ -55,6 +58,7 @@ export type AaSnapshotStoreReadResult =
 
 export interface AaSnapshotStore {
   read(): Promise<AaSnapshotStoreReadResult>;
+  readSync(): AaSnapshotStoreReadResult;
   write(
     payload: AaSnapshotStorePayload,
     metadata?: { fetchedAtIso?: string; ttlSeconds?: number },
@@ -62,8 +66,12 @@ export interface AaSnapshotStore {
   refresh(refresher: () => Promise<AaSnapshotStorePayload>): Promise<AaSnapshotStoreReadResult>;
 }
 
+const TimestampStringSchema = z
+  .string()
+  .refine((value) => Number.isFinite(new Date(value).getTime()));
+
 const AaStoredSnapshotSchema = z.object({
-  fetchedAtIso: z.string(),
+  fetchedAtIso: TimestampStringSchema,
   ttlSeconds: z.number().int().positive(),
   provenance: z.object({
     collectedAt: z.string(),
@@ -75,15 +83,26 @@ const AaStoredSnapshotSchema = z.object({
 
 let writeSeq = 0;
 
+type SyncSnapshotCache = {
+  mtimeMs: number;
+  size: number;
+  snapshot: AaStoredSnapshot;
+};
+
 export function createAaSnapshotStore(opts: AaSnapshotStoreOptions = {}): AaSnapshotStore {
   const path = expandHome(opts.path ?? DEFAULT_AA_SNAPSHOT_PATH);
+  const configuredTtlSeconds = opts.ttlSeconds;
   const ttlSeconds = opts.ttlSeconds ?? 24 * 60 * 60;
   const now = opts.now ?? (() => new Date());
   const debugLogger = opts.debugLogger ?? (() => undefined);
+  const syncCache: { current: SyncSnapshotCache | undefined } = { current: undefined };
 
   return {
     read(): Promise<AaSnapshotStoreReadResult> {
-      return readSnapshot(path, now);
+      return readSnapshot(path, now, configuredTtlSeconds);
+    },
+    readSync(): AaSnapshotStoreReadResult {
+      return readSnapshotSync(path, now, configuredTtlSeconds, syncCache);
     },
     async write(payload, metadata): Promise<AaSnapshotStoreReadResult> {
       const stored: AaStoredSnapshot = {
@@ -93,7 +112,7 @@ export function createAaSnapshotStore(opts: AaSnapshotStoreOptions = {}): AaSnap
         models: payload.models,
       };
       await writeSnapshot(path, stored);
-      return resultFor(stored, now, "refreshed");
+      return resultFor(stored, now, "refreshed", configuredTtlSeconds);
     },
     async refresh(refresher): Promise<AaSnapshotStoreReadResult> {
       try {
@@ -101,7 +120,7 @@ export function createAaSnapshotStore(opts: AaSnapshotStoreOptions = {}): AaSnap
         return await this.write(payload);
       } catch (error) {
         debugLogger(error);
-        const lastKnownGood = await readSnapshot(path, now);
+        const lastKnownGood = await readSnapshot(path, now, configuredTtlSeconds);
         if (lastKnownGood.state === "available") {
           return {
             ...lastKnownGood,
@@ -127,12 +146,69 @@ export function expandHome(path: string): string {
   return path;
 }
 
-async function readSnapshot(path: string, now: () => Date): Promise<AaSnapshotStoreReadResult> {
+async function readSnapshot(
+  path: string,
+  now: () => Date,
+  configuredTtlSeconds: number | undefined,
+): Promise<AaSnapshotStoreReadResult> {
   try {
+    const stats = await stat(path);
+    if (stats.size > MAX_AA_SNAPSHOT_BYTES) {
+      return {
+        state: "corrupt",
+        stale: false,
+        ageSeconds: null,
+        source: "corrupt",
+      };
+    }
     const raw = await readFile(path, "utf8");
     const parsed = AaStoredSnapshotSchema.parse(JSON.parse(raw));
-    return resultFor(parsed, now, "store");
+    return resultFor(parsed, now, "store", configuredTtlSeconds);
   } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        state: "missing",
+        stale: false,
+        ageSeconds: null,
+        source: "missing",
+      };
+    }
+    return {
+      state: "corrupt",
+      stale: false,
+      ageSeconds: null,
+      source: "corrupt",
+    };
+  }
+}
+
+function readSnapshotSync(
+  path: string,
+  now: () => Date,
+  configuredTtlSeconds: number | undefined,
+  cache: { current: SyncSnapshotCache | undefined },
+): AaSnapshotStoreReadResult {
+  try {
+    const stats = statSync(path);
+    if (stats.size > MAX_AA_SNAPSHOT_BYTES) {
+      cache.current = undefined;
+      return {
+        state: "corrupt",
+        stale: false,
+        ageSeconds: null,
+        source: "corrupt",
+      };
+    }
+    const cached = cache.current;
+    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      return resultFor(cached.snapshot, now, "store", configuredTtlSeconds);
+    }
+    const raw = readFileSync(path, "utf8");
+    const parsed = AaStoredSnapshotSchema.parse(JSON.parse(raw));
+    cache.current = { mtimeMs: stats.mtimeMs, size: stats.size, snapshot: parsed };
+    return resultFor(parsed, now, "store", configuredTtlSeconds);
+  } catch (error) {
+    cache.current = undefined;
     if (isMissingFileError(error)) {
       return {
         state: "missing",
@@ -171,15 +247,17 @@ function resultFor(
   snapshot: AaStoredSnapshot,
   now: () => Date,
   source: "store" | "refreshed" | "last_known_good",
+  configuredTtlSeconds: number | undefined,
 ): AaSnapshotStoreReadResult {
   const fetchedAtMs = new Date(snapshot.fetchedAtIso).getTime();
   const ageSeconds = Number.isFinite(fetchedAtMs)
     ? Math.max(0, Math.floor((now().getTime() - fetchedAtMs) / 1000))
     : Infinity;
+  const ttlSeconds = configuredTtlSeconds ?? snapshot.ttlSeconds;
   return {
     state: "available",
     snapshot,
-    stale: ageSeconds === Infinity || ageSeconds > snapshot.ttlSeconds,
+    stale: ageSeconds === Infinity || ageSeconds > ttlSeconds,
     ageSeconds,
     source,
   };
