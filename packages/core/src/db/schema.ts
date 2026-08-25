@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 
-// 39 = persisted handoff branch names.
-export const SCHEMA_VERSION = 39;
+// 40 = persisted routing decisions.
+export const SCHEMA_VERSION = 40;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -918,6 +918,32 @@ const SCHEMA_DDL_BLOCK_13 = `
         );
       END;
 `;
+const SCHEMA_DDL_BLOCK_14 = `
+      CREATE TABLE IF NOT EXISTS routing_decisions (
+        decision_id             TEXT PRIMARY KEY,
+        ts                      TEXT NOT NULL,
+        handoff_id              TEXT,
+        mode                    TEXT NOT NULL,
+        role                    TEXT,
+        selected_agent          TEXT,
+        selected_provider       TEXT,
+        applied                 INTEGER NOT NULL,
+        score                   REAL,
+        confidence              REAL,
+        predicted_cost_usd      REAL,
+        predicted_latency_ms    INTEGER,
+        task_profile_json       TEXT NOT NULL,
+        factors_json            TEXT NOT NULL,
+        alternatives_json       TEXT NOT NULL,
+        fallback_chain_json     TEXT NOT NULL,
+        data_freshness_json     TEXT NOT NULL,
+        explanation_json        TEXT NOT NULL,
+        router_schema_version   TEXT NOT NULL
+      );
+      DROP INDEX IF EXISTS idx_routing_decisions_handoff_id;
+      CREATE INDEX IF NOT EXISTS idx_routing_decisions_handoff_id_ts ON routing_decisions(handoff_id, ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_routing_decisions_ts ON routing_decisions(ts DESC);
+`;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -1263,6 +1289,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.run(SCHEMA_DDL_BLOCK_11);
     applyMemoryLinksNullableMigration(db);
     db.run(SCHEMA_DDL_BLOCK_12);
+    db.run(SCHEMA_DDL_BLOCK_14);
     db.run("COMMIT");
   } catch (err) {
     db.run("ROLLBACK");
