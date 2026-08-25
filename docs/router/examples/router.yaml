@@ -1,0 +1,47 @@
+# Model task router configuration.
+#
+# Loaded by @penumbra/config's loadTaskRouterConfigFromDir() from the same
+# directory as model-aliases.yaml -- both resolved from PENUMBRA_CONFIG_DIR
+# (falling back to XDG_CONFIG_HOME/penumbra, then ~/.config/penumbra). See
+# docs/router/operations.md for the reload / kill-switch procedure.
+#
+# Every key below is optional; this file spells out the schema defaults
+# (packages/config/src/files/task-router.ts) explicitly so they're visible
+# in one place. An empty file (or a missing one) is equivalent to mode: off
+# with all of these same defaults.
+
+# off | recommend | shadow | auto. Production default is "off". This example
+# uses "shadow" -- decisions are computed and logged to routing_decisions,
+# but never override the legacy route. See operations.md's mode table.
+mode: shadow
+
+# See docs/router/metrics.md for what each weight actually scores (three of
+# these -- reliability, affinity, uncertainty -- are schema-validated but not
+# yet consumed by decide() in this version).
+weights:
+  quality: 1
+  speed: 0.35
+  latency: 0.3
+  cost: 0.25
+  reliability: 0.75
+  affinity: 0.5
+  history: 0.6
+  quota: 0.2
+  uncertainty: 0.4
+  staleness: 0.1
+
+thresholds:
+  quality_floor: 0.5
+  context_safety_margin_tokens: 4096
+  max_fallbacks: 2
+  judge_confidence_floor: 0.6
+
+# How long a fetched Artificial Analysis snapshot stays fresh in the store.
+# This is the snapshot store's TTL; the router's `snapshot_ttl_seconds`
+# decay scale is separate.
+snapshot_ttl_seconds: 86400
+
+# Hard budget constraint (constraint-filter.ts): a candidate whose predicted
+# cost for this dispatch exceeds this is excluded outright, not just scored
+# down. Omit this key to disable the hard budget cap entirely.
+max_predicted_cost_usd_per_dispatch: 2.5

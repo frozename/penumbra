@@ -1,0 +1,41 @@
+# Seat name (the agents.yaml `name` / dispatch `to_agent`) -> Artificial
+# Analysis benchmark row. See docs/router/aliases.md for the reconciliation
+# procedure, and specifically why reasoning-level variants (-low/-medium/
+# -high/-xhigh) are separate AA rows rather than something `reasoning_level`
+# looks up.
+#
+# aa_creator must be a canonical provider value (lowercase, hyphen-separated
+# -- see packages/config/src/provider-format.ts). aa_slug must match the AA
+# snapshot row's `slug` exactly; reconciliation keys on (aa_creator, aa_slug)
+# only.
+
+planner-primary:
+  aa_creator: anthropic
+  aa_slug: claude-sonnet-4-5
+  reasoning_level: high
+
+executor-fast:
+  aa_creator: openai
+  aa_slug: gpt-5-6-sol
+
+# Codex ACP seats: the same adapter binary, pointed at a different underlying
+# model per seat via adapter-level config. Reconcile by seat name exactly
+# like any other agent -- see aliases.md's "Hand-maintained CODEX_CONFIG-
+# embedded seats" section for why these need re-verification whenever a
+# seat's embedded model config changes.
+openai-codex-sol-acp:
+  aa_creator: openai
+  aa_slug: gpt-5-6-sol
+
+openai-codex-terra-acp:
+  aa_creator: openai
+  aa_slug: gpt-5-6-terra
+
+openai-codex-luna-acp:
+  aa_creator: openai
+  aa_slug: gpt-5-6-luna
+
+# gpt-5-3-codex is its own AA row, distinct from the gpt-5-6-* seats above.
+openai-codex-classic-acp:
+  aa_creator: openai
+  aa_slug: gpt-5-3-codex
