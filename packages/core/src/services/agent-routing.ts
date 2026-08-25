@@ -778,7 +778,7 @@ function getConfigMembershipAllowlist(input: RouteAgentInput): Set<string> | nul
 // key exactly, so a stale per-model warning does NOT mask a fresh global
 // (model=null) snapshot and vice versa. Callers that pass no warnings behave
 // as though nothing is stale (byte-identical to pre-fix behavior).
-function buildPressureStaleKeys(
+export function buildPressureStaleKeys(
   pressureSnapshot: RouteAgentInput["applyPressure"] | undefined,
 ): Set<string> {
   if (!pressureSnapshot?.warnings || pressureSnapshot.warnings.length === 0) {
@@ -789,7 +789,7 @@ function buildPressureStaleKeys(
   );
 }
 
-function pressureSnapshotKey(snapshot: {
+export function pressureSnapshotKey(snapshot: {
   provider: string;
   window_label: string;
   model: string | null;
