@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import aaLiveSample from "./fixtures/aa-live-sample.json";
 
 import {
   AaModelSchema,
@@ -277,5 +278,20 @@ describe("routing domain schemas", () => {
     });
 
     expect(parsed.id).toBe("aa:model:1");
+  });
+
+  test("live-capture fixture round-trips with all tier fields preserved", () => {
+    const parsed = AaModelSnapshotSchema.parse({
+      collectedAt: "2026-08-25T00:00:00.000Z",
+      models: aaLiveSample.data,
+    });
+
+    expect(parsed.models[0].evaluations.terminalbench_hard).toBe(0.659090909090909);
+    expect(parsed.models[0].evaluations.tau2).toBe(0.850877192982456);
+    expect(parsed.models[0].evaluations.ifbench).toBe(0.726530612244898);
+    expect(parsed.models[0].evaluations.lcr).toBe(0.776666666666667);
+    expect(parsed.models[0].release_date).toBe("2026-07-09");
+    expect(Object.hasOwn(parsed.models[0].evaluations, "aime_25")).toBe(true);
+    expect(parsed.models[0].evaluations.aime_25).toBeNull();
   });
 });

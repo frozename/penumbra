@@ -128,6 +128,9 @@ export const RoutingDecisionSchema = z
 export type RoutingDecision = z.infer<typeof RoutingDecisionSchema>;
 
 // AA API schemas stay non-strict because upstream may add fields without notice.
+// Field list verified against a live tier capture 2026-08-25 (fixtures/aa-live-sample.json);
+// zod's default strip mode silently drops untyped fields, so newly valuable upstream metrics
+// MUST be added here to survive parse.
 export const AaEvaluationSchema = z.object({
   artificial_analysis_intelligence_index: z.number().nullable().optional(),
   artificial_analysis_coding_index: z.number().nullable().optional(),
@@ -139,6 +142,13 @@ export const AaEvaluationSchema = z.object({
   scicode: z.number().nullable().optional(),
   math_500: z.number().nullable().optional(),
   aime: z.number().nullable().optional(),
+  aime_25: z.number().nullable().optional(),
+  ifbench: z.number().nullable().optional(),
+  lcr: z.number().nullable().optional(),
+  tau2: z.number().nullable().optional(),
+  tau_banking: z.number().nullable().optional(),
+  terminalbench_hard: z.number().nullable().optional(),
+  terminalbench_v2_1: z.number().nullable().optional(),
 });
 export type AaEvaluation = z.infer<typeof AaEvaluationSchema>;
 
@@ -153,6 +163,7 @@ export const AaModelSchema = z.object({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
+  release_date: z.string().nullable().optional(),
   model_creator: z.object({
     id: z.string(),
     name: z.string(),

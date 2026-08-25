@@ -1,0 +1,120 @@
+{
+  "status": 200,
+  "prompt_options": { "parallel_queries": 1, "prompt_length": 1000 },
+  "data": [
+    {
+      "id": "d93edfe8-bf35-49ad-b56e-b18116142a1c",
+      "name": "GPT-5.6 Sol (max)",
+      "slug": "gpt-5-6-sol",
+      "release_date": "2026-07-09",
+      "model_creator": {
+        "id": "e67e56e3-15cd-43db-b679-da4660a69f41",
+        "name": "OpenAI",
+        "slug": "openai"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 60.9,
+        "artificial_analysis_coding_index": 77.4,
+        "artificial_analysis_math_index": null,
+        "mmlu_pro": null,
+        "gpqa": 0.941,
+        "hle": 0.495,
+        "livecodebench": null,
+        "scicode": 0.561,
+        "math_500": null,
+        "aime": null,
+        "aime_25": null,
+        "ifbench": 0.726530612244898,
+        "lcr": 0.776666666666667,
+        "terminalbench_hard": 0.659090909090909,
+        "terminalbench_v2_1": 0.880149812734082,
+        "tau2": 0.850877192982456,
+        "tau_banking": 0.443298969072165
+      },
+      "pricing": {
+        "price_1m_blended_3_to_1": 8,
+        "price_1m_input_tokens": 4,
+        "price_1m_output_tokens": 20
+      },
+      "median_output_tokens_per_second": 62.221,
+      "median_time_to_first_token_seconds": 97.585,
+      "median_time_to_first_answer_token": 97.585
+    },
+    {
+      "id": "59b5b14b-5365-4ee7-824a-18a8e6309644",
+      "name": "GPT-5.3 Codex (xhigh)",
+      "slug": "gpt-5-3-codex",
+      "release_date": "2026-02-05",
+      "model_creator": {
+        "id": "e67e56e3-15cd-43db-b679-da4660a69f41",
+        "name": "OpenAI",
+        "slug": "openai"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 45.5,
+        "artificial_analysis_coding_index": null,
+        "artificial_analysis_math_index": null,
+        "mmlu_pro": null,
+        "gpqa": 0.915,
+        "hle": 0.425,
+        "livecodebench": null,
+        "scicode": 0.532,
+        "math_500": null,
+        "aime": null,
+        "aime_25": null,
+        "ifbench": 0.753741496598639,
+        "lcr": 0.783333333333333,
+        "terminalbench_hard": 0.53030303030303,
+        "terminalbench_v2_1": null,
+        "tau2": 0.859649122807018,
+        "tau_banking": null
+      },
+      "pricing": {
+        "price_1m_blended_3_to_1": 4.813,
+        "price_1m_input_tokens": 1.75,
+        "price_1m_output_tokens": 14
+      },
+      "median_output_tokens_per_second": 136.43,
+      "median_time_to_first_token_seconds": 39.989,
+      "median_time_to_first_answer_token": 39.989
+    },
+    {
+      "id": "78332c88-fe60-42c8-af9d-3617e44cf1f5",
+      "name": "Gemini 3.6 Flash (high)",
+      "slug": "gemini-3-6-flash",
+      "release_date": "2026-07-21",
+      "model_creator": {
+        "id": "faddc6d9-2c14-445f-9b28-56726f59c793",
+        "name": "Google",
+        "slug": "google"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 51.6,
+        "artificial_analysis_coding_index": 69.2,
+        "artificial_analysis_math_index": null,
+        "mmlu_pro": null,
+        "gpqa": 0.928,
+        "hle": 0.408,
+        "livecodebench": null,
+        "scicode": 0.527,
+        "math_500": null,
+        "aime": null,
+        "aime_25": null,
+        "ifbench": null,
+        "lcr": 0.79,
+        "terminalbench_hard": null,
+        "terminalbench_v2_1": 0.775280898876405,
+        "tau2": null,
+        "tau_banking": 0.298969072164948
+      },
+      "pricing": {
+        "price_1m_blended_3_to_1": 1.5,
+        "price_1m_input_tokens": 0.75,
+        "price_1m_output_tokens": 3.75
+      },
+      "median_output_tokens_per_second": 195.64,
+      "median_time_to_first_token_seconds": 14.161,
+      "median_time_to_first_answer_token": 14.161
+    }
+  ]
+}
