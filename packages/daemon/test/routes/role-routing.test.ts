@@ -124,6 +124,15 @@ function routing(): AgentRoutingConfig {
   };
 }
 
+function missingAaSnapshotStore(): AaSnapshotStore {
+  return {
+    read: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+  };
+}
+
 function services(db: Database, agentRouting: AgentRoutingConfig | null = routing()): Services {
   return {
     db,
@@ -131,6 +140,7 @@ function services(db: Database, agentRouting: AgentRoutingConfig | null = routin
     agentRegistry: ["alpha", "beta"],
     clock: () => new Date(NOW),
     log: { warn: () => undefined } as Services["log"],
+    aaSnapshotStore: missingAaSnapshotStore(),
   } as Services;
 }
 
@@ -441,8 +451,12 @@ describe("resolveSingleRoute — model task router modes", () => {
       });
       expect(freshSink.decision?.dataFreshness.artificial_analysis).toBe("fresh");
 
+      const staleFetchedAtIso = "2026-05-01T10:00:00Z";
+      const expectedAgeSeconds = String(
+        Math.floor((new Date(NOW).getTime() - new Date(staleFetchedAtIso).getTime()) / 1000),
+      );
       await store.write(aaSnapshotPayload(), {
-        fetchedAtIso: "2026-05-01T10:00:00Z",
+        fetchedAtIso: staleFetchedAtIso,
         ttlSeconds: 60,
       });
       const staleSink: RouterDecisionSink = { decision: null };
@@ -451,7 +465,9 @@ describe("resolveSingleRoute — model task router modes", () => {
       });
 
       expect(staleSink.decision?.dataFreshness.artificial_analysis).toBe("stale");
-      expect(staleSink.decision?.dataFreshness.artificial_analysis_age_seconds).toBe("7200");
+      expect(staleSink.decision?.dataFreshness.artificial_analysis_age_seconds).toBe(
+        expectedAgeSeconds,
+      );
       expect(staleSink.decision?.factors).toContainEqual(
         expect.objectContaining({
           name: "aa_staleness_discount",
@@ -461,6 +477,33 @@ describe("resolveSingleRoute — model task router modes", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("mode:'shadow' degrades to absent AA freshness when the snapshot store is unreadable", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+    const svc = services(db) as Services & { aaSnapshotStore: AaSnapshotStore };
+    svc.taskRouterConfig = routerConfig("shadow");
+    svc.modelAliasMap = {};
+    svc.aaSnapshotStore = {
+      read: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+      readSync: () => ({ state: "corrupt", stale: false, ageSeconds: null, source: "corrupt" }),
+      write: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+      refresh: async () => ({
+        state: "missing",
+        stale: false,
+        ageSeconds: null,
+        source: "missing",
+      }),
+    };
+
+    const sink: RouterDecisionSink = { decision: null };
+    const route = resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+      decisionSink: sink,
+    });
+
+    expect(route).toEqual({ agent: "alpha", role: "reviewer", taskType: "review_adversarial" });
+    expect(sink.decision?.dataFreshness).toEqual({ artificial_analysis: "absent" });
   });
 
   test("mode:'recommend' is wired identically to shadow: route untouched, decision recorded", () => {

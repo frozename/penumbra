@@ -371,6 +371,7 @@ export function commitTaskRouterConfigSubsystem(
   services: DaemonServices,
   snapshot: TaskRouterConfigSnapshot,
 ): void {
+  // Keep this three-field commit synchronous; inserting an await would expose a split router config.
   services.taskRouterConfig = snapshot.taskRouterConfig;
   services.modelAliasMap = snapshot.modelAliasMap;
   services.aaSnapshotStore = snapshot.aaSnapshotStore;

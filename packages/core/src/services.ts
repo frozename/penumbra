@@ -405,6 +405,8 @@ export function buildServices(opts: BuildServicesOpts): Services {
     log,
     agentRegistry: opts.agentRegistry ?? null,
     agentRouting: opts.agentRouting ?? null,
+    // Default placeholder for tests and bare services; daemon serve() replaces
+    // it at boot with a store using the active router snapshot TTL.
     aaSnapshotStore: createAaSnapshotStore({ now: clock }),
     providerQuotas: opts.providerQuotas ?? [],
     subscriptionPressureCache: createSubscriptionPressureCache(opts.db, {

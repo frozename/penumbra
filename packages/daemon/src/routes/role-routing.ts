@@ -102,17 +102,13 @@ function collectHarnessContext(opts: {
 }
 
 function readRouterAaSnapshot(services: Services): RouterAaSnapshot | undefined {
-  try {
-    const result = services.aaSnapshotStore.readSync();
-    if (result.state !== "available") return undefined;
-    return {
-      snapshot: result.snapshot,
-      stale: result.stale,
-      ageSeconds: result.ageSeconds,
-    };
-  } catch {
-    return undefined;
-  }
+  const result = services.aaSnapshotStore.readSync();
+  if (result.state !== "available") return undefined;
+  return {
+    snapshot: result.snapshot,
+    stale: result.stale,
+    ageSeconds: result.ageSeconds,
+  };
 }
 
 function computeRouterDecision(opts: {
