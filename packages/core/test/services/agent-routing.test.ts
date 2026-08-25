@@ -1867,11 +1867,11 @@ describe("routing bias (usage steering)", () => {
     expect(findC(out, "alpha")).toBeUndefined();
   });
 
-  test("safe fallback: excluding ALL candidates re-admits rather than emptying the ranking", () => {
+  test("excluding ALL candidates never re-admits into the ranking", () => {
     const out = routeAgent(
       rankInput([bias("provider", "prov-a", "exclude"), bias("provider", "prov-b", "exclude")]),
     );
-    expect(cands(out).length).toBe(3);
+    expect(cands(out)).toEqual([]);
   });
 
   test("hardExcludedAgents never re-admits, even when it covers every candidate", () => {
@@ -1892,13 +1892,37 @@ describe("routing bias (usage steering)", () => {
     expect(out.route?.agent).not.toBe("alpha");
   });
 
-  test("single mode safe fallback: excluding ALL role agents still returns a route", () => {
+  test("single mode returns null when bias exclusions empty the role pool", () => {
     const out = routeAgent(
       singleInput([bias("provider", "prov-a", "exclude"), bias("provider", "prov-b", "exclude")]),
     );
     expect(out.detail).toBe("single");
     if (out.detail !== "single") return;
-    expect(out.route).not.toBeNull();
+    expect(out.route).toBeNull();
+    expect(out.exhaustedReason).toBe("bias_excluded");
+  });
+
+  test("GUARD: no-bias pressure-only single selection preserves the pre-change candidate order", () => {
+    const out = routeAgent({
+      ...singleInput(undefined),
+      applyPressure: {
+        snapshots: [
+          {
+            provider: "prov-a",
+            window_label: "five_minute",
+            model: null,
+            used_pct: 95,
+            resets_at: null,
+            observed_at: NOW.toISOString(),
+            source_kind: "test",
+          },
+        ],
+      },
+    });
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toBeNull();
+    expect(out.exhaustedReason).toBeNull();
   });
 });
 

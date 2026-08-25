@@ -8,6 +8,7 @@ import {
   migrate,
   ProjectRegistry,
   readRoutingDecisions,
+  setRoutingBias,
   type Services,
   type Watchdog,
   type WorkflowRunsRegistry,
@@ -79,6 +80,13 @@ type ChainResponseBody = {
     long_lived_tick_id?: string;
     message?: string;
     reasons?: { route_id: string; reasons: string[] }[];
+  };
+};
+
+type HandoffCreateErrorBody = {
+  error: {
+    code: string;
+    message?: string;
   };
 };
 
@@ -3365,6 +3373,18 @@ function seedExecutorLedger(services: Services): void {
   });
 }
 
+function excludeProvider(services: Services, provider: string): void {
+  setRoutingBias(services.db, {
+    scope: "provider",
+    value: provider,
+    mode: "exclude",
+    weight: null,
+    reason: "test",
+    ttl_seconds: 3600,
+    now: services.clock(),
+  });
+}
+
 test("chain_start with taskRouterConfig mode:'off' is byte-identical to the pre-router baseline and writes no routing_decisions row", async () => {
   const services = tempServices({
     agentRegistry: ["gemini", "codex-mini"],
@@ -3392,6 +3412,106 @@ test("chain_start with taskRouterConfig mode:'off' is byte-identical to the pre-
 
   const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
   expect(decisions).toHaveLength(0);
+});
+
+for (const mode of ["off", "recommend", "shadow"] as const) {
+  test(`chain_start with taskRouterConfig mode:'${mode}' returns 4xx when routing biases exclude every role candidate`, async () => {
+    const services = tempServices({
+      agentRegistry: ["gemini", "codex-mini"],
+      agentRouting: {
+        agents: [
+          {
+            name: "gemini",
+            roles: ["executor"],
+            pricing_mode: "subscription",
+            subscription_provider: "google",
+          },
+          {
+            name: "codex-mini",
+            roles: ["executor"],
+            pricing_mode: "subscription",
+            subscription_provider: "openai",
+          },
+        ],
+        default_roles: { executor: "gemini" },
+      },
+    });
+    services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode });
+    services.modelAliasMap = {};
+    excludeProvider(services, "google");
+    excludeProvider(services, "openai");
+
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "executor",
+          task_type: "implement_substantial",
+          message: "implement the change",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(422);
+    const body = await readJsonBody<ChainResponseBody>(res);
+    expect(body.error?.code).toBe("routing_bias_exhausted");
+
+    const handoffRows = services.db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs")
+      .get();
+    expect(handoffRows?.n ?? 0).toBe(0);
+  });
+}
+
+test("handoffs create chain-hop returns 4xx without persisting when routing biases exclude every role candidate", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: {
+      agents: [
+        {
+          name: "gemini",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "google",
+        },
+        {
+          name: "codex-mini",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
+        },
+      ],
+      default_roles: { executor: "gemini" },
+    },
+  });
+  excludeProvider(services, "google");
+  excludeProvider(services, "openai");
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "maestro",
+        to: "gemini",
+        to_role: "executor",
+        message: "continue the chain",
+        conversation_id: "conv-hop-bias",
+        triggered_by_event_id: "event-hop-bias",
+        chain_task_type: "implement_substantial",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<HandoffCreateErrorBody>(res);
+  expect(body.error.code).toBe("routing_bias_exhausted");
+
+  const handoffRows = services.db
+    .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs")
+    .get();
+  expect(handoffRows?.n ?? 0).toBe(0);
 });
 
 test("chain_start with taskRouterConfig mode:'shadow' keeps the legacy route and records an unapplied decision row", async () => {

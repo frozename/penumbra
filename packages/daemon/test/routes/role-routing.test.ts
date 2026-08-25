@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import {
   resolveSingleRoute,
+  RoutingBiasExhaustedError,
   RouterHardConstraintExhaustedError,
   type RouterDecisionSink,
 } from "../../src/routes/role-routing.js";
@@ -260,15 +261,15 @@ describe("resolveSingleRoute", () => {
     });
   });
 
-  test("excluding all role providers still returns a route (safe fallback)", () => {
+  test("excluding all role providers throws a typed bias-exhaustion error instead of re-admitting", () => {
     const db = freshDb();
     writePerf(db, "alpha");
     writeBias(db, "provider", "anthropic", "exclude");
     writeBias(db, "provider", "openai", "exclude");
 
-    const route = resolveSingleRoute(services(db), "reviewer", "review this", "review_adversarial");
-    expect(route).not.toBeNull();
-    expect(["alpha", "beta"]).toContain(route!.agent);
+    expect(() =>
+      resolveSingleRoute(services(db), "reviewer", "review this", "review_adversarial"),
+    ).toThrow(RoutingBiasExhaustedError);
   });
 
   test("an expired bias is ignored", () => {
@@ -661,6 +662,33 @@ describe("resolveSingleRoute — model task router modes", () => {
     expect(err.decision.selected).toBeNull();
     for (const alternative of err.decision.alternatives) {
       expect(alternative.reasons).toContain("privacy_local_only_unknown_remoteness");
+    }
+  });
+
+  test("mode:'auto' throws a legible hard-constraint error when routing biases empty the pool", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+    writePerf(db, "beta");
+    writeBias(db, "provider", "anthropic", "exclude");
+    writeBias(db, "provider", "openai", "exclude");
+    const svc = services(db);
+    svc.taskRouterConfig = routerConfig("auto");
+    svc.modelAliasMap = {};
+
+    let caught: unknown;
+    try {
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {});
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(RouterHardConstraintExhaustedError);
+    const err = caught as RouterHardConstraintExhaustedError;
+    expect(err.decision.selected).toBeNull();
+    expect(err.decision.alternatives).toHaveLength(2);
+    for (const alternative of err.decision.alternatives) {
+      expect(alternative.excluded).toBe(true);
+      expect(alternative.reasons).toContain("routing_bias_exclude");
     }
   });
 });

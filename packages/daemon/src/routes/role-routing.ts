@@ -56,6 +56,18 @@ export class RouterHardConstraintExhaustedError extends Error {
   }
 }
 
+export class RoutingBiasExhaustedError extends Error {
+  readonly role: string;
+  readonly taskType: AgentTaskType;
+
+  constructor(role: string, taskType: AgentTaskType) {
+    super("routing biases excluded every role candidate");
+    this.name = "RoutingBiasExhaustedError";
+    this.role = role;
+    this.taskType = taskType;
+  }
+}
+
 export interface RouterDecisionSink {
   decision: RoutingDecision | null;
 }
@@ -272,5 +284,9 @@ export function resolveSingleRoute(
     unhealthyAgents,
     now: services.clock(),
   });
-  return out.detail === "single" ? out.route : null;
+  if (out.detail !== "single") return null;
+  if (out.exhaustedReason === "bias_excluded") {
+    throw new RoutingBiasExhaustedError(role, resolvedTaskType);
+  }
+  return out.route;
 }

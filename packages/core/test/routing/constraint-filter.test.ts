@@ -40,7 +40,7 @@ describe("applyHardConstraints", () => {
       {},
     );
 
-    // Unlike bias-exclude, hard constraints must not re-admit an empty pool.
+    // Hard constraints must not re-admit an empty pool.
     expect(result.admitted).toEqual([]);
     expect(result.excluded).toEqual([
       { agent: "remote-a", reasons: ["privacy_local_only"] },

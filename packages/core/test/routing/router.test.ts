@@ -350,7 +350,7 @@ describe("routing decide orchestrator", () => {
     );
   });
 
-  test("a sampled agent hidden by bias filtering is not reported as lacking local history", () => {
+  test("a sampled agent hidden by bias filtering is reported as excluded and not selected", () => {
     const decision = decide(
       baseInput({
         activeBiases: [
@@ -360,7 +360,7 @@ describe("routing decide orchestrator", () => {
             value: "quality-seat",
             mode: "exclude",
             weight: null,
-            reason: "exercise safe re-admission",
+            reason: "operator exclusion",
             created_at: "2026-08-25T11:00:00.000Z",
             expires_at: "2026-08-26T11:00:00.000Z",
           },
@@ -382,14 +382,14 @@ describe("routing decide orchestrator", () => {
       dependencies(),
     );
 
-    expect(decision.selected?.agent).toBe("quality-seat");
+    expect(decision.selected).toBeNull();
     expect(decision.score).toBe(0);
-    expect(decision.explanation).not.toContain(
-      "Local history is absent for quality-seat; the reported score is 0.",
-    );
-    expect(decision.explanation).toContain(
-      "Local history exists for quality-seat, but routing filters removed its rank entry; the reported score is 0.",
-    );
+    expect(decision.explanation).toContain("The routing engine returned no eligible selection.");
+    expect(decision.alternatives).toContainEqual({
+      routeId: "openai:quality-seat",
+      excluded: true,
+      reasons: ["routing_bias_exclude"],
+    });
   });
 
   test("a small formatting change selects the fast cheap candidate", () => {

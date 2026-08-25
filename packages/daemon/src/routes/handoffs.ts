@@ -19,7 +19,7 @@ import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js"
 // main moved forward to the same SHA".
 import { getNearestAgents } from "./chains.js";
 import { json } from "./_helpers.js";
-import { resolveSingleRoute } from "./role-routing.js";
+import { resolveSingleRoute, RoutingBiasExhaustedError } from "./role-routing.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
@@ -298,14 +298,32 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
 
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
-  const route = parsed.data.to_role
-    ? resolveSingleRoute(
-        services,
-        parsed.data.to_role,
-        parsed.data.message,
-        parsed.data.chain_task_type ?? undefined,
-      )
-    : null;
+  let route: ReturnType<typeof resolveSingleRoute> | null = null;
+  try {
+    route = parsed.data.to_role
+      ? resolveSingleRoute(
+          services,
+          parsed.data.to_role,
+          parsed.data.message,
+          parsed.data.chain_task_type ?? undefined,
+        )
+      : null;
+  } catch (err) {
+    if (err instanceof RoutingBiasExhaustedError) {
+      return json(
+        {
+          error: {
+            code: "routing_bias_exhausted",
+            message: "routing biases excluded every candidate for the requested role",
+            role: err.role,
+            task_type: err.taskType,
+          },
+        },
+        422,
+      );
+    }
+    throw err;
+  }
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;
   const routingTaskType = route?.taskType ?? parsed.data.chain_task_type ?? null;

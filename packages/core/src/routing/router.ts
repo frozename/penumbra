@@ -6,6 +6,7 @@ import type { AgentTaskType } from "../schemas/agent-performance.js";
 import {
   buildPressureStaleKeys,
   pressureSnapshotKey,
+  resolveBiasEffect,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
@@ -146,6 +147,14 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
   if (constraintResult.admitted.length === 0) {
     return noSelectionDecision(input, priorResult, constraintResult);
   }
+  const biasConstraintResult = applyRoutingBiasExclusions(input, constraintResult.admitted);
+  const combinedConstraintResult: HardConstraintFilterResult = {
+    admitted: biasConstraintResult.admitted,
+    excluded: [...constraintResult.excluded, ...biasConstraintResult.excluded],
+  };
+  if (combinedConstraintResult.admitted.length === 0) {
+    return noSelectionDecision(input, priorResult, combinedConstraintResult);
+  }
 
   const now = deps.now();
   const commonRouteInput = {
@@ -158,7 +167,9 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
     activeBiases: input.activeBiases,
     applyPressure: input.applyPressure,
     unhealthyAgents: input.unhealthyAgents,
-    hardExcludedAgents: new Set(constraintResult.excluded.map((candidate) => candidate.agent)),
+    hardExcludedAgents: new Set(
+      combinedConstraintResult.excluded.map((candidate) => candidate.agent),
+    ),
     priors: priorResult.priors,
     roleExplorationPolicy: "ranked-first" as const,
     now,
@@ -204,7 +215,7 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
       excluded: false,
       reasons: ["Scored but not selected by the routing engine."],
     }));
-  const excludedAlternatives = excludedToAlternatives(input, constraintResult);
+  const excludedAlternatives = excludedToAlternatives(input, combinedConstraintResult);
   const fallbackChain = ranked
     .map((candidate) => candidate.agent_name)
     .filter((agent) => agent !== selectedAgent)
@@ -231,7 +242,7 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
       selected === null
         ? ["The routing engine returned no eligible selection."]
         : [
-            `Selected ${selected.agent} from ${String(constraintResult.admitted.length)} admitted candidates.`,
+            `Selected ${selected.agent} from ${String(combinedConstraintResult.admitted.length)} admitted candidates.`,
             input.aaSnapshot
               ? `Artificial Analysis priors were ${input.aaSnapshot.stale ? "stale and discounted" : "fresh"}.`
               : "Artificial Analysis priors were absent; routing used local history and configuration.",
@@ -486,6 +497,27 @@ function noSelectionDecision(
     explanation: ["Every registered candidate was excluded by a hard constraint."],
     routerSchemaVersion: ROUTER_SCHEMA_VERSION,
   });
+}
+
+function applyRoutingBiasExclusions(
+  input: DecideInput,
+  candidates: readonly string[],
+): HardConstraintFilterResult {
+  if (!input.activeBiases || input.activeBiases.length === 0) {
+    return { admitted: [...candidates], excluded: [] };
+  }
+  const admitted: string[] = [];
+  const excluded: Array<{ agent: string; reasons: string[] }> = [];
+  for (const agent of candidates) {
+    const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
+    const provider = agentConfig ? resolveProvider(agentConfig) : null;
+    if (resolveBiasEffect(agent, provider, input.activeBiases).exclude) {
+      excluded.push({ agent, reasons: ["routing_bias_exclude"] });
+    } else {
+      admitted.push(agent);
+    }
+  }
+  return { admitted, excluded };
 }
 
 function selectedRoute(

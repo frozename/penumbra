@@ -40,6 +40,7 @@ type PressureCapErrorBody = {
     snapshot_age_seconds: number;
     resets_at: number | null;
     earliest_resets_at: number | null;
+    exhausted_reason?: string;
   };
 };
 
@@ -779,7 +780,7 @@ test("classifier-decline fallback avoids a provider excluded by an active routin
   expect(handoff?.to_agent).toBe("gemini");
 });
 
-test("pressure-cap fallback re-admits excluded candidates rather than starve (safe fallback)", async () => {
+test("pressure-cap fallback never re-admits bias-excluded candidates when they exhaust recommendations", async () => {
   const services = tempServices({
     agents: [
       { name: "maestro", pricing_mode: "subscription", subscription_provider: "anthropic" },
@@ -841,8 +842,8 @@ test("pressure-cap fallback re-admits excluded candidates rather than starve (sa
     outcome: "merged",
     latency_ms: 1200,
   });
-  // Exclude every candidate's provider — the dispatch must not fail closed;
-  // the excluded set is re-admitted rather than starving the fallback.
+  // Exclude every fallback candidate's provider; pressure remains soft, but
+  // operator bias exclusions are hard and must not be re-admitted.
   writeBias(services, "provider", "groq", "exclude");
   writeBias(services, "provider", "google", "exclude");
 
@@ -852,12 +853,18 @@ test("pressure-cap fallback re-admits excluded candidates rather than starve (sa
     task_type: "implement_substantial",
   });
 
-  expect(res.status).toBe(200);
-  const body = (await res.json()) as { handoff_id: string };
-  const handoff = services.db
-    .query<{ to_agent: string }, [string]>(`SELECT to_agent FROM handoffs WHERE handoff_id=?`)
-    .get(body.handoff_id);
-  expect(["codex", "gemini"]).toContain(handoff?.to_agent);
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as { error: { code: string; exhausted_reason?: string } };
+  expect(body.error.code).toBe("subscription_pressure_capped");
+  expect(body.error.exhausted_reason).toBe("bias_excluded");
+  const payloads = parseFallbackPayloads(services);
+  expect(payloads).toContainEqual(
+    expect.objectContaining({
+      candidate_agent: null,
+      candidate_state: "exhausted",
+      exhausted_reason: "bias_excluded",
+    }),
+  );
 });
 
 test("a boost bias flips the pressure-cap fallback's chosen seat", async () => {

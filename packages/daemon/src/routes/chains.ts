@@ -38,6 +38,7 @@ import { json } from "./_helpers.js";
 import {
   readActiveRoutingBiases,
   resolveSingleRoute,
+  RoutingBiasExhaustedError,
   RouterHardConstraintExhaustedError,
   type RouterDecisionSink,
 } from "./role-routing.js";
@@ -884,6 +885,12 @@ function handlePressureGateOutcome(opts: {
   if (outcome.state !== "refuse") return { continueLoop: true };
 
   let fallbackRefusedOutcomes: CapCheckRefuse[] = [];
+  let fallbackExhaustedReason:
+    | "no_recommendations"
+    | "no_candidates"
+    | "all_refused"
+    | "bias_excluded"
+    | null = null;
   if (opts.gate.subject === "sub_agent") {
     const fallback = maybeSelectSubDispatchFallback({
       services: opts.services,
@@ -894,6 +901,7 @@ function handlePressureGateOutcome(opts: {
       refusedOutcome: outcome,
     });
     fallbackRefusedOutcomes = fallback.refusedOutcomes;
+    fallbackExhaustedReason = fallback.exhaustedReason;
     if (fallback.selectedAgent) {
       return { fallbackAgent: fallback.selectedAgent, continueLoop: true };
     }
@@ -922,6 +930,9 @@ function handlePressureGateOutcome(opts: {
           cap_pct: outcome.cap_pct,
           resets_at: outcome.resets_at,
           earliest_resets_at,
+          ...(fallbackExhaustedReason === "bias_excluded"
+            ? { exhausted_reason: fallbackExhaustedReason }
+            : {}),
           snapshot_state: outcome.snapshot_state,
           snapshot_age_seconds: outcome.snapshot_age_seconds,
         },
@@ -1575,6 +1586,19 @@ export async function chainStartInternal(
         422,
       );
     }
+    if (err instanceof RoutingBiasExhaustedError) {
+      return json(
+        {
+          error: {
+            code: "routing_bias_exhausted",
+            message: "routing biases excluded every candidate for the requested role",
+            role: err.role,
+            task_type: err.taskType,
+          },
+        },
+        422,
+      );
+    }
     throw err;
   }
   if (routing.response) return routing.response;
@@ -1719,12 +1743,7 @@ function applyRoutingBiasesToRecommendations(
     ),
   }));
   const kept = scored.filter((s) => !s.effect.exclude);
-  // Hard-prefer with safe fallback: honor exclude steers first; if that would
-  // leave no candidate at all, re-admit the excluded set rather than starve
-  // the fallback selector. Mirrors buildRank's re-admission in
-  // agent-routing.ts.
-  const visible = kept.length > 0 ? kept : scored;
-  return visible
+  return kept
     .map((s) => ({
       ...s,
       // Summary recommendations expose success_rate, not buildRank's composite
@@ -1743,9 +1762,15 @@ function maybeSelectSubDispatchFallback(opts: {
   providerCaps: Parameters<typeof checkPressureCap>[0]["providerCaps"];
   maestroAgentName: string;
   refusedOutcome: CapCheckRefuse;
-}): { selectedAgent: string | null; refusedOutcomes: CapCheckRefuse[] } {
-  if (!opts.input.parent_handoff_id) return { selectedAgent: null, refusedOutcomes: [] };
-  if (!opts.input.task_type) return { selectedAgent: null, refusedOutcomes: [] };
+}): {
+  selectedAgent: string | null;
+  refusedOutcomes: CapCheckRefuse[];
+  exhaustedReason: "no_recommendations" | "no_candidates" | "all_refused" | "bias_excluded" | null;
+} {
+  if (!opts.input.parent_handoff_id)
+    return { selectedAgent: null, refusedOutcomes: [], exhaustedReason: null };
+  if (!opts.input.task_type)
+    return { selectedAgent: null, refusedOutcomes: [], exhaustedReason: null };
 
   const refusedOutcomes: CapCheckRefuse[] = [];
 
@@ -1762,13 +1787,15 @@ function maybeSelectSubDispatchFallback(opts: {
   });
   if (route.detail !== "summary")
     throw new Error("unexpected routeAgent detail for fallback recommendations");
+  const rawRecommendations = route.recommendations;
   const recommendations: AgentRecommendation[] = applyRoutingBiasesToRecommendations(
-    route.recommendations,
+    rawRecommendations,
     opts.cfg,
     activeBiases,
   );
 
   if (recommendations.length === 0) {
+    const exhaustedReason = rawRecommendations.length > 0 ? "bias_excluded" : "no_recommendations";
     recordPressureFallbackEvent({
       services: opts.services,
       input: opts.input,
@@ -1780,9 +1807,9 @@ function maybeSelectSubDispatchFallback(opts: {
       attemptIndex: 0,
       totalAttempts: 0,
       ranking: null,
-      exhaustedReason: "no_recommendations",
+      exhaustedReason,
     });
-    return { selectedAgent: null, refusedOutcomes };
+    return { selectedAgent: null, refusedOutcomes, exhaustedReason };
   }
 
   const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
@@ -1852,7 +1879,7 @@ function maybeSelectSubDispatchFallback(opts: {
       ranking: recommendation,
       exhaustedReason: null,
     });
-    return { selectedAgent: candidate.name, refusedOutcomes };
+    return { selectedAgent: candidate.name, refusedOutcomes, exhaustedReason: null };
   }
 
   const exhaustedReason = attemptCount === 0 ? "no_candidates" : "all_refused";
@@ -1869,7 +1896,7 @@ function maybeSelectSubDispatchFallback(opts: {
     ranking: null,
     exhaustedReason,
   });
-  return { selectedAgent: null, refusedOutcomes };
+  return { selectedAgent: null, refusedOutcomes, exhaustedReason };
 }
 
 function parseDispatchEndMetaForHandoff(
@@ -2012,7 +2039,7 @@ function recordPressureFallbackEvent(opts: {
     success_rate: number;
     avg_latency_seconds: number | null;
   } | null;
-  exhaustedReason?: "no_recommendations" | "no_candidates" | "all_refused" | null;
+  exhaustedReason?: "no_recommendations" | "no_candidates" | "all_refused" | "bias_excluded" | null;
 }): void {
   const ts = opts.services.clock().toISOString();
   const payload = {

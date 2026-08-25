@@ -181,6 +181,8 @@ export type RoleRoute = {
   taskType: AgentTaskType;
 };
 
+export type SingleRouteExhaustedReason = "bias_excluded";
+
 export type AgentRecommendation = {
   agent_name: string;
   task_type: string;
@@ -248,7 +250,11 @@ export interface RouteAgentInput {
 export type RouteAgentOutput =
   | { detail: "rank"; candidates: AgentRankOutput }
   | { detail: "summary"; recommendations: AgentRecommendation[] }
-  | { detail: "single"; route: RoleRoute | null };
+  | {
+      detail: "single";
+      route: RoleRoute | null;
+      exhaustedReason: SingleRouteExhaustedReason | null;
+    };
 
 interface PerformanceRow {
   agent_name: string;
@@ -816,14 +822,13 @@ function isOverPressure(
 // User-driven routing-bias ("usage steering") effect for one candidate.
 // Default weights apply when a bias omits one: boost raises a candidate's score,
 // divert lowers it. Precedence is exclude > divert > boost — an exclude removes
-// the candidate outright (subject to the caller's safe-fallback re-admission),
-// while boost/divert weights multiply cumulatively into a single factor. A
-// candidate matches a bias by exact agent name (scope=agent) or by its resolved
-// provider (scope=provider). Matching is strict equality with NO normalization
-// — the silent-failure-retry selector mirrors this byte-for-byte, so normalizing
-// one side would drift them apart. The canonical-provider invariant that makes
-// strict `===` correct is enforced at the write boundaries (config load +
-// routing_bias_set); see @penumbra/config provider-format.
+// the candidate outright, while boost/divert weights multiply cumulatively into
+// a single factor. A candidate matches a bias by exact agent name (scope=agent)
+// or by its resolved provider (scope=provider). Matching is strict equality with
+// NO normalization — the silent-failure-retry selector mirrors this byte-for-byte,
+// so normalizing one side would drift them apart. The canonical-provider invariant
+// that makes strict `===` correct is enforced at the write boundaries (config
+// load + routing_bias_set); see @penumbra/config provider-format.
 const DEFAULT_BOOST_WEIGHT = 1.25;
 const DEFAULT_DIVERT_WEIGHT = 0.5;
 
@@ -1128,17 +1133,14 @@ function buildRank(
     maxExecMs,
   };
   const ranked = summaries.map((s) => rankSummary(s, ctx));
-  // Hard-prefer with safe fallback: drop exclude-steered candidates, but if that
-  // would empty the ranking, re-admit them rather than return nothing.
   const kept = hasBiases ? ranked.filter((r) => !r.biasExclude) : ranked;
-  const visible = kept.length > 0 ? kept : ranked;
   return {
     task_type: taskType,
     window: {
       from: sinceIso,
       to: now.toISOString(),
     },
-    candidates: visible
+    candidates: kept
       .map((r) => r.candidate)
       .sort(
         (a, b) =>
@@ -1239,10 +1241,13 @@ function buildRecommendations(
   }));
 }
 
-function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): RoleRoute | null {
-  if (!input.role || !input.agentchatConfig) return null;
+function chooseSingle(
+  input: RouteAgentInput,
+  allowedAgents: string[] | null,
+): { route: RoleRoute | null; exhaustedReason: SingleRouteExhaustedReason | null } {
+  if (!input.role || !input.agentchatConfig) return { route: null, exhaustedReason: null };
   const roleAgents = allowedAgents ?? [];
-  if (roleAgents.length === 0) return null;
+  if (roleAgents.length === 0) return { route: null, exhaustedReason: null };
 
   const taskType = input.taskType ?? inferAgentTaskTypeForRole(input.message ?? "", input.role);
   const ranked = buildRank(input.db, input, taskType, allowedAgents);
@@ -1255,7 +1260,8 @@ function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): R
   const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
   const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
 
-  const candidateOrder =
+  const hasBiases = !!input.activeBiases && input.activeBiases.length > 0;
+  const legacyCandidateOrder =
     input.roleExplorationPolicy === "ranked-first"
       ? [
           rankedAgent?.agent_name ?? null,
@@ -1271,8 +1277,10 @@ function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): R
           defaultAgent ?? null,
           roleAgents[0] ?? null,
         ];
+  const candidateOrder = hasBiases
+    ? [...legacyCandidateOrder, ...roleAgents]
+    : legacyCandidateOrder;
 
-  const hasBiases = !!input.activeBiases && input.activeBiases.length > 0;
   const isBiasExcluded = (agentName: string): boolean => {
     if (!hasBiases) return false;
     const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
@@ -1292,11 +1300,22 @@ function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): R
       return passesPressure(agentName);
     }) ?? null;
 
-  // Hard-prefer with safe fallback: honor exclude steers first; if that leaves no
-  // candidate, re-admit the excluded set rather than wedge the role.
-  const filteredAgent = pick(true) ?? (hasBiases ? pick(false) : null);
+  const filteredAgent = pick(true);
+  if (filteredAgent) {
+    return {
+      route: { agent: filteredAgent, role: input.role, taskType },
+      exhaustedReason: null,
+    };
+  }
 
-  return filteredAgent ? { agent: filteredAgent, role: input.role, taskType } : null;
+  const candidates = candidateOrder.filter(
+    (agentName): agentName is string => !!agentName && roleAgentSet.has(agentName),
+  );
+  const biasExhausted =
+    hasBiases &&
+    candidates.length > 0 &&
+    candidates.every((agentName) => isBiasExcluded(agentName));
+  return { route: null, exhaustedReason: biasExhausted ? "bias_excluded" : null };
 }
 
 export function routeAgent(input: RouteAgentInput): RouteAgentOutput {
@@ -1316,5 +1335,5 @@ export function routeAgent(input: RouteAgentInput): RouteAgentOutput {
       recommendations: buildRecommendations(input.db, input, taskType ?? "unknown", allowedAgents),
     };
   }
-  return { detail: "single", route: chooseSingle(input, allowedAgents) };
+  return { detail: "single", ...chooseSingle(input, allowedAgents) };
 }

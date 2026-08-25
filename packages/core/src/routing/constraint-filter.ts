@@ -21,8 +21,8 @@ export type HardConstraintFilterResult = {
 };
 
 /**
- * Applies non-re-admitting eligibility constraints. Unlike bias exclusions,
- * an empty result is intentional and must never be refilled with excluded candidates.
+ * Applies non-re-admitting eligibility constraints. An empty result is intentional
+ * and must never be refilled with excluded candidates.
  */
 export function applyHardConstraints(
   candidates: readonly string[],
