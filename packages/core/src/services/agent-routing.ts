@@ -216,8 +216,7 @@ export interface RouteAgentInput {
   unhealthyAgents?: ReadonlySet<string>;
   // Non-re-admitting hard filter applied in getAllowedAgents beside unhealthyAgents.
   // Silently no-ops when getAllowedAgents resolves null (no role and no registry),
-  // so production callers must pass a registry; unlike bias excludes, it does not
-  // safe-re-admit when it would otherwise empty the pool.
+  // so production callers must pass a registry.
   hardExcludedAgents?: ReadonlySet<string>;
   // Multiplicative score factor applied in rankSummary for detail:"rank" and
   // detail:"single" only. Inert in detail:"summary" because buildRecommendations
