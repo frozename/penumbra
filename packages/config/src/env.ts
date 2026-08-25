@@ -333,6 +333,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Fallback origin label for MCP tool calls when request metadata is unavailable.",
   },
+  PENUMBRA_MCP_BUILD_ID: {
+    schema: OptStr,
+    description:
+      "Override for the build-metadata suffix in MCP_SERVER_VERSION. Falls back to the short git SHA, then 'unknown', when unset.",
+  },
   PENUMBRA_MCP_INVOCATION_LOG_ENABLED: {
     schema: Bool,
     default: false,
@@ -1190,6 +1195,20 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_E2E_LLAMACTL_MANIFEST: {
     schema: OptStr,
     description: "Path to llamactl e2e manifest fixture.",
+  },
+
+  // ── core test fixtures ────────────────────────────────────────────
+  PENUMBRA_TEST_LLM_KEY: {
+    schema: OptStr,
+    description:
+      "Fixture-only apiKeyEnv target used by core/test/services/role-llm-candidates.test.ts to verify late-bound env auth resolution. Not read outside tests.",
+    isSensitive: true,
+  },
+  PENUMBRA_TEST_LLM_SNAKE_KEY: {
+    schema: OptStr,
+    description:
+      "Fixture-only api_key_env target used by core/test/services/role-llm-candidates.test.ts to verify late-bound snake_case env auth resolution. Not read outside tests.",
+    isSensitive: true,
   },
 } as const;
 
