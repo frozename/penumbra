@@ -32,6 +32,7 @@ import { PermissionReader } from "./readers/permission.js";
 import { RecallReader } from "./readers/recall.js";
 import { TaskDraftReader } from "./readers/task-draft.js";
 import { DEFAULT_REDACTION_RULES, RegexRedactor } from "./redaction/regex.js";
+import { createAaSnapshotStore, type AaSnapshotStore } from "./routing/aa-snapshot-store.js";
 import { DispatchEventLog } from "./services/dispatch-event-log.js";
 import { type Settings, SettingsDefaults, type SettingsInput } from "./settings.js";
 import { InProcessSupervisor } from "./supervisor/in-process.js";
@@ -267,6 +268,7 @@ export interface Services {
   // an absent taskRouterConfig identically to an explicit mode:'off'.
   taskRouterConfig?: TaskRouterConfig;
   modelAliasMap?: ModelAliasMap;
+  aaSnapshotStore: AaSnapshotStore;
   agentchatConfig?: {
     agents?: {
       name: string;
@@ -403,6 +405,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     log,
     agentRegistry: opts.agentRegistry ?? null,
     agentRouting: opts.agentRouting ?? null,
+    aaSnapshotStore: createAaSnapshotStore({ now: clock }),
     providerQuotas: opts.providerQuotas ?? [],
     subscriptionPressureCache: createSubscriptionPressureCache(opts.db, {
       intervalMs: 30_000,

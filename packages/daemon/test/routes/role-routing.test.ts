@@ -2,13 +2,19 @@ import { TaskRouterConfigSchema, type TaskRouterConfig } from "@penumbra/config"
 import {
   AgentPerformanceWriter,
   type AgentRoutingConfig,
+  createAaSnapshotStore,
   loadSqliteVec,
   migrate,
+  type AaSnapshotStore,
+  type AaSnapshotStorePayload,
   type Services,
   setRoutingBias,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   resolveSingleRoute,
@@ -130,6 +136,52 @@ function services(db: Database, agentRouting: AgentRoutingConfig | null = routin
 
 function routerConfig(mode: TaskRouterConfig["mode"]): TaskRouterConfig {
   return TaskRouterConfigSchema.parse({ mode });
+}
+
+function aaSnapshotPayload(): AaSnapshotStorePayload {
+  return {
+    provenance: {
+      collectedAt: NOW,
+      dataVersion: "daemon-role-routing-test",
+      benchmarkVersion: "bench-test",
+    },
+    models: [
+      {
+        id: "aa:alpha",
+        name: "Alpha Model",
+        slug: "alpha-model",
+        model_creator: { id: "creator:openai", name: "OpenAI", slug: "openai" },
+        evaluations: {
+          artificial_analysis_intelligence_index: 91,
+          artificial_analysis_coding_index: 87,
+          terminalbench_hard: 65,
+        },
+        pricing: {
+          price_1m_input_tokens: 2,
+          price_1m_output_tokens: 8,
+        },
+        median_output_tokens_per_second: 80,
+        median_time_to_first_token_seconds: 0.4,
+      },
+      {
+        id: "aa:beta",
+        name: "Beta Model",
+        slug: "beta-model",
+        model_creator: { id: "creator:anthropic", name: "Anthropic", slug: "anthropic" },
+        evaluations: {
+          artificial_analysis_intelligence_index: 70,
+          artificial_analysis_coding_index: 62,
+          terminalbench_hard: 45,
+        },
+        pricing: {
+          price_1m_input_tokens: 1,
+          price_1m_output_tokens: 4,
+        },
+        median_output_tokens_per_second: 40,
+        median_time_to_first_token_seconds: 1.2,
+      },
+    ],
+  };
 }
 
 describe("resolveSingleRoute", () => {
@@ -315,6 +367,100 @@ describe("resolveSingleRoute — model task router modes", () => {
     expect(route).toEqual({ agent: "alpha", role: "reviewer", taskType: "review_adversarial" });
     expect(sink.decision).not.toBeNull();
     expect(sink.decision?.taskProfile.taskTypes.length).toBeGreaterThan(0);
+  });
+
+  test("mode:'shadow' reads the daemon AA snapshot store into the router decision", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "role-routing-aa-"));
+    try {
+      const db = freshDb();
+      writePerf(db, "alpha");
+      const store = createAaSnapshotStore({
+        path: join(dir, "aa-snapshot.json"),
+        ttlSeconds: 3600,
+        now: () => new Date(NOW),
+      });
+      await store.write(aaSnapshotPayload(), {
+        fetchedAtIso: NOW,
+        ttlSeconds: 3600,
+      });
+
+      const svc = services(db) as Services & { aaSnapshotStore: AaSnapshotStore };
+      svc.taskRouterConfig = routerConfig("shadow");
+      svc.modelAliasMap = {
+        alpha: { aa_creator: "openai", aa_slug: "alpha-model" },
+        beta: { aa_creator: "anthropic", aa_slug: "beta-model" },
+      };
+      svc.aaSnapshotStore = store;
+
+      const sink: RouterDecisionSink = { decision: null };
+      const route = resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+        decisionSink: sink,
+      });
+
+      expect(route).toEqual({ agent: "alpha", role: "reviewer", taskType: "review_adversarial" });
+      expect(sink.decision).not.toBeNull();
+      expect(sink.decision?.dataFreshness.artificial_analysis).toBe("fresh");
+      expect(sink.decision?.dataFreshness.artificial_analysis_collected_at).toBe(NOW);
+      expect(sink.decision?.factors).toContainEqual(
+        expect.objectContaining({
+          name: "alpha.aa_prior",
+          source: "artificial_analysis",
+        }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("mode:'shadow' re-reads the AA snapshot store so TTL changes reach decisions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "role-routing-aa-ttl-"));
+    try {
+      const db = freshDb();
+      writePerf(db, "alpha");
+      const store = createAaSnapshotStore({
+        path: join(dir, "aa-snapshot.json"),
+        ttlSeconds: 3600,
+        now: () => new Date(NOW),
+      });
+      await store.write(aaSnapshotPayload(), {
+        fetchedAtIso: NOW,
+        ttlSeconds: 3600,
+      });
+
+      const svc = services(db) as Services & { aaSnapshotStore: AaSnapshotStore };
+      svc.taskRouterConfig = routerConfig("shadow");
+      svc.modelAliasMap = {
+        alpha: { aa_creator: "openai", aa_slug: "alpha-model" },
+        beta: { aa_creator: "anthropic", aa_slug: "beta-model" },
+      };
+      svc.aaSnapshotStore = store;
+
+      const freshSink: RouterDecisionSink = { decision: null };
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+        decisionSink: freshSink,
+      });
+      expect(freshSink.decision?.dataFreshness.artificial_analysis).toBe("fresh");
+
+      await store.write(aaSnapshotPayload(), {
+        fetchedAtIso: "2026-05-01T10:00:00Z",
+        ttlSeconds: 60,
+      });
+      const staleSink: RouterDecisionSink = { decision: null };
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+        decisionSink: staleSink,
+      });
+
+      expect(staleSink.decision?.dataFreshness.artificial_analysis).toBe("stale");
+      expect(staleSink.decision?.dataFreshness.artificial_analysis_age_seconds).toBe("7200");
+      expect(staleSink.decision?.factors).toContainEqual(
+        expect.objectContaining({
+          name: "aa_staleness_discount",
+          source: "config",
+        }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("mode:'recommend' is wired identically to shadow: route untouched, decision recorded", () => {

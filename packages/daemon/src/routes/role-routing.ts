@@ -8,6 +8,7 @@ import {
   readRoutingBiases,
   readSubscriptionPressure,
   type RoleRoute,
+  type RouterAaSnapshot,
   type RoutingBias,
   type RoutingDecision,
   routeAgent,
@@ -100,6 +101,20 @@ function collectHarnessContext(opts: {
   };
 }
 
+function readRouterAaSnapshot(services: Services): RouterAaSnapshot | undefined {
+  try {
+    const result = services.aaSnapshotStore.readSync();
+    if (result.state !== "available") return undefined;
+    return {
+      snapshot: result.snapshot,
+      stale: result.stale,
+      ageSeconds: result.ageSeconds,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function computeRouterDecision(opts: {
   services: Services;
   mode: "recommend" | "shadow" | "auto";
@@ -124,6 +139,7 @@ function computeRouterDecision(opts: {
       taskType,
       taskClass: hints?.taskClass,
     });
+    const aaSnapshot = readRouterAaSnapshot(services);
     return decide(
       {
         mode,
@@ -135,6 +151,7 @@ function computeRouterDecision(opts: {
         harnessContext,
         routerConfig,
         aliasMap: services.modelAliasMap ?? {},
+        aaSnapshot,
         agentchatConfig: opts.agentchatConfig,
         agentRegistry: services.agentRegistry ?? [],
         activeBiases: opts.activeBiases,

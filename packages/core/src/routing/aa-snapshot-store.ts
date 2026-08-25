@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -55,6 +56,7 @@ export type AaSnapshotStoreReadResult =
 
 export interface AaSnapshotStore {
   read(): Promise<AaSnapshotStoreReadResult>;
+  readSync(): AaSnapshotStoreReadResult;
   write(
     payload: AaSnapshotStorePayload,
     metadata?: { fetchedAtIso?: string; ttlSeconds?: number },
@@ -84,6 +86,9 @@ export function createAaSnapshotStore(opts: AaSnapshotStoreOptions = {}): AaSnap
   return {
     read(): Promise<AaSnapshotStoreReadResult> {
       return readSnapshot(path, now);
+    },
+    readSync(): AaSnapshotStoreReadResult {
+      return readSnapshotSync(path, now);
     },
     async write(payload, metadata): Promise<AaSnapshotStoreReadResult> {
       const stored: AaStoredSnapshot = {
@@ -130,6 +135,29 @@ export function expandHome(path: string): string {
 async function readSnapshot(path: string, now: () => Date): Promise<AaSnapshotStoreReadResult> {
   try {
     const raw = await readFile(path, "utf8");
+    const parsed = AaStoredSnapshotSchema.parse(JSON.parse(raw));
+    return resultFor(parsed, now, "store");
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        state: "missing",
+        stale: false,
+        ageSeconds: null,
+        source: "missing",
+      };
+    }
+    return {
+      state: "corrupt",
+      stale: false,
+      ageSeconds: null,
+      source: "corrupt",
+    };
+  }
+}
+
+function readSnapshotSync(path: string, now: () => Date): AaSnapshotStoreReadResult {
+  try {
+    const raw = readFileSync(path, "utf8");
     const parsed = AaStoredSnapshotSchema.parse(JSON.parse(raw));
     return resultFor(parsed, now, "store");
   } catch (error) {
