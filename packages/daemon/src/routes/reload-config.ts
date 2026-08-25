@@ -3,10 +3,12 @@ import type { DaemonServices } from "../serve.js";
 import { json } from "./_helpers.js";
 import {
   commitAgentChatConfigSubsystem,
+  commitTaskRouterConfigSubsystem,
   commitWorkflowAndProjectRegistrySubsystem,
   reloadAgentChatConfigSubsystem,
   reloadExtraWorkersSubsystem,
   reloadLongLivedReactorSubsystem,
+  reloadTaskRouterConfigSubsystem,
   type ReloadSubsystemStatus,
   reloadWorkflowAndProjectRegistrySubsystem,
 } from "./reload-config-orchestrators.js";
@@ -64,6 +66,14 @@ async function reloadConfigRouteUnlocked(
     return json({ error: agentchatSubsystem.error }, status);
   }
 
+  const taskRouterSubsystem = reloadTaskRouterConfigSubsystem(services);
+  if (taskRouterSubsystem.status === "failed") {
+    return json(
+      { error: taskRouterSubsystem.error, config_path: taskRouterSubsystem.meta.config_path },
+      422,
+    );
+  }
+
   const workflowProjectSubsystem = await reloadWorkflowAndProjectRegistrySubsystem(services);
   if (workflowProjectSubsystem.status === "failed") {
     services.log.error(
@@ -82,6 +92,7 @@ async function reloadConfigRouteUnlocked(
   }
 
   commitAgentChatConfigSubsystem(services, agentchatSubsystem.snapshot);
+  commitTaskRouterConfigSubsystem(services, taskRouterSubsystem.snapshot);
   commitWorkflowAndProjectRegistrySubsystem(services, workflowProjectSubsystem.snapshot);
   services.workerControl.emit({ type: "agentchat_reload" });
 

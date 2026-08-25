@@ -1,5 +1,10 @@
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
-import { getConfig, reloadAgentChatConfig } from "@penumbra/config";
+import {
+  getConfig,
+  loadModelAliasMapFromDir,
+  loadTaskRouterConfigFromDir,
+  reloadAgentChatConfig,
+} from "@penumbra/config";
 import {
   defaultProjectRegistryPath,
   loadProjectRegistry,
@@ -28,6 +33,7 @@ import { type ExtraWorkersConfig, loadExtraWorkersConfig } from "../workers/conf
 
 export type ReloadSubsystemName =
   | "agentchat_config"
+  | "task_router_config"
   | "workflow_and_project_registry"
   | "long_lived_reactor"
   | "extra_workers";
@@ -54,6 +60,21 @@ type AgentChatConfigReloaded = {
     prev_count: number;
     agent_count: number;
   };
+};
+
+type TaskRouterConfigFailed = {
+  subsystem: "task_router_config";
+  status: "failed";
+  error: string;
+  meta: { config_path: string };
+};
+
+type TaskRouterConfigReloaded = {
+  subsystem: "task_router_config";
+  status: "reloaded";
+  error?: never;
+  snapshot: TaskRouterConfigSnapshot;
+  meta: { config_path: string };
 };
 
 type WorkflowAndProjectRegistryReloaded = {
@@ -134,6 +155,8 @@ type ExtraWorkersAbsent = {
 export type ReloadSubsystemEntry =
   | AgentChatConfigFailure
   | AgentChatConfigReloaded
+  | TaskRouterConfigFailed
+  | TaskRouterConfigReloaded
   | WorkflowAndProjectRegistryReloaded
   | WorkflowAndProjectRegistryFailed
   | LongLivedReactorReloaded
@@ -144,6 +167,7 @@ export type ReloadSubsystemEntry =
   | ExtraWorkersAbsent;
 
 export type AgentChatConfigReloadResult = AgentChatConfigFailure | AgentChatConfigReloaded;
+export type TaskRouterConfigReloadResult = TaskRouterConfigFailed | TaskRouterConfigReloaded;
 export type WorkflowProjectReloadResult =
   | WorkflowAndProjectRegistryReloaded
   | WorkflowAndProjectRegistryFailed;
@@ -162,6 +186,11 @@ type AgentChatConfigSnapshot = {
   providerQuotas: DaemonServices["providerQuotas"];
   agentchatConfig: DaemonServices["agentchatConfig"];
   shellConfig: NonNullable<DaemonServices["shellConfig"]>;
+};
+
+type TaskRouterConfigSnapshot = {
+  taskRouterConfig: DaemonServices["taskRouterConfig"];
+  modelAliasMap: DaemonServices["modelAliasMap"];
 };
 
 type MissingRoutingAgent = {
@@ -304,6 +333,39 @@ export function commitAgentChatConfigSubsystem(
     log: services.log,
     evaluation: services.llmRoleFloorEvaluation,
   });
+}
+
+export function reloadTaskRouterConfigSubsystem(
+  _services: DaemonServices,
+): TaskRouterConfigReloadResult {
+  const configPath = resolveAgentChatConfigPath(process.env);
+  try {
+    const snapshot: TaskRouterConfigSnapshot = {
+      taskRouterConfig: loadTaskRouterConfigFromDir(configPath),
+      modelAliasMap: loadModelAliasMapFromDir(configPath),
+    };
+    return {
+      subsystem: "task_router_config",
+      status: "reloaded",
+      snapshot,
+      meta: { config_path: configPath },
+    };
+  } catch (error: unknown) {
+    return {
+      subsystem: "task_router_config",
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+      meta: { config_path: configPath },
+    };
+  }
+}
+
+export function commitTaskRouterConfigSubsystem(
+  services: DaemonServices,
+  snapshot: TaskRouterConfigSnapshot,
+): void {
+  services.taskRouterConfig = snapshot.taskRouterConfig;
+  services.modelAliasMap = snapshot.modelAliasMap;
 }
 
 export async function reloadWorkflowAndProjectRegistrySubsystem(

@@ -1,7 +1,14 @@
 import type { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
 
 import { getAgentDescriptor } from "@penumbra/agentchat";
-import { getConfig } from "@penumbra/config";
+import {
+  getConfig,
+  loadModelAliasMapFromDir,
+  loadTaskRouterConfigFromDir,
+  type ModelAliasMap,
+  type TaskRouterConfig,
+  TaskRouterConfigSchema,
+} from "@penumbra/config";
 import {
   type AgentDescriptor,
   AgentPerformanceWriter,
@@ -48,6 +55,7 @@ import {
 
 import type { GhClient } from "./services/gh-client.js";
 
+import { resolveAgentChatConfigPath } from "./agentchat-config.js";
 import { createBearerAuth } from "./auth.js";
 import { installGlobalCrashHandlers } from "./crash-guard.js";
 import { buildDreamingConfig, type DreamConfig } from "./dreaming/config.js";
@@ -308,6 +316,8 @@ export interface DaemonHandle {
 }
 
 export type DaemonServices = CoreServices & {
+  taskRouterConfig: TaskRouterConfig;
+  modelAliasMap: ModelAliasMap;
   agentchatConfig?: {
     agents?: { name: string; roles?: string[]; [key: string]: unknown };
     providers?: { name: string; model: string; [key: string]: unknown }[];
@@ -2110,6 +2120,25 @@ function setupDreamingCron(services: Services, runtimeDreamConfig: DreamConfig):
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
+  const configDir = resolveAgentChatConfigPath(process.env);
+  let taskRouterConfig: TaskRouterConfig;
+  try {
+    taskRouterConfig = loadTaskRouterConfigFromDir(configDir);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    opts.services.log.error({ err: message }, `${message}; falling back to defaults`);
+    taskRouterConfig = TaskRouterConfigSchema.parse({});
+  }
+  let modelAliasMap: ModelAliasMap;
+  try {
+    modelAliasMap = loadModelAliasMapFromDir(configDir);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    opts.services.log.error({ err: message }, `${message}; falling back to defaults`);
+    modelAliasMap = {};
+  }
+  daemonServices.taskRouterConfig = taskRouterConfig;
+  daemonServices.modelAliasMap = modelAliasMap;
   const configBundle = getConfig();
   const dreamConfig = buildDreamingConfig(configBundle);
   const dreamRuntime = resolveDreamRuntimeConfig(opts.services.db, configBundle, dreamConfig);
