@@ -20,9 +20,11 @@ import {
   resolveProvider,
   routeAgent,
   type RoutingBias,
+  type RoutingDecision,
   type Services,
   slugifyBranchSegment,
   type TaskClass,
+  writeRoutingDecision,
 } from "@penumbra/core";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
@@ -33,11 +35,27 @@ import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
 import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
-import { readActiveRoutingBiases, resolveSingleRoute } from "./role-routing.js";
+import {
+  readActiveRoutingBiases,
+  resolveSingleRoute,
+  RouterHardConstraintExhaustedError,
+  type RouterDecisionSink,
+} from "./role-routing.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
   taskType: AgentTaskType | null;
+}
+
+interface RouteResolution {
+  route: InitialRoute | null;
+  decision: RoutingDecision | null;
+}
+
+interface RouterHarnessHints {
+  taskClass?: string;
+  projectId?: string;
+  dispatchKind?: string;
 }
 
 type AgentChatConfigLike = {
@@ -1334,20 +1352,16 @@ interface RoutingResolution {
   routedRole: string | null;
   requestedAgent: string | null;
   routingResolutionReason: string | null;
+  routingDecision: RoutingDecision | null;
 }
 
 function rerouteForAgent(
-  input: ChainStartRequestWithLongLived,
   services: Services,
   initialAgent: string,
 ): { route: InitialRoute | null; routedAgent: string; routedRole: string | null } {
-  const route = resolveInitialRoute({
-    initialAgent,
-    message: input.message,
-    taskType: input.task_type,
-    forceExactAgent: true,
-    services,
-  });
+  const route = services.agentRegistry?.includes(initialAgent)
+    ? { agent: initialAgent, role: null, taskType: null }
+    : null;
   return {
     route,
     routedAgent: route?.agent ?? initialAgent,
@@ -1369,6 +1383,7 @@ function resolveRoutingWithFallbacks(
       routedRole: null,
       requestedAgent: null,
       routingResolutionReason: null,
+      routingDecision: null,
     };
   }
   let { initialAgent } = stripped;
@@ -1376,13 +1391,19 @@ function resolveRoutingWithFallbacks(
   const requestedAgent = initialAgent;
   let routingResolutionReason: string | null = null;
 
-  let route = resolveInitialRoute({
+  const { route: initialRoute, decision: routingDecision } = resolveInitialRoute({
     initialAgent,
     message: input.message,
     taskType: input.task_type,
     forceExactAgent,
     services,
+    harness: {
+      taskClass: input.task_class,
+      projectId: input.project_id ?? undefined,
+      dispatchKind: input.dispatch_kind,
+    },
   });
+  let route = initialRoute;
 
   const unknownAgentResponse = rejectUnknownAgent(
     route,
@@ -1399,6 +1420,7 @@ function resolveRoutingWithFallbacks(
       routedRole: null,
       requestedAgent: null,
       routingResolutionReason: null,
+      routingDecision: null,
     };
   }
 
@@ -1417,11 +1439,12 @@ function resolveRoutingWithFallbacks(
       routedRole: null,
       requestedAgent: null,
       routingResolutionReason: null,
+      routingDecision: null,
     };
   }
   if (classifierFallback.fallbackAgent !== undefined) {
     initialAgent = classifierFallback.fallbackAgent;
-    ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+    ({ route, routedAgent, routedRole } = rerouteForAgent(services, initialAgent));
     if (routedAgent !== requestedAgent) {
       routingResolutionReason = "classifier_decline_fallback";
     }
@@ -1437,6 +1460,7 @@ function resolveRoutingWithFallbacks(
         routedRole: null,
         requestedAgent: null,
         routingResolutionReason: null,
+        routingDecision: null,
       };
     }
   }
@@ -1450,11 +1474,12 @@ function resolveRoutingWithFallbacks(
       routedRole: null,
       requestedAgent: null,
       routingResolutionReason: null,
+      routingDecision: null,
     };
   }
   if (pressureOutcome.fallbackAgent !== undefined) {
     initialAgent = pressureOutcome.fallbackAgent;
-    ({ route, routedAgent, routedRole } = rerouteForAgent(input, services, initialAgent));
+    ({ route, routedAgent, routedRole } = rerouteForAgent(services, initialAgent));
     if (routedAgent !== requestedAgent) {
       routingResolutionReason = "subscription_pressure_fallback";
     }
@@ -1467,6 +1492,7 @@ function resolveRoutingWithFallbacks(
     routedRole,
     requestedAgent: routingResolutionReason === null ? null : requestedAgent,
     routingResolutionReason,
+    routingDecision,
   };
 }
 
@@ -1528,9 +1554,38 @@ export async function chainStartInternal(
   if (guardOutcome.response) return guardOutcome.response;
   const { routingWarning, routingAdvisory, projectRegistryEntries } = guardOutcome;
 
-  const routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
+  let routing: RoutingResolution;
+  try {
+    routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
+  } catch (err) {
+    if (err instanceof RouterHardConstraintExhaustedError) {
+      return json(
+        {
+          error: {
+            code: "router_hard_constraint_exhausted",
+            message: "the model task router excluded every candidate via a hard constraint",
+            reasons: err.decision.alternatives
+              .filter((alternative) => alternative.excluded)
+              .map((alternative) => ({
+                route_id: alternative.routeId,
+                reasons: alternative.reasons,
+              })),
+          },
+        },
+        422,
+      );
+    }
+    throw err;
+  }
   if (routing.response) return routing.response;
-  const { route, routedAgent, routedRole, requestedAgent, routingResolutionReason } = routing;
+  const {
+    route,
+    routedAgent,
+    routedRole,
+    requestedAgent,
+    routingResolutionReason,
+    routingDecision,
+  } = routing;
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
@@ -1608,6 +1663,18 @@ export async function chainStartInternal(
     recalled_query,
     branchName,
   });
+
+  if (routingDecision) {
+    const routerMode = services.taskRouterConfig?.mode ?? "off";
+    writeRoutingDecision(services.db, routingDecision, {
+      decisionId: services.uuid(),
+      ts,
+      handoffId: handoff_id,
+      mode: routerMode,
+      applied: routerMode === "auto" && routingDecision.selected?.agent === routedAgent,
+      role: requestedAgent ?? routedRole ?? undefined,
+    });
+  }
 
   return buildChainStartResponse({
     services,
@@ -2439,7 +2506,8 @@ function resolveInitialRoute(opts: {
   taskType?: AgentTaskType;
   forceExactAgent: boolean;
   services: Services;
-}): InitialRoute | null {
+  harness?: RouterHarnessHints;
+}): RouteResolution {
   const { agentRegistry, agentRouting } = opts.services;
   const roleAgents = (agentRouting?.agents ?? [])
     .filter((agent) => agent.roles.includes(opts.initialAgent))
@@ -2450,9 +2518,9 @@ function resolveInitialRoute(opts: {
   }
 
   if (agentRegistry?.includes(opts.initialAgent)) {
-    return { agent: opts.initialAgent, role: null, taskType: null };
+    return { route: { agent: opts.initialAgent, role: null, taskType: null }, decision: null };
   }
-  return null;
+  return { route: null, decision: null };
 }
 
 function resolveRoleRoute(
@@ -2461,13 +2529,21 @@ function resolveRoleRoute(
     message: string;
     taskType?: AgentTaskType;
     services: Services;
+    harness?: RouterHarnessHints;
   },
   roleAgents: string[],
-): InitialRoute {
+): RouteResolution {
   const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
-  const route = resolveSingleRoute(opts.services, opts.initialAgent, opts.message, taskType);
+  const decisionSink: RouterDecisionSink = { decision: null };
+  const route = resolveSingleRoute(opts.services, opts.initialAgent, opts.message, taskType, {
+    ...opts.harness,
+    decisionSink,
+  });
   const fallbackAgent = roleAgents[0] ?? opts.initialAgent;
-  return route ?? { agent: fallbackAgent, role: opts.initialAgent, taskType };
+  return {
+    route: route ?? { agent: fallbackAgent, role: opts.initialAgent, taskType },
+    decision: decisionSink.decision,
+  };
 }
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {

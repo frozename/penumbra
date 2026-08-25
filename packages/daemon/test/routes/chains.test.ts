@@ -1,3 +1,4 @@
+import { TaskRouterConfigSchema } from "@penumbra/config";
 import {
   AgentPerformanceWriter,
   type AgentRoutingConfig,
@@ -6,6 +7,7 @@ import {
   loadSqliteVec,
   migrate,
   ProjectRegistry,
+  readRoutingDecisions,
   type Services,
   type Watchdog,
   type WorkflowRunsRegistry,
@@ -76,7 +78,20 @@ type ChainResponseBody = {
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     message?: string;
+    reasons?: { route_id: string; reasons: string[] }[];
   };
+};
+
+const PRE_ROUTER_ROLE_RESPONSE_FIXTURE = {
+  conversation_id: "conv-id-1",
+  handoff_id: "id-3",
+  branch_name: "feat/implement-the-change_d3",
+  routed_agent: "codex-mini",
+  routed_role: "executor",
+  requested_agent: "executor",
+  resolved_agent: "codex-mini",
+  routing_resolution_reason: "role_route",
+  routing_task_type: "implement_substantial",
 };
 
 type ChainHistoryBody = {
@@ -1125,12 +1140,7 @@ test("POST /chains/start routes role targets to the best ledger-ranked role agen
 
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.requested_agent).toBe("executor");
-  expect(body.resolved_agent).toBe("codex-mini");
-  expect(body.routed_agent).toBe("codex-mini");
-  expect(body.routed_role).toBe("executor");
-  expect(body.routing_resolution_reason).toBe("role_route");
-  expect(body.routing_task_type).toBe("implement_substantial");
+  expect(body).toEqual(PRE_ROUTER_ROLE_RESPONSE_FIXTURE);
   const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.requested_agent).toBe("executor");
   expect(handoff.to_agent).toBe("codex-mini");
@@ -3322,4 +3332,320 @@ test("GET /chains/messages returns empty events array for unknown conversation_i
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(0);
+});
+
+function executorRouting(): AgentRoutingConfig {
+  return {
+    agents: [
+      { name: "gemini", roles: ["executor"] },
+      { name: "codex-mini", roles: ["executor"] },
+    ],
+    default_roles: { executor: "gemini" },
+  };
+}
+
+function seedExecutorLedger(services: Services): void {
+  seedPerformance(services, {
+    performance_id: "p-good",
+    handoff_id: "h-good",
+    agent_name: "codex-mini",
+    task_type: "implement_substantial",
+    outcome: "merged",
+    rounds: 1,
+    smoke_pass: "y",
+  });
+  seedPerformance(services, {
+    performance_id: "p-bad",
+    handoff_id: "h-bad",
+    agent_name: "gemini",
+    task_type: "implement_substantial",
+    outcome: "failed",
+    rounds: 4,
+    smoke_pass: "n",
+  });
+}
+
+test("chain_start with taskRouterConfig mode:'off' is byte-identical to the pre-router baseline and writes no routing_decisions row", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(services);
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "off" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_substantial",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body).toEqual(PRE_ROUTER_ROLE_RESPONSE_FIXTURE);
+
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(0);
+});
+
+test("chain_start with taskRouterConfig mode:'shadow' keeps the legacy route and records an unapplied decision row", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(services);
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "shadow" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_substantial",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  // Same routed agent as the mode:'off' baseline -- shadow mode must never
+  // change the live route.
+  expect(body.routed_agent).toBe("codex-mini");
+
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0].mode).toBe("shadow");
+  expect(decisions[0].applied).toBe(false);
+  expect(decisions[0].handoffId).toBe(body.handoff_id);
+});
+
+test("chain_start with taskRouterConfig mode:'auto' applies the router's own selection and records applied:true", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(services);
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_substantial",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.requested_agent).toBe("executor");
+  expect(body.routed_agent).toBe("codex-mini");
+  expect(body.routing_resolution_reason).toBe("role_route");
+
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0].mode).toBe("auto");
+  expect(decisions[0].applied).toBe(true);
+  expect(decisions[0].selectedAgent).toBe("codex-mini");
+});
+
+test("chain_start records an auto decision as unapplied when classifier fallback changes the final agent", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(services);
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  services.localSeatHealth = {
+    getUnhealthyAgents: () => new Set(["codex-mini"]),
+  };
+  services.agentchatConfig = { agents: executorRouting().agents };
+  services.handoffWriter.createApproved({
+    handoff_id: "parent-classifier-declined",
+    ts: services.clock().toISOString(),
+    project_id: null,
+    conversation_id: "conv-parent",
+    from: "user",
+    to: "maestro",
+    to_role: null,
+    message: "parent dispatch",
+    triggered_by_event_id: null,
+    resolved_by: "test",
+    resolved_at: services.clock().toISOString(),
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    branch_base: null,
+  });
+  services.dispatchEventLog.record({
+    handoff_id: "parent-classifier-declined",
+    worker_id: "worker-1",
+    source: "worker",
+    kind: "dispatch.end",
+    ts: services.clock().toISOString(),
+    meta: {
+      status: "error",
+      classifier_declined: true,
+      decline_reason: "provider_safety_refusal",
+    },
+  });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        parent_handoff_id: "parent-classifier-declined",
+        task_type: "implement_substantial",
+        message: "implement the change",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.to_agent).toBe("codex-mini");
+  expect(handoff.to_role).toBeNull();
+
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]).toMatchObject({
+    selectedAgent: "gemini",
+    role: "executor",
+    applied: false,
+  });
+});
+
+test("chain_start with taskRouterConfig mode:'auto' fails with a legible 422 (no fallback, no handoff, no decision row) when every candidate is hard-excluded", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  services.localSeatHealth = {
+    getUnhealthyAgents: () => new Set(["gemini", "codex-mini"]),
+  };
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_substantial",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("router_hard_constraint_exhausted");
+  expect(body.error?.reasons).toEqual([
+    {
+      route_id: "unknown:gemini",
+      reasons: ["unhealthy_or_unavailable"],
+    },
+    {
+      route_id: "unknown:codex-mini",
+      reasons: ["unhealthy_or_unavailable"],
+    },
+  ]);
+
+  const handoffCount = services.db
+    .query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs")
+    .get();
+  expect(handoffCount?.c ?? 0).toBe(0);
+  const decisionCount = services.db
+    .query<{ c: number }, []>("SELECT COUNT(*) as c FROM routing_decisions")
+    .get();
+  expect(decisionCount?.c ?? 0).toBe(0);
+});
+
+test("chain_start with an explicit agent: pin bypasses the router even in mode:'auto', and is recorded as such (no router reason, no decision row)", async () => {
+  const services = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  // Would hard-exclude every role candidate if the router ever evaluated
+  // this dispatch -- proves the pin never reaches the router at all.
+  services.localSeatHealth = {
+    getUnhealthyAgents: () => new Set(["gemini", "codex-mini"]),
+  };
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "agent:codex-mini",
+        task_type: "implement_substantial",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routing_resolution_reason).toBeUndefined();
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.to_agent).toBe("codex-mini");
+
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(0);
+});
+
+test("branch naming is unaffected by taskRouterConfig mode ('auto' vs 'off') for the same input", async () => {
+  const requestBody = {
+    initial_agent: "executor",
+    task_type: "implement_substantial",
+    task_name: "add router wiring",
+    message: "implement the change",
+  };
+
+  const offServices = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(offServices);
+  offServices.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "off" });
+  const offRes = await chainStartFromInput(requestBody, offServices);
+  expect(offRes.status).toBe(200);
+  const offBody = await readJsonBody<ChainResponseBody>(offRes);
+
+  const autoServices = tempServices({
+    agentRegistry: ["gemini", "codex-mini"],
+    agentRouting: executorRouting(),
+  });
+  seedExecutorLedger(autoServices);
+  autoServices.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  autoServices.modelAliasMap = {};
+  const autoRes = await chainStartFromInput(requestBody, autoServices);
+  expect(autoRes.status).toBe(200);
+  const autoBody = await readJsonBody<ChainResponseBody>(autoRes);
+
+  expect(autoBody.branch_name).not.toBeNull();
+  expect(autoBody.branch_name).toBe(offBody.branch_name);
 });

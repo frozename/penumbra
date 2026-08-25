@@ -1,3 +1,4 @@
+import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
 import { Database } from "bun:sqlite";
 import { resolve as pathResolve } from "node:path";
 
@@ -261,6 +262,11 @@ export interface Services {
   log: Logger;
   agentRegistry: string[] | null;
   agentRouting: AgentRoutingConfig | null;
+  // Model task router config (router.yaml / model-aliases.yaml). Absent in
+  // most tests and in the bare buildServices() path; role-routing.ts treats
+  // an absent taskRouterConfig identically to an explicit mode:'off'.
+  taskRouterConfig?: TaskRouterConfig;
+  modelAliasMap?: ModelAliasMap;
   agentchatConfig?: {
     agents?: {
       name: string;
