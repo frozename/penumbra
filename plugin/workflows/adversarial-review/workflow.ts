@@ -740,6 +740,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   // a merged synthesis as response_text. No penumbra MCP tools, no worktree,
   // no commit.
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+    fallback_role: "reviewer",
     tool_free: true,
   });
 
@@ -803,6 +804,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         // review with a trailing JSON findings block. No penumbra MCP tools,
         // no worktree, no commit.
         const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
+          fallback_role: "reviewer",
           tool_free: true,
         });
         while (true) {
@@ -931,6 +933,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       if (synthFailover || synthesizer.preferred_agent.kind !== "pool") return null;
       const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
         excludeAgents: [failedAgent],
+        fallback_role: "reviewer",
         tool_free: true,
       });
       return nextAgent !== failedAgent ? nextAgent : null;

@@ -361,6 +361,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   // it receives N planner outputs inlined in the prompt and emits a merged plan
   // as response_text. No penumbra MCP tools, no worktree, no commit.
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "plan_refine", ctx, {
+    fallback_role: "planner",
     tool_free: true,
   });
 
@@ -412,6 +413,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         // it receives topic + spec inlined in the prompt and emits a phased
         // plan as response_text. No penumbra MCP tools, no worktree, no commit.
         const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx, {
+          fallback_role: "planner",
           tool_free: true,
         });
         while (true) {

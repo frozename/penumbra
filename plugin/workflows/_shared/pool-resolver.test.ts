@@ -23,7 +23,7 @@ function freshDb(): Database {
   return db;
 }
 
-function writePerf(db: Database, agent: string): void {
+function writePerf(db: Database, agent: string, taskType = "review_adversarial"): void {
   new AgentPerformanceWriter(db).upsert({
     performance_id: `perf-${agent}`,
     ts: NOW,
@@ -31,7 +31,7 @@ function writePerf(db: Database, agent: string): void {
     conversation_id: "conv",
     project_id: "proj",
     agent_name: agent,
-    task_type: "review_adversarial",
+    task_type: taskType,
     outcome: "merged",
     rounds: agent === "a" ? 1 : 5,
     smoke_pass: "y",
@@ -69,6 +69,20 @@ function writePressure(db: Database, provider: string, usedPct: number): void {
   );
 }
 
+function writeBias(
+  db: Database,
+  scope: "provider" | "agent",
+  value: string,
+  mode: "boost" | "divert" | "exclude",
+  expiresAt = new Date(Date.parse(NOW) + 60_000).toISOString(),
+): void {
+  db.prepare(
+    `INSERT INTO routing_bias (
+      bias_id, scope, value, mode, weight, reason, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, NULL, 'test', ?, ?)`,
+  ).run(`bias-${scope}-${value}-${mode}`, scope, value, mode, NOW, expiresAt);
+}
+
 function ctx(overrides: Partial<WorkflowCtx> = {}): WorkflowCtx {
   return {
     dispatch: async () => ({ conversation_id: "conv", handoff_id: "handoff" }),
@@ -79,13 +93,13 @@ function ctx(overrides: Partial<WorkflowCtx> = {}): WorkflowCtx {
       agents: [
         {
           name: "a",
-          roles: [],
+          roles: ["reviewer"],
           pricing_mode: "subscription",
           subscription_provider: "anthropic",
         },
         {
           name: "b",
-          roles: [],
+          roles: ["reviewer"],
           pricing_mode: "subscription",
           subscription_provider: "openai",
         },
@@ -139,18 +153,410 @@ describe("agentPoolToNames", () => {
 });
 
 describe("resolveAgent", () => {
-  test("returns single agents without opening the database", () => {
+  test("keeps the configured single agent when no fallback role is provided", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent({ kind: "single", agent: "a" }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("a");
+  });
+
+  test("routes away from a single preferred agent excluded by provider bias", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        {
+          ...ctx(),
+          db: () => db,
+        },
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("b");
+  });
+
+  test("limits a single-agent fallback to reviewer-role agents", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writePerf(db, "c");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              {
+                name: "a",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "anthropic",
+              },
+              {
+                name: "b",
+                roles: ["executor"],
+                pricing_mode: "subscription",
+                subscription_provider: "openai",
+              },
+              {
+                name: "c",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "google",
+              },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("c");
+  });
+
+  test("safely re-admits an excluded planner when no other planner-role agent exists", () => {
+    const db = freshDb();
+    writePerf(db, "a", "plan_refine");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "plan_refine",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              {
+                name: "a",
+                roles: ["planner"],
+                pricing_mode: "subscription",
+                subscription_provider: "anthropic",
+              },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "planner" },
+      ),
+    ).toBe("a");
+  });
+
+  test("limits a plan-refine fallback to planner-role agents", () => {
+    const db = freshDb();
+    writePerf(db, "a", "plan_refine");
+    writePerf(db, "b", "plan_refine");
+    writePerf(db, "c", "plan_refine");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "plan_refine",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              {
+                name: "a",
+                roles: ["planner"],
+                pricing_mode: "subscription",
+                subscription_provider: "anthropic",
+              },
+              {
+                name: "b",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "openai",
+              },
+              {
+                name: "c",
+                roles: ["planner"],
+                pricing_mode: "subscription",
+                subscription_provider: "google",
+              },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "planner" },
+      ),
+    ).toBe("c");
+  });
+
+  test("avoids a pressured reviewer on a single-agent fallback", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writePerf(db, "c");
+    writeBias(db, "provider", "anthropic", "exclude");
+    writePressure(db, "openai", 95);
+    writePressure(db, "google", 10);
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              {
+                name: "a",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "anthropic",
+              },
+              {
+                name: "b",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "openai",
+              },
+              {
+                name: "c",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "google",
+              },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("c");
+  });
+
+  test("forwards tool_free on a single-agent fallback", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writePerf(db, "c");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              {
+                name: "a",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "anthropic",
+              },
+              {
+                name: "b",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "openai",
+                adapter: "stdio-acp",
+              },
+              {
+                name: "c",
+                roles: ["reviewer"],
+                pricing_mode: "subscription",
+                subscription_provider: "google",
+                adapter: "openai-compat-http",
+              },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer", tool_free: true },
+      ),
+    ).toBe("c");
+  });
+
+  test("safely re-admits the preferred single agent when biases exclude every candidate", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(db, "provider", "anthropic", "exclude");
+    writeBias(db, "provider", "openai", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        {
+          ...ctx(),
+          db: () => db,
+        },
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("a");
+  });
+
+  test("does not pick an excluded pool member when a non-excluded member exists", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("b");
+  });
+
+  test("applies boost biases while resolving a pool", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    db.query(
+      `UPDATE agent_performance SET rounds = 1, latency_ms = 10000 WHERE agent_name = 'b'`,
+    ).run();
+    writeBias(db, "agent", "b", "boost");
+
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("b");
+  });
+
+  test("applies divert biases while resolving a pool", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    db.query(
+      `UPDATE agent_performance SET rounds = 1, latency_ms = 10000 WHERE agent_name = 'b'`,
+    ).run();
+    writeBias(db, "agent", "a", "divert");
+
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("b");
+  });
+
+  test("honors agent-scoped exclusions for a configured single agent", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(db, "agent", "a", "exclude");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        {
+          ...ctx(),
+          db: () => db,
+        },
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("b");
+  });
+
+  test("ignores expired routing biases", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writePerf(db, "b");
+    writeBias(
+      db,
+      "provider",
+      "anthropic",
+      "exclude",
+      new Date(Date.parse(NOW) - 60_000).toISOString(),
+    );
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        {
+          ...ctx(),
+          db: () => db,
+        },
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("a");
+  });
+
+  test("keeps current single and pool behavior when the workflow database is unavailable", () => {
+    const workflowCtx = ctx();
+
+    expect(resolveAgent({ kind: "single", agent: "a" }, "review_adversarial", workflowCtx)).toBe(
+      "a",
+    );
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", workflowCtx),
+    ).toBe("a");
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", workflowCtx, {
+        excludeAgents: ["a"],
+      }),
+    ).toBe("b");
+  });
+
+  test("degrades to the configured single agent when the bias store read fails", () => {
+    const db = freshDb();
+    db.exec("DROP TABLE routing_bias");
+
+    expect(
+      resolveAgent({ kind: "single", agent: "a" }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("a");
+  });
+
+  test("degrades to the configured single agent when fallback routing throws", () => {
+    const db = freshDb();
+    writeBias(db, "provider", "anthropic", "exclude");
+    db.exec("DROP TABLE agent_performance");
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "a" },
+        "review_adversarial",
+        {
+          ...ctx(),
+          db: () => db,
+        },
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("a");
+  });
+
+  test("reads the database once and keeps the configured single agent when no bias is active", () => {
     let dbCalls = 0;
+    const db = freshDb();
     const out = resolveAgent({ kind: "single", agent: "a" }, "review_adversarial", {
       ...ctx(),
       db: () => {
         dbCalls += 1;
-        return freshDb();
+        return db;
       },
     });
 
     expect(out).toBe("a");
-    expect(dbCalls).toBe(0);
+    expect(dbCalls).toBe(1);
   });
 
   test("resolves pools using pressure-aware selection", () => {
@@ -166,12 +572,6 @@ describe("resolveAgent", () => {
         db: () => db,
       }),
     ).toBe("b");
-  });
-
-  test("returns the first pool agent when no workflow database is available", () => {
-    expect(resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", ctx())).toBe(
-      "a",
-    );
   });
 
   test("tool_free:true reaches the scorer and demotes an ACP twin in favor of an equivalent HTTP twin", () => {

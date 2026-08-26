@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import type { AgentTaskType } from "../schemas/agent-performance.js";
+import type { RoutingBias } from "../readers/routing-bias.js";
 
 import {
   resolveClassifierDeclineCutoverIso,
@@ -71,6 +72,7 @@ export function pickFromPool(
   // positively confirmed the role contract is text-only — routing a
   // tool-needing role to an HTTP seat breaks it.
   tool_free?: boolean,
+  activeBiases?: RoutingBias[],
 ): string {
   const [firstAgent, secondAgent] = pool;
   if (firstAgent === undefined) throw new Error("pickFromPool: pool must not be empty");
@@ -87,11 +89,8 @@ export function pickFromPool(
       }
     : undefined;
 
-  // NAMED SEAM: bias-blind by omission. pickFromPool has no production
-  // caller today (only re-exported from index.ts and exercised by its own
-  // test), so this is not a live routing-bias bypass. If a production
-  // caller is ever wired up, forward activeBiases here the same way
-  // resolveSingleRoute (packages/daemon/src/routes/role-routing.ts) does.
+  // The workflow pool resolver is a production caller. Forward its one bias
+  // snapshot so persona-pool scoring observes the same routing policy.
   const out = routeAgent({
     db,
     detail: "rank",
@@ -101,6 +100,7 @@ export function pickFromPool(
     applyPressure: pressure ?? undefined,
     agentchatConfig: localConfig,
     tool_free,
+    activeBiases,
   });
 
   if (out.detail !== "rank") return firstAgent;

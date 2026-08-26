@@ -1,4 +1,14 @@
 import { pickFromPool } from "../../../packages/core/src/tasks/pick-from-pool.js";
+import {
+  resolveBiasEffect,
+  resolveProvider,
+  routeAgent,
+  type RouteAgentInput,
+} from "../../../packages/core/src/services/agent-routing.js";
+import {
+  readRoutingBiases,
+  type RoutingBias,
+} from "../../../packages/core/src/readers/routing-bias.js";
 import { readSubscriptionPressure } from "../../../packages/core/src/readers/subscription-pressure.js";
 import type { WorkflowCtx } from "@penumbra/workflows";
 
@@ -39,16 +49,77 @@ export function resolveAgent(
   // unset (false) keeps every existing caller byte-identical. ONLY set by
   // callers that have positively confirmed text-only behavior; routing a
   // tool-needing role to an HTTP seat breaks it.
-  opts: { excludeAgents?: string[]; tool_free?: boolean } = {},
+  opts: { excludeAgents?: string[]; fallback_role?: string; tool_free?: boolean } = {},
 ): string {
-  if (field.kind === "single") return field.agent;
+  let pool: string[] | undefined;
+  if (field.kind === "pool") {
+    const excluded = new Set(opts.excludeAgents ?? []);
+    const agents = field.agents.filter((agent) => !excluded.has(agent));
+    pool = agents.length > 0 ? agents : field.agents;
+  }
 
-  const excluded = new Set(opts.excludeAgents ?? []);
-  const agents = field.agents.filter((agent) => !excluded.has(agent));
-  const pool = agents.length > 0 ? agents : field.agents;
   const db = ctx.db?.();
-  if (!db) return pool[0]!;
+  if (!db) return field.kind === "single" ? field.agent : pool![0]!;
+
+  let activeBiases: RoutingBias[] | undefined;
+  try {
+    activeBiases = readRoutingBiases(db, { now: new Date() });
+  } catch {
+    activeBiases = undefined;
+  }
+
+  const agentchatConfig = {
+    ...ctx.config,
+    agents: Array.isArray(ctx.config.agents) ? ctx.config.agents : [],
+  } as NonNullable<RouteAgentInput["agentchatConfig"]>;
+  if (field.kind === "single") {
+    const preferredConfig = agentchatConfig.agents.find((agent) => agent.name === field.agent);
+    const provider = preferredConfig ? resolveProvider(preferredConfig) : null;
+    if (!resolveBiasEffect(field.agent, provider, activeBiases).exclude) return field.agent;
+    const fallbackRole = opts.fallback_role;
+    if (!fallbackRole) return field.agent;
+
+    const fallbackAgents = agentchatConfig.agents
+      .filter((agent) => agent.name !== field.agent && agent.roles.includes(fallbackRole))
+      .map((agent) => agent.name);
+    if (fallbackAgents.length === 0) return field.agent;
+
+    try {
+      const pressure = readSubscriptionPressure(db);
+      const out = routeAgent({
+        db,
+        detail: "rank",
+        taskType: taskType as RouteAgentInput["taskType"],
+        agentRegistry: fallbackAgents,
+        includeNeutral: true,
+        applyPressure: pressure,
+        agentchatConfig: {
+          ...agentchatConfig,
+          role_routing: {
+            ...agentchatConfig.role_routing,
+            headroom_weighting: true,
+            latency_weighting: true,
+          },
+        },
+        tool_free: opts.tool_free,
+        activeBiases,
+      });
+      if (out.detail === "rank") {
+        const alternative = out.candidates.candidates[0]?.agent_name;
+        if (alternative) return alternative;
+      }
+    } catch {}
+    return field.agent;
+  }
 
   const pressure = readSubscriptionPressure(db);
-  return pickFromPool(pool, db, ctx.config as any, pressure, taskType as any, opts.tool_free);
+  return pickFromPool(
+    pool!,
+    db,
+    ctx.config as any,
+    pressure,
+    taskType as any,
+    opts.tool_free,
+    activeBiases,
+  );
 }
