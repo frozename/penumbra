@@ -207,6 +207,13 @@ import {
 } from "./routes/plans.js";
 import { qualityStatusRoute } from "./routes/quality.js";
 import { recallRoute } from "./routes/recall.js";
+import {
+  registrarAppendRoute,
+  registrarCreateRoute,
+  registrarGetRoute,
+  registrarListRoute,
+  registrarListEventsRoute,
+} from "./routes/registrar.js";
 import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from "./routes/reconciler.js";
 import { reloadConfigRoute } from "./routes/reload-config.js";
 import {
@@ -603,6 +610,7 @@ interface StaticRoute {
   // Exact string match, or prefix-startsWith match when prefixOnly is true.
   path: string;
   prefixOnly?: boolean;
+  feature?: "registrar";
   handler: StaticRouteHandler;
 }
 
@@ -610,6 +618,7 @@ interface CapturingRoute {
   method: "GET" | "POST";
   // Regex pattern with a single capture group. The capture is passed to handler.
   path: RegExp;
+  feature?: "registrar";
   handler: CapturingRouteHandler;
 }
 
@@ -622,17 +631,24 @@ function staticRoute(
   method: StaticRoute["method"],
   path: string,
   handler: StaticRouteHandler,
-  options: { prefixOnly?: boolean } = {},
+  options: { prefixOnly?: boolean; feature?: StaticRoute["feature"] } = {},
 ): StaticRoute {
-  return { method, path, prefixOnly: options.prefixOnly, handler };
+  return {
+    method,
+    path,
+    prefixOnly: options.prefixOnly,
+    feature: options.feature,
+    handler,
+  };
 }
 
 function regexRoute(
   method: CapturingRoute["method"],
   path: RegExp,
   handler: CapturingRouteHandler,
+  options: { feature?: CapturingRoute["feature"] } = {},
 ): CapturingRoute {
-  return { method, path, handler };
+  return { method, path, feature: options.feature, handler };
 }
 
 function jsonError(code: string, status: number): Response {
@@ -1014,6 +1030,31 @@ const ROUTES: Route[] = [
     plansCancelRoute(req, id, ctx.services, ctx.taskWriter),
   ),
   regexRoute("GET", /^\/plans\/([^/]+)$/, (req, ctx, id) => plansGetRoute(req, id, ctx.services)),
+  // registrar
+  staticRoute("POST", "/registrar", (req, ctx) => registrarCreateRoute(req, ctx.services), {
+    feature: "registrar",
+  }),
+  staticRoute("GET", "/registrar", (req, ctx) => registrarListRoute(req, ctx.services), {
+    feature: "registrar",
+  }),
+  regexRoute(
+    "POST",
+    /^\/registrar\/([^/]+)\/events$/,
+    (req, ctx, id) => registrarAppendRoute(req, decodeURIComponent(id), ctx.services),
+    { feature: "registrar" },
+  ),
+  regexRoute(
+    "GET",
+    /^\/registrar\/([^/]+)\/events$/,
+    (req, ctx, id) => registrarListEventsRoute(req, decodeURIComponent(id), ctx.services),
+    { feature: "registrar" },
+  ),
+  regexRoute(
+    "GET",
+    /^\/registrar\/([^/]+)$/,
+    (req, ctx, id) => registrarGetRoute(req, decodeURIComponent(id), ctx.services),
+    { feature: "registrar" },
+  ),
 ];
 
 function isStaticRoute(route: Route): route is StaticRoute {
@@ -1028,8 +1069,13 @@ function matchesCapturePath(route: CapturingRoute, pathname: string): string | u
   return route.path.exec(pathname)?.[1];
 }
 
-async function dispatchRoute(req: Request, url: URL, ctx: RouteCtx): Promise<Response | undefined> {
-  for (const route of ROUTES) {
+async function dispatchRoute(
+  req: Request,
+  url: URL,
+  ctx: RouteCtx,
+  routes: readonly Route[],
+): Promise<Response | undefined> {
+  for (const route of routes) {
     if (route.method !== req.method) continue;
     if (isStaticRoute(route)) {
       if (matchesStaticPath(route, url.pathname)) return await route.handler(req, ctx);
@@ -1056,6 +1102,10 @@ export function createDaemonFetchHandler(opts: {
   resolveLlmKeychain?: ResolveKeychainSecret;
 }): (req: Request) => Promise<Response> {
   const daemonServices = opts.services as DaemonServices;
+  const routes =
+    process.env.PENUMBRA_REGISTRAR === "0"
+      ? ROUTES.filter((route) => route.feature !== "registrar")
+      : ROUTES;
   const workerTokenStore = new WorkerTokenStore(opts.services.db);
   const auth = createBearerAuth({ token: opts.token, workerTokenStore });
   const originHostGuard = createOriginHostGuard({
@@ -1160,7 +1210,7 @@ export function createDaemonFetchHandler(opts: {
       return await otlpTracesRoute(req, opts.services);
     const denied = auth(req);
     if (denied) return denied;
-    const dispatched = await dispatchRoute(req, url, ctx);
+    const dispatched = await dispatchRoute(req, url, ctx, routes);
     return dispatched ?? new Response("not found", { status: 404 });
   };
 }

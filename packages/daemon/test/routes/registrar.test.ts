@@ -1,0 +1,367 @@
+import {
+  RegistrarDetailSchema,
+  RegistrarEventKindSchema,
+  RegistrarListResponseSchema,
+} from "@penumbra/api-contract";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  ProjectRegistry,
+  type Services,
+  TaskEventBus,
+  TaskWriter,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { setPrincipalForTest } from "../../src/auth.js";
+import { registrarCreateRoute } from "../../src/routes/registrar.js";
+import { createDaemonFetchHandler } from "../../src/serve.js";
+
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  /* ignored: best-effort darwin sqlite hint */
+}
+
+const noop = (): void => undefined;
+
+function startTestDaemon(): {
+  fetch: (path: string, init?: RequestInit) => Promise<Response>;
+  services: Services;
+  token: string;
+  stop: () => void;
+} {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const root = mkdtempSync(join(tmpdir(), "registrar-route-"));
+  const worktreeRootDir = join(root, "worktrees");
+  const mainRepoDir = join(root, "main");
+  mkdirSync(worktreeRootDir, { recursive: true });
+  mkdirSync(mainRepoDir, { recursive: true });
+
+  const projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: root }]]),
+  );
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: root,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-08-26T12:00:00.000Z"),
+    worktreeRootDir,
+    mainRepoDir,
+    projectRegistry,
+  });
+  services.watchdog = {
+    recordHeartbeat: noop,
+    hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
+    tick: (): Promise<void> => Promise.resolve(),
+  };
+  Object.assign(services, {
+    agentchatConfig: {
+      agents: [{ name: "codex-acp-fast", tags: ["typescript"], tier: "cli" }],
+    },
+  });
+
+  const taskEvents = new TaskEventBus();
+  const taskWriter = new TaskWriter(db, {
+    now: (): number => services.clock().getTime(),
+    bus: taskEvents,
+  });
+  const token = "tok";
+  const handler = createDaemonFetchHandler({ services, token, taskEvents, taskWriter });
+
+  return {
+    fetch: (path: string, init?: RequestInit): Promise<Response> =>
+      handler(new Request(`http://x${path}`, init)),
+    services,
+    token,
+    stop: (): void => {
+      try {
+        services.supervisor.stopAll();
+      } catch {
+        /* ignored: best-effort teardown */
+      }
+      try {
+        db.close();
+      } catch {
+        /* ignored: best-effort teardown */
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function registrarCreateInput(): Record<string, unknown> {
+  return {
+    title: "Registrar rollout",
+    slug: "registrar-rollout",
+    home_project: "penumbra",
+    phases: ["Domain", "HTTP routes"],
+  };
+}
+
+function registrarCreateRequest(): Request {
+  return new Request("http://x/registrar", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(registrarCreateInput()),
+  });
+}
+
+function authJsonHeaders(token: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+  };
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` };
+}
+
+async function createRegistrar(daemon: ReturnType<typeof startTestDaemon>): Promise<string> {
+  const response = await daemon.fetch("/registrar", {
+    method: "POST",
+    headers: authJsonHeaders(daemon.token),
+    body: JSON.stringify(registrarCreateInput()),
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { registrar_id: string }).registrar_id;
+}
+
+test("enum drift trap: every RegistrarEventKindSchema option is accepted by the registrar_events CHECK, and an invented value is rejected by raw db.run", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  db.run(
+    `INSERT INTO registrar_entries
+       (registrar_id, slug, title, home_project, source_doc_path, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ["registrar-1", "registrar-one", "Registrar one", "penumbra", null, "active", 1, 1],
+  );
+
+  const insertKind = (kind: string): void => {
+    const state =
+      kind === "blocker"
+        ? "opened"
+        : kind === "follow_up"
+          ? "owed"
+          : kind === "phase_transition"
+            ? "active"
+            : null;
+    const linkKind = kind === "link" ? "commit_sha" : null;
+    const linkValue = kind === "link" ? "abc123" : null;
+    db.run(
+      `INSERT INTO registrar_events
+         (registrar_id, phase_no, kind, state, ref_event_id, link_kind, link_value, actor, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["registrar-1", null, kind, state, null, linkKind, linkValue, "maestro", kind, 1],
+    );
+  };
+
+  try {
+    for (const kind of RegistrarEventKindSchema.options) insertKind(kind);
+    expect(() => insertKind("sabotage")).toThrow();
+  } finally {
+    db.close();
+  }
+});
+
+test("POST /registrar with a worker-token principal returns 403", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const req = registrarCreateRequest();
+    setPrincipalForTest(req, {
+      kind: "worker",
+      worker_id: "worker-1",
+      token_hash: "hash-1",
+    });
+
+    const response = await registrarCreateRoute(req, daemon.services);
+
+    expect(response.status).toBe(403);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar as the shared principal creates the entry and its phases in one call, 201 + registrar_id", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const response = await daemon.fetch("/registrar", {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify(registrarCreateInput()),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { registrar_id: string };
+    expect(body.registrar_id).toBeString();
+    expect(daemon.services.registrarReader.getEntry(body.registrar_id)?.title).toBe(
+      "Registrar rollout",
+    );
+    expect(daemon.services.registrarReader.listPhases(body.registrar_id)).toEqual([
+      expect.objectContaining({ phase_no: 1, title: "Domain", status: "active" }),
+      expect.objectContaining({ phase_no: 2, title: "HTTP routes", status: "pending" }),
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events with kind='sabotage' returns 400 invalid_input and a subsequent GET shows zero events", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+    const append = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({ kind: "sabotage", actor: "maestro", body: "break it" }),
+    });
+
+    expect(append.status).toBe(400);
+    expect((await append.json()) as { error: string }).toEqual(
+      expect.objectContaining({ error: "invalid_input" }),
+    );
+
+    const list = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      headers: authHeaders(daemon.token),
+    });
+    expect(list.status).toBe(200);
+    expect((await list.json()) as { events: unknown[] }).toEqual({ events: [] });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("two concurrent POST /registrar/:id/events phase transitions from the same from_status: one 200, one 409 — not a 500", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+    const transition = {
+      phase_no: 1,
+      kind: "phase_transition",
+      from_status: "active",
+      state: "complete",
+      actor: "maestro",
+      body: "phase complete",
+    };
+
+    const responses = await Promise.all([
+      daemon.fetch(`/registrar/${registrarId}/events`, {
+        method: "POST",
+        headers: authJsonHeaders(daemon.token),
+        body: JSON.stringify(transition),
+      }),
+      daemon.fetch(`/registrar/${registrarId}/events`, {
+        method: "POST",
+        headers: authJsonHeaders(daemon.token),
+        body: JSON.stringify(transition),
+      }),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("GET /registrar returns open_blockers/open_followups/phase progress matching RegistrarListResponseSchema", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+    daemon.services.registrarWriter.appendEvent(registrarId, {
+      phase_no: 1,
+      kind: "blocker",
+      state: "opened",
+      actor: "maestro",
+      body: "Need daemon routes",
+    });
+    daemon.services.registrarWriter.appendEvent(registrarId, {
+      phase_no: 2,
+      kind: "follow_up",
+      state: "owed",
+      actor: "maestro",
+      body: "Add MCP surface later",
+    });
+    daemon.services.registrarWriter.appendEvent(registrarId, {
+      phase_no: 1,
+      kind: "phase_transition",
+      from_status: "active",
+      state: "complete",
+      actor: "maestro",
+      body: "Domain phase complete",
+    });
+
+    const list = await daemon.fetch("/registrar", { headers: authHeaders(daemon.token) });
+    expect(list.status).toBe(200);
+    const listBody = RegistrarListResponseSchema.parse(await list.json());
+    expect(listBody.entries).toHaveLength(1);
+    expect(listBody.entries[0]?.registrar_id).toBe(registrarId);
+
+    const detail = await daemon.fetch(`/registrar/${registrarId}`, {
+      headers: authHeaders(daemon.token),
+    });
+    expect(detail.status).toBe(200);
+    const detailBody = RegistrarDetailSchema.parse(await detail.json());
+    expect(detailBody.rollup).toEqual({ open_blockers: 1, open_follow_ups: 1 });
+    expect(detailBody.phases).toEqual([
+      expect.objectContaining({ phase_no: 1, status: "complete" }),
+      expect.objectContaining({ phase_no: 2, status: "pending" }),
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("with PENUMBRA_REGISTRAR=0 the routes are not mounted (404)", async () => {
+  const previous = process.env.PENUMBRA_REGISTRAR;
+  process.env.PENUMBRA_REGISTRAR = "0";
+  const daemon = startTestDaemon();
+  try {
+    const entry = daemon.services.registrarWriter.createEntry(registrarCreateInput());
+    const requests: [string, RequestInit?][] = [
+      [
+        "/registrar",
+        {
+          method: "POST",
+          headers: authJsonHeaders(daemon.token),
+          body: JSON.stringify({ ...registrarCreateInput(), slug: "another-registrar" }),
+        },
+      ],
+      ["/registrar", { headers: authHeaders(daemon.token) }],
+      [`/registrar/${entry.registrar_id}`, { headers: authHeaders(daemon.token) }],
+      [
+        `/registrar/${entry.registrar_id}/events`,
+        {
+          method: "POST",
+          headers: authJsonHeaders(daemon.token),
+          body: JSON.stringify({ kind: "progress", actor: "maestro", body: "hidden" }),
+        },
+      ],
+      [`/registrar/${entry.registrar_id}/events`, { headers: authHeaders(daemon.token) }],
+    ];
+
+    for (const [path, init] of requests) {
+      expect((await daemon.fetch(path, init)).status).toBe(404);
+    }
+  } finally {
+    daemon.stop();
+    if (previous === undefined) delete process.env.PENUMBRA_REGISTRAR;
+    else process.env.PENUMBRA_REGISTRAR = previous;
+  }
+});
