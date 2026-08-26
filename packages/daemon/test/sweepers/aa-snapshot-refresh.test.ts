@@ -500,4 +500,54 @@ describe("aa-snapshot-refresh sweeper", () => {
       global.clearInterval = originalClearInterval;
     }
   });
+
+  test("startAaSnapshotRefreshSweeper: falls back to the default when intervalMs exceeds the int32 setInterval ceiling", async () => {
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+    let capturedIntervalMs: number | undefined;
+    let unrefCallCount = 0;
+    let timerId: { unref: () => void } | null = null;
+    global.setInterval = ((_cb: () => void, ms?: number) => {
+      capturedIntervalMs = ms;
+      timerId = {
+        unref: () => {
+          unrefCallCount += 1;
+        },
+      };
+      return timerId;
+    }) as unknown as typeof global.setInterval;
+    global.clearInterval = mock(() => undefined);
+
+    try {
+      await withTempDir("aa-refresh-timer-oversized-", async (dir) => {
+        const store = createAaSnapshotStore({
+          path: join(dir, "aa-snapshot.json"),
+          ttlSeconds: 3600,
+        });
+        const transport: AaTransport = {
+          async fetch() {
+            return jsonResponse(aaResponseBody());
+          },
+        };
+
+        // 2^31-1 is the largest ms delay setInterval honors; anything above
+        // it is normalized to ~1ms by Node/Bun, causing a hot loop.
+        const stop = startAaSnapshotRefreshSweeper(
+          {
+            aaSnapshotStore: store,
+            transport,
+            apiKeyPath: join(dir, "missing.key"),
+          },
+          2147483648,
+        );
+
+        expect(capturedIntervalMs).toBe(DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS);
+        await waitFor(() => unrefCallCount >= 1);
+        stop();
+      });
+    } finally {
+      global.setInterval = originalSetInterval;
+      global.clearInterval = originalClearInterval;
+    }
+  });
 });

@@ -49,6 +49,16 @@ describe("parseEnv", () => {
     );
   });
 
+  test("AA snapshot refresh interval rejects 0 (sweeper treats missing and 0 differently otherwise)", () => {
+    expect(() => parseEnv({ PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS: "0" })).toThrow(
+      /PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS/,
+    );
+    const unset = parseEnv({});
+    expect(unset.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS).toBeUndefined();
+    const positive = parseEnv({ PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS: "60000" });
+    expect(positive.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS).toBe(60000);
+  });
+
   test("t2 embed recipe defaults to title_plus_concise", () => {
     const result = parseEnv({});
     expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");

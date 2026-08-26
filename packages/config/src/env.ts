@@ -802,8 +802,9 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Max PRs to close per reconciler sweep.",
   },
   PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS: {
-    schema: OptNonNegInt,
-    description: "Interval for the Artificial Analysis snapshot refresh sweeper in milliseconds.",
+    schema: OptPosInt,
+    description:
+      "Interval for the Artificial Analysis snapshot refresh sweeper in milliseconds. Must be a positive integer (0 is rejected, not treated as 'use the default').",
   },
   PENUMBRA_AA_SNAPSHOT_REFRESH_DISABLED: {
     schema: Bool,

@@ -21,6 +21,13 @@ function maybeUnref(timer: ReturnType<typeof setInterval>): void {
 
 export const DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
+/**
+ * Node/Bun's setInterval takes a signed 32-bit ms delay; anything above this
+ * is silently normalized to 1ms internally, turning a large "infrequent
+ * refresh" config value into a hot loop.
+ */
+const MAX_SAFE_SET_INTERVAL_MS = 2147483647;
+
 /** Ceiling applied to a server-supplied Retry-After before it becomes a backoff window. */
 const MAX_AA_SNAPSHOT_BACKOFF_SECONDS = 60 * 60;
 
@@ -159,11 +166,11 @@ export function startAaSnapshotRefreshSweeper(
   deps: AaSnapshotRefreshSweepDeps,
   intervalMs: number = DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
 ): () => void {
-  // Fail closed against a non-finite/non-positive interval reaching setInterval
-  // (which Node/Bun clamp to ~1ms, causing a hot loop) even if a future caller
-  // bypasses the config-layer validation.
+  // Fail closed against a non-finite/non-positive/oversized interval reaching
+  // setInterval (which Node/Bun clamp to ~1ms outside the int32 range, causing
+  // a hot loop) even if a future caller bypasses the config-layer validation.
   const effectiveIntervalMs =
-    Number.isFinite(intervalMs) && intervalMs > 0
+    Number.isFinite(intervalMs) && intervalMs > 0 && intervalMs <= MAX_SAFE_SET_INTERVAL_MS
       ? intervalMs
       : DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS;
 
