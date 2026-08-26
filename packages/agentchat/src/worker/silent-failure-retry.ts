@@ -1,4 +1,8 @@
-import { resolveBiasEffect, type RoutingBiasEffectInput } from "@penumbra/core";
+import {
+  NON_MUTATING_TASK_TYPES,
+  resolveBiasEffect,
+  type RoutingBiasEffectInput,
+} from "@penumbra/core";
 
 export { resolveProvider as resolveAgentProvider } from "@penumbra/core";
 
@@ -25,6 +29,8 @@ export interface SilentRetryPayloadInput {
   conversation_id: string;
   project_id: string | null;
   task_type: string | undefined;
+  task_name?: string;
+  branch_type?: string;
   branch_name?: string | null;
   message: string;
   next_agent: string;
@@ -129,10 +135,17 @@ export function shouldRetryHandoffForSilentFailure(
   perf: PerformanceForRetry | null | undefined,
 ): boolean {
   if (handoff.dispatch_kind === "long_lived_tick") return false;
-  if (handoff.chain_task_type === "smoke_test" || handoff.chain_task_type === "health_check") {
-    return false;
-  }
+  // Non-mutating dispatches leave worktrees untouched by design; retrying their prompts on
+  // role-routed seats can fabricate a replacement result (observed 2026-08-26).
+  if (isNonMutatingTaskType(handoff.chain_task_type)) return false;
   return shouldRetryForSilentFailure(perf);
+}
+
+export function isNonMutatingTaskType(taskType: string | null | undefined): boolean {
+  return (
+    typeof taskType === "string" &&
+    (NON_MUTATING_TASK_TYPES as readonly string[]).includes(taskType)
+  );
 }
 
 export function buildRetryPayloadOrNull(input: SilentRetryPayloadInput): SilentRetryPayload | null {
@@ -143,7 +156,11 @@ export function buildRetryPayloadOrNull(input: SilentRetryPayloadInput): SilentR
 }
 
 export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentRetryPayload {
-  const branchFields = retryBranchFields(input.branch_name);
+  const branchFields = {
+    ...retryBranchFields(input.branch_name),
+    ...(input.task_name === undefined ? {} : { task_name: input.task_name }),
+    ...(input.branch_type === undefined ? {} : { branch_type: input.branch_type }),
+  };
   return {
     initial_agent: input.next_agent,
     message: `${SILENT_RETRY_PREFIX} retry_of=${input.failed_handoff_id} prior_agent=${input.failed_to_agent}\n\n${input.message}`,
@@ -156,7 +173,7 @@ export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentR
   };
 }
 
-function retryBranchFields(
+export function retryBranchFields(
   branchName: string | null | undefined,
 ): Pick<SilentRetryPayload, "task_name" | "branch_type"> {
   if (typeof branchName !== "string") return {};

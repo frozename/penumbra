@@ -98,8 +98,10 @@ import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
   resolveAgentProvider,
+  retryBranchFields,
   type RoutingBiasLike,
   selectRetryAgent,
+  isNonMutatingTaskType,
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
@@ -760,10 +762,7 @@ async function maybeCaptureDispatchOutcome(
   // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
   // recovery handoff message; further captures on retry handoffs are skipped.
   if (!shouldRetryHandoffForSilentFailure(handoff, perf)) {
-    if (
-      shouldRetryForSilentFailure(perf) &&
-      (handoff.chain_task_type === "smoke_test" || handoff.chain_task_type === "health_check")
-    ) {
+    if (shouldRetryForSilentFailure(perf) && isNonMutatingTaskType(handoff.chain_task_type)) {
       log.info(
         {
           handoff_id: handoff.handoff_id,
@@ -845,12 +844,14 @@ async function tryAutoRetrySilentFailure(
   }
 
   try {
+    const branchFields = retryBranchFields(failedHandoff.branch_name);
     const retryPayload = buildRetryPayloadOrNull({
       failed_handoff_id: failedHandoff.handoff_id,
       failed_to_agent: failedHandoff.to_agent,
       conversation_id: failedHandoff.conversation_id,
       project_id: failedHandoff.project_id,
       task_type: failedHandoff.chain_task_type ?? undefined,
+      ...branchFields,
       branch_name: failedHandoff.branch_name ?? null,
       message: failedHandoff.message,
       next_agent: nextAgent,

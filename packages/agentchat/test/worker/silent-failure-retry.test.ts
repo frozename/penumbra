@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { slugifyBranchSegment } from "@penumbra/core";
+import { NON_MUTATING_TASK_TYPES, slugifyBranchSegment } from "@penumbra/core";
 
 import {
   buildRetryPayloadOrNull,
@@ -100,6 +100,12 @@ describe("shouldRetryForSilentFailure", () => {
 });
 
 describe("shouldRetryHandoffForSilentFailure", () => {
+  const noWorktreeActivityPerf = {
+    outcome: "success",
+    reliability_status: "no_worktree_activity",
+    notes: "completed",
+  } as const;
+
   const perfThatRetries = {
     outcome: "success",
     reliability_status: "non_terminal_stale",
@@ -134,17 +140,33 @@ describe("shouldRetryHandoffForSilentFailure", () => {
     ).toBe(false);
   });
 
+  test("does not retry review_adversarial when an untouched worktree is expected", () => {
+    const handoff = { dispatch_kind: null, chain_task_type: "review_adversarial" };
+    expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
+  });
+
   test.each(["smoke_test", "health_check"])(
     "returns false for %s workloads that can complete without worktree changes",
     (chain_task_type) => {
       const handoff = { dispatch_kind: null, chain_task_type };
-      expect(shouldRetryHandoffForSilentFailure(handoff, perfThatRetries)).toBe(false);
+      expect(NON_MUTATING_TASK_TYPES).toContain(chain_task_type);
+      expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
     },
   );
 
-  test("continues retrying implement_small silent failures", () => {
+  test("continues retrying implement_small with no worktree activity", () => {
     const handoff = { dispatch_kind: null, chain_task_type: "implement_small" };
-    expect(shouldRetryHandoffForSilentFailure(handoff, perfThatRetries)).toBe(true);
+    expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(true);
+  });
+
+  test("does not retry a failed non-mutating handoff with a silent_failure note", () => {
+    const handoff = { dispatch_kind: null, chain_task_type: "review_adversarial" };
+    const perf = {
+      outcome: "failed",
+      reliability_status: "no_worktree_activity",
+      notes: "silent_failure: no worktree changes",
+    } as const;
+    expect(shouldRetryHandoffForSilentFailure(handoff, perf)).toBe(false);
   });
 });
 
@@ -181,6 +203,17 @@ describe("buildSilentRetryPayload", () => {
     expect(p.project_id).toBe("penumbra");
     expect(p.task_type).toBe("implement_small");
     expect(p.initial_agent).toBe("codex-acp-fast");
+  });
+
+  test("forwards the original task_name and branch_type", () => {
+    const input = {
+      ...base,
+      task_name: "repair dispatch retry",
+      branch_type: "fix",
+    };
+    const p = buildSilentRetryPayload(input);
+    expect(p.task_name).toBe("repair dispatch retry");
+    expect(p.branch_type).toBe("fix");
   });
 
   test("derives branch_type and task_name from a named workload branch", () => {
