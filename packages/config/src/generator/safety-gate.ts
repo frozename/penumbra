@@ -3,7 +3,12 @@ import type { ModelAliasMap } from "../files/model-aliases.js";
 import type { RoutingConfig } from "../files/routing.js";
 
 import { assertNoBilledHttpSeats } from "./assertions.js";
-import { assertNoRoleTagCollision, assertUniqueSeatNames, type SeatNameInput } from "./naming.js";
+import {
+  assertNoRoleTagCollision,
+  assertUniqueSeatNames,
+  seatNameFor,
+  type SeatNameInput,
+} from "./naming.js";
 import { assertRoleFloors } from "./role-floors.js";
 import { assertPruneSafe } from "./routing-refs.js";
 
@@ -19,6 +24,7 @@ export interface GeneratorSafetyGateContext {
 export interface GeneratorSafetyGateResult {
   readonly ok: boolean;
   readonly violations: string[];
+  readonly warnings: string[];
 }
 
 /**
@@ -35,6 +41,7 @@ export function runGeneratorSafetyGate(
   ctx: GeneratorSafetyGateContext,
 ): GeneratorSafetyGateResult {
   const violations: string[] = [];
+  const warnings: string[] = [];
 
   const guard = (assertion: () => void): void => {
     try {
@@ -48,14 +55,28 @@ export function runGeneratorSafetyGate(
     assertNoBilledHttpSeats(candidateConfig.agents, { allowedProviders: ctx.allowedProviders }),
   );
   guard(() => assertRoleFloors(candidateConfig.agents, ctx.aliasMap));
-  guard(() =>
-    assertNoRoleTagCollision(
-      candidateConfig.agents.map((agent) => agent.name),
-      ctx.roleTags,
-    ),
-  );
+  const generatedSeatNames = ctx.seatNameInputs.flatMap((input) => {
+    try {
+      return [seatNameFor(input.source, input.modelSlug, input.effort)];
+    } catch {
+      return [];
+    }
+  });
+  guard(() => assertNoRoleTagCollision(generatedSeatNames, ctx.roleTags));
   guard(() => assertUniqueSeatNames(ctx.seatNameInputs));
   guard(() => assertPruneSafe(ctx.candidatePrunes, ctx.routing));
 
-  return { ok: violations.length === 0, violations };
+  const generatedNameSet = new Set(generatedSeatNames);
+  const roleTagSet = new Set(ctx.roleTags);
+  const preExistingCollisions = candidateConfig.agents
+    .map((agent) => agent.name)
+    .filter((name) => !generatedNameSet.has(name) && roleTagSet.has(name));
+  if (preExistingCollisions.length > 0) {
+    warnings.push(
+      "pre-existing seat name(s) equal live role tag(s) (exact-name dispatch will silently role-route): " +
+        preExistingCollisions.join(", "),
+    );
+  }
+
+  return { ok: violations.length === 0, violations, warnings };
 }

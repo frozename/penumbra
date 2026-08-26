@@ -336,7 +336,11 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      safetyGate: () => ({ ok: false, violations: ["unsafe one", "unsafe two"] }),
+      safetyGate: () => ({
+        ok: false,
+        violations: ["unsafe one", "unsafe two"],
+        warnings: ["pre-existing role-tag collision"],
+      }),
       reloadConfig: async () => {
         reloads += 1;
       },
@@ -345,9 +349,33 @@ describe("penumbra config sync-providers", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.join("\n")).toContain("unsafe one");
     expect(result.stderr.join("\n")).toContain("unsafe two");
+    expect(result.stdout).toContain("warning: pre-existing role-tag collision");
     expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(agentsBefore);
     expect(readFileSync(join(dir, "model-aliases.yaml"), "utf8")).toBe(aliasesBefore);
     expect(reloads).toBe(0);
+  });
+
+  test("prints safety gate warnings when the gate passes", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "codex", modelId: "gpt-5.5", displayName: "GPT-5.5" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      safetyGate: () => ({
+        ok: true,
+        violations: [],
+        warnings: ["pre-existing role-tag collision"],
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("warning: pre-existing role-tag collision");
   });
 
   test("dry-run (default) makes no filesystem change; --apply writes and requests a daemon reload", async () => {

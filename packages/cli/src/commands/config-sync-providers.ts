@@ -557,6 +557,7 @@ export async function runConfigSyncProviders(
     candidatePrunes: pruneResult.prunes,
     routing,
   });
+  stdout.push(...gateResult.warnings.map((warning) => `warning: ${warning}`));
   if (!gateResult.ok) {
     stderr.push("penumbra config sync-providers: safety gate failed");
     stderr.push(...gateResult.violations.map((violation) => `  - ${violation}`));

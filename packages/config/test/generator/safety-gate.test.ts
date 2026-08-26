@@ -78,6 +78,66 @@ describe("runGeneratorSafetyGate", () => {
 
     const result = runGeneratorSafetyGate(candidateConfig, baseCtx());
 
-    expect(result).toEqual({ ok: true, violations: [] });
+    expect(result).toEqual({ ok: true, violations: [], warnings: [] });
+  });
+
+  test("warns without failing when a hand-authored seat name equals a live role tag", () => {
+    const candidateConfig: AgentsConfig = {
+      agents: [...completeAgents(), agent({ name: "executor" })],
+    };
+
+    const result = runGeneratorSafetyGate(candidateConfig, baseCtx());
+
+    expect(result).toEqual({
+      ok: true,
+      violations: [],
+      warnings: [
+        "pre-existing seat name(s) equal live role tag(s) (exact-name dispatch will silently role-route): executor",
+      ],
+    });
+  });
+
+  test("fails when a generated seat name equals a live role tag", () => {
+    const generatedName = "openai-gpt-5";
+    const candidateConfig: AgentsConfig = {
+      agents: [...completeAgents(), agent({ name: generatedName })],
+    };
+
+    const result = runGeneratorSafetyGate(candidateConfig, {
+      ...baseCtx(),
+      roleTags: [generatedName],
+      seatNameInputs: [{ source: "openai", modelSlug: "gpt-5" }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toEqual([
+      "generated seat name(s) collide with live role tag(s), which would silently role-route an exact-name dispatch instead of hitting the named seat: openai-gpt-5",
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("retains collision findings and warnings when another generated name input is invalid", () => {
+    const generatedName = "openai-gpt-5";
+    const candidateConfig: AgentsConfig = {
+      agents: [...completeAgents(), agent({ name: generatedName }), agent({ name: "executor" })],
+    };
+
+    const result = runGeneratorSafetyGate(candidateConfig, {
+      ...baseCtx(),
+      roleTags: [generatedName, "executor"],
+      seatNameInputs: [
+        { source: "openai", modelSlug: "gpt-5" },
+        { source: "---", modelSlug: "..." },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations.some((violation) => violation.includes(generatedName))).toBe(true);
+    expect(
+      result.violations.some((violation) => violation.includes("normalizes to an empty")),
+    ).toBe(true);
+    expect(result.warnings).toEqual([
+      "pre-existing seat name(s) equal live role tag(s) (exact-name dispatch will silently role-route): executor",
+    ]);
   });
 });
