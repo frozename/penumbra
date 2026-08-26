@@ -96,6 +96,36 @@ anthropic:
     } satisfies ProviderSourcesConfig);
   });
 
+  test("round-trips per-source model exclusions and rejects empty entries", () => {
+    const dir = makeTempDir();
+    const fixture = `
+sakana:
+  discovery:
+    kind: endpoint
+    locator: https://api.sakana.ai/v1/models
+  auth: {}
+  exclude_models: [fugu-ultra]
+  bindings: {}
+`;
+    writeUtf8(join(dir, "providers.yaml"), fixture);
+
+    expect(loadProviderSourcesFromDir(dir)).toEqual({
+      sakana: {
+        discovery: {
+          kind: "endpoint",
+          locator: "https://api.sakana.ai/v1/models",
+        },
+        auth: {},
+        exclude_models: ["fugu-ultra"],
+        bindings: {},
+      },
+    } satisfies ProviderSourcesConfig);
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("fugu-ultra", "''"));
+
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/exclude_models/);
+  });
+
   test("an openai-compat-http binding must declare pricing_mode and api_provider explicitly — no default", () => {
     const dir = makeTempDir();
     const binding = `

@@ -387,9 +387,21 @@ export async function runConfigSyncProviders(
         continue;
       }
       assertDiscoveryNotSuspiciouslyEmpty(result);
+      const excludedModelIds = new Set(source.exclude_models ?? []);
+      const discoveredModelIds = new Set(result.map((model) => model.modelId));
+      const included = result.filter((model) => {
+        if (!excludedModelIds.has(model.modelId)) return true;
+        stdout.push(`model excluded by config: ${providerId}/${model.modelId}`);
+        return false;
+      });
+      for (const entry of source.exclude_models ?? []) {
+        if (!discoveredModelIds.has(entry)) {
+          stdout.push(`exclusion unmatched (stale): ${providerId}/${entry}`);
+        }
+      }
       discoveredByProvider.set(
         providerId,
-        result.map((model) => ({ ...model, sourceProviderId: providerId })),
+        included.map((model) => ({ ...model, sourceProviderId: providerId })),
       );
     } catch (error) {
       discoveryComplete = false;

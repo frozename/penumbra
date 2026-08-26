@@ -103,6 +103,62 @@ function providerFixture(
 const noModelsDev = async (): Promise<unknown> => ({});
 
 describe("penumbra config sync-providers", () => {
+  test("excludes exact model ids before reporting and generation, and reports stale exclusions", async () => {
+    const dir = await makeTempDir();
+    const providers = providerFixture({ exclude_models: ["fugu-ultra", "retired-fugu"] });
+    providers.openai!.bindings["openai-cli"] = {
+      kind: "cli",
+      pricing_mode: "subscription",
+      api_provider: "openai",
+      subscription_provider: "openai",
+      model_carrier: "model",
+      seat_name_template: "openai-{model}-cli",
+    };
+    writeFixture(dir, providers, [
+      ...FLOOR_AGENTS,
+      {
+        name: "openai-fugu-ultra-http",
+        adapter: "stdio-acp",
+        api_provider: "openai",
+        options: { binary: "operator-seat", model: "operator-fugu" },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+          {
+            sourceProviderId: "openai",
+            modelId: "fugu-ultra-20260615",
+            displayName: "Fugu Ultra 2026-06-15",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toEqual([]);
+    expect(result.stdout).toContain("model excluded by config: openai/fugu-ultra");
+    expect(result.stdout).toContain("exclusion unmatched (stale): openai/retired-fugu");
+    expect(result.stdout).toContain("would upsert openai-fugu-ultra-20260615-http");
+    expect(result.stdout).toContain("would alias openai-fugu-ultra-20260615-http");
+    expect(
+      result.stdout.some((line) =>
+        line.startsWith("edge lit (no seat): openai/fugu-ultra-20260615 via openai-cli"),
+      ),
+    ).toBe(true);
+    expect(
+      result.stdout.some((line) =>
+        line.startsWith("edge lit (no seat): openai/fugu-ultra via openai-cli"),
+      ),
+    ).toBe(false);
+    expect(result.stdout).not.toContain("would upsert openai-fugu-ultra-http");
+    expect(result.stdout).not.toContain("hand-covered openai/fugu-ultra");
+  });
+
   test("skips a model already covered by a hand-authored seat, matched on source+model identity, not name", async () => {
     const dir = await makeTempDir();
     writeFixture(dir, providerFixture(), [
