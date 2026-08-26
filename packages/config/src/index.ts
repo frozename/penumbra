@@ -72,6 +72,13 @@ export {
   type HttpSeatLike,
 } from "./generator/assertions.js";
 export {
+  applyBindingCarriers,
+  type AppliedCarriers,
+  type BindingCarriers,
+  type CarrierModelVars,
+  renderTemplateTokens,
+} from "./generator/carriers.js";
+export {
   assertNoRoleTagCollision,
   assertUniqueSeatNames,
   type SeatNameInput,

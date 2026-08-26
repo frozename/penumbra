@@ -12,6 +12,7 @@ import {
   loadProviderSourcesFromDir,
   ModelAliasMapSchema,
   pruneOwnedOnly,
+  renderTemplateTokens,
   RoutingConfigSchema,
   runGeneratorSafetyGate,
   seatNameFor,
@@ -249,12 +250,18 @@ function renderSeatName(
     throw new Error(`seat_name_template ${JSON.stringify(template)} must include {model}`);
   }
   const hasTierPlaceholder = template.includes("{tier}");
-  const rendered = template
-    .replaceAll("{model}", model.modelId)
-    .replaceAll("{tier}", model.reasoningTier ?? "");
+  const [rendered] = renderTemplateTokens(
+    [template],
+    {
+      modelId: model.modelId,
+      reasoningTier: model.reasoningTier,
+      displayName: model.displayName,
+    },
+    { onMissingTier: "empty" },
+  );
   const input: SeatNameInput = {
     source: "",
-    modelSlug: rendered,
+    modelSlug: rendered!,
     ...(!hasTierPlaceholder && model.reasoningTier ? { effort: model.reasoningTier } : {}),
   };
   return { name: seatNameFor(input.source, input.modelSlug, input.effort), input };

@@ -432,6 +432,38 @@ describe("penumbra config sync-providers", () => {
     expect(collision.stderr.join("\n")).toContain("collides across distinct");
   });
 
+  test("keeps tier placeholders lenient only for deterministic seat names", async () => {
+    const dir = await makeTempDir();
+    const providers = providerFixture();
+    providers.openai!.bindings["openai-http"]!.seat_name_template = "openai-{model}-{tier}-http";
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "gpt-5.4", displayName: "GPT-5.4" },
+          {
+            sourceProviderId: "openai",
+            modelId: "gpt-5.5",
+            displayName: "GPT-5.5",
+            reasoningTier: "high",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const generatedNames = readAgents(dir)
+      .agents.filter((agent) => agent.provenance?.source === "providers-sync")
+      .map((agent) => agent.name)
+      .sort();
+    expect(generatedNames).toEqual(["openai-gpt-5-4-http", "openai-gpt-5-5-high-http"]);
+  });
+
   test("aborts with no filesystem write when runGeneratorSafetyGate reports any violation", async () => {
     const dir = await makeTempDir();
     writeFixture(dir, providerFixture());
