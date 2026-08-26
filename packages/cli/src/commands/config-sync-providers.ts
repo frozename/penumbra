@@ -8,6 +8,7 @@ import { resolveDaemonStorageRoot } from "../../../core/src/index.js";
 import {
   AgentsConfigSchema,
   assertDiscoveryNotSuspiciouslyEmpty,
+  applyBindingCarriers,
   loadModelAliasMapFromDir,
   loadProviderSourcesFromDir,
   ModelAliasMapSchema,
@@ -77,9 +78,21 @@ interface GeneratedSeat {
 }
 
 type HttpProviderBinding = ProviderBinding & { kind: "openai-compat-http" };
+type LeafProviderBinding = ProviderBinding & { kind: "opencode-acp" };
+type MaterializationStrategy = "http" | "leaf" | "carrier" | "unsupported";
 
-function isHttpProviderBinding(binding: ProviderBinding): binding is HttpProviderBinding {
-  return binding.kind === "openai-compat-http";
+function resolveMaterializationStrategy(binding: ProviderBinding): MaterializationStrategy {
+  switch (binding.kind) {
+    case "openai-compat-http":
+      return "http";
+    case "opencode-acp":
+      return "leaf";
+    case "stdio-acp":
+    case "agy-cli":
+      return "carrier";
+    case "cli":
+      return "unsupported";
+  }
 }
 
 function resolveConfigDir(env: Record<string, string | undefined>): string {
@@ -278,7 +291,7 @@ function aliasCreator(model: DiscoveredModel, binding: ProviderBinding): string 
     : binding.api_provider;
 }
 
-function generatedSeat(
+function materializeHttpSeat(
   providerId: string,
   source: ProviderSource,
   bindingId: string,
@@ -324,6 +337,60 @@ function generatedSeat(
         managed_fields: managedFields,
       },
       options: options as AgentConfig["options"],
+    },
+    alias: {
+      aa_creator: aliasCreator(model, binding),
+      aa_slug: aliasSlug(model),
+      ...(model.reasoningTier ? { reasoning_level: model.reasoningTier } : {}),
+    },
+  };
+}
+
+function materializeLeafSeat(
+  providerId: string,
+  bindingId: string,
+  binding: LeafProviderBinding,
+  model: DiscoveredModel,
+): GeneratedSeat {
+  const { name, input } = renderSeatName(binding.seat_name_template, model);
+  const modelPath = carrierPath(binding.model_carrier);
+  const baseOptions: Record<string, unknown> = {};
+  setPath(baseOptions, modelPath.replace(/^options\./, ""), model.modelId);
+  const applied = applyBindingCarriers(baseOptions, binding.carriers, binding.kind, {
+    modelId: model.modelId,
+    reasoningTier: model.reasoningTier,
+    displayName: model.displayName,
+  });
+  const managedFields = [
+    "name",
+    "adapter",
+    "api_provider",
+    "pricing_mode",
+    "subscription_provider",
+    modelPath,
+    ...applied.managedFields,
+  ];
+
+  return {
+    identity: JSON.stringify([providerId, bindingId, model.modelId, model.reasoningTier ?? null]),
+    seatNameInput: input,
+    managedFields,
+    agent: {
+      name,
+      adapter: binding.kind,
+      api_provider: binding.api_provider,
+      pricing_mode: binding.pricing_mode,
+      ...(binding.subscription_provider
+        ? { subscription_provider: binding.subscription_provider }
+        : {}),
+      ...applied.topLevel,
+      roles: [],
+      auto_approve_to: [],
+      provenance: {
+        source: PROVENANCE_SOURCE,
+        managed_fields: managedFields,
+      },
+      options: applied.options as AgentConfig["options"],
     },
     alias: {
       aa_creator: aliasCreator(model, binding),
@@ -481,7 +548,8 @@ export async function runConfigSyncProviders(
             }
             continue;
           }
-          if (!isHttpProviderBinding(binding)) {
+          const strategy = resolveMaterializationStrategy(binding);
+          if (strategy !== "http" && strategy !== "leaf") {
             const edgeKey = JSON.stringify([binding.api_provider, model.modelId, bindingId]);
             const reportedEdge = reportedEdges.get(edgeKey);
             const tiers = reportedEdge?.tiers ?? [];
@@ -497,7 +565,29 @@ export async function runConfigSyncProviders(
             }
             continue;
           }
-          generated.push(generatedSeat(providerId, source, bindingId, binding, model));
+          if (strategy === "http") {
+            if (binding.kind !== "openai-compat-http") {
+              throw new Error(
+                `internal materialization strategy mismatch for kind ${binding.kind}`,
+              );
+            }
+            generated.push(
+              materializeHttpSeat(
+                providerId,
+                source,
+                bindingId,
+                binding as HttpProviderBinding,
+                model,
+              ),
+            );
+            continue;
+          }
+          if (binding.kind !== "opencode-acp") {
+            throw new Error(`internal materialization strategy mismatch for kind ${binding.kind}`);
+          }
+          generated.push(
+            materializeLeafSeat(providerId, bindingId, binding as LeafProviderBinding, model),
+          );
         }
       }
     }

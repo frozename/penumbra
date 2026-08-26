@@ -14,6 +14,7 @@ import {
   runConfigSyncProviders,
   type ProviderDiscoveryAdapter,
 } from "../../src/commands/config-sync-providers.js";
+import { parseOpencodeModelsOutput } from "../../src/commands/generator/discovery-opencode.js";
 
 let tempDirs: string[] = [];
 
@@ -93,6 +94,28 @@ function providerFixture(
           subscription_provider: "openai",
           model_carrier: "model",
           seat_name_template: "openai-{model}-http",
+        },
+      },
+      ...overrides,
+    },
+  };
+}
+
+function opencodeProviderFixture(
+  overrides: Partial<ProviderSourcesConfig[string]> = {},
+): ProviderSourcesConfig {
+  return {
+    opencode: {
+      discovery: { kind: "fake", locator: "opencode models --verbose" },
+      auth: {},
+      bindings: {
+        "opencode-go-acp": {
+          kind: "opencode-acp",
+          pricing_mode: "subscription",
+          api_provider: "opencode-go",
+          subscription_provider: "opencode-go",
+          model_carrier: "model",
+          seat_name_template: "{model}-acp",
         },
       },
       ...overrides,
@@ -642,6 +665,218 @@ describe("penumbra config sync-providers", () => {
       "options.baseUrl",
       "options.apiKeyKeychain",
     ]);
+  });
+
+  test("materializes an opencode-acp seat from model_carrier alone, no carriers block required", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, opencodeProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/deepseek-v4-pro",
+            displayName: "DeepSeek V4 Pro",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      result.stdout.some((line) =>
+        line.startsWith("edge lit (no seat): opencode-go/opencode-go/deepseek-v4-pro"),
+      ),
+    ).toBe(false);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "opencode-go-deepseek-v4-pro-acp",
+    );
+    expect(seat).toMatchObject({
+      adapter: "opencode-acp",
+      api_provider: "opencode-go",
+      pricing_mode: "subscription",
+      subscription_provider: "opencode-go",
+      options: { model: "opencode-go/deepseek-v4-pro" },
+      provenance: {
+        source: "providers-sync",
+        managed_fields: [
+          "name",
+          "adapter",
+          "api_provider",
+          "pricing_mode",
+          "subscription_provider",
+          "options.model",
+        ],
+      },
+    });
+    expect(seat?.options).not.toHaveProperty("opencodeBinary");
+  });
+
+  test("carriers.binary threads into options.opencodeBinary for opencode-acp", async () => {
+    const dir = await makeTempDir();
+    const providers = opencodeProviderFixture();
+    providers.opencode!.bindings["opencode-go-acp"]!.carriers = {
+      binary: "/opt/opencode-go/bin/opencode",
+    };
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/qwen3.7-max",
+            displayName: "Qwen 3.7 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "opencode-go-qwen3-7-max-acp",
+    );
+    expect(seat?.options).toMatchObject({
+      model: "opencode-go/qwen3.7-max",
+      opencodeBinary: "/opt/opencode-go/bin/opencode",
+    });
+    expect(seat?.provenance?.managed_fields).toContain("options.opencodeBinary");
+  });
+
+  test("generates the whole opencode-go catalog fixture without unique-name or billed-seat failures", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, opencodeProviderFixture());
+    const catalogModels = parseOpencodeModelsOutput(
+      readFileSync(join(import.meta.dir, "fixtures", "opencode-models.txt"), "utf8"),
+    )
+      .slice(0, 31)
+      .map((model) => ({
+        ...model,
+        modelId: model.modelId.replace(/^opencode\//, "opencode-go/"),
+      }));
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter(catalogModels),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(catalogModels.length).toBeGreaterThan(30);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toEqual([]);
+    expect(result.stdout.join("\n")).not.toContain("safety gate failed");
+    expect(result.stdout.join("\n")).not.toContain("collide");
+    expect(
+      readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
+    ).toHaveLength(catalogModels.length);
+  });
+
+  test("a freshly generated opencode-acp seat has no consumed roles", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, opencodeProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/glm-5.2",
+            displayName: "GLM 5.2",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      readAgents(dir).agents.find((agent) => agent.name === "opencode-go-glm-5-2-acp")?.roles,
+    ).toEqual([]);
+  });
+
+  test("a hand-authored opencode-acp seat pinning the same model is still hand-covered", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, opencodeProviderFixture(), [
+      ...FLOOR_AGENTS,
+      {
+        name: "hand-opencode-go-deepseek",
+        adapter: "opencode-acp",
+        api_provider: "opencode-go",
+        pricing_mode: "subscription",
+        subscription_provider: "opencode-go",
+        options: { model: "opencode-go/deepseek-v4-pro" },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/deepseek-v4-pro",
+            displayName: "DeepSeek V4 Pro",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("hand-covered opencode-go/opencode-go/deepseek-v4-pro");
+    expect(result.stdout.join("\n")).not.toContain("edge lit (no seat):");
+    expect(result.stdout.join("\n")).not.toContain("would upsert");
+  });
+
+  test("a bare cli binding still produces the byte-identical P5 binding-contract refusal", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, {
+      openai: {
+        discovery: { kind: "fake", locator: "codex models list" },
+        auth: {},
+        bindings: {
+          "codex-cli": {
+            kind: "cli",
+            pricing_mode: "subscription",
+            api_provider: "openai",
+            subscription_provider: "openai",
+            model_carrier: "model",
+            seat_name_template: "openai-{model}-cli",
+          },
+        },
+      },
+    });
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "gpt-5.4", displayName: "GPT-5.4" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "edge lit (no seat): openai/gpt-5.4 via codex-cli — seat generation for kind cli requires the P5 binding contract (binary/tier/env carriers)",
+    );
   });
 
   test("reports non-HTTP binding edges without generating seats or aliases", async () => {
