@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 
-// 40 = persisted routing decisions.
-export const SCHEMA_VERSION = 40;
+// 41 = registrar entries, phases, and event journal.
+export const SCHEMA_VERSION = 41;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -944,6 +944,52 @@ const SCHEMA_DDL_BLOCK_14 = `
       CREATE INDEX IF NOT EXISTS idx_routing_decisions_handoff_id_ts ON routing_decisions(handoff_id, ts DESC);
       CREATE INDEX IF NOT EXISTS idx_routing_decisions_ts ON routing_decisions(ts DESC);
 `;
+const SCHEMA_DDL_BLOCK_15 = `
+      CREATE TABLE IF NOT EXISTS registrar_entries (
+        registrar_id    TEXT PRIMARY KEY,
+        slug            TEXT NOT NULL UNIQUE
+                          CHECK (slug GLOB '[a-z]*' AND slug NOT GLOB '*[^a-z0-9-]*'),
+        title           TEXT NOT NULL,
+        home_project    TEXT NOT NULL,
+        source_doc_path TEXT,
+        status          TEXT NOT NULL CHECK (status IN ('draft','active','paused','complete','abandoned')),
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS registrar_phases (
+        registrar_id TEXT NOT NULL REFERENCES registrar_entries(registrar_id),
+        phase_no     INTEGER NOT NULL,
+        title        TEXT NOT NULL,
+        status       TEXT NOT NULL CHECK (status IN ('pending','active','blocked','complete','abandoned')),
+        updated_at   INTEGER NOT NULL,
+        PRIMARY KEY (registrar_id, phase_no)
+      );
+
+      CREATE TABLE IF NOT EXISTS registrar_events (
+        event_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        registrar_id TEXT NOT NULL REFERENCES registrar_entries(registrar_id),
+        phase_no     INTEGER,
+        kind         TEXT NOT NULL CHECK (kind IN
+                       ('progress','caveat','blocker','follow_up','decision','phase_transition','link')),
+        state        TEXT,
+        ref_event_id INTEGER REFERENCES registrar_events(event_id),
+        link_kind    TEXT CHECK (link_kind IS NULL OR link_kind IN
+                       ('commit_sha','handoff_id','lane_id','workflow_run_id','memory_id','plan_id','gh_issue')),
+        link_value   TEXT,
+        actor        TEXT NOT NULL CHECK (actor IN ('maestro','worker','sweeper','operator')),
+        body         TEXT NOT NULL CHECK (length(body) <= 4096),
+        created_at   INTEGER NOT NULL,
+        CHECK ((kind = 'blocker'          AND state IN ('opened','resolved'))
+            OR (kind = 'follow_up'        AND state IN ('owed','done','dropped'))
+            OR (kind = 'phase_transition' AND state IN ('pending','active','blocked','complete','abandoned'))
+            OR (kind NOT IN ('blocker','follow_up','phase_transition') AND state IS NULL)),
+        CHECK (kind != 'link' OR (link_kind IS NOT NULL AND link_value IS NOT NULL)),
+        CHECK (state NOT IN ('resolved','done','dropped') OR ref_event_id IS NOT NULL)
+      );
+      CREATE INDEX IF NOT EXISTS registrar_events_by_entry ON registrar_events(registrar_id, created_at);
+      CREATE INDEX IF NOT EXISTS registrar_events_open_state ON registrar_events(registrar_id, kind, state);
+`;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -1290,6 +1336,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     applyMemoryLinksNullableMigration(db);
     db.run(SCHEMA_DDL_BLOCK_12);
     db.run(SCHEMA_DDL_BLOCK_14);
+    db.run(SCHEMA_DDL_BLOCK_15);
     db.run("COMMIT");
   } catch (err) {
     db.run("ROLLBACK");

@@ -259,7 +259,7 @@ describe("routing decision log", () => {
   });
 
   test("migrate reaches the bumped SCHEMA_VERSION", () => {
-    expect(SCHEMA_VERSION).toBe(40);
+    expect(SCHEMA_VERSION).toBe(41);
 
     const marker = db
       .query<{ value: string }, []>("SELECT value FROM db_meta WHERE key = 'schema_version'")

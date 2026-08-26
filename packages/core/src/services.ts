@@ -26,6 +26,8 @@ import {
 import { MaestroSessionWriter } from "./maestro/writer.js";
 import { PidRegistry } from "./pid/registry.js";
 import { PlanWriter } from "./plans/writer.js";
+import { RegistrarReader } from "./registrar/reader.js";
+import { RegistrarWriter } from "./registrar/writer.js";
 import { ChainReader } from "./readers/chain.js";
 import { HandoffReader } from "./readers/handoff.js";
 import { PermissionReader } from "./readers/permission.js";
@@ -298,6 +300,8 @@ export interface Services {
   mcpPool?: McpPoolLike;
   actionGate?: ActionGateLike;
   planWriter: PlanWriter;
+  registrarWriter: RegistrarWriter;
+  registrarReader: RegistrarReader;
 }
 
 export interface BuildServicesOpts {
@@ -416,6 +420,8 @@ export function buildServices(opts: BuildServicesOpts): Services {
     workflowRegistry: opts.workflowRegistry,
     workflowRuns: opts.workflowRuns,
     planWriter: new PlanWriter(opts.db, () => clock().getTime()),
+    registrarWriter: new RegistrarWriter(opts.db, () => clock().getTime()),
+    registrarReader: new RegistrarReader(opts.db),
     notificationOutbox: new NotificationOutboxWriter(opts.db),
   };
 }

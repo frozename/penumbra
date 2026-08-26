@@ -5,6 +5,7 @@ export * from "./dispatch-events.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./handoffs.js";
+export * from "./registrar.js";
 export { MissionSessionSchema } from "./session.js";
 export * from "./session.js";
 export * from "./tasks.js";

@@ -132,6 +132,16 @@ export {
   PlanWriter,
   type RegisterPlanInput,
 } from "./plans/writer.js";
+export {
+  InvalidPhaseTransition,
+  PhaseNotFound,
+  RegistrarNotFound,
+  RegistrarSlugTaken,
+  UnknownJournalRef,
+} from "./registrar/errors.js";
+export { RegistrarReader } from "./registrar/reader.js";
+export * from "./registrar/schema.js";
+export { RegistrarWriter } from "./registrar/writer.js";
 export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
   defaultProjectRegistryPath,

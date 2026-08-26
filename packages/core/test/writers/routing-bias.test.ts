@@ -90,7 +90,7 @@ describe("routing_bias schema", () => {
 
   it("SCHEMA_VERSION is expected", () => {
     // SCHEMA_VERSION is defined in packages/core/src/db/schema.ts
-    expect(SCHEMA_VERSION).toBe(40);
+    expect(SCHEMA_VERSION).toBe(41);
   });
 
   it("db_meta marker re-stamps to current SCHEMA_VERSION after applySchema", () => {
