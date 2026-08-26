@@ -240,6 +240,8 @@ The validator checks:
 
 Known traps (per `plan_validate_format_gotchas` memory): no `---` separators between phases (use `## Phase N` headers only); no inline `Dispatch graph:` lines outside the per-phase block; `maestro` is not a registered agent — drop yaml meta blocks from maestro-manual tasks entirely.
 
+Register the plan: `penumbra registrar register <plan-file>`.
+
 ### preferred_agent / fallback_agent discipline
 
 Before naming an agent, query `mcp__penumbra__agent_recommend` with the matching `task_type`:

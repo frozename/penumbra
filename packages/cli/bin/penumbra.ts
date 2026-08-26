@@ -28,6 +28,7 @@ import { dispatchPlanSubcommand } from "../src/commands/plan.js";
 import { runRecallBackfill } from "../src/commands/recall-backfill.js";
 import { runRecall } from "../src/commands/recall.js";
 import { runRecent } from "../src/commands/recent.js";
+import { dispatchRegistrarSubcommand } from "../src/commands/registrar.js";
 import { runRepair } from "../src/commands/repair.js";
 import { runStart, runStartDetached } from "../src/commands/start.js";
 import { runStatus } from "../src/commands/status.js";
@@ -799,6 +800,17 @@ switch (cmd) {
       }
     }
     break;
+  case "registrar":
+    {
+      try {
+        const code = await dispatchRegistrarSubcommand(process.argv.slice(3), resolveLiveRoot());
+        process.exit(code);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
+    }
+    break;
   case "maestro":
     {
       try {
@@ -1195,7 +1207,7 @@ switch (cmd) {
   case "-h":
   case undefined:
     emit(
-      "usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
+      "usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
     );
     process.exit(0);
     break;

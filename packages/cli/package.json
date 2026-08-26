@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@penumbra/agentchat": "workspace:*",
+    "@penumbra/api-contract": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",
     "@penumbra/config": "workspace:*",
