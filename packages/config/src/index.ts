@@ -56,10 +56,31 @@ export {
   type AssertDiscoveryNotSuspiciouslyEmptyOptions,
 } from "./generator/empty-discovery.js";
 export {
+  assertNoBilledHttpSeats,
+  type AssertNoBilledHttpSeatsOptions,
+  type HttpSeatLike,
+} from "./generator/assertions.js";
+export {
+  assertNoRoleTagCollision,
+  assertUniqueSeatNames,
+  type SeatNameInput,
+  seatNameFor,
+} from "./generator/naming.js";
+export {
+  assertRoleFloors,
+  CONSUMED_ROLE_TAGS,
+  type ConsumedRoleTag,
+} from "./generator/role-floors.js";
+export {
   assertPruneSafe,
   collectMissingRoutingAgents,
   type RoutingAgentReference,
 } from "./generator/routing-refs.js";
+export {
+  type GeneratorSafetyGateContext,
+  type GeneratorSafetyGateResult,
+  runGeneratorSafetyGate,
+} from "./generator/safety-gate.js";
 export {
   isGeneratorOwned,
   pruneOwnedOnly,
