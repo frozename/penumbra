@@ -323,6 +323,11 @@ export interface DaemonHandle {
 export type DaemonServices = CoreServices & {
   taskRouterConfig: TaskRouterConfig;
   modelAliasMap: ModelAliasMap;
+  // Override for the AA snapshot store's on-disk path, consumed by
+  // reloadTaskRouterConfigSubsystem. Absent in production (defaults to
+  // ~/.penumbra/aa-snapshot.json); tests set this to a temp path so a
+  // reload doesn't touch the operator's real snapshot file.
+  aaSnapshotPath?: string;
   agentchatConfig?: {
     agents?: { name: string; roles?: string[]; [key: string]: unknown };
     providers?: { name: string; model: string; [key: string]: unknown }[];

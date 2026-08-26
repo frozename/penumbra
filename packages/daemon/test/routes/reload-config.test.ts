@@ -668,8 +668,12 @@ function reloadAaSnapshotPayload(id: string): AaSnapshotStorePayload {
 }
 
 test("POST /agentchat/reload replaces the AA snapshot store with the active router TTL", async () => {
-  await withTempHome(async () => {
+  await withTempHome(async (home) => {
     const services = tempServices();
+    // Bun's os.homedir() ignores a process.env.HOME override, so the
+    // reload route's default `~/.penumbra/aa-snapshot.json` store would
+    // otherwise write through to the operator's real snapshot file.
+    asDaemonServices(services).aaSnapshotPath = join(home, ".penumbra", "aa-snapshot.json");
     const configDir = mkdtempSync(join(tmpdir(), "reload-router-aa-"));
     tempDirs.push(configDir);
     writeAgentchat(configDir);

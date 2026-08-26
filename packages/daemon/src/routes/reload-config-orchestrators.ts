@@ -347,6 +347,7 @@ export function reloadTaskRouterConfigSubsystem(
       taskRouterConfig,
       modelAliasMap: loadModelAliasMapFromDir(configPath),
       aaSnapshotStore: createAaSnapshotStore({
+        path: services.aaSnapshotPath,
         ttlSeconds: taskRouterConfig.snapshot_ttl_seconds,
         now: () => services.clock(),
       }),
