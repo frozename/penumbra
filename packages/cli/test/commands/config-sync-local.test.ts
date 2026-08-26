@@ -373,6 +373,65 @@ describe("penumbra config sync-local", () => {
     expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
   });
 
+  test("flags a suspiciously empty inventory when nodes are configured but zero models were found", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const before = readFileSync(join(dir, "agents.yaml"), "utf8");
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "unavailable",
+        messages: [],
+        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+        models: [],
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).toContain("configured node");
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
+  });
+
+  test("partial inventory skips prunes but still applies upserts", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-vanished-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        options: { baseUrl: "http://old", model: "vanished" },
+        provenance: { source: "llamactl-sync-local" },
+      },
+    ]);
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "partial",
+        messages: ["served models unavailable: node-b timed out"],
+        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+        models: [
+          {
+            id: "new-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      readAgents(dir)
+        .agents.map((agent) => agent.name)
+        .sort(),
+    ).toEqual(["local-new-model-http", "local-vanished-http"]);
+    expect(result.stdout.join("\n")).toContain("skipping prune");
+  });
+
   test("aborts without writing when schema validation fails", async () => {
     const dir = await makeTempDir();
     writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);

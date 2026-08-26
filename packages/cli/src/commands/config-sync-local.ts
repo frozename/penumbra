@@ -20,6 +20,7 @@ import {
   upsertManagedFields,
 } from "../../../config/src/generator/upsert.js";
 import { assertPruneSafe } from "../../../config/src/generator/routing-refs.js";
+import { assertDiscoveryNotSuspiciouslyEmpty } from "../../../config/src/generator/empty-discovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -194,7 +195,7 @@ function buildSyncedAgentsConfig(
   current: AgentsConfig,
   inventory: LlamactlInventory,
   routing: RoutingConfig,
-): { config: AgentsConfig; upserts: string[]; prunes: string[] } {
+): { config: AgentsConfig; upserts: string[]; prunes: string[]; pruneSkipped: boolean } {
   const handAuthoredModels = new Set(
     current.agents.flatMap((agent) => {
       const model = agent.options?.model;
@@ -215,12 +216,14 @@ function buildSyncedAgentsConfig(
     upserts.push(seat.name);
   }
 
-  const { agents, prunes } = pruneOwnedOnly(
-    [...byName.values()],
-    generatedNames,
-    PROVENANCE_SOURCE,
-  );
-  assertPruneSafe(prunes, routing);
+  // A partial/uncertain inventory (e.g. one node unreachable for this
+  // response) must never be read as "these models are gone" — only a fully
+  // successful discovery is trustworthy enough to prune on.
+  const pruneSkipped = inventory.status !== "ok";
+  const { agents, prunes } = pruneSkipped
+    ? { agents: [...byName.values()], prunes: [] as string[] }
+    : pruneOwnedOnly([...byName.values()], generatedNames, PROVENANCE_SOURCE);
+  if (prunes.length > 0) assertPruneSafe(prunes, routing);
 
   return {
     config: {
@@ -229,6 +232,7 @@ function buildSyncedAgentsConfig(
     },
     upserts,
     prunes,
+    pruneSkipped,
   };
 }
 
@@ -291,16 +295,35 @@ export async function runConfigSyncLocal(
   const inventory = await (opts.inventory ?? (() => collectLlamactlInventory({ env })))();
   if (inventory.messages.length > 0) stdout.push(...inventory.messages);
   if (inventory.models.length === 0) {
-    stdout.push("penumbra config sync-local: no local models discovered; agents.yaml unchanged");
+    try {
+      // Zero nodes configured means there is genuinely no local infra to
+      // discover models from; that empty result is authoritative. Zero
+      // models with nodes present is suspicious (likely a probe outage) and
+      // is called out explicitly, even though neither case writes anything.
+      assertDiscoveryNotSuspiciouslyEmpty(inventory.models, {
+        controlCheck: () => inventory.nodes.length === 0,
+      });
+      stdout.push("penumbra config sync-local: no local models discovered; agents.yaml unchanged");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      stdout.push(
+        `penumbra config sync-local: no local models discovered from ${String(inventory.nodes.length)} configured node(s); agents.yaml unchanged (${message})`,
+      );
+    }
     return { exitCode: 0, stdout, stderr };
   }
 
   let config: AgentsConfig;
   let upserts: string[];
   let prunes: string[];
+  let pruneSkipped: boolean;
   try {
     const routing = readRoutingConfig(configDir);
-    ({ config, upserts, prunes } = buildSyncedAgentsConfig(current, inventory, routing));
+    ({ config, upserts, prunes, pruneSkipped } = buildSyncedAgentsConfig(
+      current,
+      inventory,
+      routing,
+    ));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     stderr.push(`penumbra config sync-local: ${message}`);
@@ -308,6 +331,11 @@ export async function runConfigSyncLocal(
   }
   for (const name of upserts) stdout.push(`${dryRun ? "would upsert" : "upserted"} ${name}`);
   for (const name of prunes) stdout.push(`${dryRun ? "would prune" : "pruned"} ${name}`);
+  if (pruneSkipped) {
+    stdout.push(
+      `penumbra config sync-local: inventory status is "${inventory.status}"; skipping prune step (partial/uncertain discovery)`,
+    );
+  }
 
   let validated: AgentsConfig;
   try {

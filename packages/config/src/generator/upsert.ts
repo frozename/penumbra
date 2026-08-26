@@ -18,8 +18,13 @@ function getPath(obj: unknown, path: string): unknown {
   }, obj);
 }
 
+const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const keys = path.split(".");
+  if (keys.some((key) => UNSAFE_PATH_SEGMENTS.has(key))) {
+    throw new Error(`refusing to set unsafe managed field path: ${path}`);
+  }
   const last = keys.pop();
   if (last === undefined) return;
   let cur = obj;

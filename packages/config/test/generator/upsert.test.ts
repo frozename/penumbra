@@ -79,6 +79,32 @@ describe("isGeneratorOwned", () => {
   });
 });
 
+describe("upsertManagedFields path safety", () => {
+  test("rejects a managed field path that targets __proto__", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+    expect(() => {
+      upsertManagedFields(existing, generated, ["__proto__.polluted"]);
+    }).toThrow(/__proto__/);
+  });
+
+  test("rejects a managed field path that targets constructor.prototype", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+    expect(() => {
+      upsertManagedFields(existing, generated, ["constructor.prototype.polluted"]);
+    }).toThrow(/constructor/);
+  });
+
+  test("rejects a managed field path that targets prototype directly", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+    expect(() => {
+      upsertManagedFields(existing, generated, ["prototype.polluted"]);
+    }).toThrow(/prototype/);
+  });
+});
+
 describe("pruneOwnedOnly", () => {
   test("prunes generator-owned agents absent from generatedNames, keeps everything else", () => {
     const vanished = baseAgent({ name: "vanished", provenance: { source: "gen" } });
