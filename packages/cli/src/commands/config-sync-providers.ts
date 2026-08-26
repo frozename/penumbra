@@ -29,11 +29,16 @@ import {
 } from "../../../config/src/index.js";
 
 import { executeConfigSplitWrite } from "./config-split.js";
+import { discoverAgyModels } from "./generator/discovery-agy.js";
 import { discoverCodexModels } from "./generator/discovery-codex.js";
 import { discoverHttpModels, type HttpModelDiscoveryResult } from "./generator/discovery-http.js";
 import { fetchModelsDevPayload, joinModelsDevMetadata } from "./generator/discovery-models-dev.js";
 import { discoverOpencodeModels } from "./generator/discovery-opencode.js";
-import type { DiscoveredModel } from "./generator/discovery-types.js";
+import type {
+  DiscoveredModel,
+  DiscoveryDiagnostic,
+  DiscoveryReport,
+} from "./generator/discovery-types.js";
 
 const PROVENANCE_SOURCE = "providers-sync";
 const ALLOWED_BILLED_HTTP_PROVIDERS = ["local", "sakana", "deepseek"] as const;
@@ -43,7 +48,10 @@ export interface ProviderDiscoveryContext {
   source: ProviderSource;
 }
 
-export type ProviderDiscoveryResult = DiscoveredModel[] | { outcome: "skipped"; reason: string };
+export type ProviderDiscoveryResult =
+  | DiscoveredModel[]
+  | DiscoveryReport
+  | { outcome: "skipped"; reason: string };
 
 export type ProviderDiscoveryAdapter = (
   context: ProviderDiscoveryContext,
@@ -79,14 +87,15 @@ interface GeneratedSeat {
 
 type HttpProviderBinding = ProviderBinding & { kind: "openai-compat-http" };
 type LeafProviderBinding = ProviderBinding & { kind: "opencode-acp" };
-type CarrierProviderBinding = ProviderBinding & { kind: "stdio-acp" };
+type CarrierProviderBinding = ProviderBinding & { kind: "stdio-acp" | "agy-cli" };
 type MaterializationStrategy = "http" | "leaf" | "carrier" | "unsupported";
 
-function argsTemplateMissingModelPlaceholder(binding: ProviderBinding): boolean {
-  return (
-    binding.carriers?.args_template !== undefined &&
-    !binding.carriers.args_template.some((token) => token.includes("{model}"))
-  );
+function argsTemplateMissingModelCarrierPlaceholder(binding: ProviderBinding): boolean {
+  if (binding.carriers?.args_template === undefined) return false;
+  return !binding.carriers.args_template.some((token) => {
+    if (token.includes("{model}")) return true;
+    return binding.kind === "agy-cli" && token.includes("{displayName}");
+  });
 }
 
 function resolveMaterializationStrategy(binding: ProviderBinding): MaterializationStrategy {
@@ -96,8 +105,8 @@ function resolveMaterializationStrategy(binding: ProviderBinding): Materializati
     case "opencode-acp":
       return "leaf";
     case "stdio-acp":
-      return "carrier";
     case "agy-cli":
+      return "carrier";
     case "cli":
       return "unsupported";
   }
@@ -133,6 +142,35 @@ function skippedHttpResult(result: HttpModelDiscoveryResult): ProviderDiscoveryR
     : { outcome: "skipped", reason: result.reason };
 }
 
+function isDiscoveryReport(result: ProviderDiscoveryResult): result is DiscoveryReport {
+  return !Array.isArray(result) && result.outcome === "discovered";
+}
+
+function isSkippedDiscoveryResult(
+  result: ProviderDiscoveryResult,
+): result is { outcome: "skipped"; reason: string } {
+  return (
+    !Array.isArray(result) && result.outcome === "skipped" && typeof result.reason === "string"
+  );
+}
+
+function validDiscoveryDiagnostics(diagnostics: unknown): DiscoveryDiagnostic[] {
+  if (!Array.isArray(diagnostics)) return [];
+  return diagnostics.flatMap((entry) => {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      "row" in entry &&
+      "reason" in entry &&
+      typeof entry.row === "string" &&
+      typeof entry.reason === "string"
+    ) {
+      return [{ row: entry.row, reason: entry.reason }];
+    }
+    return [];
+  });
+}
+
 function httpDiscoveryAdapter(): ProviderDiscoveryAdapter {
   return async ({ providerId, source }) => {
     if (!source.auth.keychain) {
@@ -158,6 +196,8 @@ function defaultDiscoveryAdapters(): ProviderDiscoveryAdapterRegistry {
   return {
     codex: async () => discoverCodexModels(),
     "codex-cli": async () => discoverCodexModels(),
+    agy: async () => discoverAgyModels(),
+    "agy-cli": async () => discoverAgyModels(),
     opencode: async () => discoverOpencodeModels(),
     "opencode-cli": async () => discoverOpencodeModels(),
     http: discoverHttp,
@@ -414,8 +454,12 @@ function materializeCarrierSeat(
   binding: CarrierProviderBinding,
   model: DiscoveredModel,
 ): GeneratedSeat {
-  if (argsTemplateMissingModelPlaceholder(binding)) {
-    throw new Error("carriers.args_template must include {model}");
+  if (argsTemplateMissingModelCarrierPlaceholder(binding)) {
+    throw new Error(
+      binding.kind === "agy-cli"
+        ? "carriers.args_template must include {model} or {displayName}"
+        : "carriers.args_template must include {model}",
+    );
   }
   const { name, input } = renderSeatName(binding.seat_name_template, model);
   const applied = applyBindingCarriers({}, binding.carriers, binding.kind, {
@@ -530,23 +574,31 @@ export async function runConfigSyncProviders(
 
     try {
       const result = await adapter({ providerId, source });
-      if (!Array.isArray(result)) {
+      if (isSkippedDiscoveryResult(result)) {
         discoveryComplete = false;
-        const skippedResult = result as unknown;
-        const reason =
-          skippedResult !== null &&
-          typeof skippedResult === "object" &&
-          "reason" in skippedResult &&
-          typeof skippedResult.reason === "string"
-            ? skippedResult.reason
-            : "discovery adapter returned an invalid skipped reason";
-        stdout.push(`provider ${providerId} skipped: ${reason}`);
+        stdout.push(`provider ${providerId} skipped: ${result.reason}`);
         continue;
       }
-      assertDiscoveryNotSuspiciouslyEmpty(result);
+      if (!Array.isArray(result) && !isDiscoveryReport(result)) {
+        discoveryComplete = false;
+        stdout.push(
+          `provider ${providerId} skipped: discovery adapter returned an invalid skipped reason`,
+        );
+        continue;
+      }
+      const models = Array.isArray(result) ? result : result.models;
+      const diagnostics = Array.isArray(result)
+        ? []
+        : validDiscoveryDiagnostics(result.diagnostics);
+      for (const diagnostic of diagnostics) {
+        stdout.push(
+          `provider ${providerId} malformed row skipped: ${JSON.stringify(diagnostic.row)} — ${diagnostic.reason}`,
+        );
+      }
+      assertDiscoveryNotSuspiciouslyEmpty(models);
       const excludedModelIds = new Set(source.exclude_models ?? []);
-      const discoveredModelIds = new Set(result.map((model) => model.modelId));
-      const included = result.filter((model) => {
+      const discoveredModelIds = new Set(models.map((model) => model.modelId));
+      const included = models.filter((model) => {
         if (!excludedModelIds.has(model.modelId)) return true;
         stdout.push(`model excluded by config: ${providerId}/${model.modelId}`);
         return false;
@@ -596,7 +648,7 @@ export async function runConfigSyncProviders(
       const models = enrichedByProvider.get(providerId) ?? [];
       const unusableBindingIds = new Set<string>();
       for (const [bindingId, binding] of Object.entries(source.bindings)) {
-        if (binding.kind === "stdio-acp" && argsTemplateMissingModelPlaceholder(binding)) {
+        if (binding.kind === "stdio-acp" && argsTemplateMissingModelCarrierPlaceholder(binding)) {
           stdout.push(
             `binding unusable: ${providerId}/${bindingId} — carriers.args_template must include {model}`,
           );
@@ -654,7 +706,7 @@ export async function runConfigSyncProviders(
             continue;
           }
           if (strategy === "carrier") {
-            if (binding.kind !== "stdio-acp") {
+            if (binding.kind !== "stdio-acp" && binding.kind !== "agy-cli") {
               throw new Error(
                 `internal materialization strategy mismatch for kind ${binding.kind}`,
               );

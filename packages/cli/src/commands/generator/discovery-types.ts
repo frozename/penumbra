@@ -5,3 +5,14 @@ export interface DiscoveredModel {
   reasoningTier?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface DiscoveryDiagnostic {
+  row: string;
+  reason: string;
+}
+
+export interface DiscoveryReport {
+  outcome: "discovered";
+  models: DiscoveredModel[];
+  diagnostics?: DiscoveryDiagnostic[];
+}

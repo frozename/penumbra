@@ -147,6 +147,34 @@ function alibabaCarrierProviderFixture(): ProviderSourcesConfig {
   };
 }
 
+function agyProviderFixture(): ProviderSourcesConfig {
+  return {
+    google: {
+      discovery: { kind: "fake", locator: "agy models" },
+      auth: {},
+      bindings: {
+        "google-gemini-cli": {
+          kind: "agy-cli",
+          pricing_mode: "subscription",
+          api_provider: "google",
+          subscription_provider: "google",
+          model_carrier: "options.args.model",
+          seat_name_template: "google-{model}-cli",
+          carriers: {
+            binary: "/Users/acordeiro/.local/bin/agy",
+            args_template: [
+              "--model",
+              "{displayName}",
+              "--dangerously-skip-permissions",
+              "--print",
+            ],
+          },
+        },
+      },
+    },
+  };
+}
+
 const noModelsDev = async (): Promise<unknown> => ({});
 
 describe("penumbra config sync-providers", () => {
@@ -907,6 +935,156 @@ describe("penumbra config sync-providers", () => {
     ]);
   });
 
+  test("materializes an agy-cli seat with options.command (not options.binary)", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, agyProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.1-pro-high",
+            displayName: "Gemini 3.1 Pro (High)",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "google-gemini-3-1-pro-high-cli",
+    );
+    expect(seat).toMatchObject({
+      adapter: "agy-cli",
+      api_provider: "google",
+      pricing_mode: "subscription",
+      subscription_provider: "google",
+      options: {
+        command: "/Users/acordeiro/.local/bin/agy",
+        args: ["--model", "Gemini 3.1 Pro (High)", "--dangerously-skip-permissions", "--print"],
+      },
+      provenance: {
+        source: "providers-sync",
+        managed_fields: [
+          "name",
+          "adapter",
+          "api_provider",
+          "pricing_mode",
+          "subscription_provider",
+          "options.command",
+          "options.args",
+        ],
+      },
+    });
+    expect(seat?.options).not.toHaveProperty("binary");
+  });
+
+  test("args_template substitutes {displayName}, not {model}", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, agyProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.5-flash-medium",
+            displayName: "Gemini 3.5 Flash (Medium)",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.join("\n")).not.toContain("carriers.args_template must include {model}");
+    expect(
+      readAgents(dir).agents.find((agent) => agent.name === "google-gemini-3-5-flash-medium-cli")
+        ?.options.args,
+    ).toEqual([
+      "--model",
+      "Gemini 3.5 Flash (Medium)",
+      "--dangerously-skip-permissions",
+      "--print",
+    ]);
+  });
+
+  test("subscription_model_source:'displayName' stamps top-level subscription_model and lists it in managed_fields", async () => {
+    const dir = await makeTempDir();
+    const providers = agyProviderFixture();
+    providers.google!.bindings["google-gemini-cli"]!.carriers!.subscription_model_source =
+      "displayName";
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.1-pro-high",
+            displayName: "Gemini 3.1 Pro (High)",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "google-gemini-3-1-pro-high-cli",
+    );
+    expect(seat?.subscription_model).toBe("Gemini 3.1 Pro (High)");
+    expect(seat?.provenance?.managed_fields).toContain("subscription_model");
+  });
+
+  test("with the real google-gemini-cli hand seat shape present, the agy source reports hand-covered", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, agyProviderFixture(), [
+      ...FLOOR_AGENTS,
+      {
+        name: "google-gemini-cli",
+        adapter: "agy-cli",
+        api_provider: "google",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        options: {
+          command: "/Users/acordeiro/.local/bin/agy",
+          args: ["--model", "Gemini 3.1 Pro (High)", "--dangerously-skip-permissions", "--print"],
+          pass_via: "argv",
+        },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.1-pro-high",
+            displayName: "Gemini 3.1 Pro (High)",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("hand-covered google/gemini-3.1-pro-high");
+    expect(result.stdout.join("\n")).not.toContain("would upsert google-gemini-3-1-pro-high-cli");
+  });
+
   test("a stdio-acp binding with no carriers.binary stays refused with the existing 'requires the P5 binding contract' message, suffixed with the missing carrier name", async () => {
     const dir = await makeTempDir();
     const providers = alibabaCarrierProviderFixture();
@@ -976,6 +1154,83 @@ describe("penumbra config sync-providers", () => {
     expect(
       readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
     ).toHaveLength(0);
+  });
+
+  test("a stdio-acp args_template with only {displayName} remains unusable", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.args_template = [
+      "-c",
+      "model={displayName}",
+      "-c",
+      "model_provider=alibaba",
+    ];
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "binding unusable: alibaba/codex-alibaba-acp — carriers.args_template must include {model}",
+    );
+    expect(
+      readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
+    ).toHaveLength(0);
+  });
+
+  test("prints per-row discovery diagnostics before continuing sync", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, agyProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: async () => ({
+          outcome: "discovered",
+          models: [
+            {
+              sourceProviderId: "google",
+              modelId: "gemini-3.1-pro-high",
+              displayName: "Gemini 3.1 Pro (High)",
+            },
+          ],
+          diagnostics: [
+            {
+              row: "missing-tab-row",
+              reason: "missing tab separator",
+            },
+            {
+              row: "empty-name\t   ",
+              reason: "empty display name",
+            },
+          ],
+        }),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      'provider google malformed row skipped: "missing-tab-row" — missing tab separator',
+    );
+    expect(result.stdout).toContain(
+      'provider google malformed row skipped: "empty-name\\t   " — empty display name',
+    );
+    expect(result.stdout).toContain("would upsert google-gemini-3-1-pro-high-cli");
   });
 
   test("reports an unusable args_template once when every discovered edge is hand-covered", async () => {
