@@ -201,13 +201,35 @@ function containsEmbeddedModelIdentity(value: unknown, modelId: string): boolean
   }
 }
 
-function agentCarriesModel(agent: AgentConfig, modelId: string, modelCarrier: string): boolean {
+function agentCarriesModel(
+  agent: AgentConfig,
+  modelId: string,
+  modelCarrier: string,
+  displayName?: string,
+): boolean {
   const modelPath = carrierPath(modelCarrier);
   const configuredCarrier = getPath(agent, modelPath);
   if (configuredCarrier !== undefined) {
     return (
       configuredCarrier === modelId || containsEmbeddedModelIdentity(configuredCarrier, modelId)
     );
+  }
+  const carrierSegments = modelCarrierSegments(modelPath);
+  const carrierName = carrierSegments.pop();
+  const carrierParent = getPath(agent, carrierSegments.join("."));
+  if (carrierName && Array.isArray(carrierParent)) {
+    const candidates = [modelId, ...(displayName === undefined ? [] : [displayName])];
+    if (
+      candidates.some((candidate) =>
+        carrierParent.some(
+          (token, index) =>
+            token === `${carrierName}=${candidate}` ||
+            (token === `--${carrierName}` && carrierParent[index + 1] === candidate),
+        ),
+      )
+    ) {
+      return true;
+    }
   }
   if (agent.options.model === modelId || agent.subscription_model === modelId) return true;
   return (
@@ -442,7 +464,7 @@ export async function runConfigSyncProviders(
           const handCovered = manualAgents.some(
             (agent) =>
               agent.api_provider === binding.api_provider &&
-              agentCarriesModel(agent, model.modelId, binding.model_carrier),
+              agentCarriesModel(agent, model.modelId, binding.model_carrier, model.displayName),
           );
           if (handCovered) {
             const coverageKey = `${binding.api_provider}/${model.modelId}`;

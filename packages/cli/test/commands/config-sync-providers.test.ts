@@ -203,6 +203,115 @@ describe("penumbra config sync-providers", () => {
     expect(result.stdout.join("\n")).toContain("would upsert openai-gpt-5-4-http");
   });
 
+  test("agentCarriesModel detects a -c key=value token in an argv array", async () => {
+    const dir = await makeTempDir();
+    writeFixture(
+      dir,
+      {
+        alibaba: {
+          discovery: { kind: "fake", locator: "codex models list" },
+          auth: {},
+          bindings: {
+            "alibaba-acp": {
+              kind: "stdio-acp",
+              pricing_mode: "subscription",
+              api_provider: "alibaba",
+              subscription_provider: "alibaba",
+              model_carrier: "options.args.model",
+              seat_name_template: "alibaba-{model}-acp",
+            },
+          },
+        },
+      },
+      [
+        ...FLOOR_AGENTS,
+        {
+          name: "codex-alibaba-acp",
+          adapter: "stdio-acp",
+          api_provider: "alibaba",
+          options: {
+            binary: "codex",
+            args: ["-c", "model=qwen3.8-max", "-c", "model_provider=alibaba"],
+          },
+        },
+      ],
+    );
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("hand-covered alibaba/qwen3.8-max");
+    expect(
+      result.stdout.some((line) => line.includes("edge lit (no seat): alibaba/qwen3.8-max")),
+    ).toBe(false);
+  });
+
+  test("agentCarriesModel detects a --flag value pair in an argv array, matching on displayName", async () => {
+    const dir = await makeTempDir();
+    writeFixture(
+      dir,
+      {
+        google: {
+          discovery: { kind: "fake", locator: "gemini models list" },
+          auth: {},
+          bindings: {
+            "google-gemini-cli": {
+              kind: "cli",
+              pricing_mode: "subscription",
+              api_provider: "google",
+              subscription_provider: "google",
+              model_carrier: "options.args.model",
+              seat_name_template: "google-{model}-cli",
+            },
+          },
+        },
+      },
+      [
+        ...FLOOR_AGENTS,
+        {
+          name: "google-gemini-cli",
+          adapter: "gemini-cli",
+          api_provider: "google",
+          options: {
+            args: ["--model", "Gemini 3.1 Pro (High)", "--approval-mode", "yolo"],
+          },
+        },
+      ],
+    );
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.1-pro-high",
+            displayName: "Gemini 3.1 Pro (High)",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("hand-covered google/gemini-3.1-pro-high");
+    expect(
+      result.stdout.some((line) => line.includes("edge lit (no seat): google/gemini-3.1-pro-high")),
+    ).toBe(false);
+  });
+
   test("upserts generated seats with provenance matching the managed-field allowlist", async () => {
     const dir = await makeTempDir();
     writeFixture(dir, {
