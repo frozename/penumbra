@@ -801,6 +801,15 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 5,
     description: "Max PRs to close per reconciler sweep.",
   },
+  PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS: {
+    schema: OptNonNegInt,
+    description: "Interval for the Artificial Analysis snapshot refresh sweeper in milliseconds.",
+  },
+  PENUMBRA_AA_SNAPSHOT_REFRESH_DISABLED: {
+    schema: Bool,
+    default: false,
+    description: "Disable the Artificial Analysis snapshot refresh sweeper.",
+  },
   PENUMBRA_GATE_QUALITY_DIGEST_DIR: {
     schema: OptStr,
     description: "Directory for gate-quality digest output.",

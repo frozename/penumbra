@@ -262,6 +262,10 @@ import { createLocalSeatHealthService } from "./services/local-seat-health.js";
 import { OrphanHandoffRecoveryService } from "./services/orphan-handoff-recovery.js";
 import { WatchdogService } from "./services/watchdog.js";
 import { createWorkerHealthController, WorkerHealthProbe } from "./services/worker-health-probe.js";
+import {
+  DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
+  startAaSnapshotRefreshSweeper,
+} from "./sweepers/aa-snapshot-refresh.js";
 import { startEfficacyJobReclaimSweeper } from "./sweepers/efficacy-job-reclaim.js";
 import { startGateQualityDigestSweeper } from "./sweepers/gate-quality-digest.js";
 import {
@@ -1812,6 +1816,7 @@ interface LateSweepers {
   stopNotificationSweeper: () => void;
   stopGateQualityDigestSweeper: () => void;
   stopWorkflowSweeper: () => void;
+  stopAaSnapshotRefreshSweeper: () => void;
 }
 
 function startLateSweepers(args: {
@@ -1851,6 +1856,22 @@ function startLateSweepers(args: {
     getEnv: (key: string): string | undefined => process.env[key],
     log: opts.services.log,
   });
+  const aaSnapshotRefreshConfig = getConfig().env;
+  const aaSnapshotRefreshDisabled =
+    aaSnapshotRefreshConfig.PENUMBRA_AA_SNAPSHOT_REFRESH_DISABLED === true;
+  const stopAaSnapshotRefreshSweeper = aaSnapshotRefreshDisabled
+    ? (): void => undefined
+    : startAaSnapshotRefreshSweeper(
+        {
+          get aaSnapshotStore() {
+            return opts.services.aaSnapshotStore;
+          },
+          now: (): Date => opts.services.clock(),
+          log: opts.services.log,
+        },
+        (aaSnapshotRefreshConfig.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS as number | undefined) ??
+          DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
+      );
   const stopWorkflowSweeper = ((): (() => void) => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -1880,6 +1901,7 @@ function startLateSweepers(args: {
     stopNotificationSweeper,
     stopGateQualityDigestSweeper,
     stopWorkflowSweeper,
+    stopAaSnapshotRefreshSweeper,
   };
 }
 
@@ -1926,6 +1948,7 @@ function buildStopHandler(deps: StopHandlerDeps): () => Promise<void> {
     deps.lateSweepers.stopWorkflowSweeper();
     deps.lateSweepers.stopNotificationSweeper();
     deps.lateSweepers.stopGateQualityDigestSweeper();
+    deps.lateSweepers.stopAaSnapshotRefreshSweeper();
     deps.collaborators.ghTaskSyncSweeper.stop();
     deps.dreamingStops.stopDreaming?.();
     deps.dreamingStops.stopDigest?.();
