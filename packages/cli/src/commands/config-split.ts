@@ -2,7 +2,12 @@ import type { ParsedAgentChatConfig } from "@penumbra/agentchat/config/types";
 import type { AgentPool } from "@penumbra/config";
 
 import { AgentChatConfigSchema } from "@penumbra/agentchat/config/types";
-import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
+import {
+  AgentsConfigSchema,
+  ModelAliasMapSchema,
+  QuotasConfigSchema,
+  RoutingConfigSchema,
+} from "@penumbra/config";
 import {
   copyFileSync,
   existsSync,
@@ -178,6 +183,7 @@ export type ConfigSplitTarget = readonly [
     | ReturnType<typeof AgentsConfigSchema.parse>
     | ReturnType<typeof RoutingConfigSchema.parse>
     | ReturnType<typeof QuotasConfigSchema.parse>
+    | ReturnType<typeof ModelAliasMapSchema.parse>
   ),
 ];
 

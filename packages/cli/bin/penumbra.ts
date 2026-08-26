@@ -1136,10 +1136,11 @@ switch (cmd) {
     {
       const sub = process.argv[3];
       if (sub === "--help" || sub === "-h" || sub === undefined) {
-        emit("usage: penumbra config <show|split|sync-local|check-aliases>");
+        emit("usage: penumbra config <show|split|sync-local|sync-providers|check-aliases>");
         emit("  show  [--json]");
         emit("  split (--source <path> | --source-dir <dir>) --dest <dir> [--force] [--dry-run]");
         emit("  sync-local [--apply | --dry-run]");
+        emit("  sync-providers [--apply | --dry-run]");
         emit("  check-aliases");
         process.exit(0);
       }
@@ -1168,6 +1169,16 @@ switch (cmd) {
         for (const line of result.stderr) console.error(line);
         process.exit(result.exitCode);
       }
+      if (sub === "sync-providers") {
+        const { runConfigSyncProviders } = await import("../src/commands/config-sync-providers.js");
+        const result = await runConfigSyncProviders({
+          apply: process.argv.includes("--apply"),
+          dryRun: process.argv.includes("--dry-run"),
+        });
+        for (const line of result.stdout) emit(line);
+        for (const line of result.stderr) console.error(line);
+        process.exit(result.exitCode);
+      }
       if (sub === "check-aliases") {
         const { runConfigCheckAliases } = await import("../src/commands/config-check-aliases.js");
         const result = runConfigCheckAliases({});
@@ -1175,7 +1186,7 @@ switch (cmd) {
         for (const line of result.stderr) console.error(line);
         process.exit(result.exitCode);
       }
-      console.error("Usage: penumbra config <show|split|sync-local|check-aliases>");
+      console.error("Usage: penumbra config <show|split|sync-local|sync-providers|check-aliases>");
       process.exit(2);
     }
     break;
