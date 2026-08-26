@@ -771,3 +771,178 @@ test("dispatchStream accepts an OpenAI usage-only stream chunk", async () => {
   expect(done.result.meta?.tokens_in).toBe(8);
   expect(done.result.meta?.tokens_out).toBe(0);
 });
+
+test("dispatchStream accepts Alibaba chunks with null usage and captures final usage", async () => {
+  const chunks = [
+    {
+      model: "deepseek-v4-flash-0731",
+      id: "chatcmpl-alibaba-1",
+      object: "chat.completion.chunk",
+      created: 1787766829,
+      usage: null,
+      choices: [
+        {
+          logprobs: null,
+          index: 0,
+          delta: { content: "", role: "assistant" },
+          finish_reason: null,
+        },
+      ],
+    },
+    {
+      id: "chatcmpl-alibaba-1",
+      object: "chat.completion.chunk",
+      created: 1787766829,
+      model: "deepseek-v4-flash-0731",
+      choices: [
+        {
+          index: 0,
+          delta: { content: "PROBE-OK" },
+          logprobs: null,
+          finish_reason: null,
+        },
+      ],
+      usage: null,
+    },
+    {
+      id: "chatcmpl-alibaba-1",
+      object: "chat.completion.chunk",
+      created: 1787766829,
+      model: "deepseek-v4-flash-0731",
+      choices: [
+        {
+          index: 0,
+          delta: { content: "", reasoning_content: "We" },
+          logprobs: null,
+          finish_reason: null,
+        },
+      ],
+      usage: null,
+    },
+    {
+      id: "chatcmpl-alibaba-1",
+      object: "chat.completion.chunk",
+      created: 1787766829,
+      model: "deepseek-v4-flash-0731",
+      choices: [
+        {
+          index: 0,
+          delta: { content: "" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: null,
+    },
+    {
+      id: "chatcmpl-alibaba-1",
+      object: "chat.completion.chunk",
+      created: 1787766829,
+      model: "deepseek-v4-flash-0731",
+      choices: [],
+      usage: {
+        prompt_tokens: 12,
+        total_tokens: 16,
+        completion_tokens: 4,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+    },
+  ];
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse([
+          ...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`),
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "fallback-model",
+  });
+
+  const events = await drainStream(
+    adapter.dispatchStream({
+      prompt: "p",
+      conversation: { id: "c", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    }),
+  );
+
+  const deltas = events
+    .filter((event): event is Extract<DispatchEvent, { type: "delta" }> => event.type === "delta")
+    .map((event) => event.text);
+  expect(deltas).toEqual(["PROBE-OK", "We"]);
+  const done = events.find(
+    (event): event is Extract<DispatchEvent, { type: "done" }> => event.type === "done",
+  );
+  if (!done) throw new Error("expected done event");
+  expect(done.result.text).toBe("PROBE-OK");
+  expect(done.result.meta).toMatchObject({
+    model: "deepseek-v4-flash-0731",
+    reasoning_content: "We",
+    tokens_in: 12,
+    tokens_out: 4,
+    tokens_input: 12,
+    tokens_cache_read: 0,
+  });
+});
+
+test("dispatchStream rejects an empty choices chunk with null usage", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(sseResponse(['data: {"choices":[],"usage":null}\n\n', "data: [DONE]\n\n"])),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /chat chunk/i,
+  );
+});
+
+test("dispatchStream rejects non-record usage", async () => {
+  global.fetch = asFetchFn(
+    mock(() =>
+      Promise.resolve(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"bad"},"finish_reason":"stop"}],"usage":"garbage"}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    ),
+  );
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: "http://example/v1",
+    apiKey: "tk",
+    model: "m",
+  });
+
+  await expectRejectionMatching(
+    drainStream(
+      adapter.dispatchStream({
+        prompt: "p",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+      }),
+    ),
+    /chat chunk/i,
+  );
+});

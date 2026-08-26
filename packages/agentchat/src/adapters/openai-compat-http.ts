@@ -56,7 +56,7 @@ interface OpenAiStreamChoice {
 
 interface OpenAiStreamChunk {
   choices: OpenAiStreamChoice[];
-  usage?: OpenAiUsage;
+  usage?: OpenAiUsage | null;
   model?: string;
 }
 
@@ -346,9 +346,10 @@ function isOpenAiStreamChunk(value: unknown): value is OpenAiStreamChunk {
   if (!isRecord(value)) return false;
   const choices = value.choices;
   if (!Array.isArray(choices)) return false;
-  if (choices.length === 0 && value.usage === undefined) return false;
+  if (choices.length === 0 && (value.usage === undefined || value.usage === null)) return false;
   if (!choices.every(isOpenAiStreamChoice)) return false;
-  if (value.usage !== undefined && !isOpenAiUsage(value.usage)) return false;
+  if (value.usage !== undefined && value.usage !== null && !isOpenAiUsage(value.usage))
+    return false;
   return value.model === undefined || typeof value.model === "string";
 }
 
