@@ -1,6 +1,7 @@
 import { Navigate, createBrowserRouter, type RouteObject } from "react-router-dom";
 import { MODULES } from "./modules/manifest";
 import { MissionControl } from "./modules/mission";
+import { RegistrarDetail, RegistrarList } from "./modules/registrar";
 import { Shell } from "./shell/Shell";
 
 function DeferredViewStub({ view }: { view: string }): JSX.Element {
@@ -19,13 +20,23 @@ function moduleElement(m: (typeof MODULES)[number]): JSX.Element {
   return <DeferredViewStub view={m.label} />;
 }
 
+function moduleRoutes(m: (typeof MODULES)[number]): RouteObject[] {
+  if (m.id === "registrar") {
+    return [
+      { path: m.id, element: <RegistrarList /> },
+      { path: `${m.id}/:registrarId`, element: <RegistrarDetail /> },
+    ];
+  }
+  return [{ path: m.id, element: moduleElement(m) }];
+}
+
 export const routes: RouteObject[] = [
   {
     path: "/",
     element: <Shell />,
     children: [
       { index: true, element: <Navigate to={`/${MODULES[0].id}`} replace /> },
-      ...MODULES.map((m) => ({ path: m.id, element: moduleElement(m) })),
+      ...MODULES.flatMap(moduleRoutes),
       { path: "*", element: <NotFound /> },
     ],
   },

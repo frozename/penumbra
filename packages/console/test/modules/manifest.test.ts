@@ -20,3 +20,13 @@ describe("module manifest", () => {
     expect(getModule("mission")).toEqual(MODULES[0]);
   });
 });
+
+describe("registrar module", () => {
+  test("MODULES includes a registrar entry with available:true", () => {
+    const registrar = MODULES.find((module) => module.id === "registrar");
+    expect(registrar).toBeDefined();
+    expect(registrar?.available).toBe(true);
+    expect(registrar?.path).toBe("/registrar");
+    expect(registrar?.label).toBe("Plans");
+  });
+});

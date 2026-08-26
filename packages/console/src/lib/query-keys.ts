@@ -41,3 +41,13 @@ export function usageQuotaStatus(): readonly ["usage", "quota_status"] {
 export function usageSubscriptionPressure(): readonly ["usage", "subscription_pressure"] {
   return ["usage", "subscription_pressure"] as const;
 }
+
+/** Registrar initiative list (Plans module). */
+export function registrarList(): readonly ["registrar", "list"] {
+  return ["registrar", "list"] as const;
+}
+
+/** Registrar detail (entry + phases + rollup) and journal, scoped by registrar id. */
+export function registrarDetail(registrarId: string): readonly ["registrar", "detail", string] {
+  return ["registrar", "detail", registrarId] as const;
+}

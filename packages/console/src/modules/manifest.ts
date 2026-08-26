@@ -13,6 +13,7 @@ export interface ModuleSpec {
 
 export const MODULES = [
   { id: "mission", path: "/mission", label: "Mission control", icon: "◐", available: true },
+  { id: "registrar", path: "/registrar", label: "Plans", icon: "▤", available: true },
   { id: "chains", path: "/chains", label: "Chains", icon: "≋", available: false },
   { id: "tasks", path: "/tasks", label: "Tasks", icon: "☷", available: false },
 ] as const satisfies readonly ModuleSpec[];

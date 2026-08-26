@@ -40,6 +40,39 @@ export interface PressureWindow {
   window_label: string;
 }
 
+export interface RegistrarEntryRow {
+  registrar_id: string;
+  slug: string;
+  title: string;
+  home_project: string;
+  source_doc_path: string | null;
+  status: "draft" | "active" | "paused" | "complete" | "abandoned";
+  created_at: number;
+  updated_at: number;
+}
+
+export interface RegistrarPhaseRow {
+  registrar_id: string;
+  phase_no: number;
+  title: string;
+  status: "pending" | "active" | "blocked" | "complete" | "abandoned";
+  updated_at: number;
+}
+
+export interface RegistrarEventRow {
+  event_id: number;
+  registrar_id: string;
+  phase_no: number | null;
+  kind: "progress" | "caveat" | "blocker" | "follow_up" | "decision" | "phase_transition" | "link";
+  state: string | null;
+  ref_event_id: number | null;
+  link_kind: string | null;
+  link_value: string | null;
+  actor: "maestro" | "worker" | "sweeper" | "operator";
+  body: string;
+  created_at: number;
+}
+
 export interface E2EHarness {
   port: number;
   token: string;
@@ -51,6 +84,14 @@ export interface E2EHarness {
   stop: () => Promise<void>;
   addChain: (row: ChainRow) => void;
   setPressure: (windows: PressureWindow[]) => void;
+  setRegistrarEntries: (entries: RegistrarEntryRow[]) => void;
+  addRegistrarPhase: (phase: RegistrarPhaseRow) => void;
+  addRegistrarEvent: (
+    event: Omit<RegistrarEventRow, "event_id" | "created_at"> & {
+      event_id?: number;
+      created_at?: number;
+    },
+  ) => void;
   setQuotaStatus: (data: {
     dispatched_count: number;
     cap: number;
@@ -100,6 +141,10 @@ interface HarnessState {
   pending: HarnessRow[];
   chains: ChainRow[];
   pressure: PressureWindow[];
+  registrarEntries: RegistrarEntryRow[];
+  registrarPhases: RegistrarPhaseRow[];
+  registrarEvents: RegistrarEventRow[];
+  registrarSeq: number;
   quotaStatus: {
     dispatched_count: number;
     cap: number;
@@ -124,6 +169,10 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     pending: [],
     chains: [],
     pressure: [],
+    registrarEntries: [],
+    registrarPhases: [],
+    registrarEvents: [],
+    registrarSeq: 0,
     quotaStatus: { dispatched_count: 0, cap: 6, subscription: { synth_total: 0 } },
     session: {
       id: "no-session",
@@ -144,6 +193,10 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     state.pending = [];
     state.chains = [];
     state.pressure = [];
+    state.registrarEntries = [];
+    state.registrarPhases = [];
+    state.registrarEvents = [];
+    state.registrarSeq = 0;
     state.quotaStatus = {
       dispatched_count: 0,
       cap: 6,
@@ -285,6 +338,127 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         offset,
       });
       return;
+    }
+
+    if (method === "GET" && simplePath === "/registrar") {
+      sendJson(response, { entries: state.registrarEntries });
+      return;
+    }
+
+    if (method === "POST" && simplePath === "/registrar") {
+      const body = reqBody as
+        | {
+            title?: unknown;
+            slug?: unknown;
+            home_project?: unknown;
+            phases?: unknown;
+            source_doc_path?: unknown;
+            status?: unknown;
+          }
+        | undefined;
+      if (
+        typeof body?.title !== "string" ||
+        typeof body.slug !== "string" ||
+        typeof body.home_project !== "string" ||
+        !Array.isArray(body.phases) ||
+        body.phases.some((phase) => typeof phase !== "string")
+      ) {
+        sendJson(response, { error: "invalid_input" }, 400);
+        return;
+      }
+      const now = Date.now();
+      state.registrarSeq += 1;
+      const registrarId = `reg-${state.registrarSeq}`;
+      state.registrarEntries.push({
+        registrar_id: registrarId,
+        slug: body.slug,
+        title: body.title,
+        home_project: body.home_project,
+        source_doc_path: typeof body.source_doc_path === "string" ? body.source_doc_path : null,
+        status:
+          body.status === "draft" ||
+          body.status === "active" ||
+          body.status === "paused" ||
+          body.status === "complete" ||
+          body.status === "abandoned"
+            ? body.status
+            : "active",
+        created_at: now,
+        updated_at: now,
+      });
+      (body.phases as string[]).forEach((phaseTitle, index) => {
+        state.registrarPhases.push({
+          registrar_id: registrarId,
+          phase_no: index + 1,
+          title: phaseTitle,
+          status: "pending",
+          updated_at: now,
+        });
+      });
+      sendJson(response, { registrar_id: registrarId }, 201);
+      return;
+    }
+
+    {
+      const eventsMatch = /^\/registrar\/([^/]+)\/events$/.exec(simplePath);
+      const detailMatch = /^\/registrar\/([^/]+)$/.exec(simplePath);
+
+      if (eventsMatch !== null && method === "GET") {
+        const registrarId = decodeURIComponent(eventsMatch[1]);
+        if (!state.registrarEntries.some((row) => row.registrar_id === registrarId)) {
+          sendJson(response, { error: "registrar_not_found", registrar_id: registrarId }, 404);
+          return;
+        }
+        sendJson(response, { events: registrarEventsFor(state, registrarId) });
+        return;
+      }
+
+      if (eventsMatch !== null && method === "POST") {
+        const registrarId = decodeURIComponent(eventsMatch[1]);
+        const entry = state.registrarEntries.find((row) => row.registrar_id === registrarId);
+        if (!entry) {
+          sendJson(response, { error: "registrar_not_found", registrar_id: registrarId }, 404);
+          return;
+        }
+        const body = (reqBody ?? {}) as Partial<
+          Omit<RegistrarEventRow, "event_id" | "registrar_id">
+        >;
+        const event: RegistrarEventRow = {
+          event_id: nextRegistrarEventId(state),
+          registrar_id: registrarId,
+          phase_no: typeof body.phase_no === "number" ? body.phase_no : null,
+          kind: (body.kind ?? "progress") as RegistrarEventRow["kind"],
+          state: typeof body.state === "string" ? body.state : null,
+          ref_event_id: typeof body.ref_event_id === "number" ? body.ref_event_id : null,
+          link_kind: typeof body.link_kind === "string" ? body.link_kind : null,
+          link_value: typeof body.link_value === "string" ? body.link_value : null,
+          actor: (body.actor ?? "operator") as RegistrarEventRow["actor"],
+          body: typeof body.body === "string" ? body.body : "",
+          created_at: typeof body.created_at === "number" ? body.created_at : Date.now(),
+        };
+        state.registrarEvents.push(event);
+        entry.updated_at = event.created_at;
+        sendJson(response, { event });
+        return;
+      }
+
+      if (detailMatch !== null && method === "GET") {
+        const registrarId = decodeURIComponent(detailMatch[1]);
+        const entry = state.registrarEntries.find((row) => row.registrar_id === registrarId);
+        if (!entry) {
+          sendJson(response, { error: "registrar_not_found", registrar_id: registrarId }, 404);
+          return;
+        }
+        sendJson(response, {
+          entry,
+          phases: state.registrarPhases
+            .filter((phase) => phase.registrar_id === registrarId)
+            .sort((a, b) => a.phase_no - b.phase_no),
+          events: registrarEventsFor(state, registrarId),
+          rollup: registrarRollupFor(state, registrarId),
+        });
+        return;
+      }
     }
 
     if (method === "GET" && simplePath === "/dispatch-events/stream") {
@@ -439,6 +613,27 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     setPressure(windows) {
       state.pressure = windows.map((w) => ({ ...w }));
     },
+    setRegistrarEntries(entries) {
+      state.registrarEntries = entries.map((entry) => ({ ...entry }));
+    },
+    addRegistrarPhase(phase) {
+      state.registrarPhases.push({ ...phase });
+    },
+    addRegistrarEvent(event) {
+      state.registrarEvents.push({
+        event_id: event.event_id ?? nextRegistrarEventId(state),
+        registrar_id: event.registrar_id,
+        phase_no: event.phase_no ?? null,
+        kind: event.kind,
+        state: event.state ?? null,
+        ref_event_id: event.ref_event_id ?? null,
+        link_kind: event.link_kind ?? null,
+        link_value: event.link_value ?? null,
+        actor: event.actor,
+        body: event.body,
+        created_at: event.created_at ?? Date.now(),
+      });
+    },
     setQuotaStatus(data) {
       state.quotaStatus = {
         dispatched_count: data.dispatched_count,
@@ -487,6 +682,39 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       state.errors.clear();
     },
   };
+}
+
+function registrarEventsFor(state: HarnessState, registrarId: string): RegistrarEventRow[] {
+  return state.registrarEvents
+    .filter((event) => event.registrar_id === registrarId)
+    .sort((a, b) => a.created_at - b.created_at || a.event_id - b.event_id);
+}
+
+function registrarRollupFor(
+  state: HarnessState,
+  registrarId: string,
+): { open_blockers: number; open_follow_ups: number } {
+  // Mirrors the daemon reader: an opened blocker / owed follow-up stays open
+  // until another event references it with resolved/done/dropped.
+  const closed = new Set<number>();
+  for (const event of state.registrarEvents) {
+    if (event.registrar_id !== registrarId || event.ref_event_id === null) continue;
+    if (event.state === "resolved" || event.state === "done" || event.state === "dropped") {
+      closed.add(event.ref_event_id);
+    }
+  }
+  let openBlockers = 0;
+  let openFollowUps = 0;
+  for (const event of state.registrarEvents) {
+    if (event.registrar_id !== registrarId || closed.has(event.event_id)) continue;
+    if (event.kind === "blocker" && event.state === "opened") openBlockers += 1;
+    if (event.kind === "follow_up" && event.state === "owed") openFollowUps += 1;
+  }
+  return { open_blockers: openBlockers, open_follow_ups: openFollowUps };
+}
+
+function nextRegistrarEventId(state: HarnessState): number {
+  return state.registrarEvents.reduce((max, event) => Math.max(max, event.event_id), 0) + 1;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {

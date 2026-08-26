@@ -28,6 +28,13 @@ export function providerLabel(slug: string): string {
   );
 }
 
+/** Formats an epoch-ms timestamp as a compact UTC "YYYY-MM-DD HH:mm" string. */
+export function fmtTs(epochMs: number): string {
+  const date = new Date(epochMs);
+  if (!Number.isFinite(epochMs) || Number.isNaN(date.getTime())) return "—";
+  return date.toISOString().slice(0, 16).replace("T", " ");
+}
+
 export function summarizeWords(text: string, n: number): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length <= n) {

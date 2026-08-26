@@ -2,6 +2,9 @@ import {
   ChainsListResponseSchema,
   HandoffsListResponseSchema,
   type HandoffStatus,
+  RegistrarDetailSchema,
+  RegistrarEventSchema,
+  RegistrarListResponseSchema,
   UsageQuotaResponseSchema,
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
@@ -26,6 +29,12 @@ const ApproveHandoffResponseSchemaLoose = z
   })
   .loose();
 
+const RegistrarEventsResponseSchema = z
+  .object({
+    events: z.array(RegistrarEventSchema),
+  })
+  .loose();
+
 export type HandoffsListResponse = z.infer<typeof HandoffsListResponseSchema>;
 export type ChainsListResponse = z.infer<typeof ChainsListResponseSchema>;
 export type UsageRecentResponse = z.infer<typeof UsageRecentResponseSchema>;
@@ -35,6 +44,9 @@ export type UsageSubscriptionPressureResponse = z.infer<
 >;
 export type MissionSession = z.infer<typeof MissionSessionSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
+export type RegistrarListResponse = z.infer<typeof RegistrarListResponseSchema>;
+export type RegistrarDetail = z.infer<typeof RegistrarDetailSchema>;
+export type RegistrarEventsResponse = z.infer<typeof RegistrarEventsResponseSchema>;
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
@@ -164,6 +176,27 @@ export class DaemonClient {
     return await this.request({
       path: "/workspace",
       schema: WorkspaceSchema,
+    });
+  }
+
+  async listRegistrarEntries(): Promise<RegistrarListResponse> {
+    return await this.request({
+      path: "/registrar",
+      schema: RegistrarListResponseSchema,
+    });
+  }
+
+  async getRegistrarEntry(registrarId: string): Promise<RegistrarDetail> {
+    return await this.request({
+      path: `/registrar/${encodeURIComponent(registrarId)}`,
+      schema: RegistrarDetailSchema,
+    });
+  }
+
+  async listRegistrarEvents(registrarId: string): Promise<RegistrarEventsResponse> {
+    return await this.request({
+      path: `/registrar/${encodeURIComponent(registrarId)}/events`,
+      schema: RegistrarEventsResponseSchema,
     });
   }
 
