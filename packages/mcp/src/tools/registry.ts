@@ -179,6 +179,10 @@ import { planStatusHandler, PlanStatusInputShape } from "./plan-status.js";
 import { qualityStatusHandler, QualityStatusInputShape } from "./quality-status.js";
 import { recallStatusHandler, RecallStatusInputShape } from "./recall-status.js";
 import { recallHandler, RecallInputShape } from "./recall.js";
+import { registrarAppendHandler, RegistrarAppendInputShape } from "./registrar-append.js";
+import { registrarCreateHandler, RegistrarCreateInputShape } from "./registrar-create.js";
+import { registrarListHandler, RegistrarListInputShape } from "./registrar-list.js";
+import { registrarStatusHandler, RegistrarStatusInputShape } from "./registrar-status.js";
 import {
   reconcilerSweepOrphanPrsHandler,
   ReconcilerSweepOrphanPrsInputShape,
@@ -958,6 +962,38 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: planCancelHandler as unknown as ToolDef["makeHandler"],
     readOnly: false,
+  },
+  registrar_create: {
+    descriptor: {
+      description: "Create a registrar entry and return its registrar_id and status.",
+      inputSchema: RegistrarCreateInputShape,
+    },
+    makeHandler: registrarCreateHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
+  },
+  registrar_append: {
+    descriptor: {
+      description: "Append a validated event to a registrar entry.",
+      inputSchema: RegistrarAppendInputShape,
+    },
+    makeHandler: registrarAppendHandler as unknown as ToolDef["makeHandler"],
+    readOnly: false,
+  },
+  registrar_list: {
+    descriptor: {
+      description: "List registrar entries.",
+      inputSchema: RegistrarListInputShape,
+    },
+    makeHandler: registrarListHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
+  },
+  registrar_status: {
+    descriptor: {
+      description: "Return a registrar entry with phases, events, and rollup status.",
+      inputSchema: RegistrarStatusInputShape,
+    },
+    makeHandler: registrarStatusHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
   },
   session_end: {
     descriptor: {

@@ -13,6 +13,13 @@ import type {
   RecentCostOutput,
   T0EventInput,
 } from "@penumbra/core";
+import type {
+  RegistrarCreateRequest,
+  RegistrarDetail,
+  RegistrarEvent,
+  RegistrarEventInput,
+  RegistrarListResponse,
+} from "@penumbra/api-contract";
 import type { z } from "zod";
 
 import { RecallRequestSchema } from "@penumbra/core";
@@ -238,6 +245,25 @@ export class DaemonClient {
     plan_id: string;
   }): Promise<{ plan_id: string; status: string; cancelled_running_count?: number }> {
     return await this.post(`/plans/${encodeURIComponent(req.plan_id)}/cancel`, {});
+  }
+
+  async registrarCreate(req: RegistrarCreateRequest): Promise<{ registrar_id: string }> {
+    return await this.post("/registrar", req);
+  }
+
+  async registrarAppend(req: {
+    registrar_id: string;
+    event: RegistrarEventInput;
+  }): Promise<{ event: RegistrarEvent }> {
+    return await this.post(`/registrar/${encodeURIComponent(req.registrar_id)}/events`, req.event);
+  }
+
+  async registrarList(): Promise<RegistrarListResponse> {
+    return await this.get("/registrar");
+  }
+
+  async registrarStatus(req: { registrar_id: string }): Promise<RegistrarDetail> {
+    return await this.get(`/registrar/${encodeURIComponent(req.registrar_id)}`);
   }
 
   async recallStatus(): Promise<unknown> {

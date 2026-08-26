@@ -129,6 +129,10 @@ const TOOL_NAMES = [
   "plan_open",
   "plan_status",
   "quality_status",
+  "registrar_append",
+  "registrar_create",
+  "registrar_list",
+  "registrar_status",
   "reconciler_sweep_orphan_prs",
   "reconciler_verdicts",
   "routing_bias_list",
@@ -206,6 +210,8 @@ const READ_ONLY_TOOL_NAMES = [
   "plan_list",
   "plan_status",
   "quality_status",
+  "registrar_list",
+  "registrar_status",
   "long_lived_get",
   "long_lived_list",
   "long_lived_pending_actions",
@@ -266,6 +272,8 @@ const MUTATING_TOOL_NAMES = [
   "plan_cancel",
   "plan_start",
   "plan_open",
+  "registrar_append",
+  "registrar_create",
   "reconciler_sweep_orphan_prs",
   "routing_bias_set",
   "routing_bias_clear",
@@ -565,6 +573,23 @@ describe("TOOL_REGISTRY", () => {
     if (importError || !TOOL_REGISTRY) return;
 
     expect(Object.keys(TOOL_REGISTRY).sort()).toEqual([...TOOL_NAMES].sort());
+  });
+
+  it("no registrar_* tool key collides with any existing plan_* tool key", () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const keys = Object.keys(TOOL_REGISTRY);
+    const planKeys = new Set(keys.filter((key) => key.startsWith("plan_")));
+    const registrarOnly = keys
+      .filter((key) => key.startsWith("registrar_") && !planKeys.has(key))
+      .sort();
+
+    expect(registrarOnly).toEqual([
+      "registrar_append",
+      "registrar_create",
+      "registrar_list",
+      "registrar_status",
+    ]);
   });
 
   it("matches the registry shape and readOnly snapshot", () => {
