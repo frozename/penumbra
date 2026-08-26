@@ -51,6 +51,21 @@ export {
   TaskRouterConfigSchema,
 } from "./files/task-router.js";
 export { type Workload, WORKLOADS, WorkloadSchema } from "./files/workload.js";
+export {
+  assertDiscoveryNotSuspiciouslyEmpty,
+  type AssertDiscoveryNotSuspiciouslyEmptyOptions,
+} from "./generator/empty-discovery.js";
+export {
+  assertPruneSafe,
+  collectMissingRoutingAgents,
+  type RoutingAgentReference,
+} from "./generator/routing-refs.js";
+export {
+  isGeneratorOwned,
+  pruneOwnedOnly,
+  type PruneOwnedOnlyResult,
+  upsertManagedFields,
+} from "./generator/upsert.js";
 export { type ConfigBundle, type ConfigSource, getConfig, resetConfigForTest } from "./load.js";
 export { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "./provider-format.js";
 export { formatEnvConfig, type FormatOptions } from "./show.js";

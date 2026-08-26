@@ -144,6 +144,82 @@ describe("penumbra config sync-local", () => {
     expect(seat.provenance).toBeUndefined();
   });
 
+  test("stamps a freshly generated seat's provenance.managed_fields with the original 3-field list", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+
+    await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [],
+        models: [
+          {
+            id: "fresh-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-fresh-model-http");
+    expect(seat?.provenance).toEqual({
+      source: "llamactl-sync-local",
+      managed_fields: ["options.baseUrl", "options.model", "options.apiKeyKeychain"],
+    });
+  });
+
+  test("aborts a prune without writing when routing.yaml still references the pruned seat", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-vanished-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        options: { baseUrl: "http://old", model: "vanished" },
+        provenance: { source: "llamactl-sync-local" },
+      },
+    ]);
+    writeFileSync(
+      join(dir, "routing.yaml"),
+      YAML.stringify({
+        default_roles: {},
+        workloads: {
+          review_adversarial: {
+            eligible_roles: ["reviewer"],
+            synthesizer: "local-vanished-http",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const before = readFileSync(join(dir, "agents.yaml"), "utf8");
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: async () => ({
+        status: "ok",
+        messages: [],
+        nodes: [],
+        models: [
+          {
+            id: "new-model.gguf",
+            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+          },
+        ],
+      }),
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("local-vanished-http");
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(before);
+  });
+
   test("prunes only vanished generator-owned seats and keeps hand-authored seats", async () => {
     const dir = await makeTempDir();
     writeAgents(dir, [

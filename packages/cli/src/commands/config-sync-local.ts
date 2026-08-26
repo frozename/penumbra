@@ -8,7 +8,18 @@ import {
   AgentsConfigSchema,
   type AgentConfig,
   type AgentsConfig,
+  type RoutingConfig,
+  RoutingConfigSchema,
 } from "../../../config/src/index.js";
+// Deep-relative: node_modules/@penumbra/config in this worktree symlinks to the
+// pre-change checkout, so the package specifier would not resolve this new export.
+// Resolves to the same file as @penumbra/config post-land.
+import {
+  isGeneratorOwned,
+  pruneOwnedOnly,
+  upsertManagedFields,
+} from "../../../config/src/generator/upsert.js";
+import { assertPruneSafe } from "../../../config/src/generator/routing-refs.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -123,68 +134,72 @@ function defaultsForModel(
   };
 }
 
-function isGeneratorOwned(agent: AgentConfig): boolean {
-  return agent.provenance?.source === PROVENANCE_SOURCE;
-}
+const MANAGED_FIELDS = [
+  "name",
+  "adapter",
+  "api_provider",
+  "pricing_mode",
+  "options.baseUrl",
+  "options.model",
+  "options.apiKeyKeychain",
+] as const;
 
-function upsertSeat(existing: AgentConfig | undefined, generated: GeneratedSeat): AgentConfig {
+// Narrower than MANAGED_FIELDS (which also drives the actual upsert merge):
+// this is only the provenance stamp recorded on a freshly generated seat, and
+// must stay pinned to what sync-local has always stamped.
+const STAMPED_MANAGED_FIELDS = [
+  "options.baseUrl",
+  "options.model",
+  "options.apiKeyKeychain",
+] as const;
+
+function buildGeneratedSeat(generated: GeneratedSeat): AgentConfig {
   const defaults = defaultsForModel(generated.model.id);
-  const existingOptions = existing?.options ?? {};
-  const options = {
-    ...existingOptions,
-    baseUrl: generated.baseUrl,
-    model: generated.model.id,
-    apiKeyKeychain: `llamactl/${generated.nodeName}`,
-  };
-  delete options.apiKey;
-  delete options.apiKeyEnv;
-  delete options.apiKeyFile;
-
   return {
-    ...(existing ?? {
-      name: generated.name,
-      adapter: "openai-compat-http",
-      roles: defaults.roles,
-      auto_approve_to: [],
-      pricing_mode: "api",
-      tags: defaults.tags,
-      quirks: defaults.quirks,
-      description: defaults.description,
-      provenance: {
-        source: PROVENANCE_SOURCE,
-        managed_fields: ["options.baseUrl", "options.model", "options.apiKeyKeychain"],
-      },
-    }),
     name: generated.name,
     adapter: "openai-compat-http",
     api_provider: "local",
     pricing_mode: "api",
-    roles: existing && existing.roles.length > 0 ? existing.roles : defaults.roles,
-    ...(existing?.tags ? { tags: existing.tags } : existing ? {} : { tags: defaults.tags }),
-    ...(existing?.quirks
-      ? { quirks: existing.quirks }
-      : existing
-        ? {}
-        : { quirks: defaults.quirks }),
-    ...(existing?.description
-      ? { description: existing.description }
-      : existing
-        ? {}
-        : { description: defaults.description }),
-    ...(existing?.provenance ? { provenance: existing.provenance } : {}),
-    options,
+    roles: defaults.roles,
+    auto_approve_to: [],
+    tags: defaults.tags,
+    quirks: defaults.quirks,
+    description: defaults.description,
+    provenance: {
+      source: PROVENANCE_SOURCE,
+      managed_fields: [...STAMPED_MANAGED_FIELDS],
+    },
+    options: {
+      baseUrl: generated.baseUrl,
+      model: generated.model.id,
+      apiKeyKeychain: `llamactl/${generated.nodeName}`,
+    },
   };
+}
+
+function upsertSeat(existing: AgentConfig | undefined, generated: GeneratedSeat): AgentConfig {
+  // A seat that lost its roles entirely (e.g. never set) falls back to
+  // model-inferred defaults instead of being upserted into a roleless seat.
+  const managedFields =
+    existing?.roles.length === 0 ? [...MANAGED_FIELDS, "roles"] : MANAGED_FIELDS;
+  const merged = upsertManagedFields(existing, buildGeneratedSeat(generated), managedFields);
+  const options = { ...merged.options };
+  delete options.apiKey;
+  delete options.apiKeyEnv;
+  delete options.apiKeyFile;
+  return { ...merged, options };
 }
 
 function buildSyncedAgentsConfig(
   current: AgentsConfig,
   inventory: LlamactlInventory,
+  routing: RoutingConfig,
 ): { config: AgentsConfig; upserts: string[]; prunes: string[] } {
   const handAuthoredModels = new Set(
     current.agents.flatMap((agent) => {
       const model = agent.options?.model;
       if (typeof model !== "string") return [];
-      return isGeneratorOwned(agent) ? [] : [model];
+      return isGeneratorOwned(agent, PROVENANCE_SOURCE) ? [] : [model];
     }),
   );
 
@@ -200,12 +215,12 @@ function buildSyncedAgentsConfig(
     upserts.push(seat.name);
   }
 
-  const prunes: string[] = [];
-  const agents = [...byName.values()].filter((agent) => {
-    if (!isGeneratorOwned(agent) || generatedNames.has(agent.name)) return true;
-    prunes.push(agent.name);
-    return false;
-  });
+  const { agents, prunes } = pruneOwnedOnly(
+    [...byName.values()],
+    generatedNames,
+    PROVENANCE_SOURCE,
+  );
+  assertPruneSafe(prunes, routing);
 
   return {
     config: {
@@ -221,6 +236,15 @@ function readAgentsConfig(configDir: string): AgentsConfig {
   const path = join(configDir, "agents.yaml");
   const parsed = YAML.parse(readFileSync(path, "utf8")) as unknown;
   return AgentsConfigSchema.parse(parsed);
+}
+
+// No routing.yaml present means no routing references exist to violate, so an
+// absent file resolves to an empty routing config rather than failing sync-local.
+function readRoutingConfig(configDir: string): RoutingConfig {
+  const path = join(configDir, "routing.yaml");
+  if (!existsSync(path)) return RoutingConfigSchema.parse({});
+  const parsed = YAML.parse(readFileSync(path, "utf8")) as unknown;
+  return RoutingConfigSchema.parse(parsed);
 }
 
 async function defaultReloadConfig(storageRoot: string): Promise<unknown> {
@@ -271,7 +295,17 @@ export async function runConfigSyncLocal(
     return { exitCode: 0, stdout, stderr };
   }
 
-  const { config, upserts, prunes } = buildSyncedAgentsConfig(current, inventory);
+  let config: AgentsConfig;
+  let upserts: string[];
+  let prunes: string[];
+  try {
+    const routing = readRoutingConfig(configDir);
+    ({ config, upserts, prunes } = buildSyncedAgentsConfig(current, inventory, routing));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    stderr.push(`penumbra config sync-local: ${message}`);
+    return { exitCode: 1, stdout, stderr };
+  }
   for (const name of upserts) stdout.push(`${dryRun ? "would upsert" : "upserted"} ${name}`);
   for (const name of prunes) stdout.push(`${dryRun ? "would prune" : "pruned"} ${name}`);
 

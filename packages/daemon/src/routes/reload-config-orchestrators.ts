@@ -18,6 +18,10 @@ import { join } from "node:path";
 import type { DaemonServices } from "../serve.js";
 import type { ReconcileSummary } from "../workers/supervisor.js";
 
+// Deep-relative: node_modules/@penumbra/config in this worktree symlinks to the
+// pre-change checkout, so the package specifier would not resolve this new export.
+// Resolves to the same file as @penumbra/config post-land.
+import { collectMissingRoutingAgents } from "../../../config/src/generator/routing-refs.js";
 import {
   formatAgentChatConfigError,
   loadAgentChatConfigUncached,
@@ -195,11 +199,6 @@ type TaskRouterConfigSnapshot = {
   aaSnapshotStore: DaemonServices["aaSnapshotStore"];
 };
 
-type MissingRoutingAgent = {
-  path: string;
-  agent: string;
-};
-
 type WorkflowProjectSnapshot = {
   workflowRegistry: NonNullable<DaemonServices["workflowRegistry"]>;
   projectRegistry: ProjectRegistry;
@@ -219,49 +218,6 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
   };
 }
 
-function collectAgentPoolNames(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
-  if (!value || typeof value !== "object") return [];
-  const members = (value as { members?: unknown }).members;
-  if (!Array.isArray(members)) return [];
-  return members
-    .map((member) =>
-      member && typeof member === "object" ? (member as { agent?: unknown }).agent : undefined,
-    )
-    .filter((agent): agent is string => typeof agent === "string");
-}
-
-function collectMissingRoutingAgents(
-  cfg: ReturnType<typeof loadAgentChatConfigUncached>,
-  agentRegistry: string[],
-): MissingRoutingAgent[] {
-  const knownAgents = new Set(agentRegistry);
-  const missing: MissingRoutingAgent[] = [];
-  const add = (path: string, agent: string): void => {
-    if (!knownAgents.has(agent)) missing.push({ path, agent });
-  };
-
-  for (const [role, agent] of Object.entries(cfg.default_roles)) {
-    add(`default_roles.${role}`, agent);
-  }
-
-  for (const [persona, config] of Object.entries(cfg.personas ?? {})) {
-    for (const agent of collectAgentPoolNames(config.preferred_agent)) {
-      add(`personas.${persona}.preferred_agent`, agent);
-    }
-  }
-
-  for (const [workload, config] of Object.entries(cfg.workloads ?? {})) {
-    if (!config?.synthesizer) continue;
-    for (const agent of collectAgentPoolNames(config.synthesizer)) {
-      add(`workloads.${workload}.synthesizer`, agent);
-    }
-  }
-
-  return missing;
-}
-
 export function reloadAgentChatConfigSubsystem(
   services: DaemonServices,
 ): AgentChatConfigReloadResult {
@@ -271,7 +227,9 @@ export function reloadAgentChatConfigSubsystem(
     const prevCount = services.agentRegistry?.length ?? 0;
     const cfg = loadAgentChatConfigUncached(process.env);
     const agentRegistry = cfg.agents.map((agent) => agent.name);
-    const missingAgents = collectMissingRoutingAgents(cfg, agentRegistry);
+    // `cfg` is AgentChatConfig, which extends both AgentsConfig and RoutingConfig
+    // (packages/config/src/files/agentchat-types.ts) — satisfies both params directly.
+    const missingAgents = collectMissingRoutingAgents(cfg, cfg);
     if (missingAgents.length > 0) {
       services.log.warn(
         { missing_agents: missingAgents },
