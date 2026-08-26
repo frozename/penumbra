@@ -12,7 +12,7 @@ import {
   type RouteAgentInput,
   type RouteAgentOutput,
 } from "../services/agent-routing.js";
-import { buildAliasIndex, reconcileAliases } from "./alias-map.js";
+import { buildAliasIndex, reconcileAliases, type AliasReconciliationResult } from "./alias-map.js";
 import {
   applyHardConstraints,
   type CandidateConstraintFacts,
@@ -24,6 +24,7 @@ import {
   type AaModelSnapshot,
   type HarnessContext,
   type RoutingDecision,
+  type RoutingFactorSource,
   type TaskProfile,
 } from "./schemas.js";
 
@@ -258,6 +259,33 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
   });
 }
 
+// reconcileAliases is total over the seat list it's given, so `reconciliation`
+// is undefined only if that invariant regresses. "reconciliation_missing" makes
+// that regression visible in the decision log instead of silently reporting
+// "matched".
+export function reconciliationFactorFields(reconciliation: AliasReconciliationResult | undefined): {
+  rawValue: string;
+  source: RoutingFactorSource;
+} {
+  const rawValue =
+    reconciliation === undefined
+      ? "reconciliation_missing"
+      : "unmatched" in reconciliation
+        ? reconciliation.unmatched
+        : "matched";
+  // Only "no_alias_configured" and "reconciliation_missing" are local/config
+  // gaps resolved before any AA snapshot lookup runs (see reconcileAliases).
+  // The other two unmatched reasons and "matched" all require the snapshot,
+  // so they keep the "artificial_analysis" source. RoutingFactorSource has no
+  // enum value more specific than "config" for a local reconciliation gap;
+  // reuse it rather than widen the schema for two call sites.
+  const source: RoutingFactorSource =
+    rawValue === "reconciliation_missing" || rawValue === "no_alias_configured"
+      ? "config"
+      : "artificial_analysis";
+  return { rawValue, source };
+}
+
 export function computePriors(input: ComputePriorsInput): ComputePriorsResult {
   if (!input.aaSnapshot) {
     return { priors: nullRecord(), factors: [], matchedModels: nullRecord() };
@@ -295,6 +323,20 @@ export function computePriors(input: ComputePriorsInput): ComputePriorsResult {
   const costMetric = metricSpecs.find((metric) => metric.name === "predicted_cash_cost_usd");
 
   for (const agent of input.agentRegistry) {
+    const reconciliation = reconciled[agent];
+    const { rawValue, source } = reconciliationFactorFields(reconciliation);
+    // Measured 2026-08-26: ~132-167 bytes on the wire per alias_reconciliation
+    // factor, ~5.5-7KB per routing_decisions row at 42 registered seats. That
+    // growth is a stated decision, not an accident — bounding it (if it ever
+    // needs bounding) is owned by the named routing_decisions 90d-retention
+    // sweeper follow-up, not this call site.
+    factors.push({
+      name: `${agent}.alias_reconciliation`,
+      rawValue,
+      weight: 0,
+      contribution: 0,
+      source,
+    });
     if (!matchedModels[agent]) continue;
     const agentMetrics = metrics.filter((candidate) => candidate.agent === agent);
     if (costMetric && costMetric.weight > 0 && predictedCosts[agent] === undefined) {

@@ -12,6 +12,7 @@ import type { CandidateConstraintFacts } from "../../src/routing/constraint-filt
 import {
   computePriors,
   decide,
+  reconciliationFactorFields,
   type DecideInput,
   type RouterDependencies,
 } from "../../src/routing/router.js";
@@ -745,6 +746,108 @@ describe("routing decide orchestrator", () => {
     expect(Object.getPrototypeOf(priors.priors)).toBeNull();
     expect(Object.getPrototypeOf(priors.matchedModels)).toBeNull();
     expect(Object.getPrototypeOf(capturedFacts!)).toBeNull();
+  });
+
+  test("computePriors emits an alias_reconciliation factor for every registry agent, including unmatched ones", () => {
+    const registry = ["matched-seat", "no-alias-seat", "no-model-seat", "multi-model-seat"];
+    const aliasMap: ModelAliasMap = {
+      "matched-seat": { aa_creator: "openai", aa_slug: "quality-model" },
+      "no-model-seat": { aa_creator: "openai", aa_slug: "missing-model" },
+      "multi-model-seat": { aa_creator: "openai", aa_slug: "dup-model" },
+    };
+    const aaSnapshot = snapshot([
+      aaModel("openai", "quality-model"),
+      aaModel("openai", "dup-model"),
+      aaModel("openai", "dup-model"),
+    ]);
+
+    const result = computePriors({
+      agentRegistry: registry,
+      aliasMap,
+      aaSnapshot: { snapshot: aaSnapshot, stale: false, ageSeconds: 0 },
+      taskProfile: profile(),
+      routerConfig: ROUTER_CONFIG,
+    });
+
+    const reconciliationFactors = Object.fromEntries(
+      result.factors
+        .filter((factor) => factor.name.endsWith(".alias_reconciliation"))
+        .map((factor) => [factor.name, factor]),
+    );
+
+    expect(reconciliationFactors).toEqual({
+      "matched-seat.alias_reconciliation": {
+        name: "matched-seat.alias_reconciliation",
+        rawValue: "matched",
+        weight: 0,
+        contribution: 0,
+        source: "artificial_analysis",
+      },
+      "no-alias-seat.alias_reconciliation": {
+        name: "no-alias-seat.alias_reconciliation",
+        rawValue: "no_alias_configured",
+        weight: 0,
+        contribution: 0,
+        source: "config",
+      },
+      "no-model-seat.alias_reconciliation": {
+        name: "no-model-seat.alias_reconciliation",
+        rawValue: "alias_matches_no_snapshot_model",
+        weight: 0,
+        contribution: 0,
+        source: "artificial_analysis",
+      },
+      "multi-model-seat.alias_reconciliation": {
+        name: "multi-model-seat.alias_reconciliation",
+        rawValue: "alias_matches_multiple_snapshot_models",
+        weight: 0,
+        contribution: 0,
+        source: "artificial_analysis",
+      },
+    });
+  });
+
+  test("reconciliationFactorFields reports reconciliation_missing when the seat has no reconciliation entry at all", () => {
+    expect(reconciliationFactorFields(undefined)).toEqual({
+      rawValue: "reconciliation_missing",
+      source: "config",
+    });
+  });
+
+  test("reconciliation outcomes of a zero-weight-factor-only agent never move any agent's priors", () => {
+    const registry = ["quality-seat", "fast-seat", "zero-weight-seat"];
+    const aaSnapshot = { snapshot: qualityVsFastSnapshot(), stale: false, ageSeconds: 0 };
+
+    const noAliasResult = computePriors({
+      agentRegistry: registry,
+      aliasMap: ALIASES,
+      aaSnapshot,
+      taskProfile: profile(),
+      routerConfig: ROUTER_CONFIG,
+    });
+
+    const unmatchedAliasResult = computePriors({
+      agentRegistry: registry,
+      aliasMap: {
+        ...ALIASES,
+        "zero-weight-seat": { aa_creator: "openai", aa_slug: "no-such-model" },
+      },
+      aaSnapshot,
+      taskProfile: profile(),
+      routerConfig: ROUTER_CONFIG,
+    });
+
+    const noAliasFactor = noAliasResult.factors.find(
+      (factor) => factor.name === "zero-weight-seat.alias_reconciliation",
+    );
+    const unmatchedAliasFactor = unmatchedAliasResult.factors.find(
+      (factor) => factor.name === "zero-weight-seat.alias_reconciliation",
+    );
+    expect(noAliasFactor?.rawValue).toBe("no_alias_configured");
+    expect(unmatchedAliasFactor?.rawValue).toBe("alias_matches_no_snapshot_model");
+    expect(noAliasFactor?.source).not.toBe(unmatchedAliasFactor?.source);
+
+    expect(unmatchedAliasResult.priors).toEqual(noAliasResult.priors);
   });
 
   test("the returned decision validates against RoutingDecisionSchema", () => {
