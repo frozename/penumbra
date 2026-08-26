@@ -221,9 +221,8 @@ describe("penumbra config sync-providers", () => {
       },
     });
 
-    const result = await runConfigSyncProviders({
+    const opts = {
       configDir: dir,
-      apply: true,
       discoveryAdapters: {
         fake: fakeAdapter([
           { sourceProviderId: "sakana", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
@@ -231,7 +230,8 @@ describe("penumbra config sync-providers", () => {
       },
       fetchModelsDevPayload: noModelsDev,
       reloadConfig: async () => ({ ok: true }),
-    });
+    };
+    const result = await runConfigSyncProviders({ ...opts, apply: true });
 
     expect(result.exitCode).toBe(0);
     const seat = readAgents(dir).agents.find((agent) => agent.name === "sakana-fugu-ultra-http");
@@ -259,6 +259,9 @@ describe("penumbra config sync-providers", () => {
         apiKeyKeychain: "llamactl/sakana",
       },
     });
+
+    const synchronized = await runConfigSyncProviders(opts);
+    expect(synchronized.stdout.join("\n")).not.toContain("would upsert");
   });
 
   test("co-generates a model-aliases.yaml entry for every generated seat", async () => {

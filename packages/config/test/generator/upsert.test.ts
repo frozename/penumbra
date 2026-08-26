@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isDeepStrictEqual } from "node:util";
 
 import type { AgentConfig } from "../../src/files/agents.js";
 
@@ -57,6 +58,64 @@ describe("upsertManagedFields", () => {
     const generated = baseAgent({ adapter: "openai-compat-http" });
     const merged = upsertManagedFields(existing, generated, ["adapter"]);
     expect(merged.adapter).toBe("openai-compat-http");
+  });
+
+  test("preserves strict equality when an optional managed field is absent from both seats", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+
+    const merged = upsertManagedFields(existing, generated, ["subscription_provider"]);
+
+    expect(Object.hasOwn(merged, "subscription_provider")).toBe(false);
+    expect(isDeepStrictEqual(existing, merged)).toBe(true);
+  });
+
+  test("removes a stale optional managed field when it is absent from the generated seat", () => {
+    const existing = baseAgent({ subscription_provider: "openai" });
+    const generated = baseAgent();
+
+    const merged = upsertManagedFields(existing, generated, ["subscription_provider"]);
+
+    expect(Object.hasOwn(merged, "subscription_provider")).toBe(false);
+  });
+
+  test("overwrites an optional managed field when it is present on the generated seat", () => {
+    const existing = baseAgent({ subscription_provider: "openai" });
+    const generated = baseAgent({ subscription_provider: "sakana" });
+
+    const merged = upsertManagedFields(existing, generated, ["subscription_provider"]);
+
+    expect(merged.subscription_provider).toBe("sakana");
+  });
+
+  test("does not create an undefined own-property for an absent nested managed field", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+
+    const merged = upsertManagedFields(existing, generated, ["options.model"]);
+
+    expect(Object.hasOwn(merged.options, "model")).toBe(false);
+    expect(isDeepStrictEqual(existing, merged)).toBe(true);
+  });
+
+  test("removes a stale nested managed field while preserving its siblings", () => {
+    const existing = baseAgent({ options: { model: "stale", maxTokens: 10 } });
+    const generated = baseAgent();
+
+    const merged = upsertManagedFields(existing, generated, ["options.model"]);
+
+    expect(Object.hasOwn(merged.options, "model")).toBe(false);
+    expect(merged.options.maxTokens).toBe(10);
+  });
+
+  test("does not create missing parent objects when deleting a nested managed field", () => {
+    const existing = baseAgent();
+    const generated = baseAgent();
+
+    const merged = upsertManagedFields(existing, generated, ["options.env.MODEL_ID"]);
+
+    expect(Object.hasOwn(merged.options, "env")).toBe(false);
+    expect(isDeepStrictEqual(existing, merged)).toBe(true);
   });
 
   test("does not mutate the existing agent's options object", () => {

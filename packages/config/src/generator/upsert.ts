@@ -20,11 +20,16 @@ function getPath(obj: unknown, path: string): unknown {
 
 const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 
-function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+function safePathSegments(path: string, operation: "set" | "delete"): string[] {
   const keys = path.split(".");
   if (keys.some((key) => UNSAFE_PATH_SEGMENTS.has(key))) {
-    throw new Error(`refusing to set unsafe managed field path: ${path}`);
+    throw new Error(`refusing to ${operation} unsafe managed field path: ${path}`);
   }
+  return keys;
+}
+
+function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const keys = safePathSegments(path, "set");
   const last = keys.pop();
   if (last === undefined) return;
   let cur = obj;
@@ -38,12 +43,35 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
   cur[last] = value;
 }
 
+function deletePath(obj: Record<string, unknown>, path: string): void {
+  const keys = safePathSegments(path, "delete");
+  const last = keys.pop();
+  if (last === undefined) return;
+
+  let parent = obj;
+  for (const key of keys) {
+    const next = parent[key];
+    if (next === null || typeof next !== "object") return;
+    parent = next as Record<string, unknown>;
+  }
+  if (!Object.hasOwn(parent, last)) return;
+
+  let cur = obj;
+  for (const key of keys) {
+    const clone = { ...(cur[key] as Record<string, unknown>) };
+    cur[key] = clone;
+    cur = clone;
+  }
+  delete cur[last];
+}
+
 /**
  * Merges a freshly generated seat onto an existing one: when there is no
  * existing seat, the generated seat is used as-is (it already carries its
  * own defaults + provenance). When an existing seat is present, every field
  * is preserved except the dot-paths listed in `managedFields`, which are
- * overwritten with the generated seat's value at that path.
+ * overwritten with the generated seat's value at that path or removed when
+ * the generated value is absent.
  */
 export function upsertManagedFields(
   existing: AgentConfig | undefined,
@@ -53,7 +81,12 @@ export function upsertManagedFields(
   if (!existing) return generated;
   const result: Record<string, unknown> = { ...existing };
   for (const path of managedFields) {
-    setPath(result, path, getPath(generated, path));
+    const generatedValue = getPath(generated, path);
+    if (generatedValue === undefined) {
+      deletePath(result, path);
+    } else {
+      setPath(result, path, generatedValue);
+    }
   }
   return result as AgentConfig;
 }
