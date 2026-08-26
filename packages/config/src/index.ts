@@ -35,6 +35,15 @@ export {
   ModelAliasMapSchema,
 } from "./files/model-aliases.js";
 export {
+  type ProviderBinding,
+  ProviderBindingSchema,
+  type ProviderSource,
+  ProviderSourceSchema,
+  type ProviderSourcesConfig,
+  ProviderSourcesConfigSchema,
+  loadProviderSourcesFromDir,
+} from "./files/providers.js";
+export {
   resolveLegacyOperatorConfigPath,
   resolveOperatorConfigPath,
 } from "./files/operator-paths.js";
