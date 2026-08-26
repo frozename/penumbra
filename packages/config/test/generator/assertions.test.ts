@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertNoBilledHttpSeats } from "../../src/generator/assertions.js";
+import {
+  assertNoBilledGeneratedSeats,
+  assertNoBilledHttpSeats,
+} from "../../src/generator/assertions.js";
 
 describe("assertNoBilledHttpSeats", () => {
   test("rejects a generated openai-compat-http seat with pricing_mode:'api' whose provider is outside the allowlist", () => {
@@ -77,4 +80,73 @@ describe("assertNoBilledHttpSeats", () => {
       assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] }),
     ).toThrow(/generated-http-seat/);
   });
+});
+
+describe("assertNoBilledGeneratedSeats", () => {
+  const generatorSource = "providers-sync";
+  const opts = { allowedProviders: ["local", "sakana"], generatorSource };
+
+  test.each(["stdio-acp", "opencode-acp", "agy-cli", "cli"] as const)(
+    "rejects a generator-owned %s seat with pricing_mode:'api' whose provider is outside the allowlist",
+    (adapter) => {
+      const agents = [
+        {
+          name: `${adapter}-generated-openai`,
+          adapter,
+          pricing_mode: "api" as const,
+          api_provider: "openai",
+          provenance: { source: generatorSource },
+        },
+      ];
+
+      expect(() => assertNoBilledGeneratedSeats(agents, opts)).toThrow(
+        new RegExp(`${adapter}-generated-openai`),
+      );
+    },
+  );
+
+  test("rejects a generator-owned stdio-acp seat with omitted pricing_mode whose provider is outside the allowlist", () => {
+    const agents = [
+      {
+        name: "stdio-acp-generated-openai-default-pricing",
+        adapter: "stdio-acp",
+        api_provider: "openai",
+        provenance: { source: generatorSource },
+      },
+    ];
+
+    expect(() => assertNoBilledGeneratedSeats(agents, opts)).toThrow(
+      /stdio-acp-generated-openai-default-pricing/,
+    );
+  });
+
+  test("ignores a hand-authored generated-kind seat with pricing_mode:'api' whose provider is outside the allowlist", () => {
+    const agents = [
+      {
+        name: "hand-authored-stdio",
+        adapter: "stdio-acp",
+        pricing_mode: "api" as const,
+        api_provider: "openai",
+      },
+    ];
+
+    expect(() => assertNoBilledGeneratedSeats(agents, opts)).not.toThrow();
+  });
+
+  test.each(["stdio-acp", "opencode-acp", "agy-cli", "cli"] as const)(
+    "allows a generator-owned %s seat with pricing_mode:'subscription'",
+    (adapter) => {
+      const agents = [
+        {
+          name: `${adapter}-generated-subscription`,
+          adapter,
+          pricing_mode: "subscription" as const,
+          subscription_provider: "openai",
+          provenance: { source: generatorSource },
+        },
+      ];
+
+      expect(() => assertNoBilledGeneratedSeats(agents, opts)).not.toThrow();
+    },
+  );
 });

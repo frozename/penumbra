@@ -513,6 +513,8 @@ describe("penumbra config sync-providers", () => {
           name: "providers-sync-existing",
           adapter: "stdio-acp",
           options: { binary: "existing", model: "existing-model" },
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
           provenance: { source: "providers-sync", managed_fields: ["options.model"] },
         },
       ],

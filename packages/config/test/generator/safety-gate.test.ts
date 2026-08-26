@@ -43,6 +43,7 @@ function diverseAliasMap(): ModelAliasMap {
 function baseCtx(): GeneratorSafetyGateContext {
   return {
     allowedProviders: ["local", "sakana"],
+    generatorSource: "providers-sync",
     aliasMap: diverseAliasMap(),
     roleTags: ["executor", "reviewer"],
     seatNameInputs: [],
@@ -71,6 +72,38 @@ describe("runGeneratorSafetyGate", () => {
     expect(result.ok).toBe(false);
     expect(result.violations.some((v) => /openai-gpt-http/.test(v))).toBe(true);
     expect(result.violations.some((v) => /refiner/.test(v))).toBe(true);
+  });
+
+  test("reports a generator-owned billed stdio-acp seat alongside the existing HTTP tripwire", () => {
+    const candidateConfig: AgentsConfig = {
+      agents: [
+        ...completeAgents(),
+        agent({
+          name: "openai-gpt-http",
+          adapter: "openai-compat-http",
+          pricing_mode: "api",
+          api_provider: "openai",
+          provenance: { source: "providers-sync" },
+        }),
+        agent({
+          name: "openai-gpt-stdio",
+          adapter: "stdio-acp",
+          pricing_mode: "api",
+          api_provider: "openai",
+          provenance: { source: "providers-sync" },
+        }),
+      ],
+    };
+
+    const result = runGeneratorSafetyGate(candidateConfig, {
+      ...baseCtx(),
+      generatorSource: "providers-sync",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toHaveLength(2);
+    expect(result.violations.some((violation) => /openai-gpt-http/.test(violation))).toBe(true);
+    expect(result.violations.some((violation) => /openai-gpt-stdio/.test(violation))).toBe(true);
   });
 
   test("ok:true with no violations lets the caller proceed to write", () => {

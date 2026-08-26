@@ -2,7 +2,7 @@ import type { AgentsConfig } from "../files/agents.js";
 import type { ModelAliasMap } from "../files/model-aliases.js";
 import type { RoutingConfig } from "../files/routing.js";
 
-import { assertNoBilledHttpSeats } from "./assertions.js";
+import { assertNoBilledGeneratedSeats, assertNoBilledHttpSeats } from "./assertions.js";
 import {
   assertNoRoleTagCollision,
   assertUniqueSeatNames,
@@ -14,6 +14,7 @@ import { assertPruneSafe } from "./routing-refs.js";
 
 export interface GeneratorSafetyGateContext {
   readonly allowedProviders: readonly string[];
+  readonly generatorSource: string;
   readonly aliasMap: ModelAliasMap;
   readonly roleTags: readonly string[];
   readonly seatNameInputs: readonly SeatNameInput[];
@@ -53,6 +54,12 @@ export function runGeneratorSafetyGate(
 
   guard(() =>
     assertNoBilledHttpSeats(candidateConfig.agents, { allowedProviders: ctx.allowedProviders }),
+  );
+  guard(() =>
+    assertNoBilledGeneratedSeats(candidateConfig.agents, {
+      allowedProviders: ctx.allowedProviders,
+      generatorSource: ctx.generatorSource,
+    }),
   );
   guard(() => assertRoleFloors(candidateConfig.agents, ctx.aliasMap));
   const generatedSeatNames = ctx.seatNameInputs.flatMap((input) => {

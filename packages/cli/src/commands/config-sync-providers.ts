@@ -573,6 +573,7 @@ export async function runConfigSyncProviders(
   const safetyGate = opts.safetyGate ?? runGeneratorSafetyGate;
   const gateResult: GeneratorSafetyGateResult = safetyGate(candidateConfig, {
     allowedProviders: ALLOWED_BILLED_HTTP_PROVIDERS,
+    generatorSource: PROVENANCE_SOURCE,
     aliasMap,
     roleTags: [...new Set(candidateConfig.agents.flatMap((agent) => agent.roles))],
     seatNameInputs: uniqueGenerated.map((seat) => seat.seatNameInput),
