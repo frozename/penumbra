@@ -79,7 +79,15 @@ interface GeneratedSeat {
 
 type HttpProviderBinding = ProviderBinding & { kind: "openai-compat-http" };
 type LeafProviderBinding = ProviderBinding & { kind: "opencode-acp" };
+type CarrierProviderBinding = ProviderBinding & { kind: "stdio-acp" };
 type MaterializationStrategy = "http" | "leaf" | "carrier" | "unsupported";
+
+function argsTemplateMissingModelPlaceholder(binding: ProviderBinding): boolean {
+  return (
+    binding.carriers?.args_template !== undefined &&
+    !binding.carriers.args_template.some((token) => token.includes("{model}"))
+  );
+}
 
 function resolveMaterializationStrategy(binding: ProviderBinding): MaterializationStrategy {
   switch (binding.kind) {
@@ -88,8 +96,8 @@ function resolveMaterializationStrategy(binding: ProviderBinding): Materializati
     case "opencode-acp":
       return "leaf";
     case "stdio-acp":
-    case "agy-cli":
       return "carrier";
+    case "agy-cli":
     case "cli":
       return "unsupported";
   }
@@ -400,6 +408,59 @@ function materializeLeafSeat(
   };
 }
 
+function materializeCarrierSeat(
+  providerId: string,
+  bindingId: string,
+  binding: CarrierProviderBinding,
+  model: DiscoveredModel,
+): GeneratedSeat {
+  if (argsTemplateMissingModelPlaceholder(binding)) {
+    throw new Error("carriers.args_template must include {model}");
+  }
+  const { name, input } = renderSeatName(binding.seat_name_template, model);
+  const applied = applyBindingCarriers({}, binding.carriers, binding.kind, {
+    modelId: model.modelId,
+    reasoningTier: model.reasoningTier,
+    displayName: model.displayName,
+  });
+  const managedFields = [
+    "name",
+    "adapter",
+    "api_provider",
+    "pricing_mode",
+    "subscription_provider",
+    ...applied.managedFields,
+  ];
+
+  return {
+    identity: JSON.stringify([providerId, bindingId, model.modelId, model.reasoningTier ?? null]),
+    seatNameInput: input,
+    managedFields,
+    agent: {
+      name,
+      adapter: binding.kind,
+      api_provider: binding.api_provider,
+      pricing_mode: binding.pricing_mode,
+      ...(binding.subscription_provider
+        ? { subscription_provider: binding.subscription_provider }
+        : {}),
+      ...applied.topLevel,
+      roles: [],
+      auto_approve_to: [],
+      provenance: {
+        source: PROVENANCE_SOURCE,
+        managed_fields: managedFields,
+      },
+      options: applied.options as AgentConfig["options"],
+    },
+    alias: {
+      aa_creator: aliasCreator(model, binding),
+      aa_slug: aliasSlug(model),
+      ...(model.reasoningTier ? { reasoning_level: model.reasoningTier } : {}),
+    },
+  };
+}
+
 async function defaultReloadConfig(storageRoot: string): Promise<unknown> {
   const portPath = join(storageRoot, "port");
   const tokenPath = join(storageRoot, "token");
@@ -533,6 +594,15 @@ export async function runConfigSyncProviders(
   try {
     for (const [providerId, source] of providerEntries) {
       const models = enrichedByProvider.get(providerId) ?? [];
+      const unusableBindingIds = new Set<string>();
+      for (const [bindingId, binding] of Object.entries(source.bindings)) {
+        if (binding.kind === "stdio-acp" && argsTemplateMissingModelPlaceholder(binding)) {
+          stdout.push(
+            `binding unusable: ${providerId}/${bindingId} — carriers.args_template must include {model}`,
+          );
+          unusableBindingIds.add(bindingId);
+        }
+      }
       for (const model of models) {
         for (const [bindingId, binding] of Object.entries(source.bindings)) {
           const handCovered = manualAgents.some(
@@ -548,15 +618,16 @@ export async function runConfigSyncProviders(
             }
             continue;
           }
+          if (unusableBindingIds.has(bindingId)) continue;
           const strategy = resolveMaterializationStrategy(binding);
-          if (strategy !== "http" && strategy !== "leaf") {
+          if (strategy === "unsupported" || (strategy === "carrier" && !binding.carriers?.binary)) {
             const edgeKey = JSON.stringify([binding.api_provider, model.modelId, bindingId]);
             const reportedEdge = reportedEdges.get(edgeKey);
             const tiers = reportedEdge?.tiers ?? [];
             if (model.reasoningTier && !tiers.includes(model.reasoningTier)) {
               tiers.push(model.reasoningTier);
             }
-            const line = `edge lit (no seat): ${binding.api_provider}/${model.modelId}${tiers.length > 0 ? ` [${tiers.join(",")}]` : ""} via ${bindingId} — seat generation for kind ${binding.kind} requires the P5 binding contract (binary/tier/env carriers)`;
+            const line = `edge lit (no seat): ${binding.api_provider}/${model.modelId}${tiers.length > 0 ? ` [${tiers.join(",")}]` : ""} via ${bindingId} — seat generation for kind ${binding.kind} requires the P5 binding contract (binary/tier/env carriers)${strategy === "carrier" ? ": missing carriers.binary" : ""}`;
             if (reportedEdge) {
               stdout[reportedEdge.stdoutIndex] = line;
             } else {
@@ -580,6 +651,28 @@ export async function runConfigSyncProviders(
                 model,
               ),
             );
+            continue;
+          }
+          if (strategy === "carrier") {
+            if (binding.kind !== "stdio-acp") {
+              throw new Error(
+                `internal materialization strategy mismatch for kind ${binding.kind}`,
+              );
+            }
+            try {
+              generated.push(
+                materializeCarrierSeat(
+                  providerId,
+                  bindingId,
+                  binding as CarrierProviderBinding,
+                  model,
+                ),
+              );
+            } catch (error) {
+              stdout.push(
+                `edge lit (no seat): ${binding.api_provider}/${model.modelId}${model.reasoningTier ? ` [${model.reasoningTier}]` : ""} via ${bindingId} — ${describeError(error)}`,
+              );
+            }
             continue;
           }
           if (binding.kind !== "opencode-acp") {

@@ -123,6 +123,30 @@ function opencodeProviderFixture(
   };
 }
 
+function alibabaCarrierProviderFixture(): ProviderSourcesConfig {
+  return {
+    alibaba: {
+      discovery: { kind: "fake", locator: "codex models list" },
+      auth: {},
+      bindings: {
+        "codex-alibaba-acp": {
+          kind: "stdio-acp",
+          pricing_mode: "subscription",
+          api_provider: "alibaba",
+          subscription_provider: "alibaba",
+          model_carrier: "options.args.model",
+          seat_name_template: "codex-alibaba-{model}-acp",
+          carriers: {
+            binary: "/opt/penumbra/bin/codex-acp",
+            args_template: ["-c", "model={model}", "-c", "model_provider=alibaba"],
+            unset_env: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"],
+          },
+        },
+      },
+    },
+  };
+}
+
 const noModelsDev = async (): Promise<unknown> => ({});
 
 describe("penumbra config sync-providers", () => {
@@ -752,6 +776,302 @@ describe("penumbra config sync-providers", () => {
     expect(seat?.provenance?.managed_fields).toContain("options.opencodeBinary");
   });
 
+  test("reproduces the live codex-alibaba-acp args shape from an args_template", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, alibabaCarrierProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "codex-alibaba-qwen3-8-max-acp",
+    );
+    expect(seat?.options).toMatchObject({
+      binary: "/opt/penumbra/bin/codex-acp",
+      args: ["-c", "model=qwen3.8-max", "-c", "model_provider=alibaba"],
+      unsetEnv: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"],
+    });
+    expect(seat?.options).not.toHaveProperty("command");
+  });
+
+  test("re-syncing a generated stdio-acp carrier seat reports no pending changes", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, alibabaCarrierProviderFixture());
+    const opts = {
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    };
+
+    const first = await runConfigSyncProviders(opts);
+    const second = await runConfigSyncProviders(opts);
+
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("upserted codex-alibaba-qwen3-8-max-acp");
+    expect(first.stdout).toContain("aliased codex-alibaba-qwen3-8-max-acp");
+    expect(second.exitCode).toBe(0);
+    expect(second.stdout).not.toContain("upserted codex-alibaba-qwen3-8-max-acp");
+    expect(second.stdout).not.toContain("aliased codex-alibaba-qwen3-8-max-acp");
+  });
+
+  test("an env template renders literally, including a TOML-shaped CODEX_CONFIG value", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.env = {
+      CODEX_CONFIG: 'model = "{model}"\nmodel_provider = "alibaba"',
+    };
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "codex-alibaba-qwen3-8-max-acp",
+    );
+    expect(seat?.options.env?.CODEX_CONFIG).toBe(
+      'model = "qwen3.8-max"\nmodel_provider = "alibaba"',
+    );
+  });
+
+  test("managed_fields covers exactly the carrier-set paths", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, alibabaCarrierProviderFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      readAgents(dir).agents.find((agent) => agent.name === "codex-alibaba-qwen3-8-max-acp")
+        ?.provenance?.managed_fields,
+    ).toEqual([
+      "name",
+      "adapter",
+      "api_provider",
+      "pricing_mode",
+      "subscription_provider",
+      "options.binary",
+      "options.args",
+      "options.unsetEnv",
+    ]);
+  });
+
+  test("a stdio-acp binding with no carriers.binary stays refused with the existing 'requires the P5 binding contract' message, suffixed with the missing carrier name", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    delete providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.binary;
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "edge lit (no seat): alibaba/qwen3.8-max via codex-alibaba-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers): missing carriers.binary",
+    );
+    expect(
+      readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
+    ).toHaveLength(0);
+  });
+
+  test("an args_template with no {model} placeholder is reported once at binding construction", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.args_template = [
+      "-c",
+      "model=qwen3.8-max",
+      "-c",
+      "model_provider=alibaba",
+    ];
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      result.stdout.filter(
+        (line) =>
+          line ===
+          "binding unusable: alibaba/codex-alibaba-acp — carriers.args_template must include {model}",
+      ),
+    ).toHaveLength(1);
+    expect(
+      readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
+    ).toHaveLength(0);
+  });
+
+  test("reports an unusable args_template once when every discovered edge is hand-covered", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.args_template = [
+      "-c",
+      "model=qwen3.8-max",
+      "-c",
+      "model_provider=alibaba",
+    ];
+    writeFixture(dir, providers, [
+      ...FLOOR_AGENTS,
+      {
+        name: "hand-authored-codex-alibaba-acp",
+        adapter: "stdio-acp",
+        api_provider: "alibaba",
+        options: {
+          binary: "codex",
+          args: ["-c", "model=qwen3.8-max", "-c", "model_provider=alibaba"],
+        },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("hand-covered alibaba/qwen3.8-max");
+    expect(
+      result.stdout.filter(
+        (line) =>
+          line ===
+          "binding unusable: alibaba/codex-alibaba-acp — carriers.args_template must include {model}",
+      ),
+    ).toHaveLength(1);
+    expect(result.stdout.join("\n")).not.toContain("would upsert");
+  });
+
+  test("a model with no reasoningTier under a {tier}-referencing template refuses THAT edge only — the sibling alibaba edges still generate", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!.args_template = [
+      "-c",
+      "model={model}",
+      "-c",
+      "model_provider=alibaba",
+      "-c",
+      "model_reasoning_effort={tier}",
+    ];
+    writeFixture(dir, providers);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-plus",
+            displayName: "Qwen 3.8 Plus",
+            reasoningTier: "high",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: async () => ({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "edge lit (no seat): alibaba/qwen3.8-max via codex-alibaba-acp — reasoningTier is required for carrier template token {tier}",
+    );
+    const generated = readAgents(dir).agents.filter(
+      (agent) => agent.provenance?.source === "providers-sync",
+    );
+    expect(generated.map((agent) => agent.name)).toEqual(["codex-alibaba-qwen3-8-plus-acp-high"]);
+    expect(generated[0]?.options.args).toContain("model_reasoning_effort=high");
+  });
+
   test("generates the whole opencode-go catalog fixture without unique-name or billed-seat failures", async () => {
     const dir = await makeTempDir();
     writeFixture(dir, opencodeProviderFixture());
@@ -937,7 +1257,7 @@ describe("penumbra config sync-providers", () => {
       "edge lit (no seat): openai/gpt-5.4 via codex-cli — seat generation for kind cli requires the P5 binding contract (binary/tier/env carriers)",
     );
     expect(result.stdout).toContain(
-      "edge lit (no seat): openai/gpt-5.4 via codex-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers)",
+      "edge lit (no seat): openai/gpt-5.4 via codex-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers): missing carriers.binary",
     );
     expect(
       readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
@@ -1006,7 +1326,7 @@ describe("penumbra config sync-providers", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.filter((line) => line.startsWith("edge lit (no seat):"))).toEqual([
-      "edge lit (no seat): openai/gpt-5.6-sol [low,high,ultra] via codex-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers)",
+      "edge lit (no seat): openai/gpt-5.6-sol [low,high,ultra] via codex-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers): missing carriers.binary",
     ]);
     expect(result.stdout.filter((line) => line.startsWith("hand-covered "))).toEqual([
       "hand-covered openai/gpt-5.5",
