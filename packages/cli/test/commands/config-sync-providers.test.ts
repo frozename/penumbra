@@ -480,6 +480,74 @@ describe("penumbra config sync-providers", () => {
     expect(Object.keys(readAliases(dir))).toEqual(Object.keys(FLOOR_ALIASES));
   });
 
+  test("reports one non-HTTP edge with discovered reasoning tiers in order", async () => {
+    const dir = await makeTempDir();
+    writeFixture(
+      dir,
+      {
+        openai: {
+          discovery: { kind: "fake", locator: "codex models list" },
+          auth: {},
+          bindings: {
+            "codex-acp": {
+              kind: "stdio-acp",
+              pricing_mode: "subscription",
+              api_provider: "openai",
+              subscription_provider: "openai",
+              model_carrier: "model",
+              seat_name_template: "openai-{model}-acp",
+            },
+          },
+        },
+      },
+      [
+        ...FLOOR_AGENTS,
+        {
+          name: "hand-codex",
+          adapter: "stdio-acp",
+          api_provider: "openai",
+          options: { binary: "/opt/codex", model: "gpt-5.5" },
+        },
+      ],
+    );
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "gpt-5.5", displayName: "GPT-5.5" },
+          {
+            sourceProviderId: "openai",
+            modelId: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            reasoningTier: "low",
+          },
+          {
+            sourceProviderId: "openai",
+            modelId: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            reasoningTier: "high",
+          },
+          {
+            sourceProviderId: "openai",
+            modelId: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            reasoningTier: "ultra",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.filter((line) => line.startsWith("edge lit (no seat):"))).toEqual([
+      "edge lit (no seat): openai/gpt-5.6-sol [low,high,ultra] via codex-acp — seat generation for kind stdio-acp requires the P5 binding contract (binary/tier/env carriers)",
+    ]);
+    expect(result.stdout.filter((line) => line.startsWith("hand-covered "))).toEqual([
+      "hand-covered openai/gpt-5.5",
+    ]);
+  });
+
   test("does not fall back from a defined carrier path to options.model", async () => {
     const dir = await makeTempDir();
     const providers = providerFixture();

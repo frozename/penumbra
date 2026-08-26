@@ -420,6 +420,7 @@ export async function runConfigSyncProviders(
   );
   const generated: GeneratedSeat[] = [];
   const reportedHandCoverage = new Set<string>();
+  const reportedEdges = new Map<string, { stdoutIndex: number; tiers: string[] }>();
 
   try {
     for (const [providerId, source] of providerEntries) {
@@ -440,9 +441,19 @@ export async function runConfigSyncProviders(
             continue;
           }
           if (!isHttpProviderBinding(binding)) {
-            stdout.push(
-              `edge lit (no seat): ${binding.api_provider}/${model.modelId} via ${bindingId} — seat generation for kind ${binding.kind} requires the P5 binding contract (binary/tier/env carriers)`,
-            );
+            const edgeKey = JSON.stringify([binding.api_provider, model.modelId, bindingId]);
+            const reportedEdge = reportedEdges.get(edgeKey);
+            const tiers = reportedEdge?.tiers ?? [];
+            if (model.reasoningTier && !tiers.includes(model.reasoningTier)) {
+              tiers.push(model.reasoningTier);
+            }
+            const line = `edge lit (no seat): ${binding.api_provider}/${model.modelId}${tiers.length > 0 ? ` [${tiers.join(",")}]` : ""} via ${bindingId} — seat generation for kind ${binding.kind} requires the P5 binding contract (binary/tier/env carriers)`;
+            if (reportedEdge) {
+              stdout[reportedEdge.stdoutIndex] = line;
+            } else {
+              reportedEdges.set(edgeKey, { stdoutIndex: stdout.length, tiers });
+              stdout.push(line);
+            }
             continue;
           }
           generated.push(generatedSeat(providerId, source, bindingId, binding, model));
