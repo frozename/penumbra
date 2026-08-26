@@ -4,77 +4,15 @@ import { join, resolve } from "node:path";
 
 import type { AaModelSnapshot } from "../packages/core/src/routing/schemas.js";
 
+import {
+  buildAliasCoverageReport,
+  type AliasCoverageReport,
+} from "../packages/cli/src/commands/config-check-aliases.js";
 import { loadAgentChatConfigFromDir } from "../packages/config/src/files/load.js";
-import {
-  loadModelAliasMapFromDir,
-  type ModelAliasMap,
-} from "../packages/config/src/files/model-aliases.js";
+import { loadModelAliasMapFromDir } from "../packages/config/src/files/model-aliases.js";
 import { createAaSnapshotStore } from "../packages/core/src/routing/aa-snapshot-store.js";
-import {
-  type AliasUnmatchedReason,
-  buildAliasIndex,
-  reconcileAliases,
-} from "../packages/core/src/routing/alias-map.js";
 
-export interface AliasCoverageEntry {
-  seatName: string;
-  status: "matched" | "dark" | "missing";
-  aaCreator?: string;
-  aaSlug?: string;
-  reason?: AliasUnmatchedReason;
-}
-
-export interface AliasCoverageReport {
-  matched: string[];
-  dark: string[];
-  missing: string[];
-  entries: AliasCoverageEntry[];
-}
-
-/**
- * Thin wrapper over the router's own alias matching (buildAliasIndex + reconcileAliases):
- * buckets each seat name into matched / dark (aliased but no snapshot match) / missing (no alias).
- */
-export function buildAliasCoverageReport(
-  aliases: ModelAliasMap,
-  snapshot: AaModelSnapshot,
-  seatNames: readonly string[],
-): AliasCoverageReport {
-  const index = buildAliasIndex(aliases);
-  const reconciled = reconcileAliases(index, snapshot, seatNames);
-
-  const matched: string[] = [];
-  const dark: string[] = [];
-  const missing: string[] = [];
-  const entries: AliasCoverageEntry[] = [];
-
-  for (const seatName of seatNames) {
-    const result = reconciled[seatName];
-    if (!result) continue;
-
-    if ("matched" in result) {
-      matched.push(seatName);
-      const alias = index.get(seatName);
-      entries.push({
-        seatName,
-        status: "matched",
-        aaCreator: alias?.aaCreator,
-        aaSlug: alias?.aaSlug,
-      });
-      continue;
-    }
-
-    if (result.unmatched === "no_alias_configured") {
-      missing.push(seatName);
-      entries.push({ seatName, status: "missing", reason: result.unmatched });
-    } else {
-      dark.push(seatName);
-      entries.push({ seatName, status: "dark", reason: result.unmatched });
-    }
-  }
-
-  return { matched, dark, missing, entries };
-}
+export { buildAliasCoverageReport, type AliasCoverageReport };
 
 function formatReport(report: AliasCoverageReport, snapshotState: string): string {
   const lines: string[] = [`AA snapshot: ${snapshotState}`, ""];

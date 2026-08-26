@@ -1136,10 +1136,11 @@ switch (cmd) {
     {
       const sub = process.argv[3];
       if (sub === "--help" || sub === "-h" || sub === undefined) {
-        emit("usage: penumbra config <show|split|sync-local>");
+        emit("usage: penumbra config <show|split|sync-local|check-aliases>");
         emit("  show  [--json]");
         emit("  split (--source <path> | --source-dir <dir>) --dest <dir> [--force] [--dry-run]");
         emit("  sync-local [--apply | --dry-run]");
+        emit("  check-aliases");
         process.exit(0);
       }
       if (sub === "show") {
@@ -1167,7 +1168,14 @@ switch (cmd) {
         for (const line of result.stderr) console.error(line);
         process.exit(result.exitCode);
       }
-      console.error("Usage: penumbra config <show|split|sync-local>");
+      if (sub === "check-aliases") {
+        const { runConfigCheckAliases } = await import("../src/commands/config-check-aliases.js");
+        const result = runConfigCheckAliases({});
+        for (const line of result.stdout) emit(line);
+        for (const line of result.stderr) console.error(line);
+        process.exit(result.exitCode);
+      }
+      console.error("Usage: penumbra config <show|split|sync-local|check-aliases>");
       process.exit(2);
     }
     break;
