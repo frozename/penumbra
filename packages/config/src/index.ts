@@ -36,12 +36,14 @@ export {
 } from "./files/model-aliases.js";
 export {
   type ProviderBinding,
+  ProviderBindingCarriersSchema,
   ProviderBindingSchema,
   type ProviderSource,
   ProviderSourceSchema,
   type ProviderSourcesConfig,
   ProviderSourcesConfigSchema,
   loadProviderSourcesFromDir,
+  resolveCatalogAuthority,
 } from "./files/providers.js";
 export {
   resolveLegacyOperatorConfigPath,

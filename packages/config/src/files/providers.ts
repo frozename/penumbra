@@ -12,6 +12,18 @@ const ProviderValueSchema = z
   .min(1)
   .refine(isCanonicalProviderValue, "must be a canonical provider value");
 
+export const ProviderBindingCarriersSchema = z
+  .object({
+    binary: z.string().min(1).optional(),
+    args_template: z.array(z.string().min(1)).min(1).optional(),
+    env: z.record(z.string().min(1), z.string()).optional(),
+    unset_env: z.array(z.string().min(1)).optional(),
+    mcp_servers: z.unknown().optional(),
+    authMethodId: z.string().min(1).optional(),
+    subscription_model_source: z.enum(["modelId", "displayName"]).optional(),
+  })
+  .strict();
+
 export const ProviderBindingSchema = z
   .object({
     kind: z.enum(["cli", "stdio-acp", "opencode-acp", "agy-cli", "openai-compat-http"]),
@@ -20,6 +32,8 @@ export const ProviderBindingSchema = z
     subscription_provider: ProviderValueSchema.optional(),
     model_carrier: z.string().min(1),
     seat_name_template: z.string().min(1),
+    carriers: ProviderBindingCarriersSchema.optional(),
+    catalog_authority: z.enum(["provider-catalog", "session-handshake"]).optional(),
   })
   .strict();
 export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
@@ -41,11 +55,35 @@ export const ProviderSourceSchema = z
     exclude_models: z.array(z.string().min(1)).optional(),
     bindings: z.record(z.string().min(1), ProviderBindingSchema),
   })
-  .strict();
+  .strict()
+  .superRefine((source, context) => {
+    for (const [bindingName, binding] of Object.entries(source.bindings)) {
+      if (
+        binding.catalog_authority === "session-handshake" &&
+        source.discovery.kind !== "acp-session"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["bindings", bindingName, "catalog_authority"],
+          message: "catalog_authority 'session-handshake' requires discovery.kind 'acp-session'",
+        });
+      }
+    }
+  });
 export type ProviderSource = z.infer<typeof ProviderSourceSchema>;
 
 export const ProviderSourcesConfigSchema = z.record(z.string().min(1), ProviderSourceSchema);
 export type ProviderSourcesConfig = z.infer<typeof ProviderSourcesConfigSchema>;
+
+export function resolveCatalogAuthority(
+  binding: ProviderBinding,
+  source: ProviderSource,
+): "provider-catalog" | "session-handshake" {
+  return (
+    binding.catalog_authority ??
+    (source.discovery.kind === "acp-session" ? "session-handshake" : "provider-catalog")
+  );
+}
 
 export function loadProviderSourcesFromDir(dir: string): ProviderSourcesConfig {
   const filePath = join(resolve(dir), "providers.yaml");
