@@ -1,3 +1,4 @@
+// Contract acceptance probe 2026-08-27: verified status round-trips.
 import * as core from "@penumbra/core";
 import {
   ISOLATED_INSTALL_CACHE_KEY,
