@@ -1583,6 +1583,30 @@ function projectRootForBranchPrecheck(
   return services.worktreeManager.mainRepoDir;
 }
 
+function persistRoutingDecisionForChainStart(
+  services: Services,
+  decision: RoutingDecision,
+  opts: {
+    ts: string;
+    handoffId: string | null;
+    routedAgent?: string;
+    role?: string;
+  },
+): void {
+  const routerMode = services.taskRouterConfig?.mode ?? "off";
+  writeRoutingDecision(services.db, decision, {
+    decisionId: services.uuid(),
+    ts: opts.ts,
+    handoffId: opts.handoffId,
+    mode: routerMode,
+    applied:
+      opts.handoffId !== null &&
+      routerMode === "auto" &&
+      decision.selected?.agent === opts.routedAgent,
+    role: opts.role,
+  });
+}
+
 export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1601,6 +1625,11 @@ export async function chainStartInternal(
     routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
   } catch (err) {
     if (err instanceof RouterHardConstraintExhaustedError) {
+      persistRoutingDecisionForChainStart(services, err.decision, {
+        ts: services.clock().toISOString(),
+        handoffId: null,
+        role: input.initial_agent,
+      });
       return json(
         {
           error: {
@@ -1632,7 +1661,16 @@ export async function chainStartInternal(
     }
     throw err;
   }
-  if (routing.response) return routing.response;
+  if (routing.response) {
+    if (routing.routingDecision) {
+      persistRoutingDecisionForChainStart(services, routing.routingDecision, {
+        ts: services.clock().toISOString(),
+        handoffId: null,
+        role: input.initial_agent,
+      });
+    }
+    return routing.response;
+  }
   const {
     route,
     routedAgent,
@@ -1720,13 +1758,10 @@ export async function chainStartInternal(
   });
 
   if (routingDecision) {
-    const routerMode = services.taskRouterConfig?.mode ?? "off";
-    writeRoutingDecision(services.db, routingDecision, {
-      decisionId: services.uuid(),
+    persistRoutingDecisionForChainStart(services, routingDecision, {
       ts,
       handoffId: handoff_id,
-      mode: routerMode,
-      applied: routerMode === "auto" && routingDecision.selected?.agent === routedAgent,
+      routedAgent,
       role: requestedAgent ?? routedRole ?? undefined,
     });
   }
@@ -2613,6 +2648,15 @@ function resolveRoleRoute(
     decisionSink,
   });
   if (!route && roleAgents.length === 0) {
+    return { route: null, decision: decisionSink.decision, roleRouteAttempted: true };
+  }
+  if (!route && opts.services.taskRouterConfig?.mode === "auto") {
+    // resolveSingleRoute already ran the constraint-aware selector; auto mode
+    // must not refill that denied pool with the first strict role holder. A
+    // router null always fails closed here, including non-provider constraint
+    // failures, because the router is the constraint authority and
+    // roleAgents[0] is an unconstrained legacy refill. Legacy modes keep the
+    // fallback below.
     return { route: null, decision: decisionSink.decision, roleRouteAttempted: true };
   }
   const fallbackAgent = roleAgents[0] ?? opts.initialAgent;

@@ -3675,6 +3675,132 @@ test("chain_start with taskRouterConfig mode:'auto' applies the router's own sel
   expect(decisions[0].selectedAgent).toBe("codex-mini");
 });
 
+test("chain_start auto routing fails closed when provider-scoped biases exist but provider facts are unavailable", async () => {
+  const services = tempServices({
+    agentRegistry: ["anthropic-seat"],
+    agentRouting: {
+      agents: [{ name: "anthropic-seat", roles: ["reviewer"] }],
+      default_roles: { reviewer: "anthropic-seat" },
+      role_exploration_policy: "ranked-first",
+    },
+  });
+  seedPerformance(services, {
+    performance_id: "p-unknown-provider-facts",
+    handoff_id: "h-unknown-provider-facts",
+    agent_name: "anthropic-seat",
+    task_type: "review_adversarial",
+    outcome: "merged",
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  excludeProvider(services, "anthropic");
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer",
+        task_type: "review_adversarial",
+        message: "review this change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("router_hard_constraint_exhausted");
+  expect(body.error?.reasons).toEqual([
+    {
+      route_id: "unknown:anthropic-seat",
+      reasons: ["router_facts_unavailable"],
+    },
+  ]);
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+  const decisions = readRoutingDecisions(services.db, { handoffId: null });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]).toMatchObject({
+    handoffId: null,
+    mode: "auto",
+    role: "reviewer",
+    selectedAgent: null,
+    applied: false,
+  });
+  expect(decisions[0]?.alternatives).toEqual([
+    {
+      routeId: "unknown:anthropic-seat",
+      excluded: true,
+      reasons: ["router_facts_unavailable"],
+    },
+  ]);
+});
+
+test("chain_start auto fallback does not re-admit a bias-excluded strict role holder", async () => {
+  const services = tempServices({
+    agentRegistry: ["biased-first", "pressured-second"],
+    agentRouting: {
+      agents: [
+        {
+          name: "biased-first",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
+        },
+        {
+          name: "pressured-second",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "anthropic",
+        },
+      ],
+      default_roles: { executor: "biased-first" },
+      role_exploration_policy: "ranked-first",
+    },
+  });
+  for (const agent of ["biased-first", "pressured-second"] as const) {
+    seedPerformance(services, {
+      performance_id: `p-fallback-${agent}`,
+      handoff_id: `h-fallback-${agent}`,
+      agent_name: agent,
+      task_type: "implement_small",
+      outcome: "merged",
+    });
+  }
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  services.aaSnapshotStore = {
+    ...services.aaSnapshotStore,
+    readSync: () => {
+      throw new Error("snapshot unavailable");
+    },
+  };
+  excludeProvider(services, "openai");
+  seedSubscriptionPressure(services, "anthropic", 95);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("role_route_unavailable");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+  const decisions = readRoutingDecisions(services.db, { limit: 10 });
+  expect(decisions).toHaveLength(0);
+});
+
 test("chain_start auto routing explores a known role with zero live strict holders", async () => {
   const services = tempServices({
     agentRegistry: ["planner-seat"],
@@ -4007,7 +4133,7 @@ test("chain_start records an auto decision as unapplied when classifier fallback
   });
 });
 
-test("chain_start with taskRouterConfig mode:'auto' fails with a legible 422 (no fallback, no handoff, no decision row) when every candidate is hard-excluded", async () => {
+test("chain_start with taskRouterConfig mode:'auto' fails with a legible 422 (no fallback, no handoff) and persists the denied routing decision when every candidate is hard-excluded", async () => {
   const services = tempServices({
     agentRegistry: ["gemini", "codex-mini"],
     agentRouting: executorRouting(),
@@ -4048,10 +4174,27 @@ test("chain_start with taskRouterConfig mode:'auto' fails with a legible 422 (no
     .query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs")
     .get();
   expect(handoffCount?.c ?? 0).toBe(0);
-  const decisionCount = services.db
-    .query<{ c: number }, []>("SELECT COUNT(*) as c FROM routing_decisions")
-    .get();
-  expect(decisionCount?.c ?? 0).toBe(0);
+  const decisions = readRoutingDecisions(services.db, { handoffId: null });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]).toMatchObject({
+    handoffId: null,
+    mode: "auto",
+    role: "executor",
+    selectedAgent: null,
+    applied: false,
+  });
+  expect(decisions[0]?.alternatives).toEqual([
+    {
+      routeId: "unknown:gemini",
+      excluded: true,
+      reasons: ["unhealthy_or_unavailable"],
+    },
+    {
+      routeId: "unknown:codex-mini",
+      excluded: true,
+      reasons: ["unhealthy_or_unavailable"],
+    },
+  ]);
 });
 
 test("chain_start with an explicit agent: pin bypasses the router even in mode:'auto', and is recorded as such (no router reason, no decision row)", async () => {

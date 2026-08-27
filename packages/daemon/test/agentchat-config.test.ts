@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../src/agentchat-config.js";
+import {
+  loadAgentChatConfig,
+  loadAgentRoutingFromConfig,
+  resolveAgentChatConfigPath,
+} from "../src/agentchat-config.js";
 
 function writeSplitConfig(dir: string): void {
   mkdirSync(dir, { recursive: true });
@@ -89,6 +93,66 @@ test("loadAgentChatConfig rejects routing files with legacy persona keys", () =>
 
   process.env.PENUMBRA_CONFIG_DIR = cfgDir;
   expect(() => loadAgentChatConfig()).toThrow(/review_personas/);
+});
+
+test("loadAgentRoutingFromConfig preserves the legacy boot routing shape with provider facts", () => {
+  const cfg = {
+    agents: [
+      {
+        name: "planner",
+        adapter: "stdio-acp",
+        roles: ["planner"],
+        pricing_mode: "subscription" as const,
+        subscription_provider: "anthropic",
+      },
+      {
+        name: "executor",
+        adapter: "openai-compat-http",
+        roles: ["executor", "reviewer"],
+        pricing_mode: "api" as const,
+        api_provider: "openai",
+      },
+    ],
+    default_roles: {
+      planner: "planner",
+      executor: "executor",
+    },
+    role_routing: {
+      headroom_weighting: true,
+      latency_weighting: false,
+    },
+    providers: [],
+  };
+
+  expect(loadAgentRoutingFromConfig(cfg)).toEqual({
+    agents: [
+      {
+        name: "planner",
+        roles: ["planner"],
+        subscription_provider: "anthropic",
+        api_provider: undefined,
+        pricing_mode: "subscription",
+        adapter: "stdio-acp",
+      },
+      {
+        name: "executor",
+        roles: ["executor", "reviewer"],
+        subscription_provider: undefined,
+        api_provider: "openai",
+        pricing_mode: "api",
+        adapter: "openai-compat-http",
+      },
+    ],
+    default_roles: {
+      planner: "planner",
+      executor: "executor",
+    },
+    role_exploration_policy: "unsampled-first",
+    role_routing: {
+      headroom_weighting: true,
+      latency_weighting: false,
+    },
+  });
 });
 
 test("daemon source no longer imports legacy agentchat config loader module", async () => {

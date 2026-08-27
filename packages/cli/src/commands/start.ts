@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import {
   loadAgentChatConfig,
+  loadAgentRoutingFromConfig,
   resolveAgentChatConfigPath,
 } from "../../../daemon/src/agentchat-config.js";
 import { type DaemonHandle, serve } from "../../../daemon/src/serve.js";
@@ -133,12 +134,7 @@ function loadAgentchatBundle(): AgentchatBundle {
     return {
       agentchatConfig,
       agentRegistry: agentchatConfig.agents.map((agent) => agent.name),
-      agentRouting: {
-        agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
-        default_roles: agentchatConfig.default_roles,
-        role_exploration_policy:
-          agentchatConfig.role_routing?.exploration_policy ?? "unsampled-first",
-      },
+      agentRouting: loadAgentRoutingFromConfig(agentchatConfig),
       providerQuotas: agentchatConfig.providers.map((provider) => ({
         provider: provider.name,
         model: provider.model,

@@ -556,11 +556,18 @@ function applyRoutingBiasExclusions(
   if (!input.activeBiases || input.activeBiases.length === 0) {
     return { admitted: [...candidates], excluded: [] };
   }
+  const hasProviderExclude = input.activeBiases.some(
+    (bias) => bias.scope === "provider" && bias.mode === "exclude",
+  );
   const admitted: string[] = [];
   const excluded: Array<{ agent: string; reasons: string[] }> = [];
   for (const agent of candidates) {
     const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
     const provider = agentConfig ? resolveProvider(agentConfig) : null;
+    if (hasProviderExclude && provider === null) {
+      excluded.push({ agent, reasons: ["router_facts_unavailable"] });
+      continue;
+    }
     if (resolveBiasEffect(agent, provider, input.activeBiases).exclude) {
       excluded.push({ agent, reasons: ["routing_bias_exclude"] });
     } else {
