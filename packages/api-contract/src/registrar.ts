@@ -12,6 +12,14 @@ export const RegistrarPhaseStatusSchema = z.enum([
 ]);
 export type RegistrarPhaseStatus = z.infer<typeof RegistrarPhaseStatusSchema>;
 
+export const RegistrarEntryTransitionTargetSchema = z.enum([
+  "active",
+  "paused",
+  "complete",
+  "abandoned",
+]);
+export type RegistrarEntryTransitionTarget = z.infer<typeof RegistrarEntryTransitionTargetSchema>;
+
 export const RegistrarEventKindSchema = z.enum([
   "progress",
   "caveat",
@@ -20,6 +28,7 @@ export const RegistrarEventKindSchema = z.enum([
   "decision",
   "phase_transition",
   "link",
+  "entry_transition",
 ]);
 export type RegistrarEventKind = z.infer<typeof RegistrarEventKindSchema>;
 
@@ -53,7 +62,12 @@ const eventBase = {
 const RegistrarBlockerStateSchema = z.enum(["opened", "resolved"]);
 const RegistrarFollowUpStateSchema = z.enum(["owed", "done", "dropped"]);
 const RegistrarEventStateSchema = z
-  .union([RegistrarBlockerStateSchema, RegistrarFollowUpStateSchema, RegistrarPhaseStatusSchema])
+  .union([
+    RegistrarBlockerStateSchema,
+    RegistrarFollowUpStateSchema,
+    RegistrarPhaseStatusSchema,
+    RegistrarEntryTransitionTargetSchema,
+  ])
   .nullable();
 
 const RegistrarBlockerInputSchema = z
@@ -115,6 +129,24 @@ export const RegistrarEventInputSchema = z.discriminatedUnion("kind", [
       link_value: z.string().min(1),
     })
     .strict(),
+  z
+    .object({
+      actor: RegistrarActorSchema,
+      body: RegistrarBodySchema,
+      kind: z.literal("entry_transition"),
+      from_status: RegistrarStatusSchema,
+      state: RegistrarEntryTransitionTargetSchema,
+    })
+    .strict()
+    .superRefine((event, ctx) => {
+      if (event.state === event.from_status) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["state"],
+          message: "entry_transition requires state !== from_status",
+        });
+      }
+    }),
 ]);
 export type RegistrarEventInput = z.infer<typeof RegistrarEventInputSchema>;
 
@@ -160,9 +192,12 @@ export const RegistrarEventSchema = z
         (event.state === "owed" || event.state === "done" || event.state === "dropped")) ||
       (event.kind === "phase_transition" &&
         RegistrarPhaseStatusSchema.safeParse(event.state).success) ||
+      (event.kind === "entry_transition" &&
+        RegistrarEntryTransitionTargetSchema.safeParse(event.state).success) ||
       (event.kind !== "blocker" &&
         event.kind !== "follow_up" &&
         event.kind !== "phase_transition" &&
+        event.kind !== "entry_transition" &&
         event.state === null);
     if (!stateMatchesKind) {
       ctx.addIssue({

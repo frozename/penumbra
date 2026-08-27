@@ -5,6 +5,7 @@ import type { DaemonClient } from "../../src/daemon-client.js";
 
 import { DaemonHttpError } from "../../src/daemon-client.js";
 import {
+  RegistrarAppendInputSchema,
   RegistrarAppendInputShape,
   registrarAppendHandler,
 } from "../../src/tools/registrar-append.js";
@@ -60,6 +61,79 @@ test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP d
   });
 
   await expect(promise).rejects.toThrow("phase already transitioned");
+  await expect(promise).rejects.not.toThrow("HTTP 409");
+});
+
+test("an entry_transition input parses and passes through to the daemon client", async () => {
+  const calls: Parameters<DaemonClient["registrarAppend"]>[] = [];
+  const registrarAppend = mock<DaemonClient["registrarAppend"]>((req) => {
+    calls.push([req]);
+    return Promise.resolve({
+      event: {
+        event_id: 1,
+        registrar_id: req.registrar_id,
+        phase_no: null,
+        kind: "entry_transition",
+        state: "paused",
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "maestro",
+        body: "paused for review",
+        created_at: 1_700_000_000,
+      },
+    });
+  });
+  const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
+
+  const result = await handler({
+    registrar_id: "registrar-1",
+    kind: "entry_transition",
+    from_status: "active",
+    state: "paused",
+    actor: "maestro",
+    body: "paused for review",
+  });
+
+  expect(registrarAppend).toHaveBeenCalledTimes(1);
+  expect(calls[0]).toEqual([
+    {
+      registrar_id: "registrar-1",
+      event: {
+        actor: "maestro",
+        body: "paused for review",
+        kind: "entry_transition",
+        from_status: "active",
+        state: "paused",
+      },
+    },
+  ]);
+  expect(result).toBeTruthy();
+});
+
+test("a daemon 409 invalid_entry_transition is surfaced as 'entry status already transitioned'", async () => {
+  const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
+    Promise.reject(
+      new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 409", 409, {
+        error: "invalid_entry_transition",
+        registrar_id: "registrar-1",
+        from_status: "paused",
+        current_status: "active",
+      }),
+    ),
+  );
+  const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
+
+  const promise = handler({
+    registrar_id: "registrar-1",
+    kind: "entry_transition",
+    from_status: "paused",
+    state: "abandoned",
+    actor: "maestro",
+    body: "should conflict",
+  });
+
+  await expect(promise).rejects.toThrow("entry status already transitioned");
   await expect(promise).rejects.not.toThrow("HTTP 409");
 });
 
@@ -138,6 +212,18 @@ test("RegistrarAppendInputShape rejects a multibyte body over 4096 bytes", () =>
       body: "€".repeat(2000),
     }),
   ).toThrow("body must be at most 4096 bytes");
+});
+
+test("RegistrarAppendInputSchema rejects from_status for event kinds that do not transition state", () => {
+  expect(() =>
+    RegistrarAppendInputSchema.parse({
+      registrar_id: "registrar-1",
+      kind: "progress",
+      from_status: "active",
+      actor: "maestro",
+      body: "record progress",
+    }),
+  ).toThrow("from_status is only valid for phase_transition and entry_transition");
 });
 
 test("a daemon 400 surfaces its validation message", async () => {

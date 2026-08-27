@@ -133,6 +133,7 @@ export {
   type RegisterPlanInput,
 } from "./plans/writer.js";
 export {
+  InvalidEntryTransition,
   InvalidPhaseTransition,
   PhaseNotFound,
   RegistrarNotFound,

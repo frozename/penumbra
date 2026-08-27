@@ -2,6 +2,7 @@
 import type { Database } from "bun:sqlite";
 
 import {
+  InvalidEntryTransition,
   InvalidPhaseTransition,
   PhaseNotFound,
   RegistrarNotFound,
@@ -76,15 +77,16 @@ export class RegistrarWriter {
   appendEvent(registrar_id: string, input: unknown): RegistrarEvent {
     const validated = RegistrarEventInputSchema.parse(input);
     return this.db.transaction(() => {
-      this.requireEntry(registrar_id);
-      if (validated.phase_no !== undefined) {
+      const entry = this.requireEntry(registrar_id);
+      const phase_no = "phase_no" in validated ? validated.phase_no : undefined;
+      if (phase_no !== undefined) {
         const phase = this.db
           .query<
             { phase_no: number },
             [string, number]
           >("SELECT phase_no FROM registrar_phases WHERE registrar_id = ? AND phase_no = ?")
-          .get(registrar_id, validated.phase_no);
-        if (!phase) throw new PhaseNotFound(registrar_id, validated.phase_no);
+          .get(registrar_id, phase_no);
+        if (!phase) throw new PhaseNotFound(registrar_id, phase_no);
       }
 
       const ref_event_id = "ref_event_id" in validated ? (validated.ref_event_id ?? null) : null;
@@ -99,6 +101,8 @@ export class RegistrarWriter {
       }
 
       const now = this.nowFn();
+      // Transitions mutate their projection row before journaling; the surrounding transaction
+      // keeps both steps atomic and rolls the mutation back if the event insert fails.
       if (validated.kind === "phase_transition") {
         const result = this.db
           .query<unknown, [string, number, string, number, string]>(
@@ -109,6 +113,19 @@ export class RegistrarWriter {
           .run(validated.state, now, registrar_id, validated.phase_no, validated.from_status);
         if (result.changes === 0) {
           throw new InvalidPhaseTransition(registrar_id, validated.phase_no, validated.from_status);
+        }
+      }
+
+      if (validated.kind === "entry_transition") {
+        const result = this.db
+          .query<unknown, [string, number, string, string]>(
+            `UPDATE registrar_entries
+             SET status = ?, updated_at = ?
+             WHERE registrar_id = ? AND status = ?`,
+          )
+          .run(validated.state, now, registrar_id, validated.from_status);
+        if (result.changes === 0) {
+          throw new InvalidEntryTransition(registrar_id, validated.from_status, entry.status);
         }
       }
 
@@ -137,7 +154,7 @@ export class RegistrarWriter {
         )
         .run(
           registrar_id,
-          validated.phase_no ?? null,
+          phase_no ?? null,
           validated.kind,
           state,
           ref_event_id,
