@@ -97,7 +97,7 @@ import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
 import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
-  resolveAgentProvider,
+  buildRetryRoutingMaps,
   retryBranchFields,
   type RoutingBiasLike,
   selectRetryAgent,
@@ -808,10 +808,7 @@ async function tryAutoRetrySilentFailure(
     //  - activeBiases honors operator usage-steering excludes so the retry does
     //    not bypass a steer the first-pass route obeyed.
     // Both degrade open: an empty registry/bias set just relaxes the guard.
-    const validAgents = new Set(config.agents.map((a) => a.name));
-    const agentProviders = new Map(
-      config.agents.map((a) => [a.name, resolveAgentProvider(a)] as const),
-    );
+    const { validAgents, agentProviders, agentAdapters } = buildRetryRoutingMaps(config.agents);
     let activeBiases: RoutingBiasLike[] = [];
     try {
       activeBiases = await client.listRoutingBiases();
@@ -821,11 +818,14 @@ async function tryAutoRetrySilentFailure(
         "silent-failure retry: routing-bias fetch failed; selecting unbiased",
       );
     }
+    // shouldRetryHandoffForSilentFailure already exempts non-mutating task types,
+    // so every retry reaching this selector needs tools and keeps the filter armed.
     nextAgent = selectRetryAgent({
       candidates: ranked.candidates,
       failedAgent: failedHandoff.to_agent,
       validAgents,
       agentProviders,
+      agentAdapters,
       activeBiases,
     });
   } catch (err) {

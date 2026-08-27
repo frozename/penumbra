@@ -388,6 +388,7 @@ export {
   type ResolveAgentPoolResult,
   type RoutingBiasEffectInput,
   type ResolvedAgentPoolMember,
+  isTextOnlyAdapter,
   resolveGateOutcomeCutoverIso,
   type RoleRoute,
   routeAgent,

@@ -211,6 +211,9 @@ export interface RouteAgentInput {
   roleExplorationPolicy?: "unsampled-first" | "ranked-first";
   defaultRoles?: Record<string, string>;
   agentRegistry?: string[] | null;
+  // Internal router seam: auto routing intentionally explores every non-empty
+  // role seat in the full registry; legacy role routing keeps strict holders.
+  allowRoleExploration?: boolean;
   applyPressure?: AgentRoutePressureSnapshot;
   // User-driven routing-bias steers (usage steering). Injected by the caller
   // (daemon reads readRoutingBiases); the scorer never reads the DB itself.
@@ -819,6 +822,10 @@ function isOverPressure(
   });
 }
 
+export function isTextOnlyAdapter(adapter: string | undefined | null): boolean {
+  return adapter === "openai-compat-http";
+}
+
 // User-driven routing-bias ("usage steering") effect for one candidate.
 // Default weights apply when a bias omits one: boost raises a candidate's score,
 // divert lowers it. Precedence is exclude > divert > boost — an exclude removes
@@ -861,7 +868,9 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
   const roleAgents =
     role && input.agentchatConfig?.agents
       ? input.agentchatConfig.agents
-          .filter((agent) => agent.roles.includes(role))
+          .filter((agent) =>
+            input.allowRoleExploration ? agent.roles.length > 0 : agent.roles.includes(role),
+          )
           .map((agent) => agent.name)
       : null;
   const registryAgents = input.agentRegistry ?? null;
@@ -883,6 +892,19 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
   }
   if (input.hardExcludedAgents && input.hardExcludedAgents.size > 0) {
     allowed = allowed.filter((name) => !input.hardExcludedAgents?.has(name));
+  }
+  if (
+    role &&
+    !input.allowRoleExploration &&
+    input.tool_free !== true &&
+    input.agentchatConfig?.agents
+  ) {
+    const textOnlyAgents = new Set(
+      input.agentchatConfig.agents
+        .filter((agent) => isTextOnlyAdapter(agent.adapter))
+        .map((agent) => agent.name),
+    );
+    allowed = allowed.filter((name) => !textOnlyAgents.has(name));
   }
   return allowed;
 }

@@ -55,6 +55,7 @@ export const HarnessContextSchema = z
     dispatchKind: z.string().optional(),
     role: z.string().optional(),
     localOnly: z.boolean().optional(),
+    toolFree: z.boolean().optional(),
     subscriptionQuota: z
       .object({
         remainingPct: UnitIntervalSchema.optional(),

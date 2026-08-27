@@ -349,6 +349,11 @@ describe("selectRetryAgent", () => {
     ["openai-codex-mini-cli", "openai"],
     ["anthropic-claude-opus-acp", "anthropic"],
   ]);
+  const agentAdapters = new Map<string, string | null>([
+    ["anthropic-claude-sonnet-acp", "stdio-acp"],
+    ["openai-codex-mini-cli", "stdio-acp"],
+    ["anthropic-claude-opus-acp", "stdio-acp"],
+  ]);
 
   test("picks the highest-ranked candidate that is not the failed agent", () => {
     expect(
@@ -357,6 +362,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: [],
       }),
     ).toBe("openai-codex-mini-cli");
@@ -369,6 +375,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "openai-codex-mini-cli",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: [],
       }),
     ).toBe("anthropic-claude-sonnet-acp");
@@ -385,6 +392,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: [],
       }),
     ).toBe("anthropic-claude-opus-acp");
@@ -402,6 +410,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: excludeOpenai,
       }),
     ).toBe("anthropic-claude-opus-acp");
@@ -417,6 +426,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: excludeAgent,
       }),
     ).toBe("anthropic-claude-opus-acp");
@@ -433,6 +443,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: nonExclude,
       }),
     ).toBe("openai-codex-mini-cli");
@@ -450,6 +461,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "x",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: [],
       }),
     ).toBe("anthropic-claude-sonnet-acp");
@@ -462,6 +474,7 @@ describe("selectRetryAgent", () => {
         failedAgent: "anthropic-claude-sonnet-acp",
         validAgents,
         agentProviders,
+        agentAdapters,
         activeBiases: [
           { scope: "provider", value: "openai", mode: "exclude" },
           { scope: "provider", value: "anthropic", mode: "exclude" },

@@ -8,7 +8,10 @@ import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
 
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
-import type { CandidateConstraintFacts } from "../../src/routing/constraint-filter.js";
+import {
+  applyHardConstraints,
+  type CandidateConstraintFacts,
+} from "../../src/routing/constraint-filter.js";
 import {
   computePriors,
   decide,
@@ -721,6 +724,24 @@ describe("routing decide orchestrator", () => {
       { registry: REGISTRY, policy: "ranked-first" },
       { registry: REGISTRY, policy: "ranked-first" },
     ]);
+  });
+
+  test("role routing fences a registry name that has no config row", () => {
+    let capturedFacts: Readonly<Record<string, CandidateConstraintFacts | undefined>> | undefined;
+    const decision = decide(
+      baseInput({
+        agentRegistry: ["missing-config-seat", "quality-seat"],
+      }),
+      dependencies({
+        applyHardConstraints: (candidates, taskProfile, harnessContext, facts, config) => {
+          capturedFacts = facts;
+          return applyHardConstraints(candidates, taskProfile, harnessContext, facts, config);
+        },
+      }),
+    );
+
+    expect(capturedFacts?.["missing-config-seat"]?.roleRoutingRolesEmpty).toBe(true);
+    expect(decision.selected?.agent).toBe("quality-seat");
   });
 
   test("agent-name keyed accumulators have null prototypes", () => {

@@ -6,6 +6,7 @@ import type { RoutingBias } from "../readers/routing-bias.js";
 import {
   resolveBiasEffect,
   resolveClassifierDeclineCutoverIso,
+  isTextOnlyAdapter,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
@@ -76,9 +77,27 @@ export function pickFromPool(
   tool_free?: boolean,
   activeBiases?: RoutingBias[],
 ): string {
+  if (pool.length === 0) throw new Error("pickFromPool: pool must not be empty");
+
+  let constraintFilteredPool = pool;
+  // requires_tools needs config to resolve adapters and is intentionally inert without it; production callers pass config.
+  if (tool_free !== true && agentchatConfig) {
+    const textOnlyAgents = new Set(
+      agentchatConfig.agents
+        .filter((agent) => isTextOnlyAdapter(agent.adapter))
+        .map((agent) => agent.name),
+    );
+    constraintFilteredPool = pool.filter((name) => !textOnlyAgents.has(name));
+  }
+  if (constraintFilteredPool.length === 0) {
+    throw new Error(
+      `pickFromPool: no tool-capable agents remain after requires_tools constraint (taskType=${taskType}, pool=${pool.join(",")})`,
+    );
+  }
+
   let biasFilteredPool = pool;
   if (activeBiases && activeBiases.length > 0) {
-    const nonExcluded = pool.filter((name) => {
+    const nonExcluded = constraintFilteredPool.filter((name) => {
       const conf = agentchatConfig?.agents.find((agent) => agent.name === name);
       const provider = conf ? resolveProvider(conf) : null;
       return !resolveBiasEffect(name, provider, activeBiases).exclude;
@@ -90,9 +109,12 @@ export function pickFromPool(
     } else {
       console.warn(
         "[pick-from-pool] all pool members are bias-excluded; re-admitting full pool in preference order",
-        { pool, taskType },
+        { pool: constraintFilteredPool, taskType },
       );
+      biasFilteredPool = constraintFilteredPool;
     }
+  } else {
+    biasFilteredPool = constraintFilteredPool;
   }
 
   const [firstAgent, secondAgent] = biasFilteredPool;

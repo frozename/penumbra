@@ -2122,7 +2122,12 @@ describe("model-task-router phase 3 engine inputs", () => {
         "beta",
       ]);
 
-      const single = routeAgent({ ...routeInput("single"), hardExcludedAgents, priors });
+      const single = routeAgent({
+        ...routeInput("single"),
+        hardExcludedAgents,
+        priors,
+        tool_free: true,
+      });
       expect(single.detail).toBe("single");
       if (single.detail !== "single") return;
       expect(single.route?.agent).toBe("beta");
@@ -2145,6 +2150,7 @@ describe("model-task-router phase 3 engine inputs", () => {
         const out = routeAgent({
           ...routeInput(detail),
           hardExcludedAgents: new Set(["alpha"]),
+          ...(detail === "single" ? { tool_free: true } : {}),
         });
         expect(visibleAgents(out)).toEqual(["beta"]);
       }
