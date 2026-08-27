@@ -54,7 +54,7 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
 
 test("verifyMemory provenance is surfaced by search", () => {
   const db = freshDb();
-  const createdAt = new Date("2026-05-12T12:00:00.000Z").toISOString();
+  const createdAt = new Date(Date.now() - 3 * 86_400_000).toISOString();
   insertT2(db, "memory-provenance", createdAt);
 
   const verified = verifyMemory(db, "memory-provenance", {
@@ -70,6 +70,7 @@ test("verifyMemory provenance is surfaced by search", () => {
     query: "memory-provenance",
     project_id: null,
     limit: 5,
+    offset: 0,
     tiers: ["t2"],
   });
   const hit = hits.find((row) => row.id === "memory-provenance");
@@ -84,7 +85,7 @@ test("verifyMemory provenance is surfaced by search", () => {
 
 test("verifyMemory defaults provenance fields to null", () => {
   const db = freshDb();
-  const createdAt = new Date("2026-05-12T12:00:00.000Z").toISOString();
+  const createdAt = new Date(Date.now() - 3 * 86_400_000).toISOString();
   insertT2(db, "memory-defaults", createdAt);
 
   const verified = verifyMemory(db, "memory-defaults", {
@@ -98,7 +99,13 @@ test("verifyMemory defaults provenance fields to null", () => {
     last_verified_session_id: null,
   });
 
-  const hits = search(db, { query: "memory-defaults", project_id: null, limit: 5, tiers: ["t2"] });
+  const hits = search(db, {
+    query: "memory-defaults",
+    project_id: null,
+    limit: 5,
+    offset: 0,
+    tiers: ["t2"],
+  });
   const hit = hits.find((row) => row.id === "memory-defaults");
   expect(hit).toMatchObject({
     last_verified_by: null,
