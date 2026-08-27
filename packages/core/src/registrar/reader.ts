@@ -80,10 +80,6 @@ export class RegistrarReader {
     return rows.map((row) => RegistrarEventSchema.parse(row));
   }
 
-  getEvents(registrar_id: string): RegistrarEvent[] {
-    return this.listEvents(registrar_id);
-  }
-
   getRollup(registrar_id: string): RegistrarRollup {
     const row = this.db
       .query<{ open_blockers: number; open_follow_ups: number }, [string, string]>(

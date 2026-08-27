@@ -1,9 +1,13 @@
 import { expect, mock, test } from "bun:test";
+import { z } from "zod";
 
 import type { DaemonClient } from "../../src/daemon-client.js";
 
 import { DaemonHttpError } from "../../src/daemon-client.js";
-import { registrarAppendHandler } from "../../src/tools/registrar-append.js";
+import {
+  RegistrarAppendInputShape,
+  registrarAppendHandler,
+} from "../../src/tools/registrar-append.js";
 import { fakeDaemon } from "../helpers.js";
 
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
@@ -21,7 +25,7 @@ test("an unknown kind throws at the zod boundary and daemon.registrarAppend is n
   );
   const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
 
-  expect(
+  await expect(
     handler({
       registrar_id: "registrar-1",
       kind: "unknown",
@@ -55,8 +59,8 @@ test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP d
     state: "active",
   });
 
-  expect(promise).rejects.toThrow("phase already transitioned");
-  expect(promise).rejects.not.toThrow("HTTP 409");
+  await expect(promise).rejects.toThrow("phase already transitioned");
+  await expect(promise).rejects.not.toThrow("HTTP 409");
 });
 
 test("a daemon 404 is surfaced as registrar entry not found", async () => {
@@ -81,6 +85,59 @@ test("a daemon 404 is surfaced as registrar entry not found", async () => {
 
   expect(err).toBeInstanceOf(Error);
   expect((err as Error).message).toBe("registrar entry not found");
+});
+
+test("a daemon phase_not_found 404 names the missing phase", async () => {
+  const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
+    Promise.reject(
+      new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 404", 404, {
+        error: "phase_not_found",
+        registrar_id: "registrar-1",
+        phase_no: 7,
+      }),
+    ),
+  );
+  const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
+
+  await expect(
+    handler({
+      registrar_id: "registrar-1",
+      kind: "progress",
+      actor: "maestro",
+      body: "record progress",
+    }),
+  ).rejects.toThrow("registrar phase 7 not found");
+});
+
+test("an unrecognized or bodyless daemon 404 notes that the registrar feature may be disabled", async () => {
+  for (const body of [undefined, { error: "route_not_found" }]) {
+    const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
+      Promise.reject(
+        new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 404", 404, body),
+      ),
+    );
+    const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
+
+    await expect(
+      handler({
+        registrar_id: "registrar-1",
+        kind: "progress",
+        actor: "maestro",
+        body: "record progress",
+      }),
+    ).rejects.toThrow("registrar feature may be disabled");
+  }
+});
+
+test("RegistrarAppendInputShape rejects a multibyte body over 4096 bytes", () => {
+  expect(() =>
+    z.object(RegistrarAppendInputShape).parse({
+      registrar_id: "registrar-1",
+      kind: "progress",
+      actor: "maestro",
+      body: "€".repeat(2000),
+    }),
+  ).toThrow("body must be at most 4096 bytes");
 });
 
 test("a daemon 400 surfaces its validation message", async () => {

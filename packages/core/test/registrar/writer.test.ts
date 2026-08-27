@@ -5,7 +5,7 @@ import { migrate } from "../../src/db/migrations.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { InvalidPhaseTransition, RegistrarSlugTaken } from "../../src/registrar/errors.js";
 import { RegistrarReader } from "../../src/registrar/reader.js";
-import { RegistrarWriter } from "../../src/registrar/writer.js";
+import { RegistrarWriter, rethrowSlugUniqueConstraint } from "../../src/registrar/writer.js";
 
 try {
   if (process.platform === "darwin") {
@@ -90,6 +90,20 @@ test("raw INSERT state='resolved' with ref_event_id NULL throws", () => {
   expectSqliteConstraint(() => insertRawEvent(db, { kind: "blocker", state: "resolved" }));
 });
 
+test("raw INSERT rejects a registrar event body over 4096 bytes even when it is under 4096 characters", () => {
+  const db = makeDb();
+  seedRawEntry(db);
+
+  expectSqliteConstraint(() =>
+    db.run(
+      `INSERT INTO registrar_events
+         (registrar_id, phase_no, kind, state, ref_event_id, link_kind, link_value, actor, body, created_at)
+       VALUES (?, NULL, 'progress', NULL, NULL, NULL, NULL, 'maestro', ?, 100)`,
+      ["registrar-1", "€".repeat(2000)],
+    ),
+  );
+});
+
 const createRequest = {
   title: "Registrar rollout",
   slug: "registrar-rollout",
@@ -124,6 +138,22 @@ test("createEntry() with a slug that already exists throws RegistrarSlugTaken", 
   );
 });
 
+test("rethrowSlugUniqueConstraint maps the registrar slug UNIQUE violation to RegistrarSlugTaken", () => {
+  const error = Object.assign(new Error("UNIQUE constraint failed: registrar_entries.slug"), {
+    code: "SQLITE_CONSTRAINT_UNIQUE",
+  });
+
+  expect(() => rethrowSlugUniqueConstraint(error, "registrar-rollout")).toThrow(RegistrarSlugTaken);
+});
+
+test("rethrowSlugUniqueConstraint preserves unrelated constraint errors", () => {
+  const error = Object.assign(new Error("CHECK constraint failed: status"), {
+    code: "SQLITE_CONSTRAINT_CHECK",
+  });
+
+  expect(() => rethrowSlugUniqueConstraint(error, "registrar-rollout")).toThrow(error);
+});
+
 test("createEntry() defaults status='active', phase 1 'active', the rest 'pending', in one transaction", () => {
   const { writer, reader } = makeDomain();
 
@@ -155,7 +185,7 @@ test("createEntry() defaults status='active', phase 1 'active', the rest 'pendin
   ).toBe(0);
 });
 
-test("appendEvent() rejects an unknown kind at the zod boundary — getEvents() shows zero rows", () => {
+test("appendEvent() rejects an unknown kind at the zod boundary — listEvents() shows zero rows", () => {
   const { writer, reader } = makeDomain();
   const entry = writer.createEntry(createRequest);
 
@@ -166,7 +196,7 @@ test("appendEvent() rejects an unknown kind at the zod boundary — getEvents() 
       kind: "sabotage",
     }),
   ).toThrow();
-  expect(reader.getEvents(entry.registrar_id)).toEqual([]);
+  expect(reader.listEvents(entry.registrar_id)).toEqual([]);
 });
 
 test("appendEvent(kind='phase_transition', from_status='pending', state='complete') moves registrar_phases.status and bumps registrar_entries.updated_at", () => {

@@ -1103,6 +1103,7 @@ export function createDaemonFetchHandler(opts: {
   resolveLlmKeychain?: ResolveKeychainSecret;
 }): (req: Request) => Promise<Response> {
   const daemonServices = opts.services as DaemonServices;
+  // Evaluated once at handler construction; changing PENUMBRA_REGISTRAR requires restart, and only the exact string "0" disables it.
   const routes =
     process.env.PENUMBRA_REGISTRAR === "0"
       ? ROUTES.filter((route) => route.feature !== "registrar")
@@ -1192,6 +1193,7 @@ export function createDaemonFetchHandler(opts: {
   };
   return async (req: Request): Promise<Response> => {
     const origin = req.headers.get("origin");
+    // Genuine loopback preflights answer before the host guard: they carry no body or state and their origin is already allowlisted.
     const preflight = corsPreflightResponse(req, origin);
     if (preflight) return preflight;
     const response = await (async (): Promise<Response> => {

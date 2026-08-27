@@ -579,10 +579,7 @@ describe("TOOL_REGISTRY", () => {
     if (importError || !TOOL_REGISTRY) return;
 
     const keys = Object.keys(TOOL_REGISTRY);
-    const planKeys = new Set(keys.filter((key) => key.startsWith("plan_")));
-    const registrarOnly = keys
-      .filter((key) => key.startsWith("registrar_") && !planKeys.has(key))
-      .sort();
+    const registrarOnly = keys.filter((key) => key.startsWith("registrar_")).sort();
 
     expect(registrarOnly).toEqual([
       "registrar_append",

@@ -1,5 +1,6 @@
 import {
   RegistrarDetailSchema,
+  RegistrarEventSchema,
   RegistrarEventKindSchema,
   RegistrarListResponseSchema,
 } from "@penumbra/api-contract";
@@ -18,9 +19,10 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { setPrincipalForTest } from "../../src/auth.js";
-import { registrarCreateRoute } from "../../src/routes/registrar.js";
+import { registrarAppendRoute, registrarCreateRoute } from "../../src/routes/registrar.js";
 import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
@@ -199,6 +201,32 @@ test("POST /registrar with a worker-token principal returns 403", async () => {
   }
 });
 
+test("POST /registrar/:id/events with a worker-token principal returns 403 principal_forbidden", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const entry = daemon.services.registrarWriter.createEntry(registrarCreateInput());
+    const req = new Request(`http://x/registrar/${entry.registrar_id}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "progress", actor: "worker", body: "worker update" }),
+    });
+    setPrincipalForTest(req, {
+      kind: "worker",
+      worker_id: "worker-1",
+      token_hash: "hash-1",
+    });
+
+    const response = await registrarAppendRoute(req, entry.registrar_id, daemon.services);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({ error: expect.objectContaining({ code: "principal_forbidden" }) }),
+    );
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("POST /registrar as the shared principal creates the entry and its phases in one call, 201 + registrar_id", async () => {
   const daemon = startTestDaemon();
   try {
@@ -209,8 +237,7 @@ test("POST /registrar as the shared principal creates the entry and its phases i
     });
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { registrar_id: string };
-    expect(body.registrar_id).toBeString();
+    const body = z.strictObject({ registrar_id: z.string().uuid() }).parse(await response.json());
     expect(daemon.services.registrarReader.getEntry(body.registrar_id)?.title).toBe(
       "Registrar rollout",
     );
@@ -218,6 +245,54 @@ test("POST /registrar as the shared principal creates the entry and its phases i
       expect.objectContaining({ phase_no: 1, title: "Domain", status: "active" }),
       expect.objectContaining({ phase_no: 2, title: "HTTP routes", status: "pending" }),
     ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events returns a strict RegistrarEventSchema envelope", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({ kind: "progress", actor: "maestro", body: "route complete" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = z.strictObject({ event: RegistrarEventSchema }).parse(await response.json());
+    expect(body.event).toMatchObject({
+      registrar_id: registrarId,
+      kind: "progress",
+      actor: "maestro",
+      body: "route complete",
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("GET /registrar/:id/events returns the appended event in a strict schema envelope", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+    const event = daemon.services.registrarWriter.appendEvent(registrarId, {
+      kind: "decision",
+      actor: "operator",
+      body: "ship it",
+    });
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      headers: authHeaders(daemon.token),
+    });
+
+    expect(response.status).toBe(200);
+    const body = z
+      .strictObject({ events: z.array(RegistrarEventSchema) })
+      .parse(await response.json());
+    expect(body.events).toEqual([event]);
   } finally {
     daemon.stop();
   }
@@ -248,6 +323,7 @@ test("POST /registrar/:id/events with kind='sabotage' returns 400 invalid_input 
   }
 });
 
+// This proves the HTTP mapping (one 200, one 409, no 500), not true contention; the core conditional UPDATE owns atomicity.
 test("two concurrent POST /registrar/:id/events phase transitions from the same from_status: one 200, one 409 — not a 500", async () => {
   const daemon = startTestDaemon();
   try {

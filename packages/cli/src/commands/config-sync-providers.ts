@@ -4,30 +4,35 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-import { resolveDaemonStorageRoot } from "../../../core/src/index.js";
+import type {
+  DiscoveredModel,
+  DiscoveryDiagnostic,
+  DiscoveryReport,
+} from "./generator/discovery-types.js";
+
 import {
+  type AgentConfig,
+  type AgentsConfig,
   AgentsConfigSchema,
-  assertDiscoveryNotSuspiciouslyEmpty,
   applyBindingCarriers,
+  assertDiscoveryNotSuspiciouslyEmpty,
+  type GeneratorSafetyGateResult,
   loadModelAliasMapFromDir,
   loadProviderSourcesFromDir,
+  type ModelAliasMap,
   ModelAliasMapSchema,
+  type ProviderBinding,
+  type ProviderSource,
   pruneOwnedOnly,
   renderTemplateTokens,
+  type RoutingConfig,
   RoutingConfigSchema,
   runGeneratorSafetyGate,
   seatNameFor,
-  type AgentConfig,
-  type AgentsConfig,
-  type GeneratorSafetyGateResult,
-  type ModelAliasMap,
-  type ProviderBinding,
-  type ProviderSource,
-  type RoutingConfig,
   type SeatNameInput,
   upsertManagedFields,
 } from "../../../config/src/index.js";
-
+import { resolveDaemonStorageRoot } from "../../../core/src/index.js";
 import { executeConfigSplitWrite } from "./config-split.js";
 import {
   type AcpSessionSpawner,
@@ -38,11 +43,6 @@ import { discoverCodexModels } from "./generator/discovery-codex.js";
 import { discoverHttpModels, type HttpModelDiscoveryResult } from "./generator/discovery-http.js";
 import { fetchModelsDevPayload, joinModelsDevMetadata } from "./generator/discovery-models-dev.js";
 import { discoverOpencodeModels } from "./generator/discovery-opencode.js";
-import type {
-  DiscoveredModel,
-  DiscoveryDiagnostic,
-  DiscoveryReport,
-} from "./generator/discovery-types.js";
 
 const PROVENANCE_SOURCE = "providers-sync";
 const ALLOWED_BILLED_HTTP_PROVIDERS = ["local", "sakana", "deepseek"] as const;
@@ -226,12 +226,12 @@ export function defaultDiscoveryAdapters(
         ...(unsetEnv.length > 0 ? { unsetEnv } : {}),
       });
     },
-    codex: async () => discoverCodexModels(),
-    "codex-cli": async () => discoverCodexModels(),
-    agy: async () => discoverAgyModels(),
-    "agy-cli": async () => discoverAgyModels(),
-    opencode: async () => discoverOpencodeModels(),
-    "opencode-cli": async () => discoverOpencodeModels(),
+    codex: async () => await discoverCodexModels(),
+    "codex-cli": async () => await discoverCodexModels(),
+    agy: async () => await discoverAgyModels(),
+    "agy-cli": async () => await discoverAgyModels(),
+    opencode: async () => await discoverOpencodeModels(),
+    "opencode-cli": async () => await discoverOpencodeModels(),
     http: discoverHttp,
     endpoint: discoverHttp,
   };
@@ -288,7 +288,7 @@ function containsEmbeddedModelIdentity(value: unknown, modelId: string): boolean
   try {
     return containsEmbeddedModelIdentity(JSON.parse(value) as unknown, modelId);
   } catch {
-    const escaped = modelId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = modelId.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(?:^|[\\n,{])\\s*(?:model|model_id)\\s*[:=]\\s*["']${escaped}["']`).test(
       value,
     );
@@ -416,7 +416,7 @@ function materializeHttpSeat(
         source: PROVENANCE_SOURCE,
         managed_fields: managedFields,
       },
-      options: options as AgentConfig["options"],
+      options: options,
     },
     alias: {
       aa_creator: aliasCreator(model, binding),
@@ -470,7 +470,7 @@ function materializeLeafSeat(
         source: PROVENANCE_SOURCE,
         managed_fields: managedFields,
       },
-      options: applied.options as AgentConfig["options"],
+      options: applied.options,
     },
     alias: {
       aa_creator: aliasCreator(model, binding),
@@ -527,7 +527,7 @@ function materializeCarrierSeat(
         source: PROVENANCE_SOURCE,
         managed_fields: managedFields,
       },
-      options: applied.options as AgentConfig["options"],
+      options: applied.options,
     },
     alias: {
       aa_creator: aliasCreator(model, binding),
@@ -553,7 +553,7 @@ async function defaultReloadConfig(storageRoot: string): Promise<unknown> {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!response.ok) return { skipped: `daemon reload returned HTTP ${String(response.status)}` };
-  return response.json();
+  return await response.json();
 }
 
 function describeError(error: unknown): string {

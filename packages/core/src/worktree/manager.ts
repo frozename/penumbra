@@ -927,8 +927,35 @@ export function provisionLocalCache(mainRepoRoot: string, worktreeRoot: string):
   try {
     execFileSync("cp", ["-cR", mainCachePath, worktreeCachePath], { stdio: "ignore" });
   } catch {
-    fs.cpSync(mainCachePath, worktreeCachePath, { recursive: true, force: true });
+    copyLocalCacheFallback(mainCachePath, worktreeCachePath);
   }
+}
+
+const DEFAULT_LOCAL_CACHE_COPY_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
+function recursiveLstatSize(rootPath: string): number {
+  const stat = fs.lstatSync(rootPath);
+  if (!stat.isDirectory()) return stat.size;
+  return (
+    stat.size +
+    fs
+      .readdirSync(rootPath)
+      .reduce((total, name) => total + recursiveLstatSize(path.join(rootPath, name)), 0)
+  );
+}
+
+export function copyLocalCacheFallback(
+  mainCachePath: string,
+  worktreeCachePath: string,
+  maxBytes = DEFAULT_LOCAL_CACHE_COPY_MAX_BYTES,
+): void {
+  const measuredBytes = recursiveLstatSize(mainCachePath);
+  if (measuredBytes > maxBytes) {
+    throw new Error(
+      `refusing local cache fallback copy from ${mainCachePath}: measured ${String(measuredBytes)} bytes exceeds ${String(maxBytes)} byte bound`,
+    );
+  }
+  fs.cpSync(mainCachePath, worktreeCachePath, { recursive: true, force: true });
 }
 
 function configureIsolatedWorktreeLocalExcludes(wtPath: string): void {
@@ -1106,6 +1133,12 @@ function ensureWorktreeLocalWorkspaceLink(
         `refusing to replace non-symlink isolated install workspace link: ${linkPath}`,
       );
     }
+  }
+
+  if (!isPathInsideOrEqual(worktreeRoot, expectedTarget)) {
+    throw new Error(
+      `refusing to create isolated install workspace link ${linkPath}: target escapes worktree: ${expectedTarget}`,
+    );
   }
 
   const relativeTarget = path.relative(path.dirname(linkPath), packageDir);

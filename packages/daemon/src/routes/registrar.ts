@@ -55,6 +55,7 @@ export async function registrarCreateRoute(req: Request, services: Services): Pr
     const entry = services.registrarWriter.createEntry(parsed.data);
     return json({ registrar_id: entry.registrar_id }, 201);
   } catch (err) {
+    // RegistrarNotFound is unreachable after same-transaction insertion; only slug conflicts map here, and other errors deliberately rethrow to 500.
     if (err instanceof RegistrarSlugTaken) {
       return json({ error: "registrar_slug_taken", slug: err.slug }, 409);
     }

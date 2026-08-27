@@ -978,7 +978,8 @@ const SCHEMA_DDL_BLOCK_15 = `
                        ('commit_sha','handoff_id','lane_id','workflow_run_id','memory_id','plan_id','gh_issue')),
         link_value   TEXT,
         actor        TEXT NOT NULL CHECK (actor IN ('maestro','worker','sweeper','operator')),
-        body         TEXT NOT NULL CHECK (length(body) <= 4096),
+        -- Pre-existing databases retain the character-count CHECK; writer-mediated writes remain byte-bounded.
+        body         TEXT NOT NULL CHECK (length(CAST(body AS BLOB)) <= 4096),
         created_at   INTEGER NOT NULL,
         CHECK ((kind = 'blocker'          AND state IN ('opened','resolved'))
             OR (kind = 'follow_up'        AND state IN ('owed','done','dropped'))

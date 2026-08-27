@@ -7,19 +7,20 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import YAML from "yaml";
 
+import type { AcpSessionSpawner } from "../../src/commands/generator/discovery-acp-session.js";
+
 import {
   AgentsConfigSchema,
   loadProviderSourcesFromDir,
   ModelAliasMapSchema,
-  resolveCatalogAuthority,
   type ProviderSourcesConfig,
+  resolveCatalogAuthority,
 } from "../../../config/src/index.js";
 import {
   defaultDiscoveryAdapters,
-  runConfigSyncProviders,
   type ProviderDiscoveryAdapter,
+  runConfigSyncProviders,
 } from "../../src/commands/config-sync-providers.js";
-import type { AcpSessionSpawner } from "../../src/commands/generator/discovery-acp-session.js";
 import { parseOpencodeModelsOutput } from "../../src/commands/generator/discovery-opencode.js";
 
 let tempDirs: string[] = [];
@@ -75,14 +76,14 @@ function readAliases(dir: string): ReturnType<typeof ModelAliasMapSchema.parse> 
 }
 
 function fakeAdapter(
-  models: Array<{
+  models: {
     sourceProviderId: string;
     modelId: string;
     displayName: string;
     reasoningTier?: string;
-  }>,
+  }[],
 ): ProviderDiscoveryAdapter {
-  return async () => models;
+  return () => Promise.resolve(models);
 }
 
 function providerFixture(
@@ -181,7 +182,7 @@ function agyProviderFixture(): ProviderSourcesConfig {
   };
 }
 
-const noModelsDev = async (): Promise<unknown> => ({});
+const noModelsDev = (): Promise<unknown> => Promise.resolve({});
 
 function fixtureAcpSessionSpawner(
   calls: { command: string; args: string[] }[],
@@ -743,7 +744,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     };
     const result = await runConfigSyncProviders({ ...opts, apply: true });
 
@@ -796,10 +797,11 @@ describe("penumbra config sync-providers", () => {
           { sourceProviderId: "codex", modelId: "gpt-5.4", displayName: "GPT-5.4" },
         ]),
       },
-      fetchModelsDevPayload: async () => ({
-        openai: { models: { "gpt-5.5": {}, "gpt-5.4": {} } },
-      }),
-      reloadConfig: async () => ({ ok: true }),
+      fetchModelsDevPayload: () =>
+        Promise.resolve({
+          openai: { models: { "gpt-5.5": {}, "gpt-5.4": {} } },
+        }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     const generatedNames = readAgents(dir)
@@ -858,7 +860,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -890,8 +892,9 @@ describe("penumbra config sync-providers", () => {
         violations: ["unsafe one", "unsafe two"],
         warnings: ["pre-existing role-tag collision"],
       }),
-      reloadConfig: async () => {
+      reloadConfig: (): Promise<void> => {
         reloads += 1;
+        return Promise.resolve();
       },
     });
 
@@ -968,9 +971,9 @@ describe("penumbra config sync-providers", () => {
         empty: fakeAdapter([]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => {
+      reloadConfig: (): Promise<{ ok: boolean }> => {
         reloads += 1;
-        return { ok: true };
+        return Promise.resolve({ ok: true });
       },
     };
 
@@ -1066,7 +1069,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1120,7 +1123,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1151,7 +1154,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1182,7 +1185,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     };
 
     const first = await runConfigSyncProviders(opts);
@@ -1217,7 +1220,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1246,7 +1249,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1282,7 +1285,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1331,7 +1334,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1367,7 +1370,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1434,7 +1437,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1470,7 +1473,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1510,7 +1513,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1529,26 +1532,27 @@ describe("penumbra config sync-providers", () => {
     const result = await runConfigSyncProviders({
       configDir: dir,
       discoveryAdapters: {
-        fake: async () => ({
-          outcome: "discovered",
-          models: [
-            {
-              sourceProviderId: "google",
-              modelId: "gemini-3.1-pro-high",
-              displayName: "Gemini 3.1 Pro (High)",
-            },
-          ],
-          diagnostics: [
-            {
-              row: "missing-tab-row",
-              reason: "missing tab separator",
-            },
-            {
-              row: "empty-name\t   ",
-              reason: "empty display name",
-            },
-          ],
-        }),
+        fake: () =>
+          Promise.resolve({
+            outcome: "discovered",
+            models: [
+              {
+                sourceProviderId: "google",
+                modelId: "gemini-3.1-pro-high",
+                displayName: "Gemini 3.1 Pro (High)",
+              },
+            ],
+            diagnostics: [
+              {
+                row: "missing-tab-row",
+                reason: "missing tab separator",
+              },
+              {
+                row: "empty-name\t   ",
+                reason: "empty display name",
+              },
+            ],
+          }),
       },
       fetchModelsDevPayload: noModelsDev,
     });
@@ -1643,7 +1647,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1676,7 +1680,7 @@ describe("penumbra config sync-providers", () => {
         fake: fakeAdapter(catalogModels),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(catalogModels.length).toBeGreaterThan(30);
@@ -1687,6 +1691,55 @@ describe("penumbra config sync-providers", () => {
     expect(
       readAgents(dir).agents.filter((agent) => agent.provenance?.source === "providers-sync"),
     ).toHaveLength(catalogModels.length);
+  });
+
+  test("rejects an API-priced generated opencode-acp seat and writes no config", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, {
+      opencode: {
+        discovery: { kind: "fake", locator: "opencode models --verbose" },
+        auth: {},
+        bindings: {
+          "metered-opencode-acp": {
+            kind: "opencode-acp",
+            pricing_mode: "api",
+            api_provider: "metered-opencode",
+            model_carrier: "model",
+            seat_name_template: "metered-{model}-acp",
+          },
+        },
+      },
+    });
+    const agentsBefore = readFileSync(join(dir, "agents.yaml"), "utf8");
+    const aliasesBefore = readFileSync(join(dir, "model-aliases.yaml"), "utf8");
+    let reloads = 0;
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "opencode",
+            modelId: "qwen3.7-max",
+            displayName: "Qwen 3.7 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: (): Promise<void> => {
+        reloads += 1;
+        return Promise.resolve();
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain(
+      "billed generated non-http seat(s) outside the allowed provider list: metered-qwen3-7-max-acp (adapter: opencode-acp, provider: metered-opencode)",
+    );
+    expect(readFileSync(join(dir, "agents.yaml"), "utf8")).toBe(agentsBefore);
+    expect(readFileSync(join(dir, "model-aliases.yaml"), "utf8")).toBe(aliasesBefore);
+    expect(reloads).toBe(0);
   });
 
   test("a freshly generated opencode-acp seat has no consumed roles", async () => {
@@ -1706,7 +1759,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: async () => ({ ok: true }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1784,7 +1837,7 @@ describe("penumbra config sync-providers", () => {
     );
   });
 
-  test("reports non-HTTP binding edges without generating seats or aliases", async () => {
+  test("reports cli and stdio-acp binding edges without generating seats or aliases", async () => {
     const dir = await makeTempDir();
     writeFixture(
       dir,

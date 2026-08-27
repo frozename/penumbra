@@ -20,6 +20,18 @@ import {
 
 type RegistrarEntryRow = Omit<RegistrarEntry, "status"> & { status: string };
 
+export function rethrowSlugUniqueConstraint(error: unknown, slug: string): never {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "SQLITE_CONSTRAINT_UNIQUE" &&
+    error.message.includes("UNIQUE constraint failed: registrar_entries.slug")
+  ) {
+    throw new RegistrarSlugTaken(slug);
+  }
+  throw error;
+}
+
 export class RegistrarWriter {
   private readonly nowFn: () => number;
 
@@ -43,7 +55,11 @@ export class RegistrarWriter {
 
       const registrar_id = crypto.randomUUID();
       const now = this.nowFn();
-      this.insertEntry(registrar_id, validated, now);
+      try {
+        this.insertEntry(registrar_id, validated, now);
+      } catch (error) {
+        rethrowSlugUniqueConstraint(error, validated.slug);
+      }
 
       const insertPhase = this.db.query<unknown, [string, number, string, string, number]>(
         `INSERT INTO registrar_phases (registrar_id, phase_no, title, status, updated_at)
