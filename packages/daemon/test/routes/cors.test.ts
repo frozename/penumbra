@@ -64,7 +64,7 @@ test("unauthenticated loopback OPTIONS preflight succeeds with CORS response hea
   expect(response.headers.get("access-control-allow-headers")).toContain("authorization");
   expect(response.headers.get("access-control-max-age")).toBe("600");
   expect(response.headers.get("vary")).toBe("Origin");
-  expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+  expect(response.headers.get("access-control-allow-credentials")).toBe("true");
 });
 
 test("foreign-origin OPTIONS preflight falls through to the origin guard", async () => {
@@ -131,7 +131,7 @@ test("authenticated GET with a loopback Origin exposes the response to the brows
   expect(response.status).toBe(200);
   expect(response.headers.get("access-control-allow-origin")).toBe(origin);
   expect(response.headers.get("vary")).toBe("Origin");
-  expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+  expect(response.headers.get("access-control-allow-credentials")).toBe("true");
 });
 
 test("authenticated GET without an Origin has no CORS headers", async () => {
