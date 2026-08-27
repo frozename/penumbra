@@ -101,6 +101,108 @@ describe("applyBindingCarriers", () => {
     });
   });
 
+  test("threads the seven terminal/fs tool options as literal option values in fixed managed-field order", () => {
+    expect(
+      applyBindingCarriers(
+        {},
+        {
+          binary: "codex-acp",
+          fsReadTextFile: true,
+          fsWriteTextFile: true,
+          terminal: true,
+          terminal_max_concurrent: 3,
+          terminal_output_max_bytes: 65536,
+          terminal_path: "/usr/bin:/bin",
+          terminal_timeout_s: 120,
+        },
+        "stdio-acp",
+        { modelId: "m" },
+      ),
+    ).toEqual({
+      options: {
+        binary: "codex-acp",
+        fsReadTextFile: true,
+        fsWriteTextFile: true,
+        terminal: true,
+        terminal_max_concurrent: 3,
+        terminal_output_max_bytes: 65536,
+        terminal_path: "/usr/bin:/bin",
+        terminal_timeout_s: 120,
+      },
+      topLevel: {},
+      managedFields: [
+        "options.binary",
+        "options.fsReadTextFile",
+        "options.fsWriteTextFile",
+        "options.terminal",
+        "options.terminal_max_concurrent",
+        "options.terminal_output_max_bytes",
+        "options.terminal_path",
+        "options.terminal_timeout_s",
+      ],
+    });
+  });
+
+  test("tool-option carrier values are copied literally — template tokens are NOT rendered", () => {
+    const result = applyBindingCarriers({}, { terminal_path: "/opt/{model}/bin" }, "stdio-acp", {
+      modelId: "gpt-5.5",
+    });
+
+    expect(result.options.terminal_path).toBe("/opt/{model}/bin");
+    expect(result.managedFields).toEqual(["options.terminal_path"]);
+  });
+
+  test("a binary-only carriers block produces no tool-option keys in options or managedFields", () => {
+    const result = applyBindingCarriers({}, { binary: "codex-acp" }, "stdio-acp", {
+      modelId: "gpt-5.5",
+    });
+
+    for (const key of [
+      "fsReadTextFile",
+      "fsWriteTextFile",
+      "terminal",
+      "terminal_max_concurrent",
+      "terminal_output_max_bytes",
+      "terminal_path",
+      "terminal_timeout_s",
+    ]) {
+      expect(result.options).not.toHaveProperty(key);
+    }
+    expect(result.managedFields).toEqual(["options.binary"]);
+  });
+
+  test("threads tool options identically for opencode-acp and agy-cli kinds", () => {
+    expect(
+      applyBindingCarriers(
+        {},
+        { binary: "opencode", terminal: true, terminal_timeout_s: 300 },
+        "opencode-acp",
+        { modelId: "m" },
+      ),
+    ).toEqual({
+      options: { opencodeBinary: "opencode", terminal: true, terminal_timeout_s: 300 },
+      topLevel: {},
+      managedFields: ["options.opencodeBinary", "options.terminal", "options.terminal_timeout_s"],
+    });
+
+    expect(
+      applyBindingCarriers(
+        {},
+        { binary: "agy", fsWriteTextFile: true, terminal_max_concurrent: 8 },
+        "agy-cli",
+        { modelId: "m" },
+      ),
+    ).toEqual({
+      options: { command: "agy", fsWriteTextFile: true, terminal_max_concurrent: 8 },
+      topLevel: {},
+      managedFields: [
+        "options.command",
+        "options.fsWriteTextFile",
+        "options.terminal_max_concurrent",
+      ],
+    });
+  });
+
   test("sets options.args/env/unsetEnv/mcpServers/authMethodId and returns exactly their dot-paths as managedFields", () => {
     const result = applyBindingCarriers(
       { cwd: "/repo" },

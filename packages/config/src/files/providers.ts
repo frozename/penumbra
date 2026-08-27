@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { isCanonicalProviderValue } from "../provider-format.js";
 
+import { AgentOptionsSchema, CARRIER_TOOL_OPTION_KEYS } from "./agents.js";
 import { deepFreeze, loaderError } from "./_loader-util.js";
 import { existsPath, readUtf8 } from "./node-fs.js";
 
@@ -11,6 +12,18 @@ const ProviderValueSchema = z
   .string()
   .min(1)
   .refine(isCanonicalProviderValue, "must be a canonical provider value");
+
+// Reuse the real AgentOptionsSchema validators so carrier ranges cannot drift
+// from what the daemon validates on seats.
+const CarrierToolOptionsShape = AgentOptionsSchema.pick({
+  fsReadTextFile: true,
+  fsWriteTextFile: true,
+  terminal: true,
+  terminal_max_concurrent: true,
+  terminal_output_max_bytes: true,
+  terminal_path: true,
+  terminal_timeout_s: true,
+} satisfies Record<(typeof CARRIER_TOOL_OPTION_KEYS)[number], true>).shape;
 
 export const ProviderBindingCarriersSchema = z
   .object({
@@ -21,6 +34,7 @@ export const ProviderBindingCarriersSchema = z
     mcp_servers: z.unknown().optional(),
     authMethodId: z.string().min(1).optional(),
     subscription_model_source: z.enum(["modelId", "displayName"]).optional(),
+    ...CarrierToolOptionsShape,
   })
   .strict();
 

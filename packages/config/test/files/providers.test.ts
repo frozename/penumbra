@@ -78,6 +78,139 @@ anthropic:
     });
   });
 
+  test("a stdio-acp binding round-trips the seven terminal/fs tool-option carriers", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        binary: claude-agent-acp
+        fsReadTextFile: true
+        fsWriteTextFile: true
+        terminal: true
+        terminal_max_concurrent: 3
+        terminal_output_max_bytes: 65536
+        terminal_path: "/usr/bin:/bin"
+        terminal_timeout_s: 120
+`,
+    );
+
+    expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-acp"]?.carriers).toEqual({
+      binary: "claude-agent-acp",
+      fsReadTextFile: true,
+      fsWriteTextFile: true,
+      terminal: true,
+      terminal_max_concurrent: 3,
+      terminal_output_max_bytes: 65536,
+      terminal_path: "/usr/bin:/bin",
+      terminal_timeout_s: 120,
+    });
+  });
+
+  test("carriers tool options enforce the AgentOptionsSchema ranges and types", () => {
+    const dir = makeTempDir();
+    const fixture = `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        fsReadTextFile: true
+        fsWriteTextFile: true
+        terminal: true
+        terminal_max_concurrent: 3
+        terminal_output_max_bytes: 65536
+        terminal_path: "/usr/bin:/bin"
+        terminal_timeout_s: 120
+`;
+
+    const reject = (mutated: string, message: RegExp): void => {
+      writeUtf8(join(dir, "providers.yaml"), mutated);
+      expect(() => loadProviderSourcesFromDir(dir)).toThrow(message);
+    };
+
+    reject(
+      fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 0"),
+      /terminal_timeout_s/,
+    );
+    reject(
+      fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 301"),
+      /terminal_timeout_s/,
+    );
+    reject(
+      fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 1023"),
+      /terminal_output_max_bytes/,
+    );
+    reject(
+      fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 9"),
+      /terminal_max_concurrent/,
+    );
+    reject(fixture.replace("terminal: true", 'terminal: "yes"'), /terminal/);
+
+    const accept = (mutated: string, carriers: unknown): void => {
+      writeUtf8(join(dir, "providers.yaml"), mutated);
+      expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-acp"]?.carriers).toEqual(
+        carriers,
+      );
+    };
+
+    const baseCarriers = {
+      fsReadTextFile: true,
+      fsWriteTextFile: true,
+      terminal: true,
+      terminal_max_concurrent: 3,
+      terminal_output_max_bytes: 65536,
+      terminal_path: "/usr/bin:/bin",
+      terminal_timeout_s: 120,
+    };
+    accept(fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 1"), {
+      ...baseCarriers,
+      terminal_timeout_s: 1,
+    });
+    accept(fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 300"), {
+      ...baseCarriers,
+      terminal_timeout_s: 300,
+    });
+    accept(fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 1024"), {
+      ...baseCarriers,
+      terminal_output_max_bytes: 1024,
+    });
+    accept(
+      fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 8388608"),
+      { ...baseCarriers, terminal_output_max_bytes: 8_388_608 },
+    );
+    accept(fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 1"), {
+      ...baseCarriers,
+      terminal_max_concurrent: 1,
+    });
+    accept(fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 8"), {
+      ...baseCarriers,
+      terminal_max_concurrent: 8,
+    });
+  });
+
   test("carriers is optional — an existing openai-compat-http binding with no carriers block still parses", () => {
     const dir = makeTempDir();
     writeUtf8(
@@ -109,9 +242,7 @@ openai:
 
   test("carriers rejects an unknown key", () => {
     const dir = makeTempDir();
-    writeUtf8(
-      join(dir, "providers.yaml"),
-      `
+    const fixture = `
 anthropic:
   discovery:
     kind: acp-session
@@ -127,10 +258,22 @@ anthropic:
       seat_name_template: claude-acp-{model}
       carriers:
         args_tempalte: [--model, "{model}"]
-`,
-    );
+`;
 
+    writeUtf8(join(dir, "providers.yaml"), fixture);
     expect(() => loadProviderSourcesFromDir(dir)).toThrow(/args_tempalte/);
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      fixture.replace(/args_tempalte:.*/, "terminal_allowed: [ls]"),
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/terminal_allowed/);
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      fixture.replace(/args_tempalte:.*/, "mcpWriteTools: true"),
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/mcpWriteTools/);
   });
 
   test("carriers.args_template rejects an empty array; carriers.binary rejects an empty string", () => {

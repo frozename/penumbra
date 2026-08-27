@@ -24,6 +24,7 @@ export {
   AgentProvenanceSchema,
   type AgentsConfig,
   AgentsConfigSchema,
+  CARRIER_TOOL_OPTION_KEYS,
   allowedKeysFor,
   refineAgentConfigAdapterOptions,
   UNIVERSAL_OPTION_KEYS,

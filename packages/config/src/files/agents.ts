@@ -104,6 +104,22 @@ export const UNIVERSAL_OPTION_KEYS = [
   "unset_env",
 ] as const;
 
+// The subset of universal options a providers.yaml binding may carry onto a
+// generated seat. `satisfies` fails compilation if a key ever leaves
+// UNIVERSAL_OPTION_KEYS, instead of generating adapter-rejected seats.
+export const CARRIER_TOOL_OPTION_KEYS = [
+  "fsReadTextFile",
+  "fsWriteTextFile",
+  "terminal",
+  "terminal_max_concurrent",
+  "terminal_output_max_bytes",
+  "terminal_path",
+  "terminal_timeout_s",
+] as const satisfies readonly (typeof UNIVERSAL_OPTION_KEYS)[number][];
+const _carrierKeysExistInSchema: readonly (keyof typeof AgentOptionsSchema.shape)[] =
+  CARRIER_TOOL_OPTION_KEYS;
+void _carrierKeysExistInSchema;
+
 const CLI_OPTION_KEYS = [
   "args",
   "capturePort",
