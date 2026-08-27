@@ -363,6 +363,35 @@ sakana:
     expect(() => loadProviderSourcesFromDir(dir)).toThrow(/exclude_models/);
   });
 
+  test("include_models parses and is optional", () => {
+    const dir = makeTempDir();
+    const fixture = `
+sakana:
+  discovery:
+    kind: endpoint
+    locator: https://api.sakana.ai/v1/models
+  auth: {}
+  include_models: [fugu-ultra]
+  bindings: {}
+openai:
+  discovery:
+    kind: endpoint
+    locator: https://api.openai.com/v1/models
+  auth: {}
+  bindings: {}
+`;
+    writeUtf8(join(dir, "providers.yaml"), fixture);
+
+    expect(() => loadProviderSourcesFromDir(dir)).not.toThrow();
+    const loaded = loadProviderSourcesFromDir(dir);
+    expect(loaded.sakana?.include_models).toEqual(["fugu-ultra"]);
+    expect(loaded.openai).not.toHaveProperty("include_models");
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("[fugu-ultra]", "[]"));
+
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/include_models/);
+  });
+
   test("an openai-compat-http binding must declare pricing_mode and api_provider explicitly — no default", () => {
     const dir = makeTempDir();
     const binding = `

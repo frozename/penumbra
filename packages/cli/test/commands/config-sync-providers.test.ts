@@ -415,6 +415,155 @@ describe("penumbra config sync-providers", () => {
     expect(result.stdout).not.toContain("hand-covered openai/fugu-ultra");
   });
 
+  test("include_models keeps only listed models and prints the kept-N-of-M summary", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture({ include_models: ["fugu-ultra"] }));
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+          { sourceProviderId: "openai", modelId: "fugu-lite", displayName: "Fugu Lite" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.stdout).toContain("include_models: kept 1 of 2 discovered models");
+    expect(result.stdout).toContain("would upsert openai-fugu-ultra-http");
+    expect(result.stdout.some((line) => line.includes("fugu-lite"))).toBe(false);
+  });
+
+  test("include_models matching no discovered models refuses to prune generated seats", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture({ include_models: ["retired-fugu"] }), [
+      ...FLOOR_AGENTS,
+      {
+        name: "openai-fugu-ultra-http",
+        adapter: "openai-compat-http",
+        api_provider: "openai",
+        pricing_mode: "subscription",
+        subscription_provider: "openai",
+        options: { model: "fugu-ultra" },
+        provenance: { source: "providers-sync", managed_fields: ["options.model"] },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.stdout).toContain(
+      "include_models matched 0 of 1 discovered models for openai — refusing to generate or prune; fix the list",
+    );
+    expect(result.stdout).not.toContain("would prune openai-fugu-ultra-http");
+  });
+
+  test("a matching include_models list prunes a generated seat that left the list", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture({ include_models: ["fugu-ultra"] }), [
+      ...FLOOR_AGENTS,
+      {
+        name: "openai-fugu-lite-http",
+        adapter: "openai-compat-http",
+        api_provider: "openai",
+        pricing_mode: "subscription",
+        subscription_provider: "openai",
+        options: { model: "fugu-lite" },
+        provenance: { source: "providers-sync", managed_fields: ["options.model"] },
+      },
+    ]);
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+          { sourceProviderId: "openai", modelId: "fugu-lite", displayName: "Fugu Lite" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.stdout).toContain("would prune openai-fugu-lite-http");
+  });
+
+  test("a model in both include and exclude lists is excluded", async () => {
+    const dir = await makeTempDir();
+    writeFixture(
+      dir,
+      providerFixture({
+        include_models: ["fugu-ultra"],
+        exclude_models: ["fugu-ultra"],
+      }),
+    );
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+          { sourceProviderId: "openai", modelId: "fugu-lite", displayName: "Fugu Lite" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.stdout).toContain("include_models: kept 1 of 2 discovered models");
+    expect(result.stdout).toContain("model excluded by config: openai/fugu-ultra");
+    expect(result.stdout.some((line) => line.includes("would upsert"))).toBe(false);
+  });
+
+  test("inclusion unmatched (stale) reported for an entry not in the discovered catalog", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture({ include_models: ["fugu-ultra", "retired-fugu"] }));
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result.stdout).toContain("include_models: kept 1 of 1 discovered models");
+    expect(result.stdout).toContain("inclusion unmatched (stale): openai/retired-fugu");
+  });
+
+  test("absent include_models changes nothing", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, providerFixture());
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "openai", modelId: "fugu-ultra", displayName: "Fugu Ultra" },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      stdout: [
+        "would upsert openai-fugu-ultra-http",
+        "would alias openai-fugu-ultra-http",
+        "penumbra config sync-providers: dry run; pass --apply to write agents.yaml and model-aliases.yaml",
+      ],
+      stderr: [],
+    });
+  });
+
   test("skips a model already covered by a hand-authored seat, matched on source+model identity, not name", async () => {
     const dir = await makeTempDir();
     writeFixture(dir, providerFixture(), [

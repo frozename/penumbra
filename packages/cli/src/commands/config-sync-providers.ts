@@ -628,9 +628,30 @@ export async function runConfigSyncProviders(
         );
       }
       assertDiscoveryNotSuspiciouslyEmpty(models);
+      const includedModelIds = source.include_models ? new Set(source.include_models) : undefined;
       const excludedModelIds = new Set(source.exclude_models ?? []);
       const discoveredModelIds = new Set(models.map((model) => model.modelId));
-      const included = models.filter((model) => {
+      let included = includedModelIds
+        ? models.filter((model) => includedModelIds.has(model.modelId))
+        : models;
+      if (includedModelIds) {
+        if (included.length === 0) {
+          discoveryComplete = false;
+          stdout.push(
+            `include_models matched 0 of ${models.length} discovered models for ${providerId} — refusing to generate or prune; fix the list`,
+          );
+          continue;
+        }
+        stdout.push(
+          `include_models: kept ${included.length} of ${models.length} discovered models`,
+        );
+        for (const entry of source.include_models ?? []) {
+          if (!discoveredModelIds.has(entry)) {
+            stdout.push(`inclusion unmatched (stale): ${providerId}/${entry}`);
+          }
+        }
+      }
+      included = included.filter((model) => {
         if (!excludedModelIds.has(model.modelId)) return true;
         stdout.push(`model excluded by config: ${providerId}/${model.modelId}`);
         return false;

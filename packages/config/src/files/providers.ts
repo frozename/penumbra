@@ -52,6 +52,7 @@ export const ProviderSourceSchema = z
         oauth_marker: z.string().min(1).optional(),
       })
       .strict(),
+    include_models: z.array(z.string().min(1)).min(1).optional(),
     exclude_models: z.array(z.string().min(1)).optional(),
     bindings: z.record(z.string().min(1), ProviderBindingSchema),
   })
