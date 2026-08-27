@@ -76,7 +76,7 @@ test("tick failures are logged with the worker name", async () => {
   const warnings: { worker?: string; err?: string }[] = [];
   const sup = new InProcessSupervisor({
     log: {
-      warn: (obj: unknown) => {
+      warn: (obj: unknown): void => {
         warnings.push(obj as { worker?: string; err?: string });
       },
     },
