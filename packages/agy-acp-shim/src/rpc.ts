@@ -31,6 +31,11 @@ export interface RpcServer {
   start(): void;
 }
 
+export interface RpcServerIo {
+  input?: NodeJS.ReadableStream;
+  output?: { write(chunk: string): unknown };
+}
+
 function rpcErrorCode(err: unknown): number {
   if (typeof err !== "object" || err === null || !("code" in err)) return -32000;
   const code = (err as { code?: unknown }).code;
@@ -71,9 +76,11 @@ export function decodeMessages(buf: string): object[] {
  * Creates a JSON-RPC server that reads newline-delimited requests from stdin
  * and writes responses + notifications to stdout.
  */
-export function createRpcServer(handlers: RpcHandlers): RpcServer {
+export function createRpcServer(handlers: RpcHandlers, io: RpcServerIo = {}): RpcServer {
+  const input = io.input ?? process.stdin;
+  const output = io.output ?? process.stdout;
   const write = (msg: object): void => {
-    process.stdout.write(encodeMessage(msg));
+    output.write(encodeMessage(msg));
   };
 
   const notify = (method: string, params?: unknown): void => {
@@ -83,7 +90,7 @@ export function createRpcServer(handlers: RpcHandlers): RpcServer {
   };
 
   const start = (): void => {
-    const rl = createInterface({ input: process.stdin, terminal: false });
+    const rl = createInterface({ input, terminal: false });
 
     rl.on("line", (line: string) => {
       const trimmed = line.trim();
