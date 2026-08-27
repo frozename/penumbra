@@ -435,6 +435,7 @@ export class WorktreeManager {
       prepareEscapingFileDependencyLinks(repoRoot, wtPath);
       provisionLocalCache(repoRoot, wtPath);
       await runIsolatedInstall(wtPath, { runner: this.runner, signal });
+      materializeWorkspaceLinks(wtPath);
     } else {
       mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
     }
@@ -1014,6 +1015,101 @@ function readPackageJsonManifest(repoRoot: string, relDir: string): FileDependen
       cause: err instanceof Error ? err : new Error(String(err)),
     });
   }
+}
+
+export function materializeWorkspaceLinks(worktreeRoot: string): void {
+  const rootPackageJson = readPackageJsonManifest(worktreeRoot, "");
+  const packageLinks: { packageDir: string; packageName: string }[] = [];
+
+  for (const pattern of extractWorkspacePatterns(rootPackageJson.packageJson)) {
+    for (const relDir of expandWorkspacePattern(worktreeRoot, pattern, NOOP_LOG)) {
+      const packageJsonPath = path.join(worktreeRoot, relDir, "package.json");
+      if (!fs.existsSync(packageJsonPath)) continue;
+
+      const manifest = readPackageJsonManifest(worktreeRoot, relDir);
+      const packageName = packageNameForWorktreeLink(manifest.packageJson);
+      if (packageName === null) continue;
+      packageLinks.push({ packageDir: path.join(worktreeRoot, relDir), packageName });
+    }
+  }
+
+  if (packageLinks.length === 0) return;
+  const nodeModulesRoot = path.join(worktreeRoot, "node_modules");
+  ensureRealDirectory(nodeModulesRoot);
+  const scopeDir = path.join(nodeModulesRoot, "@penumbra");
+  ensureRealDirectory(scopeDir);
+
+  for (const { packageDir, packageName } of packageLinks) {
+    const linkPath = path.join(scopeDir, packageName);
+    ensureWorktreeLocalWorkspaceLink(worktreeRoot, packageDir, linkPath);
+  }
+}
+
+function packageNameForWorktreeLink(packageJson: unknown): string | null {
+  if (!packageJson || typeof packageJson !== "object") return null;
+  const name = (packageJson as { name?: unknown }).name;
+  if (typeof name !== "string" || !name.startsWith("@penumbra/")) return null;
+
+  const unscopedName = name.slice("@penumbra/".length);
+  if (unscopedName.length === 0 || unscopedName.includes("/")) return null;
+  return unscopedName;
+}
+
+function ensureRealDirectory(dirPath: string): void {
+  let stat: fs.Stats | undefined;
+  try {
+    stat = fs.lstatSync(dirPath);
+  } catch (err) {
+    if (!isMissingError(err)) throw err;
+  }
+
+  if (stat === undefined) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    return;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`expected real directory for isolated install workspace links: ${dirPath}`);
+  }
+}
+
+function ensureWorktreeLocalWorkspaceLink(
+  worktreeRoot: string,
+  packageDir: string,
+  linkPath: string,
+): void {
+  const expectedTarget = fs.realpathSync.native(packageDir);
+  let stat: fs.Stats | undefined;
+  try {
+    stat = fs.lstatSync(linkPath);
+  } catch (err) {
+    if (!isMissingError(err)) throw err;
+  }
+
+  if (stat !== undefined) {
+    if (stat.isSymbolicLink()) {
+      try {
+        const actualTarget = fs.realpathSync.native(linkPath);
+        const rawTarget = fs.readlinkSync(linkPath);
+        if (
+          actualTarget === expectedTarget &&
+          !path.isAbsolute(rawTarget) &&
+          isPathInsideOrEqual(worktreeRoot, actualTarget)
+        ) {
+          return;
+        }
+      } catch (err) {
+        if (!isMissingError(err)) throw err;
+      }
+      fs.rmSync(linkPath, { recursive: true, force: true });
+    } else {
+      throw new Error(
+        `refusing to replace non-symlink isolated install workspace link: ${linkPath}`,
+      );
+    }
+  }
+
+  const relativeTarget = path.relative(path.dirname(linkPath), packageDir);
+  fs.symlinkSync(relativeTarget, linkPath, "dir");
 }
 
 export function planEscapingFileDependencyLinks(

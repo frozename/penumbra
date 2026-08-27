@@ -1,10 +1,16 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { type WorktreeCommandRunner, WorktreeManager } from "../../src/worktree/manager.js";
+import {
+  isPathInsideOrEqual,
+  materializeWorkspaceLinks,
+  type WorktreeCommandRunner,
+  WorktreeManager,
+} from "../../src/worktree/manager.js";
 
 const TEST_TMP_ROOT = "/private/tmp";
 
@@ -78,7 +84,7 @@ async function setupWorkspaceRepo(prefix: string): Promise<string> {
       {
         name: "test-root",
         type: "module",
-        workspaces: ["packages/*"],
+        workspaces: ["packages/*", "packages/integrations/*"],
       },
       null,
       2,
@@ -137,6 +143,41 @@ async function setupWorkspaceRepo(prefix: string): Promise<string> {
     path.join(daemonDir, "index.ts"),
     'import { existingValue } from "@penumbra/core";\nconsole.log(existingValue);\n',
   );
+
+  const agentchatDir = path.join(repoDir, "packages", "agentchat");
+  fs.mkdirSync(agentchatDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(agentchatDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "@penumbra/agentchat",
+        version: "0.0.1",
+        dependencies: { "@penumbra/core": "workspace:*" },
+      },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(
+    path.join(agentchatDir, "index.ts"),
+    'import { existingValue } from "@penumbra/core";\nconsole.log(existingValue);\n',
+  );
+
+  const siriusDir = path.join(repoDir, "packages", "integrations", "sirius-middleware");
+  fs.mkdirSync(siriusDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(siriusDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "@penumbra/sirius-middleware",
+        version: "0.0.1",
+        exports: { ".": "./index.ts" },
+      },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(path.join(siriusDir, "index.ts"), "export const middleware = true;\n");
 
   fs.writeFileSync(path.join(repoDir, "README.md"), "# test\n");
   await exec("git add . && git commit -m init", { cwd: repoDir });
@@ -201,6 +242,34 @@ function resolveWorkspaceLink(wtRoot: string, pkgName: string): string {
     throw new Error(`Expected workspace link does not exist: ${linkPath}`);
   }
   return fs.realpathSync.native(linkPath);
+}
+
+function rootWorkspaceLinkPath(wtRoot: string, pkgName: string): string {
+  return path.join(wtRoot, "node_modules", ...pkgName.split("/"));
+}
+
+function expectRootWorkspaceLinkInsideWorktree(wtRoot: string, pkgName: string): fs.Stats {
+  return expectRootWorkspaceLinkTarget(
+    wtRoot,
+    pkgName,
+    path.join("packages", pkgName.replace(/^@penumbra\//, "")),
+  );
+}
+
+function expectRootWorkspaceLinkTarget(
+  wtRoot: string,
+  pkgName: string,
+  packageRelDir: string,
+): fs.Stats {
+  const linkPath = rootWorkspaceLinkPath(wtRoot, pkgName);
+  expect(fs.existsSync(linkPath)).toBe(true);
+  const stat = fs.lstatSync(linkPath);
+  expect(stat.isSymbolicLink()).toBe(true);
+
+  const packageDir = path.join(wtRoot, packageRelDir);
+  expect(fs.realpathSync.native(linkPath)).toBe(fs.realpathSync.native(packageDir));
+  expect(isPathInsideOrEqual(wtRoot, fs.realpathSync.native(linkPath))).toBe(true);
+  return stat;
 }
 
 describe("WorktreeManager isolated-install mode", () => {
@@ -304,6 +373,146 @@ describe("WorktreeManager isolated-install mode", () => {
     } finally {
       await manager.teardownWorktree(id, true);
     }
+  });
+
+  it("isolated install materializes worktree-local @penumbra links", async () => {
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: workspaceInstallRunner,
+    });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id, { isolated_install: true });
+
+    try {
+      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/core");
+      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/daemon");
+      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/agentchat");
+
+      const requireFromAgentchat = createRequire(
+        path.join(handle.path, "packages", "agentchat", "index.ts"),
+      );
+      expect(fs.realpathSync.native(requireFromAgentchat.resolve("@penumbra/core"))).toBe(
+        fs.realpathSync.native(path.join(handle.path, "packages", "core", "index.ts")),
+      );
+    } finally {
+      await manager.teardownWorktree(id, true);
+    }
+  });
+
+  it("isolated install replaces existing @penumbra links that escape the worktree", async () => {
+    const escapingRunner: WorktreeCommandRunner = async (cmd, args, opts = {}) => {
+      const result = await workspaceInstallRunner(cmd, args, opts);
+      if (cmd === "bun") {
+        const scopeDir = path.join(opts.cwd!, "node_modules", "@penumbra");
+        fs.mkdirSync(scopeDir, { recursive: true });
+        fs.symlinkSync(path.join(homeRepo, "packages", "core"), path.join(scopeDir, "core"), "dir");
+      }
+      return result;
+    };
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: escapingRunner,
+    });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id, { isolated_install: true });
+
+    try {
+      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/core");
+    } finally {
+      await manager.teardownWorktree(id, true);
+    }
+  });
+
+  it("isolated install leaves correct existing @penumbra links untouched", async () => {
+    let beforeStat: fs.Stats | undefined;
+    const preservingRunner: WorktreeCommandRunner = async (cmd, args, opts = {}) => {
+      const result = await workspaceInstallRunner(cmd, args, opts);
+      if (cmd === "bun") {
+        const linkPath = rootWorkspaceLinkPath(opts.cwd!, "@penumbra/core");
+        fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+        fs.symlinkSync("../../packages/core", linkPath, "dir");
+        beforeStat = fs.lstatSync(linkPath);
+      }
+      return result;
+    };
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: preservingRunner,
+    });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id, { isolated_install: true });
+
+    try {
+      const afterStat = expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/core");
+      expect(beforeStat).toBeDefined();
+      expect(afterStat.ino).toBe(beforeStat!.ino);
+      expect(afterStat.mtimeMs).toBe(beforeStat!.mtimeMs);
+    } finally {
+      await manager.teardownWorktree(id, true);
+    }
+  });
+
+  it("workspace link materialization refuses to replace non-symlink package entries", () => {
+    const linkPath = rootWorkspaceLinkPath(homeRepo, "@penumbra/core");
+    const sentinelPath = path.join(linkPath, "sentinel.txt");
+    fs.mkdirSync(linkPath, { recursive: true });
+    fs.writeFileSync(sentinelPath, "operator-owned content\n");
+
+    expect(() => materializeWorkspaceLinks(homeRepo)).toThrow(
+      /refusing to replace non-symlink isolated install workspace link/,
+    );
+    expect(fs.readFileSync(sentinelPath, "utf8")).toBe("operator-owned content\n");
+    expect(fs.lstatSync(linkPath).isDirectory()).toBe(true);
+  });
+
+  it("workspace link materialization replaces dangling package symlinks", () => {
+    const linkPath = rootWorkspaceLinkPath(homeRepo, "@penumbra/core");
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+    fs.symlinkSync("../../missing-core", linkPath, "dir");
+
+    materializeWorkspaceLinks(homeRepo);
+
+    expectRootWorkspaceLinkInsideWorktree(homeRepo, "@penumbra/core");
+  });
+
+  it("workspace link materialization follows nested workspace package globs", () => {
+    materializeWorkspaceLinks(homeRepo);
+
+    expectRootWorkspaceLinkTarget(
+      homeRepo,
+      "@penumbra/sirius-middleware",
+      path.join("packages", "integrations", "sirius-middleware"),
+    );
+  });
+
+  it("isolated install fails closed when @penumbra link materialization fails", async () => {
+    const failingRunner: WorktreeCommandRunner = async (cmd, args, opts = {}) => {
+      if (cmd === "bun") {
+        fs.writeFileSync(path.join(opts.cwd!, "node_modules"), "not a directory\n");
+        return { stdout: "", stderr: "" };
+      }
+      return workspaceInstallRunner(cmd, args, opts);
+    };
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      runner: failingRunner,
+    });
+    const id = nextHandoff();
+
+    let createErr: unknown;
+    try {
+      await manager.createWorktree(id, { isolated_install: true });
+    } catch (err) {
+      createErr = err;
+    }
+
+    expect(createErr).toBeDefined();
+    expect(manager.getWorktree(id)).toBeNull();
+    expect(fs.existsSync(path.join(homeRoot, id))).toBe(false);
   });
 
   it("rediscovery preserves isolated worktree topology instead of remirroring node_modules", async () => {

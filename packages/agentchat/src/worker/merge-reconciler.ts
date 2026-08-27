@@ -167,6 +167,7 @@ type CoreIsolatedProvisioning = typeof core & {
   ISOLATED_INSTALL_CACHE_KEY?: string;
   prepareEscapingFileDependencyLinks: (mainRepoRoot: string, worktreeRoot: string) => void;
   provisionLocalCache: (mainRepoRoot: string, worktreeRoot: string) => void;
+  materializeWorkspaceLinks: (worktreeRoot: string) => void;
   runIsolatedInstall: (
     wtPath: string,
     opts?: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number },
@@ -1640,6 +1641,7 @@ async function runBunTestBaseline(
       runner: coreInstallRunner(ctx),
       timeoutMs: remainingStageMs(deadline),
     });
+    provisioning.materializeWorkspaceLinks(scratchPath);
     await assertOwnedTestNodeModules(scratchPath, "baseline");
     return await runBunTestCommand(ctx, testArgs, scratchPath, remainingStageSeconds(deadline));
   } catch (err) {

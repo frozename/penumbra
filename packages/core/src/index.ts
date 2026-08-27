@@ -579,6 +579,7 @@ export {
   ISOLATED_INSTALL_ARGS,
   ISOLATED_INSTALL_CACHE_KEY,
   isPathInsideOrEqual,
+  materializeWorkspaceLinks,
   mirrorNodeModuleSymlinks,
   prepareEscapingFileDependencyLinks,
   provisionLocalCache,

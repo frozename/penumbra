@@ -70,10 +70,12 @@ let timeoutBaselineInstall = false;
 let contaminateBaselineConfigLink = false;
 let materializeBranchLocalCache = false;
 let observedBaselineNodeModulesIsSymlink: boolean | null = null;
+let observedBaselineCoreIsSymlink: boolean | null = null;
 let observedBaselineCoreRealpath: string | null = null;
 let observedBaselineRootRealpath: string | null = null;
 let observedBaselineLocalCacheRealpath: string | null = null;
 let observedBaselineInstallOptions: ExecOptions | null = null;
+let omitBaselineCoreLinkDuringInstall = false;
 
 const brokenBaselineRaw = readFileSync(
   new URL("../fixtures/merge-reconciler/broken-baseline-raw.txt", import.meta.url),
@@ -256,25 +258,37 @@ function ensureRepoFixture(root: string): void {
     join(root, "package.json"),
     JSON.stringify({ name: "fixture", workspaces: ["packages/*"] }),
   );
+  writeFileSync(
+    join(root, "packages", "core", "package.json"),
+    JSON.stringify({ name: "@penumbra/core", version: "0.0.0" }),
+  );
+  writeFileSync(
+    join(root, "packages", "config", "package.json"),
+    JSON.stringify({ name: "@penumbra/config", version: "0.0.0" }),
+  );
   writeFileSync(join(root, "bun.lock"), "");
 }
 
-function materializeNodeModules(root: string, opts: { contaminateConfig?: boolean } = {}): void {
+function materializeNodeModules(
+  root: string,
+  opts: { contaminateConfig?: boolean; omitCore?: boolean } = {},
+): void {
   mkdirSync(join(root, "node_modules", "@penumbra"), { recursive: true });
   mkdirSync(join(root, "packages", "core"), { recursive: true });
   mkdirSync(join(root, "packages", "config"), { recursive: true });
   const coreLink = join(root, "node_modules", "@penumbra", "core");
   rmSync(coreLink, { recursive: true, force: true });
-  symlinkSync(join(root, "packages", "core"), coreLink, "dir");
+  if (!opts.omitCore) {
+    symlinkSync(join(root, "packages", "core"), coreLink, "dir");
+  }
   const configLink = join(root, "node_modules", "@penumbra", "config");
   rmSync(configLink, { recursive: true, force: true });
-  symlinkSync(
-    opts.contaminateConfig
-      ? join(mainRepoDir, "packages", "config")
-      : join(root, "packages", "config"),
-    configLink,
-    "dir",
-  );
+  if (opts.contaminateConfig) {
+    mkdirSync(configLink, { recursive: true });
+    writeFileSync(join(configLink, "sentinel.txt"), "operator-owned config\n");
+  } else {
+    symlinkSync(join(root, "packages", "config"), configLink, "dir");
+  }
 }
 
 function materializeMainNodeModules(): void {
@@ -351,6 +365,7 @@ function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
     }
     materializeNodeModules(opts.cwd, {
       contaminateConfig: contaminateBaselineConfigLink && isBaselineCwd(opts.cwd),
+      omitCore: omitBaselineCoreLinkDuringInstall && isBaselineCwd(opts.cwd),
     });
     if (materializeBranchLocalCache && existsSync(join(mainRepoDir, "local_cache"))) {
       mkdirSync(dirname(join(opts.cwd, "local_cache")), { recursive: true });
@@ -372,6 +387,7 @@ function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
       }
       const baselineCore = join(baselineNodeModules, "@penumbra", "core");
       if (existsSync(baselineCore)) {
+        observedBaselineCoreIsSymlink = lstatSync(baselineCore).isSymbolicLink();
         observedBaselineCoreRealpath = realpathSync(baselineCore);
       }
       observedBaselineRootRealpath = realpathSync(opts.cwd);
@@ -490,10 +506,12 @@ beforeEach(() => {
   contaminateBaselineConfigLink = false;
   materializeBranchLocalCache = false;
   observedBaselineNodeModulesIsSymlink = null;
+  observedBaselineCoreIsSymlink = null;
   observedBaselineCoreRealpath = null;
   observedBaselineRootRealpath = null;
   observedBaselineLocalCacheRealpath = null;
   observedBaselineInstallOptions = null;
+  omitBaselineCoreLinkDuringInstall = false;
   deps.mainRepoDir = mainRepoDir;
   deps.rebaseScratchRoot = scratchRoot;
   deps.settings = {
@@ -621,6 +639,18 @@ test("baseline scratch owns its node_modules", async () => {
   await makeReconciler()("h-baseline-isolated");
 
   expect(observedBaselineNodeModulesIsSymlink).toBe(false);
+  expect(observedBaselineCoreRealpath?.startsWith(observedBaselineRootRealpath ?? "")).toBe(true);
+});
+
+test("baseline provisioning materializes workspace links after isolated install", async () => {
+  mergeBaseSha = "h".repeat(40);
+  baseTestOutputOverride = healthyBranchRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+  omitBaselineCoreLinkDuringInstall = true;
+
+  await makeReconciler()("h-baseline-workspace-links");
+
+  expect(observedBaselineCoreIsSymlink).toBe(true);
   expect(observedBaselineCoreRealpath?.startsWith(observedBaselineRootRealpath ?? "")).toBe(true);
 });
 
