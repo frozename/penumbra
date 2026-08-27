@@ -203,6 +203,21 @@ describe("applyBindingCarriers", () => {
     });
   });
 
+  test("threads pass_via and strip_patterns for agy-cli", () => {
+    expect(
+      applyBindingCarriers(
+        {},
+        { pass_via: "argv", strip_patterns: ["secret", "token"] },
+        "agy-cli",
+        { modelId: "m" },
+      ),
+    ).toEqual({
+      options: { pass_via: "argv", strip_patterns: ["secret", "token"] },
+      topLevel: {},
+      managedFields: ["options.pass_via", "options.strip_patterns"],
+    });
+  });
+
   test("sets options.args/env/unsetEnv/mcpServers/authMethodId and returns exactly their dot-paths as managedFields", () => {
     const result = applyBindingCarriers(
       { cwd: "/repo" },

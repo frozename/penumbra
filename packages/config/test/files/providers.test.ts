@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  AgentOptionsSchema,
   loadProviderSourcesFromDir,
   resolveCatalogAuthority,
   type ProviderSourcesConfig,
@@ -211,6 +212,114 @@ anthropic:
     });
   });
 
+  test("carriers.pass_via and carriers.strip_patterns are rejected for non-CLI binding kinds at parse time", () => {
+    const dir = makeTempDir();
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        pass_via: argv
+`,
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(
+      /carriers\.pass_via.*binding kind 'stdio-acp'/,
+    );
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: opencode-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        strip_patterns: [secret]
+`,
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(
+      /carriers\.strip_patterns.*binding kind 'opencode-acp'/,
+    );
+  });
+
+  test("a CLI binding accepts carriers.pass_via and carriers.strip_patterns and preserves them", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: command
+    locator: claude models
+  auth: {}
+  bindings:
+    claude-cli:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-{model}
+      carriers:
+        pass_via: argv
+        strip_patterns: [secret, token]
+`,
+    );
+
+    expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-cli"]?.carriers).toEqual({
+      pass_via: "argv",
+      strip_patterns: ["secret", "token"],
+    });
+  });
+
+  test("a CLI binding rejects an invalid carriers.pass_via value at provider parse time", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: command
+    locator: claude models
+  auth: {}
+  bindings:
+    claude-cli:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-{model}
+      carriers:
+        pass_via: bogus
+`,
+    );
+
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/pass_via/);
+  });
+
   test("carriers is optional — an existing openai-compat-http binding with no carriers block still parses", () => {
     const dir = makeTempDir();
     writeUtf8(
@@ -238,6 +347,12 @@ openai:
       model_carrier: "id",
       seat_name_template: "openai-{model}-http",
     });
+  });
+
+  test("AgentOptionsSchema accepts stdin and argv but rejects other pass_via values", () => {
+    expect(() => AgentOptionsSchema.parse({ pass_via: "bogus" })).toThrow(/pass_via/);
+    expect(AgentOptionsSchema.parse({ pass_via: "argv" }).pass_via).toBe("argv");
+    expect(AgentOptionsSchema.parse({ pass_via: "stdin" }).pass_via).toBe("stdin");
   });
 
   test("carriers rejects an unknown key", () => {
@@ -301,6 +416,33 @@ anthropic:
 
     writeUtf8(join(dir, "providers.yaml"), fixture.replace("args_template: []", 'binary: ""'));
     expect(() => loadProviderSourcesFromDir(dir)).toThrow(/binary/);
+  });
+
+  test("carriers.strip_patterns rejects empty entries and empty arrays", () => {
+    const dir = makeTempDir();
+    const fixture = `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        strip_patterns: [secret]
+`;
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("[secret]", "['']"));
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/strip_patterns/);
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("[secret]", "[]"));
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/strip_patterns/);
   });
 
   test("resolveCatalogAuthority derives 'session-handshake' for discovery.kind 'acp-session' and 'provider-catalog' otherwise when unset", () => {

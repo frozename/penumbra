@@ -96,6 +96,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Require explicit project_id on chain_start.",
   },
+  PENUMBRA_REGISTRAR: {
+    schema: OptStr,
+    description:
+      "Daemon registrar route toggle. The daemon disables registrar routes only when this is exactly 0.",
+  },
   PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS: {
     schema: NonNegInt,
     default: 500,
@@ -1239,6 +1244,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "Fixture-only api_key_env target used by core/test/services/role-llm-candidates.test.ts to verify late-bound snake_case env auth resolution. Not read outside tests.",
     isSensitive: true,
+  },
+  PENUMBRA_ACP_DISCOVERY_KEEP: {
+    schema: OptStr,
+    description:
+      "Fixture-only env key used by ACP discovery tests to verify non-scrubbed process env values reach the child process.",
+  },
+  PENUMBRA_ACP_DISCOVERY_UNSET: {
+    schema: OptStr,
+    description:
+      "Fixture-only env key used by ACP discovery tests to verify requested unset_env entries are removed from the child process.",
   },
 } as const;
 

@@ -53,13 +53,13 @@ export const AgentOptionsSchema = z.strictObject({
   modelWarmupPrompt: z.string().optional(),
   model_warmup_prompt: z.string().optional(),
   opencodeBinary: z.string().optional(),
-  pass_via: z.string().optional(),
+  pass_via: z.enum(["stdin", "argv"]).optional(),
   provider: z.string().optional(),
   repoRoot: z.string().optional(),
   requestExtras: z.unknown().optional(),
   requestTimeoutMs: z.number().int().min(1_000).max(900_000).optional(),
   sanitizeClaudeHostEnv: z.boolean().optional(),
-  strip_patterns: z.array(z.string()).optional(),
+  strip_patterns: z.array(z.string().min(1).max(512)).min(1).optional(),
   systemPrompt: z.string().optional(),
   terminal_path: z.string().optional(),
   terminal_timeout_s: z.number().int().min(1).max(300).optional(),
@@ -128,6 +128,8 @@ const CLI_OPTION_KEYS = [
   "pass_via",
   "strip_patterns",
 ] as const;
+
+export const CARRIER_CLI_OPTION_KEYS = ["pass_via", "strip_patterns"] as const;
 
 const STDIO_ACP_WARM_OPTION_KEYS = [
   "modelWarmupPrompt",

@@ -18,6 +18,8 @@ export interface BindingCarriers extends CarrierToolOptions {
   readonly mcp_servers?: unknown;
   readonly authMethodId?: string;
   readonly subscription_model_source?: "modelId" | "displayName";
+  readonly pass_via?: string;
+  readonly strip_patterns?: readonly string[];
 }
 
 export interface AppliedCarriers {
@@ -133,6 +135,16 @@ export function applyBindingCarriers(
     topLevel.subscription_model =
       carriers.subscription_model_source === "modelId" ? vars.modelId : vars.displayName;
     managedFields.push("subscription_model");
+  }
+
+  if (carriers.pass_via !== undefined) {
+    options.pass_via = carriers.pass_via;
+    managedFields.push("options.pass_via");
+  }
+
+  if (carriers.strip_patterns !== undefined) {
+    options.strip_patterns = [...carriers.strip_patterns];
+    managedFields.push("options.strip_patterns");
   }
 
   // Operator-authored literals: copied verbatim, never template-rendered.
