@@ -122,7 +122,10 @@ export async function runWorktreeGc(opts: WorktreeGcOpts): Promise<WorktreeGcRes
             `reaped worktree ${candidate.handoff_id}: ${candidate.reason} (${candidate.path})\n`,
           );
           n_removed++;
-        } catch {
+        } catch (err) {
+          process.stderr.write(
+            `failed to reap worktree ${candidate.handoff_id} (${candidate.path}): ${String(err)}\n`,
+          );
           n_failed++;
         }
       }

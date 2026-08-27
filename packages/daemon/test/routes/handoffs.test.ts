@@ -621,6 +621,46 @@ test("POST /handoffs/:id/approve returns 409 if already resolved", async () => {
   expect(second.status).toBe(409);
 });
 
+test("POST /handoffs/:id/approve returns 500 when the writer fails on a pending handoff", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const createReq = new Request("http://x/handoffs", {
+    method: "POST",
+    body: JSON.stringify({
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: "auth-svc",
+      triggered_by_event_id: "e",
+    }),
+  });
+  const createRes = await handoffsCreateRoute(createReq, services);
+  const create = await readJsonAs<CreateBody>(createRes);
+  const id = create.handoff_id;
+
+  const failingServices = {
+    ...services,
+    handoffWriter: {
+      approve: (): never => {
+        throw new Error("db exploded");
+      },
+    },
+  } as unknown as Services;
+  const res = await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${id}/approve`, { method: "POST", body: "{}" }),
+    id,
+    failingServices,
+  );
+  expect(res.status).toBe(500);
+  const body = await readJsonAs<{ error: { code: string; message: string } }>(res);
+  expect(body.error.code).toBe("internal_error");
+  expect(body.error.message).toContain("db exploded");
+});
+
 test("POST /handoffs/:id/approve accepts optional resolved_by override", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

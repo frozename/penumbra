@@ -1,3 +1,4 @@
+import type { Logger } from "../logger.js";
 import type { WorkerDef, WorkerStatus, WorkerSupervisor } from "./interface.js";
 
 interface Slot {
@@ -9,6 +10,11 @@ interface Slot {
 
 export class InProcessSupervisor implements WorkerSupervisor {
   private slots = new Map<string, Slot>();
+  private log?: Pick<Logger, "warn">;
+
+  constructor(opts?: { log?: Pick<Logger, "warn"> }) {
+    this.log = opts?.log;
+  }
 
   register(def: WorkerDef): void {
     this.slots.set(def.name, { def, status: "idle", timer: null, inflight: false });
@@ -47,8 +53,9 @@ export class InProcessSupervisor implements WorkerSupervisor {
     try {
       await slot.def.tick();
       if (slot.status !== "stopped") slot.status = "running";
-    } catch {
+    } catch (err) {
       if (slot.status !== "stopped") slot.status = "errored";
+      this.log?.warn({ worker: slot.def.name, err: String(err) }, "worker tick failed");
     } finally {
       slot.inflight = false;
     }

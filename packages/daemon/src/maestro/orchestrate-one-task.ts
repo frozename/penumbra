@@ -15,6 +15,7 @@ import {
   MaestroSessionWriter,
   routeAgent,
   synthesizeMaestroPrompt,
+  TaskNotFound,
 } from "@penumbra/core";
 
 interface OrchestrateDefaults {
@@ -202,8 +203,11 @@ function loadOrchestrateTask(
   let task;
   try {
     task = opts.taskWriter.get(taskId);
-  } catch {
-    return { status: "short_circuited", reason: "task_not_found" };
+  } catch (err) {
+    if (err instanceof TaskNotFound) {
+      return { status: "short_circuited", reason: "task_not_found" };
+    }
+    throw err;
   }
   if (task.kind !== "orchestrate") {
     return { status: "short_circuited", reason: "not_orchestrate" };
