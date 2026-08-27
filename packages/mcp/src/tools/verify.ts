@@ -4,9 +4,9 @@ import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 
-export const VerifyInputShape = MemoryVerifyClaimInputShape;
+export { MemoryVerifyClaimInputShape as VerifyInputShape } from "@penumbra/core";
 
-const VerifySchema = z.object(VerifyInputShape);
+const VerifySchema = z.object(MemoryVerifyClaimInputShape);
 
 export function verifyHandler(
   daemon: DaemonClient,

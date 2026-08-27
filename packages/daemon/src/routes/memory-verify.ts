@@ -1,4 +1,5 @@
 import {
+  type Basis,
   getLane,
   MemoryVerifyAuthorizeInputShape,
   type Services,
@@ -26,7 +27,7 @@ function validationError(
   );
 }
 
-function shortSummary(basis: z.infer<typeof RequestSchema.shape.basis>): string {
+function shortSummary(basis: Basis): string {
   switch (basis.kind) {
     case "lane_close":
       return `lane ${basis.lane_id}`;

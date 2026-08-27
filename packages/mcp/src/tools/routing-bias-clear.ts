@@ -1,14 +1,10 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
-import {
-  RoutingBiasClearInputSchema as CoreRoutingBiasClearInputSchema,
-  RoutingBiasClearInputShape as CoreRoutingBiasClearInputShape,
-} from "@penumbra/core";
+import { RoutingBiasClearInputSchema } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 
-export const RoutingBiasClearInputSchema = CoreRoutingBiasClearInputSchema;
-export const RoutingBiasClearInputShape = CoreRoutingBiasClearInputShape;
+export { RoutingBiasClearInputSchema, RoutingBiasClearInputShape } from "@penumbra/core";
 
 export type RoutingBiasClearInput = z.infer<typeof RoutingBiasClearInputSchema>;
 

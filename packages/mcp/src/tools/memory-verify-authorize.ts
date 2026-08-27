@@ -1,10 +1,10 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
-import { MemoryVerifyAuthorizeInputShape as CoreMemoryVerifyAuthorizeInputShape } from "@penumbra/core";
+import { MemoryVerifyAuthorizeInputShape } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 
-export const MemoryVerifyAuthorizeInputShape = CoreMemoryVerifyAuthorizeInputShape;
+export { MemoryVerifyAuthorizeInputShape } from "@penumbra/core";
 
 const MemoryVerifyAuthorizeSchema = z.object(MemoryVerifyAuthorizeInputShape).strict();
 
