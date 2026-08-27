@@ -2,9 +2,9 @@ import { isCanonicalProviderValue } from "@penumbra/config";
 import {
   clearRoutingBias,
   readRoutingBiases,
-  RoutingBiasClearInputSchema,
   type RoutingBias,
   type Services,
+  RoutingBiasClearInputSchema,
   setRoutingBias,
 } from "@penumbra/core";
 import { z } from "zod";

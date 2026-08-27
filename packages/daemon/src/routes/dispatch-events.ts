@@ -129,13 +129,14 @@ export function dispatchEventsStreamRoute(req: Request, services: Services): Res
     return true;
   };
 
+  const since = query.data.since;
   return sseIteratorStream({
     subscribe: () => services.dispatchEvents.subscribe(predicate),
     replay:
-      query.data.since === undefined
+      since === undefined
         ? undefined
-        : () => {
-            const sinceIso = new Date(query.data.since as number).toISOString();
+        : (): Iterable<DispatchEvent> => {
+            const sinceIso = new Date(since).toISOString();
             return services.db
               .query<DispatchEventDbRow, [string]>(
                 `SELECT handoff_id, worker_id, source, kind, ts, meta_json

@@ -3,7 +3,7 @@
 // Escape hatch: `// lint-ignore: no-sync-exec <reason>` on the offending line.
 import { join, resolve } from "node:path";
 
-import { readArgs, scanRepo, type Finding } from "./_scan.js";
+import { type Finding, readArgs, scanRepo } from "./_scan.js";
 
 const ROOT = resolve(process.env.PENUMBRA_LINT_NO_SYNC_EXEC_ROOT ?? join(import.meta.dir, "../.."));
 const DEFAULT_PATHS = ["packages/daemon/src/**/*.ts"];

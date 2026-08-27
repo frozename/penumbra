@@ -67,12 +67,13 @@ export function tasksEventsRoute(req: Request, services: Services, bus: TaskEven
     return true;
   };
 
+  const since = query.data.since;
   return sseIteratorStream({
     subscribe: () => bus.subscribe(predicate),
     replay:
-      query.data.since === undefined
+      since === undefined
         ? undefined
-        : () =>
+        : (): Iterable<TaskEvent> =>
             services.db
               .query<TaskEventDbRow, [number]>(
                 `SELECT task_id, at, kind, actor, payload_json
@@ -81,7 +82,7 @@ export function tasksEventsRoute(req: Request, services: Services, bus: TaskEven
                  ORDER BY at ASC, id ASC
                  LIMIT 200`,
               )
-              .all(query.data.since)
+              .all(since)
               .map(hydrateTaskEvent)
               .filter(predicate),
   });

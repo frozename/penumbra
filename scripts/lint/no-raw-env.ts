@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { join, resolve } from "node:path";
 
-import { readArgs, scanRepo, type Finding } from "./_scan.js";
+import { type Finding, readArgs, scanRepo } from "./_scan.js";
 
 const ROOT = resolve(process.env.PENUMBRA_LINT_NO_RAW_ENV_ROOT ?? join(import.meta.dir, "../.."));
 const STRICT = process.env.PENUMBRA_LINT_NO_RAW_ENV_STRICT === "1";

@@ -1,7 +1,6 @@
 import type { Services } from "@penumbra/core";
 
 import {
-  BasisSchema,
   buildCorpus,
   buildT2EmbedText,
   CorpusBuildRequestSchema,
@@ -12,9 +11,9 @@ import {
   getMemoryVerificationEvents,
   getObservations,
   GetObservationsRequestSchema,
-  MemoryVerifyClaimInputShape,
   listCorpora,
   listRecentJobs,
+  MemoryVerifyClaimInputShape,
   parseWikiLinks,
   queryCorpus,
   recallStatus,

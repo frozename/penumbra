@@ -1,6 +1,6 @@
-import type { Logger } from "./logger.js";
-
 import { writeSync } from "node:fs";
+
+import type { Logger } from "./logger.js";
 
 type FatalKind = "unhandledRejection" | "uncaughtException";
 
