@@ -963,13 +963,11 @@ interface BaselineProvisioningScenarioOpts {
   contaminateBaselineConfigLink?: boolean;
   failBaselineInstall?: boolean;
   createLocalCache?: boolean;
-  mirrorNodeModuleSymlinks?: ReconcilerDeps["mirrorNodeModuleSymlinks"];
 }
 
 interface BaselineProvisioningScenarioResult {
   result: MergeResult;
   execCalls: { cmd: string; cwd: string }[];
-  mirrorNodeModuleSymlinks: ReconcilerDeps["mirrorNodeModuleSymlinks"];
   observedBaselineNodeModulesIsSymlink: boolean | null;
   observedBaselineCoreRealpath: string | null;
   observedBaselineRootRealpath: string | null;
@@ -1124,20 +1122,17 @@ async function runBaselineProvisioningScenario(
       return Promise.resolve({ stdout: "", stderr: "" });
     };
 
-    const mirrorNodeModuleSymlinks = opts.mirrorNodeModuleSymlinks ?? mock(() => undefined);
     const reconciler = createMergeReconciler({
       ...mockDeps,
       mainRepoDir,
       rebaseScratchRoot: scratchRoot,
       exec,
-      mirrorNodeModuleSymlinks,
     });
 
     const result = await reconciler(opts.handoffId);
     return {
       result,
       execCalls,
-      mirrorNodeModuleSymlinks,
       observedBaselineNodeModulesIsSymlink,
       observedBaselineCoreRealpath,
       observedBaselineRootRealpath,
@@ -1169,19 +1164,15 @@ describe("baseline test environment provisioning", () => {
   });
 
   test("baseline installs from the merge-base lockfile", async () => {
-    const mirrorNodeModuleSymlinks = mock(() => undefined);
-
     const scenario = await runBaselineProvisioningScenario({
       handoffId: "h-baseline-frozen-install",
       mergeBaseSha: "2".repeat(40),
-      mirrorNodeModuleSymlinks,
     });
 
     expect(scenario.execCalls).toContainEqual({
       cmd: "bun install --ignore-scripts --frozen-lockfile",
       cwd: scenario.baselineScratchPath,
     });
-    expect(mirrorNodeModuleSymlinks).not.toHaveBeenCalled();
   });
 
   test("contaminated baseline environment fails closed", async () => {

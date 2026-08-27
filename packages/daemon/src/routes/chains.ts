@@ -1050,6 +1050,9 @@ function resolveIsolatedInstall(
   ) {
     return true;
   }
+  if (isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO)) {
+    return true;
+  }
   if (
     taskClass === "BOUNDARY" &&
     isEnvTruthy(process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY)

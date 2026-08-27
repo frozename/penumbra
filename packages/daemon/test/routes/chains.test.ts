@@ -213,14 +213,17 @@ function tempServices(opts?: {
 
 let previousDaemonRequireExplicitProjectId: string | undefined;
 let previousRequirePromptProjectMatch: string | undefined;
+let previousIsolatedInstallAuto: string | undefined;
 let previousIsolatedInstallAutoBoundary: string | undefined;
 
 beforeEach(() => {
   previousDaemonRequireExplicitProjectId = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   previousRequirePromptProjectMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  previousIsolatedInstallAuto = process.env.PENUMBRA_ISOLATED_INSTALL_AUTO;
   previousIsolatedInstallAutoBoundary = process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO;
   delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
 });
 
@@ -235,6 +238,11 @@ afterEach(() => {
     delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
   } else {
     process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = previousRequirePromptProjectMatch;
+  }
+  if (previousIsolatedInstallAuto === undefined) {
+    delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO;
+  } else {
+    process.env.PENUMBRA_ISOLATED_INSTALL_AUTO = previousIsolatedInstallAuto;
   }
   if (previousIsolatedInstallAutoBoundary === undefined) {
     delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
@@ -2665,6 +2673,67 @@ test("POST /chains/start auto-enables BOUNDARY isolated_install only behind env"
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
   expect(handoff.isolated_install).toBe(1);
+});
+
+test("POST /chains/start auto-enables STANDARD isolated_install behind fleet-wide env", async () => {
+  process.env.PENUMBRA_ISOLATED_INSTALL_AUTO = "1";
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "STANDARD",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.isolated_install).toBe(1);
+});
+
+test("POST /chains/start preserves explicit isolated_install false behind fleet-wide env", async () => {
+  process.env.PENUMBRA_ISOLATED_INSTALL_AUTO = "1";
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "STANDARD",
+        isolated_install: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.isolated_install).toBe(0);
+});
+
+test("POST /chains/start leaves STANDARD isolated_install off with only BOUNDARY env", async () => {
+  process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY = "1";
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        task_class: "STANDARD",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.isolated_install).toBeNull();
 });
 
 test("POST /chains/start persists long-lived dispatch identity fields when supplied", async () => {

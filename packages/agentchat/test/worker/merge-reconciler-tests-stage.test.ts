@@ -434,7 +434,6 @@ const emitVerdict = mock((verdict: ReconcilerVerdict) => {
 });
 const notifyResult = mock((_handoffId: string, _result: MergeResult) => Promise.resolve());
 const postProgress = mock((_handoffId: string, _payload: unknown) => Promise.resolve());
-const baselineNodeModulesMirror = mock(() => undefined);
 
 const deps: ReconcilerDeps = {
   worktreeManager: new WorktreeManager(),
@@ -495,10 +494,8 @@ beforeEach(() => {
   observedBaselineRootRealpath = null;
   observedBaselineLocalCacheRealpath = null;
   observedBaselineInstallOptions = null;
-  baselineNodeModulesMirror.mockClear();
   deps.mainRepoDir = mainRepoDir;
   deps.rebaseScratchRoot = scratchRoot;
-  deps.mirrorNodeModuleSymlinks = undefined;
   deps.settings = {
     reconcileTypecheckTimeoutSec: 1,
     reconcileTestTimeoutSec: 1,
@@ -631,8 +628,6 @@ test("baseline installs from the merge-base lockfile", async () => {
   mergeBaseSha = "i".repeat(40);
   baseTestOutputOverride = healthyBranchRaw;
   branchTestOutputOverride = healthyBranchRaw;
-  const mirrorNodeModuleSymlinks = mock(() => undefined);
-  deps.mirrorNodeModuleSymlinks = mirrorNodeModuleSymlinks;
 
   await makeReconciler()("h-baseline-install");
 
@@ -640,7 +635,6 @@ test("baseline installs from the merge-base lockfile", async () => {
     cmd: "bun install --ignore-scripts --frozen-lockfile",
     cwd: scratchPathFor("h-baseline-install"),
   });
-  expect(mirrorNodeModuleSymlinks).not.toHaveBeenCalled();
 });
 
 test("contaminated baseline environment fails closed", async () => {

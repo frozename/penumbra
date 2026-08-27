@@ -150,7 +150,6 @@ export interface ReconcilerDeps {
     argv: string[],
     options: ReconcilerExecOptions,
   ) => Promise<{ stdout: string; stderr: string }>;
-  mirrorNodeModuleSymlinks?: NodeModulesMirror;
   thoughtsConfig?: RuntimeThoughtsConfig;
   thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
   runThoughtAnalyzer?: typeof runThoughtAnalyzer;
@@ -159,7 +158,6 @@ export interface ReconcilerDeps {
   settings?: Pick<Settings, "reconcileTypecheckTimeoutSec" | "reconcileTestTimeoutSec">;
 }
 
-type NodeModulesMirror = (mainRoot: string, wtRoot: string, log: Logger) => void;
 type ReconcilerExecOptions = Pick<
   WorktreeCommandRunnerOptions,
   "cwd" | "timeout" | "maxBuffer" | "encoding" | "signal" | "env" | "stdio"

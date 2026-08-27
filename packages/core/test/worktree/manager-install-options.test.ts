@@ -8,6 +8,7 @@ import {
   isPathInsideOrEqual,
   planEscapingFileDependencyLinks,
   provisionLocalCache,
+  runIsolatedInstall,
   WorktreeManager,
 } from "../../src/worktree/manager.js";
 
@@ -333,6 +334,41 @@ test("local cache provisioning copies main cache without sharing writes", () => 
   }
 });
 
+test("local cache provisioning rejects self-copy before removing the source", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-self-copy-"));
+
+  try {
+    fs.mkdirSync(path.join(repoRoot, "local_cache"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "seed");
+
+    expect(() => provisionLocalCache(repoRoot, repoRoot)).toThrow(
+      "local cache source and destination resolve to the same path",
+    );
+    expect(fs.readFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "utf8")).toBe("seed");
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("local cache provisioning rejects self-copy through a filesystem alias", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-alias-"));
+  const repoRoot = path.join(fixtureRoot, "repo");
+  const aliasRoot = path.join(fixtureRoot, "repo-alias");
+
+  try {
+    fs.mkdirSync(path.join(repoRoot, "local_cache"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "seed");
+    fs.symlinkSync(repoRoot, aliasRoot, process.platform === "win32" ? "junction" : "dir");
+
+    expect(() => provisionLocalCache(repoRoot, aliasRoot)).toThrow(
+      "local cache source and destination resolve to the same path",
+    );
+    expect(fs.readFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "utf8")).toBe("seed");
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("local cache provisioning creates an env-local cache when main cache is absent", () => {
   const mainRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-missing-main-"));
   const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-missing-env-"));
@@ -446,5 +482,23 @@ test("isolated install timeout rethrows a clear timeout message", async () => {
     else process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS = previousTimeout;
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("isolated install recognizes execFile timeout-kill error shapes", async () => {
+  const timeoutErrors = [
+    Object.assign(new Error("command killed"), { killed: true }),
+    Object.assign(new Error("command terminated"), { signal: "SIGTERM" }),
+    Object.assign(new Error("command killed"), { signal: "SIGKILL" }),
+  ];
+
+  for (const timeoutError of timeoutErrors) {
+    await expectRejectsWith(
+      runIsolatedInstall(os.tmpdir(), {
+        timeoutMs: 25,
+        runner: () => Promise.reject(timeoutError),
+      }),
+      "isolated bun install timed out after 25ms",
+    );
   }
 });

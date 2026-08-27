@@ -1096,6 +1096,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Maximum stale handoff grace period while the owning worker is alive.",
   },
   // ── isolated install ────────────────────────────────────────────────
+  PENUMBRA_ISOLATED_INSTALL_AUTO: {
+    schema: Bool,
+    default: false,
+    description: "Auto-enable isolated install for all dispatches.",
+  },
   PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY: {
     schema: Bool,
     default: false,

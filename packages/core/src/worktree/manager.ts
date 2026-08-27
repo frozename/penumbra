@@ -201,7 +201,7 @@ export async function runIsolatedInstall(
     // A deliberate cancellation is not a timeout — re-throw it unwrapped so
     // callers can distinguish the two.
     if (isAbortError(err)) throw err;
-    if (isTimeoutError(err)) {
+    if (isTimeoutError(err, timeout)) {
       throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
         cause: err instanceof Error ? err : new Error(String(err)),
       });
@@ -913,6 +913,8 @@ export function prepareEscapingFileDependencyLinks(
 export function provisionLocalCache(mainRepoRoot: string, worktreeRoot: string): void {
   const mainCachePath = path.join(mainRepoRoot, "local_cache");
   const worktreeCachePath = path.join(worktreeRoot, "local_cache");
+  if (resolveExistingPath(mainRepoRoot) === resolveExistingPath(worktreeRoot))
+    throw new Error("local cache source and destination resolve to the same path");
 
   fs.rmSync(worktreeCachePath, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(worktreeCachePath), { recursive: true });
@@ -1181,13 +1183,15 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// Only the explicit ETIMEDOUT set by spawnSilent's self-timeout counts: an
-// external AbortSignal also kills via signal, and matching on signals or
-// message text would misreport a deliberate cancellation as a timeout.
-function isTimeoutError(err: unknown): boolean {
+// An external AbortSignal is screened above so its ABORT_ERR remains distinct.
+function isTimeoutError(err: unknown, timeoutMs?: number): boolean {
   if (typeof err !== "object" || err === null) return false;
   const code = "code" in err ? String((err as { code?: unknown }).code) : "";
-  return code === "ETIMEDOUT";
+  if (code === "ETIMEDOUT") return true;
+  if (timeoutMs === undefined) return false;
+  const killed = "killed" in err && (err as { killed?: unknown }).killed === true;
+  const signal = "signal" in err ? String((err as { signal?: unknown }).signal) : "";
+  return killed || signal === "SIGTERM" || signal === "SIGKILL";
 }
 
 function isAbortError(err: unknown): boolean {
