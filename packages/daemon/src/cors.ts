@@ -1,5 +1,11 @@
 // IPv6 [::1] is deliberately excluded so the browser allowlist stays fail-closed.
-// The daemon has no cookie auth; this allowlist remains the boundary if that changes.
+// The daemon's only credential is the bearer header page JS attaches explicitly —
+// there is no cookie/session auth on any surface (HTTP, SSE, or WebSocket), so
+// allow-credentials carries no ambient credential today. This allowlist trusts
+// ANY port on localhost/127.0.0.1; before ever adding cookie or session auth,
+// this policy must first be re-narrowed (exact-port allowlist, SameSite=Strict,
+// path-scoped cookies) or allow-credentials removed — do not combine ambient
+// credentials with a port-agnostic loopback allowlist.
 const LOOPBACK_BROWSER_ORIGIN_RE = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/;
 const ALLOWED_PREFLIGHT_METHODS = new Set(["GET", "POST"]);
 
