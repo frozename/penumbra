@@ -21,6 +21,48 @@ export const meta = {
 //                     handoff branch_name for a fix-round building on prior work);
 //                     defaults to main. Verify uses merge-base, so the squash-land
 //                     of the resulting branch carries the full base+fix footprint.
+// task-spec-validation:begin
+function validateSpec(spec) {
+  const workflowName = spec.workflowName || 'workflow'
+  const allowedList = (keys) => keys.join(', ')
+
+  function validateObject(value, location, allowedKeys, requiredKeys) {
+    const allowed = new Set(allowedKeys || [])
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${workflowName}: ${location} must be an object; allowed keys: ${allowedList(allowedKeys || [])}`)
+    }
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        throw new Error(`${workflowName}: unknown key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+    for (const key of requiredKeys || []) {
+      if (!(key in value) || value[key] === undefined || value[key] === null || value[key] === '') {
+        throw new Error(`${workflowName}: missing required key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+  }
+
+  if (spec.validateTopLevel !== false) {
+    validateObject(spec.input || {}, 'args', spec.topLevelAllowedKeys || [], spec.requiredTopLevelKeys || [])
+  }
+
+  if (spec.defaults !== undefined) {
+    validateObject(spec.defaults, 'defaults', spec.defaultsAllowedKeys || [], [])
+  }
+
+  if (spec.tasks !== undefined) {
+    if (!Array.isArray(spec.tasks) || (spec.requireTasks && spec.tasks.length === 0)) {
+      throw new Error(`${workflowName}: tasks must be a non-empty array; allowed keys: ${allowedList(spec.taskAllowedKeys || [])}`)
+    }
+    for (let i = 0; i < spec.tasks.length; i++) {
+      const location = spec.taskLocationPrefix === 'task' && spec.tasks.length === 1 ? 'task' : `${spec.taskLocationPrefix || 'tasks'}[${i}]`
+      validateObject(spec.tasks[i], location, spec.taskAllowedKeys || [], spec.taskRequiredKeys || [])
+    }
+  }
+}
+// task-spec-validation:end
+
 let a = args
 if (typeof a === 'string') {
   try {
@@ -29,6 +71,29 @@ if (typeof a === 'string') {
     throw new Error('args was a string but not valid JSON: ' + a)
   }
 }
+
+validateSpec({
+  workflowName: 'penumbra-fleet-verify',
+  input: a || {},
+  topLevelAllowedKeys: ['tasks', 'repo'],
+  requiredTopLevelKeys: ['tasks'],
+  tasks: a && a.tasks,
+  requireTasks: true,
+  taskAllowedKeys: [
+    'name',
+    'dispatchPrompt',
+    'agent',
+    'taskClass',
+    'verifyChecklist',
+    'branchBase',
+    'task_name',
+    'label',
+    'title',
+    'branch_type',
+  ],
+  taskRequiredKeys: ['name', 'dispatchPrompt'],
+})
+
 const tasks = (a && a.tasks) || []
 if (!Array.isArray(tasks) || tasks.length === 0) {
   throw new Error('args.tasks must be a non-empty array of { name, dispatchPrompt }')

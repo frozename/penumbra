@@ -16,6 +16,48 @@ export const meta = {
 // args may arrive as a plain goal string, an object, or a JSON string (the Workflow
 // `args` field is untyped, so a JSON object passed in the tool call can reach the
 // script stringified). Parse only when the string clearly looks like JSON.
+// task-spec-validation:begin
+function validateSpec(spec) {
+  const workflowName = spec.workflowName || 'workflow'
+  const allowedList = (keys) => keys.join(', ')
+
+  function validateObject(value, location, allowedKeys, requiredKeys) {
+    const allowed = new Set(allowedKeys || [])
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${workflowName}: ${location} must be an object; allowed keys: ${allowedList(allowedKeys || [])}`)
+    }
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        throw new Error(`${workflowName}: unknown key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+    for (const key of requiredKeys || []) {
+      if (!(key in value) || value[key] === undefined || value[key] === null || value[key] === '') {
+        throw new Error(`${workflowName}: missing required key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+  }
+
+  if (spec.validateTopLevel !== false) {
+    validateObject(spec.input || {}, 'args', spec.topLevelAllowedKeys || [], spec.requiredTopLevelKeys || [])
+  }
+
+  if (spec.defaults !== undefined) {
+    validateObject(spec.defaults, 'defaults', spec.defaultsAllowedKeys || [], [])
+  }
+
+  if (spec.tasks !== undefined) {
+    if (!Array.isArray(spec.tasks) || (spec.requireTasks && spec.tasks.length === 0)) {
+      throw new Error(`${workflowName}: tasks must be a non-empty array; allowed keys: ${allowedList(spec.taskAllowedKeys || [])}`)
+    }
+    for (let i = 0; i < spec.tasks.length; i++) {
+      const location = spec.taskLocationPrefix === 'task' && spec.tasks.length === 1 ? 'task' : `${spec.taskLocationPrefix || 'tasks'}[${i}]`
+      validateObject(spec.tasks[i], location, spec.taskAllowedKeys || [], spec.taskRequiredKeys || [])
+    }
+  }
+}
+// task-spec-validation:end
+
 let input = args
 if (typeof input === 'string') {
   const s = input.trim()
@@ -28,13 +70,34 @@ if (typeof input === 'string') {
   }
 }
 
+const opts = typeof input === 'object' && input ? input : {}
+if (typeof input === 'object' && input) {
+  validateSpec({
+    workflowName: 'penumbra-swarm',
+    input: opts,
+    topLevelAllowedKeys: ['goal', 'maxTasks', 'defaults', 'agentType', 'plannerModel', 'dispatcherModel'],
+    defaults: opts.defaults,
+    defaultsAllowedKeys: [
+      'initial_agent',
+      'task_class',
+      'task_type',
+      'trust_mode',
+      'use_worktree',
+      'max_hops',
+      'timeout_ms',
+      'task_name',
+      'branch_type',
+      'branch_base',
+    ],
+  })
+}
+
 const goal = typeof input === 'string' ? input : input && input.goal
 if (!goal || !String(goal).trim()) {
   log('penumbra-swarm: no goal. Pass the goal as args (string) or args.goal.')
   return { ok: false, error: 'no_goal' }
 }
 
-const opts = typeof input === 'object' && input ? input : {}
 const maxTasks = opts.maxTasks || 8
 const defaults = opts.defaults || {}
 const agentType = opts.agentType
@@ -104,13 +167,34 @@ if (plan && Array.isArray(plan.tasks) && plan.tasks.length > maxTasks) {
     `penumbra-swarm: planner returned ${plan.tasks.length} tasks; truncated to maxTasks=${maxTasks} (dropped ${plan.tasks.length - maxTasks}).`,
   )
 }
+validateSpec({
+  workflowName: 'penumbra-swarm',
+  validateTopLevel: false,
+  tasks,
+  taskLocationPrefix: 'plan.tasks',
+  taskAllowedKeys: [
+    'label',
+    'task_name',
+    'branch_type',
+    'initial_agent',
+    'task_class',
+    'task_type',
+    'message',
+    'rationale',
+  ],
+  taskRequiredKeys: ['task_class', 'task_type', 'message'],
+})
 log(`penumbra-swarm: planner produced ${tasks.length} task(s)${plan.summary ? ' — ' + plan.summary : ''}`)
 
 phase('Dispatch')
 // Reuse the fan-out primitive rather than re-implementing the dispatch proxy.
+const dispatchTasks = tasks.map((t) => {
+  const { rationale, ...task } = t
+  return task
+})
 const fan = await workflow(
   'penumbra-fanout',
-  { tasks, defaults, dispatcherModel, ...(agentType ? { agentType } : {}) },
+  { tasks: dispatchTasks, defaults, dispatcherModel, ...(agentType ? { agentType } : {}) },
 )
 
 return {

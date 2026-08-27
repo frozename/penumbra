@@ -11,6 +11,48 @@ export const meta = {
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
 //         dispatcherModel?, graderModel? }
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
+// task-spec-validation:begin
+function validateSpec(spec) {
+  const workflowName = spec.workflowName || 'workflow'
+  const allowedList = (keys) => keys.join(', ')
+
+  function validateObject(value, location, allowedKeys, requiredKeys) {
+    const allowed = new Set(allowedKeys || [])
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${workflowName}: ${location} must be an object; allowed keys: ${allowedList(allowedKeys || [])}`)
+    }
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        throw new Error(`${workflowName}: unknown key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+    for (const key of requiredKeys || []) {
+      if (!(key in value) || value[key] === undefined || value[key] === null || value[key] === '') {
+        throw new Error(`${workflowName}: missing required key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+  }
+
+  if (spec.validateTopLevel !== false) {
+    validateObject(spec.input || {}, 'args', spec.topLevelAllowedKeys || [], spec.requiredTopLevelKeys || [])
+  }
+
+  if (spec.defaults !== undefined) {
+    validateObject(spec.defaults, 'defaults', spec.defaultsAllowedKeys || [], [])
+  }
+
+  if (spec.tasks !== undefined) {
+    if (!Array.isArray(spec.tasks) || (spec.requireTasks && spec.tasks.length === 0)) {
+      throw new Error(`${workflowName}: tasks must be a non-empty array; allowed keys: ${allowedList(spec.taskAllowedKeys || [])}`)
+    }
+    for (let i = 0; i < spec.tasks.length; i++) {
+      const location = spec.taskLocationPrefix === 'task' && spec.tasks.length === 1 ? 'task' : `${spec.taskLocationPrefix || 'tasks'}[${i}]`
+      validateObject(spec.tasks[i], location, spec.taskAllowedKeys || [], spec.taskRequiredKeys || [])
+    }
+  }
+}
+// task-spec-validation:end
+
 let input = args
 if (typeof input === 'string') {
   try {
@@ -20,6 +62,51 @@ if (typeof input === 'string') {
   }
 }
 input = input || {}
+
+validateSpec({
+  workflowName: 'penumbra-fix-until-green',
+  input,
+  topLevelAllowedKeys: [
+    'task',
+    'check',
+    'rubric',
+    'agent',
+    'escalateTo',
+    'maxRounds',
+    'base',
+    'defaults',
+    'dispatcherModel',
+    'graderModel',
+  ],
+  requiredTopLevelKeys: ['task', 'check'],
+  defaults: input.defaults,
+  defaultsAllowedKeys: [
+    'initial_agent',
+    'task_class',
+    'task_type',
+    'trust_mode',
+    'use_worktree',
+    'max_hops',
+    'timeout_ms',
+    'task_name',
+    'branch_type',
+    'branch_base',
+  ],
+  tasks: input.task ? [input.task] : [],
+  requireTasks: true,
+  taskLocationPrefix: 'task',
+  taskAllowedKeys: [
+    'message',
+    'task_name',
+    'label',
+    'name',
+    'title',
+    'branch_type',
+    'task_class',
+    'task_type',
+  ],
+  taskRequiredKeys: ['message'],
+})
 
 const task = input.task
 const check = input.check
