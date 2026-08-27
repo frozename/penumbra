@@ -82,7 +82,7 @@ export function sseIteratorStream<T>(opts: {
       const iterator = opts.subscribe();
       let keepalive: ReturnType<typeof setInterval> | null = null;
       let closed = false;
-      const format = opts.format ?? ((event: T) => `data: ${JSON.stringify(event)}\n\n`);
+      const format = opts.format ?? ((event: T): string => `data: ${JSON.stringify(event)}\n\n`);
 
       const write = (chunk: string): boolean => {
         if (closed) return false;
