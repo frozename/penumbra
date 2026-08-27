@@ -37,6 +37,7 @@ import { InProcessPermissionService } from "../../../daemon/src/services/in-proc
 import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
 import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
 import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
+import { isBilledHandSeatViolation } from "@penumbra/config";
 import { readEmbedderEnv } from "./sirius-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(
@@ -148,11 +149,21 @@ function loadAgentchatBundle(): AgentchatBundle {
       })),
     };
   } catch (err) {
+    if (handleAgentchatConfigLoadError(err)) {
+      throw err;
+    }
     process.stderr.write(
       `penumbra: failed to load agentchat config from ${configPath}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
   }
+}
+
+export function handleAgentchatConfigLoadError(error: unknown): boolean {
+  if (isBilledHandSeatViolation(error)) {
+    throw error;
+  }
+  return false;
 }
 
 function warnLegacyOperatorConfigFiles(): void {

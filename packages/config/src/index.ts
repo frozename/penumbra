@@ -29,7 +29,11 @@ export {
   refineAgentConfigAdapterOptions,
   UNIVERSAL_OPTION_KEYS,
 } from "./files/agents.js";
-export { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "./files/load.js";
+export {
+  assertHandBilledSeatsWhitelistedWithPrefix,
+  loadAgentChatConfigFromDir,
+  reloadAgentChatConfig,
+} from "./files/load.js";
 export {
   loadModelAliasMapFromDir,
   type ModelAliasMap,
@@ -72,6 +76,16 @@ export {
   type AssertNoBilledHttpSeatsOptions,
   type HttpSeatLike,
 } from "./generator/assertions.js";
+export {
+  assertHandBilledSeatsWhitelisted,
+  BilledHandSeatViolation,
+  GENERATOR_PROVENANCE_SOURCE,
+  type AssertHandBilledSeatsWhitelistedOptions,
+  BILLED_HAND_SEAT_WHITELIST,
+  isBilledHandSeatViolation,
+  type HandBilledSeatLike,
+  UNBILLED_API_PROVIDERS,
+} from "./files/billing-gate.js";
 export {
   applyBindingCarriers,
   type AppliedCarriers,

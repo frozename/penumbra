@@ -3,6 +3,7 @@ import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
 import {
   type AgentChatConfig,
   AgentsConfigSchema,
+  assertHandBilledSeatsWhitelistedWithPrefix,
   loadAgentChatConfigFromDir,
   QuotasConfigSchema,
   RoutingConfigSchema,
@@ -35,8 +36,10 @@ export function loadAgentChatConfig(env: NodeJS.ProcessEnv = process.env): Agent
 export function loadAgentChatConfigUncached(env: NodeJS.ProcessEnv = process.env): AgentChatConfig {
   const configDir = resolveAgentChatConfigPath(env);
   try {
+    const agentsConfig = parseConfigFile(configDir, "agents.yaml", AgentsConfigSchema);
+    assertHandBilledSeatsWhitelistedWithPrefix(agentsConfig.agents, join(configDir, "agents.yaml"));
     return {
-      ...parseConfigFile(configDir, "agents.yaml", AgentsConfigSchema),
+      ...agentsConfig,
       ...parseConfigFile(configDir, "routing.yaml", RoutingConfigSchema),
       ...parseConfigFile(configDir, "quotas.yaml", QuotasConfigSchema),
     };

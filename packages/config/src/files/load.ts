@@ -5,6 +5,7 @@ import { ZodError, type ZodType } from "zod";
 import type { AgentChatConfig } from "./agentchat-types.js";
 
 import { AgentsConfigSchema } from "./agents.js";
+import { assertHandBilledSeatsWhitelisted } from "./billing-gate.js";
 import { existsPath, readUtf8 } from "./node-fs.js";
 import { QuotasConfigSchema } from "./quotas.js";
 import { RoutingConfigSchema } from "./routing.js";
@@ -62,6 +63,7 @@ export function loadAgentChatConfigFromDir(dir: string): AgentChatConfig {
   }
 
   const agentsConfig = parseConfigFile(absDir, "agents.yaml", AgentsConfigSchema);
+  assertHandBilledSeatsWhitelistedWithPrefix(agentsConfig.agents, join(absDir, "agents.yaml"));
   const routingConfig = parseConfigFile(absDir, "routing.yaml", RoutingConfigSchema);
   const quotasConfig = parseConfigFile(absDir, "quotas.yaml", QuotasConfigSchema);
 
@@ -73,6 +75,17 @@ export function loadAgentChatConfigFromDir(dir: string): AgentChatConfig {
   const frozen = deepFreeze(merged);
   cache.set(absDir, frozen);
   return frozen;
+}
+
+export function assertHandBilledSeatsWhitelistedWithPrefix(
+  agents: Parameters<typeof assertHandBilledSeatsWhitelisted>[0],
+  filePath: string,
+): void {
+  try {
+    assertHandBilledSeatsWhitelisted(agents);
+  } catch (error) {
+    throw new Error(`${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function reloadAgentChatConfig(): void {

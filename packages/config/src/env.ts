@@ -811,6 +811,21 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Disable the Artificial Analysis snapshot refresh sweeper.",
   },
+  PENUMBRA_PROVIDER_DRIFT_SWEEP_INTERVAL_MS: {
+    schema: OptPosInt,
+    description:
+      "Interval for the provider-drift dry-run discovery sweeper in milliseconds. Must be a positive integer.",
+  },
+  PENUMBRA_PROVIDER_DRIFT_SWEEP_DISABLED: {
+    schema: Bool,
+    default: false,
+    description: "Disable the provider-drift dry-run discovery sweeper.",
+  },
+  PENUMBRA_PROVIDER_DRIFT_CLI_ENTRY: {
+    schema: OptStr,
+    description:
+      "Override path to the penumbra CLI entry the provider-drift sweeper spawns for its dry-run.",
+  },
   PENUMBRA_GATE_QUALITY_DIGEST_DIR: {
     schema: OptStr,
     description: "Directory for gate-quality digest output.",

@@ -449,4 +449,60 @@ providers:
     const fromFile = loadConfigPathOrDir(filePath);
     expect(fromFile.agents.map((a) => a.name)).toEqual(["only"]);
   });
+
+  describe("loadConfigFromDir (split worker dir)", () => {
+    function writeSplitDir(): string {
+      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-"));
+      writeFileSync(
+        join(dir, "agents.yaml"),
+        `
+agents:
+  - name: planner
+    adapter: claude-cli
+    options: { command: claude }
+    roles: [planner]
+`,
+      );
+      writeFileSync(
+        join(dir, "routing.yaml"),
+        `
+default_roles:
+  planner: planner
+`,
+      );
+      writeFileSync(
+        join(dir, "quotas.yaml"),
+        `
+providers:
+  - name: anthropic
+    quota_usd_per_24h: 200
+`,
+      );
+      return dir;
+    }
+
+    test("rejects an unwhitelisted billed hand seat", () => {
+      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-bad-"));
+      writeFileSync(
+        join(dir, "agents.yaml"),
+        `
+agents:
+  - name: openai-gpt52-http
+    adapter: openai-compat-http
+    pricing_mode: api
+    api_provider: openai
+`,
+      );
+      writeFileSync(join(dir, "routing.yaml"), `default_roles: {}`);
+      writeFileSync(join(dir, "quotas.yaml"), `providers: []`);
+
+      expect(() => loadConfigFromDir(dir)).toThrow(/openai-gpt52-http/);
+    });
+
+    test("loads a benign split worker dir", () => {
+      const cfg = loadConfigFromDir(writeSplitDir());
+      expect(cfg.agents[0]!.name).toBe("planner");
+      expect(cfg.providers[0]!.name).toBe("anthropic");
+    });
+  });
 });
