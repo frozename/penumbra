@@ -1,4 +1,5 @@
 // IPv6 [::1] is deliberately excluded so the browser allowlist stays fail-closed.
+// Land-gate acceptance probe 2026-08-27: symmetric isolated baselines active.
 // The daemon's only credential is the bearer header page JS attaches explicitly —
 // there is no cookie/session auth on any surface (HTTP, SSE, or WebSocket), so
 // allow-credentials carries no ambient credential today. This allowlist trusts
