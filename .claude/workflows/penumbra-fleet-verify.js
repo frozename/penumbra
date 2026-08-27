@@ -14,7 +14,7 @@ export const meta = {
 //   dispatchPrompt  - verbatim chain_start message (the task contract; MUST tell the
 //                     agent to commit explicitly with a neutral message and run its
 //                     own typecheck/tests)
-//   agent           - fleet agent (default openai-codex-deep-acp)
+//   agent           - fleet agent (default executor)
 //   taskClass       - BOUNDARY | STANDARD | TRIVIAL (default STANDARD)
 //   verifyChecklist - extra free-text checks the verifier should measure/report
 //   branchBase      - optional git ref to base the worktree on (e.g. an unlanded
@@ -85,7 +85,7 @@ const results = await pipeline(
     agent(
       [
         `Dispatch ONE task to the penumbra fleet; report ONLY verbatim tool-output values. Never invent an id or SHA.`,
-        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'openai-codex-deep-acp'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}message = the EXACT contract below.`,
+        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'executor'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}message = the EXACT contract below.`,
         `--- CONTRACT (verbatim) ---`,
         t.dispatchPrompt,
         `--- END CONTRACT ---`,

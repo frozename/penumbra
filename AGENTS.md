@@ -236,8 +236,8 @@ Invoke from the orchestrator (maestro) with a structured `args` object:
 Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
   defaults: { task_class: 'STANDARD', trust_mode: 'all', timeout_ms: 1800000 },
   tasks: [
-    { initial_agent: 'codex-acp-fast', task_type: 'implement_small',  message: '...' },
-    { initial_agent: 'AUTO',           task_type: 'review_adversarial', message: '...' },
+  { initial_agent: 'executor',       task_type: 'implement_small',    message: '...' },  // default: role-routed — the model task router picks the seat
+  { initial_agent: 'codex-acp-fast', task_type: 'review_adversarial', message: '...' },  // deliberate pin — name the reason in the task label
   ],
 }})
 ```
@@ -245,6 +245,7 @@ Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
 Boundaries baked into the design (do not loosen without intent):
 
 - **`trust_mode: all` by default.** Background workflows cannot surface penumbra's human approval gate mid-run (no mid-run user input), so unattended fan-out auto-approves every hop. Restrict fan-out to STANDARD/TRIVIAL work; route BOUNDARY tasks through maestro with the normal `dispatch-quality-gates` review fan-out.
+- **Role-route by default.** `initial_agent` defaults to the role `executor` across the workflow family; the daemon model task router resolves the seat (routing_resolution_reason=role_route, routing_decisions applied=1 in auto mode). Concrete seat ids are deliberate pins (probe / smoke / escalation / capability) and keep working verbatim.
 - **The workflow never lands.** It stops at "dispatched + responses collected + handoff `branch_name` branches ready". Review + `dispatch_land` stays with maestro (worktree-state-audit, then the `land` skill), so `agent_performance` attribution and worktree teardown happen on the supported path.
 - **Concurrency.** Claude Code caps at 16 concurrent agents; penumbra has its own worker-pool limits (`workers.yaml` extras). Excess tasks queue. Size `args.tasks` against live fleet capacity rather than firing dozens at once.
 

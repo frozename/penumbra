@@ -56,7 +56,7 @@ const DISPATCH_RESULT = {
   properties: {
     ok: { type: 'boolean', description: 'true only when the chain reached a completed terminal state' },
     status: { type: 'string', description: 'completed | failed | timeout | error' },
-    initial_agent: { type: 'string', description: 'the agent actually dispatched to (resolved if AUTO)' },
+    initial_agent: { type: 'string', description: 'the role or seat as dispatched (roles resolve daemon-side via the router)' },
     conversation_id: { type: 'string' },
     handoff_id: { type: 'string' },
     branch: { type: 'string', description: 'handoff branch_name if a worktree branch was created' },
@@ -68,7 +68,7 @@ const DISPATCH_RESULT = {
 
 function buildSpec(t) {
   const spec = {
-    initial_agent: t.initial_agent || defaults.initial_agent || 'AUTO',
+    initial_agent: t.initial_agent || defaults.initial_agent || 'executor',
     task_class: t.task_class || defaults.task_class || 'STANDARD',
     task_type: t.task_type || defaults.task_type || 'unknown',
     trust_mode: t.trust_mode || defaults.trust_mode || 'all',
@@ -101,7 +101,7 @@ function buildPrompt(t) {
     '```',
     '',
     'Protocol:',
-    '1. If initial_agent is "AUTO", call mcp__penumbra__agent_recommend({ task_type }) and use the top candidate; else use it verbatim.',
+    '1. Pass initial_agent verbatim to chain_start. A role name ("executor", "reviewer", "planner") is the DEFAULT: the daemon model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin — pass it verbatim, never substitute it. If initial_agent is the literal "AUTO" (legacy), use "executor". Do NOT call agent_recommend to pre-pick a seat; it is forensic only.',
     '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, task_name, branch_type, and branch_base if present in the spec. Capture conversation_id, handoff_id, and provisional branch_name from the result; the chain_start value is provisional because a collision suffix may be applied by the worker.',
     '3. Poll with SHORT waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 }) — each returns within ~90s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / 90000) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.',
     '4. Call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) for the worker response.',
@@ -114,7 +114,7 @@ phase('Dispatch')
 const results = await parallel(
   tasks.map((t, i) => () =>
     agent(buildPrompt(t), {
-      label: t.label || `dispatch:${t.initial_agent || defaults.initial_agent || 'AUTO'}#${i}`,
+      label: t.label || `dispatch:${t.initial_agent || defaults.initial_agent || 'executor'}#${i}`,
       phase: 'Dispatch',
       schema: DISPATCH_RESULT,
       ...(dispatcherModel && dispatcherModel !== 'inherit' ? { model: dispatcherModel } : {}),

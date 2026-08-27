@@ -30,7 +30,7 @@ if (!task || !task.message || !check) {
 const defaults = input.defaults || {}
 const dispatcherModel = input.dispatcherModel || 'sonnet'
 const graderModel = input.graderModel
-const baseAgent = input.agent || defaults.initial_agent || 'AUTO'
+const baseAgent = input.agent || defaults.initial_agent || 'executor' // role-routed default; args.agent and escalateTo are deliberate pins
 const escalateTo = input.escalateTo // optional stronger agent for the final round
 const maxRounds = input.maxRounds || 3
 const base = input.base || 'main'
