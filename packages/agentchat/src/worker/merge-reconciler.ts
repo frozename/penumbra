@@ -17,6 +17,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
+import { PenumbraHttpError } from "../penumbra-client.js";
 import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
 import {
   type BunTestReport,
@@ -29,17 +30,21 @@ import {
   type ThoughtRow,
 } from "./thought-analyzer.js";
 
+export const MERGE_RESULT_STATUSES = Object.freeze([
+  "merged",
+  "rebased",
+  "rebase_conflict",
+  "verified",
+  "test_failed",
+  "typecheck_failed",
+  "pr_opened",
+  "pr_creation_failed",
+  "no_changes",
+] as const);
+
 export interface MergeResult {
-  status:
-    | "merged"
-    | "rebased"
-    | "rebase_conflict"
-    | "verified"
-    | "test_failed"
-    | "typecheck_failed"
-    | "pr_opened"
-    | "pr_creation_failed"
-    | "no_changes";
+  status: (typeof MERGE_RESULT_STATUSES)[number];
+  progressReported?: boolean;
   conflict_files?: string[];
   regression_summary?: string;
   timed_out?: boolean;
@@ -72,6 +77,7 @@ export interface ReconcilerVerdict {
   verified_at: string;
   duration_ms: number;
   summary: string;
+  progressReported?: boolean;
 }
 
 class Mutex {
@@ -1143,6 +1149,7 @@ async function buildVerdict(ctx: ReconcileCtx, result: MergeResult): Promise<Rec
     verified_at: new Date().toISOString(),
     duration_ms,
     summary,
+    progressReported: result.progressReported,
   };
 }
 
@@ -1173,11 +1180,27 @@ async function runThoughtAnalyzerIfEnabled(ctx: ReconcileCtx, result: MergeResul
 
 async function emitResult(ctx: ReconcileCtx, result: MergeResult): Promise<void> {
   const { deps, handoffId } = ctx;
-  await deps.postProgress(handoffId, {
-    type: "merge-result",
-    handoff_id: handoffId,
-    ...result,
-  });
+  let progressReported = true;
+  try {
+    await deps.postProgress(handoffId, {
+      type: "merge-result",
+      handoff_id: handoffId,
+      ...result,
+    });
+  } catch (err) {
+    progressReported = false;
+    deps.log.warn(
+      {
+        handoffId,
+        err: String(err),
+        ...(err instanceof PenumbraHttpError
+          ? { status: err.status, body: err.body, bodyText: err.bodyText }
+          : {}),
+      },
+      "merge-result progress post failed",
+    );
+  }
+  result.progressReported = progressReported;
   if (deps.captureResult) {
     try {
       await deps.captureResult(handoffId, result);

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PenumbraClient } from "../src/penumbra-client.js";
+import { PenumbraClient, PenumbraHttpError, isTerminalHttpStatus } from "../src/penumbra-client.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
 // Test-only typed fetch shape: agentchat constructs Request objects from
@@ -85,6 +85,62 @@ test("createHandoff POSTs /handoffs and returns the new id", async () => {
   });
   expect(r.handoff_id).toBe("h-1");
   expect(r.status).toBe("pending");
+});
+
+test("PenumbraHttpError keeps a stable message and exposes daemon details separately", async () => {
+  const errorBody = {
+    error: { code: "unknown_agent" },
+    field_errors: [{ path: ["to"], message: "unknown agent: penumbra" }],
+  };
+  const fetchImpl: FetchImpl = () => Promise.resolve(Response.json(errorBody, { status: 400 }));
+  const root = mkdtempSync(join(tmpdir(), "pen-client-"));
+  writeFileSync(join(root, "port"), `1\n`);
+  writeFileSync(join(root, "token"), "tk\n");
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+
+  let caught: unknown;
+  try {
+    await client.createHandoff({
+      from: "reviewer",
+      to: "penumbra",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: null,
+      triggered_by_event_id: "e-1",
+    });
+  } catch (err) {
+    caught = err;
+  }
+
+  expect(caught).toBeInstanceOf(PenumbraHttpError);
+  if (!(caught instanceof PenumbraHttpError)) throw new Error("expected PenumbraHttpError");
+  expect(caught.status).toBe(400);
+  expect(caught.body).toEqual(errorBody);
+  expect(caught.code).toBe("unknown_agent");
+  expect(caught.bodyText).toContain("unknown_agent");
+  expect(caught.bodyText).toContain("field_errors");
+  expect(caught.message).toBe("penumbra /handoffs: HTTP 400 code=unknown_agent");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("PenumbraHttpError bodyText is truncated", () => {
+  const err = new PenumbraHttpError("penumbra /x: HTTP 400", 400, {
+    error: { code: "too_much" },
+    details: "x".repeat(3_000),
+  });
+
+  expect(err.code).toBe("too_much");
+  expect(err.bodyText.length).toBeLessThanOrEqual(2_048);
+  expect(err.message).toBe("penumbra /x: HTTP 400 code=too_much");
+});
+
+test("terminal HTTP status classification distinguishes contained from retryable statuses", () => {
+  for (const status of [400, 401, 403, 404, 409, 422]) {
+    expect(isTerminalHttpStatus(status)).toBe(true);
+  }
+  for (const status of [408, 429, 500, 503]) {
+    expect(isTerminalHttpStatus(status)).toBe(false);
+  }
 });
 
 test("captureAgentPerformanceFromDispatch sends final response summary fields", async () => {

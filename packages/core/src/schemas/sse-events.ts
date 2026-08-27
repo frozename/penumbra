@@ -14,6 +14,7 @@ export const ConversationChainEndReasonSchema = z.enum([
   "error",
   "cancelled",
   "max_hops",
+  "handoff_creation_failed",
 ]);
 export type ConversationChainEndReason = z.infer<typeof ConversationChainEndReasonSchema>;
 
@@ -41,7 +42,16 @@ export const ConversationHopEndEventSchema = z.object({
   chain_id: z.string(),
   text: z.string().optional(),
   next_handoff_id: z.string().nullable(),
-  error: z.string().nullable(),
+  error: z
+    .union([
+      z.string(),
+      z.object({
+        status: z.number(),
+        code: z.string().optional(),
+        message: z.string(),
+      }),
+    ])
+    .nullable(),
 });
 export type ConversationHopEndEvent = z.infer<typeof ConversationHopEndEventSchema>;
 
@@ -59,6 +69,7 @@ export const MergeResultEventSchema = z.object({
     "merged",
     "rebased",
     "rebase_conflict",
+    "verified",
     "test_failed",
     "typecheck_failed",
     "pr_opened",

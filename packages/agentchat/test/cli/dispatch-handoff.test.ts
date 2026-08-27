@@ -4,6 +4,7 @@ import type { ChatTurnInput, ChatTurnResult } from "../../src/cli/loop.js";
 import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
 import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
+import { PenumbraHttpError } from "../../src/penumbra-client.js";
 
 type ChatTurnMockFn = (input: ChatTurnInput) => Promise<ChatTurnResult>;
 type DelayMockFn = (ms: number) => Promise<void>;
@@ -191,6 +192,166 @@ test("role mention continues to the routed agent returned by createHandoff", asy
     handoff_id: "h-routed",
     to: "codex-mini",
   });
+});
+
+test("unknown mention resolution terminates without creating a junk next handoff", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "Looks complete. @penumbra",
+    prompt_event_id: "p",
+    response_event_id: "r1",
+    next_mention: { target: "penumbra", resolution: { kind: "unknown", target: "penumbra" } },
+    mentions: [],
+  });
+  const createHandoff = mock();
+  const approve = mock();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve,
+    runChatTurn,
+  });
+
+  expect(createHandoff).not.toHaveBeenCalled();
+  expect(approve).not.toHaveBeenCalled();
+  expect(res.next).toBeNull();
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(res.text).toBe("Looks complete. @penumbra");
+});
+
+test("terminal createHandoff rejection uses a distinct handoff creation failure reason", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "ping @executor",
+    prompt_event_id: "p",
+    response_event_id: "r1",
+    next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+    mentions: [],
+  });
+  const createHandoff = mock().mockRejectedValue(
+    new PenumbraHttpError("penumbra /handoffs: HTTP 400", 400, {
+      error: { code: "unknown_agent" },
+      field_errors: [{ path: ["to"], message: "unknown agent" }],
+    }),
+  );
+  const approve = mock();
+  const markFailed = mock();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve,
+    markFailed,
+    runChatTurn,
+  });
+
+  expect(createHandoff).toHaveBeenCalledTimes(1);
+  expect(approve).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+  expect(res.next).toBeNull();
+  expect(res.terminatedReason).toBe("handoff_creation_failed");
+  expect(res.text).toBe("ping @executor");
+  expect(res.terminalError).toEqual({
+    status: 400,
+    code: "unknown_agent",
+    message: "penumbra /handoffs: HTTP 400 code=unknown_agent",
+  });
+});
+
+test("retryable createHandoff rejection escapes dispatchHandoff", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "ping @executor",
+    prompt_event_id: "p",
+    response_event_id: "r1",
+    next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+    mentions: [],
+  });
+  const createHandoffError = new PenumbraHttpError("penumbra /handoffs: HTTP 500", 500, {
+    error: { code: "internal_error" },
+  });
+  const createHandoff = mock().mockRejectedValue(createHandoffError);
+  const approve = mock();
+
+  let caught: unknown;
+  try {
+    await dispatchHandoff({
+      handoff: baseHandoff,
+      config: cfg,
+      conversation: mockConv,
+      transcript: [],
+      transcriptBudget: 1000,
+      hopsSoFar: 0,
+      maxHops: 5,
+      trustMode: "all",
+      observe: observeStub,
+      createHandoff,
+      approve,
+      runChatTurn,
+    });
+  } catch (err) {
+    caught = err;
+  }
+
+  expect(caught).toBe(createHandoffError);
+  expect(approve).not.toHaveBeenCalled();
+});
+
+test("auth createHandoff rejection uses handoff creation failure and logs loudly", async () => {
+  for (const status of [401, 403]) {
+    const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+      text: "ping @executor",
+      prompt_event_id: "p",
+      response_event_id: "r1",
+      next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+      mentions: [],
+    });
+    const createHandoff = mock().mockRejectedValue(
+      new PenumbraHttpError(`penumbra /handoffs: HTTP ${status}`, status, {
+        error: { code: "auth_failed" },
+      }),
+    );
+    const log = { error: mock() };
+    const opts: Parameters<typeof dispatchHandoff>[0] & { log: typeof log } = {
+      handoff: baseHandoff,
+      config: cfg,
+      conversation: mockConv,
+      transcript: [],
+      transcriptBudget: 1000,
+      hopsSoFar: 0,
+      maxHops: 5,
+      trustMode: "all",
+      observe: observeStub,
+      createHandoff,
+      approve: mock(),
+      log,
+      runChatTurn,
+    };
+
+    const res = await dispatchHandoff(opts);
+
+    expect(res.terminatedReason).toBe("handoff_creation_failed");
+    expect(res.terminalError).toEqual({
+      status,
+      code: "auth_failed",
+      message: `penumbra /handoffs: HTTP ${status} code=auth_failed`,
+    });
+    expect(log.error).toHaveBeenCalledTimes(1);
+  }
 });
 
 test("continuation role mention forwards the existing chain task type", async () => {

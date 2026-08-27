@@ -1,4 +1,9 @@
-import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
+import {
+  MergeResultEventSchema,
+  type HandoffRow,
+  type Logger,
+  WorktreeManager,
+} from "@penumbra/core";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   existsSync,
@@ -18,12 +23,14 @@ import type { ThoughtAnalyzerInput, ThoughtRow } from "../../src/worker/thought-
 import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
 
 import {
+  MERGE_RESULT_STATUSES,
   createMergeReconciler,
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
   resolveAffectedPackages,
 } from "../../src/worker/merge-reconciler.js";
+import { PenumbraHttpError } from "../../src/penumbra-client.js";
 
 interface ExecResult {
   stdout: string;
@@ -250,6 +257,10 @@ function materializeOwnedNodeModules(root: string): void {
 
 beforeEach(() => {
   defaultWorktreeRoot = mkdtempSync(join(tmpdir(), "penumbra-reconciler-default-wt-"));
+  logMocks.info.mockClear();
+  logMocks.debug.mockClear();
+  logMocks.error.mockClear();
+  logMocks.warn.mockClear();
   progressCalls.length = 0;
   verdictCalls.length = 0;
   execHistory.length = 0;
@@ -308,6 +319,19 @@ afterEach(() => {
 });
 
 const reconcile = createMergeReconciler(mockDeps);
+
+test("worker merge result statuses round-trip through the daemon SSE schema", () => {
+  expect(Object.isFrozen(MERGE_RESULT_STATUSES)).toBe(true);
+  for (const status of MERGE_RESULT_STATUSES) {
+    expect(
+      MergeResultEventSchema.safeParse({
+        type: "merge-result",
+        handoff_id: "h-contract",
+        status,
+      }).success,
+    ).toBe(true);
+  }
+});
 
 function thoughtsConfigEnabled(onlyWhen: string[] = ["pr_opened"]): RuntimeThoughtsConfig {
   return {
@@ -368,6 +392,7 @@ test("default reconcile verifies and emits verdict without opening PR", async ()
   });
   expect(notifyResultMock).toHaveBeenCalledWith("h1", {
     status: "verified",
+    progressReported: true,
   });
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
@@ -537,6 +562,7 @@ test("reconciler posts successful results to capture dependency", async () => {
   expect(result.status).toBe("verified");
   expect(captureResultMock).toHaveBeenCalledWith("h1", {
     status: "verified",
+    progressReported: true,
   });
 });
 
@@ -546,6 +572,55 @@ test("capture dependency failure does not change reconciler result", async () =>
   const result = await reconcile("h1");
   expect(result.status).toBe("verified");
   expect(notifyResultMock).toHaveBeenCalled();
+});
+
+test("progress post failure does not mask the verified reconciler result", async () => {
+  const captureResult = mock((_id: string, _result: MergeResult) => Promise.resolve());
+  const emitVerdict = mock((_verdict: ReconcilerVerdict) => Promise.resolve());
+  const notifyResult = mock((_id: string, _result: MergeResult) => Promise.resolve());
+  const reconcileWithProgressFailure = createMergeReconciler({
+    ...mockDeps,
+    postProgress: mock(() =>
+      Promise.reject(
+        new PenumbraHttpError("penumbra /handoffs/h1/progress: HTTP 400", 400, {
+          error: { code: "validation_failed" },
+          field_errors: [{ path: ["status"], message: "Invalid enum value" }],
+        }),
+      ),
+    ),
+    captureResult,
+    emitVerdict,
+    notifyResult,
+  });
+
+  const result = await reconcileWithProgressFailure("h1");
+
+  expect(result.status).toBe("verified");
+  expect(result.progressReported).toBe(false);
+  expect(captureResult).toHaveBeenCalledWith("h1", {
+    status: "verified",
+    progressReported: false,
+  });
+  expect(emitVerdict.mock.calls[0]?.[0]).toMatchObject({
+    handoff_id: "h1",
+    typecheck: "pass",
+    tests: "pass",
+    progressReported: false,
+  });
+  expect(notifyResult).toHaveBeenCalledWith("h1", {
+    status: "verified",
+    progressReported: false,
+  });
+  expect(logMocks.warn.mock.calls).toContainEqual([
+    expect.objectContaining({
+      handoffId: "h1",
+      status: 400,
+      body: expect.objectContaining({
+        error: { code: "validation_failed" },
+      }),
+    }),
+    "merge-result progress post failed",
+  ]);
 });
 
 test("runs thought analyzer after notifyResult when merge status is in onlyWhen", async () => {
@@ -716,6 +791,7 @@ test("Typecheck fail: returns typecheck_failed and skips PR creation", async () 
   expect(notifyResultMock).toHaveBeenCalledWith("h2", {
     status: "typecheck_failed",
     regression_summary: "packages/core, packages/daemon: Syntax error",
+    progressReported: true,
   });
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
@@ -917,6 +993,7 @@ test("Test fail: returns test_failed and skips PR creation", async () => {
   expect(notifyResultMock).toHaveBeenCalledWith("h3", {
     status: "test_failed",
     regression_summary: "1 test failed",
+    progressReported: true,
   });
 });
 
@@ -1246,6 +1323,7 @@ test("PR creation failure returns pr_creation_failed", async () => {
   expect(notifyResultMock).toHaveBeenCalledWith("h4", {
     status: "pr_creation_failed",
     regression_summary: "Error: Boom",
+    progressReported: true,
   });
 });
 
@@ -1284,6 +1362,7 @@ test("Empty branch diff returns no_changes and skips PR creation", async () => {
   });
   expect(notifyResultMock).toHaveBeenCalledWith("h_empty", {
     status: "no_changes",
+    progressReported: true,
   });
 });
 

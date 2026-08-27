@@ -3,6 +3,7 @@ import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 import type { ChatTurnInput, ChatTurnResult } from "./loop.js";
 
 import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
+import { PenumbraHttpError, isTerminalHttpStatus } from "../penumbra-client.js";
 import { runChatTurn as realRunChatTurn } from "./loop.js";
 import { buildNextPrompt } from "./transcript.js";
 import { isAutoApproved } from "./trust.js";
@@ -73,9 +74,16 @@ export interface DispatchHandoffOpts {
   eventContext?: ChatTurnInput["eventContext"];
   onEvent?: ChatTurnInput["onEvent"];
   onChunk?: (delta: string) => void;
+  log?: { error: (obj: Record<string, unknown>, msg: string) => void };
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
   signal?: AbortSignal;
+}
+
+export interface DispatchTerminalError {
+  status: number;
+  code?: string;
+  message: string;
 }
 
 export interface DispatchHandoffResult {
@@ -87,14 +95,16 @@ export interface DispatchHandoffResult {
     message: string;
     response_event_id: string;
   } | null;
-  /** Set when this hop was the last (no_mention | untrusted | max_hops | error). Absent if next is non-null. */
-  terminatedReason?: "no_mention" | "untrusted" | "max_hops" | "error";
+  /** Set when this hop was the last. Absent if next is non-null. */
+  terminatedReason?: "no_mention" | "untrusted" | "max_hops" | "error" | "handoff_creation_failed";
   /** The handoff id that was created but not approved (untrusted | max_hops), or the handoff id that failed (error). */
   cappedHandoffId?: string;
   /** Final accumulated reply text from this hop (for transcript building by the caller). */
   text: string;
   /** The dispatching agent for this hop (handoff.to_agent). */
   agent: string;
+  /** Non-fatal terminal error from setting up the next hop after this hop completed. */
+  terminalError?: DispatchTerminalError;
   meta?: ChatTurnResult["meta"];
 }
 
@@ -202,7 +212,8 @@ async function runTurnWithRetry(
 function resolveNextHop(turn: ChatTurnResult): { nextTo: string; nextRole: string | null } | null {
   if (!turn.next_mention) return null;
   const resolution = turn.next_mention.resolution;
-  const nextTo = resolution.kind === "unknown" ? turn.next_mention.target : resolution.agent_name;
+  if (resolution.kind === "unknown") return null;
+  const nextTo = resolution.agent_name;
   const nextRole = resolution.kind === "role" ? resolution.role : null;
   return { nextTo, nextRole };
 }
@@ -220,18 +231,28 @@ function buildPromptText(opts: DispatchHandoffOpts): string | undefined {
 }
 
 function terminalResult(
-  reason: "no_mention" | "max_hops" | "untrusted",
+  reason: NonNullable<DispatchHandoffResult["terminatedReason"]>,
   turn: ChatTurnResult,
   targetAgent: string,
   cappedHandoffId?: string,
+  terminalError?: DispatchTerminalError,
 ): DispatchHandoffResult {
   return {
     next: null,
     terminatedReason: reason,
     ...(cappedHandoffId ? { cappedHandoffId } : {}),
+    ...(terminalError ? { terminalError } : {}),
     text: turn.text,
     agent: targetAgent,
     ...metaSpread(turn),
+  };
+}
+
+function terminalErrorFromHttp(err: PenumbraHttpError): DispatchTerminalError {
+  return {
+    status: err.status,
+    ...(err.code ? { code: err.code } : {}),
+    message: err.message,
   };
 }
 
@@ -246,17 +267,37 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
   const nextHop = resolveNextHop(turn);
   if (!nextHop) return terminalResult("no_mention", turn, targetAgent);
 
-  const created = await opts.createHandoff({
-    from: targetAgent,
-    to: nextHop.nextTo,
-    to_role: nextHop.nextRole,
-    message: turn.text,
-    conversation_id: opts.conversation.id,
-    project_id: opts.conversation.project_id,
-    triggered_by_event_id: turn.response_event_id,
-    use_worktree: opts.handoff.use_worktree,
-    chain_task_type: opts.handoff.chain_task_type,
-  });
+  let created: CreateHandoffResult;
+  try {
+    created = await opts.createHandoff({
+      from: targetAgent,
+      to: nextHop.nextTo,
+      to_role: nextHop.nextRole,
+      message: turn.text,
+      conversation_id: opts.conversation.id,
+      project_id: opts.conversation.project_id,
+      triggered_by_event_id: turn.response_event_id,
+      use_worktree: opts.handoff.use_worktree,
+      chain_task_type: opts.handoff.chain_task_type,
+    });
+  } catch (err) {
+    if (err instanceof PenumbraHttpError && isTerminalHttpStatus(err.status)) {
+      const terminalError = terminalErrorFromHttp(err);
+      if (err.status === 401 || err.status === 403) {
+        opts.log?.error(
+          {
+            handoff_id: opts.handoff.handoff_id,
+            status: err.status,
+            code: err.code,
+            body: err.body,
+          },
+          "handoff creation rejected by daemon auth",
+        );
+      }
+      return terminalResult("handoff_creation_failed", turn, targetAgent, undefined, terminalError);
+    }
+    throw err;
+  }
   const routedNextTo = created.routed_agent ?? nextHop.nextTo;
 
   // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)

@@ -751,14 +751,35 @@ export class PenumbraClient {
  * retryable (network, 5xx) failures without parsing error message strings.
  */
 export class PenumbraHttpError extends Error {
+  public readonly code: string | undefined;
+  public readonly bodyText: string;
+
   constructor(
     message: string,
     public readonly status: number,
     public readonly body: unknown = null,
   ) {
-    super(message);
+    const code = extractErrorCode(body);
+    super(code ? `${message} code=${code}` : message);
     this.name = "PenumbraHttpError";
+    this.code = code;
+    this.bodyText = truncateBodyText(body);
   }
+}
+
+function extractErrorCode(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.length > 0 ? code : undefined;
+}
+
+function truncateBodyText(body: unknown): string {
+  if (body === null) return "";
+  const text = JSON.stringify(body);
+  if (text === undefined) return "";
+  return text.length > 2_048 ? text.slice(0, 2_048) : text;
 }
 
 /** Returns true for HTTP statuses that are NOT worth retrying (definitive outcomes). */

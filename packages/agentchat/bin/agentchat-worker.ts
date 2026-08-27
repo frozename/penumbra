@@ -1530,6 +1530,7 @@ async function runDispatch(
       approve: (id: string, body: Parameters<typeof client.approve>[1]) => client.approve(id, body),
       markFailed: (id: string, reason: string) => client.markFailed(id, reason, workerId),
       onChunk,
+      log,
       eventContext: {
         handoffId: handoff.handoff_id,
         workerId,

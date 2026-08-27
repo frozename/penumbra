@@ -1,4 +1,9 @@
-import type { DispatchEventInput, Logger } from "@penumbra/core";
+import {
+  ConversationChainEndEventSchema,
+  ConversationHopEndEventSchema,
+  type DispatchEventInput,
+  type Logger,
+} from "@penumbra/core";
 
 import { expect, mock, test, vi } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -592,6 +597,69 @@ test("emits dispatch.end status=error when dispatch reports terminal error", asy
       agent: "executor",
     }),
   );
+});
+
+test("handoff creation failures propagate to hop-end and dispatch.end metadata", async () => {
+  const events: DispatchEventInput[] = [];
+  const terminalError = {
+    status: 403,
+    code: "auth_failed",
+    message: "penumbra /handoffs: HTTP 403",
+  };
+  const d = deps({
+    onEvent: (event) => events.push(event),
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "handoff_creation_failed",
+      terminalError,
+      text: "ping @executor",
+      agent: "planner",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-create-failed"));
+  await dispatcher.idle();
+
+  const progressCalls = mockCalls<[string, Record<string, unknown>]>(d.postProgress).map(
+    (call) => call[1],
+  );
+  expect(progressCalls).toContainEqual(
+    expect.objectContaining({
+      type: "hop-end",
+      error: terminalError,
+    }),
+  );
+  expect(progressCalls).toContainEqual(
+    expect.objectContaining({
+      type: "chain-end",
+      reason: "handoff_creation_failed",
+      error: terminalError,
+    }),
+  );
+  expect(events).toContainEqual(
+    eventMatcher<DispatchEventInput>({
+      kind: "dispatch.end",
+      meta: expect.objectContaining({
+        status: "error",
+        terminal_error: terminalError,
+      }) as DispatchEventInput["meta"],
+    }),
+  );
+  const hopEndPayload = progressCalls.find((payload) => payload.type === "hop-end");
+  const chainEndPayload = progressCalls.find((payload) => payload.type === "chain-end");
+  expect(ConversationHopEndEventSchema.safeParse(hopEndPayload).success).toBe(true);
+  expect(ConversationChainEndEventSchema.safeParse(chainEndPayload).success).toBe(true);
+  expect(
+    ConversationHopEndEventSchema.safeParse({
+      type: "hop-end",
+      handoff_id: "h-legacy",
+      chain_id: "c-legacy",
+      text: "done",
+      next_handoff_id: null,
+      error: "dispatch error",
+    }).success,
+  ).toBe(true);
 });
 
 test("terminal-error dispatch is marked failed, not completed", async () => {

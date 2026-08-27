@@ -718,11 +718,22 @@ function reasonForTerminated(terminatedReason: string | undefined): string {
     max_hops: "max_hops",
     untrusted: "cancelled",
     error: "error",
+    handoff_creation_failed: "handoff_creation_failed",
   };
   if (terminatedReason === undefined) {
     return "completed";
   }
   return reasonMap[terminatedReason] ?? "completed";
+}
+
+function terminalErrorOf(result: DispatchHandoffResult | null): unknown | null {
+  return result?.terminalError ?? null;
+}
+
+function terminalErrorMessageOf(result: DispatchHandoffResult): string {
+  const err = result.terminalError;
+  if (!err) return "dispatch error";
+  return err.message;
 }
 
 function frameworkOverheadMsOf(result: DispatchHandoffResult | null): number | null {
@@ -748,6 +759,7 @@ async function handleHopCompletion(
     type: "chain-end",
     chain_id: handoff.conversation_id,
     reason,
+    ...(result.terminalError ? { error: result.terminalError } : {}),
   });
   // Capture the worktree snapshot here so it's available to onChainEnd hooks.
   // Memoised — the finally block reuses the same value when emitting
@@ -853,7 +865,12 @@ async function runDispatchBody(
     chain_id: handoff.conversation_id,
     text: result.text,
     next_handoff_id: result.next?.handoff_id ?? result.cappedHandoffId ?? null,
-    error: result.terminatedReason === "error" ? "dispatch error" : null,
+    error:
+      result.terminatedReason === "error"
+        ? "dispatch error"
+        : result.terminatedReason === "handoff_creation_failed"
+          ? (result.terminalError ?? "handoff creation failed")
+          : null,
   });
   await handleHopCompletion(deps, handoff, ctx, result);
 }
@@ -868,9 +885,18 @@ function classifyResult(
     ctx.outcome.status = "aborted";
     return;
   }
-  if (result.terminatedReason === "error") {
+  if (
+    result.terminatedReason === "error" ||
+    result.terminatedReason === "handoff_creation_failed"
+  ) {
     ctx.outcome.status = "error";
-    emitAdapterRetryExhausted(deps, handoff);
+    ctx.outcome.errorText =
+      result.terminatedReason === "handoff_creation_failed"
+        ? terminalErrorMessageOf(result)
+        : "dispatch error";
+    if (result.terminatedReason === "error") {
+      emitAdapterRetryExhausted(deps, handoff);
+    }
   }
 }
 
@@ -925,6 +951,7 @@ function buildDispatchEndMeta(ctx: DispatchLifecycleContext): Record<string, unk
   const snap = snapshotOrNull(ctx.snapshot);
   const overhead = frameworkOverheadMsOf(ctx.outcome.result);
   const decline = resolveClassifierDecline(ctx);
+  const terminalError = terminalErrorOf(ctx.outcome.result);
   return {
     status: ctx.outcome.status,
     wall_ms: Date.now() - ctx.dispatchStart,
@@ -933,6 +960,7 @@ function buildDispatchEndMeta(ctx: DispatchLifecycleContext): Record<string, unk
     ...(snap.dirty !== null ? { dirty: snap.dirty } : {}),
     ...(snap.committed !== null ? { committed: snap.committed } : {}),
     ...(decline ?? {}),
+    ...(terminalError !== null ? { terminal_error: terminalError } : {}),
   };
 }
 

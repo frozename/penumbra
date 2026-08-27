@@ -42,13 +42,14 @@ export interface AutoChainOpts {
   trustMode?: "all" | "config";
   projectContext?: string;
   onChunk?: (delta: string) => void;
+  log?: { error: (obj: Record<string, unknown>, msg: string) => void };
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
 }
 
 export interface AutoChainResult {
   hops: number;
-  terminatedReason: "no_mention" | "max_hops" | "untrusted" | "error";
+  terminatedReason: "no_mention" | "max_hops" | "untrusted" | "error" | "handoff_creation_failed";
   cappedHandoffId?: string;
 }
 
@@ -131,6 +132,7 @@ async function runOneStep(input: StepInput): Promise<StepFinished | StepContinue
     markFailed: opts.markFailed,
     runChatTurn: opts.runChatTurn ?? realRunChatTurn,
     onChunk: opts.onChunk,
+    log: opts.log,
     delay: opts.delay,
   });
   process.stdout.write("\n\n");
@@ -163,13 +165,13 @@ async function runOneStep(input: StepInput): Promise<StepFinished | StepContinue
       result: withCap({ hops, terminatedReason: "untrusted" }, res.cappedHandoffId),
     };
   }
-  if (res.terminatedReason === "error") {
+  if (res.terminatedReason === "error" || res.terminatedReason === "handoff_creation_failed") {
     const cap = res.cappedHandoffId ?? currentHandoff.handoff_id;
     return {
       kind: "finished",
       reason: "error",
       cappedHandoffId: cap,
-      result: withCap({ hops, terminatedReason: "error" }, cap),
+      result: withCap({ hops, terminatedReason: res.terminatedReason }, cap),
     };
   }
 
