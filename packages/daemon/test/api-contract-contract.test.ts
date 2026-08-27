@@ -1,4 +1,5 @@
 import {
+  ChainStartRequestSchema as ApiChainStartRequestSchema,
   ChainsListResponseSchema,
   DispatchEventSchema,
   DispatchEventsListResponseSchema,
@@ -9,7 +10,13 @@ import {
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
 } from "@penumbra/api-contract";
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  ChainStartRequestSchema as CoreChainStartRequestSchema,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -109,6 +116,48 @@ test("GET /chains response shape matches ChainsListResponseSchema", async () => 
   } finally {
     h.stop();
   }
+});
+
+test("chain-start request contracts expose the same typed tool_free field", () => {
+  const input = {
+    initial_agent: "executor",
+    message: "summarize",
+    tool_free: true,
+  };
+
+  expect(ApiChainStartRequestSchema.shape.tool_free.safeParse("true").success).toBe(false);
+  expect(ApiChainStartRequestSchema.parse(input).tool_free).toBe(
+    CoreChainStartRequestSchema.parse(input).tool_free,
+  );
+});
+
+test("chain-start request contracts preserve explicit false tool_free", () => {
+  const input = {
+    initial_agent: "executor",
+    message: "summarize",
+    tool_free: false,
+  };
+
+  const apiParsed = ApiChainStartRequestSchema.parse(input);
+  const coreParsed = CoreChainStartRequestSchema.parse(input);
+
+  expect(apiParsed.tool_free).toBe(false);
+  expect(coreParsed.tool_free).toBe(false);
+});
+
+test("chain-start request contracts leave absent tool_free absent", () => {
+  const input = {
+    initial_agent: "executor",
+    message: "summarize",
+  };
+
+  const apiParsed = ApiChainStartRequestSchema.parse(input);
+  const coreParsed = CoreChainStartRequestSchema.parse(input);
+
+  expect(Object.prototype.hasOwnProperty.call(apiParsed, "tool_free")).toBe(false);
+  expect(Object.prototype.hasOwnProperty.call(coreParsed, "tool_free")).toBe(false);
+  expect(apiParsed.tool_free).toBeUndefined();
+  expect(coreParsed.tool_free).toBeUndefined();
 });
 
 test("GET /handoffs?status=pending response shape matches HandoffsListResponseSchema", async () => {

@@ -51,12 +51,14 @@ interface InitialRoute {
 interface RouteResolution {
   route: InitialRoute | null;
   decision: RoutingDecision | null;
+  roleRouteAttempted: boolean;
 }
 
 interface RouterHarnessHints {
   taskClass?: string;
   projectId?: string;
   dispatchKind?: string;
+  tool_free?: boolean;
 }
 
 type AgentChatConfigLike = {
@@ -1405,7 +1407,11 @@ function resolveRoutingWithFallbacks(
   const requestedAgent = initialAgent;
   let routingResolutionReason: string | null = null;
 
-  const { route: initialRoute, decision: routingDecision } = resolveInitialRoute({
+  const {
+    route: initialRoute,
+    decision: routingDecision,
+    roleRouteAttempted,
+  } = resolveInitialRoute({
     initialAgent,
     message: input.message,
     taskType: input.task_type,
@@ -1415,9 +1421,31 @@ function resolveRoutingWithFallbacks(
       taskClass: input.task_class,
       projectId: input.project_id ?? undefined,
       dispatchKind: input.dispatch_kind,
+      tool_free: input.tool_free,
     },
   });
   let route = initialRoute;
+
+  if (!route && roleRouteAttempted) {
+    return {
+      response: json(
+        {
+          error: {
+            code: "role_route_unavailable",
+            message: "the model task router returned no route for the requested role",
+            role: initialAgent,
+          },
+        },
+        422,
+      ),
+      route: null,
+      routedAgent: "",
+      routedRole: null,
+      requestedAgent: null,
+      routingResolutionReason: null,
+      routingDecision,
+    };
+  }
 
   const unknownAgentResponse = rejectUnknownAgent(
     route,
@@ -2543,14 +2571,29 @@ function resolveInitialRoute(opts: {
     .filter((agent) => agent.roles.includes(opts.initialAgent))
     .map((agent) => agent.name)
     .filter((name) => !agentRegistry || agentRegistry.includes(name));
-  if (!opts.forceExactAgent && agentRouting && roleAgents.length > 0) {
+  const isKnownRole =
+    agentRouting !== null &&
+    agentRouting !== undefined &&
+    (Object.hasOwn(agentRouting.default_roles, opts.initialAgent) ||
+      agentRouting.agents.some((agent) => agent.roles.includes(opts.initialAgent)));
+  const shouldExploreZeroHolderRole =
+    isKnownRole && opts.services.taskRouterConfig?.mode === "auto";
+  if (
+    !opts.forceExactAgent &&
+    agentRouting &&
+    (roleAgents.length > 0 || shouldExploreZeroHolderRole)
+  ) {
     return resolveRoleRoute(opts, roleAgents);
   }
 
   if (agentRegistry?.includes(opts.initialAgent)) {
-    return { route: { agent: opts.initialAgent, role: null, taskType: null }, decision: null };
+    return {
+      route: { agent: opts.initialAgent, role: null, taskType: null },
+      decision: null,
+      roleRouteAttempted: false,
+    };
   }
-  return { route: null, decision: null };
+  return { route: null, decision: null, roleRouteAttempted: false };
 }
 
 function resolveRoleRoute(
@@ -2569,10 +2612,14 @@ function resolveRoleRoute(
     ...opts.harness,
     decisionSink,
   });
+  if (!route && roleAgents.length === 0) {
+    return { route: null, decision: decisionSink.decision, roleRouteAttempted: true };
+  }
   const fallbackAgent = roleAgents[0] ?? opts.initialAgent;
   return {
     route: route ?? { agent: fallbackAgent, role: opts.initialAgent, taskType },
     decision: decisionSink.decision,
+    roleRouteAttempted: true,
   };
 }
 

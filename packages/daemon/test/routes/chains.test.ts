@@ -313,7 +313,7 @@ function seedPerformance(
     performance_id: string;
     handoff_id: string;
     agent_name: string;
-    task_type: "implement_substantial" | "review_adversarial";
+    task_type: "implement_small" | "implement_substantial" | "review_adversarial";
     outcome: "merged" | "failed";
     rounds?: number;
     smoke_pass?: "y" | "n";
@@ -339,6 +339,30 @@ function seedPerformance(
     notes: null,
     metadata_json: "{}",
   });
+}
+
+function seedSubscriptionPressure(services: Services, provider: string, usedPct: number): void {
+  const now = services.clock().toISOString();
+  services.db
+    .prepare(
+      `INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)`,
+    )
+    .run(
+      `pressure-${provider}`,
+      now,
+      now,
+      provider,
+      JSON.stringify({
+        window_label: "24h",
+        model: null,
+        used_pct: usedPct,
+        resets_at: null,
+        source_kind: "subscription",
+      }),
+    );
 }
 
 function writeAgentResponse(
@@ -3649,6 +3673,265 @@ test("chain_start with taskRouterConfig mode:'auto' applies the router's own sel
   expect(decisions[0].mode).toBe("auto");
   expect(decisions[0].applied).toBe(true);
   expect(decisions[0].selectedAgent).toBe("codex-mini");
+});
+
+test("chain_start auto routing explores a known role with zero live strict holders", async () => {
+  const services = tempServices({
+    agentRegistry: ["planner-seat"],
+    agentRouting: {
+      agents: [
+        { name: "offline-executor", roles: ["executor"] },
+        { name: "planner-seat", roles: ["planner"] },
+      ],
+      default_roles: {},
+    },
+  });
+  seedPerformance(services, {
+    performance_id: "p-zero-holder-exploration",
+    handoff_id: "h-zero-holder-exploration",
+    agent_name: "planner-seat",
+    task_type: "implement_small",
+    outcome: "merged",
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body).toMatchObject({
+    requested_agent: "executor",
+    routed_agent: "planner-seat",
+    routed_role: "executor",
+    routing_resolution_reason: "role_route",
+  });
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]).toMatchObject({
+    mode: "auto",
+    selectedAgent: "planner-seat",
+    applied: true,
+  });
+});
+
+for (const mode of ["off", "recommend", "shadow"] as const) {
+  test(`chain_start mode:'${mode}' preserves strict role holders for a known zero-holder role`, async () => {
+    const services = tempServices({
+      agentRegistry: ["planner-seat"],
+      agentRouting: {
+        agents: [
+          { name: "offline-executor", roles: ["executor"] },
+          { name: "planner-seat", roles: ["planner"] },
+        ],
+        default_roles: {},
+      },
+    });
+    services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode });
+
+    const res = await chainsStartRoute(
+      new Request("http://x/chains/start", {
+        method: "POST",
+        body: JSON.stringify({
+          initial_agent: "executor",
+          task_type: "implement_small",
+          message: "implement the change",
+        }),
+      }),
+      services,
+    );
+
+    expect(res.status).toBe(400);
+    const body = await readJsonBody<ChainResponseBody>(res);
+    expect(body.error?.code).toBe("unknown_agent");
+    expect(
+      services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+    ).toBe(0);
+  });
+}
+
+test("chain_start auto routing does not explore an unknown name", async () => {
+  const services = tempServices({
+    agentRegistry: ["planner-seat"],
+    agentRouting: {
+      agents: [{ name: "planner-seat", roles: ["planner"] }],
+      default_roles: {},
+    },
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "not-a-role-or-seat",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("unknown_agent");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM routing_decisions").get()?.c ??
+      0,
+  ).toBe(0);
+});
+
+test("chain_start auto routing fails closed when a known zero-holder role has no explorable seat", async () => {
+  const services = tempServices({
+    agentRegistry: ["fenced-seat"],
+    agentRouting: {
+      agents: [
+        { name: "offline-executor", roles: ["executor"] },
+        { name: "fenced-seat", roles: [] },
+      ],
+      default_roles: {},
+    },
+  });
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("router_hard_constraint_exhausted");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+});
+
+test("chain_start auto routing does not re-admit a same-named concrete seat after zero-holder exploration returns null", async () => {
+  const services = tempServices({
+    agentRegistry: ["executor"],
+    agentRouting: {
+      agents: [
+        { name: "offline-executor", roles: ["executor"] },
+        {
+          name: "executor",
+          roles: ["reviewer"],
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
+        },
+      ],
+      default_roles: {},
+    },
+  });
+  seedPerformance(services, {
+    performance_id: "p-pressured-collision",
+    handoff_id: "h-pressured-collision",
+    agent_name: "executor",
+    task_type: "implement_small",
+    outcome: "merged",
+  });
+  seedSubscriptionPressure(services, "openai", 95);
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("role_route_unavailable");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+});
+
+test("chain_start forwards tool_free through the request schema into auto-router constraints", async () => {
+  const services = tempServices({
+    agentRegistry: ["http-seat", "tool-seat"],
+    agentRouting: {
+      agents: [
+        {
+          name: "http-seat",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
+          adapter: "openai-compat-http",
+        },
+        {
+          name: "tool-seat",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "anthropic",
+          adapter: "stdio-acp",
+        },
+      ],
+      default_roles: {},
+      role_exploration_policy: "ranked-first",
+    },
+  });
+  for (const agent of ["http-seat", "tool-seat"] as const) {
+    seedPerformance(services, {
+      performance_id: `p-tool-free-${agent}`,
+      handoff_id: `h-tool-free-${agent}`,
+      agent_name: agent,
+      task_type: "implement_small",
+      outcome: "merged",
+    });
+  }
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "summarize the implementation",
+        tool_free: true,
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routed_agent).toBe("http-seat");
+  const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0].selectedAgent).toBe("http-seat");
+  expect(decisions[0].alternatives).not.toContainEqual(
+    expect.objectContaining({
+      routeId: "openai:http-seat",
+      excluded: true,
+    }),
+  );
 });
 
 test("chain_start records an auto decision as unapplied when classifier fallback changes the final agent", async () => {
