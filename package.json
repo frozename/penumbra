@@ -45,12 +45,6 @@
   "overrides": {
     "fastembed": {
       "tar": "^6.2.1"
-    },
-    "onnxruntime-node": {
-      "tar": "^7.5.22"
-    },
-    "express-rate-limit": {
-      "ip-address": "^10.5.0"
     }
   },
   "lint-staged": {
