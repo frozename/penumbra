@@ -58,6 +58,7 @@ import type { GhClient } from "./services/gh-client.js";
 
 import { resolveAgentChatConfigPath } from "./agentchat-config.js";
 import { createBearerAuth } from "./auth.js";
+import { corsPreflightResponse, withCorsResponseHeaders } from "./cors.js";
 import { installGlobalCrashHandlers } from "./crash-guard.js";
 import { buildDreamingConfig, type DreamConfig } from "./dreaming/config.js";
 import { buildDreamCycleDeps } from "./dreaming/deps.js";
@@ -1190,28 +1191,34 @@ export function createDaemonFetchHandler(opts: {
     lagSampler: opts.lagSampler,
   };
   return async (req: Request): Promise<Response> => {
-    const originDenied = originHostGuard(req);
-    if (originDenied) return originDenied;
-    const url = new URL(req.url);
-    if (url.pathname === "/health") {
-      return healthRoute({
-        sampler: opts.lagSampler,
-        db: opts.services.db,
-        now: opts.services.clock,
-        llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
-      });
-    }
-    // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
-    if (req.method === "POST" && url.pathname === "/v1/logs")
-      return await otlpLogsRoute(req, opts.services);
-    if (req.method === "POST" && url.pathname === "/v1/metrics")
-      return await otlpMetricsRoute(req, opts.services);
-    if (req.method === "POST" && url.pathname === "/v1/traces")
-      return await otlpTracesRoute(req, opts.services);
-    const denied = auth(req);
-    if (denied) return denied;
-    const dispatched = await dispatchRoute(req, url, ctx, routes);
-    return dispatched ?? new Response("not found", { status: 404 });
+    const origin = req.headers.get("origin");
+    const preflight = corsPreflightResponse(req, origin);
+    if (preflight) return preflight;
+    const response = await (async (): Promise<Response> => {
+      const originDenied = originHostGuard(req, origin);
+      if (originDenied) return originDenied;
+      const url = new URL(req.url);
+      if (url.pathname === "/health") {
+        return healthRoute({
+          sampler: opts.lagSampler,
+          db: opts.services.db,
+          now: opts.services.clock,
+          llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
+        });
+      }
+      // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
+      if (req.method === "POST" && url.pathname === "/v1/logs")
+        return await otlpLogsRoute(req, opts.services);
+      if (req.method === "POST" && url.pathname === "/v1/metrics")
+        return await otlpMetricsRoute(req, opts.services);
+      if (req.method === "POST" && url.pathname === "/v1/traces")
+        return await otlpTracesRoute(req, opts.services);
+      const denied = auth(req);
+      if (denied) return denied;
+      const dispatched = await dispatchRoute(req, url, ctx, routes);
+      return dispatched ?? new Response("not found", { status: 404 });
+    })();
+    return withCorsResponseHeaders(origin, response);
   };
 }
 

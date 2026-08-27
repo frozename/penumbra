@@ -25,12 +25,11 @@ const LOOPBACK_ORIGIN_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/;
  */
 export function createOriginHostGuard(
   opts: OriginHostOpts = {},
-): (req: Request) => Response | null {
+): (req: Request, origin?: string | null) => Response | null {
   const allowRemote = opts.allowRemote === true;
-  return (req) => {
+  return (req, origin = req.headers.get("origin")) => {
     if (allowRemote) return null;
 
-    const origin = req.headers.get("origin");
     if (origin !== null && origin !== "null" && !LOOPBACK_ORIGIN_RE.test(origin)) {
       return forbidden(`origin not allowed: ${origin}`);
     }
