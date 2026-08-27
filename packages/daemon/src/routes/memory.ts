@@ -12,6 +12,7 @@ import {
   getMemoryVerificationEvents,
   getObservations,
   GetObservationsRequestSchema,
+  MemoryVerifyClaimInputShape,
   listCorpora,
   listRecentJobs,
   parseWikiLinks,
@@ -288,32 +289,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
 export async function memoryVerifyRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
   if (raw && typeof raw === "object" && "_err" in raw) return (raw as { _err: Response })._err;
-  const parsed = z
-    .object({
-      memory_id: z.string().min(1),
-      claimed_by: z
-        .string()
-        .min(1)
-        .max(120)
-        .regex(/^[A-Za-z0-9._:@-]+$/)
-        .optional(),
-      by: z
-        .string()
-        .min(1)
-        .max(120)
-        .regex(/^[A-Za-z0-9._:@-]+$/)
-        .describe("Deprecated: use claimed_by instead")
-        .optional(),
-      reason: z.string().min(1).max(500).optional(),
-      session_id: z
-        .string()
-        .min(1)
-        .max(120)
-        .regex(/^[A-Za-z0-9._-]+$/)
-        .optional(),
-      basis: BasisSchema,
-    })
-    .safeParse(raw);
+  const parsed = z.object(MemoryVerifyClaimInputShape).safeParse(raw);
   if (!parsed.success) return validationError(parsed);
   const basisValidation = await validateBasis(services, parsed.data.basis);
   if (!basisValidation.ok) {

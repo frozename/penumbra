@@ -1,41 +1,10 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
+import { MemoryVerifyAuthorizeInputShape as CoreMemoryVerifyAuthorizeInputShape } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 
-const BasisSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("lane_close"),
-    lane_id: z.string().min(1),
-    reviewer_handoff: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("dispatch_land"),
-    merge_commit: z
-      .string()
-      .min(7)
-      .max(40)
-      .regex(/^[a-f0-9]+$/),
-    reviewer_handoff: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("adversarial_review"),
-    synthesis_path: z.string().min(1),
-    synthesizer_handoff: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal("manual_override"),
-    reason: z.string().min(1),
-    authorized_by: z.string().min(1),
-  }),
-]);
-
-export const MemoryVerifyAuthorizeInputShape = {
-  handoff_id: z.string().min(1),
-  verdict: z.enum(["passed", "failed", "skipped", "review_debt"]),
-  basis: BasisSchema,
-  authorized_by_handoff: z.string().min(1).optional().nullable(),
-};
+export const MemoryVerifyAuthorizeInputShape = CoreMemoryVerifyAuthorizeInputShape;
 
 const MemoryVerifyAuthorizeSchema = z.object(MemoryVerifyAuthorizeInputShape).strict();
 
