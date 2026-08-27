@@ -420,6 +420,19 @@ describe("resolveAgent", () => {
     ).toBe("b");
   });
 
+  test("does not pick an excluded pool member when the only non-excluded member has no history (synthesizer cold-start)", () => {
+    const db = freshDb();
+    writePerf(db, "a");
+    writeBias(db, "provider", "anthropic", "exclude");
+
+    expect(
+      resolveAgent({ kind: "pool", agents: ["a", "b"] }, "review_adversarial", {
+        ...ctx(),
+        db: () => db,
+      }),
+    ).toBe("b");
+  });
+
   test("applies boost biases while resolving a pool", () => {
     const db = freshDb();
     writePerf(db, "a");

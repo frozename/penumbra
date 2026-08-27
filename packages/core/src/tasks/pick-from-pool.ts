@@ -4,7 +4,9 @@ import type { AgentTaskType } from "../schemas/agent-performance.js";
 import type { RoutingBias } from "../readers/routing-bias.js";
 
 import {
+  resolveBiasEffect,
   resolveClassifierDeclineCutoverIso,
+  resolveProvider,
   routeAgent,
   type RouteAgentInput,
   SUCCESS_OUTCOME_VALUES,
@@ -74,7 +76,19 @@ export function pickFromPool(
   tool_free?: boolean,
   activeBiases?: RoutingBias[],
 ): string {
-  const [firstAgent, secondAgent] = pool;
+  let workingPool = pool;
+  if (activeBiases && activeBiases.length > 0) {
+    const nonExcluded = pool.filter((name) => {
+      const conf = agentchatConfig?.agents.find((agent) => agent.name === name);
+      const provider = conf ? resolveProvider(conf) : null;
+      return !resolveBiasEffect(name, provider, activeBiases).exclude;
+    });
+    // When every member is excluded, re-admit the full pool and fail toward
+    // its configured preference order, matching the single-seat fallback.
+    if (nonExcluded.length > 0) workingPool = nonExcluded;
+  }
+
+  const [firstAgent, secondAgent] = workingPool;
   if (firstAgent === undefined) throw new Error("pickFromPool: pool must not be empty");
   if (secondAgent === undefined) return firstAgent;
 
@@ -95,7 +109,7 @@ export function pickFromPool(
     db,
     detail: "rank",
     taskType,
-    agentRegistry: pool,
+    agentRegistry: workingPool,
     includeNeutral: true,
     applyPressure: pressure ?? undefined,
     agentchatConfig: localConfig,
@@ -104,9 +118,9 @@ export function pickFromPool(
   });
 
   if (out.detail !== "rank") return firstAgent;
-  const demoted = recentlyFailingAgents(pool, db, taskType);
-  const eligiblePool = pool.filter((agent) => !demoted.has(agent));
-  const pickPool = eligiblePool.length > 0 ? eligiblePool : pool;
+  const demoted = recentlyFailingAgents(workingPool, db, taskType);
+  const eligiblePool = workingPool.filter((agent) => !demoted.has(agent));
+  const pickPool = eligiblePool.length > 0 ? eligiblePool : workingPool;
   const [pickHead] = pickPool;
   if (pickHead === undefined) return firstAgent;
 

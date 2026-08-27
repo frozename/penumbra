@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 
+import type { RoutingBias } from "../../src/readers/routing-bias.js";
 import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
 
 import {
@@ -98,6 +99,17 @@ function config(headroom_weighting = false): AgentchatConfig {
   };
 }
 
+const excludeAnthropic: RoutingBias = {
+  bias_id: "bias-anthropic-exclude",
+  scope: "provider",
+  value: "anthropic",
+  mode: "exclude",
+  weight: null,
+  reason: "test",
+  created_at: NOW,
+  expires_at: "2027-01-01T00:00:00.000Z",
+};
+
 function pressure(anthropic: number, openai: number): PressureResult {
   return {
     warnings: [],
@@ -149,6 +161,43 @@ describe("pickFromPool", () => {
     const db = freshDb();
 
     expect(pickFromPool(["a", "b"], db, config(), undefined, "implement_small")).toBe("a");
+  });
+
+  test("cold-start does not pick a provider-excluded first member when a non-excluded member exists", () => {
+    const db = freshDb();
+
+    expect(
+      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
+        excludeAnthropic,
+      ]),
+    ).toBe("b");
+  });
+
+  test("an excluded member with history cannot win over a history-less non-excluded member", () => {
+    const db = freshDb();
+    writePerf(db, "a", "review_adversarial");
+
+    expect(
+      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
+        excludeAnthropic,
+      ]),
+    ).toBe("b");
+  });
+
+  test("all pool members excluded falls back to the first pool agent (preference-order re-admission)", () => {
+    const db = freshDb();
+    const excludeOpenai: RoutingBias = {
+      ...excludeAnthropic,
+      bias_id: "bias-openai-exclude",
+      value: "openai",
+    };
+
+    expect(
+      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
+        excludeAnthropic,
+        excludeOpenai,
+      ]),
+    ).toBe("a");
   });
 
   test("single-element pool returns immediately without querying the database", () => {
