@@ -29,6 +29,10 @@ import {
 } from "../../../config/src/index.js";
 
 import { executeConfigSplitWrite } from "./config-split.js";
+import {
+  type AcpSessionSpawner,
+  discoverAcpSessionModels,
+} from "./generator/discovery-acp-session.js";
 import { discoverAgyModels } from "./generator/discovery-agy.js";
 import { discoverCodexModels } from "./generator/discovery-codex.js";
 import { discoverHttpModels, type HttpModelDiscoveryResult } from "./generator/discovery-http.js";
@@ -191,9 +195,37 @@ function httpDiscoveryAdapter(): ProviderDiscoveryAdapter {
   };
 }
 
-function defaultDiscoveryAdapters(): ProviderDiscoveryAdapterRegistry {
+export interface DefaultDiscoveryAdaptersOpts {
+  acpSessionSpawn?: AcpSessionSpawner;
+  acpSessionTimeoutMs?: number;
+}
+
+export function defaultDiscoveryAdapters(
+  opts: DefaultDiscoveryAdaptersOpts = {},
+): ProviderDiscoveryAdapterRegistry {
   const discoverHttp = httpDiscoveryAdapter();
   return {
+    "acp-session": async ({ providerId, source }): Promise<ProviderDiscoveryResult> => {
+      const [command, ...args] = source.discovery.locator.trim().split(/\s+/);
+      if (!command) {
+        return { outcome: "skipped", reason: "ACP session discovery locator is empty" };
+      }
+      // Discovery is source-wide, so union every binding's unset list. Removing more variables is
+      // safer than probing under a principal that some generated seats deliberately exclude.
+      const unsetEnv = [
+        ...new Set(
+          Object.values(source.bindings).flatMap((binding) => binding.carriers?.unset_env ?? []),
+        ),
+      ];
+      return await discoverAcpSessionModels({
+        providerId,
+        command,
+        args,
+        ...(opts.acpSessionSpawn ? { spawn: opts.acpSessionSpawn } : {}),
+        timeoutMs: opts.acpSessionTimeoutMs ?? 10_000,
+        ...(unsetEnv.length > 0 ? { unsetEnv } : {}),
+      });
+    },
     codex: async () => discoverCodexModels(),
     "codex-cli": async () => discoverCodexModels(),
     agy: async () => discoverAgyModels(),

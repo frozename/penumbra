@@ -1,19 +1,25 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import YAML from "yaml";
 
 import {
   AgentsConfigSchema,
+  loadProviderSourcesFromDir,
   ModelAliasMapSchema,
+  resolveCatalogAuthority,
   type ProviderSourcesConfig,
 } from "../../../config/src/index.js";
 import {
+  defaultDiscoveryAdapters,
   runConfigSyncProviders,
   type ProviderDiscoveryAdapter,
 } from "../../src/commands/config-sync-providers.js";
+import type { AcpSessionSpawner } from "../../src/commands/generator/discovery-acp-session.js";
 import { parseOpencodeModelsOutput } from "../../src/commands/generator/discovery-opencode.js";
 
 let tempDirs: string[] = [];
@@ -177,7 +183,182 @@ function agyProviderFixture(): ProviderSourcesConfig {
 
 const noModelsDev = async (): Promise<unknown> => ({});
 
+function fixtureAcpSessionSpawner(
+  calls: { command: string; args: string[] }[],
+  onSpawn?: (options: Parameters<AcpSessionSpawner>[2]) => void,
+): AcpSessionSpawner {
+  const responses = readFileSync(
+    join(import.meta.dir, "fixtures/acp-session-handshake.jsonl"),
+    "utf8",
+  )
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { id?: string | number | null });
+
+  return (command, args, options) => {
+    calls.push({ command, args: [...args] });
+    onSpawn?.(options);
+    const child = new EventEmitter() as EventEmitter & {
+      stdin: PassThrough;
+      stdout: PassThrough;
+      stderr: PassThrough;
+      pid: number;
+      exitCode: number | null;
+      signalCode: NodeJS.Signals | null;
+      kill: (signal?: NodeJS.Signals | number) => boolean;
+    };
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.pid = 8118;
+    child.exitCode = null;
+    child.signalCode = null;
+    let buffer = "";
+    child.stdin.setEncoding("utf8");
+    child.stdin.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) break;
+        const request = JSON.parse(buffer.slice(0, newline)) as {
+          id: string | number;
+          method: string;
+        };
+        buffer = buffer.slice(newline + 1);
+        const fixture = request.method === "initialize" ? responses[0] : responses[1];
+        child.stdout.write(`${JSON.stringify({ ...fixture, id: request.id })}\n`);
+      }
+    });
+    child.kill = (signal): boolean => {
+      child.signalCode = typeof signal === "string" ? signal : null;
+      queueMicrotask(() => {
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("exit", child.exitCode, child.signalCode);
+        child.emit("close", child.exitCode, child.signalCode);
+      });
+      return true;
+    };
+    return child as unknown as ReturnType<AcpSessionSpawner>;
+  };
+}
+
 describe("penumbra config sync-providers", () => {
+  test("a source with discovery.kind:'acp-session' derives catalog_authority 'session-handshake' end to end", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, {
+      anthropic: {
+        discovery: { kind: "acp-session", locator: "fixture-acp --read-only" },
+        auth: {},
+        bindings: {
+          "anthropic-acp": {
+            kind: "stdio-acp",
+            pricing_mode: "subscription",
+            api_provider: "anthropic",
+            subscription_provider: "anthropic",
+            model_carrier: "options.args.model",
+            seat_name_template: "anthropic-{model}-acp",
+            carriers: {
+              binary: "fixture-acp",
+              args_template: ["--model", "{model}"],
+            },
+          },
+        },
+      },
+    });
+    const spawnCalls: { command: string; args: string[] }[] = [];
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      discoveryAdapters: defaultDiscoveryAdapters({
+        acpSessionSpawn: fixtureAcpSessionSpawner(spawnCalls),
+        acpSessionTimeoutMs: 100,
+      }),
+      fetchModelsDevPayload: noModelsDev,
+    });
+
+    const source = loadProviderSourcesFromDir(dir).anthropic!;
+    expect(resolveCatalogAuthority(source.bindings["anthropic-acp"]!, source)).toBe(
+      "session-handshake",
+    );
+    expect(spawnCalls).toEqual([{ command: "fixture-acp", args: ["--read-only"] }]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("would upsert anthropic-gpt-5-5-low-acp");
+  });
+
+  test("acp-session discovery removes the union of binding unset_env keys from the spawned env", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, {
+      anthropic: {
+        discovery: { kind: "acp-session", locator: "fixture-acp --read-only" },
+        auth: {},
+        bindings: {
+          "anthropic-acp": {
+            kind: "stdio-acp",
+            pricing_mode: "subscription",
+            api_provider: "anthropic",
+            subscription_provider: "anthropic",
+            model_carrier: "options.args.model",
+            seat_name_template: "anthropic-{model}-acp",
+            carriers: {
+              binary: "fixture-acp",
+              args_template: ["--model", "{model}"],
+              unset_env: ["OPENAI_API_KEY"],
+            },
+          },
+          "anthropic-alt-acp": {
+            kind: "stdio-acp",
+            pricing_mode: "subscription",
+            api_provider: "anthropic",
+            subscription_provider: "anthropic",
+            model_carrier: "options.args.model",
+            seat_name_template: "anthropic-alt-{model}-acp",
+            carriers: {
+              binary: "fixture-acp",
+              args_template: ["--model", "{model}"],
+              unset_env: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
+            },
+          },
+        },
+      },
+    });
+    const spawnCalls: { command: string; args: string[] }[] = [];
+    const originalApiKey = process.env.OPENAI_API_KEY;
+    const originalBaseUrl = process.env.OPENAI_BASE_URL;
+    const originalKeep = process.env.PENUMBRA_ACP_DISCOVERY_KEEP;
+    process.env.OPENAI_API_KEY = "operator-api-key";
+    process.env.OPENAI_BASE_URL = "https://operator.example.test";
+    process.env.PENUMBRA_ACP_DISCOVERY_KEEP = "keep-me";
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+
+    try {
+      await runConfigSyncProviders({
+        configDir: dir,
+        discoveryAdapters: defaultDiscoveryAdapters({
+          acpSessionSpawn: fixtureAcpSessionSpawner(spawnCalls, (options) => {
+            spawnedEnv = options.env;
+          }),
+          acpSessionTimeoutMs: 100,
+        }),
+        fetchModelsDevPayload: noModelsDev,
+      });
+
+      expect(spawnCalls).toEqual([{ command: "fixture-acp", args: ["--read-only"] }]);
+      expect(spawnedEnv?.OPENAI_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.OPENAI_BASE_URL).toBeUndefined();
+      expect(spawnedEnv?.PENUMBRA_ACP_DISCOVERY_KEEP).toBe("keep-me");
+      expect(process.env.OPENAI_API_KEY).toBe("operator-api-key");
+      expect(process.env.OPENAI_BASE_URL).toBe("https://operator.example.test");
+    } finally {
+      if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalApiKey;
+      if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = originalBaseUrl;
+      if (originalKeep === undefined) delete process.env.PENUMBRA_ACP_DISCOVERY_KEEP;
+      else process.env.PENUMBRA_ACP_DISCOVERY_KEEP = originalKeep;
+    }
+  });
+
   test("excludes exact model ids before reporting and generation, and reports stale exclusions", async () => {
     const dir = await makeTempDir();
     const providers = providerFixture({ exclude_models: ["fugu-ultra", "retired-fugu"] });

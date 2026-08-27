@@ -1,4 +1,5 @@
 export { buildAdapter, registerAdapter } from "./adapters/registry.js";
+export { StdioAcpClient } from "./adapters/stdio-acp-client.js";
 export { ReviewPersonaSchema, ReviewSynthesizerSchema } from "./config/types.js";
 export type { ReviewPersona, ReviewSynthesizer } from "./config/types.js";
 export { parseMentions } from "./mention/parser.js";
