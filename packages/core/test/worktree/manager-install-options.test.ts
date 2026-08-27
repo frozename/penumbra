@@ -4,7 +4,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { planEscapingFileDependencyLinks, WorktreeManager } from "../../src/worktree/manager.js";
+import {
+  isPathInsideOrEqual,
+  planEscapingFileDependencyLinks,
+  provisionLocalCache,
+  WorktreeManager,
+} from "../../src/worktree/manager.js";
 
 type RunnerOptions = {
   cwd?: string;
@@ -295,6 +300,54 @@ test("file dependency link planning throws when an escaping target is missing", 
     );
   } finally {
     fs.rmSync(mainRepoRoot, { recursive: true, force: true });
+  }
+});
+
+test("path containment honors platform case sensitivity", () => {
+  const parent = path.join(os.tmpdir(), "PenumbraCaseRoot");
+  const child = path.join(os.tmpdir(), "penumbracaseroot", "packages", "core");
+  const platformFoldsCase = process.platform === "darwin" || process.platform === "win32";
+
+  expect(isPathInsideOrEqual(parent, child)).toBe(platformFoldsCase);
+});
+
+test("local cache provisioning copies main cache without sharing writes", () => {
+  const mainRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-main-"));
+  const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-env-"));
+
+  try {
+    fs.mkdirSync(path.join(mainRepoRoot, "local_cache"), { recursive: true });
+    fs.writeFileSync(path.join(mainRepoRoot, "local_cache", "seed.bin"), "seed");
+
+    provisionLocalCache(mainRepoRoot, worktreeRoot);
+
+    const worktreeCache = path.join(worktreeRoot, "local_cache");
+    expect(fs.lstatSync(worktreeCache).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(worktreeCache, "seed.bin"), "utf8")).toBe("seed");
+
+    fs.writeFileSync(path.join(worktreeCache, "env-only.bin"), "env");
+    expect(fs.existsSync(path.join(mainRepoRoot, "local_cache", "env-only.bin"))).toBe(false);
+  } finally {
+    fs.rmSync(mainRepoRoot, { recursive: true, force: true });
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+  }
+});
+
+test("local cache provisioning creates an env-local cache when main cache is absent", () => {
+  const mainRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-missing-main-"));
+  const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-missing-env-"));
+
+  try {
+    provisionLocalCache(mainRepoRoot, worktreeRoot);
+
+    const worktreeCache = path.join(worktreeRoot, "local_cache");
+    expect(fs.lstatSync(worktreeCache).isDirectory()).toBe(true);
+    expect(fs.lstatSync(worktreeCache).isSymbolicLink()).toBe(false);
+    fs.writeFileSync(path.join(worktreeCache, "downloaded.bin"), "env");
+    expect(fs.readFileSync(path.join(worktreeCache, "downloaded.bin"), "utf8")).toBe("env");
+  } finally {
+    fs.rmSync(mainRepoRoot, { recursive: true, force: true });
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
   }
 });
 

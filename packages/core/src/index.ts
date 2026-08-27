@@ -576,7 +576,13 @@ export {
   type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
   WorktreeManager,
+  ISOLATED_INSTALL_ARGS,
+  ISOLATED_INSTALL_CACHE_KEY,
+  isPathInsideOrEqual,
   mirrorNodeModuleSymlinks,
+  prepareEscapingFileDependencyLinks,
+  provisionLocalCache,
+  runIsolatedInstall,
   type WorktreeMode,
 } from "./worktree/manager.js";
 export {

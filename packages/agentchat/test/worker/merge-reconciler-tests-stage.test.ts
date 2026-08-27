@@ -1,6 +1,18 @@
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
-import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import {
   createMergeReconciler,
@@ -15,12 +27,21 @@ interface ExecResult {
   stderr: string;
 }
 
+interface ExecOptions {
+  cwd: string;
+  timeout?: number;
+  maxBuffer?: number;
+  encoding?: BufferEncoding;
+  signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
+}
+
 class ExecCommandError extends Error {
   public readonly stdout: string;
   public readonly stderr: string;
-  public readonly code: number | undefined;
+  public readonly code: number | string | undefined;
 
-  constructor(init: { stdout?: string; stderr?: string; code?: number } = {}) {
+  constructor(init: { stdout?: string; stderr?: string; code?: number | string } = {}) {
     super(init.stderr ?? init.stdout ?? "");
     this.name = "ExecCommandError";
     this.stdout = init.stdout ?? "";
@@ -40,6 +61,19 @@ let baseHasPreExistingFailure = false;
 let holdBranchTestOpen = false;
 let branchTestOutputOverride: string | null = null;
 let baseTestOutputOverride: string | null = null;
+let tempRoot = "";
+let mainRepoDir = "";
+let branchWorktreeRoot = "";
+let scratchRoot = "";
+let failBaselineInstall = false;
+let timeoutBaselineInstall = false;
+let contaminateBaselineConfigLink = false;
+let materializeBranchLocalCache = false;
+let observedBaselineNodeModulesIsSymlink: boolean | null = null;
+let observedBaselineCoreRealpath: string | null = null;
+let observedBaselineRootRealpath: string | null = null;
+let observedBaselineLocalCacheRealpath: string | null = null;
+let observedBaselineInstallOptions: ExecOptions | null = null;
 
 const brokenBaselineRaw = readFileSync(
   new URL("../fixtures/merge-reconciler/broken-baseline-raw.txt", import.meta.url),
@@ -187,6 +221,23 @@ Ran 0 tests across 1 files. [${totalTime}]
 `;
 }
 
+function summaryOnlyUnhandledErrorOutput(suitePath: string): string {
+  return `bun test v1.3.14 (0d9b296a)
+
+${suitePath}:
+
+# Unhandled error between tests
+-------------------------------
+error: fixture load failed
+    at /worktree/branch/${suitePath}:62:15
+-------------------------------
+
+ 0 fail
+ 1 error
+Ran 0 tests across 1 files. [1.00ms]
+`;
+}
+
 function panicOutput(): string {
   return `${passOutput()}
 panic(main thread): A C++ exception occurred
@@ -198,7 +249,55 @@ function isBaselineCwd(cwd: string): boolean {
   return cwd.includes("test-baseline");
 }
 
-function execMock(argv: string[], opts: { cwd: string }): Promise<ExecResult> {
+function ensureRepoFixture(root: string): void {
+  mkdirSync(join(root, "packages", "core"), { recursive: true });
+  mkdirSync(join(root, "packages", "config"), { recursive: true });
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ name: "fixture", workspaces: ["packages/*"] }),
+  );
+  writeFileSync(join(root, "bun.lock"), "");
+}
+
+function materializeNodeModules(root: string, opts: { contaminateConfig?: boolean } = {}): void {
+  mkdirSync(join(root, "node_modules", "@penumbra"), { recursive: true });
+  mkdirSync(join(root, "packages", "core"), { recursive: true });
+  mkdirSync(join(root, "packages", "config"), { recursive: true });
+  const coreLink = join(root, "node_modules", "@penumbra", "core");
+  rmSync(coreLink, { recursive: true, force: true });
+  symlinkSync(join(root, "packages", "core"), coreLink, "dir");
+  const configLink = join(root, "node_modules", "@penumbra", "config");
+  rmSync(configLink, { recursive: true, force: true });
+  symlinkSync(
+    opts.contaminateConfig
+      ? join(mainRepoDir, "packages", "config")
+      : join(root, "packages", "config"),
+    configLink,
+    "dir",
+  );
+}
+
+function materializeMainNodeModules(): void {
+  mkdirSync(join(mainRepoDir, "node_modules", "@penumbra"), { recursive: true });
+  mkdirSync(join(mainRepoDir, "packages", "core"), { recursive: true });
+  mkdirSync(join(mainRepoDir, "packages", "config"), { recursive: true });
+  symlinkSync(
+    join(mainRepoDir, "packages", "core"),
+    join(mainRepoDir, "node_modules", "@penumbra", "core"),
+    "dir",
+  );
+  symlinkSync(
+    join(mainRepoDir, "packages", "config"),
+    join(mainRepoDir, "node_modules", "@penumbra", "config"),
+    "dir",
+  );
+}
+
+function scratchPathFor(handoffId: string): string {
+  return join(scratchRoot, "test-baseline", handoffId);
+}
+
+function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
   const cmd = argv.join(" ");
   execHistory.push({ cmd, cwd: opts.cwd });
 
@@ -211,6 +310,12 @@ function execMock(argv: string[], opts: { cwd: string }): Promise<ExecResult> {
   if (cmd === `git merge-base ${baseTipSha} ${branchHeadSha}`) {
     return Promise.resolve({ stdout: `${mergeBaseSha}\n`, stderr: "" });
   }
+  if (cmd === `git show ${mergeBaseSha}:bun.lock`) {
+    return Promise.resolve({
+      stdout: readFileSync(join(mainRepoDir, "bun.lock"), "utf8"),
+      stderr: "",
+    });
+  }
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }
@@ -220,7 +325,37 @@ function execMock(argv: string[], opts: { cwd: string }): Promise<ExecResult> {
   if (cmd.startsWith("git merge-base --is-ancestor")) {
     return Promise.resolve({ stdout: "", stderr: "" });
   }
+  if (cmd.startsWith("git worktree remove --force ")) {
+    rmSync(argv.at(-1) ?? "", { recursive: true, force: true });
+    return Promise.resolve({ stdout: "", stderr: "" });
+  }
+  if (cmd.startsWith("git worktree add --detach ")) {
+    const worktreePath = argv[4];
+    if (worktreePath !== undefined) {
+      ensureRepoFixture(worktreePath);
+    }
+    return Promise.resolve({ stdout: "", stderr: "" });
+  }
   if (cmd.startsWith("git worktree ") || cmd.startsWith("git checkout ")) {
+    return Promise.resolve({ stdout: "", stderr: "" });
+  }
+  if (cmd === "bun install --ignore-scripts --frozen-lockfile") {
+    if (isBaselineCwd(opts.cwd)) observedBaselineInstallOptions = opts;
+    if (failBaselineInstall && isBaselineCwd(opts.cwd)) {
+      return Promise.reject(new ExecCommandError({ stderr: "lockfile had changes", code: 1 }));
+    }
+    if (timeoutBaselineInstall && isBaselineCwd(opts.cwd)) {
+      return Promise.reject(
+        new ExecCommandError({ stderr: "operation timed out", code: "ETIMEDOUT" }),
+      );
+    }
+    materializeNodeModules(opts.cwd, {
+      contaminateConfig: contaminateBaselineConfigLink && isBaselineCwd(opts.cwd),
+    });
+    if (materializeBranchLocalCache && existsSync(join(mainRepoDir, "local_cache"))) {
+      mkdirSync(dirname(join(opts.cwd, "local_cache")), { recursive: true });
+      symlinkSync(join(mainRepoDir, "local_cache"), join(opts.cwd, "local_cache"), "dir");
+    }
     return Promise.resolve({ stdout: "", stderr: "" });
   }
   if (cmd.startsWith("bun tsc -b")) {
@@ -231,6 +366,19 @@ function execMock(argv: string[], opts: { cwd: string }): Promise<ExecResult> {
       return new Promise<ExecResult>(() => undefined);
     }
     if (isBaselineCwd(opts.cwd)) {
+      const baselineNodeModules = join(opts.cwd, "node_modules");
+      if (existsSync(baselineNodeModules)) {
+        observedBaselineNodeModulesIsSymlink = lstatSync(baselineNodeModules).isSymbolicLink();
+      }
+      const baselineCore = join(baselineNodeModules, "@penumbra", "core");
+      if (existsSync(baselineCore)) {
+        observedBaselineCoreRealpath = realpathSync(baselineCore);
+      }
+      observedBaselineRootRealpath = realpathSync(opts.cwd);
+      const baselineLocalCache = join(opts.cwd, "local_cache");
+      if (existsSync(baselineLocalCache)) {
+        observedBaselineLocalCacheRealpath = realpathSync(baselineLocalCache);
+      }
       if (baseTestOutputOverride !== null) {
         return Promise.reject(new ExecCommandError({ stdout: baseTestOutputOverride, code: 1 }));
       }
@@ -294,11 +442,10 @@ const deps: ReconcilerDeps = {
   notifyResult,
   emitVerdict,
   log: makeTestLogger(),
-  mainRepoDir: "/main/repo",
-  rebaseScratchRoot: "/tmp/reconciler-test-scratch",
+  mainRepoDir: "/unused/main/repo",
+  rebaseScratchRoot: "/unused/reconciler-test-scratch",
   getHandoff: mock(() => Promise.resolve(makeHandoffRow())),
   exec: execMock,
-  mirrorNodeModuleSymlinks: baselineNodeModulesMirror,
   settings: {
     reconcileTypecheckTimeoutSec: 1,
     reconcileTestTimeoutSec: 1,
@@ -308,12 +455,12 @@ const deps: ReconcilerDeps = {
 const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
   (handoffId: string) => ({
     handoffId,
-    path: `/worktree/${handoffId}`,
+    path: branchWorktreeRoot,
     branchName: `agent/${handoffId}`,
-    storageRoot: `/worktree/${handoffId}/.test-storage`,
+    storageRoot: join(branchWorktreeRoot, ".test-storage"),
     createdAt: "",
     status: "created" as const,
-    worktreeMode: "symlink_mirror" as const,
+    worktreeMode: "isolated_install" as const,
   }),
 );
 
@@ -322,6 +469,14 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  tempRoot = mkdtempSync(join(tmpdir(), "penumbra-reconciler-baseline-"));
+  mainRepoDir = join(tempRoot, "main");
+  branchWorktreeRoot = join(tempRoot, "branch");
+  scratchRoot = join(tempRoot, "scratch");
+  ensureRepoFixture(mainRepoDir);
+  ensureRepoFixture(branchWorktreeRoot);
+  materializeMainNodeModules();
+  materializeNodeModules(branchWorktreeRoot);
   execHistory.length = 0;
   verdicts.length = 0;
   diffOutput = "packages/daemon/src/routes/handoffs.ts\n";
@@ -331,8 +486,19 @@ beforeEach(() => {
   holdBranchTestOpen = false;
   branchTestOutputOverride = null;
   baseTestOutputOverride = null;
+  failBaselineInstall = false;
+  timeoutBaselineInstall = false;
+  contaminateBaselineConfigLink = false;
+  materializeBranchLocalCache = false;
+  observedBaselineNodeModulesIsSymlink = null;
+  observedBaselineCoreRealpath = null;
+  observedBaselineRootRealpath = null;
+  observedBaselineLocalCacheRealpath = null;
+  observedBaselineInstallOptions = null;
   baselineNodeModulesMirror.mockClear();
-  deps.mirrorNodeModuleSymlinks = baselineNodeModulesMirror;
+  deps.mainRepoDir = mainRepoDir;
+  deps.rebaseScratchRoot = scratchRoot;
+  deps.mirrorNodeModuleSymlinks = undefined;
   deps.settings = {
     reconcileTypecheckTimeoutSec: 1,
     reconcileTestTimeoutSec: 1,
@@ -340,6 +506,10 @@ beforeEach(() => {
   emitVerdict.mockClear();
   notifyResult.mockClear();
   postProgress.mockClear();
+});
+
+afterEach(() => {
+  rmSync(tempRoot, { recursive: true, force: true });
 });
 
 function makeReconciler(): ReturnType<typeof createMergeReconciler> {
@@ -429,20 +599,190 @@ test("captured branch failures shared by a healthy baseline are suppressed", asy
   });
 });
 
-test("baseline setup mirrors node_modules into its scratch worktree", async () => {
+test("summary-only baseline with matching branch failures is a test environment error", async () => {
+  const suitePath = "packages/daemon/test/sweepers/reconciler-sweep.test.ts";
+  mergeBaseSha = "m".repeat(40);
+  branchTestOutputOverride = unhandledErrorOutput(suitePath, "1.00ms");
+  baseTestOutputOverride = summaryOnlyUnhandledErrorOutput(suitePath);
+
+  const result = await makeReconciler()("h-summary-only-baseline");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).not.toContain("scoped tests failed only with failures");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-summary-only-baseline",
+    tests: "error",
+  });
+});
+
+test("baseline scratch owns its node_modules", async () => {
   mergeBaseSha = "h".repeat(40);
+  baseTestOutputOverride = healthyBranchRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+
+  await makeReconciler()("h-baseline-isolated");
+
+  expect(observedBaselineNodeModulesIsSymlink).toBe(false);
+  expect(observedBaselineCoreRealpath?.startsWith(observedBaselineRootRealpath ?? "")).toBe(true);
+});
+
+test("baseline installs from the merge-base lockfile", async () => {
+  mergeBaseSha = "i".repeat(40);
   baseTestOutputOverride = healthyBranchRaw;
   branchTestOutputOverride = healthyBranchRaw;
   const mirrorNodeModuleSymlinks = mock(() => undefined);
   deps.mirrorNodeModuleSymlinks = mirrorNodeModuleSymlinks;
 
-  await makeReconciler()("h-baseline-mirror");
+  await makeReconciler()("h-baseline-install");
 
-  expect(mirrorNodeModuleSymlinks).toHaveBeenCalledWith(
-    "/main/repo",
-    "/tmp/reconciler-test-scratch/test-baseline/h-baseline-mirror",
-    deps.log,
+  expect(execHistory).toContainEqual({
+    cmd: "bun install --ignore-scripts --frozen-lockfile",
+    cwd: scratchPathFor("h-baseline-install"),
+  });
+  expect(mirrorNodeModuleSymlinks).not.toHaveBeenCalled();
+});
+
+test("contaminated baseline environment fails closed", async () => {
+  mergeBaseSha = "j".repeat(40);
+  baseTestOutputOverride = passOutput();
+  branchTestOutputOverride = failOutput("daemon changed suite > newly fails", 10);
+  contaminateBaselineConfigLink = true;
+
+  const result = await makeReconciler()("h-baseline-contaminated");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).toContain("@penumbra/config");
+  expect(result.regression_summary).not.toContain("new test failures");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-baseline-contaminated",
+    tests: "error",
+  });
+});
+
+test("baseline install failure fails closed", async () => {
+  mergeBaseSha = "k".repeat(40);
+  branchTestOutputOverride = failOutput("daemon changed suite > newly fails", 10);
+  failBaselineInstall = true;
+
+  const result = await makeReconciler()("h-baseline-install-fail");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).toContain("lockfile had changes");
+  expect(result.regression_summary).not.toContain("new test failures");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-baseline-install-fail",
+    tests: "error",
+  });
+});
+
+test("baseline install is bounded by the remaining tests-stage timeout", async () => {
+  mergeBaseSha = "n".repeat(40);
+  baseHasPreExistingFailure = true;
+  branchTestOutcome = "pre-existing-fail";
+  deps.settings = {
+    reconcileTypecheckTimeoutSec: 1,
+    reconcileTestTimeoutSec: 1,
+  };
+
+  await makeReconciler()("h-baseline-install-timeout-options");
+
+  expect(observedBaselineInstallOptions?.timeout).toBeGreaterThan(0);
+  expect(observedBaselineInstallOptions?.timeout).toBeLessThanOrEqual(1000);
+  expect(observedBaselineInstallOptions?.maxBuffer).toBe(1024 * 1024 * 10);
+  expect(observedBaselineInstallOptions?.encoding).toBe("utf8");
+});
+
+test("timed-out baseline install fails closed as a test environment error", async () => {
+  mergeBaseSha = "o".repeat(40);
+  branchTestOutcome = "new-fail";
+  timeoutBaselineInstall = true;
+  deps.settings = {
+    reconcileTypecheckTimeoutSec: 1,
+    reconcileTestTimeoutSec: 1,
+  };
+
+  const result = await makeReconciler()("h-baseline-install-timeout");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).toContain("timed out");
+  expect(observedBaselineInstallOptions?.timeout).toBeLessThanOrEqual(1000);
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-baseline-install-timeout",
+    tests: "error",
+  });
+});
+
+test("failed baseline installs are retried on the next reconcile", async () => {
+  mergeBaseSha = "p".repeat(40);
+  branchTestOutcome = "pre-existing-fail";
+  baseHasPreExistingFailure = true;
+  failBaselineInstall = true;
+
+  const first = await makeReconciler()("h-baseline-install-retry-a");
+  expect(first.status).toBe("test_failed");
+  expect(first.regression_summary).toContain("verification environment error (tests)");
+
+  failBaselineInstall = false;
+  const second = await makeReconciler()("h-baseline-install-retry-b");
+
+  expect(second.status).toBe("verified");
+});
+
+test("baseline cache key changes when the merge-base lockfile changes", async () => {
+  mergeBaseSha = "q".repeat(40);
+  branchTestOutputOverride = failOutput("daemon existing suite > already fails");
+  baseTestOutputOverride = failOutput("daemon existing suite > already fails");
+
+  const first = await makeReconciler()("h-baseline-lock-cache-a");
+  expect(first.status).toBe("verified");
+
+  writeFileSync(join(mainRepoDir, "bun.lock"), "changed-lockfile\n");
+  baseTestOutputOverride = passOutput();
+  const second = await makeReconciler()("h-baseline-lock-cache-b");
+
+  expect(second.status).toBe("test_failed");
+  expect(second.regression_summary).toContain("new test failures");
+});
+
+test("local_cache is provisioned into branch and baseline test environments", async () => {
+  mergeBaseSha = "l".repeat(40);
+  baseTestOutputOverride = healthyBranchRaw;
+  branchTestOutputOverride = healthyBranchRaw;
+  mkdirSync(join(mainRepoDir, "local_cache"), { recursive: true });
+  writeFileSync(join(mainRepoDir, "local_cache", "fastembed.bin"), "cache");
+
+  await makeReconciler()("h-baseline-cache");
+
+  expect(realpathSync(join(branchWorktreeRoot, "local_cache"))).not.toBe(
+    realpathSync(join(mainRepoDir, "local_cache")),
   );
+  expect(readFileSync(join(branchWorktreeRoot, "local_cache", "fastembed.bin"), "utf8")).toBe(
+    "cache",
+  );
+  expect(observedBaselineLocalCacheRealpath).not.toBe(
+    realpathSync(join(mainRepoDir, "local_cache")),
+  );
+});
+
+test("passing branch run with symlinked node_modules fails closed before tests execute", async () => {
+  rmSync(join(branchWorktreeRoot, "node_modules"), { recursive: true, force: true });
+  symlinkSync(join(mainRepoDir, "node_modules"), join(branchWorktreeRoot, "node_modules"), "dir");
+
+  const result = await makeReconciler()("h-branch-contaminated-pass");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).toContain("node_modules is a symlink");
+  expect(result.regression_summary).toContain("isolated install");
+  expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-contaminated-pass",
+    tests: "error",
+  });
 });
 
 test("pre-existing unenumerable scoped failures are stable across timing-only reruns", async () => {

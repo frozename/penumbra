@@ -1,4 +1,4 @@
-import { execFile as execFileCb, spawn } from "node:child_process";
+import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +20,8 @@ const ISOLATED_INSTALL_STDERR_TAIL_CHARS = 16 * 1024;
 const SPAWN_STDERR_CAP = 16 * 1024;
 
 export type WorktreeMode = "symlink_mirror" | "isolated_install";
+export const ISOLATED_INSTALL_ARGS = ["install", "--ignore-scripts", "--frozen-lockfile"] as const;
+export const ISOLATED_INSTALL_CACHE_KEY = `bun ${ISOLATED_INSTALL_ARGS.join(" ")}`;
 
 export interface WorktreeCommandRunnerOptions {
   cwd?: string;
@@ -176,6 +178,42 @@ function spawnSilent(
       });
     });
   });
+}
+
+export async function runIsolatedInstall(
+  wtPath: string,
+  opts: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<void> {
+  const timeout =
+    opts.timeoutMs ??
+    readPositiveIntEnv("PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS", DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS);
+  const runner = opts.runner ?? defaultRunner;
+  try {
+    await runner("bun", [...ISOLATED_INSTALL_ARGS], {
+      cwd: wtPath,
+      timeout,
+      maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
+      encoding: "utf8",
+      signal: opts.signal,
+      env: process.env,
+    });
+  } catch (err) {
+    // A deliberate cancellation is not a timeout — re-throw it unwrapped so
+    // callers can distinguish the two.
+    if (isAbortError(err)) throw err;
+    if (isTimeoutError(err)) {
+      throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
+        cause: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
+    const stderrTail = stderrTailFromError(err);
+    if (stderrTail.length > 0) {
+      throw new Error(`isolated bun install failed: ${stderrTail}`, {
+        cause: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
+    throw err;
+  }
 }
 
 export class WorktreeManager {
@@ -395,7 +433,8 @@ export class WorktreeManager {
   ): Promise<void> {
     if (worktreeMode === "isolated_install") {
       prepareEscapingFileDependencyLinks(repoRoot, wtPath);
-      await this.runIsolatedInstall(wtPath, signal);
+      provisionLocalCache(repoRoot, wtPath);
+      await runIsolatedInstall(wtPath, { runner: this.runner, signal });
     } else {
       mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
     }
@@ -509,39 +548,6 @@ export class WorktreeManager {
       await this.git(["branch", "-D", branchName], { cwd: repoRoot });
     } catch {
       // Branch may not exist if creation failed before checkout completed.
-    }
-  }
-
-  private async runIsolatedInstall(wtPath: string, signal?: AbortSignal): Promise<void> {
-    const timeout = readPositiveIntEnv(
-      "PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS",
-      DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS,
-    );
-    try {
-      await this.runner("bun", ["install", "--ignore-scripts", "--frozen-lockfile"], {
-        cwd: wtPath,
-        timeout,
-        maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
-        encoding: "utf8",
-        signal,
-        env: process.env,
-      });
-    } catch (err) {
-      // A deliberate cancellation is not a timeout — re-throw it unwrapped so
-      // callers can distinguish the two.
-      if (isAbortError(err)) throw err;
-      if (isTimeoutError(err)) {
-        throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
-          cause: err instanceof Error ? err : new Error(String(err)),
-        });
-      }
-      const stderrTail = stderrTailFromError(err);
-      if (stderrTail.length > 0) {
-        throw new Error(`isolated bun install failed: ${stderrTail}`, {
-          cause: err instanceof Error ? err : new Error(String(err)),
-        });
-      }
-      throw err;
     }
   }
 
@@ -894,10 +900,31 @@ function inferWorktreeMode(wtRoot: string): WorktreeMode {
   return "symlink_mirror";
 }
 
-function prepareEscapingFileDependencyLinks(mainRepoRoot: string, worktreeRoot: string): void {
+export function prepareEscapingFileDependencyLinks(
+  mainRepoRoot: string,
+  worktreeRoot: string,
+): void {
   const manifests = readWorkspacePackageJsonManifests(worktreeRoot);
   for (const link of planEscapingFileDependencyLinks(mainRepoRoot, worktreeRoot, manifests)) {
     ensureEscapingFileDependencyLink(link);
+  }
+}
+
+export function provisionLocalCache(mainRepoRoot: string, worktreeRoot: string): void {
+  const mainCachePath = path.join(mainRepoRoot, "local_cache");
+  const worktreeCachePath = path.join(worktreeRoot, "local_cache");
+
+  fs.rmSync(worktreeCachePath, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(worktreeCachePath), { recursive: true });
+  if (!fs.existsSync(mainCachePath)) {
+    fs.mkdirSync(worktreeCachePath, { recursive: true });
+    return;
+  }
+
+  try {
+    execFileSync("cp", ["-cR", mainCachePath, worktreeCachePath], { stdio: "ignore" });
+  } catch {
+    fs.cpSync(mainCachePath, worktreeCachePath, { recursive: true, force: true });
   }
 }
 
@@ -1082,8 +1109,18 @@ function ensureEscapingFileDependencyLink(link: EscapingFileDependencyLinkPlan):
   fs.symlinkSync(link.targetPath, link.linkPath, targetStat.isDirectory() ? "dir" : "file");
 }
 
-function isPathInsideOrEqual(parentPath: string, childPath: string): boolean {
-  const relative = path.relative(parentPath, childPath);
+function normalizePathForContainment(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === "darwin" || process.platform === "win32"
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
+export function isPathInsideOrEqual(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(
+    normalizePathForContainment(parentPath),
+    normalizePathForContainment(childPath),
+  );
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 

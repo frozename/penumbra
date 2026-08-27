@@ -1,5 +1,17 @@
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
-import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { CreatePRArgs, CreatePRResult } from "../../src/worker/github-pr-helper.js";
 import type { ThoughtAnalyzerInput, ThoughtRow } from "../../src/worker/thought-analyzer.js";
@@ -98,6 +110,7 @@ const execHistory: string[] = [];
 const prCalls: PRCallRecord[] = [];
 const handoffRows = new Map<string, HandoffRow>();
 const execFailures = new Map<string, ExecCommandError>();
+let defaultWorktreeRoot = "";
 let nextExecResult: ExecResult = { stdout: "", stderr: "" };
 let createDispatchPRFailOnCall: number | null = null;
 let createDispatchPRCallCount = 0;
@@ -205,14 +218,16 @@ const mockDeps: ReconcilerDeps = {
 const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImplementation(
   (id: string) => {
     if (id === "missing") return null;
+    const path = defaultWorktreeRoot ? join(defaultWorktreeRoot, id) : `/worktree/${id}`;
+    if (defaultWorktreeRoot) materializeOwnedNodeModules(path);
     return {
       handoffId: id,
-      path: `/worktree/${id}`,
+      path,
       branchName: `agent/${id}`,
-      storageRoot: `/worktree/${id}/.test-storage`,
+      storageRoot: join(path, ".test-storage"),
       createdAt: "",
       status: "created" as const,
-      worktreeMode: "symlink_mirror" as const,
+      worktreeMode: "isolated_install" as const,
     };
   },
 );
@@ -221,7 +236,20 @@ afterAll(() => {
   getWorktreeSpy.mockRestore();
 });
 
+function materializeOwnedNodeModules(root: string): void {
+  mkdirSync(join(root, "packages", "core"), { recursive: true });
+  mkdirSync(join(root, "packages", "config"), { recursive: true });
+  mkdirSync(join(root, "node_modules", "@penumbra"), { recursive: true });
+  const coreLink = join(root, "node_modules", "@penumbra", "core");
+  const configLink = join(root, "node_modules", "@penumbra", "config");
+  rmSync(coreLink, { recursive: true, force: true });
+  rmSync(configLink, { recursive: true, force: true });
+  symlinkSync(join(root, "packages", "core"), coreLink, "dir");
+  symlinkSync(join(root, "packages", "config"), configLink, "dir");
+}
+
 beforeEach(() => {
+  defaultWorktreeRoot = mkdtempSync(join(tmpdir(), "penumbra-reconciler-default-wt-"));
   progressCalls.length = 0;
   verdictCalls.length = 0;
   execHistory.length = 0;
@@ -272,6 +300,13 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => {
+  if (defaultWorktreeRoot) {
+    rmSync(defaultWorktreeRoot, { recursive: true, force: true });
+    defaultWorktreeRoot = "";
+  }
+});
+
 const reconcile = createMergeReconciler(mockDeps);
 
 function thoughtsConfigEnabled(onlyWhen: string[] = ["pr_opened"]): RuntimeThoughtsConfig {
@@ -310,9 +345,7 @@ test("default reconcile verifies and emits verdict without opening PR", async ()
   expect(result.status).toBe("verified");
   expect(result.pr_url).toBeUndefined();
   expect(result.pr_number).toBeUndefined();
-  expect(execHistory).toContain(
-    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
-  );
+  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
   expect(execHistory).toContain("bun test packages/daemon/test/");
   expect(execHistory).toContain(
     `git diff ${defaultMergeBaseSha}...${defaultBranchHeadSha} --shortstat`,
@@ -660,19 +693,15 @@ test("does not throw when analyzer throws — logs and continues", async () => {
 
 test("Typecheck fail: returns typecheck_failed and skips PR creation", async () => {
   execFailures.set(
-    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
+    "bun tsc -b packages/core packages/daemon",
     new ExecCommandError({ stderr: "Syntax error" }),
   );
 
   const result = await reconcile("h2");
 
   expect(result.status).toBe("typecheck_failed");
-  expect(result.regression_summary).toBe(
-    "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
-  );
-  expect(execHistory).toContain(
-    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
-  );
+  expect(result.regression_summary).toBe("packages/core, packages/daemon: Syntax error");
+  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
   expect(execHistory).not.toContain("bun test");
   expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
@@ -681,14 +710,12 @@ test("Typecheck fail: returns typecheck_failed and skips PR creation", async () 
       type: "merge-result",
       handoff_id: "h2",
       status: "typecheck_failed",
-      regression_summary:
-        "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
+      regression_summary: "packages/core, packages/daemon: Syntax error",
     },
   });
   expect(notifyResultMock).toHaveBeenCalledWith("h2", {
     status: "typecheck_failed",
-    regression_summary:
-      "packages/agentchat, packages/cli, packages/core, packages/daemon, packages/mcp, packages/workflows: Syntax error",
+    regression_summary: "packages/core, packages/daemon: Syntax error",
   });
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
@@ -863,10 +890,7 @@ test("head/base mismatch with persistently empty diff does not emit hard-fail ve
 
 test("Typecheck environment failure (empty-output exec error): stamps 'error' not 'fail', logs the break", async () => {
   execFailures.set("git diff --name-only", new ExecCommandError({}));
-  execFailures.set(
-    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
-    new ExecCommandError({}),
-  );
+  execFailures.set("bun tsc -b packages/core packages/daemon", new ExecCommandError({}));
 
   const result = await reconcile("h-env-tc");
 
@@ -887,9 +911,7 @@ test("Test fail: returns test_failed and skips PR creation", async () => {
 
   expect(result.status).toBe("test_failed");
   expect(result.regression_summary).toBe("1 test failed");
-  expect(execHistory).toContain(
-    "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
-  );
+  expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
   expect(execHistory).toContain("bun test packages/daemon/test/");
   expect(prCalls).toHaveLength(0);
   expect(notifyResultMock).toHaveBeenCalledWith("h3", {
@@ -909,6 +931,299 @@ test("Test environment failure (empty-output exec error): stamps 'error' not 'fa
     handoff_id: "h-env-test",
     typecheck: "pass",
     tests: "error",
+  });
+});
+
+function baselinePassOutput(): string {
+  return `(pass) daemon suite > already passes [1.00ms]
+
+ 1 pass
+ 0 fail
+ 0 error
+Ran 1 tests across 1 files. [2.00ms]
+`;
+}
+
+function baselineFailOutput(name = "daemon suite > already fails"): string {
+  return `(fail) ${name} [1.00ms]
+error: expect(received).toBe(expected)
+
+ 0 pass
+ 1 fail
+ 0 error
+Ran 1 tests across 1 files. [2.00ms]
+`;
+}
+
+interface BaselineProvisioningScenarioOpts {
+  handoffId: string;
+  mergeBaseSha: string;
+  branchOutput?: string;
+  baselineOutput?: string;
+  contaminateBaselineConfigLink?: boolean;
+  failBaselineInstall?: boolean;
+  createLocalCache?: boolean;
+  mirrorNodeModuleSymlinks?: ReconcilerDeps["mirrorNodeModuleSymlinks"];
+}
+
+interface BaselineProvisioningScenarioResult {
+  result: MergeResult;
+  execCalls: { cmd: string; cwd: string }[];
+  mirrorNodeModuleSymlinks: ReconcilerDeps["mirrorNodeModuleSymlinks"];
+  observedBaselineNodeModulesIsSymlink: boolean | null;
+  observedBaselineCoreRealpath: string | null;
+  observedBaselineRootRealpath: string | null;
+  observedBaselineLocalCacheRealpath: string | null;
+  observedBranchLocalCacheRealpath: string | null;
+  observedBranchLocalCacheHasSeed: boolean;
+  observedBaselineLocalCacheHasSeed: boolean;
+  mainLocalCacheRealpath: string | null;
+  baselineScratchPath: string;
+}
+
+async function runBaselineProvisioningScenario(
+  opts: BaselineProvisioningScenarioOpts,
+): Promise<BaselineProvisioningScenarioResult> {
+  const tempRoot = mkdtempSync(join(tmpdir(), "penumbra-merge-baseline-"));
+  const mainRepoDir = join(tempRoot, "main");
+  const branchRoot = join(tempRoot, "branch");
+  const scratchRoot = join(tempRoot, "scratch");
+  const baselineScratchPath = join(scratchRoot, "test-baseline", opts.handoffId);
+  const execCalls: { cmd: string; cwd: string }[] = [];
+  let observedBaselineNodeModulesIsSymlink: boolean | null = null;
+  let observedBaselineCoreRealpath: string | null = null;
+  let observedBaselineRootRealpath: string | null = null;
+  let observedBaselineLocalCacheRealpath: string | null = null;
+  let observedBranchLocalCacheRealpath: string | null = null;
+  let observedBranchLocalCacheHasSeed = false;
+  let observedBaselineLocalCacheHasSeed = false;
+  let mainLocalCacheRealpath: string | null = null;
+
+  function ensureRepoFixture(root: string): void {
+    mkdirSync(join(root, "packages", "core"), { recursive: true });
+    mkdirSync(join(root, "packages", "config"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "fixture", workspaces: ["packages/*"] }),
+    );
+    writeFileSync(join(root, "bun.lock"), "");
+  }
+
+  function materializeNodeModules(root: string, contaminateConfig = false): void {
+    mkdirSync(join(root, "node_modules", "@penumbra"), { recursive: true });
+    mkdirSync(join(root, "packages", "core"), { recursive: true });
+    mkdirSync(join(root, "packages", "config"), { recursive: true });
+    const coreLink = join(root, "node_modules", "@penumbra", "core");
+    const configLink = join(root, "node_modules", "@penumbra", "config");
+    rmSync(coreLink, { recursive: true, force: true });
+    rmSync(configLink, { recursive: true, force: true });
+    symlinkSync(join(root, "packages", "core"), coreLink, "dir");
+    symlinkSync(
+      contaminateConfig
+        ? join(mainRepoDir, "packages", "config")
+        : join(root, "packages", "config"),
+      configLink,
+      "dir",
+    );
+  }
+
+  try {
+    ensureRepoFixture(mainRepoDir);
+    ensureRepoFixture(branchRoot);
+    materializeNodeModules(mainRepoDir);
+    materializeNodeModules(branchRoot);
+    if (opts.createLocalCache) {
+      mkdirSync(join(mainRepoDir, "local_cache"), { recursive: true });
+      writeFileSync(join(mainRepoDir, "local_cache", "fastembed.bin"), "cache");
+      mainLocalCacheRealpath = realpathSync(join(mainRepoDir, "local_cache"));
+    }
+
+    getWorktreeSpy.mockImplementationOnce((handoffId: string) => ({
+      handoffId,
+      path: branchRoot,
+      branchName: `agent/${handoffId}`,
+      storageRoot: join(branchRoot, ".test-storage"),
+      createdAt: "",
+      status: "created" as const,
+      worktreeMode: "isolated_install" as const,
+    }));
+
+    const exec = (argv: string[], execOpts: { cwd: string }): Promise<ExecResult> => {
+      const cmd = argv.join(" ");
+      execCalls.push({ cmd, cwd: execOpts.cwd });
+      if (cmd === "git rev-parse HEAD") {
+        return Promise.resolve({ stdout: `${defaultBranchHeadSha}\n`, stderr: "" });
+      }
+      if (cmd === "git rev-parse main") {
+        return Promise.resolve({ stdout: `${defaultBaseTipSha}\n`, stderr: "" });
+      }
+      if (cmd === `git merge-base ${defaultBaseTipSha} ${defaultBranchHeadSha}`) {
+        return Promise.resolve({ stdout: `${opts.mergeBaseSha}\n`, stderr: "" });
+      }
+      if (cmd.startsWith("git diff --name-only")) {
+        return Promise.resolve({ stdout: "packages/daemon/src/routes/handoffs.ts\n", stderr: "" });
+      }
+      if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+        return Promise.resolve(defaultShortStat);
+      }
+      if (cmd.startsWith("git merge-base --is-ancestor")) {
+        return Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (cmd.startsWith("git worktree remove --force ")) {
+        rmSync(argv.at(-1) ?? "", { recursive: true, force: true });
+        return Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (cmd.startsWith("git worktree add --detach ")) {
+        const worktreePath = argv[4];
+        if (worktreePath) ensureRepoFixture(worktreePath);
+        return Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (cmd === "bun tsc -b packages/core packages/daemon") {
+        return Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (cmd === "bun install --ignore-scripts --frozen-lockfile") {
+        if (opts.failBaselineInstall && execOpts.cwd === baselineScratchPath) {
+          return Promise.reject(new ExecCommandError({ stderr: "lockfile had changes", code: 1 }));
+        }
+        materializeNodeModules(
+          execOpts.cwd,
+          Boolean(opts.contaminateBaselineConfigLink && execOpts.cwd === baselineScratchPath),
+        );
+        return Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (cmd === "bun test packages/daemon/test/") {
+        const branchLocalCache = join(branchRoot, "local_cache");
+        if (execOpts.cwd === branchRoot && existsSync(branchLocalCache)) {
+          observedBranchLocalCacheRealpath = realpathSync(branchLocalCache);
+          observedBranchLocalCacheHasSeed = existsSync(join(branchLocalCache, "fastembed.bin"));
+        }
+        if (execOpts.cwd === baselineScratchPath) {
+          const baselineNodeModules = join(execOpts.cwd, "node_modules");
+          if (existsSync(baselineNodeModules)) {
+            observedBaselineNodeModulesIsSymlink = lstatSync(baselineNodeModules).isSymbolicLink();
+          }
+          const baselineCore = join(baselineNodeModules, "@penumbra", "core");
+          if (existsSync(baselineCore)) {
+            observedBaselineCoreRealpath = realpathSync(baselineCore);
+          }
+          observedBaselineRootRealpath = realpathSync(execOpts.cwd);
+          const baselineLocalCache = join(execOpts.cwd, "local_cache");
+          if (existsSync(baselineLocalCache)) {
+            observedBaselineLocalCacheRealpath = realpathSync(baselineLocalCache);
+            observedBaselineLocalCacheHasSeed = existsSync(
+              join(baselineLocalCache, "fastembed.bin"),
+            );
+          }
+          const baselineOutput = opts.baselineOutput ?? baselineFailOutput();
+          return Promise.reject(new ExecCommandError({ stdout: baselineOutput, code: 1 }));
+        }
+        return Promise.reject(
+          new ExecCommandError({ stdout: opts.branchOutput ?? baselineFailOutput(), code: 1 }),
+        );
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    };
+
+    const mirrorNodeModuleSymlinks = opts.mirrorNodeModuleSymlinks ?? mock(() => undefined);
+    const reconciler = createMergeReconciler({
+      ...mockDeps,
+      mainRepoDir,
+      rebaseScratchRoot: scratchRoot,
+      exec,
+      mirrorNodeModuleSymlinks,
+    });
+
+    const result = await reconciler(opts.handoffId);
+    return {
+      result,
+      execCalls,
+      mirrorNodeModuleSymlinks,
+      observedBaselineNodeModulesIsSymlink,
+      observedBaselineCoreRealpath,
+      observedBaselineRootRealpath,
+      observedBaselineLocalCacheRealpath,
+      observedBranchLocalCacheRealpath,
+      observedBranchLocalCacheHasSeed,
+      observedBaselineLocalCacheHasSeed,
+      mainLocalCacheRealpath,
+      baselineScratchPath,
+    };
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+describe("baseline test environment provisioning", () => {
+  test("baseline scratch owns its node_modules", async () => {
+    const scenario = await runBaselineProvisioningScenario({
+      handoffId: "h-baseline-owns-node-modules",
+      mergeBaseSha: "1".repeat(40),
+    });
+
+    expect(scenario.observedBaselineNodeModulesIsSymlink).toBe(false);
+    expect(
+      scenario.observedBaselineCoreRealpath?.startsWith(
+        scenario.observedBaselineRootRealpath ?? "",
+      ),
+    ).toBe(true);
+  });
+
+  test("baseline installs from the merge-base lockfile", async () => {
+    const mirrorNodeModuleSymlinks = mock(() => undefined);
+
+    const scenario = await runBaselineProvisioningScenario({
+      handoffId: "h-baseline-frozen-install",
+      mergeBaseSha: "2".repeat(40),
+      mirrorNodeModuleSymlinks,
+    });
+
+    expect(scenario.execCalls).toContainEqual({
+      cmd: "bun install --ignore-scripts --frozen-lockfile",
+      cwd: scenario.baselineScratchPath,
+    });
+    expect(mirrorNodeModuleSymlinks).not.toHaveBeenCalled();
+  });
+
+  test("contaminated baseline environment fails closed", async () => {
+    const scenario = await runBaselineProvisioningScenario({
+      handoffId: "h-baseline-contaminated-env",
+      mergeBaseSha: "3".repeat(40),
+      branchOutput: baselineFailOutput("daemon changed suite > newly fails"),
+      baselineOutput: baselinePassOutput(),
+      contaminateBaselineConfigLink: true,
+    });
+
+    expect(scenario.result.status).toBe("test_failed");
+    expect(scenario.result.regression_summary).toContain("verification environment error (tests)");
+    expect(scenario.result.regression_summary).toContain("@penumbra/config");
+    expect(scenario.result.regression_summary).not.toContain("new test failures");
+  });
+
+  test("baseline install failure fails closed", async () => {
+    const scenario = await runBaselineProvisioningScenario({
+      handoffId: "h-baseline-install-error",
+      mergeBaseSha: "4".repeat(40),
+      branchOutput: baselineFailOutput("daemon changed suite > newly fails"),
+      failBaselineInstall: true,
+    });
+
+    expect(scenario.result.status).toBe("test_failed");
+    expect(scenario.result.regression_summary).toContain("verification environment error (tests)");
+    expect(scenario.result.regression_summary).toContain("lockfile had changes");
+    expect(scenario.result.regression_summary).not.toContain("new test failures");
+  });
+
+  test("local_cache is provisioned into branch and baseline test environments", async () => {
+    const scenario = await runBaselineProvisioningScenario({
+      handoffId: "h-baseline-fastembed-cache",
+      mergeBaseSha: "5".repeat(40),
+      createLocalCache: true,
+    });
+
+    expect(scenario.observedBranchLocalCacheRealpath).not.toBe(scenario.mainLocalCacheRealpath);
+    expect(scenario.observedBaselineLocalCacheRealpath).not.toBe(scenario.mainLocalCacheRealpath);
+    expect(scenario.observedBranchLocalCacheHasSeed).toBe(true);
+    expect(scenario.observedBaselineLocalCacheHasSeed).toBe(true);
   });
 });
 
@@ -1173,11 +1488,7 @@ test("Typecheck timeout returns timed_out: true", async () => {
     if (cmd.startsWith("git diff --name-only")) {
       return defaultDiffResult;
     }
-    if (
-      cmd.includes(
-        "bun tsc -b packages/agentchat packages/cli packages/core packages/daemon packages/mcp packages/workflows",
-      )
-    ) {
+    if (cmd.includes("bun tsc -b packages/core packages/daemon")) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return defaultExecForCommand(cmd);

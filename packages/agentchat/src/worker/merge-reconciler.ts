@@ -1,15 +1,19 @@
 import * as core from "@penumbra/core";
 import {
+  ISOLATED_INSTALL_CACHE_KEY,
   type HandoffRow,
   type Logger,
   type Settings,
+  type WorktreeCommandRunner,
+  type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
   type WorktreeManager,
 } from "@penumbra/core";
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
@@ -142,7 +146,10 @@ export interface ReconcilerDeps {
   rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
-  exec?: (argv: string[], options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
+  exec?: (
+    argv: string[],
+    options: ReconcilerExecOptions,
+  ) => Promise<{ stdout: string; stderr: string }>;
   mirrorNodeModuleSymlinks?: NodeModulesMirror;
   thoughtsConfig?: RuntimeThoughtsConfig;
   thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
@@ -153,6 +160,20 @@ export interface ReconcilerDeps {
 }
 
 type NodeModulesMirror = (mainRoot: string, wtRoot: string, log: Logger) => void;
+type ReconcilerExecOptions = Pick<
+  WorktreeCommandRunnerOptions,
+  "cwd" | "timeout" | "maxBuffer" | "encoding" | "signal" | "env" | "stdio"
+> & { cwd: string };
+
+type CoreIsolatedProvisioning = typeof core & {
+  ISOLATED_INSTALL_CACHE_KEY?: string;
+  prepareEscapingFileDependencyLinks: (mainRepoRoot: string, worktreeRoot: string) => void;
+  provisionLocalCache: (mainRepoRoot: string, worktreeRoot: string) => void;
+  runIsolatedInstall: (
+    wtPath: string,
+    opts?: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number },
+  ) => Promise<void>;
+};
 
 interface RebaseOutcome {
   attempted: boolean;
@@ -1475,15 +1496,131 @@ function safePathToken(value: string): string {
   return token.length > 0 ? token.slice(0, 120) : "unknown";
 }
 
-function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): string {
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function mergeBaseLockfileHash(ctx: ReconcileCtx): Promise<string> {
   const snapshot = requireSnapshot(ctx);
-  return [ctx.deps.mainRepoDir, snapshot.mergeBaseSha, ...testArgs].join("\0");
+  const lockfile = await execGitSafe(
+    ctx,
+    ["show", `${snapshot.mergeBaseSha}:bun.lock`],
+    ctx.deps.mainRepoDir,
+  );
+  if (lockfile) return sha256Hex(lockfile.stdout);
+  try {
+    return sha256Hex(await readFile(join(ctx.deps.mainRepoDir, "bun.lock"), "utf8"));
+  } catch {
+    return "missing";
+  }
+}
+
+async function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): Promise<string> {
+  const snapshot = requireSnapshot(ctx);
+  const installKey =
+    isolatedProvisioning().ISOLATED_INSTALL_CACHE_KEY ?? ISOLATED_INSTALL_CACHE_KEY;
+  return [
+    ctx.deps.mainRepoDir,
+    snapshot.mergeBaseSha,
+    await mergeBaseLockfileHash(ctx),
+    installKey,
+    ...testArgs,
+  ].join("\0");
+}
+
+function isolatedProvisioning(): CoreIsolatedProvisioning {
+  return core as CoreIsolatedProvisioning;
+}
+
+function coreInstallRunner(ctx: ReconcileCtx): WorktreeCommandRunner | undefined {
+  const exec = ctx.deps.exec;
+  if (!exec) return undefined;
+  return async (cmd, args, opts) => {
+    const execOpts: ReconcilerExecOptions = { cwd: opts?.cwd ?? process.cwd() };
+    if (opts?.timeout !== undefined) execOpts.timeout = opts.timeout;
+    if (opts?.maxBuffer !== undefined) execOpts.maxBuffer = opts.maxBuffer;
+    if (opts?.encoding !== undefined) execOpts.encoding = opts.encoding;
+    if (opts?.signal !== undefined) execOpts.signal = opts.signal;
+    if (opts?.env !== undefined) execOpts.env = opts.env;
+    if (opts?.stdio !== undefined) execOpts.stdio = opts.stdio;
+    return await exec([cmd, ...args], execOpts);
+  };
+}
+
+function isPathInsideOrEqual(parentPath: string, childPath: string): boolean {
+  const rel = relative(parentPath, childPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function environmentFailureOutcome(err: unknown): BunTestCommandOutcome {
+  const info = commandErrorInfo(err);
+  const output = info.stderr || info.stdout || String(err);
+  return {
+    timedOut: false,
+    envFailure: true,
+    passed: false,
+    exitCode: info.exitCode,
+    stdout: info.stdout,
+    stderr: output,
+    report: parseBunTestReport(output),
+  };
+}
+
+async function assertOwnedTestNodeModules(envRoot: string, label: string): Promise<void> {
+  const rootRealpath = await realpath(envRoot);
+  const nodeModulesPath = join(envRoot, "node_modules");
+  const nodeModulesStat = await lstat(nodeModulesPath);
+  if (nodeModulesStat.isSymbolicLink()) {
+    throw new Error(
+      `${label} test environment node_modules is a symlink: ${nodeModulesPath}. Recreate the worktree with isolated install before reconciling.`,
+    );
+  }
+  if (!nodeModulesStat.isDirectory()) {
+    throw new Error(
+      `${label} test environment node_modules is not a directory: ${nodeModulesPath}. Recreate the worktree with isolated install before reconciling.`,
+    );
+  }
+
+  const penumbraScopePath = join(nodeModulesPath, "@penumbra");
+  const corePath = join(penumbraScopePath, "core");
+  const coreRealpath = await realpath(corePath);
+  if (!isPathInsideOrEqual(rootRealpath, coreRealpath)) {
+    throw new Error(
+      `${label} test environment @penumbra/core resolves outside env: ${coreRealpath}. Recreate the worktree with isolated install before reconciling.`,
+    );
+  }
+
+  for (const entry of await readdir(penumbraScopePath)) {
+    const packagePath = join(penumbraScopePath, entry);
+    const packageRealpath = await realpath(packagePath);
+    if (!isPathInsideOrEqual(rootRealpath, packageRealpath)) {
+      throw new Error(
+        `${label} test environment @penumbra/${entry} resolves outside env: ${packageRealpath}. Recreate the worktree with isolated install before reconciling.`,
+      );
+    }
+  }
+}
+
+function provisionTestLocalCache(ctx: ReconcileCtx, envRoot: string): void {
+  isolatedProvisioning().provisionLocalCache(ctx.deps.mainRepoDir, envRoot);
+}
+
+interface TestStageDeadline {
+  expiresAtMs: number;
+}
+
+function remainingStageMs(deadline: TestStageDeadline): number {
+  return Math.max(1, deadline.expiresAtMs - Date.now());
+}
+
+function remainingStageSeconds(deadline: TestStageDeadline): number {
+  return remainingStageMs(deadline) / 1000;
 }
 
 async function runBunTestBaseline(
   ctx: ReconcileCtx,
   testArgs: string[],
-  timeout: number,
+  deadline: TestStageDeadline,
 ): Promise<BunTestCommandOutcome> {
   const { deps, handoffId } = ctx;
   const snapshot = requireSnapshot(ctx);
@@ -1498,12 +1635,17 @@ async function runBunTestBaseline(
       ["worktree", "add", "--detach", scratchPath, snapshot.mergeBaseSha],
       deps.mainRepoDir,
     );
-    (
-      deps.mirrorNodeModuleSymlinks ??
-      (core as typeof core & { mirrorNodeModuleSymlinks: NodeModulesMirror })
-        .mirrorNodeModuleSymlinks
-    )(deps.mainRepoDir, scratchPath, deps.log);
-    return await runBunTestCommand(ctx, testArgs, scratchPath, timeout);
+    const provisioning = isolatedProvisioning();
+    provisioning.prepareEscapingFileDependencyLinks(deps.mainRepoDir, scratchPath);
+    provisioning.provisionLocalCache(deps.mainRepoDir, scratchPath);
+    await provisioning.runIsolatedInstall(scratchPath, {
+      runner: coreInstallRunner(ctx),
+      timeoutMs: remainingStageMs(deadline),
+    });
+    await assertOwnedTestNodeModules(scratchPath, "baseline");
+    return await runBunTestCommand(ctx, testArgs, scratchPath, remainingStageSeconds(deadline));
+  } catch (err) {
+    return environmentFailureOutcome(err);
   } finally {
     await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
     await rm(scratchPath, { recursive: true, force: true }).catch(noop);
@@ -1513,15 +1655,24 @@ async function runBunTestBaseline(
 async function getCachedBunTestBaseline(
   ctx: ReconcileCtx,
   testArgs: string[],
-  timeout: number,
+  deadline: TestStageDeadline,
 ): Promise<BunTestCommandOutcome> {
-  const key = testBaselineCacheKey(ctx, testArgs);
+  const key = await testBaselineCacheKey(ctx, testArgs);
   let pending = testBaselineCache.get(key);
   if (!pending) {
-    pending = runBunTestBaseline(ctx, testArgs, timeout);
+    pending = runBunTestBaseline(ctx, testArgs, deadline);
     testBaselineCache.set(key, pending);
   }
-  return await pending;
+  try {
+    const outcome = await pending;
+    if (outcome.envFailure && testBaselineCache.get(key) === pending) {
+      testBaselineCache.delete(key);
+    }
+    return outcome;
+  } catch (err) {
+    if (testBaselineCache.get(key) === pending) testBaselineCache.delete(key);
+    throw err;
+  }
 }
 
 function testOutcomeOutput(outcome: BunTestCommandOutcome): string {
@@ -1552,8 +1703,19 @@ function canCompareAgainstBaseline(outcome: BunTestCommandOutcome): boolean {
   );
 }
 
+function summaryTestCount(output: string): number | null {
+  const matches = [...output.matchAll(/Ran\s+(\d+)\s+tests?\b/g)];
+  const last = matches.at(-1);
+  return last?.[1] ? Number.parseInt(last[1], 10) : null;
+}
+
 function isCredibleBunTestBaseline(outcome: BunTestCommandOutcome): boolean {
   const { report } = outcome;
+  if (report.pass === null) return false;
+  const ran = summaryTestCount(report.output);
+  if (ran === null) return false;
+  const accountedTests = report.pass + (report.fails ?? 0);
+  if (report.pass > ran || accountedTests > ran) return false;
   // A zero-pass baseline whose reported failures are only load errors cannot
   // establish whether branch failures are regressions or missing dependencies.
   return !(
@@ -1598,7 +1760,7 @@ async function emitTestEnvironmentError(
 async function evaluateBunTestOutcome(
   ctx: ReconcileCtx,
   testArgs: string[],
-  timeout: number,
+  deadline: TestStageDeadline,
   outcome: BunTestCommandOutcome,
 ): Promise<MergeResult | null> {
   if (outcome.timedOut) {
@@ -1615,12 +1777,15 @@ async function evaluateBunTestOutcome(
     return await emitTestFailure(ctx, testOutcomeOutput(outcome) || "tests failed");
   }
 
-  const baseline = await getCachedBunTestBaseline(ctx, testArgs, timeout);
+  const baseline = await getCachedBunTestBaseline(ctx, testArgs, deadline);
   if (baseline.timedOut) {
     return await emitTestEnvironmentError(ctx, "baseline tests timed out");
   }
   if (baseline.envFailure) {
-    return await emitTestEnvironmentError(ctx, "empty stdout/stderr from baseline test command");
+    return await emitTestEnvironmentError(
+      ctx,
+      testOutcomeOutput(baseline) || "empty stdout/stderr from baseline test command",
+    );
   }
   if (!baseline.report.reachedSummary) {
     return await emitTestEnvironmentError(
@@ -1651,16 +1816,25 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
   try {
     deps.log.debug({ handoffId }, "scoping tests from git diff");
     const timeout = deps.settings?.reconcileTestTimeoutSec ?? 300;
+    const deadline = { expiresAtMs: Date.now() + timeout * 1000 };
     const affectedPackages = state.affectedPackages;
 
     if (affectedPackages === null) {
       deps.log.debug({ handoffId }, "running full test suite in worktree");
       state.testCommandUsed = "bun test";
+      provisionTestLocalCache(ctx, wt.path);
+      try {
+        await assertOwnedTestNodeModules(wt.path, "branch");
+      } catch (err) {
+        return await emitTestEnvironmentError(ctx, String(err));
+      }
+      // Deliberate check-then-run TOCTOU: filesystem tampering after this point
+      // is outside the reconciler's threat model.
       return await evaluateBunTestOutcome(
         ctx,
         [],
-        timeout,
-        await runBunTestCommand(ctx, [], wt.path, timeout),
+        deadline,
+        await runBunTestCommand(ctx, [], wt.path, remainingStageSeconds(deadline)),
       );
     }
     if (affectedPackages.length === 0) {
@@ -1680,11 +1854,19 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     }
     deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
     state.testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
+    provisionTestLocalCache(ctx, wt.path);
+    try {
+      await assertOwnedTestNodeModules(wt.path, "branch");
+    } catch (err) {
+      return await emitTestEnvironmentError(ctx, String(err));
+    }
+    // Deliberate check-then-run TOCTOU: filesystem tampering after this point
+    // is outside the reconciler's threat model.
     return await evaluateBunTestOutcome(
       ctx,
       scopedTestPaths,
-      timeout,
-      await runBunTestCommand(ctx, scopedTestPaths, wt.path, timeout),
+      deadline,
+      await runBunTestCommand(ctx, scopedTestPaths, wt.path, remainingStageSeconds(deadline)),
     );
   } catch (err: unknown) {
     const info = commandErrorInfo(err);
