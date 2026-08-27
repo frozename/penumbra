@@ -9,6 +9,7 @@ import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
 import { json } from "./_helpers.js";
+import { sseIteratorStream } from "./_sse.js";
 
 // Every DispatchEventKind the POST route accepts and records. DERIVED from the
 // api-contract schema (the single source of truth), with an explicit heartbeat
@@ -128,92 +129,24 @@ export function dispatchEventsStreamRoute(req: Request, services: Services): Res
     return true;
   };
 
-  const bus = services.dispatchEvents;
-
-  let shutdown: (() => Promise<void>) | null = null;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller): void {
-      const encoder = new TextEncoder();
-      const iterator = bus.subscribe(predicate);
-      let keepalive: ReturnType<typeof setInterval> | null = null;
-      let closed = false;
-
-      const write = (line: string): boolean => {
-        if (closed) return false;
-        try {
-          controller.enqueue(encoder.encode(line));
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const close = async (): Promise<void> => {
-        if (closed) return;
-        closed = true;
-        if (keepalive) clearInterval(keepalive);
-        keepalive = null;
-        try {
-          await iterator.return?.();
-        } catch {
-          /* noop */
-        }
-      };
-      shutdown = close;
-
-      if (query.data.since !== undefined) {
-        const sinceIso = new Date(query.data.since).toISOString();
-        const replay = services.db
-          .query<DispatchEventDbRow, [string]>(
-            `SELECT handoff_id, worker_id, source, kind, ts, meta_json
-             FROM dispatch_events
-             WHERE ts >= ?
-             ORDER BY ts ASC, id ASC
-             LIMIT 200`,
-          )
-          .all(sinceIso)
-          .map(hydrateRow)
-          .filter(predicate);
-        for (const event of replay) {
-          if (!write(`data: ${JSON.stringify(event)}\n\n`)) {
-            void close();
-            return;
-          }
-        }
-      }
-
-      write(": ok\n\n");
-
-      void (async (): Promise<void> => {
-        try {
-          for await (const event of iterator) {
-            if (!write(`data: ${JSON.stringify(event)}\n\n`)) break;
-          }
-        } finally {
-          await close();
-        }
-      })();
-
-      keepalive = setInterval(() => {
-        if (!write(": keepalive\n\n")) {
-          void close();
-        }
-      }, 30_000);
-    },
-    cancel(): void {
-      if (shutdown) {
-        void shutdown();
-      }
-      shutdown = null;
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
+  return sseIteratorStream({
+    subscribe: () => services.dispatchEvents.subscribe(predicate),
+    replay:
+      query.data.since === undefined
+        ? undefined
+        : () => {
+            const sinceIso = new Date(query.data.since as number).toISOString();
+            return services.db
+              .query<DispatchEventDbRow, [string]>(
+                `SELECT handoff_id, worker_id, source, kind, ts, meta_json
+                 FROM dispatch_events
+                 WHERE ts >= ?
+                 ORDER BY ts ASC, id ASC
+                 LIMIT 200`,
+              )
+              .all(sinceIso)
+              .map(hydrateRow)
+              .filter(predicate);
+          },
   });
 }

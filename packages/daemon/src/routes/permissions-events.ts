@@ -1,5 +1,7 @@
 import type { EmittedPermissionEvent, Services } from "@penumbra/core";
 
+import { sseCallbackStream } from "./_sse.js";
+
 function formatSse(evt: EmittedPermissionEvent): string {
   return `event: ${evt.kind}\nid: ${evt.permission_id}:${String(evt.seq)}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
 }
@@ -13,69 +15,29 @@ function parseLastEventSeq(header: string | null): number | null {
 }
 
 export function permissionsEventsRoute(req: Request, services: Services): Response {
-  let off: (() => void) | null = null;
-  let keepalive: ReturnType<typeof setInterval> | null = null;
   const lastSeq = parseLastEventSeq(req.headers.get("last-event-id"));
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller): void {
-      const encoder = new TextEncoder();
-
+  return sseCallbackStream({
+    start(write) {
       // Replay missed events first if Last-Event-ID was supplied.
       if (lastSeq !== null) {
         const replay = services.permissionEvents.replaySince(lastSeq);
         if (replay === null) {
           // Ring buffer evicted — signal client to resync via per-id GET.
-          controller.enqueue(encoder.encode(": resync\n\n"));
+          write(": resync\n\n");
         } else {
           for (const evt of replay) {
-            controller.enqueue(encoder.encode(formatSse(evt)));
+            write(formatSse(evt));
           }
         }
       } else {
-        controller.enqueue(encoder.encode(": ok\n\n"));
+        write(": ok\n\n");
       }
 
-      off = services.permissionEvents.subscribe((evt) => {
-        try {
-          controller.enqueue(encoder.encode(formatSse(evt)));
-        } catch {
-          off?.();
-          off = null;
-          if (keepalive) clearInterval(keepalive);
-          keepalive = null;
-        }
+      const off = services.permissionEvents.subscribe((evt) => {
+        write(formatSse(evt));
       });
-
-      keepalive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(": keepalive\n\n"));
-        } catch {
-          off?.();
-          off = null;
-          if (keepalive) clearInterval(keepalive);
-          keepalive = null;
-        }
-      }, 15_000);
-    },
-    cancel(): void {
-      if (keepalive) clearInterval(keepalive);
-      keepalive = null;
-      try {
-        off?.();
-      } catch {
-        /* noop */
-      }
-      off = null;
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
+      return off;
     },
   });
 }
