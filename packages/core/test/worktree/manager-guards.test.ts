@@ -46,6 +46,34 @@ test("workspace link creation rejects a package whose real path escapes the work
   }
 });
 
+test("workspace link creation succeeds when the worktree root is reached through a symlink", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-symlink-root-"));
+  const realRoot = path.join(fixtureRoot, "real-worktree");
+  const symlinkRoot = path.join(fixtureRoot, "link-worktree");
+  const linkPath = path.join(symlinkRoot, "node_modules", "@penumbra", "pkg");
+
+  try {
+    fs.mkdirSync(path.join(realRoot, "packages", "pkg"), { recursive: true });
+    fs.writeFileSync(
+      path.join(realRoot, "package.json"),
+      JSON.stringify({ workspaces: ["packages/pkg"] }),
+    );
+    fs.writeFileSync(
+      path.join(realRoot, "packages", "pkg", "package.json"),
+      JSON.stringify({ name: "@penumbra/pkg" }),
+    );
+    fs.symlinkSync(realRoot, symlinkRoot, "dir");
+
+    materializeWorkspaceLinks(symlinkRoot);
+
+    expect(fs.realpathSync.native(linkPath)).toBe(
+      fs.realpathSync.native(path.join(realRoot, "packages", "pkg")),
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("local cache fallback rejects a source over the byte bound without creating a destination", () => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-bound-"));
   const mainCachePath = path.join(fixtureRoot, "main-cache");

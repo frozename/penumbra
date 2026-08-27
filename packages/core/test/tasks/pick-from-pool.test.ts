@@ -79,7 +79,10 @@ function writePerf(
   });
 }
 
-function config(headroom_weighting = false): AgentchatConfig {
+function config(
+  headroom_weighting = false,
+  providers: { a: string; b: string } = { a: "anthropic", b: "openai" },
+): AgentchatConfig {
   return {
     role_routing: { headroom_weighting },
     agents: [
@@ -87,13 +90,13 @@ function config(headroom_weighting = false): AgentchatConfig {
         name: "a",
         roles: [],
         pricing_mode: "subscription",
-        subscription_provider: "anthropic",
+        subscription_provider: providers.a,
       },
       {
         name: "b",
         roles: [],
         pricing_mode: "subscription",
-        subscription_provider: "openai",
+        subscription_provider: providers.b,
       },
     ],
   };
@@ -167,9 +170,15 @@ describe("pickFromPool", () => {
     const db = freshDb();
 
     expect(
-      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
-        excludeAnthropic,
-      ]),
+      pickFromPool(
+        ["a", "b"],
+        db,
+        config(false, { a: "anthropic", b: "openai" }),
+        undefined,
+        "review_adversarial",
+        undefined,
+        [excludeAnthropic],
+      ),
     ).toBe("b");
   });
 
@@ -178,9 +187,15 @@ describe("pickFromPool", () => {
     writePerf(db, "a", "review_adversarial");
 
     expect(
-      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
-        excludeAnthropic,
-      ]),
+      pickFromPool(
+        ["a", "b"],
+        db,
+        config(false, { a: "anthropic", b: "openai" }),
+        undefined,
+        "review_adversarial",
+        undefined,
+        [excludeAnthropic],
+      ),
     ).toBe("b");
   });
 
@@ -193,11 +208,66 @@ describe("pickFromPool", () => {
     };
 
     expect(
-      pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial", undefined, [
-        excludeAnthropic,
-        excludeOpenai,
-      ]),
+      pickFromPool(
+        ["a", "b"],
+        db,
+        config(false, { a: "anthropic", b: "openai" }),
+        undefined,
+        "review_adversarial",
+        undefined,
+        [excludeAnthropic, excludeOpenai],
+      ),
     ).toBe("a");
+  });
+
+  test("warns when all pool members are excluded and the full pool is re-admitted", () => {
+    const db = freshDb();
+    const warnSpy = spyOn(console, "warn");
+    const excludeOpenai: RoutingBias = {
+      ...excludeAnthropic,
+      bias_id: "bias-openai-exclude",
+      value: "openai",
+    };
+
+    try {
+      expect(
+        pickFromPool(
+          ["a", "b"],
+          db,
+          config(false, { a: "anthropic", b: "openai" }),
+          undefined,
+          "review_adversarial",
+          undefined,
+          [excludeAnthropic, excludeOpenai],
+        ),
+      ).toBe("a");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/\[pick-from-pool\].*re-admit/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test("does not warn when some pool members survive bias exclusion", () => {
+    const db = freshDb();
+    const warnSpy = spyOn(console, "warn");
+
+    try {
+      expect(
+        pickFromPool(
+          ["a", "b"],
+          db,
+          config(false, { a: "anthropic", b: "openai" }),
+          undefined,
+          "review_adversarial",
+          undefined,
+          [excludeAnthropic],
+        ),
+      ).toBe("b");
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("single-element pool returns immediately without querying the database", () => {
@@ -205,6 +275,25 @@ describe("pickFromPool", () => {
     const querySpy = spyOn(db, "query");
 
     expect(pickFromPool(["a"], db, config(), undefined, "implement_small")).toBe("a");
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  test("single-element pool with active biases returns immediately without querying the database", () => {
+    const db = freshDb();
+    const querySpy = spyOn(db, "query");
+
+    // ["a"] exercises excluded-single-seat re-admission; ["b"] exercises a
+    // filtered-but-surviving single seat.
+    expect(
+      pickFromPool(["a"], db, config(), undefined, "review_adversarial", undefined, [
+        excludeAnthropic,
+      ]),
+    ).toBe("a");
+    expect(
+      pickFromPool(["b"], db, config(), undefined, "review_adversarial", undefined, [
+        excludeAnthropic,
+      ]),
+    ).toBe("b");
     expect(querySpy).not.toHaveBeenCalled();
   });
 

@@ -343,7 +343,7 @@ const SCHEMA_DDL_BLOCK_01 = `
         maestro_takeover_required TEXT,
         empty_response       TEXT,
         worktree_changed     TEXT,
-        reconcile_status     TEXT,
+        reconcile_status     TEXT, -- deprecated: never written; do not adopt
         environment_failure  TEXT,
         trust_score          REAL,
         agent_kind           TEXT,
@@ -1042,6 +1042,7 @@ const AGENT_PERFORMANCE_ADDITIVE_COLUMNS: [string, string][] = [
   ["maestro_takeover_required", "TEXT"],
   ["empty_response", "TEXT"],
   ["worktree_changed", "TEXT"],
+  // deprecated: dead column, never written — see AgentPerformanceRowSchema.reconcile_status
   ["reconcile_status", "TEXT"],
   ["environment_failure", "TEXT"],
   ["trust_score", "REAL"],

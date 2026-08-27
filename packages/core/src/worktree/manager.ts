@@ -1104,6 +1104,10 @@ function ensureWorktreeLocalWorkspaceLink(
   packageDir: string,
   linkPath: string,
 ): void {
+  // Resolve the root once so both sides of the containment check compare
+  // canonical paths; an un-resolved root fails closed when the worktree is
+  // reached through a symlink (e.g. /tmp -> /private/tmp on macOS).
+  const containmentRoot = fs.realpathSync.native(worktreeRoot);
   const expectedTarget = fs.realpathSync.native(packageDir);
   let stat: fs.Stats | undefined;
   try {
@@ -1120,7 +1124,7 @@ function ensureWorktreeLocalWorkspaceLink(
         if (
           actualTarget === expectedTarget &&
           !path.isAbsolute(rawTarget) &&
-          isPathInsideOrEqual(worktreeRoot, actualTarget)
+          isPathInsideOrEqual(containmentRoot, actualTarget)
         ) {
           return;
         }
@@ -1135,7 +1139,7 @@ function ensureWorktreeLocalWorkspaceLink(
     }
   }
 
-  if (!isPathInsideOrEqual(worktreeRoot, expectedTarget)) {
+  if (!isPathInsideOrEqual(containmentRoot, expectedTarget)) {
     throw new Error(
       `refusing to create isolated install workspace link ${linkPath}: target escapes worktree: ${expectedTarget}`,
     );

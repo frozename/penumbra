@@ -76,7 +76,7 @@ export function pickFromPool(
   tool_free?: boolean,
   activeBiases?: RoutingBias[],
 ): string {
-  let workingPool = pool;
+  let biasFilteredPool = pool;
   if (activeBiases && activeBiases.length > 0) {
     const nonExcluded = pool.filter((name) => {
       const conf = agentchatConfig?.agents.find((agent) => agent.name === name);
@@ -85,10 +85,17 @@ export function pickFromPool(
     });
     // When every member is excluded, re-admit the full pool and fail toward
     // its configured preference order, matching the single-seat fallback.
-    if (nonExcluded.length > 0) workingPool = nonExcluded;
+    if (nonExcluded.length > 0) {
+      biasFilteredPool = nonExcluded;
+    } else {
+      console.warn(
+        "[pick-from-pool] all pool members are bias-excluded; re-admitting full pool in preference order",
+        { pool, taskType },
+      );
+    }
   }
 
-  const [firstAgent, secondAgent] = workingPool;
+  const [firstAgent, secondAgent] = biasFilteredPool;
   if (firstAgent === undefined) throw new Error("pickFromPool: pool must not be empty");
   if (secondAgent === undefined) return firstAgent;
 
@@ -109,7 +116,7 @@ export function pickFromPool(
     db,
     detail: "rank",
     taskType,
-    agentRegistry: workingPool,
+    agentRegistry: biasFilteredPool,
     includeNeutral: true,
     applyPressure: pressure ?? undefined,
     agentchatConfig: localConfig,
@@ -118,15 +125,15 @@ export function pickFromPool(
   });
 
   if (out.detail !== "rank") return firstAgent;
-  const demoted = recentlyFailingAgents(workingPool, db, taskType);
-  const eligiblePool = workingPool.filter((agent) => !demoted.has(agent));
-  const pickPool = eligiblePool.length > 0 ? eligiblePool : workingPool;
-  const [pickHead] = pickPool;
+  const demoted = recentlyFailingAgents(biasFilteredPool, db, taskType);
+  const eligiblePool = biasFilteredPool.filter((agent) => !demoted.has(agent));
+  const finalPool = eligiblePool.length > 0 ? eligiblePool : biasFilteredPool;
+  const [pickHead] = finalPool;
   if (pickHead === undefined) return firstAgent;
 
   const winner = pickPreferred(
     out.candidates.candidates,
-    pickPool.map((name) => ({ name })),
+    finalPool.map((name) => ({ name })),
   );
   return winner?.agent_id ?? pickHead;
 }

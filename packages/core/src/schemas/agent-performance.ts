@@ -83,6 +83,7 @@ export const AgentPerformanceRowSchema = z.object({
   maestro_takeover_required: AgentBooleanFlagSchema.nullable().optional(),
   empty_response: AgentBooleanFlagSchema.nullable().optional(),
   worktree_changed: AgentEvidenceFlagSchema.nullable().optional(),
+  /** @deprecated Dead column: never written in production (0 of ~42k rows non-null as of 2026-08-27) and read by nothing. Do not adopt for new writes; kept only because dropping a column from the live DB is not worth a migration. */
   reconcile_status: z.string().nullable().optional(),
   environment_failure: AgentBooleanFlagSchema.nullable().optional(),
   trust_score: z.number().nullable().optional(),

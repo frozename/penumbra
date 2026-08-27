@@ -85,6 +85,7 @@ export class AgentPerformanceWriter {
       row.maestro_takeover_required ?? null,
       row.empty_response ?? null,
       row.worktree_changed ?? null,
+      // reconcile_status is deprecated/dead — always null in production; do not start writing it.
       row.reconcile_status ?? null,
       row.environment_failure ?? null,
       row.trust_score ?? null,
