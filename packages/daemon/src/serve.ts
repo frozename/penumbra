@@ -16,6 +16,7 @@ import {
   checkEmbeddingModelVersion,
   createAaSnapshotStore,
   type Services as CoreServices,
+  installGlobalCrashHandlers,
   ledgerWriteToPerformanceRow,
   MaestroSessionWriter,
   mapTaskEventToLedger,
@@ -59,7 +60,6 @@ import type { GhClient } from "./services/gh-client.js";
 import { resolveAgentChatConfigPath } from "./agentchat-config.js";
 import { createBearerAuth } from "./auth.js";
 import { corsPreflightResponse, withCorsResponseHeaders } from "./cors.js";
-import { installGlobalCrashHandlers } from "./crash-guard.js";
 import { buildDreamingConfig, type DreamConfig } from "./dreaming/config.js";
 import { buildDreamCycleDeps } from "./dreaming/deps.js";
 import { startDailyDigestCron, startDreamingCron } from "./dreaming/index.js";

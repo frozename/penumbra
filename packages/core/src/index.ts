@@ -53,6 +53,11 @@ export {
 export { type DispatchEvent, DispatchEventBus } from "./dispatch/event-bus.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
 export type { Embedder } from "./embedder/interface.js";
+export {
+  type GlobalCrashHandlerOpts,
+  installGlobalCrashHandlers,
+  type WorkerFatalRecord,
+} from "./crash-guard.js";
 export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
 export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
 export { resolveEmbedder } from "./embedder/resolve.js";

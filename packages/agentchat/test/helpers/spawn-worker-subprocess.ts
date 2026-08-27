@@ -35,7 +35,7 @@ export async function spawnWorkerCrashGuardSubprocess(opts: {
   Object.assign(env, opts.env);
 
   const script = `
-    import { installGlobalCrashHandlers } from "./packages/agentchat/src/worker/crash-guard.ts";
+    import { installGlobalCrashHandlers } from "./packages/core/src/crash-guard.ts";
 
     installGlobalCrashHandlers({
       log: {

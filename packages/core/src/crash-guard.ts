@@ -1,4 +1,4 @@
-import type { Logger } from "@penumbra/core";
+import type { Logger } from "./logger.js";
 
 import { writeSync } from "node:fs";
 
@@ -16,8 +16,6 @@ export interface GlobalCrashHandlerOpts {
   flush?: () => void;
 }
 
-let globalCrashHandlersInstalled = false;
-
 function normalizeError(err: unknown): { err: string; stack: string | null } {
   if (err instanceof Error) {
     return { err: err.message, stack: err.stack ?? null };
@@ -34,9 +32,11 @@ function shouldExit(kind: FatalKind): boolean {
   return process.env.PENUMBRA_WORKER_CRASH_GUARD !== "survive";
 }
 
+let crashHandlersInstalled = false;
+
 export function installGlobalCrashHandlers(opts: GlobalCrashHandlerOpts): void {
-  if (globalCrashHandlersInstalled) return;
-  globalCrashHandlersInstalled = true;
+  if (crashHandlersInstalled) return;
+  crashHandlersInstalled = true;
 
   const handleFatal = (kind: FatalKind, rawErr: unknown): void => {
     const err = normalizeError(rawErr);
