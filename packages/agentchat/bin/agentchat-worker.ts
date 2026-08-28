@@ -45,6 +45,7 @@ import { PenumbraClient } from "../src/penumbra-client.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
+import { AlibabaUsageSynth } from "../src/usage-readers/alibaba-usage-synth.js";
 import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
 import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
 import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
@@ -1713,6 +1714,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
     new ClaudeJsonlReader(),
     new ClaudeStatusLineBridge(),
     new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
+    new AlibabaUsageSynth({ client, min_emit_pct: 1 }),
     new SakanaUsageSynth({ client, min_emit_pct: 1 }),
   ];
   const ocConsoleConfig = loadOpencodeConsoleConfig();

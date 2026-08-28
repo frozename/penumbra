@@ -524,7 +524,7 @@ export class PenumbraClient {
     return await this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
   async fetchQuotaStatus(
-    args?: string | { since?: string; window?: "24h" | "5h" },
+    args?: string | { since?: string; window?: "24h" | "5h" | "7d" },
   ): Promise<QuotaStatusResponse> {
     const since = typeof args === "string" ? args : args?.since;
     const window = typeof args === "string" ? undefined : args?.window;

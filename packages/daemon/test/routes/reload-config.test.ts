@@ -21,7 +21,10 @@ import { join } from "node:path";
 import type { DaemonServices } from "../../src/serve.js";
 import type { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
 
-import { formatAgentChatConfigError } from "../../src/agentchat-config.js";
+import {
+  formatAgentChatConfigError,
+  providerQuotasFromAgentChatConfig,
+} from "../../src/agentchat-config.js";
 import { reloadConfigRoute } from "../../src/routes/reload-config.js";
 
 try {
@@ -366,6 +369,7 @@ agents:
 providers:
   - name: anthropic
     model: claude-sonnet-4
+    quota_tokens_per_7d: 7000000
     pressure_caps:
       five_hour:
         warn: 80
@@ -390,6 +394,7 @@ providers:
         quota_usd_per_24h: undefined,
         quota_tokens_per_24h: undefined,
         quota_tokens_per_5h: undefined,
+        quota_tokens_per_7d: 7000000,
         pressure_caps: {
           five_hour: {
             warn: 80,
@@ -415,6 +420,44 @@ providers:
   } finally {
     rmSync(yamlPath, { recursive: true, force: true });
   }
+});
+
+test("provider quota mapper preserves seven-day token ceilings for boot/reload parity", () => {
+  const configDir = mkdtempSync(join(tmpdir(), "reload-config-seven-day-"));
+  tempDirs.push(configDir);
+  writeAgentchat(
+    configDir,
+    `
+agents:
+  - name: test-agent-1
+    adapter: mock
+providers:
+  - name: alibaba
+    quota_tokens_per_7d: 7000000
+    pressure_caps:
+      seven_day:
+        warn: 80
+        refuse: 95
+`,
+  );
+  const cfg = loadAgentChatConfigFromDir(configDir);
+
+  expect(providerQuotasFromAgentChatConfig(cfg)).toEqual([
+    {
+      provider: "alibaba",
+      model: undefined,
+      quota_usd_per_24h: undefined,
+      quota_tokens_per_24h: undefined,
+      quota_tokens_per_5h: undefined,
+      quota_tokens_per_7d: 7_000_000,
+      pressure_caps: {
+        seven_day: {
+          warn: 80,
+          refuse: 95,
+        },
+      },
+    },
+  ]);
 });
 
 test("POST /agentchat/reload warns when routing references missing agents", async () => {

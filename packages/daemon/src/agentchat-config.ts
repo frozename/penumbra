@@ -74,12 +74,17 @@ export function loadAgentRouting(env: NodeJS.ProcessEnv = process.env): AgentRou
 
 export function loadProviderQuotas(env: NodeJS.ProcessEnv = process.env): ProviderQuota[] {
   const cfg = loadAgentChatConfig(env);
+  return providerQuotasFromAgentChatConfig(cfg);
+}
+
+export function providerQuotasFromAgentChatConfig(cfg: AgentChatConfig): ProviderQuota[] {
   return cfg.providers.map((p) => ({
     provider: p.name,
     model: p.model,
     quota_usd_per_24h: p.quota_usd_per_24h,
     quota_tokens_per_24h: p.quota_tokens_per_24h,
     quota_tokens_per_5h: p.quota_tokens_per_5h,
+    quota_tokens_per_7d: p.quota_tokens_per_7d,
     pressure_caps: p.pressure_caps,
   }));
 }

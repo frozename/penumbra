@@ -31,6 +31,7 @@ import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import {
   loadAgentChatConfig,
   loadAgentRoutingFromConfig,
+  providerQuotasFromAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../../../daemon/src/agentchat-config.js";
 import { type DaemonHandle, serve } from "../../../daemon/src/serve.js";
@@ -124,7 +125,7 @@ interface AgentchatBundle {
   agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null;
 }
 
-function loadAgentchatBundle(): AgentchatBundle {
+export function loadAgentchatBundle(): AgentchatBundle {
   const configPath = resolveAgentChatConfigPath(process.env);
   if (!existsSync(configPath)) {
     return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
@@ -135,14 +136,7 @@ function loadAgentchatBundle(): AgentchatBundle {
       agentchatConfig,
       agentRegistry: agentchatConfig.agents.map((agent) => agent.name),
       agentRouting: loadAgentRoutingFromConfig(agentchatConfig),
-      providerQuotas: agentchatConfig.providers.map((provider) => ({
-        provider: provider.name,
-        model: provider.model,
-        quota_usd_per_24h: provider.quota_usd_per_24h,
-        quota_tokens_per_24h: provider.quota_tokens_per_24h,
-        quota_tokens_per_5h: provider.quota_tokens_per_5h,
-        pressure_caps: provider.pressure_caps,
-      })),
+      providerQuotas: providerQuotasFromAgentChatConfig(agentchatConfig),
     };
   } catch (err) {
     if (handleAgentchatConfigLoadError(err)) {

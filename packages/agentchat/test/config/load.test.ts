@@ -230,6 +230,7 @@ describe("ProviderQuotaConfig per-model", () => {
         "    model: gemini-3.1-pro-preview",
         "    quota_tokens_per_5h: 1000000",
         "    quota_tokens_per_24h: 4000000",
+        "    quota_tokens_per_7d: 7000000",
       ].join("\n"),
     );
     const cfg = loadConfig(yamlPath);
@@ -239,6 +240,7 @@ describe("ProviderQuotaConfig per-model", () => {
       model: "gemini-3.1-pro-preview",
       quota_tokens_per_5h: 1_000_000,
       quota_tokens_per_24h: 4_000_000,
+      quota_tokens_per_7d: 7_000_000,
     });
   });
 

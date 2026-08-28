@@ -25,6 +25,7 @@ export interface ProviderQuota {
   quota_usd_per_24h?: number;
   quota_tokens_per_24h?: number;
   quota_tokens_per_5h?: number;
+  quota_tokens_per_7d?: number;
   /** Per-window subscription pressure caps. Consumed by checkPressureCap, not the USD/token quota path. */
   pressure_caps?: Partial<
     Record<KnownPressureWindowLabel, { warn: number | null; refuse: number }>
@@ -35,7 +36,7 @@ export interface ProviderQuota {
 export interface QuotaStatusInput {
   since?: string;
   /** Which configured ceiling to compare used_tokens against. Defaults to 24h. */
-  window?: "24h" | "5h";
+  window?: "24h" | "5h" | "7d";
 }
 
 export interface QuotaStatusProviderRow {
@@ -99,7 +100,11 @@ function buildQuotaProviderRow(
     used_usd !== null && quota_usd !== null ? Math.max(0, quota_usd - used_usd) : null;
   const used_tokens = usage.tokens_used;
   const quota_tokens =
-    input.window === "5h" ? (p.quota_tokens_per_5h ?? null) : (p.quota_tokens_per_24h ?? null);
+    input.window === "5h"
+      ? (p.quota_tokens_per_5h ?? null)
+      : input.window === "7d"
+        ? (p.quota_tokens_per_7d ?? null)
+        : (p.quota_tokens_per_24h ?? null);
   const remaining_tokens = quota_tokens !== null ? Math.max(0, quota_tokens - used_tokens) : null;
   const usd_quota_mode: QuotaStatusProviderRow["usd_quota_mode"] =
     p.pressure_caps || p.synthetic_cap ? "display_only" : quota_usd !== null ? "billed" : "none";

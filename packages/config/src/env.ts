@@ -64,10 +64,17 @@ const OptNonNegInt = NonNegInt.optional();
 const OptNonNegNum = NonNegNum.optional();
 const OptPosInt = PosInt.optional();
 const DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
+export const DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
 const SakanaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
   if (v === undefined) return v;
   const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT;
+  return parsed;
+}, z.number().positive());
+const AlibabaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
+  if (v === undefined) return v;
+  const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT;
   return parsed;
 }, z.number().positive());
 
@@ -937,6 +944,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: SakanaSynthMaxPlausiblePct,
     default: DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT,
     description: "Maximum plausible percentage for synthesized Sakana usage estimates.",
+  },
+  PENUMBRA_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT: {
+    schema: AlibabaSynthMaxPlausiblePct,
+    default: DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT,
+    description: "Maximum plausible percentage for synthesized Alibaba usage estimates.",
   },
   PENUMBRA_PER_WORKER_USAGE_CURSOR: {
     schema: Bool,

@@ -531,6 +531,34 @@ describe("QuotasConfigSchema", () => {
     expect(() => QuotasConfigSchema.parse(live)).not.toThrow();
   });
 
+  test("accepts quota_tokens_per_7d when present", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [{ name: "alibaba", quota_tokens_per_7d: 7_000_000 }],
+    });
+
+    expect(parsed.providers[0]?.quota_tokens_per_7d).toBe(7_000_000);
+  });
+
+  test("accepts quota_tokens_per_7d when absent", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [{ name: "alibaba" }],
+    });
+
+    expect(parsed.providers[0]?.quota_tokens_per_7d).toBeUndefined();
+  });
+
+  test.each([
+    ["zero", 0],
+    ["negative", -1],
+    ["non-integer", 7_000_000.5],
+  ])("rejects %s quota_tokens_per_7d", (_label, quota) => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [{ name: "alibaba", quota_tokens_per_7d: quota }],
+      }),
+    ).toThrow(/quota_tokens_per_7d/);
+  });
+
   test("rejects unknown pressure cap window labels", () => {
     expect(() =>
       QuotasConfigSchema.parse({

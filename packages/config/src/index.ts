@@ -1,4 +1,5 @@
 export {
+  DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT,
   ENV_REGISTRY,
   type EnvConfig,
   EnvSchema,

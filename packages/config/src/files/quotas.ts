@@ -70,6 +70,7 @@ export const ProviderQuotaConfigSchema = z
     quota_usd_per_24h: z.number().positive().optional(),
     quota_tokens_per_24h: z.number().int().positive().optional(),
     quota_tokens_per_5h: z.number().int().positive().optional(),
+    quota_tokens_per_7d: z.number().int().positive().optional(),
     pressure_caps: z.partialRecord(PressureWindowLabelSchema, PressureCapWindowSchema).optional(),
     opencode_console: OpenCodeConsoleConfigSchema.optional(),
     synthetic_cap: z
