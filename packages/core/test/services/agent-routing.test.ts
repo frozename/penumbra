@@ -1452,6 +1452,76 @@ describe("routeAgent", () => {
     expect(summaryAgent.success_rate).toBeCloseTo(rankAgent.success_rate, 6);
     expect(summaryAgent.gate_verdict_coverage).toBeCloseTo(rankAgent.gate_verdict_coverage, 6);
   });
+
+  test("environment-failure rows do not count as routing failures or success-rate samples", () => {
+    const writer = new AgentPerformanceWriter(db);
+    const baseRow = {
+      project_id: "proj",
+      agent_name: "environment-neutral",
+      task_type: "implement_substantial" as const,
+      rounds: 1,
+      smoke_pass: "y" as const,
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: 1000,
+      source: "manual_seed" as const,
+      notes: null,
+      metadata_json: "{}",
+    };
+    writer.upsert({
+      ...baseRow,
+      performance_id: "environment-neutral-merged",
+      ts: "2026-04-30T10:00:00Z",
+      handoff_id: "h-environment-neutral-merged",
+      conversation_id: "c-environment-neutral-merged",
+      outcome: "merged",
+      gate_outcome: "passed",
+    });
+    writer.upsert({
+      ...baseRow,
+      performance_id: "environment-neutral-test-failed",
+      ts: "2026-04-30T11:00:00Z",
+      handoff_id: "h-environment-neutral-test-failed",
+      conversation_id: "c-environment-neutral-test-failed",
+      outcome: "test_failed",
+      gate_outcome: null,
+      smoke_pass: "n",
+      reviewer_findings: 10,
+      environment_failure: "y",
+    });
+
+    const rankOut = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      since: "2026-04-29T00:00:00Z",
+      includeNeutral: false,
+      now: NOW,
+    });
+    const rankAgent = findCandidate(rankOut, "environment-neutral");
+
+    const summaryOut = routeAgent({
+      db,
+      detail: "summary",
+      taskType: "implement_substantial",
+      windowDays: 30,
+      includeNeutral: false,
+      now: NOW,
+    });
+    if (summaryOut.detail !== "summary") throw new Error("expected summary");
+    const summaryAgent = summaryOut.recommendations.find(
+      (r) => r.agent_name === "environment-neutral",
+    );
+    if (!summaryAgent) throw new Error("environment-neutral missing from summary");
+
+    expect(rankAgent.samples).toBe(1);
+    expect(rankAgent.failures).toBe(0);
+    expect(rankAgent.success_rate).toBe(1);
+    expect(summaryAgent.samples).toBe(1);
+    expect(summaryAgent.success_rate).toBe(1);
+  });
 });
 
 describe("latency_weighting routing", () => {

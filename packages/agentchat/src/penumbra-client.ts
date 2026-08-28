@@ -354,7 +354,7 @@ export class PenumbraClient {
     task_type?: string;
     wall_ms?: number | null;
     framework_overhead_ms?: number | null;
-    result: Record<string, unknown>;
+    result: Record<string, unknown> & { verification_environment_error?: true };
   }): Promise<void> {
     await this.post("/agents/performance/reconciler", body);
   }

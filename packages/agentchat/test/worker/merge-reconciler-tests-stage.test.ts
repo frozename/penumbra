@@ -1,3 +1,4 @@
+import * as core from "@penumbra/core";
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import {
@@ -593,6 +594,7 @@ test("a captured zero-pass load-error baseline is a test environment error", asy
   const result = await makeReconciler()("h-captured-broken-baseline");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(verdicts[0]).toMatchObject({
     handoff_id: "h-captured-broken-baseline",
@@ -623,6 +625,7 @@ test("summary-only baseline with matching branch failures is a test environment 
   const result = await makeReconciler()("h-summary-only-baseline");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(result.regression_summary).not.toContain("scoped tests failed only with failures");
   expect(verdicts[0]).toMatchObject({
@@ -676,6 +679,7 @@ test("contaminated baseline environment fails closed", async () => {
   const result = await makeReconciler()("h-baseline-contaminated");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(result.regression_summary).toContain("@penumbra/config");
   expect(result.regression_summary).not.toContain("new test failures");
@@ -693,6 +697,7 @@ test("baseline install failure fails closed", async () => {
   const result = await makeReconciler()("h-baseline-install-fail");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(result.regression_summary).toContain("lockfile had changes");
   expect(result.regression_summary).not.toContain("new test failures");
@@ -731,6 +736,7 @@ test("timed-out baseline install fails closed as a test environment error", asyn
   const result = await makeReconciler()("h-baseline-install-timeout");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(result.regression_summary).toContain("timed out");
   expect(observedBaselineInstallOptions?.timeout).toBeLessThanOrEqual(1000);
@@ -748,6 +754,7 @@ test("failed baseline installs are retried on the next reconcile", async () => {
 
   const first = await makeReconciler()("h-baseline-install-retry-a");
   expect(first.status).toBe("test_failed");
+  expect(first.verification_environment_error).toBe(true);
   expect(first.regression_summary).toContain("verification environment error (tests)");
 
   failBaselineInstall = false;
@@ -799,6 +806,7 @@ test("passing branch run with symlinked node_modules fails closed before tests e
   const result = await makeReconciler()("h-branch-contaminated-pass");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(result.regression_summary).toContain("node_modules is a symlink");
   expect(result.regression_summary).toContain("isolated install");
@@ -807,6 +815,45 @@ test("passing branch run with symlinked node_modules fails closed before tests e
     handoff_id: "h-branch-contaminated-pass",
     tests: "error",
   });
+});
+
+test("branch local cache provisioning environment failure is not attributed to dispatched code", async () => {
+  deps.mainRepoDir = branchWorktreeRoot;
+
+  const result = await makeReconciler()("h-branch-cache-provision-env");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
+  expect(result.regression_summary).toStartWith("verification environment error (tests): ");
+  expect(result.regression_summary).toContain(
+    "local cache source and destination resolve to the same path",
+  );
+  expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-cache-provision-env",
+    tests: "error",
+  });
+});
+
+test("branch local cache provisioning command failure stays attributable", async () => {
+  const provisionLocalCacheSpy = spyOn(core, "provisionLocalCache").mockImplementation(() => {
+    throw new ExecCommandError({ stderr: "local cache copy failed\n", code: 1 });
+  });
+
+  try {
+    const result = await makeReconciler()("h-branch-cache-provision-fail");
+
+    expect(result.status).toBe("test_failed");
+    expect(result.verification_environment_error).toBeUndefined();
+    expect(result.regression_summary).toBe("local cache copy failed\n");
+    expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+    expect(verdicts[0]).toMatchObject({
+      handoff_id: "h-branch-cache-provision-fail",
+      tests: "fail",
+    });
+  } finally {
+    provisionLocalCacheSpy.mockRestore();
+  }
 });
 
 test("pre-existing unenumerable scoped failures are stable across timing-only reruns", async () => {

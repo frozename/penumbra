@@ -1172,6 +1172,32 @@ describe("captureAgentPerformanceFromReconciler", () => {
       .get();
     expect(count?.n).toBe(1);
   });
+
+  it("round-trips reconciler verification environment errors to environment_failure", () => {
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-env-error",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: {
+          status: "test_failed",
+          regression_summary: "verification environment error (tests): empty stdout/stderr",
+          verification_environment_error: true,
+        },
+      },
+    });
+
+    expect(row.outcome).toBe("test_failed");
+    expect(row.environment_failure).toBe("y");
+    const persisted = db
+      .query<
+        { outcome: string; environment_failure: string | null },
+        []
+      >(`SELECT outcome, environment_failure FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted).toEqual({ outcome: "test_failed", environment_failure: "y" });
+  });
   it("computes exact signals for a multi-event handoff with one dispatch.end", () => {
     const insertEvt = db.prepare(
       "INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, 'worker', ?, ?, ?)",

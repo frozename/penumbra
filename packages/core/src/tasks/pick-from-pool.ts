@@ -11,6 +11,7 @@ import {
   routeAgent,
   type RouteAgentInput,
   SUCCESS_OUTCOME_VALUES,
+  isNeutralPerformanceOutcome,
 } from "../services/agent-routing.js";
 import { pickPreferred } from "./auction.js";
 
@@ -24,6 +25,7 @@ const RECENT_FAILURE_DEMOTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 type RecentOutcomeRow = {
   outcome: string;
   failure_class: string | null;
+  environment_failure: string | null;
 };
 
 function isSuccess(row: RecentOutcomeRow): boolean {
@@ -31,7 +33,7 @@ function isSuccess(row: RecentOutcomeRow): boolean {
 }
 
 function isNeutral(row: RecentOutcomeRow): boolean {
-  return row.outcome === "no_changes" || row.outcome === "bypassed";
+  return isNeutralPerformanceOutcome(row);
 }
 
 function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTaskType): Set<string> {
@@ -39,7 +41,7 @@ function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTask
   const classifierDeclineCutover = resolveClassifierDeclineCutoverIso();
   const recencyFloor = new Date(Date.now() - RECENT_FAILURE_DEMOTION_MAX_AGE_MS).toISOString();
   const stmt = db.query<RecentOutcomeRow, [string, string, string, string, number]>(
-    `SELECT outcome, failure_class
+    `SELECT outcome, failure_class, environment_failure
      FROM agent_performance
      WHERE task_type = ? AND agent_name = ? AND ts >= ?
        AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < ?)

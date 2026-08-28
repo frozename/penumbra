@@ -275,6 +275,7 @@ interface PerformanceRow {
   agent_kind: string | null;
   gate_outcome: string | null;
   failure_class: string | null;
+  environment_failure: string | null;
   trust_score: number | null;
 }
 
@@ -374,6 +375,7 @@ export const SUCCESS_OUTCOME_VALUES = [
 // derive from this array — change it here, never inline, or the two paths
 // diverge on which seats appear in the ranked pool.
 export const NEUTRAL_OUTCOME_VALUES = ["no_changes", "bypassed"] as const;
+export const ENVIRONMENT_FAILURE_VALUE = "y" as const;
 export const GATE_OUTCOME_PASS_VALUES = ["passed", "skipped"] as const;
 
 function sqlInList(values: readonly string[]): string {
@@ -449,7 +451,25 @@ function isClassifierDeclineExempt(row: Pick<PerformanceRow, "failure_class" | "
   );
 }
 
+function isEnvironmentFailure(row: { environment_failure?: string | null }): boolean {
+  return row.environment_failure === ENVIRONMENT_FAILURE_VALUE;
+}
+
+export function isNeutralPerformanceOutcome(row: {
+  outcome: string;
+  environment_failure?: string | null;
+}): boolean {
+  return (
+    isEnvironmentFailure(row) || (NEUTRAL_OUTCOME_VALUES as readonly string[]).includes(row.outcome)
+  );
+}
+
+function buildNonNeutralPredicateSql(): string {
+  return `outcome NOT IN (${sqlInList(NEUTRAL_OUTCOME_VALUES)}) AND (environment_failure IS NULL OR environment_failure != '${ENVIRONMENT_FAILURE_VALUE}')`;
+}
+
 function rowOutcomeScore(row: PerformanceRow): number {
+  if (isEnvironmentFailure(row)) return 0.5;
   switch (row.outcome) {
     case "merged":
     case "pr_opened":
@@ -475,8 +495,8 @@ function rowOutcomeScore(row: PerformanceRow): number {
 }
 
 function rowOutcomeBucket(row: PerformanceRow): "success" | "failure" | "neutral" {
+  if (isNeutralPerformanceOutcome(row)) return "neutral";
   if (isSuccessOutcome(row.outcome)) return "success";
-  if ((NEUTRAL_OUTCOME_VALUES as readonly string[]).includes(row.outcome)) return "neutral";
   return "failure";
 }
 
@@ -918,7 +938,7 @@ function queryRows(
 ): PerformanceRow[] {
   const rows = db
     .query<PerformanceRow, [string, string, string]>(
-      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, failure_class, trust_score
+      `SELECT agent_name, task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, latency_ms, exec_ms, framework_overhead_ms, ts, agent_kind, gate_outcome, failure_class, environment_failure, trust_score
      FROM agent_performance
      WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      ORDER BY ts DESC`,
@@ -1222,7 +1242,7 @@ function buildRecommendations(
       `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS successes, SUM(CASE WHEN gate_outcome IS NOT NULL THEN 1 ELSE 0 END) AS gate_outcome_count, SUM(CASE WHEN gate_outcome IN (${sqlInList(GATE_OUTCOME_PASS_VALUES)}) THEN 1 ELSE 0 END) AS gate_pass_count, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = $taskType AND ts >= $cutoff AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = $agentKind
-       AND outcome NOT IN (${sqlInList(NEUTRAL_OUTCOME_VALUES)})
+       AND ${buildNonNeutralPredicateSql()}
        AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < $classifierDeclineCutover)
      GROUP BY agent_name
      ORDER BY (CAST(SUM(CASE WHEN ${successPredicate.sql} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC, (AVG(latency_ms) IS NULL) ASC, AVG(latency_ms) ASC`,
