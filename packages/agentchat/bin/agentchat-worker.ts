@@ -63,6 +63,13 @@ import {
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
 } from "../src/worker/claim-affinity.js";
+import {
+  assessWorkerCodeStaleness,
+  resolveWorkerCodeSha,
+  resolveWorkerCodeShaAsync,
+  shouldCheckWorkerCodeStaleness,
+  WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
+} from "../src/worker/code-staleness.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { installGlobalCrashHandlers } from "../src/worker/crash-guard.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
@@ -412,6 +419,21 @@ const workerId = resolveWorkerId({
   envValue: process.env.PENUMBRA_WORKER_ID,
   log,
 });
+const workerBootTs = new Date().toISOString();
+const workerBootCodeSha = resolveWorkerCodeSha(process.cwd());
+const workerBootCodeShaCheckedAtMs = Date.now();
+log.info(
+  {
+    worker_id: workerId,
+    code_sha: workerBootCodeSha.sha,
+    code_sha_status: workerBootCodeSha.status,
+    ...(workerBootCodeSha.status === "unknown"
+      ? { code_sha_reason: workerBootCodeSha.reason }
+      : {}),
+    boot_ts: workerBootTs,
+  },
+  "agentchat worker code snapshot",
+);
 const workerToken = process.env.PENUMBRA_TOKEN ?? "";
 const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? "").trim() || undefined;
 const workerIsolation = ((): "hard" | "sticky" | "shared" => {
@@ -1799,8 +1821,47 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   log.info({ interval_ms: 60_000, workerId }, "notification scheduler started");
 }
 
+let workerStaleWarningEmitted = false;
+let workerStaleLastCheckedAtMs: number | null = workerBootCodeShaCheckedAtMs;
+function warnIfWorkerCodeStale(): void {
+  if (workerStaleWarningEmitted) return;
+  const nowMs = Date.now();
+  if (
+    !shouldCheckWorkerCodeStaleness({
+      lastCheckedAtMs: workerStaleLastCheckedAtMs,
+      nowMs,
+      intervalMs: WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
+    })
+  ) {
+    return;
+  }
+  workerStaleLastCheckedAtMs = nowMs;
+  void resolveWorkerCodeShaAsync(process.cwd())
+    .then((current) => {
+      const staleness = assessWorkerCodeStaleness({
+        bootSha: workerBootCodeSha.sha,
+        currentSha: current.sha,
+      });
+      if (!staleness.stale) return;
+      workerStaleWarningEmitted = true;
+      log.warn(
+        {
+          worker_id: workerId,
+          boot_code_sha: workerBootCodeSha.sha,
+          current_code_sha: current.sha,
+          boot_ts: workerBootTs,
+        },
+        "worker code is stale; restart required to load current repo HEAD",
+      );
+    })
+    .catch(() => undefined);
+}
+
 const heartbeatLoop = startHeartbeatLoop({
-  emitHeartbeat: (signal) => emitHeartbeat({ client, workerId, signal, onEvent }),
+  emitHeartbeat: (signal) => {
+    warnIfWorkerCodeStale();
+    return emitHeartbeat({ client, workerId, signal, onEvent });
+  },
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
   schedule: (run, delayMs): { cancel: () => void } => {

@@ -21,6 +21,11 @@ import {
   type StartStdioAcpServerOptions,
   type StdioAcpHandle,
 } from "./stdio-acp-server.js";
+import {
+  OperationRejectedError,
+  TerminalCapExceededError,
+  TerminalNotFoundError,
+} from "../worker/write-tools-errors.js";
 
 export function detectStdioAcpClassifierDecline(input: {
   finalText: string | null | undefined;
@@ -70,6 +75,22 @@ interface MappedError extends Error {
   code?: number;
 }
 
+class InternalTerminalHandlerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InternalTerminalHandlerError";
+  }
+}
+
+function isSafeInternalTerminalError(err: unknown): boolean {
+  return (
+    err instanceof TerminalNotFoundError ||
+    err instanceof TerminalCapExceededError ||
+    err instanceof OperationRejectedError ||
+    err instanceof InternalTerminalHandlerError
+  );
+}
+
 function mapWriteToolsError(err: unknown): Error {
   if (err instanceof Error && "code" in err) {
     const errCode = (err as ErrorWithCode).code;
@@ -80,7 +101,39 @@ function mapWriteToolsError(err: unknown): Error {
       return mapped;
     }
   }
-  return err instanceof Error ? err : new Error(String(err));
+  if (err instanceof Error) {
+    if (isSafeInternalTerminalError(err)) {
+      return new Error(err.message);
+    }
+    return err;
+  }
+  return new Error(String(err));
+}
+
+function safeInternalTerminalMessage(err: unknown): string | null {
+  if (err instanceof TerminalNotFoundError) return "terminal not found";
+  if (err instanceof TerminalCapExceededError) {
+    return `terminal cap exceeded (max=${String(err.max)})`;
+  }
+  if (err instanceof OperationRejectedError || err instanceof InternalTerminalHandlerError) {
+    return err.message;
+  }
+  return null;
+}
+
+export function redactTerminalErrorMessage(message: unknown, code = -32000): string {
+  let messageLength = 0;
+  try {
+    if (typeof message === "string") {
+      messageLength = message.length;
+    } else if (message !== null && message !== undefined) {
+      messageLength = String(message).length;
+    }
+  } catch {
+    messageLength = 0;
+  }
+  const safeCode = Number.isFinite(code) ? Math.trunc(code) : -32000;
+  return `terminal error redacted (code=${safeCode}, messageLength=${messageLength})`;
 }
 
 // Idle / no-wire-activity stall timeout for stdio-acp dispatches. Raised from 5min
@@ -92,6 +145,7 @@ function mapWriteToolsError(err: unknown): Error {
 // Per-seat `requestTimeoutMs` (agentchat options, schema-capped at 900_000) overrides this.
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_200_000;
 const DEFAULT_BOOT_TIMEOUT_MS = 120_000;
+const TERMINAL_FAILURE_AUDIT_TIMEOUT_MS = 2_000;
 // Upper bound for the optional model-warmup prompt (modelWarmupPrompt). The
 // `/model` acknowledgment turn is fast (~5-10s observed), but a cold model load
 // can be slower; cap at 2min and fall through to the real task prompt regardless
@@ -221,6 +275,72 @@ function emitLifecycle(
     ts: new Date().toISOString(),
     meta,
   });
+}
+
+async function emitTerminalFailure(
+  input: DispatchInput,
+  method: string,
+  err: unknown,
+): Promise<Error> {
+  const mapped = mapWriteToolsError(err);
+  const code =
+    typeof (mapped as { code?: unknown }).code === "number"
+      ? ((mapped as { code?: number }).code as number)
+      : -32000;
+  const terminalMessage =
+    safeInternalTerminalMessage(err) ?? redactTerminalErrorMessage(mapped.message, code);
+  // Unknown terminal failures can include caller argv with credentials when
+  // trust_mode=all auto-approves, so only typed internal failures keep text.
+  try {
+    emitLifecycle(input, "terminal.failed", {
+      handoff_id: input.handoff_id ?? input.eventContext?.handoffId ?? "unknown",
+      method,
+      code,
+      message: terminalMessage,
+    });
+  } catch (lifecycleErr) {
+    console.warn("stdio-acp: terminal failure lifecycle emit failed", {
+      method,
+      code,
+      message: lifecycleErr instanceof Error ? lifecycleErr.message : String(lifecycleErr),
+    });
+  }
+  if (input.executor) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const audit = Promise.resolve(
+        input.executor.auditTerminalFailure({
+          handoff_id: input.handoff_id ?? input.eventContext?.handoffId ?? "unknown",
+          method,
+          code,
+          message: terminalMessage,
+        }),
+      );
+      const auditTimeout = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(
+            new Error(
+              `terminal failure audit timed out after ${String(TERMINAL_FAILURE_AUDIT_TIMEOUT_MS)}ms`,
+            ),
+          );
+        }, TERMINAL_FAILURE_AUDIT_TIMEOUT_MS);
+      });
+      await Promise.race([audit, auditTimeout]);
+    } catch (auditErr: unknown) {
+      console.warn("stdio-acp: terminal failure audit emit failed", {
+        method,
+        code,
+        message: auditErr instanceof Error ? auditErr.message : String(auditErr),
+      });
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+  }
+  // Do not attach the mapped error as cause: pino serializes error causes and
+  // would re-leak the raw text that terminalMessage intentionally redacted.
+  const terminalError = new Error(terminalMessage) as MappedError;
+  terminalError.code = code;
+  return terminalError;
 }
 
 function supportsClientCapability(
@@ -781,7 +901,8 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
   const { client, input, arm } = ctx;
   const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): string => {
     const terminalId = params.terminal_id ?? params.terminalId;
-    if (terminalId === undefined) throw new Error(`${method}: missing terminal_id or terminalId`);
+    if (terminalId === undefined)
+      throw new InternalTerminalHandlerError(`${method}: missing terminal_id or terminalId`);
     return terminalId;
   };
   const commandStringFromParams = (params: AcpTerminalCreateParams): string =>
@@ -808,8 +929,8 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
     "terminal/create",
     typedRequest<AcpTerminalCreateParams>(async (params) => {
       arm();
-      if (!input.executor) throw new Error("terminal/create: no executor");
       try {
+        if (!input.executor) throw new Error("terminal/create: no executor");
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
           console.info(
@@ -835,7 +956,7 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
         );
         return withTerminalAliases(result);
       } catch (err) {
-        throw mapWriteToolsError(err);
+        throw await emitTerminalFailure(input, "terminal/create", err);
       } finally {
         arm();
       }
@@ -850,12 +971,12 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       method,
       typedRequest<AcpTerminalIdParams>(async (params) => {
         arm();
-        const executor = input.executor;
-        if (!executor) throw new Error(`${method}: no executor`);
         try {
+          const executor = input.executor;
+          if (!executor) throw new Error(`${method}: no executor`);
           return withTerminalAliases(await fn(executor, terminalIdFromParams(method, params)));
         } catch (err) {
-          throw mapWriteToolsError(err);
+          throw await emitTerminalFailure(input, method, err);
         } finally {
           arm();
         }
