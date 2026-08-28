@@ -350,9 +350,10 @@ export interface StdioAcpOptions {
    * server, claude-agent-sdk) read it out of the extensibility-reserved
    * `_meta` block on initialize.clientCapabilities and session/new._meta.
    * The exact wire shape is also mirrored at the top of `clientCapabilities`
-   * for agents that read a non-spec `permission` field. Operators pin this
-   * per seat (e.g. `permissionMode: "bypassPermissions"` on devin-acp) when
-   * the per-dispatch trust hint is not enough.
+   * for agents that read a non-spec `permission` field. This field is adapter
+   * internal and is not reachable from agents.yaml; the strict seat schema
+   * rejects `permissionMode`. ACP-side mode control belongs in a future
+   * `session/set_mode` request, which this adapter does not implement yet.
    */
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 }
@@ -450,10 +451,12 @@ interface AcpTerminalCreateParams {
   args?: string[];
   cwd?: string;
   output_byte_limit?: number;
+  outputByteLimit?: number;
 }
 
 interface AcpTerminalIdParams {
   terminal_id?: string;
+  terminalId?: string;
 }
 
 interface AcpPermissionOption {
@@ -776,18 +779,49 @@ function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): vo
 function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (opts.terminal !== true) return;
   const { client, input, arm } = ctx;
+  const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): string => {
+    const terminalId = params.terminal_id ?? params.terminalId;
+    if (terminalId === undefined) throw new Error(`${method}: missing terminal_id or terminalId`);
+    return terminalId;
+  };
+  const commandStringFromParams = (params: AcpTerminalCreateParams): string =>
+    params.command ?? params.args?.join(" ") ?? "";
+  const commandProgramFromParams = (params: AcpTerminalCreateParams): string => {
+    const command = commandStringFromParams(params).trimStart();
+    return command.split(/\s+/, 1)[0] ?? "";
+  };
+  const withTerminalAliases = (result: unknown): unknown => {
+    if (result === null || typeof result !== "object") return result;
+    const aliases: Record<string, unknown> = {};
+    const terminalId = (result as { terminal_id?: unknown }).terminal_id;
+    if (terminalId !== undefined && !("terminalId" in result)) {
+      aliases.terminalId = terminalId;
+    }
+    const exitStatus = (result as { exit_status?: unknown }).exit_status;
+    if (exitStatus !== undefined && !("exitStatus" in result)) {
+      aliases.exitStatus = exitStatus;
+    }
+    if (Object.keys(aliases).length === 0) return result;
+    return { ...result, ...aliases };
+  };
   client.onRequest(
     "terminal/create",
     typedRequest<AcpTerminalCreateParams>(async (params) => {
       arm();
       if (!input.executor) throw new Error("terminal/create: no executor");
       try {
-        return await input.executor.terminalCreate(
+        if (input.trust_mode === "all") {
+          const command = commandStringFromParams(params);
+          console.info(
+            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
+          );
+        }
+        const result = await input.executor.terminalCreate(
           {
             command: params.command,
             argv: params.args,
             cwd: params.cwd,
-            output_byte_limit: params.output_byte_limit,
+            output_byte_limit: params.output_byte_limit ?? params.outputByteLimit,
           },
           {
             toolName: "terminal.create",
@@ -799,6 +833,7 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
             dispatchId: input.handoff_id ?? "unknown",
           },
         );
+        return withTerminalAliases(result);
       } catch (err) {
         throw mapWriteToolsError(err);
       } finally {
@@ -818,7 +853,7 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
         const executor = input.executor;
         if (!executor) throw new Error(`${method}: no executor`);
         try {
-          return await fn(executor, params.terminal_id ?? "");
+          return withTerminalAliases(await fn(executor, terminalIdFromParams(method, params)));
         } catch (err) {
           throw mapWriteToolsError(err);
         } finally {
@@ -827,21 +862,19 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       }),
     );
   };
-  wrapTerminalCommand(
-    "terminal/output",
-    async (executor, terminalId) => await executor.terminalOutput({ terminal_id: terminalId }),
+  wrapTerminalCommand("terminal/output", async (executor, terminalId) =>
+    executor.terminalOutput({ terminal_id: terminalId }),
   );
-  wrapTerminalCommand(
-    "terminal/wait_for_exit",
-    async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
+  wrapTerminalCommand("terminal/wait_for_exit", async (executor, terminalId) =>
+    executor.terminalWaitForExit({ terminal_id: terminalId }),
   );
   wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
-    await executor.terminalRelease({ terminal_id: terminalId });
-    return {};
+    const result = (await executor.terminalRelease({ terminal_id: terminalId })) as unknown;
+    return result ?? {};
   });
   wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
-    await executor.terminalKill({ terminal_id: terminalId });
-    return {};
+    const result = (await executor.terminalKill({ terminal_id: terminalId })) as unknown;
+    return result ?? {};
   });
 }
 
@@ -870,6 +903,14 @@ function cancelledOutcome(): PermissionResultCancelled {
   return { outcome: { outcome: "cancelled" } };
 }
 
+function isBypassOptionId(optionId: unknown): boolean {
+  return typeof optionId === "string" && /^(switch_)?bypass$/i.test(optionId);
+}
+
+function isBypassLikeOptionId(optionId: unknown): boolean {
+  return typeof optionId === "string" && /bypass/i.test(optionId);
+}
+
 async function handlePermissionRequest(
   ctx: DispatchTurnContext,
   params: AcpRequestPermissionParams,
@@ -881,11 +922,22 @@ async function handlePermissionRequest(
   // overhead and adds a stall point on every nested exec/shell tool call. The
   // shape mirrors the "no callback" branch below.
   if (!ctx.input.requestPermission || ctx.input.trust_mode === "all") {
-    const chosen = pickPermissionOption(options, [
+    const autoAllowPredicates: PermissionOptionPredicate[] = [
       (o: AcpPermissionOption): boolean => o.kind === "allow_always",
       (o: AcpPermissionOption): boolean => o.kind === "allow_once",
       (): boolean => true,
-    ]);
+    ];
+    const predicates =
+      ctx.input.trust_mode === "all"
+        ? [
+            (o: AcpPermissionOption): boolean =>
+              o.kind === "allow_always" && isBypassOptionId(o.optionId),
+            (o: AcpPermissionOption): boolean =>
+              o.kind === "allow_always" && !isBypassLikeOptionId(o.optionId),
+            ...autoAllowPredicates,
+          ]
+        : autoAllowPredicates;
+    const chosen = pickPermissionOption(options, predicates);
     if (chosen?.optionId === undefined) return cancelledOutcome();
     return { outcome: { outcome: "selected", optionId: chosen.optionId } };
   }

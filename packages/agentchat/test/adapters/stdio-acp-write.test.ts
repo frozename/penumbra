@@ -274,7 +274,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       output_byte_limit: 1234,
     });
 
-    expect(result).toEqual({ terminal_id: "term-123" });
+    expect(result).toMatchObject({ terminal_id: "term-123" });
     expect(calls).toEqual([
       {
         args: {
@@ -288,6 +288,94 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
           rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: "/tmp" },
           dispatchId: "handoff-1",
         },
+      },
+    ]);
+  });
+
+  test("terminal/create's response carries both terminal_id and terminalId", async () => {
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalCreate: (): Promise<unknown> => Promise.resolve({ terminal_id: "term-123" }),
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+    const result = await handler?.({ command: "echo hello" });
+
+    expect(result).toEqual({ terminal_id: "term-123", terminalId: "term-123" });
+  });
+
+  test("terminal/create preserves a pre-existing terminalId while adding no alias when terminal_id is absent", async () => {
+    const results = [
+      { terminal_id: "snake-term", terminalId: "camel-term" },
+      { terminalId: "only-camel" },
+    ];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalCreate: (): Promise<unknown> => Promise.resolve(results.shift()),
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+    const withSnake = await handler?.({ command: "echo hello" });
+    const withoutSnake = await handler?.({ command: "echo hello" });
+
+    expect(withSnake).toEqual({ terminal_id: "snake-term", terminalId: "camel-term" });
+    expect(withoutSnake).toEqual({ terminalId: "only-camel" });
+  });
+
+  test("terminal/create reads params.outputByteLimit when output_byte_limit is absent", async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalCreate: (args): Promise<unknown> => {
+          calls.push(args);
+          return Promise.resolve({ terminal_id: "term-123" });
+        },
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+    await handler?.({ command: "echo hello", outputByteLimit: 4321 });
+
+    expect(calls).toEqual([
+      {
+        command: "echo hello",
+        argv: undefined,
+        cwd: undefined,
+        output_byte_limit: 4321,
+      },
+    ]);
+  });
+
+  test("terminal/create prefers output_byte_limit over outputByteLimit when both casings are present", async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalCreate: (args): Promise<unknown> => {
+          calls.push(args);
+          return Promise.resolve({ terminal_id: "term-123" });
+        },
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+    await handler?.({ command: "echo hello", output_byte_limit: 1234, outputByteLimit: 4321 });
+
+    expect(calls).toEqual([
+      {
+        command: "echo hello",
+        argv: undefined,
+        cwd: undefined,
+        output_byte_limit: 1234,
       },
     ]);
   });
@@ -309,11 +397,231 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const handler = harness.getHandler("terminal/output");
     const result = await handler?.({ terminal_id: "term-123" });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       output: "hello\n",
       truncated: false,
       exit_status: { exitCode: 0, signal: null },
     });
+  });
+
+  test("terminal/wait_for_exit and terminal/output resolve a terminal created with a camelCase terminalId", async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalOutput: (args): Promise<unknown> => {
+          calls.push(args);
+          if ((args as { terminal_id?: string }).terminal_id !== "term-123") {
+            throw new TerminalNotFoundError(String((args as { terminal_id?: string }).terminal_id));
+          }
+          return Promise.resolve({ output: "hello\n", truncated: false });
+        },
+        terminalWaitForExit: (args): Promise<unknown> => {
+          calls.push(args);
+          if ((args as { terminal_id?: string }).terminal_id !== "term-123") {
+            throw new TerminalNotFoundError(String((args as { terminal_id?: string }).terminal_id));
+          }
+          return Promise.resolve({ exit_status: { exitCode: 0, signal: null } });
+        },
+      },
+    );
+
+    await harness.runDispatch();
+    const outputHandler = harness.getHandler("terminal/output");
+    const waitHandler = harness.getHandler("terminal/wait_for_exit");
+    const outputResult = await outputHandler?.({ terminalId: "term-123" });
+    const waitResult = await waitHandler?.({ terminalId: "term-123" });
+
+    expect(outputResult).toEqual({ output: "hello\n", truncated: false });
+    expect(waitResult).toMatchObject({ exit_status: { exitCode: 0, signal: null } });
+    expect(calls).toEqual([{ terminal_id: "term-123" }, { terminal_id: "term-123" }]);
+  });
+
+  test("terminal/wait_for_exit prefers terminal_id over terminalId when both casings are present", async () => {
+    const calls: unknown[] = [];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalWaitForExit: (args): Promise<unknown> => {
+          calls.push(args);
+          return Promise.resolve({ exit_status: { exitCode: 0, signal: null } });
+        },
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/wait_for_exit");
+    await handler?.({ terminal_id: "snake-term", terminalId: "camel-term" });
+
+    expect(calls).toEqual([{ terminal_id: "snake-term" }]);
+  });
+
+  test("terminal/wait_for_exit's response carries both exit_status and exitStatus", async () => {
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalWaitForExit: (): Promise<unknown> =>
+          Promise.resolve({ exit_status: { exitCode: 0, signal: null } }),
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/wait_for_exit");
+    const result = await handler?.({ terminal_id: "term-123" });
+
+    expect(result).toEqual({
+      exit_status: { exitCode: 0, signal: null },
+      exitStatus: { exitCode: 0, signal: null },
+    });
+  });
+
+  test("terminal/wait_for_exit preserves a pre-existing exitStatus while adding no alias when exit_status is absent", async () => {
+    const results = [
+      {
+        exit_status: { exitCode: 0, signal: null },
+        exitStatus: { exitCode: 99, signal: "SIGTERM" },
+      },
+      { exitStatus: { exitCode: 7, signal: null } },
+    ];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalWaitForExit: (): Promise<unknown> => Promise.resolve(results.shift()),
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/wait_for_exit");
+    const withSnake = await handler?.({ terminal_id: "term-123" });
+    const withoutSnake = await handler?.({ terminal_id: "term-123" });
+
+    expect(withSnake).toEqual({
+      exit_status: { exitCode: 0, signal: null },
+      exitStatus: { exitCode: 99, signal: "SIGTERM" },
+    });
+    expect(withoutSnake).toEqual({ exitStatus: { exitCode: 7, signal: null } });
+  });
+
+  test("terminal/output's response carries exitStatus when exit_status is present, and omits it when absent", async () => {
+    const outputs = [
+      { output: "hello\n", truncated: false, exit_status: { exitCode: 0, signal: null } },
+      { output: "still running\n", truncated: false },
+    ];
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalOutput: (): Promise<unknown> => Promise.resolve(outputs.shift()),
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/output");
+    const exited = await handler?.({ terminal_id: "term-123" });
+    const running = await handler?.({ terminal_id: "term-123" });
+
+    expect(exited).toEqual({
+      output: "hello\n",
+      truncated: false,
+      exit_status: { exitCode: 0, signal: null },
+      exitStatus: { exitCode: 0, signal: null },
+    });
+    expect(running).toEqual({ output: "still running\n", truncated: false });
+    expect(running).not.toHaveProperty("exitStatus");
+  });
+
+  test("terminal handlers uniformly apply terminalId and exitStatus aliases", async () => {
+    const aliasedResult = {
+      terminal_id: "term-123",
+      exit_status: { exitCode: 0, signal: null },
+    };
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalCreate: (): Promise<unknown> => Promise.resolve(aliasedResult),
+        terminalOutput: (): Promise<unknown> => Promise.resolve(aliasedResult),
+        terminalWaitForExit: (): Promise<unknown> => Promise.resolve(aliasedResult),
+        terminalRelease: (): Promise<unknown> => Promise.resolve(aliasedResult),
+        terminalKill: (): Promise<unknown> => Promise.resolve(aliasedResult),
+      },
+    );
+
+    await harness.runDispatch();
+
+    expect(await harness.getHandler("terminal/create")?.({ command: "echo hello" })).toEqual({
+      ...aliasedResult,
+      terminalId: "term-123",
+      exitStatus: { exitCode: 0, signal: null },
+    });
+    for (const method of [
+      "terminal/output",
+      "terminal/wait_for_exit",
+      "terminal/release",
+      "terminal/kill",
+    ]) {
+      expect(await harness.getHandler(method)?.({ terminal_id: "term-123" })).toEqual({
+        ...aliasedResult,
+        terminalId: "term-123",
+        exitStatus: { exitCode: 0, signal: null },
+      });
+    }
+  });
+
+  test("a terminalId valid under session A does not resolve under session B", async () => {
+    const terminals = new Map<string, "session-a" | "session-b">();
+    const scopedExecutor = (owner: "session-a" | "session-b"): MockExecutor => ({
+      terminalCreate: (): Promise<unknown> => {
+        terminals.set("term-123", owner);
+        return Promise.resolve({ terminal_id: "term-123" });
+      },
+      terminalWaitForExit: (args): Promise<unknown> => {
+        const terminalId = (args as { terminal_id?: string }).terminal_id;
+        if (terminalId === undefined || terminals.get(terminalId) !== owner) {
+          throw new TerminalNotFoundError(String(terminalId));
+        }
+        return Promise.resolve({ exit_status: { exitCode: 0, signal: null } });
+      },
+    });
+    const harnessA = createHarness({ terminal: true }, scopedExecutor("session-a"));
+    const harnessB = createHarness({ terminal: true }, scopedExecutor("session-b"));
+
+    await harnessA.runDispatch();
+    await harnessB.runDispatch();
+    const createHandlerA = harnessA.getHandler("terminal/create");
+    const handlerA = harnessA.getHandler("terminal/wait_for_exit");
+    const handlerB = harnessB.getHandler("terminal/wait_for_exit");
+
+    await expect(createHandlerA?.({ command: "echo hello" })).resolves.toMatchObject({
+      terminal_id: "term-123",
+    });
+    await expect(handlerA?.({ terminalId: "term-123" })).resolves.toMatchObject({
+      exit_status: { exitCode: 0, signal: null },
+    });
+    const { error } = await captureError(handlerB?.({ terminalId: "term-123" }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(errorCode(error)).toBe(-32005);
+    expect(error?.message).toBe("terminal not found: term-123");
+  });
+
+  test("terminal/output rejects clearly when neither terminal id casing is supplied", async () => {
+    let called = false;
+    const harness = createHarness(
+      { terminal: true },
+      {
+        terminalOutput: (): Promise<unknown> => {
+          called = true;
+          throw new TerminalNotFoundError("");
+        },
+      },
+    );
+
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/output");
+    const { error } = await captureError(handler?.({}));
+
+    expect(called).toBe(false);
+    expect(error).toBeInstanceOf(Error);
+    expect(error?.message).toBe("terminal/output: missing terminal_id or terminalId");
   });
 
   test("terminal/kill maps TerminalNotFoundError to -32005", async () => {

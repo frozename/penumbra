@@ -12,6 +12,7 @@ import type {
 import type { HostEnvPolicy, StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
 import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
 import type { CapturePort } from "../../src/worker/capture-port.js";
+import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import {
@@ -189,6 +190,17 @@ function createPermissionHarness(
   adapterOptions: Partial<StdioAcpOptions> = {
     mcpServers: [makePenumbraMcpServer()],
   },
+  permissionPayload: RequestPermissionPayload = {
+    toolCall: {
+      title: "mcp__penumbra__chain.list_agents",
+      rawInput: { args: ["--all"] },
+    },
+    options: [
+      { kind: "allow_always", optionId: "allow-always" },
+      { kind: "allow_once", optionId: "allow-once" },
+      { kind: "reject_once", optionId: "reject-once" },
+    ],
+  },
 ): PermissionHarness {
   const handle = makeMockAcpHandle();
   const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
@@ -199,17 +211,7 @@ function createPermissionHarness(
   const mockClientRequest = makeStandardClientRequest({
     onSessionPrompt: async (): Promise<unknown> => {
       if (!requestHandler) throw new Error("missing request handler");
-      const outcome: unknown = await requestHandler({
-        toolCall: {
-          title: "mcp__penumbra__chain.list_agents",
-          rawInput: { args: ["--all"] },
-        },
-        options: [
-          { kind: "allow_always", optionId: "allow-always" },
-          { kind: "allow_once", optionId: "allow-once" },
-          { kind: "reject_once", optionId: "reject-once" },
-        ],
-      });
+      const outcome: unknown = await requestHandler(permissionPayload);
       lastOutcome = outcome;
       return { stopReason: "end_turn" };
     },
@@ -622,6 +624,160 @@ describe("StdioAcpAdapter", () => {
 
     expect(requestPermission).toHaveBeenCalled();
     expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
+  });
+
+  it("without trust_mode 'all', absent requestPermission keeps the original allow_always tie-break", async () => {
+    const devinOptions = [
+      { kind: "allow_once", optionId: "allow_once" },
+      { kind: "allow_always", optionId: "switch_accept_edits" },
+      { kind: "allow_always", optionId: "switch_bypass" },
+      { kind: "reject_once", optionId: "reject_once" },
+    ];
+    const harness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
+      {
+        toolCall: { title: "Edit", rawInput: { args: ["touch", "file"] } },
+        options: devinOptions,
+      },
+    );
+
+    await dispatch(harness.adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+    });
+
+    expect(harness.getOutcome()).toEqual({
+      outcome: { outcome: "selected", optionId: "switch_accept_edits" },
+    });
+  });
+
+  it("under trust_mode 'all', handlePermissionRequest prefers an exact bypass allow_always option over another allow_always option", async () => {
+    const devinOptions = [
+      { kind: "allow_once", optionId: "allow_once" },
+      { kind: "allow_always", optionId: "switch_accept_edits" },
+      { kind: "allow_always", optionId: "switch_bypass" },
+      { kind: "reject_once", optionId: "reject_once" },
+    ];
+    const devinHarness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
+      {
+        toolCall: { title: "Edit", rawInput: { args: ["touch", "file"] } },
+        options: devinOptions,
+      },
+    );
+
+    await dispatch(devinHarness.adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      requestPermission: vi.fn().mockResolvedValue("approve" as const),
+      trust_mode: "all",
+    });
+
+    expect(devinHarness.getOutcome()).toEqual({
+      outcome: { outcome: "selected", optionId: "switch_bypass" },
+    });
+
+    const singleAllowHarness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
+      {
+        toolCall: { title: "Edit", rawInput: { args: ["touch", "file"] } },
+        options: [{ kind: "allow_always", optionId: "switch_accept_edits" }],
+      },
+    );
+
+    await dispatch(singleAllowHarness.adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      requestPermission: vi.fn().mockResolvedValue("approve" as const),
+      trust_mode: "all",
+    });
+
+    expect(singleAllowHarness.getOutcome()).toEqual({
+      outcome: { outcome: "selected", optionId: "switch_accept_edits" },
+    });
+  });
+
+  it("under trust_mode 'all', handlePermissionRequest does not select bypass-looking disabled options", async () => {
+    const harness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
+      {
+        toolCall: { title: "Edit", rawInput: { args: ["touch", "file"] } },
+        options: [
+          { kind: "allow_always", optionId: "switch_bypass_disabled" },
+          { kind: "allow_always", optionId: "switch_accept_edits" },
+          { kind: "reject_once", optionId: "reject_once" },
+        ],
+      },
+    );
+
+    await dispatch(harness.adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      requestPermission: vi.fn().mockResolvedValue("approve" as const),
+      trust_mode: "all",
+    });
+
+    expect(harness.getOutcome()).toEqual({
+      outcome: { outcome: "selected", optionId: "switch_accept_edits" },
+    });
+  });
+
+  it("a terminal/create auto-approved under trust_mode 'all' logs cwd and program without command arguments", async () => {
+    let terminalCreateHandler: ((params: unknown) => unknown) | undefined;
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionPrompt: async (): Promise<unknown> => {
+        if (!terminalCreateHandler) throw new Error("missing terminal/create handler");
+        await terminalCreateHandler({
+          command: "deploy.sh --token=SUPERSECRET123",
+          args: ["deploy.sh", "--token=SUPERSECRET123"],
+          cwd: "/tmp/project",
+        });
+        return { stopReason: "end_turn" };
+      },
+    });
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", terminal: true },
+      {
+        startServer: vi.fn(startStdioAcpServerStub),
+        createClient: (): StdioAcpClient =>
+          makeMockAcpClient({
+            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
+              if (method === "terminal/create") terminalCreateHandler = handler;
+            },
+            on: vi.fn<StdioAcpClient["on"]>(),
+            request: mockClientRequest,
+          }),
+      },
+    );
+
+    let matchingLogCount = 0;
+    let logLines: string[] = [];
+    try {
+      await dispatch(adapter, {
+        prompt: "hello",
+        signal: new AbortController().signal,
+        trust_mode: "all",
+        executor: {
+          terminalCreate: (): Promise<unknown> => Promise.resolve({ terminal_id: "term-123" }),
+        } as unknown as WriteToolsExecutor,
+      });
+      matchingLogCount = infoSpy.mock.calls.filter(([message]) =>
+        String(message).includes("stdio-acp: terminal/create auto-approved"),
+      ).length;
+      logLines = infoSpy.mock.calls.map(([message]) => String(message));
+    } finally {
+      infoSpy.mockRestore();
+    }
+
+    expect(matchingLogCount).toBe(1);
+    const matchingLog = logLines.find((message) =>
+      message.includes("stdio-acp: terminal/create auto-approved"),
+    );
+    expect(matchingLog).toContain("program=deploy.sh");
+    expect(matchingLog).toContain("cwd=/tmp/project");
+    expect(matchingLog).toContain("commandLength=32");
+    expect(matchingLog).not.toContain("SUPERSECRET123");
   });
 
   it("returns cancelled when requestPermission rejects the tool call", async () => {
