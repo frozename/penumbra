@@ -401,6 +401,7 @@ providers:
             refuse: 95,
           },
         },
+        synthetic_cap: undefined,
       },
       {
         provider: "gemini",
@@ -414,6 +415,7 @@ providers:
             refuse: 90,
           },
         },
+        synthetic_cap: undefined,
       },
     ]);
     expect(services.providerQuotas.some((entry) => entry.provider === "placeholder")).toBe(false);
@@ -456,6 +458,7 @@ providers:
           refuse: 95,
         },
       },
+      synthetic_cap: undefined,
     },
   ]);
 });

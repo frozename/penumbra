@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   loadAgentChatConfig,
   loadAgentRoutingFromConfig,
+  providerQuotasFromAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../src/agentchat-config.js";
 
@@ -151,6 +152,93 @@ test("loadAgentRoutingFromConfig preserves the legacy boot routing shape with pr
     role_routing: {
       headroom_weighting: true,
       latency_weighting: false,
+    },
+  });
+});
+
+test("providerQuotasFromAgentChatConfig preserves configured synthetic dispatch caps", () => {
+  const quotas = providerQuotasFromAgentChatConfig({
+    agents: [],
+    default_roles: {},
+    providers: [
+      {
+        name: "devin",
+        synthetic_cap: {
+          max_dispatches: 4,
+          window_seconds: 900,
+        },
+      },
+    ],
+  });
+
+  expect(quotas).toEqual([
+    {
+      provider: "devin",
+      model: undefined,
+      quota_usd_per_24h: undefined,
+      quota_tokens_per_24h: undefined,
+      quota_tokens_per_5h: undefined,
+      quota_tokens_per_7d: undefined,
+      pressure_caps: undefined,
+      synthetic_cap: {
+        max_dispatches: 4,
+        window_seconds: 900,
+      },
+    },
+  ]);
+});
+
+test("providerQuotasFromAgentChatConfig does not invent synthetic dispatch caps", () => {
+  const quotas = providerQuotasFromAgentChatConfig({
+    agents: [],
+    default_roles: {},
+    providers: [
+      {
+        name: "anthropic",
+      },
+    ],
+  });
+
+  expect(quotas).toEqual([
+    {
+      provider: "anthropic",
+      model: undefined,
+      quota_usd_per_24h: undefined,
+      quota_tokens_per_24h: undefined,
+      quota_tokens_per_5h: undefined,
+      quota_tokens_per_7d: undefined,
+      pressure_caps: undefined,
+      synthetic_cap: undefined,
+    },
+  ]);
+});
+
+test("provider quota mapper output feeds downstream synthetic cap lookup", () => {
+  const quotas = providerQuotasFromAgentChatConfig({
+    agents: [],
+    default_roles: {},
+    providers: [
+      {
+        name: "devin",
+        synthetic_cap: {
+          max_dispatches: 2,
+          window_seconds: 300,
+        },
+      },
+      {
+        name: "anthropic",
+      },
+    ],
+  });
+  const syntheticCaps: Record<string, { max_dispatches: number; window_seconds: number }> = {};
+  for (const quota of quotas) {
+    if (quota.synthetic_cap) syntheticCaps[quota.provider] = quota.synthetic_cap;
+  }
+
+  expect(syntheticCaps).toEqual({
+    devin: {
+      max_dispatches: 2,
+      window_seconds: 300,
     },
   });
 });
