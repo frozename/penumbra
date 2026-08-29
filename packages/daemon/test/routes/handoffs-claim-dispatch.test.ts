@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -27,6 +33,30 @@ type WorkerAuthz = Map<string, { isolation: "sticky" | "hard" | "shared"; projec
 type ClaimServices = Services & {
   workerAuthz?: WorkerAuthz;
 };
+type ClaimDispatchOptions = Parameters<HandoffWriter["claimDispatch"]>[2];
+
+class RacingHandoffWriter extends HandoffWriter {
+  private raced = false;
+
+  constructor(
+    db: Database,
+    private readonly race: () => void,
+  ) {
+    super({ db });
+  }
+
+  override claimDispatch(
+    handoff_id: string,
+    worker_id: string,
+    opts?: ClaimDispatchOptions,
+  ): boolean {
+    if (!this.raced) {
+      this.raced = true;
+      this.race();
+    }
+    return super.claimDispatch(handoff_id, worker_id, opts);
+  }
+}
 
 async function readErrorCode(res: Response): Promise<string> {
   const body = (await res.json()) as ErrorResponse;
@@ -37,6 +67,11 @@ function requireToken(tokens: Map<string, string>, workerId: string): string {
   const token = tokens.get(workerId);
   if (!token) throw new Error(`missing token for ${workerId}`);
   return token;
+}
+
+function expectRetryableClaimRefusalStatus(status: number): void {
+  // A terminal 4xx makes the worker drop this fleet-wide refusal permanently instead of retrying.
+  expect([408, 429]).toContain(status);
 }
 
 function tempServices(): Services {
@@ -55,6 +90,30 @@ function tempServices(): Services {
       return () => `e-${String(++n)}`;
     })(),
   });
+}
+
+function configureProviderCap(services: Services, max_in_flight: number): void {
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas = [{ provider: "anthropic", max_in_flight }];
 }
 
 function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
@@ -298,29 +357,9 @@ test("workflow fan-out sibling claims are spread across active workers without e
   ]);
 });
 
-test("/handoffs/:id/claim returns typed 409 when provider in-flight cap is reached", async () => {
+test("/handoffs/:id/claim returns retryable typed response when provider in-flight cap is reached", async () => {
   const services = tempServices();
-  services.agentchatConfig = {
-    agents: [
-      {
-        name: "claude-a",
-        roles: [],
-        adapter: "stdio-acp",
-        pricing_mode: "subscription",
-        subscription_provider: "anthropic",
-      },
-      {
-        name: "claude-b",
-        roles: [],
-        adapter: "stdio-acp",
-        pricing_mode: "subscription",
-        subscription_provider: "anthropic",
-      },
-    ],
-    default_roles: {},
-    providers: [],
-  };
-  services.providerQuotas = [{ provider: "anthropic", max_in_flight: 1 }];
+  configureProviderCap(services, 1);
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
 
   seedApprovedHandoff(services, "provider-running", null, { to: "claude-a" });
@@ -356,7 +395,7 @@ test("/handoffs/:id/claim returns typed 409 when provider in-flight cap is reach
     }),
   );
 
-  expect(capped.status).toBe(409);
+  expectRetryableClaimRefusalStatus(capped.status);
   const body = (await capped.json()) as ProviderConcurrencyCapResponse;
   expect(body.error.code).toBe("provider_concurrency_cap");
   expect(body.provider).toBe("anthropic");
@@ -370,6 +409,83 @@ test("/handoffs/:id/claim returns typed 409 when provider in-flight cap is reach
     >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
     .get("provider-next");
   expect(row).toEqual({ status: "approved", worker_id: null });
+});
+
+test("/handoffs/:id/claim returns retryable provider cap response when CAS loses to provider cap race", async () => {
+  const services = tempServices();
+  configureProviderCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-running-race", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "provider-race-next", null, { to: "claude-b" });
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET status='dispatched', worker_id='W-A' WHERE handoff_id='provider-running-race'`,
+    );
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const raced = await fetchHandler(
+    new Request("http://x/handoffs/provider-race-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expectRetryableClaimRefusalStatus(raced.status);
+  const body = (await raced.json()) as ProviderConcurrencyCapResponse;
+  expect(body.error.code).toBe("provider_concurrency_cap");
+  expect(body.provider).toBe("anthropic");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("provider-race-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
+});
+
+test("/handoffs/:id/claim returns generic terminal conflict when CAS loses because row is already claimed", async () => {
+  const services = tempServices();
+  configureProviderCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-row-claimed-race", null, { to: "claude-b" });
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET status='dispatched', worker_id='W-A' WHERE handoff_id='provider-row-claimed-race'`,
+    );
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const raced = await fetchHandler(
+    new Request("http://x/handoffs/provider-row-claimed-race/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expect(raced.status).toBe(409);
+  const body = (await raced.json()) as ErrorResponse & { current_status: string | null };
+  expect(body.error.code).toBe("conflict");
+  expect(body.current_status).toBe("dispatched");
 });
 
 test("/handoffs/:id/claim uses provider-wide max_in_flight regardless of quota row order", async () => {

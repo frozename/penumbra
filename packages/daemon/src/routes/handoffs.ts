@@ -270,6 +270,8 @@ function providerConcurrencyCapResponse(
   handoff_id: string,
   decision: ProviderConcurrencyDecision,
 ): Response {
+  // This status MUST remain retryable per agentchat isTerminalHttpStatus(); terminal claim
+  // refusals are dropped by workers, and this fleet-wide cap leaves no alternate claimer.
   return json(
     {
       error: {
@@ -280,7 +282,7 @@ function providerConcurrencyCapResponse(
       max_in_flight: decision.max_in_flight,
       in_flight_count: decision.in_flight_count,
     },
-    409,
+    429,
   );
 }
 
@@ -875,6 +877,7 @@ function buildClaimConflictResponse(
   handoff_id: string,
   worker_id: string,
   spreadDecision: ClaimSpreadDecision | null,
+  providerDecision: ProviderConcurrencyDecision | null,
 ): Response {
   const after = services.handoffReader.get(handoff_id);
   if (
@@ -885,6 +888,12 @@ function buildClaimConflictResponse(
       spreadDecision.max_per_worker
   ) {
     return claimSpreadCapResponse(handoff_id, spreadDecision);
+  }
+  if (providerDecision && after && (after.status === "approved" || after.status === "redirected")) {
+    const in_flight_count = countProviderInFlight(services, providerDecision.providerSeatNames);
+    if (in_flight_count >= providerDecision.max_in_flight) {
+      return providerConcurrencyCapResponse(handoff_id, { ...providerDecision, in_flight_count });
+    }
   }
   return json(
     {
@@ -967,7 +976,13 @@ export async function handoffsClaimRoute(
     maxProviderInFlight: providerDecision?.max_in_flight,
   });
   if (!won) {
-    return buildClaimConflictResponse(services, handoff_id, body.data.worker_id, spreadDecision);
+    return buildClaimConflictResponse(
+      services,
+      handoff_id,
+      body.data.worker_id,
+      spreadDecision,
+      providerDecision,
+    );
   }
 
   recordClaimDispatchEvent(services, handoff_id, body.data.worker_id);
