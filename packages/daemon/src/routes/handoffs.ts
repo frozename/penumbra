@@ -2,6 +2,7 @@ import {
   ApproveHandoffRequestSchema,
   classifyDispatchReliability,
   CreateHandoffRequestSchema,
+  resolveProvider,
   type HandoffStatus,
   HandoffStatusSchema,
   type Services,
@@ -77,6 +78,13 @@ interface ClaimSpreadDecision {
   active_worker_count: number;
   sibling_count: number;
   max_per_worker: number;
+}
+
+interface ProviderConcurrencyDecision {
+  provider: string;
+  providerSeatNames: string[];
+  max_in_flight: number;
+  in_flight_count: number;
 }
 
 interface WorkerTokenWorkerRow {
@@ -210,6 +218,83 @@ function claimSpreadCapResponse(handoff_id: string, decision: ClaimSpreadDecisio
     },
     409,
   );
+}
+
+function countProviderInFlight(services: DaemonServices, providerSeatNames: string[]): number {
+  const placeholders = providerSeatNames.map(() => "?").join(",");
+  const row = services.db
+    .query<CountRow, string[]>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE status='dispatched'
+          AND to_agent IN (${placeholders})`,
+    )
+    .get(...providerSeatNames);
+  return row?.n ?? 0;
+}
+
+function resolveProviderConcurrencyDecision(
+  services: DaemonServices,
+  handoff: { to_agent: string },
+): ProviderConcurrencyDecision | null {
+  const agentchatConfig = services.agentchatConfig;
+  if (!agentchatConfig) return null;
+  const agents = agentchatConfig.agents;
+  if (!Array.isArray(agents)) return null;
+  const handoffAgent = agents.find((agent) => agent.name === handoff.to_agent);
+  if (!handoffAgent) return null;
+
+  const provider = resolveProvider(handoffAgent);
+  if (!provider) return null;
+
+  const quota = services.providerQuotas.find(
+    (entry) =>
+      entry.provider === provider && entry.model === undefined && entry.max_in_flight !== undefined,
+  );
+  if (!quota || quota.max_in_flight === undefined) return null;
+
+  const providerSeatNames = agents
+    .filter((agent) => resolveProvider(agent) === provider)
+    .map((agent) => agent.name);
+  if (providerSeatNames.length === 0) return null;
+
+  return {
+    provider,
+    providerSeatNames,
+    max_in_flight: quota.max_in_flight,
+    in_flight_count: countProviderInFlight(services, providerSeatNames),
+  };
+}
+
+function providerConcurrencyCapResponse(
+  handoff_id: string,
+  decision: ProviderConcurrencyDecision,
+): Response {
+  return json(
+    {
+      error: {
+        code: "provider_concurrency_cap",
+        message: `handoff ${handoff_id} targets provider ${decision.provider}; provider is at the in-flight dispatch cap`,
+      },
+      provider: decision.provider,
+      max_in_flight: decision.max_in_flight,
+      in_flight_count: decision.in_flight_count,
+    },
+    409,
+  );
+}
+
+function enforceProviderConcurrencyCap(
+  services: DaemonServices,
+  handoff: { to_agent: string },
+  handoff_id: string,
+): { decision: ProviderConcurrencyDecision | null; response?: Response } {
+  const decision = resolveProviderConcurrencyDecision(services, handoff);
+  if (!decision) return { decision: null };
+  if (decision.in_flight_count >= decision.max_in_flight) {
+    return { decision, response: providerConcurrencyCapResponse(handoff_id, decision) };
+  }
+  return { decision };
 }
 
 function maybeTeardownLongLivedTick(params: {
@@ -871,9 +956,15 @@ export async function handoffsClaimRoute(
   if (cap.response) return cap.response;
   const spreadDecision = cap.decision;
 
+  const providerCap = enforceProviderConcurrencyCap(services, cur, handoff_id);
+  if (providerCap.response) return providerCap.response;
+  const providerDecision = providerCap.decision;
+
   const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id, {
     workflow_run_id: spreadDecision?.workflow_run_id,
     maxWorkflowSiblingsPerWorker: spreadDecision?.max_per_worker,
+    providerSeatNames: providerDecision?.providerSeatNames,
+    maxProviderInFlight: providerDecision?.max_in_flight,
   });
   if (!won) {
     return buildClaimConflictResponse(services, handoff_id, body.data.worker_id, spreadDecision);

@@ -85,6 +85,7 @@ export function providerQuotasFromAgentChatConfig(cfg: AgentChatConfig): Provide
     quota_tokens_per_24h: p.quota_tokens_per_24h,
     quota_tokens_per_5h: p.quota_tokens_per_5h,
     quota_tokens_per_7d: p.quota_tokens_per_7d,
+    max_in_flight: p.max_in_flight,
     pressure_caps: p.pressure_caps,
     synthetic_cap: p.synthetic_cap,
   }));

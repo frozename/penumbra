@@ -18,6 +18,11 @@ const SHARED_TOKEN = "shared-sec";
 
 type ErrorResponse = { error: { code: string } };
 type ClaimResponse = { status: string };
+type ProviderConcurrencyCapResponse = ErrorResponse & {
+  provider: string;
+  max_in_flight: number;
+  in_flight_count: number;
+};
 type WorkerAuthz = Map<string, { isolation: "sticky" | "hard" | "shared"; project_id?: string }>;
 type ClaimServices = Services & {
   workerAuthz?: WorkerAuthz;
@@ -291,6 +296,155 @@ test("workflow fan-out sibling claims are spread across active workers without e
     { worker_id: "W-A", n: 5 },
     { worker_id: "W-B", n: 1 },
   ]);
+});
+
+test("/handoffs/:id/claim returns typed 409 when provider in-flight cap is reached", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas = [{ provider: "anthropic", max_in_flight: 1 }];
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-running", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "provider-next", null, { to: "claude-b" });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const first = await fetchHandler(
+    new Request("http://x/handoffs/provider-running/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(first.status).toBe(200);
+
+  const capped = await fetchHandler(
+    new Request("http://x/handoffs/provider-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expect(capped.status).toBe(409);
+  const body = (await capped.json()) as ProviderConcurrencyCapResponse;
+  expect(body.error.code).toBe("provider_concurrency_cap");
+  expect(body.provider).toBe("anthropic");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("provider-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
+});
+
+test("/handoffs/:id/claim uses provider-wide max_in_flight regardless of quota row order", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "google-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-x",
+      },
+      {
+        name: "google-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-y",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas = [
+    { provider: "google", model: "gemini-x", max_in_flight: 1 },
+    { provider: "google", max_in_flight: 2 },
+  ];
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-order-running", null, { to: "google-a" });
+  seedApprovedHandoff(services, "provider-order-next", null, { to: "google-b" });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const first = await fetchHandler(
+    new Request("http://x/handoffs/provider-order-running/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(first.status).toBe(200);
+
+  const second = await fetchHandler(
+    new Request("http://x/handoffs/provider-order-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expect(second.status).toBe(200);
+  const count = services.db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE status='dispatched'
+          AND to_agent IN ('google-a', 'google-b')`,
+    )
+    .get();
+  expect(count?.n).toBe(2);
 });
 
 test("workflow sibling spreading does not block a warm-pool home worker", async () => {

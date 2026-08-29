@@ -244,6 +244,25 @@ describe("ProviderQuotaConfig per-model", () => {
     });
   });
 
+  test("preserves provider max_in_flight caps in the worker config schema", () => {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const yamlPath = join(dir, "agentchat.yaml");
+    writeFileSync(
+      yamlPath,
+      [
+        "agents:",
+        "  - name: x",
+        "    adapter: cli-spawn",
+        "providers:",
+        "  - name: anthropic",
+        "    max_in_flight: 2",
+      ].join("\n"),
+    );
+
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.max_in_flight).toBe(2);
+  });
+
   test("still accepts provider-level (no-model) entries for backwards compatibility", () => {
     const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
     const yamlPath = join(dir, "agentchat.yaml");

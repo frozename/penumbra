@@ -188,6 +188,33 @@ test("providerQuotasFromAgentChatConfig preserves configured synthetic dispatch 
   ]);
 });
 
+test("providerQuotasFromAgentChatConfig preserves configured provider in-flight caps", () => {
+  const quotas = providerQuotasFromAgentChatConfig({
+    agents: [],
+    default_roles: {},
+    providers: [
+      {
+        name: "anthropic",
+        max_in_flight: 2,
+      },
+    ],
+  });
+
+  expect(quotas).toEqual([
+    {
+      provider: "anthropic",
+      model: undefined,
+      quota_usd_per_24h: undefined,
+      quota_tokens_per_24h: undefined,
+      quota_tokens_per_5h: undefined,
+      quota_tokens_per_7d: undefined,
+      pressure_caps: undefined,
+      synthetic_cap: undefined,
+      max_in_flight: 2,
+    },
+  ]);
+});
+
 test("providerQuotasFromAgentChatConfig does not invent synthetic dispatch caps", () => {
   const quotas = providerQuotasFromAgentChatConfig({
     agents: [],

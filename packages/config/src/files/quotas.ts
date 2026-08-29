@@ -71,6 +71,7 @@ export const ProviderQuotaConfigSchema = z
     quota_tokens_per_24h: z.number().int().positive().optional(),
     quota_tokens_per_5h: z.number().int().positive().optional(),
     quota_tokens_per_7d: z.number().int().positive().optional(),
+    max_in_flight: z.number().int().positive().optional(),
     pressure_caps: z.partialRecord(PressureWindowLabelSchema, PressureCapWindowSchema).optional(),
     opencode_console: OpenCodeConsoleConfigSchema.optional(),
     synthetic_cap: z
@@ -97,6 +98,7 @@ export const QuotasConfigSchema = z
     // (no model) is a distinct key from any model-scoped entry. Only entries
     // sharing BOTH name AND model (including both-model-absent) collide.
     const seen = new Map<string, number>();
+    const maxInFlightByProvider = new Map<string, number>();
     for (const [i, entry] of data.providers.entries()) {
       const key = JSON.stringify([entry.name, entry.model ?? null]);
       const first = seen.get(key);
@@ -109,6 +111,27 @@ export const QuotasConfigSchema = z
         });
       } else {
         seen.set(key, i);
+      }
+
+      if (entry.max_in_flight !== undefined) {
+        if (entry.model !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["providers", i],
+            message: `provider '${entry.name}' model '${entry.model}' cannot define max_in_flight; max_in_flight is provider-wide and must be configured on the provider-level row`,
+          });
+        }
+
+        const firstMaxInFlight = maxInFlightByProvider.get(entry.name);
+        if (firstMaxInFlight !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["providers", i],
+            message: `provider '${entry.name}' defines max_in_flight more than once (also at providers[${String(firstMaxInFlight)}]); max_in_flight is provider-wide and only one row per provider may define it`,
+          });
+        } else {
+          maxInFlightByProvider.set(entry.name, i);
+        }
       }
     }
   });

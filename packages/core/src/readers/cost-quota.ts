@@ -26,6 +26,8 @@ export interface ProviderQuota {
   quota_tokens_per_24h?: number;
   quota_tokens_per_5h?: number;
   quota_tokens_per_7d?: number;
+  /** Fleet-wide cap on concurrently in-flight dispatches for the provider; enforced in HandoffWriter.claimDispatch. */
+  max_in_flight?: number;
   /** Per-window subscription pressure caps. Consumed by checkPressureCap, not the USD/token quota path. */
   pressure_caps?: Partial<
     Record<KnownPressureWindowLabel, { warn: number | null; refuse: number }>

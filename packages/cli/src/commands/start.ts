@@ -145,7 +145,7 @@ export function loadAgentchatBundle(): AgentchatBundle {
     process.stderr.write(
       `penumbra: failed to load agentchat config from ${configPath}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-    return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
+    throw err;
   }
 }
 

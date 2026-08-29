@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,6 +57,61 @@ describe("loadAgentchatBundle", () => {
         },
       ]);
     } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.PENUMBRA_CONFIG_DIR;
+      } else {
+        process.env.PENUMBRA_CONFIG_DIR = previousConfigDir;
+      }
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns an empty bundle when the config directory is absent", () => {
+    const configDir = join(
+      mkdtempSync(join(tmpdir(), "penumbra-start-absent-parent-")),
+      "missing-config",
+    );
+    const previousConfigDir = process.env.PENUMBRA_CONFIG_DIR;
+    process.env.PENUMBRA_CONFIG_DIR = configDir;
+    try {
+      expect(loadAgentchatBundle()).toEqual({
+        agentRegistry: null,
+        agentRouting: null,
+        providerQuotas: [],
+        agentchatConfig: null,
+      });
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.PENUMBRA_CONFIG_DIR;
+      } else {
+        process.env.PENUMBRA_CONFIG_DIR = previousConfigDir;
+      }
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rethrows ordinary parse failures when the config directory exists", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "penumbra-start-invalid-"));
+    const previousConfigDir = process.env.PENUMBRA_CONFIG_DIR;
+    const write = process.stderr.write;
+    const stderr: string[] = [];
+    process.env.PENUMBRA_CONFIG_DIR = configDir;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(join(configDir, "agents.yaml"), "agents: [\n");
+      writeFileSync(join(configDir, "routing.yaml"), "default_roles: {}\n");
+      writeFileSync(join(configDir, "quotas.yaml"), "providers: []\n");
+
+      expect(() => loadAgentchatBundle()).toThrow(/Flow sequence/);
+      expect(stderr.join("")).toContain(
+        `penumbra: failed to load agentchat config from ${configDir}`,
+      );
+    } finally {
+      process.stderr.write = write;
       if (previousConfigDir === undefined) {
         delete process.env.PENUMBRA_CONFIG_DIR;
       } else {
