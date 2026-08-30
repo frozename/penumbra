@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 
 import type { WorkerFatalRecord } from "../src/crash-guard.js";
 
-import { installGlobalCrashHandlers } from "../src/crash-guard.js";
+const crashGuard =
+  (await import("../src/crash-guard.js?crash-guard-test")) as typeof import("../src/crash-guard.js");
+const { installGlobalCrashHandlers } = crashGuard;
 
 const logged: { record: WorkerFatalRecord; msg: string }[] = [];
 let flushCount = 0;
@@ -15,19 +17,35 @@ const log = {
   },
 };
 
-const priorRejectionListeners = process.listeners("unhandledRejection");
-const priorExceptionListeners = process.listeners("uncaughtException");
+let listenersAtInstall: {
+  rejection: unknown[];
+  exception: unknown[];
+};
 let exitSpy: ReturnType<typeof spyOn<typeof process, "exit">>;
 const originalGuardEnv = process.env["PENUMBRA_WORKER_CRASH_GUARD"];
+let testRejectionListeners: unknown[] = [];
+let testExceptionListeners: unknown[] = [];
 
 beforeAll(() => {
   exitSpy = spyOn(process, "exit").mockImplementation(() => undefined as never);
+  const rejectionListenersBeforeInstall = new Set(process.listeners("unhandledRejection"));
+  const exceptionListenersBeforeInstall = new Set(process.listeners("uncaughtException"));
   installGlobalCrashHandlers({
     log,
     flush: () => {
       flushCount += 1;
     },
   });
+  listenersAtInstall = {
+    rejection: process.listeners("unhandledRejection"),
+    exception: process.listeners("uncaughtException"),
+  };
+  testRejectionListeners = listenersAtInstall.rejection.filter(
+    (listener) => !rejectionListenersBeforeInstall.has(listener),
+  );
+  testExceptionListeners = listenersAtInstall.exception.filter(
+    (listener) => !exceptionListenersBeforeInstall.has(listener),
+  );
 });
 
 afterEach(() => {
@@ -44,28 +62,24 @@ afterEach(() => {
 
 afterAll(() => {
   exitSpy.mockRestore();
-  for (const listener of process.listeners("unhandledRejection")) {
-    if (!priorRejectionListeners.includes(listener)) {
-      process.removeListener("unhandledRejection", listener);
-    }
+  for (const listener of testRejectionListeners) {
+    process.removeListener("unhandledRejection", listener as never);
   }
-  for (const listener of process.listeners("uncaughtException")) {
-    if (!priorExceptionListeners.includes(listener)) {
-      process.removeListener("uncaughtException", listener);
-    }
+  for (const listener of testExceptionListeners) {
+    process.removeListener("uncaughtException", listener as never);
   }
 });
 
 describe("installGlobalCrashHandlers", () => {
   test("registers exactly one handler per fatal event", () => {
-    expect(process.listenerCount("unhandledRejection")).toBe(priorRejectionListeners.length + 1);
-    expect(process.listenerCount("uncaughtException")).toBe(priorExceptionListeners.length + 1);
+    expect(process.listenerCount("unhandledRejection")).toBe(listenersAtInstall.rejection.length);
+    expect(process.listenerCount("uncaughtException")).toBe(listenersAtInstall.exception.length);
   });
 
   test("second install is a no-op", () => {
     installGlobalCrashHandlers({ log });
-    expect(process.listenerCount("unhandledRejection")).toBe(priorRejectionListeners.length + 1);
-    expect(process.listenerCount("uncaughtException")).toBe(priorExceptionListeners.length + 1);
+    expect(process.listenerCount("unhandledRejection")).toBe(listenersAtInstall.rejection.length);
+    expect(process.listenerCount("uncaughtException")).toBe(listenersAtInstall.exception.length);
   });
 
   test("uncaughtException logs a worker_fatal record with stack and exits 1", () => {
