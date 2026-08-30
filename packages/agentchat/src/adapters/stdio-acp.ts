@@ -6,7 +6,13 @@ import type { McpServer } from "./acp-types.js";
 
 import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifier-decline.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
+import {
+  OperationRejectedError,
+  TerminalCapExceededError,
+  TerminalNotFoundError,
+} from "../worker/write-tools-errors.js";
 import { executeReadTextFile, ReadTextFileError } from "./acp-fs.js";
+import { resolveWarmPrewarmCap, totalAcpWarmPoolEntryCount } from "./acp-warm-pool-registry.js";
 import {
   acpSpecHash,
   type AcpWarmPool,
@@ -14,18 +20,12 @@ import {
   type AcpWarmPoolPrewarmEviction,
   poolKeyFor,
 } from "./acp-warm-pool.js";
-import { resolveWarmPrewarmCap, totalAcpWarmPoolEntryCount } from "./acp-warm-pool-registry.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
   startStdioAcpServer,
   type StartStdioAcpServerOptions,
   type StdioAcpHandle,
 } from "./stdio-acp-server.js";
-import {
-  OperationRejectedError,
-  TerminalCapExceededError,
-  TerminalNotFoundError,
-} from "../worker/write-tools-errors.js";
 
 export function detectStdioAcpClassifierDecline(input: {
   finalText: string | null | undefined;
@@ -127,13 +127,27 @@ export function redactTerminalErrorMessage(message: unknown, code = -32000): str
     if (typeof message === "string") {
       messageLength = message.length;
     } else if (message !== null && message !== undefined) {
-      messageLength = String(message).length;
+      messageLength =
+        message instanceof Error
+          ? message.message.length
+          : typeof message === "object"
+            ? ((): number => {
+                const serialized = JSON.stringify(message) as unknown;
+                return typeof serialized === "string" ? serialized.length : 0;
+              })()
+            : typeof message === "string" ||
+                typeof message === "number" ||
+                typeof message === "boolean" ||
+                typeof message === "bigint" ||
+                typeof message === "symbol"
+              ? String(message).length
+              : 0;
     }
   } catch {
     messageLength = 0;
   }
   const safeCode = Number.isFinite(code) ? Math.trunc(code) : -32000;
-  return `terminal error redacted (code=${safeCode}, messageLength=${messageLength})`;
+  return `terminal error redacted (code=${String(safeCode)}, messageLength=${String(messageLength)})`;
 }
 
 // Idle / no-wire-activity stall timeout for stdio-acp dispatches. Raised from 5min
@@ -283,10 +297,8 @@ async function emitTerminalFailure(
   err: unknown,
 ): Promise<Error> {
   const mapped = mapWriteToolsError(err);
-  const code =
-    typeof (mapped as { code?: unknown }).code === "number"
-      ? ((mapped as { code?: number }).code as number)
-      : -32000;
+  const mappedCode = (mapped as { code?: unknown }).code;
+  const code = typeof mappedCode === "number" ? mappedCode : -32000;
   const terminalMessage =
     safeInternalTerminalMessage(err) ?? redactTerminalErrorMessage(mapped.message, code);
   // Unknown terminal failures can include caller argv with credentials when
@@ -933,8 +945,8 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
         if (!input.executor) throw new Error("terminal/create: no executor");
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
-          console.info(
-            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
+          console.warn(
+            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${String(command.length)}`,
           );
         }
         const result = await input.executor.terminalCreate(
@@ -983,19 +995,21 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       }),
     );
   };
-  wrapTerminalCommand("terminal/output", async (executor, terminalId) =>
-    executor.terminalOutput({ terminal_id: terminalId }),
+  wrapTerminalCommand(
+    "terminal/output",
+    async (executor, terminalId) => await executor.terminalOutput({ terminal_id: terminalId }),
   );
-  wrapTerminalCommand("terminal/wait_for_exit", async (executor, terminalId) =>
-    executor.terminalWaitForExit({ terminal_id: terminalId }),
+  wrapTerminalCommand(
+    "terminal/wait_for_exit",
+    async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
   );
   wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
-    const result = (await executor.terminalRelease({ terminal_id: terminalId })) as unknown;
-    return result ?? {};
+    await executor.terminalRelease({ terminal_id: terminalId });
+    return {};
   });
   wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
-    const result = (await executor.terminalKill({ terminal_id: terminalId })) as unknown;
-    return result ?? {};
+    await executor.terminalKill({ terminal_id: terminalId });
+    return {};
   });
 }
 
@@ -1025,7 +1039,7 @@ function cancelledOutcome(): PermissionResultCancelled {
 }
 
 function isBypassOptionId(optionId: unknown): boolean {
-  return typeof optionId === "string" && /^(switch_)?bypass$/i.test(optionId);
+  return typeof optionId === "string" && /^(?:switch_)?bypass$/i.test(optionId);
 }
 
 function isBypassLikeOptionId(optionId: unknown): boolean {
@@ -2038,9 +2052,9 @@ function shouldRetryColdDispatch(
 }
 
 function isTransportClosedError(err: unknown, pooledEntry: AcpWarmPoolEntry): boolean {
-  const isTransportOpen = pooledEntry.client.isTransportOpen;
+  const isTransportOpen = pooledEntry.client.isTransportOpen();
   return (
-    (typeof isTransportOpen === "function" && !isTransportOpen.call(pooledEntry.client)) ||
+    !isTransportOpen ||
     (err instanceof Error && err.message.includes("stdio-acp-client: transport closed"))
   );
 }

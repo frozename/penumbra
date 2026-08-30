@@ -1,3 +1,5 @@
+import type { DispatchEventInput } from "@penumbra/core";
+
 import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
@@ -5,7 +7,6 @@ import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
 import type { StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
 import type { DispatchInput } from "../../src/sdk/adapter.js";
 import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-import type { DispatchEventInput } from "@penumbra/core";
 
 import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
 import { redactTerminalErrorMessage, StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
@@ -637,10 +638,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const handlerA = harnessA.getHandler("terminal/wait_for_exit");
     const handlerB = harnessB.getHandler("terminal/wait_for_exit");
 
-    await expect(createHandlerA?.({ command: "echo hello" })).resolves.toMatchObject({
+    expect(createHandlerA?.({ command: "echo hello" })).resolves.toMatchObject({
       terminal_id: "term-123",
     });
-    await expect(handlerA?.({ terminalId: "term-123" })).resolves.toMatchObject({
+    expect(handlerA?.({ terminalId: "term-123" })).resolves.toMatchObject({
       exit_status: { exitCode: 0, signal: null },
     });
     const { error } = await captureError(handlerB?.({ terminalId: "term-123" }));
@@ -728,7 +729,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
           code: -32004,
           message: "denied",
         },
-      }),
+      }) as unknown as DispatchEventInput,
     );
   });
 
@@ -768,7 +769,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
           code: -32005,
           message: "terminal not found",
         },
-      }),
+      }) as unknown as DispatchEventInput,
     );
   });
 
@@ -795,8 +796,8 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
           method: "terminal/output",
           code: -32005,
           message: "terminal not found",
-        }),
-      }),
+        }) as unknown,
+      }) as unknown as DispatchEventInput,
     );
     expect(harness.auditEvents).toEqual([
       {
@@ -836,16 +837,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     expect(error?.message).not.toContain(secret);
     expect(JSON.stringify(harness.events)).not.toContain(secret);
     expect(JSON.stringify(harness.auditEvents)).not.toContain(secret);
-    expect(harness.events).toContainEqual(
-      expect.objectContaining({
-        kind: "terminal.failed",
-        meta: expect.objectContaining({
-          method: "terminal/kill",
-          code: -32000,
-          message: expectedMessage,
-        }),
-      }),
-    );
+    const failedEvent = harness.events.find((event) => event.kind === "terminal.failed");
+    expect(failedEvent?.meta?.method).toBe("terminal/kill");
+    expect(failedEvent?.meta?.code).toBe(-32000);
+    expect(failedEvent?.meta?.message).toBe(expectedMessage);
     expect(harness.auditEvents).toEqual([
       {
         type: "terminal.failed",
@@ -975,28 +970,37 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       const handled = captureError(handler?.({ terminal_id: "term-404" }));
       const immediate = await Promise.race([
         handled,
-        new Promise((resolve) => setTimeout(() => resolve("blocked"), 20)),
+        new Promise((resolve) =>
+          setTimeout(() => {
+            resolve("blocked");
+          }, 20),
+        ),
       ]);
 
       expect(immediate).toBe("blocked");
 
       const bounded = await Promise.race([
         handled,
-        new Promise((resolve) => setTimeout(() => resolve("still-blocked"), 2_800)),
+        new Promise((resolve) =>
+          setTimeout(() => {
+            resolve("still-blocked");
+          }, 2_800),
+        ),
       ]);
       const elapsedMs = Date.now() - startedAt;
 
       expect(bounded).not.toBe("still-blocked");
       expect(elapsedMs).toBeLessThan(2_800);
       expect((bounded as { error: Error | null }).error?.message).toBe("terminal not found");
-      expect(warnings).toContainEqual([
-        "stdio-acp: terminal failure audit emit failed",
-        {
-          method: "terminal/kill",
-          code: -32005,
-          message: expect.stringContaining("timed out"),
-        },
-      ]);
+      const warning = warnings[0] as [string, { message?: unknown }] | undefined;
+      const payload = warning?.[1] as unknown as { message?: unknown };
+      expect(warning?.[0]).toBe("stdio-acp: terminal failure audit emit failed");
+      expect(warning?.[1]).toMatchObject({
+        method: "terminal/kill",
+        code: -32005,
+      });
+      expect(typeof payload.message).toBe("string");
+      expect(payload.message).toContain("timed out");
     } finally {
       console.warn = originalWarn;
     }
@@ -1005,8 +1009,8 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
   test("terminal failure audit and logs do not expose raw command secrets", async () => {
     const secret = "FAKE_SECRET_TOKEN_do_not_log";
     const logs: unknown[] = [];
-    const originalInfo = console.info;
-    console.info = (...args: unknown[]): void => {
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]): void => {
       logs.push(args);
     };
     try {
@@ -1051,7 +1055,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(harness.events.some((event) => event.kind === "terminal.failed")).toBe(true);
       expect(harness.auditEvents.some((event) => event.type === "terminal.failed")).toBe(true);
     } finally {
-      console.info = originalInfo;
+      console.warn = originalWarn;
     }
   });
 
@@ -1059,8 +1063,8 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const secret = "sk-FAKE-SECRET-DO-NOT-LOG-12345";
     const fakeArgv = `["curl","-H","Authorization: Bearer ${secret}","https://example.test"]`;
     const terminalError = new Error(`spawn failed for full argv ${fakeArgv}`);
-    const originalInfo = console.info;
-    console.info = (): void => undefined;
+    const originalWarn = console.warn;
+    console.warn = (): void => undefined;
     try {
       const harness = createHarness(
         { terminal: true },
@@ -1091,7 +1095,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(error?.message).not.toContain(fakeArgv);
       expect((error as { cause?: unknown } | null)?.cause).toBeUndefined();
     } finally {
-      console.info = originalInfo;
+      console.warn = originalWarn;
     }
   });
 
@@ -1243,7 +1247,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     );
     expect(terminalErrorFrame).toBeDefined();
     expect(terminalErrorFrame?.error.message).toBe(
-      `terminal error redacted (code=-32000, messageLength=${String(`spawn failed for ${secret}`).length})`,
+      `terminal error redacted (code=-32000, messageLength=${String(`spawn failed for ${secret}`.length)})`,
     );
     expect(JSON.stringify(writtenFrames)).not.toContain(secret);
   });

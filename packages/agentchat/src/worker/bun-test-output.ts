@@ -49,16 +49,24 @@ function normalizeSuitePath(path: string): string {
 }
 
 function suitePathFromHeader(line: string): string | null {
-  const match = line.match(/^(.+?\.(?:test|spec)\.[cm]?[tj]sx?):\s*$/);
+  const match = /^(.+?\.(?:test|spec)\.[cm]?[tj]sx?):\s*$/.exec(line);
   return match?.[1] ? normalizeSuitePath(match[1]) : null;
 }
 
 function suitePathFromStack(line: string): string | null {
-  const match = line.match(/\bat\s+(?:file:\/\/)?(.+?\.(?:test|spec)\.[cm]?[tj]sx?):\d+:\d+/);
+  const match = /\bat\s+(?:file:\/\/)?(\S+\.(?:test|spec)\.[cm]?[tj]sx?):\d+:\d+/.exec(line);
   return match?.[1] ? normalizeSuitePath(match[1]) : null;
 }
 
 function collectFailureSuitePaths(out: string): string[] {
+  return collectUnhandledSuites(out, true);
+}
+
+function collectUnhandledErrorNames(out: string): string[] {
+  return collectUnhandledSuites(out, false);
+}
+
+function collectUnhandledSuites(out: string, includeFailures: boolean): string[] {
   const suitePaths = new Set<string>();
   let currentSuite: string | null = null;
   let pendingUnhandledError = false;
@@ -71,7 +79,7 @@ function collectFailureSuitePaths(out: string): string[] {
       continue;
     }
 
-    if (/^\((?:fail|error)\)\s+/.test(line) && currentSuite) {
+    if (includeFailures && /^\((?:fail|error)\)\s+/.test(line) && currentSuite) {
       suitePaths.add(currentSuite);
     }
 
@@ -93,37 +101,6 @@ function collectFailureSuitePaths(out: string): string[] {
   return [...suitePaths].sort();
 }
 
-function collectUnhandledErrorNames(out: string): string[] {
-  const errorNames = new Set<string>();
-  let currentSuite: string | null = null;
-  let pendingUnhandledError = false;
-
-  for (const line of out.split(/\r?\n/)) {
-    const suitePath = suitePathFromHeader(line);
-    if (suitePath) {
-      currentSuite = suitePath;
-      pendingUnhandledError = false;
-      continue;
-    }
-
-    if (line === "# Unhandled error between tests") {
-      if (currentSuite) errorNames.add(currentSuite);
-      pendingUnhandledError = currentSuite === null;
-      continue;
-    }
-
-    if (pendingUnhandledError) {
-      const stackSuitePath = suitePathFromStack(line);
-      if (stackSuitePath) {
-        errorNames.add(stackSuitePath);
-        pendingUnhandledError = false;
-      }
-    }
-  }
-
-  return [...errorNames].sort();
-}
-
 function unenumerableFailureKey(init: {
   fails: number | null;
   errors: number;
@@ -135,10 +112,10 @@ function unenumerableFailureKey(init: {
   const sortedSuitePaths = [...new Set(init.failureSuitePaths)].sort();
   const missingCount = Math.max(0, init.reportedFailureCount - init.failureKeys.length);
   const projection = [
-    `fails=${init.fails ?? "unknown"}`,
-    `errors=${init.errors}`,
-    `known=${init.failureKeys.length}`,
-    `missing=${missingCount}`,
+    `fails=${String(init.fails ?? "unknown")}`,
+    `errors=${String(init.errors)}`,
+    `known=${String(init.failureKeys.length)}`,
+    `missing=${String(missingCount)}`,
     `keys=${fingerprintProjection(sortedKeys)}`,
     `suites=${fingerprintProjection(sortedSuitePaths)}`,
   ];

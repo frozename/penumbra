@@ -1,6 +1,5 @@
-import { expect, test } from "bun:test";
-
 import { MAX_WALKER_DEPTH } from "@penumbra/core";
+import { expect, test } from "bun:test";
 
 import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 

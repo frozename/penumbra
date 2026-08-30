@@ -329,7 +329,7 @@ class AcpWarmPoolImpl implements AcpWarmPool {
       signalCode?: NodeJS.Signals | null;
     };
     const stdout = handle.stdout as StdioAcpHandle["stdout"] & { closed?: boolean };
-    const transportOpen = entry.client.isTransportOpen;
+    const transportOpen = entry.client.isTransportOpen();
     return (
       !entry.tornDown &&
       (handle.exitCode === null || handle.exitCode === undefined) &&
@@ -339,7 +339,7 @@ class AcpWarmPoolImpl implements AcpWarmPool {
       stdout.readable &&
       !stdout.destroyed &&
       !stdout.closed &&
-      (typeof transportOpen !== "function" || transportOpen.call(entry.client))
+      transportOpen
     );
   }
 

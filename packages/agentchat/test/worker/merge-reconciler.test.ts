@@ -1,7 +1,7 @@
 import {
-  MergeResultEventSchema,
   type HandoffRow,
   type Logger,
+  MergeResultEventSchema,
   WorktreeManager,
 } from "@penumbra/core";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
@@ -22,15 +22,15 @@ import type { CreatePRArgs, CreatePRResult } from "../../src/worker/github-pr-he
 import type { ThoughtAnalyzerInput, ThoughtRow } from "../../src/worker/thought-analyzer.js";
 import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
 
+import { PenumbraHttpError } from "../../src/penumbra-client.js";
 import {
-  MERGE_RESULT_STATUSES,
   createMergeReconciler,
+  MERGE_RESULT_STATUSES,
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
   resolveAffectedPackages,
 } from "../../src/worker/merge-reconciler.js";
-import { PenumbraHttpError } from "../../src/penumbra-client.js";
 
 interface ExecResult {
   stdout: string;
@@ -611,16 +611,15 @@ test("progress post failure does not mask the verified reconciler result", async
     status: "verified",
     progressReported: false,
   });
-  expect(logMocks.warn.mock.calls).toContainEqual([
-    expect.objectContaining({
-      handoffId: "h1",
-      status: 400,
-      body: expect.objectContaining({
-        error: { code: "validation_failed" },
-      }),
-    }),
-    "merge-result progress post failed",
-  ]);
+  const warning = logMocks.warn.mock.calls.find(
+    (call) => call[1] === "merge-result progress post failed",
+  );
+  expect(warning).toBeDefined();
+  expect(warning?.[0]).toMatchObject({
+    handoffId: "h1",
+    status: 400,
+    body: { error: { code: "validation_failed" } },
+  });
 });
 
 test("runs thought analyzer after notifyResult when merge status is in onlyWhen", async () => {
@@ -1612,7 +1611,7 @@ test("Typecheck timeout returns timed_out: true", async () => {
     if (cmd.includes("bun tsc -b packages/core packages/daemon")) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return defaultExecForCommand(cmd);
+    return await defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_timeout_1");
@@ -1634,7 +1633,7 @@ test("Test timeout returns timed_out: true", async () => {
     if (cmd.includes("bun test")) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    return defaultExecForCommand(cmd);
+    return await defaultExecForCommand(cmd);
   });
 
   const result = await reconcile("h_timeout_2");

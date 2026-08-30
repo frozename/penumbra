@@ -250,13 +250,13 @@ function createPhaseAbortSignal(
 
 async function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
-    const reason = signal.reason;
+    const reason: unknown = signal.reason;
     throw reason instanceof Error ? reason : new Error("opencode-acp: operation aborted");
   }
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = (): void => {
-      const reason = signal.reason;
+      const reason: unknown = signal.reason;
       reject(reason instanceof Error ? reason : new Error("opencode-acp: operation aborted"));
     };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -481,7 +481,7 @@ export class OpencodeAcpAdapter implements Adapter {
       }
     };
     try {
-      streamLoop: while (true) {
+      streamLoop: for (;;) {
         const next = await nextEvent();
         if (next.done) break;
         sawEvent = true;

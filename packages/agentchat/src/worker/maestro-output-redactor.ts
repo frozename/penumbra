@@ -1,8 +1,8 @@
 import {
   ValuePatternRedactor,
-  WALKER_DEPTH_EXCEEDED_RULE_ID,
   type ValuePatternRule,
   type ValueRedactionHit,
+  WALKER_DEPTH_EXCEEDED_RULE_ID,
 } from "@penumbra/core";
 
 import {

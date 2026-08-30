@@ -15,13 +15,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { parseBunTestReport } from "../../src/worker/bun-test-output.js";
 import {
   createMergeReconciler,
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
 } from "../../src/worker/merge-reconciler.js";
-import { parseBunTestReport } from "../../src/worker/bun-test-output.js";
 
 interface ExecResult {
   stdout: string;

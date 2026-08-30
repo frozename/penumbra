@@ -92,11 +92,21 @@ export class StdioAcpClient {
       });
     }
 
-    this.options.stdout.once("close", () => this.closeTransport());
-    this.options.stdout.once("end", () => this.closeTransport());
-    this.options.stdout.once("error", (err) => this.closeTransport(err));
-    this.options.stdin.once("close", () => this.closeTransport());
-    this.options.stdin.once("error", (err) => this.closeTransport(err));
+    this.options.stdout.once("close", () => {
+      this.closeTransport();
+    });
+    this.options.stdout.once("end", () => {
+      this.closeTransport();
+    });
+    this.options.stdout.once("error", (err) => {
+      this.closeTransport(err);
+    });
+    this.options.stdin.once("close", () => {
+      this.closeTransport();
+    });
+    this.options.stdin.once("error", (err) => {
+      this.closeTransport(err);
+    });
   }
 
   isTransportOpen(): boolean {
@@ -180,7 +190,7 @@ export class StdioAcpClient {
         return false;
       }
       this.consumeHeader(headerEnd);
-      if (this.framingBroken) return false;
+      if (this.isFramingBroken()) return false;
     }
 
     if (this.contentLength === null) return false;
@@ -245,6 +255,10 @@ export class StdioAcpClient {
     } catch {
       // best-effort
     }
+  }
+
+  private isFramingBroken(): boolean {
+    return this.framingBroken;
   }
 
   private writeMessage(message: object): void {
