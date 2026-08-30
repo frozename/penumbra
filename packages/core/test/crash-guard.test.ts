@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 
-import type { WorkerFatalRecord } from "../../core/src/crash-guard.js";
+import type { WorkerFatalRecord } from "../src/crash-guard.js";
 
 const crashGuard =
-  (await import("../../core/src/crash-guard.js?crash-guard-test")) as typeof import(
-    "../../core/src/crash-guard.js"
+  (await import("../src/crash-guard.js?crash-guard-test")) as typeof import(
+    "../src/crash-guard.js"
   );
 const { installGlobalCrashHandlers } = crashGuard;
 
