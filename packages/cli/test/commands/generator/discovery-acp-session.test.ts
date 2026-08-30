@@ -12,6 +12,7 @@ import {
   parseAcpSessionModels,
   runAcpHandshake,
 } from "../../../src/commands/generator/discovery-acp-session.js";
+import { expectAsyncThrow } from "../_helpers.js";
 
 interface RpcMessage {
   jsonrpc: "2.0";
@@ -180,7 +181,7 @@ describe("ACP session model discovery", () => {
     });
   });
 
-  test("a child that hangs on session/new is killed within timeoutMs and confirmed dead", () => {
+  test("a child that hangs on session/new is killed within timeoutMs and confirmed dead", async () => {
     const child = new FakeAcpChild((request, transport) => {
       if (request.method === "initialize") {
         transport.send(responseFor(request, initializeFixture));
@@ -196,14 +197,15 @@ describe("ACP session model discovery", () => {
     const startedAt = performance.now();
 
     try {
-      expect(
+      await expectAsyncThrow(
         runAcpHandshake({
           command: "fixture-acp",
           args: [],
           spawn: spawnChild(child),
           timeoutMs: 20,
         }),
-      ).rejects.toThrow("session/new timed out after 20ms");
+        "session/new timed out after 20ms",
+      );
     } finally {
       // eslint-disable-next-line no-console -- restore the captured info logger.
       console.info = originalInfo;

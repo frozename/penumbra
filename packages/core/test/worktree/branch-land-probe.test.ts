@@ -75,7 +75,13 @@ describe("classifyBranchLandStatus", () => {
     await git(repoDir, ["merge", "--squash", branch]);
     await git(repoDir, ["commit", "-m", "squash land"]);
 
-    expect(git(repoDir, ["merge-base", "--is-ancestor", branch, "main"])).rejects.toThrow();
+    let ancestorCheckRejected = false;
+    try {
+      await git(repoDir, ["merge-base", "--is-ancestor", branch, "main"]);
+    } catch {
+      ancestorCheckRejected = true;
+    }
+    expect(ancestorCheckRejected).toBe(true);
 
     const status = await classifyBranchLandStatus(gitRunner, repoDir, branch, "main");
 

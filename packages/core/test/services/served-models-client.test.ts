@@ -53,11 +53,16 @@ describe("served models client", () => {
     ]);
   });
 
-  test("throws when the inventory endpoint is unavailable", () => {
-    expect(
-      fetchServedModels("http://127.0.0.1:7944", {
+  test("throws when the inventory endpoint is unavailable", async () => {
+    let caught: unknown;
+    try {
+      await fetchServedModels("http://127.0.0.1:7944", {
         fetch: () => new Response("bad", { status: 502 }),
-      }),
-    ).rejects.toThrow("served models probe failed");
+      });
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof Error)) throw new Error("expected fetchServedModels to reject");
+    expect(caught.message).toContain("served models probe failed");
   });
 });

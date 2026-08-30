@@ -638,10 +638,12 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     const handlerA = harnessA.getHandler("terminal/wait_for_exit");
     const handlerB = harnessB.getHandler("terminal/wait_for_exit");
 
-    expect(createHandlerA?.({ command: "echo hello" })).resolves.toMatchObject({
+    const createdTerminal = await createHandlerA?.({ command: "echo hello" });
+    expect(createdTerminal).toMatchObject({
       terminal_id: "term-123",
     });
-    expect(handlerA?.({ terminalId: "term-123" })).resolves.toMatchObject({
+    const exitedTerminal = await handlerA?.({ terminalId: "term-123" });
+    expect(exitedTerminal).toMatchObject({
       exit_status: { exitCode: 0, signal: null },
     });
     const { error } = await captureError(handlerB?.({ terminalId: "term-123" }));

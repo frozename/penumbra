@@ -213,7 +213,7 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
     ]);
   });
 
-  it("replaces a dead pooled transport with a cold dispatch", () => {
+  it("replaces a dead pooled transport with a cold dispatch", async () => {
     const pool = createAcpWarmPool({ now: () => 0 });
     const staleServer = makeServer();
     let transportOpen = true;
@@ -252,7 +252,8 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
       pool,
     });
 
-    expect(adapter.dispatch(makeDispatchInput("h1", []))).resolves.toMatchObject({
+    const result = await adapter.dispatch(makeDispatchInput("h1", []));
+    expect(result).toMatchObject({
       text: "",
     });
     expect(staleServer.kill).toHaveBeenCalledTimes(1);

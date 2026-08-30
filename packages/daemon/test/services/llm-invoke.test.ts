@@ -44,6 +44,19 @@ function rolePoolInput(
   };
 }
 
+async function expectLlmInvokeRejects(promise: Promise<unknown>, matcher: RegExp): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof Error)) {
+    throw new Error("expected llmInvoke to reject");
+  }
+  expect(caught.message).toMatch(matcher);
+}
+
 test("happy path returns parsed payload and raw content", async () => {
   const fetchMock = mock(
     (): Promise<Response> =>
@@ -522,7 +535,7 @@ test("advances past HTTP 200 with whitespace-only content", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
-test("rejects a non-allowlisted provider before transport", () => {
+test("rejects a non-allowlisted provider before transport", async () => {
   const fetchMock = mock(
     (): Promise<Response> =>
       Promise.resolve(
@@ -533,7 +546,7 @@ test("rejects a non-allowlisted provider before transport", () => {
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       baseUrl: "https://api.openai.com",
       model: "gpt-4o",
@@ -543,11 +556,12 @@ test("rejects a non-allowlisted provider before transport", () => {
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/provider.*openai.*not allowed/i);
+    /provider.*openai.*not allowed/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
 
-test("never re-admits a bias-excluded provider when it is the last candidate", () => {
+test("never re-admits a bias-excluded provider when it is the last candidate", async () => {
   const fetchMock = mock(
     (): Promise<Response> =>
       Promise.resolve(
@@ -558,7 +572,7 @@ test("never re-admits a bias-excluded provider when it is the last candidate", (
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       baseUrl: "https://api.sakana.ai/v1",
       model: "sakana-rewriter",
@@ -577,11 +591,12 @@ test("never re-admits a bias-excluded provider when it is the last candidate", (
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/no eligible.*candidate/i);
+    /no eligible.*candidate/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
 
-test("embedding purpose never admits fallback candidates", () => {
+test("embedding purpose never admits fallback candidates", async () => {
   const fetchMock = mock((url: string): Promise<Response> => {
     if (url.startsWith("http://primary")) {
       return Promise.resolve(new Response("down", { status: 502 }));
@@ -594,7 +609,7 @@ test("embedding purpose never admits fallback candidates", () => {
   });
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       purpose: "embedding",
       baseUrl: "http://primary",
@@ -614,7 +629,8 @@ test("embedding purpose never admits fallback candidates", () => {
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/embedding.*fallback/i);
+    /embedding.*fallback/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
 
@@ -662,7 +678,7 @@ test("role-resolved candidates skip an unreachable local seat and serve from the
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
-test("role-resolved candidates reject a disallowed provider before transport", () => {
+test("role-resolved candidates reject a disallowed provider before transport", async () => {
   const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -679,18 +695,19 @@ test("role-resolved candidates reject a disallowed provider before transport", (
     },
   ]);
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       ...rolePoolInput(candidates),
       messages: [{ role: "user", content: "hello" }],
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/provider.*openai.*not allowed/i);
+    /provider.*openai.*not allowed/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
 
-test("role-resolved candidates do not re-admit a bias-excluded provider", () => {
+test("role-resolved candidates do not re-admit a bias-excluded provider", async () => {
   const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
   const candidates = roleCandidates([
     {
@@ -707,7 +724,7 @@ test("role-resolved candidates do not re-admit a bias-excluded provider", () => 
     },
   ]);
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       ...rolePoolInput(candidates),
       activeBiases: [
@@ -723,11 +740,12 @@ test("role-resolved candidates do not re-admit a bias-excluded provider", () => 
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/no eligible.*candidate/i);
+    /no eligible.*candidate/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
 
-test("embedding rejects a role-resolved fallback pool before transport", () => {
+test("embedding rejects a role-resolved fallback pool before transport", async () => {
   const fetchMock = mock(() => Promise.resolve(new Response("unexpected", { status: 200 })));
   const candidates = roleCandidates([
     {
@@ -744,7 +762,7 @@ test("embedding rejects a role-resolved fallback pool before transport", () => {
     },
   ]);
 
-  expect(
+  await expectLlmInvokeRejects(
     llmInvoke({
       ...rolePoolInput(candidates),
       purpose: "embedding",
@@ -752,6 +770,7 @@ test("embedding rejects a role-resolved fallback pool before transport", () => {
       schema: z.object({ answer: z.string() }),
       fetchFn: fetchMock as unknown as typeof fetch,
     }),
-  ).rejects.toThrow(/embedding fallback candidates are forbidden/i);
+    /embedding fallback candidates are forbidden/i,
+  );
   expect(fetchMock).toHaveBeenCalledTimes(0);
 });
