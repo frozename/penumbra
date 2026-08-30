@@ -5,6 +5,7 @@ import type { DiscoveredModel } from "./discovery-types.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_SOURCE_PROVIDER_ID = "opencode";
+const DISCOVERY_CLI_TIMEOUT_MS = 30_000;
 
 export interface DiscoverOpencodeModelsOpts {
   runOpencodeModels?: () => Promise<string>;
@@ -87,9 +88,12 @@ export function parseOpencodeModelsOutput(output: string): DiscoveredModel[] {
 }
 
 async function defaultRunOpencodeModels(): Promise<string> {
-  const { stdout } = await execFileAsync("opencode", ["models", "--verbose"], {
+  const promise = execFileAsync("opencode", ["models", "--verbose"], {
     maxBuffer: 10 * 1024 * 1024,
+    timeout: DISCOVERY_CLI_TIMEOUT_MS,
   });
+  promise.child.stdin?.end();
+  const { stdout } = await promise;
   return stdout;
 }
 

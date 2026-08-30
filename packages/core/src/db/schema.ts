@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 
+// 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 41;
+export const SCHEMA_VERSION = 42;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -971,20 +972,20 @@ const SCHEMA_DDL_BLOCK_15 = `
         registrar_id TEXT NOT NULL REFERENCES registrar_entries(registrar_id),
         phase_no     INTEGER,
         kind         TEXT NOT NULL CHECK (kind IN
-                       ('progress','caveat','blocker','follow_up','decision','phase_transition','link')),
+                       ('progress','caveat','blocker','follow_up','decision','phase_transition','link','entry_transition')),
         state        TEXT,
         ref_event_id INTEGER REFERENCES registrar_events(event_id),
         link_kind    TEXT CHECK (link_kind IS NULL OR link_kind IN
                        ('commit_sha','handoff_id','lane_id','workflow_run_id','memory_id','plan_id','gh_issue')),
         link_value   TEXT,
         actor        TEXT NOT NULL CHECK (actor IN ('maestro','worker','sweeper','operator')),
-        -- Pre-existing databases retain the character-count CHECK; writer-mediated writes remain byte-bounded.
         body         TEXT NOT NULL CHECK (length(CAST(body AS BLOB)) <= 4096),
         created_at   INTEGER NOT NULL,
         CHECK ((kind = 'blocker'          AND state IN ('opened','resolved'))
             OR (kind = 'follow_up'        AND state IN ('owed','done','dropped'))
             OR (kind = 'phase_transition' AND state IN ('pending','active','blocked','complete','abandoned'))
-            OR (kind NOT IN ('blocker','follow_up','phase_transition') AND state IS NULL)),
+            OR (kind = 'entry_transition' AND state IN ('active','paused','complete','abandoned'))
+            OR (kind NOT IN ('blocker','follow_up','phase_transition','entry_transition') AND state IS NULL)),
         CHECK (kind != 'link' OR (link_kind IS NOT NULL AND link_value IS NOT NULL)),
         CHECK (state NOT IN ('resolved','done','dropped') OR ref_event_id IS NOT NULL)
       );
@@ -1351,6 +1352,9 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
   // enclosing transaction) keeps the FK-disable effective so an orphaned row upgrades
   // instead of crashing applySchema on a FOREIGN KEY violation.
   migrateDreamQueryRewritesToModelScopedKeys(db);
+  // Same envelope: registrar_events declares a self-referencing FK, so the rebuild
+  // also runs with FK enforcement off, outside the main transaction.
+  ensureRegistrarEventsEntryTransitionKind(db);
 }
 
 function createT0FtsSrcView(db: Database): void {
@@ -1709,6 +1713,105 @@ function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
       db.run(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
         ON dream_query_rewrites(t2_memory_id)`);
       markDreamQueryRewritesMigrated(db);
+      db.run("COMMIT");
+    } catch (err) {
+      db.run("ROLLBACK");
+      throw err;
+    }
+  } finally {
+    db.run(`PRAGMA foreign_keys = ${restoreForeignKeys}`);
+  }
+}
+
+function ensureRegistrarEventsEntryTransitionKind(db: Database): void {
+  // Self-auditing: fresh databases created at v42 already carry the kind in their
+  // sqlite_master DDL, so probe the stored CREATE statement instead of a db_meta marker.
+  const tableSql = db
+    .query<
+      { sql: string },
+      []
+    >("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registrar_events'")
+    .get();
+  if (!tableSql || tableSql.sql.includes("entry_transition")) return;
+
+  const oversizedBodies = db
+    .query<
+      { event_id: number },
+      []
+    >("SELECT event_id FROM registrar_events WHERE length(CAST(body AS BLOB)) > 4096 LIMIT 10")
+    .all();
+  if (oversizedBodies.length > 0) {
+    const eventIds = oversizedBodies.map((row) => String(row.event_id)).join(", ");
+    throw new Error(
+      `registrar_events contains bodies over 4096 bytes for event_id(s): ${eventIds}; shorten these bodies below 4096 bytes, then restart`,
+    );
+  }
+  const oldSequence =
+    db
+      .query<{ seq: number }, []>("SELECT seq FROM sqlite_sequence WHERE name = 'registrar_events'")
+      .get()?.seq ?? 0;
+
+  // Mirror migrateDreamQueryRewritesToModelScopedKeys: registrar_events has a
+  // self-referencing FK, and PRAGMA foreign_keys is ignored inside an open
+  // transaction, so toggle it here (no enclosing transaction) and restore in finally.
+  const fkState = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
+  const restoreForeignKeys = fkState?.foreign_keys === 0 ? "OFF" : "ON";
+  db.run("PRAGMA foreign_keys = OFF");
+  try {
+    db.run("BEGIN");
+    try {
+      db.run("ALTER TABLE registrar_events RENAME TO registrar_events__pre_entry_transition");
+      db.run(`
+      CREATE TABLE registrar_events (
+        event_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        registrar_id TEXT NOT NULL REFERENCES registrar_entries(registrar_id),
+        phase_no     INTEGER,
+        kind         TEXT NOT NULL CHECK (kind IN
+                       ('progress','caveat','blocker','follow_up','decision','phase_transition','link','entry_transition')),
+        state        TEXT,
+        ref_event_id INTEGER REFERENCES registrar_events(event_id),
+        link_kind    TEXT CHECK (link_kind IS NULL OR link_kind IN
+                       ('commit_sha','handoff_id','lane_id','workflow_run_id','memory_id','plan_id','gh_issue')),
+        link_value   TEXT,
+        actor        TEXT NOT NULL CHECK (actor IN ('maestro','worker','sweeper','operator')),
+        body         TEXT NOT NULL CHECK (length(CAST(body AS BLOB)) <= 4096),
+        created_at   INTEGER NOT NULL,
+        CHECK ((kind = 'blocker'          AND state IN ('opened','resolved'))
+            OR (kind = 'follow_up'        AND state IN ('owed','done','dropped'))
+            OR (kind = 'phase_transition' AND state IN ('pending','active','blocked','complete','abandoned'))
+            OR (kind = 'entry_transition' AND state IN ('active','paused','complete','abandoned'))
+            OR (kind NOT IN ('blocker','follow_up','phase_transition','entry_transition') AND state IS NULL)),
+        CHECK (kind != 'link' OR (link_kind IS NOT NULL AND link_value IS NOT NULL)),
+        CHECK (state NOT IN ('resolved','done','dropped') OR ref_event_id IS NOT NULL)
+      );`);
+      db.run(`
+        INSERT INTO registrar_events (
+          event_id, registrar_id, phase_no, kind, state, ref_event_id, link_kind, link_value, actor, body, created_at
+        )
+        SELECT event_id, registrar_id, phase_no, kind, state, ref_event_id, link_kind, link_value, actor, body, created_at
+        FROM registrar_events__pre_entry_transition
+      `);
+      const maxEventId =
+        db
+          .query<
+            { max_event_id: number | null },
+            []
+          >("SELECT MAX(event_id) AS max_event_id FROM registrar_events")
+          .get()?.max_event_id ?? 0;
+      const restoredSequence = Math.max(oldSequence, maxEventId);
+      if (restoredSequence > 0) {
+        db.run("DELETE FROM sqlite_sequence WHERE name = 'registrar_events'");
+        db.run("INSERT INTO sqlite_sequence(name, seq) VALUES ('registrar_events', ?)", [
+          restoredSequence,
+        ]);
+      }
+      db.run("DROP TABLE registrar_events__pre_entry_transition");
+      db.run(
+        "CREATE INDEX IF NOT EXISTS registrar_events_by_entry ON registrar_events(registrar_id, created_at)",
+      );
+      db.run(
+        "CREATE INDEX IF NOT EXISTS registrar_events_open_state ON registrar_events(registrar_id, kind, state)",
+      );
       db.run("COMMIT");
     } catch (err) {
       db.run("ROLLBACK");

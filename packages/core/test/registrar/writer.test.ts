@@ -3,7 +3,11 @@ import { expect, test } from "bun:test";
 
 import { migrate } from "../../src/db/migrations.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { InvalidPhaseTransition, RegistrarSlugTaken } from "../../src/registrar/errors.js";
+import {
+  InvalidEntryTransition,
+  InvalidPhaseTransition,
+  RegistrarSlugTaken,
+} from "../../src/registrar/errors.js";
 import { RegistrarReader } from "../../src/registrar/reader.js";
 import { RegistrarWriter, rethrowSlugUniqueConstraint } from "../../src/registrar/writer.js";
 
@@ -232,6 +236,62 @@ test("two appendEvent phase transitions from the same from_status: the first suc
   writer.appendEvent(entry.registrar_id, transition);
   expect(() => writer.appendEvent(entry.registrar_id, transition)).toThrow(InvalidPhaseTransition);
   expect(reader.listEvents(entry.registrar_id)).toHaveLength(1);
+});
+
+test("appendEvent(kind='entry_transition') moves registrar_entries.status and bumps updated_at", () => {
+  const { writer, reader, setNow } = makeDomain();
+  const entry = writer.createEntry(createRequest);
+  setNow(200);
+
+  writer.appendEvent(entry.registrar_id, {
+    actor: "maestro",
+    body: "all phases landed",
+    from_status: "active",
+    kind: "entry_transition",
+    state: "complete",
+  });
+
+  expect(reader.getEntry(entry.registrar_id)?.status).toBe("complete");
+  expect(reader.getEntry(entry.registrar_id)?.updated_at).toBe(200);
+});
+
+test("appendEvent entry_transition allows draft as the source status and activates the entry", () => {
+  const { db, writer, reader, setNow } = makeDomain();
+  const entry = writer.createEntry(createRequest);
+  db.run("UPDATE registrar_entries SET status = 'draft' WHERE registrar_id = ?", [
+    entry.registrar_id,
+  ]);
+  setNow(200);
+
+  writer.appendEvent(entry.registrar_id, {
+    actor: "maestro",
+    body: "activate draft entry",
+    from_status: "draft",
+    kind: "entry_transition",
+    state: "active",
+  });
+
+  expect(reader.getEntry(entry.registrar_id)?.status).toBe("active");
+  expect(reader.listEvents(entry.registrar_id)).toMatchObject([
+    { kind: "entry_transition", state: "active" },
+  ]);
+});
+
+test("appendEvent entry_transition with a wrong from_status throws InvalidEntryTransition and inserts no event", () => {
+  const { writer, reader } = makeDomain();
+  const entry = writer.createEntry(createRequest);
+
+  expect(() =>
+    writer.appendEvent(entry.registrar_id, {
+      actor: "maestro",
+      body: "should conflict",
+      from_status: "paused",
+      kind: "entry_transition",
+      state: "abandoned",
+    }),
+  ).toThrow(InvalidEntryTransition);
+  expect(reader.getEntry(entry.registrar_id)?.status).toBe("active");
+  expect(reader.listEvents(entry.registrar_id)).toHaveLength(0);
 });
 
 test("getRollup() counts opened blockers as open until a resolved event's ref_event_id points at them", () => {

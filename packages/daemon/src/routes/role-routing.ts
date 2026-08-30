@@ -87,6 +87,7 @@ export interface RouterRoutingHints {
   // constraint (constraint-filter.ts) is reachable the moment one does,
   // instead of staying permanently dead behind the router integration.
   localOnly?: boolean;
+  tool_free?: boolean;
   // Populated as a side effect when the router computes a decision. Needed
   // because chain_start mints handoff_id AFTER routing resolves (chains.ts
   // :1531 vs :1542), so the caller can't get a decisionId-bearing return
@@ -109,6 +110,7 @@ function collectHarnessContext(opts: {
     ...(hints?.projectId !== undefined ? { projectId: hints.projectId } : {}),
     ...(hints?.dispatchKind !== undefined ? { dispatchKind: hints.dispatchKind } : {}),
     ...(hints?.localOnly !== undefined ? { localOnly: hints.localOnly } : {}),
+    ...(hints?.tool_free !== undefined ? { toolFree: hints.tool_free } : {}),
     ...(services.agentRegistry ? { availableAgents: services.agentRegistry } : {}),
   };
 }
@@ -282,6 +284,7 @@ export function resolveSingleRoute(
     applyPressure: pressure,
     activeBiases,
     unhealthyAgents,
+    tool_free: hints?.tool_free,
     now: services.clock(),
   });
   if (out.detail !== "single") return null;

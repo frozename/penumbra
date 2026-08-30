@@ -55,6 +55,21 @@ describe("agent performance schemas", () => {
     expect(parsed.result.status).toBe("pr_opened");
   });
 
+  it("declares the reconciler verification environment error flag", () => {
+    expect(Object.keys(AgentPerformanceCaptureFromReconcilerSchema.shape.result.shape)).toContain(
+      "verification_environment_error",
+    );
+    const parsed = AgentPerformanceCaptureFromReconcilerSchema.parse({
+      handoff_id: "h1",
+      result: { status: "test_failed", verification_environment_error: true },
+    });
+
+    expect(parsed.result).toEqual({
+      status: "test_failed",
+      verification_environment_error: true,
+    });
+  });
+
   it("accepts verified reconciler status as a merge result status", () => {
     expect(MergeResultStatusSchema.safeParse("verified").success).toBe(true);
   });

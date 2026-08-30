@@ -1,5 +1,6 @@
 import { RegistrarCreateRequestSchema, RegistrarEventInputSchema } from "@penumbra/api-contract";
 import {
+  InvalidEntryTransition,
   InvalidPhaseTransition,
   PhaseNotFound,
   RegistrarNotFound,
@@ -94,6 +95,17 @@ export async function registrarAppendRoute(
           registrar_id,
           phase_no: err.phase_no,
           from_status: err.from_status,
+        },
+        409,
+      );
+    }
+    if (err instanceof InvalidEntryTransition) {
+      return json(
+        {
+          error: "invalid_entry_transition",
+          registrar_id,
+          from_status: err.from_status,
+          current_status: err.current_status,
         },
         409,
       );

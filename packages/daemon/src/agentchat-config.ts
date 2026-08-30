@@ -3,6 +3,7 @@ import type { AgentRoutingConfig, ProviderQuota } from "@penumbra/core";
 import {
   type AgentChatConfig,
   AgentsConfigSchema,
+  assertHandBilledSeatsWhitelistedWithPrefix,
   loadAgentChatConfigFromDir,
   QuotasConfigSchema,
   RoutingConfigSchema,
@@ -35,8 +36,10 @@ export function loadAgentChatConfig(env: NodeJS.ProcessEnv = process.env): Agent
 export function loadAgentChatConfigUncached(env: NodeJS.ProcessEnv = process.env): AgentChatConfig {
   const configDir = resolveAgentChatConfigPath(env);
   try {
+    const agentsConfig = parseConfigFile(configDir, "agents.yaml", AgentsConfigSchema);
+    assertHandBilledSeatsWhitelistedWithPrefix(agentsConfig.agents, join(configDir, "agents.yaml"));
     return {
-      ...parseConfigFile(configDir, "agents.yaml", AgentsConfigSchema),
+      ...agentsConfig,
       ...parseConfigFile(configDir, "routing.yaml", RoutingConfigSchema),
       ...parseConfigFile(configDir, "quotas.yaml", QuotasConfigSchema),
     };
@@ -71,13 +74,20 @@ export function loadAgentRouting(env: NodeJS.ProcessEnv = process.env): AgentRou
 
 export function loadProviderQuotas(env: NodeJS.ProcessEnv = process.env): ProviderQuota[] {
   const cfg = loadAgentChatConfig(env);
+  return providerQuotasFromAgentChatConfig(cfg);
+}
+
+export function providerQuotasFromAgentChatConfig(cfg: AgentChatConfig): ProviderQuota[] {
   return cfg.providers.map((p) => ({
     provider: p.name,
     model: p.model,
     quota_usd_per_24h: p.quota_usd_per_24h,
     quota_tokens_per_24h: p.quota_tokens_per_24h,
     quota_tokens_per_5h: p.quota_tokens_per_5h,
+    quota_tokens_per_7d: p.quota_tokens_per_7d,
+    max_in_flight: p.max_in_flight,
     pressure_caps: p.pressure_caps,
+    synthetic_cap: p.synthetic_cap,
   }));
 }
 

@@ -34,7 +34,7 @@ export const meta = {
 //   exclude?: 'free-text areas to skip (e.g. already-fixed code)',
 //   base?: 'main',
 //   candidates?: number,         // how many candidates the ranker surfaces (default 5); top-1 goes through the loop
-//   fixAgent?: 'openai-codex-deep-acp',
+//   fixAgent?: 'executor',
 //   maxFixRounds?: number,       // implement/fix-until-green check rounds (default 3)
 //   dryRunPlan?: boolean,        // stop after PLAN (no fleet dispatch) — useful to inspect what it would build
 //   dispatcherModel?, finderModel?, plannerModel?, graderModel?
@@ -62,7 +62,7 @@ const scope =
 const exclude = a.exclude || "none";
 const base = a.base || "main";
 const candidateCount = Math.max(1, Math.min(10, a.candidates || 5));
-const fixAgent = a.fixAgent || "openai-codex-deep-acp";
+const fixAgent = a.fixAgent || "executor";
 const maxFixRounds = Math.max(1, Math.min(5, a.maxFixRounds || 3));
 const dryRunPlan = !!a.dryRunPlan;
 const dispatcherModel = a.dispatcherModel || "sonnet";

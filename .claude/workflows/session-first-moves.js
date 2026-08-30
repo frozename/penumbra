@@ -59,6 +59,10 @@ const SFM_SCHEMA = {
       description: "Memory gate delta counts",
     },
     open_lanes: nullable({ type: "integer", description: "Count of open lanes" }),
+    pin_share: {
+      type: ["object", "null"],
+      description: "Dispatch pin-share from handoffs: role_route vs pinned (NULL reason), 24h/7d, plus the steerable subset (dispatch_kind NULL/workflow). Return verbatim from the collector.",
+    },
   },
 };
 
@@ -85,6 +89,10 @@ const SOAK_SCHEMA = {
       },
     },
     open_lanes: nullable({ type: "integer" }),
+    pin_share: {
+      type: ["object", "null"],
+      description: "Dispatch pin-share from handoffs: role_route vs pinned (NULL reason), 24h/7d, plus the steerable subset (dispatch_kind NULL/workflow). Return verbatim from the collector.",
+    },
     soak: {
       type: "object",
       additionalProperties: false,

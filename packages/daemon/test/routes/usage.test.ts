@@ -223,6 +223,23 @@ describe("GET /usage/quota_status", () => {
     expect(res.status).toBe(200);
   });
 
+  it("accepts window=7d", async () => {
+    insertUsageRow(db, {
+      event_id: "3",
+      ts: "2026-08-28T00:00:00Z",
+      provider: "alibaba",
+      cost_usd: null,
+      used: 700,
+      handoff_id: "h3",
+    });
+    const services = makeServices(db, [{ provider: "alibaba", quota_tokens_per_7d: 7_000_000 }]);
+    const req = new Request("http://x/usage/quota_status?since=2026-08-26T15:53:00Z&window=7d");
+    const res = usageQuotaStatusRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as QuotaBody;
+    expect(body.providers[0].quota_tokens).toBe(7_000_000);
+  });
+
   it("returns 400 on unknown window", () => {
     const services = makeServices(db, [{ provider: "google", quota_tokens_per_5h: 100 }]);
     const req = new Request("http://x/usage/quota_status?window=foo");

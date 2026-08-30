@@ -7,6 +7,8 @@ export {
   RegistrarDetailSchema,
   type RegistrarEntry,
   RegistrarEntrySchema,
+  type RegistrarEntryTransitionTarget,
+  RegistrarEntryTransitionTargetSchema,
   type RegistrarEvent,
   type RegistrarEventInput,
   RegistrarEventInputSchema,

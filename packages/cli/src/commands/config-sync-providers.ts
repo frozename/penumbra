@@ -16,6 +16,7 @@ import {
   AgentsConfigSchema,
   applyBindingCarriers,
   assertDiscoveryNotSuspiciouslyEmpty,
+  GENERATOR_PROVENANCE_SOURCE,
   type GeneratorSafetyGateResult,
   loadModelAliasMapFromDir,
   loadProviderSourcesFromDir,
@@ -44,7 +45,7 @@ import { discoverHttpModels, type HttpModelDiscoveryResult } from "./generator/d
 import { fetchModelsDevPayload, joinModelsDevMetadata } from "./generator/discovery-models-dev.js";
 import { discoverOpencodeModels } from "./generator/discovery-opencode.js";
 
-const PROVENANCE_SOURCE = "providers-sync";
+const PROVENANCE_SOURCE = GENERATOR_PROVENANCE_SOURCE;
 const ALLOWED_BILLED_HTTP_PROVIDERS = ["local", "sakana", "deepseek"] as const;
 
 export interface ProviderDiscoveryContext {

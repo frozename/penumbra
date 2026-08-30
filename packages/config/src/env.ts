@@ -64,10 +64,17 @@ const OptNonNegInt = NonNegInt.optional();
 const OptNonNegNum = NonNegNum.optional();
 const OptPosInt = PosInt.optional();
 const DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
+export const DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
 const SakanaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
   if (v === undefined) return v;
   const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT;
+  return parsed;
+}, z.number().positive());
+const AlibabaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
+  if (v === undefined) return v;
+  const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT;
   return parsed;
 }, z.number().positive());
 
@@ -95,6 +102,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: Bool,
     default: false,
     description: "Require explicit project_id on chain_start.",
+  },
+  PENUMBRA_REGISTRAR: {
+    schema: OptStr,
+    description:
+      "Daemon registrar route toggle. The daemon disables registrar routes only when this is exactly 0.",
   },
   PENUMBRA_EVENT_LOOP_LAG_THRESHOLD_MS: {
     schema: NonNegInt,
@@ -811,6 +823,21 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Disable the Artificial Analysis snapshot refresh sweeper.",
   },
+  PENUMBRA_PROVIDER_DRIFT_SWEEP_INTERVAL_MS: {
+    schema: OptPosInt,
+    description:
+      "Interval for the provider-drift dry-run discovery sweeper in milliseconds. Must be a positive integer.",
+  },
+  PENUMBRA_PROVIDER_DRIFT_SWEEP_DISABLED: {
+    schema: Bool,
+    default: false,
+    description: "Disable the provider-drift dry-run discovery sweeper.",
+  },
+  PENUMBRA_PROVIDER_DRIFT_CLI_ENTRY: {
+    schema: OptStr,
+    description:
+      "Override path to the penumbra CLI entry the provider-drift sweeper spawns for its dry-run.",
+  },
   PENUMBRA_GATE_QUALITY_DIGEST_DIR: {
     schema: OptStr,
     description: "Directory for gate-quality digest output.",
@@ -917,6 +944,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: SakanaSynthMaxPlausiblePct,
     default: DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT,
     description: "Maximum plausible percentage for synthesized Sakana usage estimates.",
+  },
+  PENUMBRA_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT: {
+    schema: AlibabaSynthMaxPlausiblePct,
+    default: DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT,
+    description: "Maximum plausible percentage for synthesized Alibaba usage estimates.",
   },
   PENUMBRA_PER_WORKER_USAGE_CURSOR: {
     schema: Bool,
@@ -1224,6 +1256,16 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "Fixture-only api_key_env target used by core/test/services/role-llm-candidates.test.ts to verify late-bound snake_case env auth resolution. Not read outside tests.",
     isSensitive: true,
+  },
+  PENUMBRA_ACP_DISCOVERY_KEEP: {
+    schema: OptStr,
+    description:
+      "Fixture-only env key used by ACP discovery tests to verify non-scrubbed process env values reach the child process.",
+  },
+  PENUMBRA_ACP_DISCOVERY_UNSET: {
+    schema: OptStr,
+    description:
+      "Fixture-only env key used by ACP discovery tests to verify requested unset_env entries are removed from the child process.",
   },
 } as const;
 

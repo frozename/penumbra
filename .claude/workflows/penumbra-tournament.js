@@ -56,6 +56,7 @@ const VERDICT = {
 }
 
 phase('Compete')
+// tournament agents are deliberate pins by design — diversity is the objective, not router score
 const tasks = agents.map((a) => ({
   label: `compete:${a}`,
   task_name: task.task_name || task.label || task.name || task.title || 'tournament-candidate',

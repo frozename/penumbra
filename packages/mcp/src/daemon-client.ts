@@ -649,6 +649,7 @@ export class DaemonClient {
     branch_base?: string;
     open_pr_on_review?: boolean;
     isolated_install?: boolean;
+    tool_free?: boolean;
   }): Promise<ChainStartResult> {
     return await this.post("/chains/start", body);
   }

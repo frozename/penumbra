@@ -257,6 +257,8 @@ export const ProviderQuotaConfigSchema = z.object({
   quota_usd_per_24h: z.number().positive().optional(),
   quota_tokens_per_24h: z.number().int().positive().optional(),
   quota_tokens_per_5h: z.number().int().positive().optional(),
+  quota_tokens_per_7d: z.number().int().positive().optional(),
+  max_in_flight: z.number().int().positive().optional(),
   cost_budget_usd_per_5h: z.number().positive().optional(),
   cost_budget_usd_per_week: z.number().positive().optional(),
   cost_budget_usd_per_month: z.number().positive().optional(),

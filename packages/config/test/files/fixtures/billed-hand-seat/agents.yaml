@@ -1,0 +1,5 @@
+agents:
+  - name: openai-gpt52-http
+    adapter: openai-compat-http
+    pricing_mode: api
+    api_provider: openai
