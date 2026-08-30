@@ -14,7 +14,7 @@ describe("local seat health service", () => {
     const service = createLocalSeatHealthService({
       agents: () => [localSeat],
       ttlMs: 20_000,
-      fetch: async () =>
+      fetch: () =>
         new Response(
           JSON.stringify({ data: [{ id: "bge-m3-GGUF/bge-m3-FP16.gguf" }, { id: "bge-m3" }] }),
         ),
@@ -36,7 +36,7 @@ describe("local seat health service", () => {
     const service = createLocalSeatHealthService({
       agents: () => [localSeat, cloudSeat],
       ttlMs: 20_000,
-      fetch: async () => {
+      fetch: () => {
         calls += 1;
         return new Response(JSON.stringify({ data: [{ id: "different-model" }] }));
       },
@@ -55,7 +55,7 @@ describe("local seat health service", () => {
       agents: () => [localSeat],
       ttlMs: 20_000,
       now: () => now,
-      fetch: async () => {
+      fetch: () => {
         calls += 1;
         return new Response(JSON.stringify({ data: [{ id: "bge-m3" }] }));
       },

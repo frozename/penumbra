@@ -295,7 +295,7 @@ class McpPoolRuntime implements McpPool {
       }
       for (let i = skipped.length - 1; i >= 0; i--) {
         const entry = skipped[i];
-        if (!entry || entry.server !== server) continue;
+        if (entry?.server !== server) continue;
         seenSkipped.delete(`${entry.server}::${entry.tool}::${entry.reason}`);
         skipped.splice(i, 1);
       }

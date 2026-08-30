@@ -451,14 +451,14 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
         parsed = await parsePlanFile(plan.file_path);
         parseFailureCounts.delete(plan.plan_id);
       } catch (error: unknown) {
-        const isEnoent = (error as NodeJS.ErrnoException)?.code === "ENOENT";
+        const isEnoent = (error as NodeJS.ErrnoException).code === "ENOENT";
         const attempts = (parseFailureCounts.get(plan.plan_id) ?? 0) + 1;
         parseFailureCounts.set(plan.plan_id, attempts);
 
         if (isEnoent || attempts >= PARSE_FAILURE_QUARANTINE_THRESHOLD) {
           const reason = isEnoent
             ? "plan file missing (ENOENT)"
-            : `plan parse failed ${attempts} consecutive times: ${String(error)}`;
+            : `plan parse failed ${String(attempts)} consecutive times: ${String(error)}`;
           warnWithContext(
             opts.log,
             { plan_id: plan.plan_id, file_path: plan.file_path, error: String(error), reason },

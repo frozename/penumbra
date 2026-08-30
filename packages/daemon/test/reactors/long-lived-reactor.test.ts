@@ -47,7 +47,7 @@ const fakeAgent: AgentRecord = {
 function makeMcpPool(overrides: Partial<Pick<McpPool, "ensureRunning">> = {}): McpPool {
   const empty: FederationHealthSnapshot = { registered: [], skipped: [] };
   return {
-    ensureRunning: overrides.ensureRunning ?? (() => Promise.resolve()),
+    ensureRunning: overrides.ensureRunning ?? ((): Promise<void> => Promise.resolve()),
     callTool: () => Promise.resolve(undefined),
     listTools: () => Promise.resolve<McpToolDescriptor[]>([]),
     acquire: () => undefined,

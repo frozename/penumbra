@@ -1,6 +1,5 @@
 import { resolve4, resolve6 } from "node:dns/promises";
 import { isIP } from "node:net";
-
 import { Agent, fetch as undiciFetch } from "undici";
 
 import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
@@ -122,14 +121,14 @@ function defaultPinnedFetch(
   const family = isIP(pinnedAddress) === 6 ? 6 : 4;
   const agent = new Agent({
     connect: {
-      lookup: (_hostname, _opts, cb) => {
+      lookup: (_hostname, _opts, cb): void => {
         cb(null, pinnedAddress, family);
       },
     },
   });
   const undiciInit = { ...init, dispatcher: agent } as Parameters<typeof undiciFetch>[1];
   return undiciFetch(url, undiciInit).finally(() => {
-    void agent.close().catch(() => {});
+    void agent.close().catch(() => undefined);
   }) as unknown as Promise<Response>;
 }
 

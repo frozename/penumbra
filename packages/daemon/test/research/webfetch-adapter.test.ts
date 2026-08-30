@@ -117,7 +117,7 @@ it("allows scrape of public host on allowlist", async () => {
 
   const adapter = new WebFetchAdapter({
     allowedDomains: ["example.com"],
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   const result = await adapter.scrape({ url: "https://example.com/page" });
@@ -136,7 +136,7 @@ it("allows scrape of public host when no allowlist is set", async () => {
     );
 
   const adapter = new WebFetchAdapter({
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   const result = await adapter.scrape({ url: "https://example.com/" });
@@ -211,7 +211,8 @@ it("rejects when resolver-1 and resolver-2 (rebind) disagree by surfacing any in
   // before any pinnedFetch call is issued.
   let pinnedFetchCalls = 0;
   const adapter = new WebFetchAdapter({
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34", "169.254.169.254"]),
+    resolveHostAddresses: (): Promise<string[]> =>
+      Promise.resolve(["93.184.216.34", "169.254.169.254"]),
     pinnedFetch: (): Promise<Response> => {
       pinnedFetchCalls += 1;
       return Promise.resolve(new Response("never", { status: 200 }));
@@ -256,7 +257,7 @@ it("blocks redirect target on internal/metadata host", async () => {
   };
 
   const adapter = new WebFetchAdapter({
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   await expectRejectsToMatch(
@@ -280,7 +281,7 @@ it("blocks redirect target outside allowlist", async () => {
 
   const adapter = new WebFetchAdapter({
     allowedDomains: ["example.com"],
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   await expectRejectsToMatch(
@@ -309,7 +310,7 @@ it("follows allowed redirects and returns final body", async () => {
 
   const adapter = new WebFetchAdapter({
     allowedDomains: ["example.com"],
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   const result = await adapter.scrape({ url: "https://example.com/a" });
@@ -332,7 +333,7 @@ it("caps redirect chain length", async () => {
 
   const adapter = new WebFetchAdapter({
     allowedDomains: ["example.com"],
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   await expectRejectsToMatch(
@@ -367,7 +368,7 @@ it("firecrawl-fallback path blocks redirect to internal host (401 -> webfetch)",
 
   const fallback = new WebFetchAdapter({
     allowedDomains: ["example.com"],
-    resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    resolveHostAddresses: (): Promise<string[]> => Promise.resolve(["93.184.216.34"]),
     pinnedFetch,
   });
   const primary = new FirecrawlAdapter({ allowedDomains: ["example.com"] }, stubFirecrawl);
@@ -375,7 +376,7 @@ it("firecrawl-fallback path blocks redirect to internal host (401 -> webfetch)",
   // Re-create the firecrawl-with-fallback wrapper's behaviour: on 401, defer
   // to the webfetch adapter.
   const adapter = {
-    scrape: async (args: { url: string }) => {
+    scrape: async (args: { url: string }): Promise<unknown> => {
       try {
         return await primary.scrape(args);
       } catch (err) {

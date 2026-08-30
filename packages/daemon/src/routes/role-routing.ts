@@ -8,10 +8,10 @@ import {
   readRoutingBiases,
   readSubscriptionPressure,
   type RoleRoute,
+  routeAgent,
   type RouterAaSnapshot,
   type RoutingBias,
   type RoutingDecision,
-  routeAgent,
   type Services,
 } from "@penumbra/core";
 
@@ -255,7 +255,7 @@ export function resolveSingleRoute(
       unhealthyAgents,
     });
     if (decision) {
-      if (hints?.decisionSink) hints.decisionSink.decision = decision;
+      if (hints.decisionSink) hints.decisionSink.decision = decision;
       if (mode === "auto") {
         if (decision.selected === null) {
           if (hasHardConstraintExclusion(decision)) {

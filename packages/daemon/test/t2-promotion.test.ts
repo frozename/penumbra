@@ -1,5 +1,5 @@
-import { serve } from "bun";
 import { type Services, type T2MemoryExtraction } from "@penumbra/core";
+import { serve } from "bun";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -513,7 +513,7 @@ test("agentchat-based pool passes requestExtras from memory-refiner agents", asy
   const server = serve({
     port: 0,
     async fetch(req) {
-      const parsed = (await req.json()) as unknown;
+      const parsed = await req.json();
       if (!isRecord(parsed)) {
         throw new Error("expected JSON object request body");
       }

@@ -445,14 +445,14 @@ test("async onSignal rejection is logged and allows re-signal on next tick", asy
     vi.advanceTimersByTime(ms);
   };
 
-  const errorLogs: Array<{ err: Error; worker_id: string }> = [];
+  const errorLogs: { err: Error; worker_id: string }[] = [];
   const log = makeLogStub();
-  log.error = ((obj: { err: unknown; worker_id?: string }) => {
+  log.error = (obj: { err: unknown; worker_id?: string }): void => {
     errorLogs.push({
       err: obj.err as Error,
-      worker_id: (obj as { worker_id: string }).worker_id ?? "",
+      worker_id: (obj as { worker_id?: string }).worker_id ?? "",
     });
-  }) as unknown as ProbeLog["error"];
+  };
 
   let signalCount = 0;
   let shouldFail = true;
@@ -463,6 +463,7 @@ test("async onSignal rejection is logged and allows re-signal on next tick", asy
         shouldFail = false;
         throw new Error("simulated eviction failure");
       }
+      await Promise.resolve();
     },
   };
 

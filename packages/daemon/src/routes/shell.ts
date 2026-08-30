@@ -4,11 +4,10 @@ import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonServices } from "../serve.js";
-
 import type { ShellConfig } from "./command-policy.js";
 
-import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { json } from "./_helpers.js";
+import { matchedDangerousPatterns, requestCommandPermission } from "./command-policy.js";
 import { checkWorkerOwnership } from "./fs.js";
 
 const ShellRunInputSchema = z.object({

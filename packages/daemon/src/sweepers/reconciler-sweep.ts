@@ -47,7 +47,12 @@ export async function runReconcilerSweepTick(
     (process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE
       ? Number(process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE)
       : DEFAULT_MAX_CLOSE);
-  const dryRun = opts.dryRun ?? services.settings?.prOrphanSweeperDryRun ?? true;
+  const settings = (
+    services as unknown as Omit<Services, "settings"> & {
+      settings?: { prOrphanSweeperDryRun?: boolean };
+    }
+  ).settings;
+  const dryRun = opts.dryRun ?? settings?.prOrphanSweeperDryRun ?? true;
   const runSweep = opts.runSweep ?? runPrOrphanSweepForDaemon;
 
   try {
