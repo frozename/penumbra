@@ -1,4 +1,11 @@
 import type {
+  RegistrarCreateRequest,
+  RegistrarDetail,
+  RegistrarEvent,
+  RegistrarEventInput,
+  RegistrarListResponse,
+} from "@penumbra/api-contract";
+import type {
   AgentRankOutput,
   Basis,
   ChainStartRequest,
@@ -13,13 +20,6 @@ import type {
   RecentCostOutput,
   T0EventInput,
 } from "@penumbra/core";
-import type {
-  RegistrarCreateRequest,
-  RegistrarDetail,
-  RegistrarEvent,
-  RegistrarEventInput,
-  RegistrarListResponse,
-} from "@penumbra/api-contract";
 import type { z } from "zod";
 
 import { RecallRequestSchema } from "@penumbra/core";

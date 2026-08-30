@@ -5,9 +5,9 @@ import type { DaemonClient } from "../../src/daemon-client.js";
 
 import { DaemonHttpError } from "../../src/daemon-client.js";
 import {
+  registrarAppendHandler,
   RegistrarAppendInputSchema,
   RegistrarAppendInputShape,
-  registrarAppendHandler,
 } from "../../src/tools/registrar-append.js";
 import { fakeDaemon } from "../helpers.js";
 
@@ -20,13 +20,13 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("expected promise to reject but it resolved");
 }
 
-test("an unknown kind throws at the zod boundary and daemon.registrarAppend is never invoked", async () => {
+test("an unknown kind throws at the zod boundary and daemon.registrarAppend is never invoked", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.resolve({ event: {} as never }),
   );
   const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
 
-  await expect(
+  expect(
     handler({
       registrar_id: "registrar-1",
       kind: "unknown",
@@ -37,7 +37,7 @@ test("an unknown kind throws at the zod boundary and daemon.registrarAppend is n
   expect(registrarAppend).not.toHaveBeenCalled();
 });
 
-test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP dump", async () => {
+test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP dump", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(
       new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 409", 409, {
@@ -60,11 +60,11 @@ test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP d
     state: "active",
   });
 
-  await expect(promise).rejects.toThrow("phase already transitioned");
-  await expect(promise).rejects.not.toThrow("HTTP 409");
+  expect(promise).rejects.toThrow("phase already transitioned");
+  expect(promise).rejects.not.toThrow("HTTP 409");
 });
 
-test("an entry_transition input parses and passes through to the daemon client", async () => {
+test("an entry_transition input parses and passes through to the daemon client", () => {
   const calls: Parameters<DaemonClient["registrarAppend"]>[] = [];
   const registrarAppend = mock<DaemonClient["registrarAppend"]>((req) => {
     calls.push([req]);
@@ -111,7 +111,7 @@ test("an entry_transition input parses and passes through to the daemon client",
   expect(result).toBeTruthy();
 });
 
-test("a daemon 409 invalid_entry_transition is surfaced as 'entry status already transitioned'", async () => {
+test("a daemon 409 invalid_entry_transition is surfaced as 'entry status already transitioned'", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(
       new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 409", 409, {
@@ -133,11 +133,11 @@ test("a daemon 409 invalid_entry_transition is surfaced as 'entry status already
     body: "should conflict",
   });
 
-  await expect(promise).rejects.toThrow("entry status already transitioned");
-  await expect(promise).rejects.not.toThrow("HTTP 409");
+  expect(promise).rejects.toThrow("entry status already transitioned");
+  expect(promise).rejects.not.toThrow("HTTP 409");
 });
 
-test("a daemon 404 is surfaced as registrar entry not found", async () => {
+test("a daemon 404 is surfaced as registrar entry not found", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(
       new DaemonHttpError("daemon /registrar/missing/events: HTTP 404", 404, {
@@ -161,7 +161,7 @@ test("a daemon 404 is surfaced as registrar entry not found", async () => {
   expect((err as Error).message).toBe("registrar entry not found");
 });
 
-test("a daemon phase_not_found 404 names the missing phase", async () => {
+test("a daemon phase_not_found 404 names the missing phase", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(
       new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 404", 404, {
@@ -173,7 +173,7 @@ test("a daemon phase_not_found 404 names the missing phase", async () => {
   );
   const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
 
-  await expect(
+  expect(
     handler({
       registrar_id: "registrar-1",
       kind: "progress",
@@ -183,7 +183,7 @@ test("a daemon phase_not_found 404 names the missing phase", async () => {
   ).rejects.toThrow("registrar phase 7 not found");
 });
 
-test("an unrecognized or bodyless daemon 404 notes that the registrar feature may be disabled", async () => {
+test("an unrecognized or bodyless daemon 404 notes that the registrar feature may be disabled", () => {
   for (const body of [undefined, { error: "route_not_found" }]) {
     const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
       Promise.reject(
@@ -192,7 +192,7 @@ test("an unrecognized or bodyless daemon 404 notes that the registrar feature ma
     );
     const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
 
-    await expect(
+    expect(
       handler({
         registrar_id: "registrar-1",
         kind: "progress",
@@ -226,7 +226,7 @@ test("RegistrarAppendInputSchema rejects from_status for event kinds that do not
   ).toThrow("from_status is only valid for phase_transition and entry_transition");
 });
 
-test("a daemon 400 surfaces its validation message", async () => {
+test("a daemon 400 surfaces its validation message", () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(
       new DaemonHttpError("daemon /registrar/registrar-1/events: HTTP 400", 400, {
