@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "../../src/config/load.js";
+import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "@src/config/load.js";
 
 test("loadConfig parses a valid YAML config", () => {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));

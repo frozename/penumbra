@@ -1,7 +1,7 @@
+import { createWorkerDispatcher } from "@penumbra/agentchat/worker/dispatcher";
 import { createLogger } from "@penumbra/core";
 import { expect, test } from "bun:test";
 
-import { createWorkerDispatcher } from "../../../agentchat/src/worker/dispatcher.js";
 import { withDaemon } from "../helpers/with-daemon.js";
 
 // Regression: an errored dispatch must NOT be durably marked completed. The

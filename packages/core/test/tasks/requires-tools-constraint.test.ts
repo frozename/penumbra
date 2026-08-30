@@ -1,17 +1,17 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import type { RoutingBias } from "../../src/readers/routing-bias.js";
-import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
+import { loadSqliteVec, migrate, pickFromPool } from "@src/index.js";
+import type { RoutingBias } from "@src/readers/routing-bias.js";
+import type { AgentTaskType } from "@src/schemas/agent-performance.js";
+import { routeAgent, type RouteAgentInput } from "@src/services/agent-routing.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 
 import {
   buildRetryRoutingMaps,
   type RetryAgentCandidate,
   selectRetryAgent,
 } from "../../../agentchat/src/worker/silent-failure-retry.js";
-import { loadSqliteVec, migrate, pickFromPool } from "../../src/index.js";
-import { routeAgent, type RouteAgentInput } from "../../src/services/agent-routing.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {

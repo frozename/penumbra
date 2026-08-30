@@ -2,9 +2,8 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, it, mock } from "bun:test";
 
-import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
-
-import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../../src/worker/thought-analyzer.js";
+import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "@src/worker/thought-analyzer.js";
+import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 type ChainStartInput = Parameters<ThoughtAnalyzerDeps["chainStart"]>[0];
 type ChainStartResult = Awaited<ReturnType<ThoughtAnalyzerDeps["chainStart"]>>;

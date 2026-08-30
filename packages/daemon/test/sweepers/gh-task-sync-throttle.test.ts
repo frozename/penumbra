@@ -2,14 +2,13 @@ import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import type { GhClient } from "../../src/services/gh-client.js";
-
+import type { GhClient } from "@src/services/gh-client.js";
 import {
   createGhTaskSyncService,
   createGhTaskSyncSweeper,
   type GhTaskSyncService,
   type GhTaskSyncSummary,
-} from "../../src/sweepers/gh-task-sync.js";
+} from "@src/sweepers/gh-task-sync.js";
 
 try {
   if (process.platform === "darwin") {

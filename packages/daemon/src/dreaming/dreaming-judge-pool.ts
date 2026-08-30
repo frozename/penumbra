@@ -1,8 +1,8 @@
+import { resolveRoleLlmCandidates } from "@penumbra/core";
 import { readFileSync } from "node:fs";
 
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
-import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "./config.js";
 

@@ -11,7 +11,8 @@ import {
   discoverAcpSessionModels,
   parseAcpSessionModels,
   runAcpHandshake,
-} from "../../../src/commands/generator/discovery-acp-session.js";
+} from "@src/commands/generator/discovery-acp-session.js";
+
 import { expectAsyncThrow } from "../_helpers.js";
 
 interface RpcMessage {

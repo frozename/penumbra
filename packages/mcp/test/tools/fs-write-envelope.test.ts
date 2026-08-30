@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { HandleStore } from "../../src/handle-store.js";
-import { isEnvelopeResult } from "../../src/responses/envelope.js";
-import { fsWriteHandler } from "../../src/tools/fs-write.js";
-import { readHandleHandler } from "../../src/tools/read-handle.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { HandleStore } from "@src/handle-store.js";
+import { isEnvelopeResult } from "@src/responses/envelope.js";
+import { fsWriteHandler } from "@src/tools/fs-write.js";
+import { readHandleHandler } from "@src/tools/read-handle.js";
 
 type WriteDaemon = Pick<DaemonClient, "writeInWorktree">;
 type WriteImpl = DaemonClient["writeInWorktree"];

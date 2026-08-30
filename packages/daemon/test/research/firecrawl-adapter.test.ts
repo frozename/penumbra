@@ -7,7 +7,7 @@ import {
   type FirecrawlSearchResponse,
   type FirecrawlTransport,
   normalizeFirecrawlSearchResponse,
-} from "../../src/research/firecrawl-adapter.js";
+} from "@src/research/firecrawl-adapter.js";
 
 function stubFirecrawl401(): FirecrawlTransport {
   return {

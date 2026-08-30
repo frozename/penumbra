@@ -6,9 +6,8 @@ import {
   type WorktreeHandle,
   WorktreeManager,
 } from "@penumbra/core";
+import { resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 try {
   if (process.platform === "darwin") {

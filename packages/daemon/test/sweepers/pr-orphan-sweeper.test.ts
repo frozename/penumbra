@@ -6,7 +6,7 @@ import {
   installPrOrphanSweeper,
   type PrOrphanSweeperDeps,
   runPrOrphanSweep,
-} from "../../src/sweepers/pr-orphan-sweeper.js";
+} from "@src/sweepers/pr-orphan-sweeper.js";
 
 type OpenPullRequest = Awaited<ReturnType<GhClient["listOpenPullRequests"]>>[number];
 

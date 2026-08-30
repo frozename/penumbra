@@ -5,8 +5,8 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
-import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
+import { createBoundsCallbacks } from "@src/maestro/bounds-callbacks.js";
+import { createBoundsTracker } from "@src/maestro/bounds-tracker.js";
 
 if (process.platform === "darwin") {
   try {

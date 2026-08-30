@@ -3,10 +3,10 @@ import type { Mock } from "bun:test";
 import { vi } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import type { McpServerStdio } from "../../src/adapters/acp-types.js";
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
-import type { CapturePort } from "../../src/worker/capture-port.js";
+import type { McpServerStdio } from "@src/adapters/acp-types.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import type { CapturePort } from "@src/worker/capture-port.js";
 
 /**
  * StdioAcpHandle is a structural interface, but tests need narrower stdin/stdout

@@ -9,9 +9,9 @@ import {
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
 } from "@penumbra/api-contract";
+import { MissionSessionSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
-import { MissionSessionSchema } from "../../../api-contract/src/session.js";
 import { buildRequestUrl } from "../lib/url.js";
 import { DaemonContractError, DaemonHttpError } from "./errors.js";
 

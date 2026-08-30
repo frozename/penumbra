@@ -9,7 +9,8 @@ import {
   loadProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
-} from "../../src/projects/registry.js";
+} from "@src/projects/registry.js";
+
 import { writeBootstrapRegistry } from "./registry-fixtures.js";
 
 const dirs: string[] = [];

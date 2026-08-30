@@ -1,3 +1,10 @@
+// Relative import: the daemon package's node_modules symlink resolves
+// @penumbra/api-contract to the shared home checkout, which lags this branch's
+// enum additions ("worktree.gc.unlanded_skipped", "reconciler.sweep.tick").
+// Reading the local source directly keeps the contract test honest during the
+// worktree-isolated build; after landing, the "@penumbra/api-contract" import
+// is a drop-in replacement.
+import { DispatchEventsListResponseSchema } from "@penumbra/api-contract";
 import {
   DispatchEventLog,
   HandoffReader,
@@ -10,15 +17,8 @@ import {
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-// Relative import: the daemon package's node_modules symlink resolves
-// @penumbra/api-contract to the shared home checkout, which lags this branch's
-// enum additions ("worktree.gc.unlanded_skipped", "reconciler.sweep.tick").
-// Reading the local source directly keeps the contract test honest during the
-// worktree-isolated build; after landing, the "@penumbra/api-contract" import
-// is a drop-in replacement.
-import { DispatchEventsListResponseSchema } from "../../../api-contract/src/dispatch-events.js";
-import { dispatchEventsGetRoute } from "../../src/routes/dispatch-events.js";
-import { type BranchLandStatus, runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+import { dispatchEventsGetRoute } from "@src/routes/dispatch-events.js";
+import { type BranchLandStatus, runWorktreeGcTick } from "@src/sweepers/worktree-gc.js";
 
 try {
   if (process.platform === "darwin") {

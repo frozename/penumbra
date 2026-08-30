@@ -1,10 +1,9 @@
 import { expect, mock, test } from "bun:test";
 
-import type { ChatTurnInput, ChatTurnResult } from "../../src/cli/loop.js";
-import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-
-import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
-import { PenumbraHttpError } from "../../src/penumbra-client.js";
+import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import type { ChatTurnInput, ChatTurnResult } from "@src/cli/loop.js";
+import { PenumbraHttpError } from "@src/penumbra-client.js";
+import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
 type ChatTurnMockFn = (input: ChatTurnInput) => Promise<ChatTurnResult>;
 type DelayMockFn = (ms: number) => Promise<void>;

@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { applySchema } from "../../src/db/schema.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { getMemoryVerificationEvents } from "../../src/readers/memory-verification-events.js";
+import { applySchema } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { getMemoryVerificationEvents } from "@src/readers/memory-verification-events.js";
 
 test("getMemoryVerificationEvents clamps limit to a bounded range", () => {
   const db = new Database(":memory:");

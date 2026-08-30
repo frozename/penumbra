@@ -4,15 +4,14 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 
-import type { WorkerTokenStoreLike } from "../../src/auth.js";
-
-import { createBearerAuth } from "../../src/auth.js";
+import type { WorkerTokenStoreLike } from "@src/auth.js";
+import { createBearerAuth } from "@src/auth.js";
 import {
   curatorPatternsAddRoute,
   curatorPatternsApproveRoute,
   curatorPatternsDisableRoute,
   curatorPatternsListRoute,
-} from "../../src/routes/curator.js";
+} from "@src/routes/curator.js";
 
 interface PatternRow {
   pattern: string;

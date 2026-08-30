@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 
-import { _resetForTest, getMcpEventBus, type McpEvent } from "../../src/events/mcp-event-bus.js";
-import { mcpEventsPublishRoute } from "../../src/routes/mcp-events.js";
+import { _resetForTest, getMcpEventBus, type McpEvent } from "@src/events/mcp-event-bus.js";
+import { mcpEventsPublishRoute } from "@src/routes/mcp-events.js";
 
 describe("POST /mcp-events/publish", () => {
   beforeEach(() => {

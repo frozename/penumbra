@@ -1,11 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { agentRecommendHandler, AgentRecommendInputSchema } from "@src/tools/agent-recommend.js";
 
-import {
-  agentRecommendHandler,
-  AgentRecommendInputSchema,
-} from "../../src/tools/agent-recommend.js";
 import { fakeDaemon } from "../helpers.js";
 
 type AgentRecommendFn = DaemonClient["agentRecommend"];

@@ -4,8 +4,8 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
-import { buildAdapter } from "../../src/adapters/registry.js";
+import { OpencodeCliAdapter } from "@src/adapters/opencode-cli.js";
+import { buildAdapter } from "@src/adapters/registry.js";
 
 interface OpencodeMcpServerCfg {
   type: "local";

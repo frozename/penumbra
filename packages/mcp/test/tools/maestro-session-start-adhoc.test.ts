@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
+import type { DaemonClient } from "@src/daemon-client.js";
 import {
   maestroSessionStartAdhocHandler,
   MaestroSessionStartAdhocInputShape,
-} from "../../src/tools/maestro-session-start-adhoc.js";
+} from "@src/tools/maestro-session-start-adhoc.js";
+
 import { fakeDaemon } from "../helpers.js";
 
 type MaestroSessionStartAdhocFn = DaemonClient["maestroSessionStartAdhoc"];

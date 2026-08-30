@@ -1,8 +1,8 @@
+import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
+
 import { resolve4, resolve6 } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
-
-import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
 
 function htmlToMarkdown(html: string): string {
   return html

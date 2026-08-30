@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { WorkflowCwdRequiredError, workflowRunHandler } from "@src/tools/workflow-run.js";
 
-import { WorkflowCwdRequiredError, workflowRunHandler } from "../../src/tools/workflow-run.js";
 import { fakeDaemon } from "../helpers.js";
 
 type WorkflowRunFn = DaemonClient["workflowRun"];

@@ -7,12 +7,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentChatConfig } from "../../src/config/types.js";
-import type { DispatchOutput } from "../../src/sdk/adapter.js";
-
-import { registerAdapter } from "../../src/adapters/registry.js";
-import { runChatTurn } from "../../src/cli/loop.js";
-import { PenumbraClient } from "../../src/penumbra-client.js";
+import { registerAdapter } from "@src/adapters/registry.js";
+import { runChatTurn } from "@src/cli/loop.js";
+import type { AgentChatConfig } from "@src/config/types.js";
+import { PenumbraClient } from "@src/penumbra-client.js";
+import type { DispatchOutput } from "@src/sdk/adapter.js";
 
 try {
   if (process.platform === "darwin") {

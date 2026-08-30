@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
-import { quotaStatus } from "../../src/readers/cost-quota.js";
-import { recentCost } from "../../src/readers/cost.js";
+import { quotaStatus } from "@src/readers/cost-quota.js";
+import { recentCost } from "@src/readers/cost.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");

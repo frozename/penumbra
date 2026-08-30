@@ -11,11 +11,8 @@ import { expect, mock, test } from "bun:test";
 import {
   resolveStaleAfterMs,
   resolveSweeperSqlCutoffMs,
-} from "../../src/sweepers/stale-handoff-thresholds.js";
-import {
-  runStaleHandoffSweep,
-  type StaleHandoffSweeperOpts,
-} from "../../src/sweepers/stale-handoff.js";
+} from "@src/sweepers/stale-handoff-thresholds.js";
+import { runStaleHandoffSweep, type StaleHandoffSweeperOpts } from "@src/sweepers/stale-handoff.js";
 
 try {
   if (process.platform === "darwin") {

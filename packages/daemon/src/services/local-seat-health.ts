@@ -2,7 +2,7 @@ import {
   fetchServedModels,
   type LocalSeatHealthLike,
   type ServedModelsFetch,
-} from "../../../core/src/index.js";
+} from "@penumbra/core";
 
 export interface LocalSeatHealthAgent {
   name: string;

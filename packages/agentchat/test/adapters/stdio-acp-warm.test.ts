@@ -8,12 +8,11 @@ import type {
   AcpWarmPoolDeposit,
   AcpWarmPoolDepositOptions,
   AcpWarmPoolEntry,
-} from "../../src/adapters/acp-warm-pool.js";
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
-
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+} from "@src/adapters/acp-warm-pool.js";
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;

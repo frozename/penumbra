@@ -5,15 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker as NodeWorker } from "node:worker_threads";
 
-import type { RouteAgentOutput } from "../../src/services/agent-routing.js";
-import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
-import type { FileTaskInput } from "../../src/tasks/schema.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { applyRuntimePragmas, loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { pickPreferred as exportedPickPreferred } from "../../src/index.js";
-import { pickPreferred } from "../../src/tasks/auction.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
+import { migrate } from "@src/db/migrations.js";
+import { applyRuntimePragmas, loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { pickPreferred as exportedPickPreferred } from "@src/index.js";
+import type { RouteAgentOutput } from "@src/services/agent-routing.js";
+import { pickPreferred } from "@src/tasks/auction.js";
+import type { AgentDescriptor } from "@src/tasks/eligibility.js";
+import type { FileTaskInput } from "@src/tasks/schema.js";
+import { TaskWriter } from "@src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {

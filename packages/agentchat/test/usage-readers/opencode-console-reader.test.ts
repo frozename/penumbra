@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import type { RateLimitDelta } from "../../src/usage-readers/index.js";
-
+import type { RateLimitDelta } from "@src/usage-readers/index.js";
 import {
   OpenCodeConsoleReader,
   parseUsageSnapshots,
-} from "../../src/usage-readers/opencode-console-reader.js";
+} from "@src/usage-readers/opencode-console-reader.js";
 
 const NOW_MS = 1_700_000_000_000;
 const NOW_S = Math.floor(NOW_MS / 1000);

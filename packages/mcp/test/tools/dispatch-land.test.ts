@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { dispatchLandHandler, DispatchLandInputShape } from "@src/tools/dispatch-land.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 
-import { dispatchLandHandler, DispatchLandInputShape } from "../../src/tools/dispatch-land.js";
-import { TOOL_REGISTRY } from "../../src/tools/registry.js";
 import { fakeDaemon } from "../helpers.js";
 
 type DispatchLandFn = DaemonClient["dispatchLand"];

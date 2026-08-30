@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildMaestroRedactorFromEnv } from "../../src/worker/maestro-output-redactor.js";
+import { buildMaestroRedactorFromEnv } from "@src/worker/maestro-output-redactor.js";
 
 test("buildMaestroRedactorFromEnv returns bypass=true when env var is set to 1", () => {
   const r = buildMaestroRedactorFromEnv({

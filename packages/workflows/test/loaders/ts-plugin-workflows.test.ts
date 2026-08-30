@@ -3,7 +3,7 @@ import { accessSync, lstatSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { loadTsWorkflow } from "../../src/loaders/ts.js";
+import { loadTsWorkflow } from "@src/loaders/ts.js";
 
 const ROOT = process.cwd();
 const TMP_NODE_MODULES = join(tmpdir(), "node_modules");

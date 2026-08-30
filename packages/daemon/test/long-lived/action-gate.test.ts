@@ -1,12 +1,10 @@
 import type { AgentConfig } from "@penumbra/agentchat/config";
 
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { type ActionGate, createActionGate } from "@penumbra/daemon/long-lived/action-gate";
 import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler";
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock } from "bun:test";
-
-import { applySchema } from "../../../core/src/db/schema.js";
-import { loadSqliteVec } from "../../../core/src/db/sqlite-vec.js";
 
 type ActionGateResult = Awaited<ReturnType<ActionGate["handleCall"]>>;
 type AuditRow = { decision: string; reason: string };

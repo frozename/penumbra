@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildRequestUrl } from "../../src/lib/url.js";
+import { buildRequestUrl } from "@src/lib/url.js";
 
 describe("buildRequestUrl", () => {
   test("builds relative baseUrl + simple path", () => {

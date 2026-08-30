@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { RoutingConfigSchema } from "../../src/files/routing.js";
+import { RoutingConfigSchema } from "@src/files/routing.js";
 
 describe("RoutingConfigSchema workloads", () => {
   test("accepts closed workload enum keys and expected entry shape", () => {

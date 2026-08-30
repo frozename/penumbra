@@ -1,10 +1,9 @@
+import { resolveHandoffBranchName } from "@penumbra/core";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { createInterface } from "node:readline/promises";
-
-import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
 
 export interface DispatchTimelineEvent {
   handoff_id: string;

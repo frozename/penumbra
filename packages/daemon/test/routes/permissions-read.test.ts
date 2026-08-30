@@ -13,7 +13,7 @@ import {
   permissionsCreateRoute,
   permissionsGetRoute,
   permissionsListRoute,
-} from "../../src/routes/permissions.js";
+} from "@src/routes/permissions.js";
 
 try {
   if (process.platform === "darwin")

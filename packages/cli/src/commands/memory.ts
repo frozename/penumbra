@@ -1,10 +1,8 @@
-import { parseWikiLinks } from "@penumbra/core";
+import { parseWikiLinks, resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 const DEFAULT_DIGEST_LIMIT = 200;
 const DEFAULT_STATUS_ROWS = 20;

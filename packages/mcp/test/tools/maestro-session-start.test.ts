@@ -2,12 +2,12 @@ import type { MaestroSessionRecord } from "@penumbra/core";
 
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
+import type { DaemonClient } from "@src/daemon-client.js";
 import {
   maestroSessionStartHandler,
   MaestroSessionStartInputShape,
-} from "../../src/tools/maestro-session-start.js";
+} from "@src/tools/maestro-session-start.js";
+
 import { fakeDaemon } from "../helpers.js";
 
 type MaestroSessionStartFn = DaemonClient["maestroSessionStart"];

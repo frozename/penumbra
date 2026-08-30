@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { isEnvelopeResult, makeEnvelopeResult } from "../../src/responses/envelope.js";
+import { isEnvelopeResult, makeEnvelopeResult } from "@src/responses/envelope.js";
 
 describe("makeEnvelopeResult", () => {
   it("embeds content and token_budget in _meta", () => {

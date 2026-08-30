@@ -8,7 +8,8 @@ import {
   runAgentLedgerImport,
   runAgentLedgerRender,
   runAgentRank,
-} from "../../src/commands/agent.js";
+} from "@src/commands/agent.js";
+
 import { expectAsyncThrow, parseJson, urlToString } from "./_helpers.js";
 
 describe("runAgentRank", () => {

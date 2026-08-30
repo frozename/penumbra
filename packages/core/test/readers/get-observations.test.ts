@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { getObservations } from "../../src/readers/get-observations.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { getObservations } from "@src/readers/get-observations.js";
 
 const MS_PER_DAY = 86_400_000;
 

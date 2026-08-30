@@ -7,7 +7,7 @@ import {
   CreateHandoffRequestSchema,
   HandoffRowSchema,
   HandoffStatusSchema,
-} from "../../src/schemas/handoff.js";
+} from "@src/schemas/handoff.js";
 
 test("HandoffStatusSchema accepts valid statuses", () => {
   for (const s of [

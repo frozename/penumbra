@@ -1,9 +1,9 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { chainStartSimpleHandler } from "@src/tools/chain-start-simple.js";
+import { ProjectIdRequiredError } from "@src/tools/chain-start.js";
 
-import { chainStartSimpleHandler } from "../../src/tools/chain-start-simple.js";
-import { ProjectIdRequiredError } from "../../src/tools/chain-start.js";
 import { fakeDaemon } from "../helpers.js";
 
 type StartChainFn = DaemonClient["startChain"];

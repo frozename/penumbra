@@ -2,10 +2,9 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, it } from "bun:test";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { runDreamCycle } from "../../src/dreaming/cycle.js";
-import { revertDreamAction } from "../../src/dreaming/reembed.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { revertDreamAction } from "@src/dreaming/reembed.js";
 
 try {
   if (process.platform === "darwin") {

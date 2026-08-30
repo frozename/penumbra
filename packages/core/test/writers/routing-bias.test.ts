@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
-import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
@@ -149,7 +149,7 @@ describe("routing_bias schema", () => {
 
 describe("readRoutingBiases", () => {
   it("returns [] on empty table", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
     const db = makeDb();
     const result = readRoutingBiases(db);
     expect(result).toEqual([]);
@@ -157,8 +157,8 @@ describe("readRoutingBiases", () => {
   });
 
   it("returns a future-expiry bias and omits a past one", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const pastISO = new Date(Date.now() - 3600_000).toISOString();
@@ -188,8 +188,8 @@ describe("readRoutingBiases", () => {
   });
 
   it("boundary expires_at===now is expired (strict > now)", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const now = new Date("2026-06-15T00:00:00.000Z");
@@ -209,8 +209,8 @@ describe("readRoutingBiases", () => {
   });
 
   it("scope filter works", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -240,8 +240,8 @@ describe("readRoutingBiases", () => {
   });
 
   it("value filter works", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -267,8 +267,8 @@ describe("readRoutingBiases", () => {
   });
 
   it("orders a refreshed existing bias ahead of older biases", async () => {
-    const { readRoutingBiases } = await import("../../src/readers/routing-bias.js");
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { readRoutingBiases } = await import("@src/readers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const readNow = new Date("2026-06-15T00:00:00.000Z");
@@ -308,7 +308,7 @@ describe("readRoutingBiases", () => {
 
 describe("setRoutingBias", () => {
   it("upsert: twice with identical (scope,value,mode) leaves exactly 1 row", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -340,7 +340,7 @@ describe("setRoutingBias", () => {
   });
 
   it("ttl_seconds computes expires_at from now", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const now = new Date("2026-06-15T00:00:00.000Z");
@@ -359,7 +359,7 @@ describe("setRoutingBias", () => {
   });
 
   it("explicit expires_at takes precedence over ttl_seconds", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const now = new Date("2026-06-15T00:00:00.000Z");
@@ -379,7 +379,7 @@ describe("setRoutingBias", () => {
   });
 
   it("throws if neither expires_at nor ttl_seconds", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     expect(() =>
@@ -394,7 +394,7 @@ describe("setRoutingBias", () => {
   });
 
   it("rejects bad mode", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     expect(() =>
@@ -409,7 +409,7 @@ describe("setRoutingBias", () => {
   });
 
   it("rejects bad scope", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     expect(() =>
@@ -424,7 +424,7 @@ describe("setRoutingBias", () => {
   });
 
   it("clamps weight to [0, 2.0]", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -449,7 +449,7 @@ describe("setRoutingBias", () => {
   });
 
   it("null weight is preserved", async () => {
-    const { setRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -467,7 +467,7 @@ describe("setRoutingBias", () => {
 
 describe("clearRoutingBias", () => {
   it("clears by bias_id", async () => {
-    const { setRoutingBias, clearRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias, clearRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -488,7 +488,7 @@ describe("clearRoutingBias", () => {
   });
 
   it("clears by (scope, value)", async () => {
-    const { setRoutingBias, clearRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias, clearRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -513,7 +513,7 @@ describe("clearRoutingBias", () => {
   });
 
   it("clears all with all:true", async () => {
-    const { setRoutingBias, clearRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { setRoutingBias, clearRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     const futureISO = new Date(Date.now() + 3600_000).toISOString();
@@ -538,7 +538,7 @@ describe("clearRoutingBias", () => {
   });
 
   it("throws without valid args", async () => {
-    const { clearRoutingBias } = await import("../../src/writers/routing-bias.js");
+    const { clearRoutingBias } = await import("@src/writers/routing-bias.js");
     const db = makeDb();
 
     expect(() => clearRoutingBias(db, {})).toThrow();
@@ -549,7 +549,7 @@ describe("clearRoutingBias", () => {
 
 describe("exports from index.ts", () => {
   it("RoutingBias type and three functions are exported", async () => {
-    const mod = await import("../../src/index.js");
+    const mod = await import("@src/index.js");
     // Check all 4 exports exist
     expect(mod.readRoutingBiases).toBeDefined();
     expect(mod.setRoutingBias).toBeDefined();

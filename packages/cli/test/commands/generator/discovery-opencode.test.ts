@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   discoverOpencodeModels,
   parseOpencodeModelsOutput,
-} from "../../../src/commands/generator/discovery-opencode.js";
+} from "@src/commands/generator/discovery-opencode.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/opencode-models.txt");
 const fixtureText = readFileSync(fixturePath, "utf8");

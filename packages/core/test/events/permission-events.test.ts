@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { type PermissionEvent, PermissionEventBus } from "../../src/events/permission-events.js";
+import { type PermissionEvent, PermissionEventBus } from "@src/events/permission-events.js";
 
 const sample = (id: string, kind: PermissionEvent["kind"]): PermissionEvent => ({
   kind,

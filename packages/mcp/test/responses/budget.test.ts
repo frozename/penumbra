@@ -5,7 +5,7 @@ import {
   estimateTokens,
   truncateToTokens,
   withinBudget,
-} from "../../src/responses/budget.js";
+} from "@src/responses/budget.js";
 
 describe("estimateTokens", () => {
   it("returns ceil(len/4)", () => {

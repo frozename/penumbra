@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { fsReadHandler } from "../../src/tools/fs-read.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { fsReadHandler } from "@src/tools/fs-read.js";
 
 type ReadDaemon = Pick<DaemonClient, "readInWorktree">;
 type ReadImpl = DaemonClient["readInWorktree"];

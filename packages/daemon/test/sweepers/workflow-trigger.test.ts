@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   runWorkflowTriggerSweep,
   type WorkflowTriggerSweeperOpts,
-} from "../../src/sweepers/workflow-trigger.js";
+} from "@src/sweepers/workflow-trigger.js";
 
 type Trigger = {
   kind: "state-threshold";

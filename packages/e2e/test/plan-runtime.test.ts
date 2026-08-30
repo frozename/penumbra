@@ -6,14 +6,13 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { createPlanRuntimeSweeper } from "@penumbra/daemon/sweepers/plan-runtime";
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { createPlanRuntimeSweeper } from "../../daemon/src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin") {

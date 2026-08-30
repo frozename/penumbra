@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
 
-import { runConfigCheckAliases } from "../../src/commands/config-check-aliases.js";
+import { runConfigCheckAliases } from "@src/commands/config-check-aliases.js";
 
 let tempDirs: string[] = [];
 

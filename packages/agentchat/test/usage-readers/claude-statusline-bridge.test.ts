@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ClaudeStatusLineBridge } from "../../src/usage-readers/claude-statusline-bridge.js";
+import { ClaudeStatusLineBridge } from "@src/usage-readers/claude-statusline-bridge.js";
 
 function tmpCache(): string {
   return join(mkdtempSync(join(tmpdir(), "claude-rl-")), "rl.json");

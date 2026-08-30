@@ -16,13 +16,20 @@ import {
   checkEmbeddingModelVersion,
   type Services as CoreServices,
   createAaSnapshotStore,
+  createJudgeChat,
   installGlobalCrashHandlers,
   ledgerWriteToPerformanceRow,
+  type LlmCandidate,
+  type LlmServingCandidate,
   MaestroSessionWriter,
   mapTaskEventToLedger,
   readRoutingBiases,
   readStoredEmbeddingModelVersion,
+  type ResolvedJudgeConfig,
+  resolveJudgeConfig,
+  type ResolveKeychainSecret,
   resolveProjectId,
+  resolveRoleLlmCandidates,
   runStartupZombieSweep,
   TaskCooldowns,
   type TaskEvent,
@@ -49,17 +56,6 @@ import { promisify } from "node:util";
 
 import type { GhClient } from "./services/gh-client.js";
 
-import {
-  createJudgeChat,
-  type ResolvedJudgeConfig,
-  resolveJudgeConfig,
-} from "../../core/src/services/judge-chat.js";
-import {
-  type LlmCandidate,
-  type LlmServingCandidate,
-  type ResolveKeychainSecret,
-  resolveRoleLlmCandidates,
-} from "../../core/src/services/llm-candidates.js";
 import { resolveAgentChatConfigPath } from "./agentchat-config.js";
 import { createBearerAuth } from "./auth.js";
 import { corsPreflightResponse, withCorsResponseHeaders } from "./cors.js";

@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PendingHandoffsError, runWorktreeGc } from "../../src/commands/worktree-gc.js";
+import { PendingHandoffsError, runWorktreeGc } from "@src/commands/worktree-gc.js";
+
 import { expectAsyncThrow } from "./_helpers.js";
 
 try {

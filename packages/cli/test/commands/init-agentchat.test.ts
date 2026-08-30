@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
 
-import { AGENTCHAT_TEMPLATE } from "../../src/commands/init-agentchat-template.js";
-import { runInit } from "../../src/commands/init.js";
+import { AGENTCHAT_TEMPLATE } from "@src/commands/init-agentchat-template.js";
+import { runInit } from "@src/commands/init.js";
 
 // Use homebrew sqlite (supports dynamic extension loading for sqlite-vec) on macOS,
 // matching the bootstrap every other CLI/runtime test uses. Without it runInit's

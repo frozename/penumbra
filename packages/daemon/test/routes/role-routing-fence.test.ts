@@ -11,7 +11,7 @@ import {
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { resolveSingleRoute, type RouterDecisionSink } from "../../src/routes/role-routing.js";
+import { resolveSingleRoute, type RouterDecisionSink } from "@src/routes/role-routing.js";
 
 if (process.platform === "darwin") {
   try {

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { prepareConsoleServer, runConsole } from "../../src/commands/console.js";
+import { prepareConsoleServer, runConsole } from "@src/commands/console.js";
 
 let storageRoot = "";
 let distRoot = "";

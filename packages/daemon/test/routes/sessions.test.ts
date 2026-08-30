@@ -2,7 +2,7 @@ import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { lookupSessionStart, sessionsTouchRoute } from "../../src/routes/sessions.js";
+import { lookupSessionStart, sessionsTouchRoute } from "@src/routes/sessions.js";
 
 if (process.platform === "darwin") {
   try {

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { AaModel, AaModelSnapshot } from "../../src/routing/schemas.js";
-
-import { buildAliasIndex, reconcileAliases } from "../../src/routing/alias-map.js";
+import { buildAliasIndex, reconcileAliases } from "@src/routing/alias-map.js";
+import type { AaModel, AaModelSnapshot } from "@src/routing/schemas.js";
 
 function aaModel(overrides: {
   id: string;

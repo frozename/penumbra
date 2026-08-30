@@ -3,7 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
 
-import { longLivedMcpCallRoute } from "../../src/routes/long-lived-mcp.js";
+import { longLivedMcpCallRoute } from "@src/routes/long-lived-mcp.js";
 
 type ActionGate = NonNullable<Services["actionGate"]>;
 type HandleCall = ActionGate["handleCall"];

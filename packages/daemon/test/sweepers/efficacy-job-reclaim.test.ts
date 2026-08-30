@@ -12,7 +12,7 @@ import { expect, test } from "bun:test";
 import {
   runEfficacyJobReclaimSweep,
   startEfficacyJobReclaimSweeper,
-} from "../../src/sweepers/efficacy-job-reclaim.js";
+} from "@src/sweepers/efficacy-job-reclaim.js";
 
 try {
   if (process.platform === "darwin") {

@@ -6,7 +6,7 @@ import { delimiter, join } from "node:path";
 import {
   discoverCodexModels,
   parseCodexDebugModelsOutput,
-} from "../../../src/commands/generator/discovery-codex.js";
+} from "@src/commands/generator/discovery-codex.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/codex-debug-models.json");
 const fixtureText = readFileSync(fixturePath, "utf8");

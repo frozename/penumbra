@@ -3,9 +3,9 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { conversationsCancelRoute } from "../../src/routes/conversations.js";
-import { handoffsCreateRoute } from "../../src/routes/handoffs.js";
-import { workerControlRoute } from "../../src/routes/worker-control.js";
+import { conversationsCancelRoute } from "@src/routes/conversations.js";
+import { handoffsCreateRoute } from "@src/routes/handoffs.js";
+import { workerControlRoute } from "@src/routes/worker-control.js";
 
 try {
   if (process.platform === "darwin") {

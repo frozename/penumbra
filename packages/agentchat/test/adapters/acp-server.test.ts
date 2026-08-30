@@ -3,7 +3,8 @@ import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { PassThrough } from "node:stream";
 
-import { type AcpServerSpawner, startAcpServer } from "../../src/adapters/acp-server.js";
+import { type AcpServerSpawner, startAcpServer } from "@src/adapters/acp-server.js";
+
 import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 import { serviceTest } from "../helpers/service-gates.js";
 

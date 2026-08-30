@@ -1,11 +1,10 @@
 import { Database } from "bun:sqlite";
 import { expect, it } from "bun:test";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { findSimilarityClusters } from "../../src/dreaming/curator/cluster-detection.js";
-import { runPC2Phase } from "../../src/dreaming/curator/pc2-cluster.js";
-import { revertDreamAction } from "../../src/dreaming/reembed.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { findSimilarityClusters } from "@src/dreaming/curator/cluster-detection.js";
+import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
+import { revertDreamAction } from "@src/dreaming/reembed.js";
 
 interface DreamActionPayloadRow {
   payload_json: string;

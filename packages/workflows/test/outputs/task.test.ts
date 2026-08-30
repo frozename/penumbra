@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { taskOutput, type TaskOutputCtx } from "../../src/outputs/task.js";
-import { WorkflowSpecSchema } from "../../src/schema.js";
+import { taskOutput, type TaskOutputCtx } from "@src/outputs/task.js";
+import { WorkflowSpecSchema } from "@src/schema.js";
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 type FetchInit = Parameters<typeof globalThis.fetch>[1];

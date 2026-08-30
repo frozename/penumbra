@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { OpenAICompatEmbedder } from "../../src/embedder/openai-compat.js";
+import { OpenAICompatEmbedder } from "@src/embedder/openai-compat.js";
 
 const originalFetch = globalThis.fetch;
 

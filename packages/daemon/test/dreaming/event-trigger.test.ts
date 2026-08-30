@@ -3,8 +3,8 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { buildDreamingConfig } from "../../src/dreaming/config.js";
-import { handleIdleSignal } from "../../src/dreaming/event-trigger.js";
+import { buildDreamingConfig } from "@src/dreaming/config.js";
+import { handleIdleSignal } from "@src/dreaming/event-trigger.js";
 
 const noopLog: { warn: (msg: string) => void } = {
   warn: (_msg: string): void => undefined,

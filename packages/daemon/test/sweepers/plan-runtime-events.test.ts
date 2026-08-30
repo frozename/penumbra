@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createPlanRuntimeSweeper } from "../../src/sweepers/plan-runtime.js";
+import { createPlanRuntimeSweeper } from "@src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin")

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { useDaemonStore } from "../../src/stores/daemon-store.js";
+import { useDaemonStore } from "@src/stores/daemon-store.js";
 
 describe("useDaemonStore", () => {
   beforeEach(() => {

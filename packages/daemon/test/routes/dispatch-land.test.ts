@@ -15,14 +15,14 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { setPrincipalForTest } from "../../src/auth.js";
+import { setPrincipalForTest } from "@src/auth.js";
 import {
   __dispatchLandInternalsForTest,
   type DispatchLandDeps,
   dispatchLandRoute,
   dispatchLandTaskRoute,
-} from "../../src/routes/dispatch-land.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/dispatch-land.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 // dispatch-land tests bypass the daemon fetch handler (they pass mocked deps
 // directly to dispatchLandRoute), so the auth middleware never runs. Stamp a

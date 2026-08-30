@@ -24,7 +24,7 @@ type WatchdogOptions = {
 };
 
 async function runWatchdog(options: WatchdogOptions): Promise<WatchdogResult | null> {
-  const module = (await import("../../src/commands/watchdog.js").catch(() => null)) as {
+  const module = (await import("@src/commands/watchdog.js").catch(() => null)) as {
     runWatchdog?: (opts: WatchdogOptions) => Promise<WatchdogResult>;
   } | null;
   return module?.runWatchdog ? await module.runWatchdog(options) : null;

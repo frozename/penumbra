@@ -4,7 +4,7 @@ import {
   type ClaimAffinityAgent,
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
-} from "../../src/worker/claim-affinity.js";
+} from "@src/worker/claim-affinity.js";
 
 const MAIN = "/repos/penumbra";
 const LLAMACTL = "/repos/llamactl";

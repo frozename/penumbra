@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   formatPenumbraComment,
   isPenumbraAuthoredComment,
-} from "../../src/services/gh-comment-format.js";
+} from "@src/services/gh-comment-format.js";
 
 test("formatPenumbraComment includes parseable marker line", () => {
   const body = formatPenumbraComment({

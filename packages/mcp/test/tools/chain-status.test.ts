@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { chainStatusHandler } from "@src/tools/chain-status.js";
 
-import { chainStatusHandler } from "../../src/tools/chain-status.js";
 import { fakeDaemon } from "../helpers.js";
 
 type GetHandoffStatusFn = DaemonClient["getHandoffStatus"];

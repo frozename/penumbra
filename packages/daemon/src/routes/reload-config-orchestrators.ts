@@ -1,5 +1,6 @@
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
 import {
+  collectMissingRoutingAgents,
   getConfig,
   loadModelAliasMapFromDir,
   loadTaskRouterConfigFromDir,
@@ -18,10 +19,6 @@ import { join } from "node:path";
 import type { DaemonServices } from "../serve.js";
 import type { ReconcileSummary } from "../workers/supervisor.js";
 
-// Deep-relative: node_modules/@penumbra/config in this worktree symlinks to the
-// pre-change checkout, so the package specifier would not resolve this new export.
-// Resolves to the same file as @penumbra/config post-land.
-import { collectMissingRoutingAgents } from "../../../config/src/generator/routing-refs.js";
 import {
   formatAgentChatConfigError,
   loadAgentChatConfigUncached,

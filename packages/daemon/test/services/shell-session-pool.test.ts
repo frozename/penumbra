@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { buildScrubbedChildEnv, ShellSessionPool } from "../../src/services/shell-session-pool.js";
+import { buildScrubbedChildEnv, ShellSessionPool } from "@src/services/shell-session-pool.js";
 
 // bun:test's `.rejects.toThrow()` is typed as void even though it awaits the
 // underlying promise at runtime. Use this helper instead.

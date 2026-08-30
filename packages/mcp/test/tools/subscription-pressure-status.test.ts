@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { TOOL_REGISTRY } from "../../src/tools/registry.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import {
   subscriptionPressureStatusHandler,
   SubscriptionPressureStatusInputSchema,
-} from "../../src/tools/subscription-pressure-status.js";
+} from "@src/tools/subscription-pressure-status.js";
+
 import { fakeDaemon } from "../helpers.js";
 
 type SubscriptionPressureStatusFn = DaemonClient["subscriptionPressureStatus"];

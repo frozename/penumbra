@@ -10,7 +10,7 @@ import {
   createBriefSynthesizer,
   createBriefSynthesizerFromAgentchat,
   parseSynthesizerResponse,
-} from "../../src/dreaming/brief-synthesizer.js";
+} from "@src/dreaming/brief-synthesizer.js";
 
 beforeAll(() => {
   delete process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"];

@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { findProjectIdByCwd } from "../../src/projects/registry-cwd.js";
-import { ProjectRegistry } from "../../src/projects/registry.js";
+import { findProjectIdByCwd } from "@src/projects/registry-cwd.js";
+import { ProjectRegistry } from "@src/projects/registry.js";
 
 const dirs: string[] = [];
 

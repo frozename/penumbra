@@ -6,7 +6,7 @@ import {
   TerminalExitedPayload,
   TerminalKilledPayload,
   TerminalSpawnedPayload,
-} from "../../src/schemas/write-tools-events.js";
+} from "@src/schemas/write-tools-events.js";
 
 describe("FsWriteAppliedPayload", () => {
   const valid = {

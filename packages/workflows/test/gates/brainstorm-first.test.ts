@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { verifyBrainstormFirst } from "../../src/gates/brainstorm-first.js";
+import { verifyBrainstormFirst } from "@src/gates/brainstorm-first.js";
 
 test("passes when conversation memory shows brainstorming was invoked", () => {
   const r = verifyBrainstormFirst({

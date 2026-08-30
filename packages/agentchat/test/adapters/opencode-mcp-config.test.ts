@@ -7,7 +7,7 @@ import * as path from "node:path";
 import {
   prepareOpencodeMcpConfigDir,
   translateAcpMcpServerToOpencode,
-} from "../../src/adapters/opencode-mcp-config.js";
+} from "@src/adapters/opencode-mcp-config.js";
 
 interface OpencodeLocalMcp {
   type: "local";

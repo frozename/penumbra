@@ -1,9 +1,9 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { brainstormHandler } from "@src/tools/brainstorm.js";
 
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { brainstormHandler } from "../../src/tools/brainstorm.js";
 import { fakeDaemon } from "../helpers.js";
 
 type WorkflowRunFn = DaemonClient["workflowRun"];

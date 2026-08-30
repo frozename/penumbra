@@ -1,5 +1,6 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
@@ -11,9 +12,8 @@ import {
   agentsPerformanceReconcilerRoute,
   agentsRankRoute,
   agentsRecommendRoute,
-} from "../../src/routes/agents.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { registerWorkerForTest } from "../../test-utils.js";
+} from "@src/routes/agents.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

@@ -5,8 +5,8 @@ import {
   type StreamMessage,
   type StreamTopic,
   type Subscription,
-} from "../../src/api/streams";
-import { useStream } from "../../src/hooks/useStream";
+} from "@src/api/streams";
+import { useStream } from "@src/hooks/useStream";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,

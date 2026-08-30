@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "@src/routes/otlp.js";
+
 import { ProtoWriter } from "../../../core/test/otlp/encoder.js";
-import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "../../src/routes/otlp.js";
 
 const FIXTURE_PATH = join(
   import.meta.dir,

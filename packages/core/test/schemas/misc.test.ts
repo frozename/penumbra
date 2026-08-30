@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { T2MemorySchema } from "../../src/schemas/memory.js";
-import { ProjectSchema } from "../../src/schemas/project.js";
-import { RecallRequestSchema, RecallResultSchema } from "../../src/schemas/recall.js";
-import { T1RollupSchema } from "../../src/schemas/rollup.js";
+import { T2MemorySchema } from "@src/schemas/memory.js";
+import { ProjectSchema } from "@src/schemas/project.js";
+import { RecallRequestSchema, RecallResultSchema } from "@src/schemas/recall.js";
+import { T1RollupSchema } from "@src/schemas/rollup.js";
 
 test("T1 rollup parses a minimal row", () => {
   const r = T1RollupSchema.parse({

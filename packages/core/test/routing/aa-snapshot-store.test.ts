@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   type AaSnapshotStorePayload,
   createAaSnapshotStore,
-} from "../../src/routing/aa-snapshot-store.js";
+} from "@src/routing/aa-snapshot-store.js";
 
 function snapshot(id: string, collectedAt = "2026-08-24T10:00:00.000Z"): AaSnapshotStorePayload {
   return {

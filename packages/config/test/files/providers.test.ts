@@ -8,7 +8,8 @@ import {
   loadProviderSourcesFromDir,
   type ProviderSourcesConfig,
   resolveCatalogAuthority,
-} from "../../src/index.js";
+} from "@src/index.js";
+
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 
 const tempDirs: string[] = [];

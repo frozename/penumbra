@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveAdapterApiKey } from "../../src/adapters/secret.js";
+import { resolveAdapterApiKey } from "@src/adapters/secret.js";
 
 test("resolveAdapterApiKey: literal apiKey wins (back-compat)", () => {
   expect(resolveAdapterApiKey({ apiKey: "literal-123" })).toBe("literal-123");

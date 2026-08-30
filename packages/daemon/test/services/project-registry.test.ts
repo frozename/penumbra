@@ -12,9 +12,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DaemonServices } from "../../src/serve.js";
-
-import { reloadConfigRoute } from "../../src/routes/reload-config.js";
+import { reloadConfigRoute } from "@src/routes/reload-config.js";
+import type { DaemonServices } from "@src/serve.js";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;

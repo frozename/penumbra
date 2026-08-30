@@ -1,5 +1,6 @@
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { createDaemonFetchHandler } from "@penumbra/daemon";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -7,9 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
-import { DaemonClient } from "../../src/daemon-client.js";
-import { laneCloseHandler, LaneCloseInputShape } from "../../src/tools/lane-close.js";
+import { DaemonClient } from "@src/daemon-client.js";
+import { laneCloseHandler, LaneCloseInputShape } from "@src/tools/lane-close.js";
+
 import { bodyAsString, type FetchHarness, installFetchMock, requestUrl } from "../helpers.js";
 
 interface MockToolResult {

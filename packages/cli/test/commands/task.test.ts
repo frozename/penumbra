@@ -10,7 +10,7 @@ import {
   runTaskReview,
   runTaskShow,
   runTaskWatch,
-} from "../../src/commands/task.js";
+} from "@src/commands/task.js";
 
 let storageRoot = "";
 

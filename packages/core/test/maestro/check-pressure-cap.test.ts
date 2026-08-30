@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import {
-  checkPressureCap,
-  type CheckPressureCapDeps,
-  type PressureSnapshot,
-} from "../../src/index.js";
+import { checkPressureCap, type CheckPressureCapDeps, type PressureSnapshot } from "@src/index.js";
 
 const now = (): Date => new Date("2026-05-08T01:00:00Z");
 

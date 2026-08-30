@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 
-import { createAcpInjector } from "../../src/maestro/acp-injector.js";
+import { createAcpInjector } from "@src/maestro/acp-injector.js";
 
 interface AcpInjectMessage {
   role: "user";

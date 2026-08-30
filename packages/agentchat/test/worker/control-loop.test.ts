@@ -2,9 +2,8 @@ import type { Logger } from "@penumbra/core";
 
 import { expect, mock, test } from "bun:test";
 
-import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
-
-import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
+import type { DispatchHandoffResult } from "@src/cli/dispatch-handoff.js";
+import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
 
 // pino's Logger has heavily-overloaded info/warn/debug signatures the bun mock
 // can't structurally satisfy. Single laundering helper produces a Logger-typed

@@ -1,12 +1,11 @@
+import { PenumbraClient } from "@penumbra/agentchat/penumbra-client";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { PenumbraClient } from "../../../agentchat/src/penumbra-client.js";
-import { createDaemonFetchHandler } from "../../../daemon/test-utils.ts";
 
 export function withDaemon(): {
   client: PenumbraClient;

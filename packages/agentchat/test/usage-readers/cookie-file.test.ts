@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { expandHome, readCookieFile } from "../../src/usage-readers/cookie-file.js";
+import { expandHome, readCookieFile } from "@src/usage-readers/cookie-file.js";
 
 function tempCookie(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cookie-file-test-"));

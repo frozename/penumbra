@@ -1,9 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import { createAcpWarmPool, poolKeyFor } from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 
-import { createAcpWarmPool, poolKeyFor } from "../../src/adapters/acp-warm-pool.js";
 import { makeMockAcpHandle, type MockAcpHandle } from "../helpers/stdio-acp-fixtures.js";
 
 interface Deferred<T> {

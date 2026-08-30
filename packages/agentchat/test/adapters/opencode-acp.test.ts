@@ -4,18 +4,17 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AcpClient, AcpClientOptions } from "../../src/adapters/acp-client.js";
-import type { AcpServerHandle, StartAcpServerOptions } from "../../src/adapters/acp-server.js";
+import type { AcpClient, AcpClientOptions } from "@src/adapters/acp-client.js";
+import type { AcpServerHandle, StartAcpServerOptions } from "@src/adapters/acp-server.js";
 import type {
   AcpCreateSessionRequest,
   AcpEvent,
   AcpTool,
   McpServer,
   McpServerStdio,
-} from "../../src/adapters/acp-types.js";
-import type { DispatchInput } from "../../src/sdk/adapter.js";
-
-import { OpencodeAcpAdapter } from "../../src/adapters/opencode-acp.js";
+} from "@src/adapters/acp-types.js";
+import { OpencodeAcpAdapter } from "@src/adapters/opencode-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
 type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
 type ObservedDispatchEvent = Parameters<NonNullable<DispatchInput["onEvent"]>>[0];

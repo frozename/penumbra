@@ -7,8 +7,8 @@ import {
   autocommitOnChainEnd,
   filterAutocommitPaths,
   parseGitStatusPaths,
-} from "../../src/worker/autocommit-on-chain-end.js";
-import { createWorkerDispatcher, type WorkerDispatcherDeps } from "../../src/worker/dispatcher.js";
+} from "@src/worker/autocommit-on-chain-end.js";
+import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
 
 const handoff = {
   handoff_id: "h-auto",

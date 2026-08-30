@@ -3,8 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runApprove } from "../../src/cli/approve.js";
-import { runQueue } from "../../src/cli/queue.js";
+import { runApprove } from "@src/cli/approve.js";
+import { runQueue } from "@src/cli/queue.js";
 
 interface RequestRecord {
   url: string;

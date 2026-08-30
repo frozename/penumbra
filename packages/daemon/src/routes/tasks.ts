@@ -24,13 +24,13 @@ import {
   TaskWriter,
   UnexpectedReviewVerdict,
 } from "@penumbra/core";
+// Deep import (core/src, not the @penumbra/core barrel): the barrel's built .d.ts
+// lags newly-added exports, so the daemon typecheck wouldn't see this function.
+import { getTaskDraftPromotionInfo } from "@penumbra/core";
 import { z } from "zod";
 
 import type { GhTaskSyncService, GhTaskSyncSummary } from "../sweepers/gh-task-sync.js";
 
-// Deep import (core/src, not the @penumbra/core barrel): the barrel's built .d.ts
-// lags newly-added exports, so the daemon typecheck wouldn't see this function.
-import { getTaskDraftPromotionInfo } from "../../../core/src/readers/task-draft.js";
 import { getPrincipal } from "../auth.js";
 import { bodyJson, json } from "./_helpers.js";
 const TaskIncludeSchema = z.enum(["lease", "events", "descendants"]);

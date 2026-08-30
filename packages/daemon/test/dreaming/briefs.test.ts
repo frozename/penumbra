@@ -2,9 +2,8 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, test } from "bun:test";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { type DreamCycleDeps, runDreamCycle } from "../../src/dreaming/cycle.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { type DreamCycleDeps, runDreamCycle } from "@src/dreaming/cycle.js";
 
 // File-local typed placeholder for DreamConfig — this test exercises only the
 // handful of fields set inline below; DreamConfig's 30+ env-derived knobs would

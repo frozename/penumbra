@@ -3,8 +3,8 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { buildDreamingConfig } from "../../src/dreaming/config.js";
-import { resolveDreamRuntimeConfig } from "../../src/dreaming/runtime-config.js";
+import { buildDreamingConfig } from "@src/dreaming/config.js";
+import { resolveDreamRuntimeConfig } from "@src/dreaming/runtime-config.js";
 
 function withDb(run: (db: Database) => void): void {
   const db = new Database(":memory:");

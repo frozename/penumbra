@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { dispatchWorkflowSubcommand } from "../../src/commands/workflow.js";
+import { dispatchWorkflowSubcommand } from "@src/commands/workflow.js";
 
 const TOKEN = "test-token";
 

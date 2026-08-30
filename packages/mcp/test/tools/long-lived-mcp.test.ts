@@ -1,23 +1,23 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { longLivedApproveActionHandler } from "../../src/tools/long-lived-approve-action-mcp.js";
-import { longLivedAuditHandler } from "../../src/tools/long-lived-audit-mcp.js";
-import { longLivedGetHandler } from "../../src/tools/long-lived-get-mcp.js";
-import { longLivedInjectGoalHandler } from "../../src/tools/long-lived-inject-goal-mcp.js";
-import { longLivedListHandler } from "../../src/tools/long-lived-list-mcp.js";
-import { longLivedPauseHandler } from "../../src/tools/long-lived-pause-mcp.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { longLivedApproveActionHandler } from "@src/tools/long-lived-approve-action-mcp.js";
+import { longLivedAuditHandler } from "@src/tools/long-lived-audit-mcp.js";
+import { longLivedGetHandler } from "@src/tools/long-lived-get-mcp.js";
+import { longLivedInjectGoalHandler } from "@src/tools/long-lived-inject-goal-mcp.js";
+import { longLivedListHandler } from "@src/tools/long-lived-list-mcp.js";
+import { longLivedPauseHandler } from "@src/tools/long-lived-pause-mcp.js";
 import {
   longLivedPendingActionsHandler,
   LongLivedPendingActionsInputShape,
-} from "../../src/tools/long-lived-pending-actions-mcp.js";
-import { longLivedRejectActionHandler } from "../../src/tools/long-lived-reject-action-mcp.js";
-import { longLivedResumeHandler } from "../../src/tools/long-lived-resume-mcp.js";
-import { longLivedRetireHandler } from "../../src/tools/long-lived-retire-mcp.js";
-import { longLivedStateGetHandler } from "../../src/tools/long-lived-state-get-mcp.js";
-import { longLivedStateSetHandler } from "../../src/tools/long-lived-state-set-mcp.js";
-import { longLivedTicksHandler } from "../../src/tools/long-lived-ticks-mcp.js";
+} from "@src/tools/long-lived-pending-actions-mcp.js";
+import { longLivedRejectActionHandler } from "@src/tools/long-lived-reject-action-mcp.js";
+import { longLivedResumeHandler } from "@src/tools/long-lived-resume-mcp.js";
+import { longLivedRetireHandler } from "@src/tools/long-lived-retire-mcp.js";
+import { longLivedStateGetHandler } from "@src/tools/long-lived-state-get-mcp.js";
+import { longLivedStateSetHandler } from "@src/tools/long-lived-state-set-mcp.js";
+import { longLivedTicksHandler } from "@src/tools/long-lived-ticks-mcp.js";
+
 import { fakeDaemon } from "../helpers.js";
 
 type LongLivedListFn = DaemonClient["longLivedList"];

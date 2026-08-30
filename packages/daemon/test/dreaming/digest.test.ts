@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { writeDailyDigest } from "../../src/dreaming/digest.js";
+import { writeDailyDigest } from "@src/dreaming/digest.js";
 
 try {
   if (process.platform === "darwin") {

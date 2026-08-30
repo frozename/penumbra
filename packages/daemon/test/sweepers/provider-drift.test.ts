@@ -6,7 +6,7 @@ import {
   PROVIDER_DRIFT_DRY_RUN_ARGV,
   runProviderDriftSweep,
   startProviderDriftSweeper,
-} from "../../src/sweepers/provider-drift.js";
+} from "@src/sweepers/provider-drift.js";
 
 const DRY_RUN_TERMINAL_LINE =
   "penumbra config sync-providers: dry run; pass --apply to write agents.yaml and model-aliases.yaml";

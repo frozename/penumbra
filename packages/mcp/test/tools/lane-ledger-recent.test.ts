@@ -4,7 +4,8 @@ import { z } from "zod";
 import {
   laneLedgerRecentHandler,
   LaneLedgerRecentInputShape,
-} from "../../src/tools/lane-ledger-recent.js";
+} from "@src/tools/lane-ledger-recent.js";
+
 import { installFetchMock, requestUrl } from "../helpers.js";
 
 interface MockToolResult {

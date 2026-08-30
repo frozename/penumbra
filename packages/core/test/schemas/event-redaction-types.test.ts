@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { EventTypeSchema } from "../../src/schemas/event.js";
+import { EventTypeSchema } from "@src/schemas/event.js";
 
 const NEW_TYPES = [
   "agent-response-blocked",

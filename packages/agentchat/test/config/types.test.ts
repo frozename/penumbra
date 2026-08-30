@@ -4,7 +4,7 @@ import {
 } from "@penumbra/config";
 import { describe, expect, test } from "bun:test";
 
-import { BUILT_IN_ADAPTER_KINDS } from "../../src/adapters/registry.js";
+import { BUILT_IN_ADAPTER_KINDS } from "@src/adapters/registry.js";
 import {
   AgentChatConfigSchema,
   AgentConfigSchema,
@@ -13,7 +13,7 @@ import {
   PlanSynthesizerSchema,
   ReviewPersonaSchema,
   ReviewSynthesizerSchema,
-} from "../../src/config/types.js";
+} from "@src/config/types.js";
 
 describe("AgentOptionsSchema — config single source of truth", () => {
   test("agentchat re-exports the canonical config schema object", () => {

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runFsGlob } from "../../src/recall-sources/fs.js";
+import { runFsGlob } from "@src/recall-sources/fs.js";
 
 test("fs.glob lists files matching a pattern", async () => {
   const dir = mkdtempSync(join(tmpdir(), "fsg-"));

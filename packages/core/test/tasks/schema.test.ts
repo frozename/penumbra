@@ -13,7 +13,7 @@ import {
   TaskPrioritySchema,
   TaskRecordSchema,
   TaskStatusSchema,
-} from "../../src/tasks/schema.js";
+} from "@src/tasks/schema.js";
 
 describe("task board schemas", () => {
   test("TaskKindSchema accepts lifecycle kinds", () => {

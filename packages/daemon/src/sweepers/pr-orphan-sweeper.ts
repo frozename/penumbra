@@ -1,9 +1,8 @@
 import type { Database } from "bun:sqlite";
 
+import { HandoffReader, isAncestorOf, isThreeDotDiffEmpty } from "@penumbra/core";
 import { spawn } from "node:child_process";
 
-import { HandoffReader } from "../../../core/src/readers/handoff.js";
-import { isAncestorOf, isThreeDotDiffEmpty } from "../../../core/src/worktree/branch-land-probe.js";
 import {
   type GhClient as CanonicalGhClient,
   createGhCliClient,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { INTERNAL_TERMS_SEED, isWebSearchable } from "../../src/dreaming/query-rewriting.js";
+import { INTERNAL_TERMS_SEED, isWebSearchable } from "@src/dreaming/query-rewriting.js";
 
 describe("dreaming/query-rewriting", () => {
   const resetInternalTerms = (): string | undefined => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { Titlebar } from "../../src/shell/Titlebar";
+import { Titlebar } from "@src/shell/Titlebar";
 
 describe("Titlebar", () => {
   test("renders traffic lights, orb, brand, and version", () => {

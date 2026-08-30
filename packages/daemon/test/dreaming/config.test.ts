@@ -1,7 +1,7 @@
 import { getConfig, resetConfigForTest } from "@penumbra/config";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { buildDreamingConfig } from "../../src/dreaming/config.js";
+import { buildDreamingConfig } from "@src/dreaming/config.js";
 
 function buildFromProcessEnv(): ReturnType<typeof buildDreamingConfig> {
   resetConfigForTest();

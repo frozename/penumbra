@@ -3,7 +3,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import {
   createPermissionEventSource,
   type PermissionSseCreds,
-} from "../../src/worker/permission-event-source.js";
+} from "@src/worker/permission-event-source.js";
 
 interface CapturedRequest {
   url: string;

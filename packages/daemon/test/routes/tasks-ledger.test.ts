@@ -13,8 +13,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { createTaskLeaseSweeper } from "../../src/sweepers/task-leases.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { createTaskLeaseSweeper } from "@src/sweepers/task-leases.js";
 
 type TaskLedgerServices = Services & {
   agentchatConfig: {

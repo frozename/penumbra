@@ -1,9 +1,8 @@
-import { loadSqliteVec, migrate, T0Writer } from "@penumbra/core";
+import { loadSqliteVec, migrate, T0Writer, TaskDraftReader } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { TaskDraftReader } from "../../../core/src/readers/task-draft.js";
-import { createRefiningStuckRecoverySweeper } from "../../src/sweepers/refining-stuck-recovery.js";
+import { createRefiningStuckRecoverySweeper } from "@src/sweepers/refining-stuck-recovery.js";
 
 try {
   if (process.platform === "darwin") {

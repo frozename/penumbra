@@ -9,17 +9,16 @@ import {
   TaskWriter,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { createDaemonFetchHandler } from "@penumbra/daemon";
+import { createBoundsCallbacks } from "@penumbra/daemon/maestro/bounds-callbacks";
+import { createBoundsTracker } from "@penumbra/daemon/maestro/bounds-tracker";
+import { createOrchestrateReactor } from "@penumbra/daemon/reactors/orchestrate-reactor";
+import { chainStartInternal } from "@penumbra/daemon/routes/chains";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { createBoundsCallbacks } from "../../daemon/src/maestro/bounds-callbacks.js";
-import { createBoundsTracker } from "../../daemon/src/maestro/bounds-tracker.js";
-import { createOrchestrateReactor } from "../../daemon/src/reactors/orchestrate-reactor.js";
-import { chainStartInternal } from "../../daemon/src/routes/chains.js";
-import { createDaemonFetchHandler } from "../../daemon/src/serve.js";
 
 try {
   if (process.platform === "darwin") {

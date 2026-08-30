@@ -4,7 +4,7 @@ import {
   type BootReconcileDeps,
   type BootReconcileLogger,
   reconcileOrphansAtWorkerBoot,
-} from "../../src/worker/boot-reconcile.js";
+} from "@src/worker/boot-reconcile.js";
 
 type BootReconcileClient = BootReconcileDeps["client"];
 

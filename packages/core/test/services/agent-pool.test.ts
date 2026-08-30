@@ -1,7 +1,7 @@
+import { AgentPoolSchema } from "@penumbra/config";
 import { describe, expect, test } from "bun:test";
 
-import { AgentPoolSchema } from "../../../config/src/files/agent-pool.js";
-import { resolveAgentPool } from "../../src/services/agent-routing.js";
+import { resolveAgentPool } from "@src/services/agent-routing.js";
 
 describe("resolveAgentPool", () => {
   test("returns an empty ordered list and drop reasons when every member is dropped", () => {

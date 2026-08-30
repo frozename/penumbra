@@ -9,7 +9,7 @@ import {
   insertLane,
   recentLanes,
   stampAgentPerformanceGateOutcomeForHandoff,
-} from "../../src/db/lane-ledger.js";
+} from "@src/db/lane-ledger.js";
 
 const CREATE_LANE_LEDGER_SQL = `
   CREATE TABLE IF NOT EXISTS lane_ledger (

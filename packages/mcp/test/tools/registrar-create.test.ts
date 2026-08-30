@@ -1,9 +1,9 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { registrarCreateHandler } from "@src/tools/registrar-create.js";
 
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { registrarCreateHandler } from "../../src/tools/registrar-create.js";
 import { fakeDaemon, firstJson } from "../helpers.js";
 
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {

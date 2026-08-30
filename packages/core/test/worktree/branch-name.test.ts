@@ -6,7 +6,7 @@ import {
   deriveBranchNameFromMessage,
   resolveHandoffBranchName,
   slugifyBranchSegment,
-} from "../../src/worktree/branch-name.js";
+} from "@src/worktree/branch-name.js";
 
 test("resolveHandoffBranchName falls back for legacy NULL branch_name rows", () => {
   expect(resolveHandoffBranchName({ handoff_id: "h-legacy", branch_name: null })).toBe(

@@ -2,11 +2,10 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-import type { DreamCycleDeps } from "../../src/dreaming/cycle.js";
-
-import { runDreamCycle } from "../../src/dreaming/cycle.js";
-import { revertDreamAction, runReembedPhase } from "../../src/dreaming/reembed.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import type { DreamCycleDeps } from "@src/dreaming/cycle.js";
+import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { revertDreamAction, runReembedPhase } from "@src/dreaming/reembed.js";
 
 // File-local typed factory for DreamConfig stubs. DreamConfig has 30+ env-derived
 // fields; runReembedPhase / runDreamCycle in these tests only consume a small

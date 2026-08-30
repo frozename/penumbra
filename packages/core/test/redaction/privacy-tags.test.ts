@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { stripPrivacyTags } from "../../src/redaction/privacy-tags.js";
+import { stripPrivacyTags } from "@src/redaction/privacy-tags.js";
 
 test("removes content inside <private>...</private>", () => {
   expect(stripPrivacyTags("keep <private>drop me</private> keep")).toBe("keep  keep");

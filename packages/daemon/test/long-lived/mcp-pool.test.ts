@@ -5,7 +5,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 
-import { createMcpPool } from "../../src/long-lived/mcp-pool.js";
+import { createMcpPool } from "@src/long-lived/mcp-pool.js";
 
 const fixture = join(import.meta.dir, "../fixtures/echo-mcp.ts");
 

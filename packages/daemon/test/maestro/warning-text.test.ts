@@ -2,7 +2,7 @@ import type { BoundsConsumed } from "@penumbra/core";
 
 import { expect, test } from "bun:test";
 
-import { formatBudgetWarning } from "../../src/maestro/warning-text.js";
+import { formatBudgetWarning } from "@src/maestro/warning-text.js";
 
 const BASE_BUDGETS = {
   wall_clock_budget_ms: 30 * 60_000,

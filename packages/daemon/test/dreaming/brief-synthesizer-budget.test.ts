@@ -4,7 +4,7 @@ import {
   type BriefSynthesizerInput,
   buildBriefPrompt,
   createBriefSynthesizer,
-} from "../../src/dreaming/brief-synthesizer.js";
+} from "@src/dreaming/brief-synthesizer.js";
 
 function makeMemory(id: string, body: string): BriefSynthesizerInput["recent_memories"][number] {
   return {

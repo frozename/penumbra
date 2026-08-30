@@ -1,15 +1,14 @@
 #!/usr/bin/env bun
 
+import { runInit } from "@penumbra/cli/commands/init";
+import { runStart } from "@penumbra/cli/commands/start";
+import { runStop } from "@penumbra/cli/commands/stop";
 // Bootstrap the homebrew-supplied sqlite for sqlite-vec on macOS.
 // Must run before any `new Database(...)` call. Idempotent.
 import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-
-import { runInit } from "../../cli/src/commands/init.js";
-import { runStart } from "../../cli/src/commands/start.js";
-import { runStop } from "../../cli/src/commands/stop.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

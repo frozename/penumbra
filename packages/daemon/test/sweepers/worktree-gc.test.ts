@@ -15,8 +15,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { lifecycleLock, resetLifecycleLock } from "../../src/dispatch/lifecycle-lock.js";
-import { type BranchLandStatus, runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
+import { lifecycleLock, resetLifecycleLock } from "@src/dispatch/lifecycle-lock.js";
+import { type BranchLandStatus, runWorktreeGcTick } from "@src/sweepers/worktree-gc.js";
 
 const execFile = promisify(execFileCb);
 

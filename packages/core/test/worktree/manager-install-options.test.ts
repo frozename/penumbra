@@ -10,7 +10,7 @@ import {
   provisionLocalCache,
   runIsolatedInstall,
   WorktreeManager,
-} from "../../src/worktree/manager.js";
+} from "@src/worktree/manager.js";
 
 type RunnerOptions = {
   cwd?: string;

@@ -2,7 +2,7 @@ import { applySchema, loadSqliteVec, routeAgent } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
-import { handleTickTeardown } from "../../src/long-lived/teardown.js";
+import { handleTickTeardown } from "@src/long-lived/teardown.js";
 
 type AgentPerformanceRow = {
   agent_kind: string;

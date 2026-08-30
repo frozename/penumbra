@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 
-import type { AgentChatConfig } from "../../src/config/types.js";
-
-import { isAutoApproved } from "../../src/cli/trust.js";
+import { isAutoApproved } from "@src/cli/trust.js";
+import type { AgentChatConfig } from "@src/config/types.js";
 
 const cfg: AgentChatConfig = {
   agents: [

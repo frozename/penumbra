@@ -4,7 +4,7 @@ import {
   applyOrchestrateToolsToConfig,
   ORCHESTRATE_MAESTRO_TOOLS,
   withOrchestrateTools,
-} from "../../src/worker/orchestrate-tools.js";
+} from "@src/worker/orchestrate-tools.js";
 
 describe("withOrchestrateTools", () => {
   test("appends the maestro tools for an orchestrate dispatch", () => {

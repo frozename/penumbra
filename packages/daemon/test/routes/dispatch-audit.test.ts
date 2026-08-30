@@ -3,8 +3,8 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { dispatchAuditRoute } from "../../src/routes/dispatch-audit.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { dispatchAuditRoute } from "@src/routes/dispatch-audit.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 function services(): Services {
   const db = new Database(":memory:");

@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { backfillRecallFields } from "../../src/db/backfill-recall-fields.js";
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { backfillRecallFields } from "@src/db/backfill-recall-fields.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 // Switch to Homebrew's full-featured SQLite before any Database is created.
 // Guard against double-load when multiple test files run in the same process.

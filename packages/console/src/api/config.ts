@@ -28,6 +28,12 @@ export interface LoadDeps {
   devUrl?: string;
 }
 
+const viteEnv = import.meta.env as {
+  DEV: boolean;
+  PENUMBRA_DAEMON_URL?: string;
+  PENUMBRA_TOKEN?: string;
+};
+
 function isLoopbackBaseUrl(raw: string): boolean {
   try {
     const u = new URL(raw);
@@ -55,14 +61,14 @@ function normalizeBaseUrl(raw: string): string {
  * The dev path is for local development only; no launcher proxy.
  */
 export function loadPenumbraConfig(deps?: LoadDeps): PenumbraConfig {
-  const isDev = deps?.isDev ?? import.meta.env.DEV;
+  const isDev = deps?.isDev ?? viteEnv.DEV;
 
   if (!isDev) {
     return { baseUrl: "/api", token: "" };
   }
 
-  const devUrl = deps?.devUrl ?? import.meta.env.PENUMBRA_DAEMON_URL ?? "";
-  const devToken = deps?.devToken ?? import.meta.env.PENUMBRA_TOKEN ?? "";
+  const devUrl = deps?.devUrl ?? viteEnv.PENUMBRA_DAEMON_URL ?? "";
+  const devToken = deps?.devToken ?? viteEnv.PENUMBRA_TOKEN ?? "";
 
   if (!isLoopbackBaseUrl(devUrl)) {
     throw new BadDaemonUrlError(`dev daemon URL must be loopback, got: ${devUrl}`);

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { type WorktreeCommandRunner, WorktreeManager } from "../../src/worktree/manager.js";
+import { type WorktreeCommandRunner, WorktreeManager } from "@src/worktree/manager.js";
 
 type ExecResult = { stdout: string; stderr: string };
 type ExecOpts = { cwd?: string };

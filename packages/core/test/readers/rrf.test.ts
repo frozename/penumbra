@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { fuseRRF, type RankedResult } from "../../src/readers/rrf.js";
+import { fuseRRF, type RankedResult } from "@src/readers/rrf.js";
 
 type Item = { tag: string };
 

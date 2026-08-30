@@ -1,4 +1,4 @@
-import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
+import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
 
 import { OffAdapter } from "./off-adapter.js";
 import { WebFetchAdapter } from "./webfetch-adapter.js";

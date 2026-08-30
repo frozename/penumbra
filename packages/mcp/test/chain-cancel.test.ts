@@ -1,15 +1,15 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-
-import { conversationsCancelRoute } from "../../daemon/src/routes/conversations.js";
+import { conversationsCancelRoute } from "@penumbra/daemon/routes/conversations";
 import {
   handoffsApproveRoute,
   handoffsCompleteRoute,
   handoffsCreateRoute,
   handoffsGetRoute,
-} from "../../daemon/src/routes/handoffs.js";
+} from "@penumbra/daemon/routes/handoffs";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { DaemonClient } from "../src/daemon-client.js";
 import { connectInMemory, fakeDaemon, firstJson, firstText } from "./helpers.js";
 

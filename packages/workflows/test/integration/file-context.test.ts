@@ -13,7 +13,7 @@ import {
   evaluateTriggerEvent,
   executeWorkflow,
   type TemplateVarContext,
-} from "../../src/index.js";
+} from "@src/index.js";
 
 try {
   if (process.platform === "darwin") {

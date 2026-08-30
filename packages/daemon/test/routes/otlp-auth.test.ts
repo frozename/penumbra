@@ -3,7 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
 
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 const OTLP_PATHS = ["/v1/logs", "/v1/metrics", "/v1/traces"] as const;
 const TOKEN = "tok";

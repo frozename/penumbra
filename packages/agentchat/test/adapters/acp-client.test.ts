@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 
-import type { AcpEvent } from "../../src/adapters/acp-types.js";
-
-import { AcpClient } from "../../src/adapters/acp-client.js";
+import { AcpClient } from "@src/adapters/acp-client.js";
+import type { AcpEvent } from "@src/adapters/acp-types.js";
 
 let originalFetch: typeof fetch;
 beforeEach(() => {

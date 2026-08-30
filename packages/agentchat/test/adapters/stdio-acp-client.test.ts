@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 
 function readUtf8(stream: PassThrough): string {
   const chunk: unknown = stream.read();

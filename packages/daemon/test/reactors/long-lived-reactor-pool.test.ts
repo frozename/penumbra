@@ -9,7 +9,7 @@ import type {
   FederationHealthSnapshot,
   McpPool,
   McpToolDescriptor,
-} from "../../src/long-lived/mcp-pool.js";
+} from "@src/long-lived/mcp-pool.js";
 
 type LoggerArg = NonNullable<Parameters<typeof createLongLivedReactor>[0]["log"]>;
 type SpawnArg = Parameters<typeof createLongLivedReactor>[0]["spawn"];

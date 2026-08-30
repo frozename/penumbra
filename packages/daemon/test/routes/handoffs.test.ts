@@ -10,10 +10,11 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
+import { reconcileLongLivedAgents } from "@src/long-lived/reconciler.js";
 import {
   handoffsApproveRoute,
   handoffsCompleteRoute,
@@ -22,9 +23,8 @@ import {
   handoffsGetRoute,
   handoffsLatestRoute,
   handoffsListPendingRoute,
-} from "../../src/routes/handoffs.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { registerWorkerForTest } from "../../test-utils.js";
+} from "@src/routes/handoffs.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

@@ -6,7 +6,7 @@ import {
   type WorkerHealthControllerDeps,
   WorkerHealthProbe,
   type WorkerHealthSignal,
-} from "../../src/services/worker-health-probe.js";
+} from "@src/services/worker-health-probe.js";
 
 type ProbeConstructorOpts = ConstructorParameters<typeof WorkerHealthProbe>[0];
 type ProbeServices = ProbeConstructorOpts["services"];

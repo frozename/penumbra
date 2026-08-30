@@ -13,12 +13,12 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { chainsStartRoute } from "../../src/routes/chains.js";
+import { chainsStartRoute } from "@src/routes/chains.js";
 import {
   worktreesCleanupRoute,
   worktreesInspectRoute,
   worktreesListRoute,
-} from "../../src/routes/worktrees.js";
+} from "@src/routes/worktrees.js";
 
 try {
   if (process.platform === "darwin")

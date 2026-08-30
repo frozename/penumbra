@@ -4,9 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildServices, loadSqliteVec, migrate } from "../../src/index.js";
-import { validateBasis } from "../../src/memory-verify/basis.js";
-import { TestEmbedder } from "../../src/testing/index.js";
+import { buildServices, loadSqliteVec, migrate } from "@src/index.js";
+import { validateBasis } from "@src/memory-verify/basis.js";
+import { TestEmbedder } from "@src/testing/index.js";
 
 function freshServices(): {
   db: Database;

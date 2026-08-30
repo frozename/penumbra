@@ -4,8 +4,8 @@ import {
   FEW_SHOT_EXAMPLES,
   REWRITE_RESPONSE_SCHEMA,
   SYSTEM_PROMPT,
-} from "../../src/dreaming/dream-rewriter-prompt-content.js";
-import { buildDreamQueryRewritePrompt } from "../../src/dreaming/dream-rewriter-prompt.js";
+} from "@src/dreaming/dream-rewriter-prompt-content.js";
+import { buildDreamQueryRewritePrompt } from "@src/dreaming/dream-rewriter-prompt.js";
 
 interface PromptMessage {
   role: "system" | "user" | "assistant";

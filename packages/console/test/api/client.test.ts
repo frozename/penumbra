@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { DaemonClient, type UsageQuotaResponse } from "../../src/api/client.js";
-import { DaemonContractError, DaemonHttpError } from "../../src/api/errors.js";
+import { DaemonClient, type UsageQuotaResponse } from "@src/api/client.js";
+import { DaemonContractError, DaemonHttpError } from "@src/api/errors.js";
 
 interface FetchCall {
   url: string;

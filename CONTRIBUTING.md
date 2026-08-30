@@ -8,6 +8,8 @@ penumbra is MIT-licensed (see [LICENSE](./LICENSE)). By contributing you agree y
 
 ---
 
+Import and file-size conventions are documented in the [Conventions section of AGENTS.md](./AGENTS.md#conventions).
+
 ## Prerequisites
 
 penumbra is a [Bun](https://bun.sh) + TypeScript monorepo. **There is no `npm`/`node` build path** — every script, binary, and test runs under Bun.

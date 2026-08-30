@@ -1,5 +1,6 @@
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { createDaemonFetchHandler } from "@penumbra/daemon";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -7,8 +8,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
-import { runMemoryImport } from "../../src/commands/memory.js";
+import { runMemoryImport } from "@src/commands/memory.js";
+
 import { urlToString } from "./_helpers.js";
 
 let root = "";

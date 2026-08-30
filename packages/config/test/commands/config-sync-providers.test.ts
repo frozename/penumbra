@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
 
+import { AgentsConfigSchema } from "@src/files/agents.js";
+import { loadProviderSourcesFromDir } from "@src/files/providers.js";
+
 import {
   type ProviderDiscoveryAdapter,
   runConfigSyncProviders,
 } from "../../../cli/src/commands/config-sync-providers.js";
-import { AgentsConfigSchema } from "../../src/files/agents.js";
-import { loadProviderSourcesFromDir } from "../../src/files/providers.js";
 
 const tempDirs: string[] = [];
 

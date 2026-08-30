@@ -2,10 +2,9 @@ import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { runDreamCycle } from "../../src/dreaming/cycle.js";
-import { makeFakeJudgePool } from "../../src/dreaming/judge-pool.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 
 try {
   if (process.platform === "darwin") {

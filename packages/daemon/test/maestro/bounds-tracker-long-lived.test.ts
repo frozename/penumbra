@@ -2,7 +2,7 @@ import { loadSqliteVec, MaestroSessionWriter, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { createBoundsTracker } from "../../src/maestro/bounds-tracker.js";
+import { createBoundsTracker } from "@src/maestro/bounds-tracker.js";
 
 if (process.platform === "darwin") {
   try {

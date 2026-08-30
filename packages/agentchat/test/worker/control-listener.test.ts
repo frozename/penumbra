@@ -9,7 +9,7 @@ import {
   handleControlEvent,
   runWorkerControlListener,
   type WorkerControlEvent,
-} from "../../src/worker/control-listener.js";
+} from "@src/worker/control-listener.js";
 
 // Async generator factory satisfies the ControlListenerClient contract:
 // when called with an empty events array it yields nothing but still

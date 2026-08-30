@@ -3,15 +3,15 @@ import type { DispatchEventInput } from "@penumbra/core";
 import { describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 
-import type { DispatchEvent } from "../../src/sdk/adapter.js";
-import type { RecordThoughtInput } from "../../src/worker/thought-capture.js";
-
 import {
   type CapacityError,
   detectCapacityError,
   spawnCliAdapter,
   spawnCliAdapterStream,
-} from "../../src/adapters/cli-spawn.js";
+} from "@src/adapters/cli-spawn.js";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
+import type { RecordThoughtInput } from "@src/worker/thought-capture.js";
+
 import {
   expectRejection,
   makeMockChildProcess,

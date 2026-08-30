@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { emitFileOutput } from "../../src/outputs/file.js";
+import { emitFileOutput } from "@src/outputs/file.js";
 
 test("emitFileOutput rejects absolute path outside repoRoot", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-file-abs-"));

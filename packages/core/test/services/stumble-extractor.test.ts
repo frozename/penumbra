@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   extractStumblesFromSession,
   type SessionEventRow,
-} from "../../src/services/stumble-extractor.js";
+} from "@src/services/stumble-extractor.js";
 
 const storedRow: SessionEventRow = {
   source: "agentchat",

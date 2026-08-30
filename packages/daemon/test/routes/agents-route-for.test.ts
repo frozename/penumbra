@@ -2,7 +2,7 @@ import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { computeRouteForRole } from "../../src/routes/agents.js";
+import { computeRouteForRole } from "@src/routes/agents.js";
 
 try {
   if (process.platform === "darwin") {

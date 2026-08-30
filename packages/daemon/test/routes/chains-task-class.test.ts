@@ -7,7 +7,7 @@ import {
   __resetLegacyNoTaskClassUseWorktreeCounterForTest,
   chainsStartRoute,
   getLegacyNoTaskClassUseWorktreeCounter,
-} from "../../src/routes/chains.js";
+} from "@src/routes/chains.js";
 
 try {
   if (process.platform === "darwin")

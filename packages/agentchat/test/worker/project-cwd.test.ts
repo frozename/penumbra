@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { resolveDispatchCwd, UnknownProjectError } from "../../src/worker/project-cwd.js";
+import { resolveDispatchCwd, UnknownProjectError } from "@src/worker/project-cwd.js";
 
 test("resolveDispatchCwd uses the default cwd when project_id is unset", () => {
   const homeCwd = process.cwd();

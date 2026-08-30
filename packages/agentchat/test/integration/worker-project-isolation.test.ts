@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { startEventSource } from "../../src/worker/event-source.js";
+import { startEventSource } from "@src/worker/event-source.js";
 
 const pollWaitMs = 60;
 

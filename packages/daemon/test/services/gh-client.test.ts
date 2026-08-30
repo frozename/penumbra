@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createGhCliClient, type GhExec } from "../../src/services/gh-client.js";
+import { createGhCliClient, type GhExec } from "@src/services/gh-client.js";
 
 async function expectRejectsWithMessage(
   promise: Promise<unknown>,

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { parseWikiLinks } from "../../src/writers/wiki-links.js";
+import { parseWikiLinks } from "@src/writers/wiki-links.js";
 
 test("parseWikiLinks ignores case-only variants consistently across repeated calls", () => {
   const body = "Keep [[Foo-Bar]] hidden but keep [[foo-bar]] linked";

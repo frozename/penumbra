@@ -6,16 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { DispatchInput } from "../../src/sdk/adapter.js";
-
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import {
   startStdioAcpServer,
   type StartStdioAcpServerOptions,
   type StdioAcpHandle,
-} from "../../src/adapters/stdio-acp-server.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+} from "@src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 

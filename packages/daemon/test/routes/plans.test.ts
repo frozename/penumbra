@@ -14,9 +14,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { setPrincipalForTest } from "../../src/auth.js";
-import { plansRegisterRoute } from "../../src/routes/plans.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { setPrincipalForTest } from "@src/auth.js";
+import { plansRegisterRoute } from "@src/routes/plans.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

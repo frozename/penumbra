@@ -5,7 +5,7 @@ import {
   CreatePermissionRequestSchema,
   PermissionRequestRowSchema,
   PermissionStatusSchema,
-} from "../../src/schemas/permission.js";
+} from "@src/schemas/permission.js";
 
 describe("PermissionStatusSchema", () => {
   it("accepts the four lifecycle states", () => {

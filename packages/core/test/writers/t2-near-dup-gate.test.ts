@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { type T2MemoryExtraction, T2Promotion } from "../../src/writers/t2.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { type T2MemoryExtraction, T2Promotion } from "@src/writers/t2.js";
 
 interface PromotionInternals {
   markPromotionFiltered: (rollupId: string) => void;

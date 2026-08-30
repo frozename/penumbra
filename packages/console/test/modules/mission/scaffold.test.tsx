@@ -3,14 +3,14 @@ import { act, render, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
-import { MissionControl } from "../../../src/modules/mission";
-import { StatRow } from "../../../src/modules/mission/StatRow";
-import { useMissionStore } from "../../../src/modules/mission/store";
-import { useDaemonStore } from "../../../src/stores/daemon-store";
-import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
-import type { StreamMessage, StreamTopic, Subscription } from "../../../src/api/streams";
-import type { EventSourceLike } from "../../../src/api/event-source-shim";
-import type { DaemonClient } from "../../../src/api/client";
+import { MissionControl } from "@src/modules/mission";
+import { StatRow } from "@src/modules/mission/StatRow";
+import { useMissionStore } from "@src/modules/mission/store";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
+import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
+import type { EventSourceLike } from "@src/api/event-source-shim";
+import type { DaemonClient } from "@src/api/client";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,

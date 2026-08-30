@@ -1,23 +1,23 @@
+import type { Services } from "@penumbra/core";
+
+import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import type { Services } from "../../../core/src/index.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 import type {
   GhClient,
   GhCreateIssueInput,
   GhIssueComment,
   GhIssueView,
-} from "../../src/services/gh-client.js";
-
-import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "../../../core/src/index.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/services/gh-client.js";
 import {
   createGhTaskSyncService,
   createGhTaskSyncSingleFlight,
   createGhTaskSyncSweeper,
   type GhTaskSyncService,
   type GhTaskSyncSummary,
-} from "../../src/sweepers/gh-task-sync.js";
+} from "@src/sweepers/gh-task-sync.js";
 
 try {
   if (process.platform === "darwin") {

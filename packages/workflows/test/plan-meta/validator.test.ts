@@ -3,9 +3,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { TaskMeta } from "../../src/plan-meta/schema.js";
-
-import { validatePlan } from "../../src/plan-meta/validator.js";
+import type { TaskMeta } from "@src/plan-meta/schema.js";
+import { validatePlan } from "@src/plan-meta/validator.js";
 
 function task(overrides: Partial<TaskMeta> & Pick<TaskMeta, "id">): TaskMeta {
   return {

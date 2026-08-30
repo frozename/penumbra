@@ -6,8 +6,8 @@ import {
   MaestroSessionRecord,
   MaestroTerminationReason,
   TaskKindSchema,
-} from "../../src/index.js";
-import { FileTaskInputSchema } from "../../src/tasks/schema.js";
+} from "@src/index.js";
+import { FileTaskInputSchema } from "@src/tasks/schema.js";
 
 describe("maestro schemas", () => {
   test("TaskKindSchema accepts orchestrate", () => {

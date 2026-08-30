@@ -3,26 +3,23 @@ import type { DispatchEventInput } from "@penumbra/core";
 import { describe, expect, it, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import type { McpServerStdio } from "../../src/adapters/acp-types.js";
-import type { AcpWarmPoolDeposit } from "../../src/adapters/acp-warm-pool.js";
-import type {
-  StartStdioAcpServerOptions,
-  StdioAcpHandle,
-} from "../../src/adapters/stdio-acp-server.js";
-import type { HostEnvPolicy, StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
-import type { DispatchInput, DispatchOutput } from "../../src/sdk/adapter.js";
-import type { CapturePort } from "../../src/worker/capture-port.js";
-import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
+import type { McpServerStdio } from "@src/adapters/acp-types.js";
+import type { AcpWarmPoolDeposit } from "@src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StartStdioAcpServerOptions, StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import type { HostEnvPolicy, StdioAcpOptions } from "@src/adapters/stdio-acp.js";
 import {
   detectStdioAcpClassifierDecline,
   isClaudeHostEnvKey,
   resolveHostEnvPolicy,
   shouldScrubHostEnvKey,
   StdioAcpAdapter,
-} from "../../src/adapters/stdio-acp.js";
-import { ThoughtCapture } from "../../src/worker/thought-capture.js";
+} from "@src/adapters/stdio-acp.js";
+import type { DispatchInput, DispatchOutput } from "@src/sdk/adapter.js";
+import type { CapturePort } from "@src/worker/capture-port.js";
+import { ThoughtCapture } from "@src/worker/thought-capture.js";
+import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
+
 import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 import {
   type AcpRequestMock,

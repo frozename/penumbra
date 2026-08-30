@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { registrarDetail, registrarList } from "../../lib/query-keys";
+import { registrarDetail, registrarList } from "@src/lib/query-keys";
 import { RegistrarList } from "./RegistrarList";
 import { makeStoryDetail, makeStoryEntry } from "./fixtures";
 

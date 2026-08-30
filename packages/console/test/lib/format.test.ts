@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { fmtDur, summarizeWords } from "../../src/lib/format.js";
+import { fmtDur, summarizeWords } from "@src/lib/format.js";
 
 describe("fmtDur", () => {
   test("formats minute and hour durations", () => {

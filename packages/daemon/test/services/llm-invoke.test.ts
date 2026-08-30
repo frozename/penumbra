@@ -1,14 +1,11 @@
+import type { Adapter, DispatchInput, DispatchOutput } from "@penumbra/agentchat";
+
+import { clearCustomAdapters, registerAdapter } from "@penumbra/agentchat/adapters/registry";
+import { type LlmCandidate, resolveRoleLlmCandidates } from "@penumbra/core";
 import { afterEach, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
-import type { Adapter, DispatchInput, DispatchOutput } from "../../../agentchat/src/sdk/adapter.js";
-
-import { clearCustomAdapters, registerAdapter } from "../../../agentchat/src/adapters/registry.js";
-import {
-  type LlmCandidate,
-  resolveRoleLlmCandidates,
-} from "../../../core/src/services/llm-candidates.js";
-import { llmInvoke } from "../../src/services/llm-invoke.js";
+import { llmInvoke } from "@src/services/llm-invoke.js";
 
 const originalFetch = globalThis.fetch;
 

@@ -1,6 +1,6 @@
 import type { RegistrarEvent, RegistrarEventKind } from "@penumbra/api-contract";
-import { Badge, type BadgeVariant } from "../../ui/Badge";
-import { fmtTs } from "../../lib/format";
+import { Badge, type BadgeVariant } from "@src/ui/Badge";
+import { fmtTs } from "@src/lib/format";
 
 const KIND_LABEL: Record<RegistrarEventKind, string> = {
   progress: "Progress",

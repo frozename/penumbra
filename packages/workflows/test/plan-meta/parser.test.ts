@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { parsePlanMeta } from "../../src/plan-meta/parser.js";
+import { parsePlanMeta } from "@src/plan-meta/parser.js";
 
 test("parses valid yaml meta blocks in document order", () => {
   const markdown = [

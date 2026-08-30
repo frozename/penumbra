@@ -6,8 +6,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
-import { WatchdogService } from "../../src/services/watchdog.js";
+import { handoffsApproveRoute, handoffsCreateRoute } from "@src/routes/handoffs.js";
+import { WatchdogService } from "@src/services/watchdog.js";
 
 try {
   if (process.platform === "darwin") {

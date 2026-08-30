@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { verifyHandler, VerifyInputShape } from "@src/tools/verify.js";
 
-import { verifyHandler, VerifyInputShape } from "../../src/tools/verify.js";
 import { fakeDaemon } from "../helpers.js";
 
 type MemoryVerifyFn = DaemonClient["memoryVerify"];

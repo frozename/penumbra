@@ -1,8 +1,8 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { reconcilerVerdictsHandler } from "@src/tools/reconciler-verdicts.js";
 
-import { reconcilerVerdictsHandler } from "../../src/tools/reconciler-verdicts.js";
 import { fakeDaemon } from "../helpers.js";
 
 type ReconcilerVerdictsFn = DaemonClient["reconcilerVerdicts"];

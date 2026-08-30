@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { PendingHandoffs } from "../../../src/modules/mission/PendingHandoffs";
-import type { DaemonClient } from "../../../src/api/client";
-import type { HandoffsListResponse } from "../../../src/api/client";
+import { PendingHandoffs } from "@src/modules/mission/PendingHandoffs";
+import type { DaemonClient } from "@src/api/client";
+import type { HandoffsListResponse } from "@src/api/client";
 
 function makeWrapper(): {
   Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;

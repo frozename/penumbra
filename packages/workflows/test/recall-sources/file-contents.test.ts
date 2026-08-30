@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runFileContents } from "../../src/recall-sources/file-contents.js";
+import { runFileContents } from "@src/recall-sources/file-contents.js";
 
 test("file.contents returns text body when file exists and fits", async () => {
   const dir = mkdtempSync(join(tmpdir(), "file-contents-"));

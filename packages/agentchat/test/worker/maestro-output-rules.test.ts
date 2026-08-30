@@ -5,7 +5,7 @@ import {
   buildUnknownAgentRule,
   isFailClosed,
   MAESTRO_STATIC_RULES,
-} from "../../src/worker/maestro-output-rules.js";
+} from "@src/worker/maestro-output-rules.js";
 
 const R = new ValuePatternRedactor(MAESTRO_STATIC_RULES);
 

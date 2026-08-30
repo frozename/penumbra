@@ -1,8 +1,8 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { reconcilerSweepOrphanPrsHandler } from "@src/tools/reconciler-sweep-orphan-prs.js";
 
-import { reconcilerSweepOrphanPrsHandler } from "../../src/tools/reconciler-sweep-orphan-prs.js";
 import { fakeDaemon } from "../helpers.js";
 
 type ReconcilerSweepOrphanPrsFn = DaemonClient["reconcilerSweepOrphanPrs"];

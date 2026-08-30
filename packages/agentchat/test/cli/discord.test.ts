@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runDiscordCli } from "../../src/cli/discord.js";
+import { runDiscordCli } from "@src/cli/discord.js";
 
 function writeConfigFile(yaml: string): string {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-discord-cli-"));

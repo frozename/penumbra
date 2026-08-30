@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
 
-import type { AgentChatConfig } from "../../src/config/types.js";
-import type { Adapter } from "../../src/sdk/adapter.js";
-
-import { runChatTurn } from "../../src/cli/loop.js";
-import { createPermissionCallback } from "../../src/worker/permission-callback.js";
+import { runChatTurn } from "@src/cli/loop.js";
+import type { AgentChatConfig } from "@src/config/types.js";
+import type { Adapter } from "@src/sdk/adapter.js";
+import { createPermissionCallback } from "@src/worker/permission-callback.js";
 
 function makeHomeMgmtConfig(): AgentChatConfig {
   return {

@@ -18,11 +18,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CreatePRArgs, CreatePRResult } from "../../src/worker/github-pr-helper.js";
-import type { ThoughtAnalyzerInput, ThoughtRow } from "../../src/worker/thought-analyzer.js";
-import type { RuntimeThoughtsConfig } from "../../src/worker/thought-config.js";
-
-import { PenumbraHttpError } from "../../src/penumbra-client.js";
+import { PenumbraHttpError } from "@src/penumbra-client.js";
+import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
 import {
   createMergeReconciler,
   MERGE_RESULT_STATUSES,
@@ -30,7 +27,9 @@ import {
   type ReconcilerDeps,
   type ReconcilerVerdict,
   resolveAffectedPackages,
-} from "../../src/worker/merge-reconciler.js";
+} from "@src/worker/merge-reconciler.js";
+import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
+import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 interface ExecResult {
   stdout: string;

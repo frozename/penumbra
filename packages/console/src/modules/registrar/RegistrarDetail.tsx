@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { Card, CardHead } from "../../ui/Card";
-import { DaemonClient } from "../../api/client";
-import { useDaemonStore } from "../../stores/daemon-store";
-import { registrarDetail } from "../../lib/query-keys";
-import { HEARTBEAT_MS } from "../../lib/timing";
-import { fmtTs } from "../../lib/format";
+import { Card, CardHead } from "@src/ui/Card";
+import { DaemonClient } from "@src/api/client";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { registrarDetail } from "@src/lib/query-keys";
+import { HEARTBEAT_MS } from "@src/lib/timing";
+import { fmtTs } from "@src/lib/format";
 import { PhaseTimeline } from "./PhaseTimeline";
 import { JournalFeed } from "./JournalFeed";
 

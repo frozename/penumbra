@@ -8,7 +8,8 @@ import {
   RoutingDecisionSchema,
   type TaskProfile,
   TaskProfileSchema,
-} from "../../src/routing/schemas.js";
+} from "@src/routing/schemas.js";
+
 import aaLiveSample from "./fixtures/aa-live-sample.json";
 
 function validTaskProfile(): TaskProfile {

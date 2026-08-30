@@ -4,7 +4,7 @@ import {
   type StampInputAgent,
   type StampInputTick,
   stampPrompt,
-} from "../../src/long-lived/prompt-stamper.js";
+} from "@src/long-lived/prompt-stamper.js";
 
 const baseTick: StampInputTick = {
   id: "t1",

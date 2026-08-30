@@ -1,9 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 
-import type { JudgeChatFn } from "../../src/services/judge-chat.js";
-
-import { type TaskProfile } from "../../src/routing/schemas.js";
-import { createTaskProfileJudgeAdapter } from "../../src/routing/task-profile-judge.js";
+import { type TaskProfile } from "@src/routing/schemas.js";
+import { createTaskProfileJudgeAdapter } from "@src/routing/task-profile-judge.js";
+import type { JudgeChatFn } from "@src/services/judge-chat.js";
 
 type DeterministicFallback = (
   message: string,

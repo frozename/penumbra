@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { AgentOptionsSchema } from "../../src/config/types.js";
+import { AgentOptionsSchema } from "@src/config/types.js";
 
 describe("AgentOptionsSchema warm_pool options", () => {
   test("accepts warm_pool true and leaves default unset", () => {

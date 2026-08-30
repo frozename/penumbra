@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CodexRolloutReader } from "../../src/usage-readers/codex-rollout-reader.js";
+import { CodexRolloutReader } from "@src/usage-readers/codex-rollout-reader.js";
 
 function writeRollout(dir: string, name: string, lines: object[]): string {
   const path = join(dir, name);

@@ -21,7 +21,7 @@ import {
   type RouterDecisionSink,
   RouterHardConstraintExhaustedError,
   RoutingBiasExhaustedError,
-} from "../../src/routes/role-routing.js";
+} from "@src/routes/role-routing.js";
 
 if (process.platform === "darwin") {
   try {

@@ -13,11 +13,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { GhClient } from "../../src/services/gh-client.js";
-import type { GhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
-
-import { conciseTitle } from "../../src/routes/tasks.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { conciseTitle } from "@src/routes/tasks.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
+import type { GhClient } from "@src/services/gh-client.js";
+import type { GhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
 
 const noop = (): void => undefined;
 

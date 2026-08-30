@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ContextFileWriter } from "../../src/context-file/writer.js";
-import { loadSqliteVec, migrate } from "../../src/index.js";
+import { ContextFileWriter } from "@src/context-file/writer.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

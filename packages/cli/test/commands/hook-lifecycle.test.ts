@@ -7,7 +7,7 @@ import {
   claudeCodeEventToLifecycle,
   defaultLifecycleForwardFn,
   runLifecycleForward,
-} from "../../src/commands/hook.js";
+} from "@src/commands/hook.js";
 
 interface LifecycleEvent {
   kind: "lifecycle";

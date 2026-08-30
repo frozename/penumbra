@@ -3,7 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
+import { reconcileLongLivedAgents } from "@src/long-lived/reconciler.js";
 import {
   longLivedApproveActionRoute,
   longLivedAuditRoute,
@@ -20,8 +20,8 @@ import {
   longLivedStateSetRoute,
   longLivedTickRoute,
   longLivedTicksRoute,
-} from "../../src/routes/long-lived.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/long-lived.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 type ReactorStub = NonNullable<Services["longLivedReactor"]>;
 type ManualTick = ReactorStub["manualTick"];

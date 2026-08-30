@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { PrewarmTarget } from "../../src/worker/prewarm-targets.js";
-
-import { createPrewarmLoop, type PrewarmLoopClock } from "../../src/worker/prewarm-loop.js";
+import { createPrewarmLoop, type PrewarmLoopClock } from "@src/worker/prewarm-loop.js";
+import type { PrewarmTarget } from "@src/worker/prewarm-targets.js";
 
 /**
  * Phase 4 — bounded-process invariant + crash-rate guard. The loop must never

@@ -4,11 +4,8 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import {
-  dispatchEventsGetRoute,
-  dispatchEventsPostRoute,
-} from "../../src/routes/dispatch-events.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { dispatchEventsGetRoute, dispatchEventsPostRoute } from "@src/routes/dispatch-events.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 function tempServices(): Services {
   const db = new Database(":memory:");

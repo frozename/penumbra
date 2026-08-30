@@ -1,6 +1,6 @@
 import { expect, mock, test } from "bun:test";
 
-import { maestroCapabilitiesHandler } from "../../src/tools/maestro-capabilities.js";
+import { maestroCapabilitiesHandler } from "@src/tools/maestro-capabilities.js";
 
 test("maestro_capabilities proxies daemon and returns wrapped text content", async () => {
   const daemon = {

@@ -2,7 +2,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, mock, test } from "bun:test";
 
-import { DispatchEventQueue } from "../../src/worker/event-queue.js";
+import { DispatchEventQueue } from "@src/worker/event-queue.js";
 
 const sample: DispatchEventInput = {
   handoff_id: "h-1",

@@ -2,7 +2,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, mock, test } from "bun:test";
 
-import { emitHeartbeat } from "../../src/worker/heartbeat-emit.js";
+import { emitHeartbeat } from "@src/worker/heartbeat-emit.js";
 
 describe("emitHeartbeat", () => {
   test("records heartbeat.sent after a successful POST", async () => {

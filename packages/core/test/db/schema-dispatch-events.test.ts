@@ -2,8 +2,8 @@ import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { applySchema, SCHEMA_VERSION } from "../../src/db/schema.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 describe("dispatch_events table", () => {
   test("SCHEMA_VERSION is bumped for dispatch event storage", () => {

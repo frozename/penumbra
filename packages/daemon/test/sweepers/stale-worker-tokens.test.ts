@@ -7,7 +7,7 @@ import {
   DEFAULT_STALE_WINDOW_MS,
   runStaleWorkerTokensSweep,
   startStaleWorkerTokensSweeper,
-} from "../../src/sweepers/stale-worker-tokens.js";
+} from "@src/sweepers/stale-worker-tokens.js";
 
 try {
   if (process.platform === "darwin") {

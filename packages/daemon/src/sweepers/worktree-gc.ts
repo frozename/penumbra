@@ -1,16 +1,13 @@
-import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
-
-// Pinned to the worktree-local manager source so the new `branchSha` field on
-// teardownWorktree's return type is visible inside symlink_mirror worktrees;
-// the @penumbra/core resolution chain otherwise points back to the home repo.
-import type { WorktreeManager as WorktreeManagerLocal } from "../../../core/src/worktree/manager.js";
-
 import {
   classifyBranchLandStatus,
   type BranchLandStatus as CoreBranchLandStatus,
-} from "../../../core/src/worktree/branch-land-probe.js";
+  selectWorktreeGcCandidates,
+  type Services,
+  type WorktreeManager as WorktreeManagerLocal,
+} from "@penumbra/core";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 
 type TeardownResult = Awaited<ReturnType<WorktreeManagerLocal["teardownWorktree"]>>;

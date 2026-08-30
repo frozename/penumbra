@@ -67,6 +67,7 @@ bun packages/cli/bin/penumbra.ts notes rotate --apply  # actually archive
 ## Conventions
 
 - **Conventional commits** — neutral, imperative subject lines scoped by package (e.g. `fix(core): …`).
+- **Imports & file size** — use `@src/*` for same-package imports outside the immediate directory (no `../../` chains), and `@penumbra/<pkg>` exports for cross-package imports (never another package's `src`). Source files are capped at 700 effective lines via `max-lines`; the `LEGACY_LARGE_FILES` list is a burn-down list and may only shrink.
 - **TDD discipline** for new code: failing test → minimal implementation → green → commit per logical chunk.
 - **Default to no comments.** Only add a comment when the WHY is non-obvious (a hidden constraint, a workaround, surprising behavior).
 - **No backward-compat hacks** for unused code. If something's unused, delete it.

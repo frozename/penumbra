@@ -8,13 +8,12 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
-import type { DispatchInput, PermissionDecision } from "../../src/sdk/adapter.js";
-
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "../../src/worker/sandbox-config.js";
-import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput, PermissionDecision } from "@src/sdk/adapter.js";
+import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "@src/worker/sandbox-config.js";
+import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
 interface CapturedEvent {
   type: string;

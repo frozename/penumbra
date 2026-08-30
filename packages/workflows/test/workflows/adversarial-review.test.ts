@@ -1,6 +1,7 @@
 import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
 import type { z } from "zod";
 
+import { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "@penumbra/config";
 import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
@@ -15,10 +16,6 @@ import { parse as parseYaml } from "yaml";
 // once and cast the exports to typed views, so the rest of the file lints
 // with real type info.
 import * as adversarialReviewModule from "../../../../plugin/workflows/adversarial-review/workflow.js";
-import {
-  loadAgentChatConfigFromDir,
-  reloadAgentChatConfig,
-} from "../../../config/src/files/load.js";
 
 type ReviewModule = {
   default: WorkflowSpec;

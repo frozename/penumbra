@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildAttachmentPreamble, parseAttachFlags } from "../../src/cli/attachments.js";
+import { buildAttachmentPreamble, parseAttachFlags } from "@src/cli/attachments.js";
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "attachments-"));

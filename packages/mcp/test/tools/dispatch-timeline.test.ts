@@ -1,13 +1,13 @@
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { DaemonClient as DaemonClientCtor } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonClient as DaemonClientCtor } from "@src/daemon-client.js";
 import {
   dispatchTimelineHandler,
   DispatchTimelineInputShape,
-} from "../../src/tools/dispatch-timeline.js";
+} from "@src/tools/dispatch-timeline.js";
+
 import { connectInMemory, fakeDaemon } from "../helpers.js";
 
 type GetDispatchTimelineFn = DaemonClient["getDispatchTimeline"];

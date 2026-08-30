@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertDiscoveryNotSuspiciouslyEmpty } from "../../src/generator/empty-discovery.js";
+import { assertDiscoveryNotSuspiciouslyEmpty } from "@src/generator/empty-discovery.js";
 
 describe("assertDiscoveryNotSuspiciouslyEmpty", () => {
   test("an empty discovery result with no paired control confirmation produces a no-change result, never a prune-everything result", () => {

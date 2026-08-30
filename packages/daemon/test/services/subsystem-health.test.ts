@@ -9,7 +9,7 @@ import {
   evaluateLlmRoleFloors,
   readSubsystemHealth,
   recordSubsystemOutcome,
-} from "../../src/services/subsystem-health.js";
+} from "@src/services/subsystem-health.js";
 
 try {
   if (process.platform === "darwin") {

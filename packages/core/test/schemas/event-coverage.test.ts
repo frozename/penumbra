@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-import { EventTypeSchema } from "../../src/schemas/event.js";
+import { EventTypeSchema } from "@src/schemas/event.js";
 
 const EVENT_TYPE_LITERAL_RE = /\bevent_type\s*:\s*['"]([^'"]+)['"]/g;
 

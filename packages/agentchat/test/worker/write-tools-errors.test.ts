@@ -9,7 +9,7 @@ import {
   OutsideWorktreeError,
   TerminalCapExceededError,
   TerminalNotFoundError,
-} from "../../src/worker/write-tools-errors.js";
+} from "@src/worker/write-tools-errors.js";
 
 describe("write-tools-errors", () => {
   test("all classes extend Error", () => {

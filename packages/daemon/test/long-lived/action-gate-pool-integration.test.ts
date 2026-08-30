@@ -5,9 +5,9 @@ import { applySchema } from "@penumbra/core/db/schema";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, type Mock, test } from "bun:test";
 
-import { buildActionGateCallbacks } from "../../src/long-lived/action-gate-callbacks.js";
-import { createActionGate } from "../../src/long-lived/action-gate.js";
-import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
+import { buildActionGateCallbacks } from "@src/long-lived/action-gate-callbacks.js";
+import { createActionGate } from "@src/long-lived/action-gate.js";
+import { reconcileLongLivedAgents } from "@src/long-lived/reconciler.js";
 
 function setup(): Database {
   const db = new Database(":memory:");

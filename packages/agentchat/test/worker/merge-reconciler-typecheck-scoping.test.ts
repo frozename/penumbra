@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createMergeReconciler, type ReconcilerDeps } from "../../src/worker/merge-reconciler.js";
+import { createMergeReconciler, type ReconcilerDeps } from "@src/worker/merge-reconciler.js";
 
 interface ExecResult {
   stdout: string;

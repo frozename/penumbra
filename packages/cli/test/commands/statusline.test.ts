@@ -4,7 +4,7 @@ import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runStatusline } from "../../src/commands/statusline.js";
+import { runStatusline } from "@src/commands/statusline.js";
 
 const CACHE_PATH = "/tmp/penumbra-statusline.cache";
 let storageRoot = "";

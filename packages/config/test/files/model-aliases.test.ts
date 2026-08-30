@@ -3,7 +3,8 @@ import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadModelAliasMapFromDir, type ModelAliasMap } from "../../src/index.js";
+import { loadModelAliasMapFromDir, type ModelAliasMap } from "@src/index.js";
+
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 
 const tempDirs: string[] = [];

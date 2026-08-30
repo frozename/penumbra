@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react/pure";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { MissionControl } from "../../../src/modules/mission";
-import { useMissionStore } from "../../../src/modules/mission/store";
-import { useDaemonStore } from "../../../src/stores/daemon-store";
-import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
-import type { EventSourceLike } from "../../../src/api/event-source-shim";
+import { MissionControl } from "@src/modules/mission";
+import { useMissionStore } from "@src/modules/mission/store";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
+import type { EventSourceLike } from "@src/api/event-source-shim";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { usageSubscriptionPressure } from "../../lib/query-keys";
+import { usageSubscriptionPressure } from "@src/lib/query-keys";
 import { PressureGrid } from "./PressureGrid";
 
 const meta: Meta<typeof PressureGrid> = {

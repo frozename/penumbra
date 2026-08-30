@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { readFleetLatency } from "../../src/readers/fleet-latency.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { readFleetLatency } from "@src/readers/fleet-latency.js";
 
 if (process.platform === "darwin") {
   try {

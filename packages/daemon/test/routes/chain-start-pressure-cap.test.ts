@@ -12,7 +12,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, test } from "bun:test";
 
-import { chainStartInternal } from "../../src/routes/chains.js";
+import { chainStartInternal } from "@src/routes/chains.js";
 
 if (process.platform === "darwin") {
   try {

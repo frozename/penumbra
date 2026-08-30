@@ -10,7 +10,7 @@ import {
   runPlanStart,
   runPlanStatus,
   runPlanValidate,
-} from "../../src/commands/plan.js";
+} from "@src/commands/plan.js";
 
 const KNOWN_AGENTS = new Set(["codex-acp-fast", "gemini-acp"]);
 

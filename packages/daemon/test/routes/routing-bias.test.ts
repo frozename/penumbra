@@ -6,8 +6,8 @@ import {
   routingBiasClearRoute,
   routingBiasListRoute,
   routingBiasSetRoute,
-} from "../../src/routes/routing-bias.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/routing-bias.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 if (process.platform === "darwin") {
   try {

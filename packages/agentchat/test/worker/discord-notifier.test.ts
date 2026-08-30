@@ -6,7 +6,7 @@ import {
   formatHandoffEmbed,
   formatMergeResultEmbed,
   postToDiscord,
-} from "../../src/worker/discord-notifier.js";
+} from "@src/worker/discord-notifier.js";
 
 interface FetchCallArgs {
   input: string | URL | Request;

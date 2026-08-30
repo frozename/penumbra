@@ -11,7 +11,7 @@ import {
 import { Database } from "bun:sqlite";
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 
-import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
+import { createOrchestrateReactor } from "@src/reactors/orchestrate-reactor.js";
 
 try {
   if (process.platform === "darwin") {

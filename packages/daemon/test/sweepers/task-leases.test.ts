@@ -2,7 +2,7 @@ import { loadSqliteVec, migrate, TaskCooldowns, TaskWriter } from "@penumbra/cor
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { createTaskLeaseSweeper } from "../../src/sweepers/task-leases.js";
+import { createTaskLeaseSweeper } from "@src/sweepers/task-leases.js";
 
 try {
   if (process.platform === "darwin") {

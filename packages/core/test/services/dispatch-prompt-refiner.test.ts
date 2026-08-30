@@ -5,7 +5,7 @@ import {
   RefineError,
   REFINER_INPUT_MAX_BYTES,
   REFINER_OUTPUT_MAX_BYTES,
-} from "../../src/services/dispatch-prompt-refiner.js";
+} from "@src/services/dispatch-prompt-refiner.js";
 
 // Capture the rejection from a promise so assertions can run against the
 // caught error. Sidesteps the bun-types type gap where `.rejects.X()` is

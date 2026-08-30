@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computePrewarmTargets } from "../../src/worker/prewarm-targets.js";
+import { computePrewarmTargets } from "@src/worker/prewarm-targets.js";
 
 /**
  * Phase 1 — pure eligible-tuple resolver. No subprocesses; provably a subset of

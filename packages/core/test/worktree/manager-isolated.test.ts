@@ -11,7 +11,7 @@ import {
   materializeWorkspaceLinks,
   type WorktreeCommandRunner,
   WorktreeManager,
-} from "../../src/worktree/manager.js";
+} from "@src/worktree/manager.js";
 
 const TEST_TMP_ROOT = fs.realpathSync.native(os.tmpdir());
 

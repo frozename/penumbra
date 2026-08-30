@@ -16,14 +16,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DaemonServices } from "../../src/serve.js";
-import type { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
-
 import {
   formatAgentChatConfigError,
   providerQuotasFromAgentChatConfig,
-} from "../../src/agentchat-config.js";
-import { reloadConfigRoute } from "../../src/routes/reload-config.js";
+} from "@src/agentchat-config.js";
+import { reloadConfigRoute } from "@src/routes/reload-config.js";
+import type { DaemonServices } from "@src/serve.js";
+import type { ExtraWorkerSupervisor } from "@src/workers/supervisor.js";
 
 try {
   if (process.platform === "darwin")

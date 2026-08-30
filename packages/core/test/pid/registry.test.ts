@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { PidRegistry } from "../../src/pid/registry.js";
+import { PidRegistry } from "@src/pid/registry.js";
 
 test("register and iterate live PIDs", () => {
   const reg = new PidRegistry({ softCap: 2, hardCap: 4 });

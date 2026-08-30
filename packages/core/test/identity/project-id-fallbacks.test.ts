@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveProjectId } from "../../src/identity/project-id.js";
+import { resolveProjectId } from "@src/identity/project-id.js";
 
 let dir = "";
 beforeEach(() => {

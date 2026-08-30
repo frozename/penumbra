@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { ChainStartRequestSchema } from "../../src/schemas/chain.js";
+import { ChainStartRequestSchema } from "@src/schemas/chain.js";
 
 test("ChainStartRequestSchema accepts task_class", () => {
   const parsed = ChainStartRequestSchema.safeParse({

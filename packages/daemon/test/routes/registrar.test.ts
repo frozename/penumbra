@@ -21,9 +21,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { setPrincipalForTest } from "../../src/auth.js";
-import { registrarAppendRoute, registrarCreateRoute } from "../../src/routes/registrar.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { setPrincipalForTest } from "@src/auth.js";
+import { registrarAppendRoute, registrarCreateRoute } from "@src/routes/registrar.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

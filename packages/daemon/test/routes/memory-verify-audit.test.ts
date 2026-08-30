@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { memoryVerificationEventsRoute, memoryVerifyRoute } from "../../src/routes/memory.js";
+import { memoryVerificationEventsRoute, memoryVerifyRoute } from "@src/routes/memory.js";
 
 try {
   if (process.platform === "darwin") {

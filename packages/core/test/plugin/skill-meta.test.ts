@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadSkillFiles } from "../../src/plugin/skill-meta.js";
+import { loadSkillFiles } from "@src/plugin/skill-meta.js";
 
 let dirs: string[] = [];
 

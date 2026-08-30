@@ -6,12 +6,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import type { AgentChatConfig } from "../../src/config/types.js";
-
+import type { AgentChatConfig } from "@src/config/types.js";
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
-} from "../../src/worker/worktree-integration.js";
+} from "@src/worker/worktree-integration.js";
 
 const diskFullError = new Error("disk full");
 const exec = promisify(execCb);

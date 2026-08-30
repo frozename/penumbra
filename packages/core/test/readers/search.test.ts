@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { search } from "../../src/readers/search.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { search } from "@src/readers/search.js";
 
 try {
   if (process.platform === "darwin") {

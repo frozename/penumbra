@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { AgentPinSchema, AgentPoolSchema, RoutingConfigSchema } from "../../src/files/routing.js";
-import {
-  AgentPinSchema as WorkloadAgentPinSchema,
-  WorkloadSchema,
-} from "../../src/files/workload.js";
+import { AgentPinSchema, AgentPoolSchema, RoutingConfigSchema } from "@src/files/routing.js";
+import { AgentPinSchema as WorkloadAgentPinSchema, WorkloadSchema } from "@src/files/workload.js";
 
 describe("AgentPoolSchema", () => {
   test("canonicalizes agent pin schema across split config schemas", () => {

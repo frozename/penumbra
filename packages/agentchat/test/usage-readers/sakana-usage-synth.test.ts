@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import type { QuotaStatusResponse } from "../../src/penumbra-client.js";
-
-import { SakanaUsageSynth } from "../../src/usage-readers/sakana-usage-synth.js";
+import type { QuotaStatusResponse } from "@src/penumbra-client.js";
+import { SakanaUsageSynth } from "@src/usage-readers/sakana-usage-synth.js";
 
 interface FetchQuotaArgs {
   since?: string;

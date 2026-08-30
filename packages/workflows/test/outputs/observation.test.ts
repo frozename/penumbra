@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { emitObservationOutput } from "../../src/outputs/observation.js";
+import { emitObservationOutput } from "@src/outputs/observation.js";
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 type FetchInit = Parameters<typeof globalThis.fetch>[1];

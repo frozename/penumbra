@@ -6,7 +6,7 @@ import {
   usageQuotaStatusRoute,
   usageRecentRoute,
   usageSubscriptionPressureRoute,
-} from "../../src/routes/usage.js";
+} from "@src/routes/usage.js";
 
 type ProviderQuota = Services["providerQuotas"][number];
 

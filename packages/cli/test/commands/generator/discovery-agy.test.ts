@@ -3,10 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import {
-  discoverAgyModels,
-  parseAgyModelsOutput,
-} from "../../../src/commands/generator/discovery-agy.js";
+import { discoverAgyModels, parseAgyModelsOutput } from "@src/commands/generator/discovery-agy.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/agy-models.txt");
 const fixtureText = readFileSync(fixturePath, "utf8");

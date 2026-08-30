@@ -2,11 +2,11 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, it, vi } from "bun:test";
 
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { DispatchInput } from "../../src/sdk/adapter.js";
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import { StdioAcpAdapter, type StdioAcpOptions } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import { StdioAcpAdapter, type StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
 import {
   makeMockAcpClient,
   makeMockAcpHandle,

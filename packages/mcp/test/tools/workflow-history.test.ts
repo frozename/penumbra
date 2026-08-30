@@ -1,8 +1,8 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { workflowHistoryHandler } from "@src/tools/workflow-history.js";
 
-import { workflowHistoryHandler } from "../../src/tools/workflow-history.js";
 import { fakeDaemon } from "../helpers.js";
 
 type WorkflowHistoryFn = DaemonClient["workflowHistory"];

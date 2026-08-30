@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
+import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 
 function freshDb(path: string): Database {
   const db = new Database(path);

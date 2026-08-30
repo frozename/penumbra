@@ -6,7 +6,7 @@ import {
   SourceSchema,
   T0EventInputSchema,
   T0EventSchema,
-} from "../../src/schemas/event.js";
+} from "@src/schemas/event.js";
 
 test("parses a complete T0 event", () => {
   const e = T0EventSchema.parse({

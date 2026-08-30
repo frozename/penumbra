@@ -2,14 +2,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { loadConfig } from "@src/config/load.js";
+import { PenumbraClient } from "@src/penumbra-client.js";
+
 import type {
   AcpPromotionRunResult,
   AcpPromotionScenario,
   AcpPromotionScenarioId,
 } from "./types.js";
 
-import { loadConfig } from "../../src/config/load.js";
-import { PenumbraClient } from "../../src/penumbra-client.js";
 import { evaluatePromotionEvidence } from "./evaluate.js";
 import { renderPromotionJsonl, renderPromotionMarkdown } from "./report.js";
 import { PROMOTION_SCENARIOS, validatePromotionScenarios } from "./scenarios.js";

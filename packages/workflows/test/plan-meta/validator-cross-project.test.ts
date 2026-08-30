@@ -7,7 +7,7 @@ import {
   type ProjectRegistryLike,
   validatePlan,
   type ValidatorTask,
-} from "../../src/plan-meta/validator.js";
+} from "@src/plan-meta/validator.js";
 
 function fakeRegistry(ids: string[]): ProjectRegistryLike {
   const set = new Set(ids);

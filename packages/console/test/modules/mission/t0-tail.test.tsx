@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { T0Tail } from "../../../src/modules/mission/T0Tail";
-import { useMissionStore } from "../../../src/modules/mission/store";
-import { __resetBrokerForTests, __setSourceFactory } from "../../../src/api/streams";
-import type { StreamMessage, StreamTopic, Subscription } from "../../../src/api/streams";
+import { T0Tail } from "@src/modules/mission/T0Tail";
+import { useMissionStore } from "@src/modules/mission/store";
+import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
+import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,

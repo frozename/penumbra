@@ -8,12 +8,10 @@ import type {
 } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
-import { OrchestrateAgentNotMaestroCapable } from "@penumbra/core";
+import { OrchestrateAgentNotMaestroCapable, resolveHandoffBranchName } from "@penumbra/core";
 import { parsePlanMetaFile } from "@penumbra/workflows";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-
-import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
 
 type StageMergedBaseWorktreeManager = {
   stageMergedBase(

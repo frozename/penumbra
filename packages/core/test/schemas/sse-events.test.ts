@@ -8,7 +8,7 @@ import {
   HopStateCacheEntrySchema,
   MergeResultEventSchema,
   WorkerCancelEventSchema,
-} from "../../src/schemas/sse-events.js";
+} from "@src/schemas/sse-events.js";
 
 test("ConversationHopStartEventSchema validates the phase 2 hop-start payload", () => {
   expect(

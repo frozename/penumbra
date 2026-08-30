@@ -2,7 +2,7 @@ import { getLane, insertLane, loadSqliteVec, migrate, type Services } from "@pen
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { runOrphanLanesSweep } from "../../src/sweepers/orphan-lanes.js";
+import { runOrphanLanesSweep } from "@src/sweepers/orphan-lanes.js";
 
 try {
   if (process.platform === "darwin")

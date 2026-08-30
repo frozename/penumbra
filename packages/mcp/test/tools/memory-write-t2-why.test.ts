@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { memoryWriteT2Handler } from "@src/tools/memory-write-t2.js";
 
-import { memoryWriteT2Handler } from "../../src/tools/memory-write-t2.js";
 import { fakeDaemon } from "../helpers.js";
 
 type MemoryWriteT2Fn = DaemonClient["memoryWriteT2"];

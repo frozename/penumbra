@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { migrate } from "../../src/db/migrations.js";
-import { SCHEMA_VERSION } from "../../src/db/schema.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "@src/db/migrations.js";
+import { SCHEMA_VERSION } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {

@@ -3,7 +3,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, mock, spyOn, test } from "bun:test";
 
-import { longLivedFederationToolsRoute } from "../../src/routes/long-lived-federation-tools.js";
+import { longLivedFederationToolsRoute } from "@src/routes/long-lived-federation-tools.js";
 
 type McpPool = NonNullable<Services["mcpPool"]>;
 type ListTools = McpPool["listTools"];

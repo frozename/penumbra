@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyHardConstraints } from "../../src/routing/constraint-filter.js";
+import { applyHardConstraints } from "@src/routing/constraint-filter.js";
 
 function taskProfile(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

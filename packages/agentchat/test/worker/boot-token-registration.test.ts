@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PenumbraClient, PenumbraHttpError } from "../../src/penumbra-client.js";
-import { runWorkerBoot } from "../../src/worker-boot.js";
+import { PenumbraClient, PenumbraHttpError } from "@src/penumbra-client.js";
+import { runWorkerBoot } from "@src/worker-boot.js";
 
 type WorkerBootClient = Pick<
   PenumbraClient,

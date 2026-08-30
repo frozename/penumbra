@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { planListHandler } from "@src/tools/plan-list.js";
+import { planStatusHandler } from "@src/tools/plan-status.js";
 
-import { planListHandler } from "../../src/tools/plan-list.js";
-import { planStatusHandler } from "../../src/tools/plan-status.js";
 import { fakeDaemon } from "../helpers.js";
 
 type PlanListFn = DaemonClient["planList"];

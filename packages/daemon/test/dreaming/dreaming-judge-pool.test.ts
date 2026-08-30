@@ -10,7 +10,7 @@ import {
   createDreamingJudgePoolFromAgentchat,
   type DreamingJudgeEntry,
   parseDreamingJudgeResponse,
-} from "../../src/dreaming/dreaming-judge-pool.js";
+} from "@src/dreaming/dreaming-judge-pool.js";
 
 beforeAll(() => {
   delete process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"];

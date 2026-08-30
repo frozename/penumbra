@@ -1,8 +1,8 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { longLivedTickHandler } from "@src/tools/long-lived-tick-mcp.js";
 
-import { longLivedTickHandler } from "../../src/tools/long-lived-tick-mcp.js";
 import { fakeDaemon } from "../helpers.js";
 
 test("long_lived_tick proxies to daemon.longLivedTick", async () => {

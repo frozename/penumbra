@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
 
-import { runConfigSplit } from "../../src/commands/config-split.js";
+import { runConfigSplit } from "@src/commands/config-split.js";
 
 let tempDirs: string[] = [];
 let stdoutLines: string[] = [];

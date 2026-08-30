@@ -2,7 +2,7 @@ import { loadSqliteVec, MaestroSessionWriter, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { enforceMaestroBudget } from "../../src/maestro/chain-budget-gate.js";
+import { enforceMaestroBudget } from "@src/maestro/chain-budget-gate.js";
 
 if (process.platform === "darwin") {
   try {

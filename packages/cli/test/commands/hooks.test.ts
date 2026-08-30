@@ -16,7 +16,8 @@ import {
   runHooksUninstallClaudeOtel,
   runHooksUninstallCodexOtel,
   runHooksUninstallGeminiOtel,
-} from "../../src/commands/hooks.js";
+} from "@src/commands/hooks.js";
+
 import { expectAsyncThrow, parseJson } from "./_helpers.js";
 
 interface ClaudeSettings {
@@ -632,7 +633,7 @@ describe("hooks uninstall --claude-memory", () => {
 
 describe("PENUMBRA_HOOK_EVENTS", () => {
   it("includes SessionStart, PreCompact, Stop", async () => {
-    const { PENUMBRA_HOOK_EVENTS } = await import("../../src/commands/hooks.js");
+    const { PENUMBRA_HOOK_EVENTS } = await import("@src/commands/hooks.js");
     expect(PENUMBRA_HOOK_EVENTS).toContain("SessionStart");
     expect(PENUMBRA_HOOK_EVENTS).toContain("PreCompact");
     expect(PENUMBRA_HOOK_EVENTS).toContain("Stop");

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { derivePlanId } from "../../src/plans/plan-id.js";
+import { derivePlanId } from "@src/plans/plan-id.js";
 
 test("identical inputs collide", () => {
   const a = derivePlanId("plan content", 1_700_000_000_000);

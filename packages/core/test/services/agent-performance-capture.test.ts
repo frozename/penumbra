@@ -1,14 +1,14 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { ChainReader } from "../../src/readers/chain.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { ChainReader } from "@src/readers/chain.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   meaningfulOutput,
   MIN_RESPONSE_CHARS,
-} from "../../src/services/agent-performance-capture.js";
+} from "@src/services/agent-performance-capture.js";
 
 if (process.platform === "darwin") {
   try {

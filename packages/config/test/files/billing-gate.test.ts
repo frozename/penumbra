@@ -4,7 +4,7 @@ import {
   assertHandBilledSeatsWhitelisted,
   BilledHandSeatViolation,
   isBilledHandSeatViolation,
-} from "../../src/files/billing-gate.js";
+} from "@src/files/billing-gate.js";
 
 describe("assertHandBilledSeatsWhitelisted", () => {
   test("rejects a hand-authored pricing_mode:'api' seat whose api_provider is not whitelisted", () => {

@@ -1,19 +1,18 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { fsEditHandler } from "../../src/tools/fs-edit.js";
-import { fsExecHandler } from "../../src/tools/fs-exec.js";
-import { fsGlobHandler } from "../../src/tools/fs-glob.js";
-import { fsGrepHandler } from "../../src/tools/fs-grep.js";
-import { fsReadHandler } from "../../src/tools/fs-read.js";
-import { fsWriteHandler } from "../../src/tools/fs-write.js";
-import { resolveHandoffId } from "../../src/tools/handoff-guard.js";
-import { shellCloseHandler } from "../../src/tools/shell-close.js";
-import { shellListHandler } from "../../src/tools/shell-list.js";
-import { shellRunHandler } from "../../src/tools/shell-run.js";
-import { worktreeCleanupHandler } from "../../src/tools/worktree-cleanup.js";
-import { worktreeInspectHandler } from "../../src/tools/worktree-inspect.js";
+import type { DaemonClient } from "@src/daemon-client.js";
+import { fsEditHandler } from "@src/tools/fs-edit.js";
+import { fsExecHandler } from "@src/tools/fs-exec.js";
+import { fsGlobHandler } from "@src/tools/fs-glob.js";
+import { fsGrepHandler } from "@src/tools/fs-grep.js";
+import { fsReadHandler } from "@src/tools/fs-read.js";
+import { fsWriteHandler } from "@src/tools/fs-write.js";
+import { resolveHandoffId } from "@src/tools/handoff-guard.js";
+import { shellCloseHandler } from "@src/tools/shell-close.js";
+import { shellListHandler } from "@src/tools/shell-list.js";
+import { shellRunHandler } from "@src/tools/shell-run.js";
+import { worktreeCleanupHandler } from "@src/tools/worktree-cleanup.js";
+import { worktreeInspectHandler } from "@src/tools/worktree-inspect.js";
 
 interface TextOutput {
   content: { type: "text"; text: string }[];

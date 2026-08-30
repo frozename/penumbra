@@ -10,7 +10,7 @@ import {
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { permissionsCreateRoute, permissionsDecideRoute } from "../../src/routes/permissions.js";
+import { permissionsCreateRoute, permissionsDecideRoute } from "@src/routes/permissions.js";
 
 try {
   if (process.platform === "darwin")

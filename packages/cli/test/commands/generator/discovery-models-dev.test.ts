@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   fetchModelsDevPayload,
   joinModelsDevMetadata,
-} from "../../../src/commands/generator/discovery-models-dev.js";
+} from "@src/commands/generator/discovery-models-dev.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/models-dev-api.json");
 // The snapshot intentionally keeps three real models from each of two providers.

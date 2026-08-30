@@ -2,13 +2,13 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import type { RegistrarEntry, RegistrarStatus } from "@penumbra/api-contract";
-import { Card, CardHead } from "../../ui/Card";
-import type { BadgeVariant } from "../../ui/Badge";
-import { DaemonClient } from "../../api/client";
-import { useDaemonStore } from "../../stores/daemon-store";
-import { registrarDetail, registrarList } from "../../lib/query-keys";
-import { HEARTBEAT_MS } from "../../lib/timing";
-import { fmtTs } from "../../lib/format";
+import { Card, CardHead } from "@src/ui/Card";
+import type { BadgeVariant } from "@src/ui/Badge";
+import { DaemonClient } from "@src/api/client";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { registrarDetail, registrarList } from "@src/lib/query-keys";
+import { HEARTBEAT_MS } from "@src/lib/timing";
+import { fmtTs } from "@src/lib/format";
 
 export interface RegistrarListProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */

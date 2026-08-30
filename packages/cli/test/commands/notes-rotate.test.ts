@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runNotesRotate } from "../../src/commands/notes-rotate.js";
+import { runNotesRotate } from "@src/commands/notes-rotate.js";
+
 import { expectAsyncThrow } from "./_helpers.js";
 
 let rootDir = "";

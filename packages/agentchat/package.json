@@ -6,8 +6,12 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./adapters/registry": "./src/adapters/registry.ts",
     "./config": "./src/config/load.ts",
     "./config/types": "./src/config/types.ts",
+    "./cli/dispatch-handoff": "./src/cli/dispatch-handoff.ts",
+    "./penumbra-client": "./src/penumbra-client.ts",
+    "./worker/dispatcher": "./src/worker/dispatcher.ts",
     "./worker/shell-config": "./src/worker/shell-config.ts"
   },
   "bin": {

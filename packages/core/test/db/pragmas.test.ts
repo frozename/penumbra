@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyRuntimePragmas, loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applyRuntimePragmas, loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 let tempDb: Database | null = null;
 

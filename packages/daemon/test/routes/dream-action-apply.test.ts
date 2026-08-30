@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 function createTestServices(): { services: Services; cleanup: () => void } {
   const db = new Database(":memory:");

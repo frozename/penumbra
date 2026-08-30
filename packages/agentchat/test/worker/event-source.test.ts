@@ -5,7 +5,7 @@ import {
   type EventSourceOpts,
   type EventSourceRow,
   startEventSource,
-} from "../../src/worker/event-source.js";
+} from "@src/worker/event-source.js";
 
 // Test-local row: extends the wider production `EventSourceRow` contract with
 // a status field used by the synthetic mock data. Keeping it as an extension

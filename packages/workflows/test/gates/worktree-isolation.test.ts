@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { verifyWorktreeIsolation } from "../../src/gates/worktree-isolation.js";
+import { verifyWorktreeIsolation } from "@src/gates/worktree-isolation.js";
 
 test("passes when use_worktree=true", () => {
   expect(verifyWorktreeIsolation({ spec: { use_worktree: true } }).passed).toBe(true);

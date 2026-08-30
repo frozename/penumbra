@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadOpencodeConsoleConfig } from "../../src/usage-readers/opencode-console-config.js";
+import { loadOpencodeConsoleConfig } from "@src/usage-readers/opencode-console-config.js";
 
 function makeQuotasDir(yaml: string): string {
   const dir = mkdtempSync(join(tmpdir(), "oc-console-config-"));

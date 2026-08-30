@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardHead } from "../../ui/Card";
-import { StatusBadge } from "../../ui/StatusBadge";
-import { DaemonClient } from "../../api/client";
-import { useDaemonStore } from "../../stores/daemon-store";
-import { chainsByStatus } from "../../lib/query-keys";
-import { COOL_POLL_MS } from "../../lib/timing";
+import { Card, CardHead } from "@src/ui/Card";
+import { StatusBadge } from "@src/ui/StatusBadge";
+import { DaemonClient } from "@src/api/client";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { chainsByStatus } from "@src/lib/query-keys";
+import { COOL_POLL_MS } from "@src/lib/timing";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });

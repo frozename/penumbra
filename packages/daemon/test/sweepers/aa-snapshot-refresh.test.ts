@@ -9,7 +9,7 @@ import {
   DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
   runAaSnapshotRefreshSweep,
   startAaSnapshotRefreshSweeper,
-} from "../../src/sweepers/aa-snapshot-refresh.js";
+} from "@src/sweepers/aa-snapshot-refresh.js";
 
 function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

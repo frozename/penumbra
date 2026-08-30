@@ -6,11 +6,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import type { ExtraWorkerConfig } from "../../src/workers/config.js";
-
-import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
-import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
-import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
+import { handoffsApproveRoute, handoffsCreateRoute } from "@src/routes/handoffs.js";
+import { OrphanHandoffRecoveryService } from "@src/services/orphan-handoff-recovery.js";
+import type { ExtraWorkerConfig } from "@src/workers/config.js";
+import { ExtraWorkerSupervisor } from "@src/workers/supervisor.js";
 
 try {
   if (process.platform === "darwin") {

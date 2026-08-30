@@ -7,12 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  buildRegistry,
-  composeRecall,
-  evaluateTriggerEvent,
-  executeWorkflow,
-} from "../../src/index.js";
+import { buildRegistry, composeRecall, evaluateTriggerEvent, executeWorkflow } from "@src/index.js";
 
 try {
   if (process.platform === "darwin") {

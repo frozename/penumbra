@@ -16,9 +16,9 @@ import {
   EFFICACY_RUNNER_HEARTBEAT_STALE_MS,
   memoryEfficacyRebuildRoute,
   memoryEfficacyRecentRoute,
-} from "../../src/routes/memory.js";
-import { qualityStatusRoute } from "../../src/routes/quality.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/memory.js";
+import { qualityStatusRoute } from "@src/routes/quality.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

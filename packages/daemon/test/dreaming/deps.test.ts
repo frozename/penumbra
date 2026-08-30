@@ -5,9 +5,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "../../src/dreaming/deps.js";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "@src/dreaming/deps.js";
 
 const configDir = join(tmpdir(), `penumbra-rewriter-role-${crypto.randomUUID()}`);
 

@@ -11,7 +11,7 @@ import {
   mapDispatchReasonToAgentOutcome,
   mapMergeStatusToAgentOutcome,
   MergeResultStatusSchema,
-} from "../../src/schemas/agent-performance.js";
+} from "@src/schemas/agent-performance.js";
 
 describe("agent performance schemas", () => {
   describe("mapDispatchReasonToAgentOutcome", () => {

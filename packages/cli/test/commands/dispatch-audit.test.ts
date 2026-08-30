@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { formatDispatchAudit, runDispatchAudit } from "../../src/commands/dispatch-audit.js";
+import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-audit.js";
+
 import { urlToString } from "./_helpers.js";
 
 const report = {

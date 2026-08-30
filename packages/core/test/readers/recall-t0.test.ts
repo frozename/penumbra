@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { TestEmbedder } from "../../src/embedder/test-embedder.js";
-import { queryT0, RecallReader } from "../../src/readers/recall.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { TestEmbedder } from "@src/embedder/test-embedder.js";
+import { queryT0, RecallReader } from "@src/readers/recall.js";
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.

@@ -11,7 +11,7 @@ import {
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
-} from "../../src/worker/silent-failure-retry.js";
+} from "@src/worker/silent-failure-retry.js";
 
 describe("shouldRetryForSilentFailure", () => {
   test("null/undefined perf does not trigger retry", () => {

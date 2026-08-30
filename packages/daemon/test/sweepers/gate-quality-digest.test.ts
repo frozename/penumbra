@@ -10,7 +10,7 @@ import {
   type AgentGateOutcomeSplit,
   type AgentGateRateTrend,
   readAgentGateOutcomeSplits,
-} from "../../src/sweepers/gate-quality-digest.js";
+} from "@src/sweepers/gate-quality-digest.js";
 
 try {
   if (process.platform === "darwin") {
@@ -56,7 +56,7 @@ describe("gate-quality-digest sweeper", () => {
     seedLanes();
     seedAgentPerformance();
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
 
     const first = await runGateQualityDigestSweep({ services, outDir: dir, now: () => NOW });
 
@@ -94,7 +94,7 @@ describe("gate-quality-digest sweeper", () => {
     seedLanes();
     seedRecurringLanes(25, "dispatch-event-stream-gap");
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
     const env = (key: string): string | undefined =>
       key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined;
     let laneReads = 0;
@@ -168,7 +168,7 @@ describe("gate-quality-digest sweeper", () => {
       );
     `);
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
     const result = await runGateQualityDigestSweep({ services, outDir: dir, now: () => NOW });
 
     expect(result.lanesProcessed).toBe(1);
@@ -182,7 +182,7 @@ describe("gate-quality-digest sweeper", () => {
       "Dispatch Event Stream Gap With Extra Context That Should Be Trimmed Because The Signature Keeps Going Past The Slug Limit And Must Not Be Embedded Whole",
     );
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
     const env = (key: string): string | undefined =>
       key === "PENUMBRA_GATE_QUALITY_T2_WRITES" ? "true" : undefined;
 
@@ -229,7 +229,7 @@ describe("gate-quality-digest sweeper", () => {
     seedMassiveLanes(5_001);
     const warnings: { obj: Record<string, unknown>; msg: string }[] = [];
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
 
     const result = await runGateQualityDigestSweep({
       services,
@@ -252,8 +252,7 @@ describe("gate-quality-digest sweeper", () => {
 
   it("started sweepers keep independent in-flight state per instance", async () => {
     const otherDir = mkdtempSync(join(tmpdir(), "penumbra-gate-quality-digest-other-"));
-    const { startGateQualityDigestSweeper } =
-      await import("../../src/sweepers/gate-quality-digest.js");
+    const { startGateQualityDigestSweeper } = await import("@src/sweepers/gate-quality-digest.js");
 
     const stopA = startGateQualityDigestSweeper({ services, outDir: dir, now: () => NOW }, 10_000);
     const stopB = startGateQualityDigestSweeper(
@@ -341,7 +340,7 @@ describe("gate-quality-digest sweeper", () => {
       { gate_outcome: "review_debt" },
     ]);
 
-    const { runGateQualityDigestSweep } = await import("../../src/sweepers/gate-quality-digest.js");
+    const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
     const result = await runGateQualityDigestSweep({ services, outDir: dir, now: () => NOW });
     const digest = readFileSync(result.digestPath, "utf8");
 
@@ -396,8 +395,7 @@ describe("gate-quality-digest sweeper", () => {
         "passed",
       );
 
-      const { runGateQualityDigestSweep } =
-        await import("../../src/sweepers/gate-quality-digest.js");
+      const { runGateQualityDigestSweep } = await import("@src/sweepers/gate-quality-digest.js");
       const result = await runGateQualityDigestSweep({
         services,
         outDir: dir,
@@ -580,8 +578,7 @@ describe("gate-quality-digest sweeper", () => {
 
   it("startGateQualityDigestSweeper: defers sweep when pressure guard enabled and provider is over threshold", async () => {
     const deferLogs: string[] = [];
-    const { startGateQualityDigestSweeper } =
-      await import("../../src/sweepers/gate-quality-digest.js");
+    const { startGateQualityDigestSweeper } = await import("@src/sweepers/gate-quality-digest.js");
 
     const stop = startGateQualityDigestSweeper(
       {
@@ -602,8 +599,7 @@ describe("gate-quality-digest sweeper", () => {
   });
 
   it("startGateQualityDigestSweeper: runs normally when pressure guard enabled but pressure is low", async () => {
-    const { startGateQualityDigestSweeper } =
-      await import("../../src/sweepers/gate-quality-digest.js");
+    const { startGateQualityDigestSweeper } = await import("@src/sweepers/gate-quality-digest.js");
 
     const stop = startGateQualityDigestSweeper(
       {
@@ -622,8 +618,7 @@ describe("gate-quality-digest sweeper", () => {
   });
 
   it("startGateQualityDigestSweeper: always runs when pressure guard flag is off, even if checkPressure returns true", async () => {
-    const { startGateQualityDigestSweeper } =
-      await import("../../src/sweepers/gate-quality-digest.js");
+    const { startGateQualityDigestSweeper } = await import("@src/sweepers/gate-quality-digest.js");
 
     const stop = startGateQualityDigestSweeper(
       {
