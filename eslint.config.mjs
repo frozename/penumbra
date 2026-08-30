@@ -10,17 +10,44 @@ import unusedImports from "eslint-plugin-unused-imports";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-// Keep these CONGRUENT with tsconfig.eslint.json's `include`: eslint must lint
-// exactly the files the type-aware parser project covers. A file linted but
-// outside the project parses without type info and falls back to base JS rules
-// (no-undef, base no-unused-vars) plus emits a parse error — the source of
-// thousands of spurious findings.
+// Keep these CONGRUENT with the type-aware parser projects' `include` globs:
+// eslint must lint exactly the files those projects cover. A file linted but
+// outside the projects parses without type info and falls back to base JS
+// rules (no-undef, base no-unused-vars) plus emits a parse error — the source
+// of thousands of spurious findings.
 const SOURCE_GLOBS = [
   "packages/**/src/**/*.ts",
   "packages/**/test/**/*.ts",
   "packages/**/bin/**/*.ts",
   "packages/**/scripts/**/*.ts",
   "scripts/**/*.ts",
+];
+
+// Burn-down list: files already over the max-lines cap when the rule landed.
+// Shrink this list as files are refactored; never add to it.
+const LEGACY_LARGE_FILES = [
+  "packages/agentchat/bin/agentchat-worker.ts",
+  "packages/agentchat/src/adapters/stdio-acp.ts",
+  "packages/agentchat/src/penumbra-client.ts",
+  "packages/agentchat/src/worker/dispatcher.ts",
+  "packages/agentchat/src/worker/merge-reconciler.ts",
+  "packages/cli/bin/penumbra.ts",
+  "packages/cli/src/commands/config-sync-providers.ts",
+  "packages/config/src/env.ts",
+  "packages/core/src/db/schema.ts",
+  "packages/core/src/services/agent-routing.ts",
+  "packages/core/src/tasks/writer.ts",
+  "packages/core/src/worktree/manager.ts",
+  "packages/core/src/writers/t2.ts",
+  "packages/daemon/src/dreaming/cycle.ts",
+  "packages/daemon/src/routes/chains.ts",
+  "packages/daemon/src/routes/dispatch-land.ts",
+  "packages/daemon/src/routes/handoffs.ts",
+  "packages/daemon/src/routes/workflows.ts",
+  "packages/daemon/src/serve.ts",
+  "packages/daemon/src/sweepers/gh-task-sync.ts",
+  "packages/mcp/src/daemon-client.ts",
+  "packages/mcp/src/tools/registry.ts",
 ];
 
 export default tseslint.config(
@@ -63,7 +90,11 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: false,
-        project: "./tsconfig.eslint.json",
+        project: [
+          "./tsconfig.eslint.json",
+          "./packages/*/tsconfig.eslint.json",
+          "./packages/integrations/*/tsconfig.eslint.json",
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.node, Bun: "readonly" },
@@ -149,6 +180,7 @@ export default tseslint.config(
       "perfectionist/sort-named-imports": ["warn", { type: "natural", order: "asc" }],
       "perfectionist/sort-named-exports": ["warn", { type: "natural", order: "asc" }],
       "perfectionist/sort-exports": ["warn", { type: "natural", order: "asc" }],
+      "max-lines": ["warn", { max: 700, skipBlankLines: true, skipComments: true }],
       "max-lines-per-function": ["warn", { max: 120, skipBlankLines: true, skipComments: true }],
       "sonarjs/cognitive-complexity": ["warn", 12],
       "unicorn/no-for-loop": "warn",
@@ -196,7 +228,23 @@ export default tseslint.config(
     files: ["**/*.test.ts", "**/*.spec.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",
+      "max-lines": "off",
       "max-lines-per-function": "off",
+    },
+  },
+  {
+    files: ["packages/core/test/readers/embed-recipe-bench.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+    },
+  },
+  {
+    files: LEGACY_LARGE_FILES,
+    rules: {
+      "max-lines": "off",
     },
   },
   prettierConfig,
