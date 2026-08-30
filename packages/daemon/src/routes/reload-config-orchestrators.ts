@@ -26,6 +26,7 @@ import {
   formatAgentChatConfigError,
   loadAgentChatConfigUncached,
   loadAgentRoutingFromConfig,
+  providerQuotasFromAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../agentchat-config.js";
 import { buildDreamingConfig } from "../dreaming/config.js";
@@ -239,14 +240,7 @@ export function reloadAgentChatConfigSubsystem(
     const snapshot: AgentChatConfigSnapshot = {
       agentRegistry,
       agentRouting: loadAgentRoutingFromConfig(cfg),
-      providerQuotas: cfg.providers.map((provider) => ({
-        provider: provider.name,
-        model: provider.model,
-        quota_usd_per_24h: provider.quota_usd_per_24h,
-        quota_tokens_per_24h: provider.quota_tokens_per_24h,
-        quota_tokens_per_5h: provider.quota_tokens_per_5h,
-        pressure_caps: provider.pressure_caps,
-      })),
+      providerQuotas: providerQuotasFromAgentChatConfig(cfg),
       agentchatConfig: cfg as unknown as DaemonServices["agentchatConfig"],
       shellConfig: loadShellConfig({ agentchat: cfg }),
     };

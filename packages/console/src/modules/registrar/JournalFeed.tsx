@@ -10,6 +10,7 @@ const KIND_LABEL: Record<RegistrarEventKind, string> = {
   decision: "Decision",
   phase_transition: "Phase transition",
   link: "Link",
+  entry_transition: "Entry transition",
 };
 
 const KIND_VARIANT: Record<RegistrarEventKind, BadgeVariant> = {
@@ -20,6 +21,7 @@ const KIND_VARIANT: Record<RegistrarEventKind, BadgeVariant> = {
   decision: "brand",
   phase_transition: "info",
   link: "muted",
+  entry_transition: "brand",
 };
 
 export interface JournalFeedProps {

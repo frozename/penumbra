@@ -16,6 +16,7 @@ import {
   type ProviderSourcesConfig,
   resolveCatalogAuthority,
 } from "../../../config/src/index.js";
+import { AgentConfigSchema as AgentchatAgentConfigSchema } from "../../../agentchat/src/config/types.js";
 import {
   defaultDiscoveryAdapters,
   type ProviderDiscoveryAdapter,
@@ -1197,6 +1198,265 @@ describe("penumbra config sync-providers", () => {
     expect(second.exitCode).toBe(0);
     expect(second.stdout).not.toContain("upserted codex-alibaba-qwen3-8-max-acp");
     expect(second.stdout).not.toContain("aliased codex-alibaba-qwen3-8-max-acp");
+  });
+
+  test("terminal/fs tool options in carriers round-trip into generated seats the agentchat schema accepts", async () => {
+    const dir = await makeTempDir();
+    const toolOptions = {
+      fsReadTextFile: true,
+      fsWriteTextFile: true,
+      terminal: true,
+      terminal_max_concurrent: 3,
+      terminal_output_max_bytes: 65536,
+      terminal_path: "/usr/bin:/bin",
+      terminal_timeout_s: 120,
+    };
+    const managedToolFields = [
+      "options.fsReadTextFile",
+      "options.fsWriteTextFile",
+      "options.terminal",
+      "options.terminal_max_concurrent",
+      "options.terminal_output_max_bytes",
+      "options.terminal_path",
+      "options.terminal_timeout_s",
+    ];
+
+    const alibaba = alibabaCarrierProviderFixture();
+    Object.assign(alibaba.alibaba!.bindings["codex-alibaba-acp"]!.carriers!, toolOptions);
+    const google = agyProviderFixture();
+    Object.assign(google.google!.bindings["google-gemini-cli"]!.carriers!, toolOptions);
+    const opencode = opencodeProviderFixture();
+    // opencode starts without a carriers object; the CLI/ACP fixtures mutate
+    // the existing carrier objects so they retain their required binding fields.
+    opencode.opencode!.bindings["opencode-go-acp"]!.carriers = { ...toolOptions };
+    writeFixture(dir, { ...alibaba, ...google, ...opencode });
+
+    const opts = {
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "alibaba", modelId: "qwen3.8-max", displayName: "Qwen 3.8 Max" },
+          {
+            sourceProviderId: "google",
+            modelId: "gemini-3.5-pro",
+            displayName: "Gemini 3.5 Pro",
+          },
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/qwen3.7-max",
+            displayName: "Qwen 3.7 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: () => Promise.resolve({ ok: true }),
+    };
+
+    const first = await runConfigSyncProviders(opts);
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("upserted codex-alibaba-qwen3-8-max-acp");
+    expect(first.stdout).toContain("upserted google-gemini-3-5-pro-cli");
+    expect(first.stdout).toContain("upserted opencode-go-qwen3-7-max-acp");
+
+    const agents = readAgents(dir).agents;
+    const seats = [
+      agents.find((agent) => agent.name === "codex-alibaba-qwen3-8-max-acp"),
+      agents.find((agent) => agent.name === "google-gemini-3-5-pro-cli"),
+      agents.find((agent) => agent.name === "opencode-go-qwen3-7-max-acp"),
+    ];
+
+    for (const seat of seats) {
+      expect(seat).toBeDefined();
+      expect(seat!.options).toMatchObject(toolOptions);
+      for (const field of managedToolFields) {
+        expect(seat!.provenance?.managed_fields).toContain(field);
+      }
+      expect(() => AgentchatAgentConfigSchema.parse(seat)).not.toThrow();
+      const bogus = { ...seat!, options: { ...seat!.options, terminal_allowed: true } };
+      expect(() => AgentchatAgentConfigSchema.parse(bogus)).toThrow(/terminal_allowed/);
+    }
+
+    const second = await runConfigSyncProviders(opts);
+    expect(second.exitCode).toBe(0);
+    expect(
+      second.stdout.filter(
+        (line) => line.startsWith("upserted ") || line.startsWith("would upsert "),
+      ),
+    ).toEqual([]);
+  });
+
+  test("removing a carrier tool option revokes it on re-sync", async () => {
+    const dir = await makeTempDir();
+    const providers = alibabaCarrierProviderFixture();
+    const carriers = providers.alibaba!.bindings["codex-alibaba-acp"]!.carriers!;
+    carriers.env = {
+      CARRIER_CONTROL: "{model}",
+    };
+    carriers.terminal = true;
+    carriers.terminal_timeout_s = 120;
+    writeFixture(dir, providers);
+
+    const opts = {
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          {
+            sourceProviderId: "alibaba",
+            modelId: "qwen3.8-max",
+            displayName: "Qwen 3.8 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: () => Promise.resolve({ ok: true }),
+    };
+
+    const first = await runConfigSyncProviders(opts);
+    expect(first.exitCode).toBe(0);
+    const initialSeat = readAgents(dir).agents.find(
+      (agent) => agent.name === "codex-alibaba-qwen3-8-max-acp",
+    );
+    expect(initialSeat?.options).toMatchObject({
+      env: { CARRIER_CONTROL: "qwen3.8-max" },
+      terminal: true,
+      terminal_timeout_s: 120,
+    });
+    expect(initialSeat?.provenance?.managed_fields).toContain("options.env");
+    expect(initialSeat?.provenance?.managed_fields).toContain("options.terminal");
+    expect(initialSeat?.provenance?.managed_fields).toContain("options.terminal_timeout_s");
+
+    delete carriers.env;
+    delete carriers.terminal;
+    delete carriers.terminal_timeout_s;
+    writeFileSync(join(dir, "providers.yaml"), YAML.stringify(providers), "utf8");
+
+    const second = await runConfigSyncProviders(opts);
+    expect(second.exitCode).toBe(0);
+    const resyncedSeat = readAgents(dir).agents.find(
+      (agent) => agent.name === "codex-alibaba-qwen3-8-max-acp",
+    );
+    expect(resyncedSeat?.options).not.toHaveProperty("terminal");
+    expect(resyncedSeat?.options).not.toHaveProperty("terminal_timeout_s");
+    expect(resyncedSeat?.provenance?.managed_fields).not.toContain("options.terminal");
+    expect(resyncedSeat?.provenance?.managed_fields).not.toContain("options.terminal_timeout_s");
+    expect(resyncedSeat?.options.env).toEqual({ CARRIER_CONTROL: "qwen3.8-max" });
+    expect(resyncedSeat?.provenance?.managed_fields).not.toContain("options.env");
+  });
+
+  test("options-free carriers generate byte-identical seats (no silent new defaults)", async () => {
+    const dir = await makeTempDir();
+    writeFixture(dir, {
+      ...alibabaCarrierProviderFixture(),
+      ...agyProviderFixture(),
+      ...opencodeProviderFixture(),
+    });
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        fake: fakeAdapter([
+          { sourceProviderId: "alibaba", modelId: "qwen3.8-max", displayName: "Qwen 3.8 Max" },
+          { sourceProviderId: "google", modelId: "gemini-3.5-pro", displayName: "Gemini 3.5 Pro" },
+          {
+            sourceProviderId: "opencode",
+            modelId: "opencode-go/qwen3.7-max",
+            displayName: "Qwen 3.7 Max",
+          },
+        ]),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: () => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const agents = readAgents(dir).agents;
+
+    const alibabaSeat = agents.find((agent) => agent.name === "codex-alibaba-qwen3-8-max-acp");
+    expect(alibabaSeat).toEqual({
+      name: "codex-alibaba-qwen3-8-max-acp",
+      adapter: "stdio-acp",
+      api_provider: "alibaba",
+      pricing_mode: "subscription",
+      subscription_provider: "alibaba",
+      roles: [],
+      auto_approve_to: [],
+      options: {
+        binary: "/opt/penumbra/bin/codex-acp",
+        args: ["-c", "model=qwen3.8-max", "-c", "model_provider=alibaba"],
+        unsetEnv: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"],
+      },
+      provenance: {
+        source: "providers-sync",
+        managed_fields: [
+          "name",
+          "adapter",
+          "api_provider",
+          "pricing_mode",
+          "subscription_provider",
+          "options.binary",
+          "options.args",
+          "options.unsetEnv",
+        ],
+      },
+    });
+    expect(Object.keys(alibabaSeat!.options!).sort()).toEqual(["args", "binary", "unsetEnv"]);
+
+    const agySeat = agents.find((agent) => agent.name === "google-gemini-3-5-pro-cli");
+    expect(agySeat).toEqual({
+      name: "google-gemini-3-5-pro-cli",
+      adapter: "agy-cli",
+      api_provider: "google",
+      pricing_mode: "subscription",
+      subscription_provider: "google",
+      roles: [],
+      auto_approve_to: [],
+      options: {
+        command: "/Users/acordeiro/.local/bin/agy",
+        args: ["--model", "Gemini 3.5 Pro", "--dangerously-skip-permissions", "--print"],
+      },
+      provenance: {
+        source: "providers-sync",
+        managed_fields: [
+          "name",
+          "adapter",
+          "api_provider",
+          "pricing_mode",
+          "subscription_provider",
+          "options.command",
+          "options.args",
+        ],
+      },
+    });
+    expect(Object.keys(agySeat!.options!).sort()).toEqual(["args", "command"]);
+
+    const opencodeSeat = agents.find((agent) => agent.name === "opencode-go-qwen3-7-max-acp");
+    expect(opencodeSeat).toEqual({
+      name: "opencode-go-qwen3-7-max-acp",
+      adapter: "opencode-acp",
+      api_provider: "opencode-go",
+      pricing_mode: "subscription",
+      subscription_provider: "opencode-go",
+      roles: [],
+      auto_approve_to: [],
+      options: {
+        model: "opencode-go/qwen3.7-max",
+      },
+      provenance: {
+        source: "providers-sync",
+        managed_fields: [
+          "name",
+          "adapter",
+          "api_provider",
+          "pricing_mode",
+          "subscription_provider",
+          "options.model",
+        ],
+      },
+    });
+    expect(Object.keys(opencodeSeat!.options!).sort()).toEqual(["model"]);
   });
 
   test("an env template renders literally, including a TOML-shaped CODEX_CONFIG value", async () => {

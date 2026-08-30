@@ -90,9 +90,9 @@ function insertT2WithObsType(
 
 test("verifyMemory updates freshness and search surfaces it", () => {
   const db = freshDb();
-  const now = new Date("2026-05-12T12:00:00.000Z");
-  const oldCreatedAt = new Date(now.getTime() - 45 * 86_400_000).toISOString();
-  const staleCreatedAt = new Date(now.getTime() - 60 * 86_400_000).toISOString();
+  const now = Date.now();
+  const oldCreatedAt = new Date(now - 45 * 86_400_000).toISOString();
+  const staleCreatedAt = new Date(now - 90 * 86_400_000).toISOString();
 
   insertT2(db, "memory-fresh", oldCreatedAt);
 
@@ -107,6 +107,7 @@ test("verifyMemory updates freshness and search surfaces it", () => {
     query: "memory-fresh",
     project_id: null,
     limit: 5,
+    offset: 0,
     tiers: ["t2"],
   });
   expect(freshHits).toHaveLength(1);
@@ -123,6 +124,7 @@ test("verifyMemory updates freshness and search surfaces it", () => {
     query: "memory-stale",
     project_id: null,
     limit: 5,
+    offset: 0,
     tiers: ["t2"],
   });
   expect(staleHits).toHaveLength(1);
@@ -132,7 +134,7 @@ test("verifyMemory updates freshness and search surfaces it", () => {
 
 test("search uses obs_type-specific stale thresholds", () => {
   const db = freshDb();
-  const oldCreatedAt = new Date(Date.UTC(2026, 4, 12, 12, 0, 0) - 90 * 86_400_000).toISOString();
+  const oldCreatedAt = new Date(Date.now() - 90 * 86_400_000).toISOString();
 
   insertT2WithObsType(db, "memory-decision", oldCreatedAt, "decision");
   insertT2WithObsType(db, "memory-session", oldCreatedAt, "session");
@@ -141,6 +143,7 @@ test("search uses obs_type-specific stale thresholds", () => {
     query: "memory-decision",
     project_id: null,
     limit: 5,
+    offset: 0,
     tiers: ["t2"],
   });
   expect(decisionHits).toHaveLength(1);
@@ -154,6 +157,7 @@ test("search uses obs_type-specific stale thresholds", () => {
     query: "memory-session",
     project_id: null,
     limit: 5,
+    offset: 0,
     tiers: ["t2"],
   });
   expect(sessionHits).toHaveLength(1);

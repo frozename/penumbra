@@ -180,6 +180,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
+    environment_failure: input.result.verification_environment_error === true ? "y" : null,
     metadata_json: JSON.stringify(metadata),
   };
   return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);

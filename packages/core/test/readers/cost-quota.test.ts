@@ -440,6 +440,59 @@ describe("quotaStatus token window selection", () => {
     expect(out.providers[0]?.quota_tokens).toBeNull();
   });
 
+  it("selects quota_tokens_per_7d when window=7d", () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: "w4",
+      ts: "2026-08-27T12:30:00Z",
+      provider: "alibaba",
+      cost_usd: null,
+      used: 700,
+      handoff_id: "h4",
+    });
+
+    const out = quotaStatus(
+      db,
+      [
+        {
+          provider: "alibaba",
+          quota_tokens_per_24h: 1_000,
+          quota_tokens_per_7d: 7_000_000,
+        },
+      ],
+      { since: "2026-08-26T15:53:00Z", window: "7d" },
+      () => new Date("2026-08-27T13:00:00Z"),
+    );
+
+    expect(out.providers[0]?.quota_tokens).toBe(7_000_000);
+  });
+
+  it("returns null quota_tokens for window=7d when quota_tokens_per_7d is absent", () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: "w5",
+      ts: "2026-08-27T12:30:00Z",
+      provider: "alibaba",
+      cost_usd: null,
+      used: 700,
+      handoff_id: "h5",
+    });
+
+    const out = quotaStatus(
+      db,
+      [
+        {
+          provider: "alibaba",
+          quota_tokens_per_24h: 1_000,
+        },
+      ],
+      { since: "2026-08-26T15:53:00Z", window: "7d" },
+      () => new Date("2026-08-27T13:00:00Z"),
+    );
+
+    expect(out.providers[0]?.quota_tokens).toBeNull();
+  });
+
   it("surfaces subscription pressure snapshots per row and dedupes by window_label", () => {
     const db = makeDb();
     const now = new Date("2026-05-08T12:00:00Z");

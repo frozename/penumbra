@@ -43,8 +43,9 @@ function writePerf(
   agent: string,
   taskType: AgentTaskType,
   overrides: Partial<{
-    outcome: "merged" | "pr_opened" | "failed";
+    outcome: "merged" | "pr_opened" | "failed" | "test_failed";
     failure_class: string | null;
+    environment_failure: "y" | "n" | null;
     gate_outcome: "passed" | "skipped" | "failed" | "review_debt" | null;
     rounds: number;
     latency_ms: number;
@@ -64,6 +65,7 @@ function writePerf(
     task_type: taskType,
     outcome: overrides.outcome ?? "merged",
     failure_class: overrides.failure_class,
+    environment_failure: overrides.environment_failure,
     gate_outcome: overrides.gate_outcome,
     rounds: overrides.rounds ?? 1,
     smoke_pass: "y",
@@ -407,6 +409,37 @@ describe("pickFromPool", () => {
       if (previousCutover === undefined) delete process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO;
       else process.env.PENUMBRA_CLASSIFIER_DECLINE_CUTOVER_ISO = previousCutover;
     }
+  });
+
+  test("does not demote agents whose recent test failures are verification environment failures", () => {
+    const db = freshDb();
+    writePerf(db, "a", "review_adversarial", {
+      outcome: "merged",
+      rounds: 1,
+      latency_ms: 10_000,
+      ts: recentIso(60),
+      id_suffix: "baseline-success",
+    });
+    db.query(`UPDATE agent_performance SET gate_outcome='passed' WHERE handoff_id=?`).run(
+      "handoff-review_adversarial-a-baseline-success",
+    );
+    for (let i = 0; i < 3; i += 1) {
+      writePerf(db, "a", "review_adversarial", {
+        outcome: "test_failed",
+        environment_failure: "y",
+        rounds: 1,
+        latency_ms: 10_000,
+        ts: recentIso(30 - i),
+        id_suffix: `environment-failure-${String(i)}`,
+      });
+    }
+    writePerf(db, "b", "review_adversarial", {
+      outcome: "merged",
+      rounds: 10,
+      latency_ms: 60_000,
+    });
+
+    expect(pickFromPool(["a", "b"], db, config(), undefined, "review_adversarial")).toBe("a");
   });
 
   test("keeps a fallback when every pool agent has recent workload failures", () => {

@@ -1,4 +1,4 @@
-import type { AgentConfig } from "../files/agents.js";
+import { CARRIER_TOOL_OPTION_KEYS, type AgentConfig } from "../files/agents.js";
 
 /**
  * Shared managed-fields upsert discipline for config generators (llamactl
@@ -19,6 +19,10 @@ function getPath(obj: unknown, path: string): unknown {
 }
 
 const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+const PROVIDERS_SYNC_SOURCE = "providers-sync";
+const CARRIER_TOOL_OPTION_PATHS = new Set<string>(
+  CARRIER_TOOL_OPTION_KEYS.map((key) => `options.${key}`),
+);
 
 function safePathSegments(path: string, operation: "set" | "delete"): string[] {
   const keys = path.split(".");
@@ -65,6 +69,17 @@ function deletePath(obj: Record<string, unknown>, path: string): void {
   delete cur[last];
 }
 
+function formerlyManagedCarrierToolOptionPaths(
+  existing: AgentConfig,
+  managedFields: readonly string[],
+): string[] {
+  if (existing.provenance?.source !== PROVIDERS_SYNC_SOURCE) return [];
+  const nextManagedFields = new Set(managedFields);
+  return (existing.provenance.managed_fields ?? []).filter(
+    (path) => CARRIER_TOOL_OPTION_PATHS.has(path) && !nextManagedFields.has(path),
+  );
+}
+
 /**
  * Merges a freshly generated seat onto an existing one: when there is no
  * existing seat, the generated seat is used as-is (it already carries its
@@ -80,6 +95,10 @@ export function upsertManagedFields(
 ): AgentConfig {
   if (!existing) return generated;
   const result: Record<string, unknown> = { ...existing };
+  const carrierToolOptionPathsToRevoke = formerlyManagedCarrierToolOptionPaths(
+    existing,
+    managedFields,
+  );
   for (const path of managedFields) {
     const generatedValue = getPath(generated, path);
     if (generatedValue === undefined) {
@@ -87,6 +106,9 @@ export function upsertManagedFields(
     } else {
       setPath(result, path, generatedValue);
     }
+  }
+  for (const path of carrierToolOptionPathsToRevoke) {
+    deletePath(result, path);
   }
   return result as AgentConfig;
 }

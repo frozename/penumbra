@@ -265,9 +265,21 @@ export class HandoffWriter {
   claimDispatch(
     handoff_id: string,
     worker_id: string,
-    opts?: { workflow_run_id?: string | null; maxWorkflowSiblingsPerWorker?: number | null },
+    opts?: {
+      workflow_run_id?: string | null;
+      maxWorkflowSiblingsPerWorker?: number | null;
+      providerSeatNames?: string[] | null;
+      maxProviderInFlight?: number | null;
+    },
   ): boolean {
     const last_dispatch_started_at = new Date().toISOString();
+    const whereClauses = [
+      "handoff_id=?",
+      "status IN ('approved','redirected')",
+      "dispatch_attempts < max_dispatch_attempts",
+    ];
+    const params: Array<string | number> = [worker_id, last_dispatch_started_at, handoff_id];
+
     if (
       opts?.workflow_run_id &&
       opts.maxWorkflowSiblingsPerWorker !== null &&
@@ -275,33 +287,41 @@ export class HandoffWriter {
       Number.isFinite(opts.maxWorkflowSiblingsPerWorker) &&
       opts.maxWorkflowSiblingsPerWorker >= 0
     ) {
-      const changes = this.db
-        .query<unknown, [string, string, string, string, string, number]>(
-          `UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE handoff_id=? AND status IN ('approved','redirected') AND dispatch_attempts < max_dispatch_attempts AND (
+      whereClauses.push(`(
             SELECT COUNT(*)
               FROM handoffs sibling
              WHERE sibling.dispatch_kind='workflow'
                AND sibling.workflow_run_id=?
                AND sibling.status='dispatched'
                AND sibling.worker_id=?
-          ) < ?`,
-        )
-        .run(
-          worker_id,
-          last_dispatch_started_at,
-          handoff_id,
-          opts.workflow_run_id,
-          worker_id,
-          opts.maxWorkflowSiblingsPerWorker,
-        );
-      return changes.changes > 0;
+          ) < ?`);
+      params.push(opts.workflow_run_id, worker_id, opts.maxWorkflowSiblingsPerWorker);
     }
+
+    if (
+      Array.isArray(opts?.providerSeatNames) &&
+      opts.providerSeatNames.length > 0 &&
+      opts.maxProviderInFlight !== null &&
+      opts.maxProviderInFlight !== undefined &&
+      Number.isFinite(opts.maxProviderInFlight) &&
+      opts.maxProviderInFlight >= 0
+    ) {
+      const seatPlaceholders = opts.providerSeatNames.map(() => "?").join(",");
+      whereClauses.push(`(
+            SELECT COUNT(*)
+              FROM handoffs provider_sibling
+             WHERE provider_sibling.status='dispatched'
+               AND provider_sibling.to_agent IN (${seatPlaceholders})
+          ) < ?`);
+      params.push(...opts.providerSeatNames, opts.maxProviderInFlight);
+    }
+
     const changes = this.db
       .query<
         unknown,
-        [string, string, string]
-      >(`UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE handoff_id=? AND status IN ('approved','redirected') AND dispatch_attempts < max_dispatch_attempts`)
-      .run(worker_id, last_dispatch_started_at, handoff_id);
+        Array<string | number>
+      >(`UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE ${whereClauses.join(" AND ")}`)
+      .run(...params);
     return changes.changes > 0;
   }
 

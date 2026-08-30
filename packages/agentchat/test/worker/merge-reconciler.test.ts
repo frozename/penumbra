@@ -948,6 +948,7 @@ test("head/base mismatch with persistently empty diff does not emit hard-fail ve
   const result = await reconcile("h_empty_diff_fail");
 
   expect(result.status).toBe("typecheck_failed");
+  expect(result.verification_environment_error).toBeUndefined();
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
     handoff_id: "h_empty_diff_fail",
@@ -971,6 +972,7 @@ test("Typecheck environment failure (empty-output exec error): stamps 'error' no
   const result = await reconcile("h-env-tc");
 
   expect(result.status).toBe("typecheck_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
     handoff_id: "h-env-tc",
@@ -986,6 +988,7 @@ test("Test fail: returns test_failed and skips PR creation", async () => {
   const result = await reconcile("h3");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBeUndefined();
   expect(result.regression_summary).toBe("1 test failed");
   expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
   expect(execHistory).toContain("bun test packages/daemon/test/");
@@ -1003,11 +1006,57 @@ test("Test environment failure (empty-output exec error): stamps 'error' not 'fa
   const result = await reconcile("h-env-test");
 
   expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
     handoff_id: "h-env-test",
     typecheck: "pass",
     tests: "error",
+  });
+});
+
+test("genuine test failure downgraded to verdict error does not get the environment flag", async () => {
+  const baseTip = "4".repeat(40);
+  const branchTip = "5".repeat(40);
+  const mergeBase = "6".repeat(40);
+
+  execMock.mockImplementation((argv: string[]): Promise<ExecResult> => {
+    const cmd = argv.join(" ");
+    execHistory.push(cmd);
+    if (cmd === "git rev-parse HEAD" || cmd === "git rev-parse agent/h_empty_diff_test_fail") {
+      return Promise.resolve({ stdout: `${branchTip}\n`, stderr: "" });
+    }
+    if (cmd === "git rev-parse main") {
+      return Promise.resolve({ stdout: `${baseTip}\n`, stderr: "" });
+    }
+    if (cmd === `git merge-base ${baseTip} ${branchTip}`) {
+      return Promise.resolve({ stdout: `${mergeBase}\n`, stderr: "" });
+    }
+    if (cmd.startsWith("git diff --name-only")) {
+      return Promise.resolve({ stdout: "packages/daemon/src/routes/handoffs.ts\n", stderr: "" });
+    }
+    if (cmd.startsWith("git diff") && cmd.includes("--shortstat")) {
+      return Promise.resolve({ stdout: "", stderr: "" });
+    }
+    if (cmd.startsWith("bun test")) {
+      return Promise.reject(new ExecCommandError({ stderr: "1 test failed", code: 1 }));
+    }
+    return defaultExecForCommand(cmd);
+  });
+
+  const result = await reconcile("h_empty_diff_test_fail");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBeUndefined();
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: "h_empty_diff_test_fail",
+    tests: "error",
+  });
+  expect(notifyResultMock).toHaveBeenCalledWith("h_empty_diff_test_fail", {
+    status: "test_failed",
+    regression_summary: "1 test failed",
+    progressReported: true,
   });
 });
 
@@ -1262,6 +1311,7 @@ describe("baseline test environment provisioning", () => {
     });
 
     expect(scenario.result.status).toBe("test_failed");
+    expect(scenario.result.verification_environment_error).toBe(true);
     expect(scenario.result.regression_summary).toContain("verification environment error (tests)");
     expect(scenario.result.regression_summary).toContain("@penumbra/config");
     expect(scenario.result.regression_summary).not.toContain("new test failures");
@@ -1276,6 +1326,7 @@ describe("baseline test environment provisioning", () => {
     });
 
     expect(scenario.result.status).toBe("test_failed");
+    expect(scenario.result.verification_environment_error).toBe(true);
     expect(scenario.result.regression_summary).toContain("verification environment error (tests)");
     expect(scenario.result.regression_summary).toContain("lockfile had changes");
     expect(scenario.result.regression_summary).not.toContain("new test failures");

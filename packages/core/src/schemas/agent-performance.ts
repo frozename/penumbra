@@ -114,6 +114,7 @@ export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
     pr_url: z.url().optional(),
     regression_summary: z.string().optional(),
     timed_out: z.boolean().optional(),
+    verification_environment_error: z.literal(true).optional(),
   }),
 });
 export type AgentPerformanceCaptureFromReconciler = z.infer<

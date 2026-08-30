@@ -5,6 +5,7 @@ import type { DiscoveredModel } from "./discovery-types.js";
 
 const execFileAsync = promisify(execFile);
 const CODEX_SOURCE_PROVIDER_ID = "codex";
+const DISCOVERY_CLI_TIMEOUT_MS = 30_000;
 
 export interface DiscoverCodexModelsOpts {
   runCodexDebugModels?: () => Promise<string>;
@@ -58,9 +59,12 @@ export function parseCodexDebugModelsOutput(output: string): DiscoveredModel[] {
 }
 
 async function defaultRunCodexDebugModels(): Promise<string> {
-  const { stdout } = await execFileAsync("codex", ["debug", "models"], {
+  const promise = execFileAsync("codex", ["debug", "models"], {
     maxBuffer: 10 * 1024 * 1024,
+    timeout: DISCOVERY_CLI_TIMEOUT_MS,
   });
+  promise.child.stdin?.end();
+  const { stdout } = await promise;
   return stdout;
 }
 

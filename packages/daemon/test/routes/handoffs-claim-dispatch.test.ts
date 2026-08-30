@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -18,10 +24,39 @@ const SHARED_TOKEN = "shared-sec";
 
 type ErrorResponse = { error: { code: string } };
 type ClaimResponse = { status: string };
+type ProviderConcurrencyCapResponse = ErrorResponse & {
+  provider: string;
+  max_in_flight: number;
+  in_flight_count: number;
+};
 type WorkerAuthz = Map<string, { isolation: "sticky" | "hard" | "shared"; project_id?: string }>;
 type ClaimServices = Services & {
   workerAuthz?: WorkerAuthz;
 };
+type ClaimDispatchOptions = Parameters<HandoffWriter["claimDispatch"]>[2];
+
+class RacingHandoffWriter extends HandoffWriter {
+  private raced = false;
+
+  constructor(
+    db: Database,
+    private readonly race: () => void,
+  ) {
+    super({ db });
+  }
+
+  override claimDispatch(
+    handoff_id: string,
+    worker_id: string,
+    opts?: ClaimDispatchOptions,
+  ): boolean {
+    if (!this.raced) {
+      this.raced = true;
+      this.race();
+    }
+    return super.claimDispatch(handoff_id, worker_id, opts);
+  }
+}
 
 async function readErrorCode(res: Response): Promise<string> {
   const body = (await res.json()) as ErrorResponse;
@@ -32,6 +67,11 @@ function requireToken(tokens: Map<string, string>, workerId: string): string {
   const token = tokens.get(workerId);
   if (!token) throw new Error(`missing token for ${workerId}`);
   return token;
+}
+
+function expectRetryableClaimRefusalStatus(status: number): void {
+  // A terminal 4xx makes the worker drop this fleet-wide refusal permanently instead of retrying.
+  expect([408, 429]).toContain(status);
 }
 
 function tempServices(): Services {
@@ -50,6 +90,30 @@ function tempServices(): Services {
       return () => `e-${String(++n)}`;
     })(),
   });
+}
+
+function configureProviderCap(services: Services, max_in_flight: number): void {
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas = [{ provider: "anthropic", max_in_flight }];
 }
 
 function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
@@ -291,6 +355,212 @@ test("workflow fan-out sibling claims are spread across active workers without e
     { worker_id: "W-A", n: 5 },
     { worker_id: "W-B", n: 1 },
   ]);
+});
+
+test("/handoffs/:id/claim returns retryable typed response when provider in-flight cap is reached", async () => {
+  const services = tempServices();
+  configureProviderCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-running", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "provider-next", null, { to: "claude-b" });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const first = await fetchHandler(
+    new Request("http://x/handoffs/provider-running/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(first.status).toBe(200);
+
+  const capped = await fetchHandler(
+    new Request("http://x/handoffs/provider-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expectRetryableClaimRefusalStatus(capped.status);
+  const body = (await capped.json()) as ProviderConcurrencyCapResponse;
+  expect(body.error.code).toBe("provider_concurrency_cap");
+  expect(body.provider).toBe("anthropic");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("provider-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
+});
+
+test("/handoffs/:id/claim returns retryable provider cap response when CAS loses to provider cap race", async () => {
+  const services = tempServices();
+  configureProviderCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-running-race", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "provider-race-next", null, { to: "claude-b" });
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET status='dispatched', worker_id='W-A' WHERE handoff_id='provider-running-race'`,
+    );
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const raced = await fetchHandler(
+    new Request("http://x/handoffs/provider-race-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expectRetryableClaimRefusalStatus(raced.status);
+  const body = (await raced.json()) as ProviderConcurrencyCapResponse;
+  expect(body.error.code).toBe("provider_concurrency_cap");
+  expect(body.provider).toBe("anthropic");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("provider-race-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
+});
+
+test("/handoffs/:id/claim returns generic terminal conflict when CAS loses because row is already claimed", async () => {
+  const services = tempServices();
+  configureProviderCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-row-claimed-race", null, { to: "claude-b" });
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET status='dispatched', worker_id='W-A' WHERE handoff_id='provider-row-claimed-race'`,
+    );
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const raced = await fetchHandler(
+    new Request("http://x/handoffs/provider-row-claimed-race/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expect(raced.status).toBe(409);
+  const body = (await raced.json()) as ErrorResponse & { current_status: string | null };
+  expect(body.error.code).toBe("conflict");
+  expect(body.current_status).toBe("dispatched");
+});
+
+test("/handoffs/:id/claim uses provider-wide max_in_flight regardless of quota row order", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "google-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-x",
+      },
+      {
+        name: "google-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "google",
+        subscription_model: "gemini-y",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas = [
+    { provider: "google", model: "gemini-x", max_in_flight: 1 },
+    { provider: "google", max_in_flight: 2 },
+  ];
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-order-running", null, { to: "google-a" });
+  seedApprovedHandoff(services, "provider-order-next", null, { to: "google-b" });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const first = await fetchHandler(
+    new Request("http://x/handoffs/provider-order-running/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(first.status).toBe(200);
+
+  const second = await fetchHandler(
+    new Request("http://x/handoffs/provider-order-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expect(second.status).toBe(200);
+  const count = services.db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n
+         FROM handoffs
+        WHERE status='dispatched'
+          AND to_agent IN ('google-a', 'google-b')`,
+    )
+    .get();
+  expect(count?.n).toBe(2);
 });
 
 test("workflow sibling spreading does not block a warm-pool home worker", async () => {

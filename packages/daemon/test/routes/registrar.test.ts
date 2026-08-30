@@ -164,7 +164,9 @@ test("enum drift trap: every RegistrarEventKindSchema option is accepted by the 
           ? "owed"
           : kind === "phase_transition"
             ? "active"
-            : null;
+            : kind === "entry_transition"
+              ? "complete"
+              : null;
     const linkKind = kind === "link" ? "commit_sha" : null;
     const linkValue = kind === "link" ? "abc123" : null;
     db.run(
@@ -351,6 +353,185 @@ test("two concurrent POST /registrar/:id/events phase transitions from the same 
     ]);
 
     expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition active→complete updates the entry and appends the audit event", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "active",
+        state: "complete",
+        actor: "maestro",
+        body: "all phases landed",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = z.strictObject({ event: RegistrarEventSchema }).parse(await response.json());
+    expect(body.event.kind).toBe("entry_transition");
+    expect(body.event.state).toBe("complete");
+    expect(body.event.phase_no).toBeNull();
+
+    expect(daemon.services.registrarReader.getEntry(registrarId)?.status).toBe("complete");
+    expect(
+      daemon.services.registrarReader
+        .listEvents(registrarId)
+        .filter((event) => event.kind === "entry_transition"),
+    ).toHaveLength(1);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition with a wrong from_status returns 409 invalid_entry_transition and appends no event", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "paused",
+        state: "abandoned",
+        actor: "maestro",
+        body: "should not apply",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({ error: "invalid_entry_transition" }),
+    );
+    expect(daemon.services.registrarReader.getEntry(registrarId)?.status).toBe("active");
+    expect(daemon.services.registrarReader.listEvents(registrarId)).toHaveLength(0);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition against an unknown registrar returns 404 registrar_not_found", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const response = await daemon.fetch("/registrar/does-not-exist/events", {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "active",
+        state: "complete",
+        actor: "maestro",
+        body: "no such entry",
+      }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({ error: "registrar_not_found" }),
+    );
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition complete→active re-open round-trips 200", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const close = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "active",
+        state: "complete",
+        actor: "maestro",
+        body: "closed early",
+      }),
+    });
+    expect(close.status).toBe(200);
+
+    const reopen = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "complete",
+        state: "active",
+        actor: "maestro",
+        body: "re-opened",
+      }),
+    });
+    expect(reopen.status).toBe(200);
+
+    expect(daemon.services.registrarReader.getEntry(registrarId)?.status).toBe("active");
+    expect(
+      daemon.services.registrarReader
+        .listEvents(registrarId)
+        .filter((event) => event.kind === "entry_transition"),
+    ).toHaveLength(2);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition with state='draft' returns 400 invalid_input", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        from_status: "active",
+        state: "draft",
+        actor: "maestro",
+        body: "draft is creation-only",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: "invalid_input" }));
+    expect(daemon.services.registrarReader.getEntry(registrarId)?.status).toBe("active");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /registrar/:id/events entry_transition with phase_no returns 400 invalid_input", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const registrarId = await createRegistrar(daemon);
+
+    const response = await daemon.fetch(`/registrar/${registrarId}/events`, {
+      method: "POST",
+      headers: authJsonHeaders(daemon.token),
+      body: JSON.stringify({
+        kind: "entry_transition",
+        phase_no: 1,
+        from_status: "active",
+        state: "complete",
+        actor: "maestro",
+        body: "entry transitions are entry-scoped",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: "invalid_input" }));
+    expect(daemon.services.registrarReader.listEvents(registrarId)).toHaveLength(0);
   } finally {
     daemon.stop();
   }
