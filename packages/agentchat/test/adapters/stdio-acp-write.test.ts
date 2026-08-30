@@ -1011,8 +1011,8 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
   test("terminal failure audit and logs do not expose raw command secrets", async () => {
     const secret = "FAKE_SECRET_TOKEN_do_not_log";
     const logs: unknown[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]): void => {
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]): void => {
       logs.push(args);
     };
     try {
@@ -1057,7 +1057,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(harness.events.some((event) => event.kind === "terminal.failed")).toBe(true);
       expect(harness.auditEvents.some((event) => event.type === "terminal.failed")).toBe(true);
     } finally {
-      console.warn = originalWarn;
+      console.info = originalInfo;
     }
   });
 
@@ -1249,7 +1249,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     );
     expect(terminalErrorFrame).toBeDefined();
     expect(terminalErrorFrame?.error.message).toBe(
-      `terminal error redacted (code=-32000, messageLength=${String(`spawn failed for ${secret}`.length)})`,
+      `terminal error redacted (code=-32000, messageLength=${String(`spawn failed for ${secret}`).length})`,
     );
     expect(JSON.stringify(writtenFrames)).not.toContain(secret);
   });

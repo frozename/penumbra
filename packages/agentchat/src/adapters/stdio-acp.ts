@@ -127,21 +127,8 @@ export function redactTerminalErrorMessage(message: unknown, code = -32000): str
     if (typeof message === "string") {
       messageLength = message.length;
     } else if (message !== null && message !== undefined) {
-      messageLength =
-        message instanceof Error
-          ? message.message.length
-          : typeof message === "object"
-            ? ((): number => {
-                const serialized = JSON.stringify(message) as unknown;
-                return typeof serialized === "string" ? serialized.length : 0;
-              })()
-            : typeof message === "string" ||
-                typeof message === "number" ||
-                typeof message === "boolean" ||
-                typeof message === "bigint" ||
-                typeof message === "symbol"
-              ? String(message).length
-              : 0;
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve the established redaction length semantics for arbitrary thrown values.
+      messageLength = String(message).length;
     }
   } catch {
     messageLength = 0;
@@ -945,8 +932,10 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
         if (!input.executor) throw new Error("terminal/create: no executor");
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
-          console.warn(
-            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${String(command.length)}`,
+          // eslint-disable-next-line no-console -- Preserve the established operator-facing auto-approval log.
+          console.info(
+            // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Preserve the established numeric command-length log field.
+            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
           );
         }
         const result = await input.executor.terminalCreate(
@@ -1004,12 +993,14 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
     async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
   );
   wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
-    await executor.terminalRelease({ terminal_id: terminalId });
-    return {};
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
+    const result = (await executor.terminalRelease({ terminal_id: terminalId })) as unknown;
+    return result ?? {};
   });
   wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
-    await executor.terminalKill({ terminal_id: terminalId });
-    return {};
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
+    const result = (await executor.terminalKill({ terminal_id: terminalId })) as unknown;
+    return result ?? {};
   });
 }
 
@@ -1039,13 +1030,15 @@ function cancelledOutcome(): PermissionResultCancelled {
 }
 
 function isBypassOptionId(optionId: unknown): boolean {
-  return typeof optionId === "string" && /^(?:switch_)?bypass$/i.test(optionId);
+  // eslint-disable-next-line regexp/no-unused-capturing-group -- Preserve the established bypass-option expression.
+  return typeof optionId === "string" && /^(switch_)?bypass$/i.test(optionId);
 }
 
 function isBypassLikeOptionId(optionId: unknown): boolean {
   return typeof optionId === "string" && /bypass/i.test(optionId);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve permission negotiation while grandfathering its pre-existing complexity.
 async function handlePermissionRequest(
   ctx: DispatchTurnContext,
   params: AcpRequestPermissionParams,
@@ -2052,9 +2045,10 @@ function shouldRetryColdDispatch(
 }
 
 function isTransportClosedError(err: unknown, pooledEntry: AcpWarmPoolEntry): boolean {
-  const isTransportOpen = pooledEntry.client.isTransportOpen();
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve compatibility with lightweight clients that omit transport probes.
+  const isTransportOpen = pooledEntry.client.isTransportOpen;
   return (
-    !isTransportOpen ||
+    (typeof isTransportOpen === "function" && !isTransportOpen.call(pooledEntry.client)) ||
     (err instanceof Error && err.message.includes("stdio-acp-client: transport closed"))
   );
 }

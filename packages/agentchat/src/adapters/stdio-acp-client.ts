@@ -179,6 +179,7 @@ export class StdioAcpClient {
     }
   }
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the framing parser state machine while grandfathering its pre-existing complexity.
   private tryReadOneFramedMessage(): boolean {
     if (this.framingBroken) return false;
     if (this.contentLength === null) {
@@ -190,7 +191,8 @@ export class StdioAcpClient {
         return false;
       }
       this.consumeHeader(headerEnd);
-      if (this.isFramingBroken()) return false;
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Preserve the framing-break guard required after header parsing.
+      if (this.framingBroken) return false;
     }
 
     if (this.contentLength === null) return false;
@@ -255,10 +257,6 @@ export class StdioAcpClient {
     } catch {
       // best-effort
     }
-  }
-
-  private isFramingBroken(): boolean {
-    return this.framingBroken;
   }
 
   private writeMessage(message: object): void {
