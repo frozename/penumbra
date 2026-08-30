@@ -72,6 +72,7 @@ beforeAll(() => {
       "  - name: dummy-judge",
       "    pricing_mode: api",
       "    adapter: openai-compat-http",
+      "    api_provider: local",
       "    roles: [memory-refiner]",
       "",
     ].join("\n"),
@@ -458,6 +459,7 @@ serviceTest(
         "  - name: dummy-judge",
         "    pricing_mode: api",
         "    adapter: openai-compat-http",
+        "    api_provider: local",
         "    roles: [memory-refiner]",
         "",
       ].join("\n"),
@@ -533,6 +535,7 @@ test("agentchat-based pool passes requestExtras from memory-refiner agents", asy
 agents:
   - name: judge-a
     adapter: openai-compat-http
+    api_provider: local
     options:
       baseUrl: http://localhost:${String(port)}
       model: granite
@@ -543,6 +546,7 @@ agents:
     roles: [memory-refiner]
   - name: judge-b
     adapter: openai-compat-http
+    api_provider: local
     options:
       baseUrl: http://judge-b
       model: gemma
@@ -594,6 +598,7 @@ serviceTest("worker falls back to single-judge env config when no memory-refiner
 agents:
   - name: planner
     adapter: openai-compat-http
+    api_provider: local
     options:
       baseUrl: http://planner
       model: granite

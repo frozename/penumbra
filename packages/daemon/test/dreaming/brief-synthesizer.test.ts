@@ -248,7 +248,7 @@ function writeConfig(agentsYaml: string): void {
 describe("createBriefSynthesizerFromAgentchat", () => {
   it("returns null when no agents match the brief-synthesizer role", () => {
     writeConfig(
-      `  - name: other-agent\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+      `  - name: other-agent\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
@@ -263,7 +263,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
 
   it("logs when matching role candidates are filtered out", () => {
     writeConfig(
-      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+      `  - name: public-agent\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n      provider: openai\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     const warnCalls: { fields: unknown[]; msg: string }[] = [];
@@ -303,7 +303,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
 
   it("returns a synthesizer when 1 matching agent exists", () => {
     writeConfig(
-      `  - name: synth-1\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+      `  - name: synth-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
@@ -330,7 +330,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
 
   it("rejects public API endpoints by default and returns null", () => {
     writeConfig(
-      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+      `  - name: public-agent\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n      provider: openai\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     const savedAllow = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC"];
@@ -350,7 +350,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
 
   it("does not admit a public API endpoint even when the legacy override is set", () => {
     writeConfig(
-      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+      `  - name: public-agent\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n      provider: openai\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     const savedAllow = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC"];
@@ -370,7 +370,7 @@ describe("createBriefSynthesizerFromAgentchat", () => {
 
   it("respects PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE env override", () => {
     writeConfig(
-      `  - name: custom-synth\n    adapter: openai-compat-http\n    roles:\n      - my-brief-role\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+      `  - name: custom-synth\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - my-brief-role\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
     const savedConfig = process.env["PENUMBRA_CONFIG_DIR"];
     const savedRole = process.env["PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE"];

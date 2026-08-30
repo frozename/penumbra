@@ -206,7 +206,7 @@ function writeConfig(agentsYaml: string): void {
 describe("createDreamingJudgePoolFromAgentchat", () => {
   it("returns null when no agents match the dreaming-judge role", () => {
     writeConfig(
-      `  - name: other-agent\n    adapter: openai-compat-http\n    roles:\n      - memory-refiner\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+      `  - name: other-agent\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - memory-refiner\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
@@ -221,7 +221,7 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
 
   it("returns null when only 1 agent matches (insufficient for quorum)", () => {
     writeConfig(
-      `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+      `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
@@ -238,8 +238,8 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
   it("returns a pool when ≥2 agents match", () => {
     writeConfig(
       [
-        `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1`,
-        `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+        `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1`,
+        `  - name: judge-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
       ].join("\n"),
     );
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
@@ -268,8 +268,8 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
   it("respects PENUMBRA_DREAMING_JUDGE_ROLE env override", () => {
     writeConfig(
       [
-        `  - name: custom-1\n    adapter: openai-compat-http\n    roles:\n      - my-custom-role\n    options:\n      baseUrl: http://localhost:1111/v1`,
-        `  - name: custom-2\n    adapter: openai-compat-http\n    roles:\n      - my-custom-role\n    options:\n      baseUrl: http://localhost:2222/v1`,
+        `  - name: custom-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - my-custom-role\n    options:\n      baseUrl: http://localhost:1111/v1`,
+        `  - name: custom-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - my-custom-role\n    options:\n      baseUrl: http://localhost:2222/v1`,
       ].join("\n"),
     );
     const savedConfig = process.env["PENUMBRA_CONFIG_DIR"];
@@ -395,8 +395,8 @@ describe("createDreamingJudgePoolFromAgentchat request extras", () => {
   it("threads requestExtras from agent options into the POST body", async () => {
     writeConfig(
       [
-        `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras:\n        chat_template_kwargs:\n          enable_thinking: false`,
-        `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+        `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras:\n        chat_template_kwargs:\n          enable_thinking: false`,
+        `  - name: judge-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
       ].join("\n"),
     );
     const bodies = new Map<string, Record<string, unknown>>();
@@ -430,8 +430,8 @@ describe("createDreamingJudgePoolFromAgentchat request extras", () => {
       for (const malformed of ["not-an-object", "[1, 2]", "null", "7"]) {
         writeConfig(
           [
-            `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras: ${malformed}`,
-            `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+            `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      requestExtras: ${malformed}`,
+            `  - name: judge-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
           ].join("\n"),
         );
         const bodies: Record<string, unknown>[] = [];

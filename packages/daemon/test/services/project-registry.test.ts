@@ -18,13 +18,17 @@ import { reloadConfigRoute } from "../../src/routes/reload-config.js";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;
+let prevConfigDir: string | undefined;
 
 beforeEach(() => {
   prevEnv = process.env.PENUMBRA_PROJECTS_YAML;
+  prevConfigDir = process.env.PENUMBRA_CONFIG_DIR;
 });
 
 afterEach(() => {
   process.env.PENUMBRA_PROJECTS_YAML = prevEnv;
+  if (prevConfigDir === undefined) delete process.env.PENUMBRA_CONFIG_DIR;
+  else process.env.PENUMBRA_CONFIG_DIR = prevConfigDir;
   while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
@@ -83,6 +87,18 @@ test("POST /agentchat/reload refreshes the project registry snapshot", async () 
   const services = makeServices();
   const daemonSvc = services as unknown as DaemonServices;
   const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n`);
+  const configDir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-config-"));
+  dirs.push(configDir);
+  writeFileSync(
+    join(configDir, "agents.yaml"),
+    `agents:
+  - name: test-agent
+    adapter: mock
+`,
+  );
+  writeFileSync(join(configDir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(configDir, "quotas.yaml"), "providers: []\n");
+  process.env.PENUMBRA_CONFIG_DIR = configDir;
 
   const first = await reloadConfigRoute(
     new Request("http://x/agentchat/reload", { method: "POST" }),

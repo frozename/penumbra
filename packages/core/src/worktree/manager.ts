@@ -386,7 +386,7 @@ export class WorktreeManager {
 
     let createdAt = new Date().toISOString();
     try {
-      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+      createdAt = new Date(effectiveCreationTime(fs.statSync(wtPath))).toISOString();
     } catch {
       // ignore stat errors
     }
@@ -625,7 +625,7 @@ export class WorktreeManager {
     const storageRoot = path.join(wtPath, ".test-storage");
     let createdAt = new Date().toISOString();
     try {
-      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+      createdAt = new Date(effectiveCreationTime(fs.statSync(wtPath))).toISOString();
     } catch {
       // ignore stat errors — synthesize a placeholder timestamp
     }
@@ -700,7 +700,7 @@ export class WorktreeManager {
     if (!fs.existsSync(wtPath)) return null;
     let createdAt = new Date().toISOString();
     try {
-      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+      createdAt = new Date(effectiveCreationTime(fs.statSync(wtPath))).toISOString();
     } catch {
       // ignore stat errors — synthesize a placeholder timestamp
     }
@@ -1301,10 +1301,14 @@ function unreadyWorktreeGraceMs(): number {
   return Math.max(UNREADY_WORKTREE_ORPHAN_GRACE_MS, installTimeoutMs + 5 * 60_000);
 }
 
+function effectiveCreationTime(stat: fs.Stats): number {
+  return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+}
+
 async function isUnreadyWorktreePastGrace(wtRoot: string): Promise<boolean> {
   try {
     const stat = await fs.promises.stat(wtRoot);
-    return Date.now() - stat.birthtimeMs > unreadyWorktreeGraceMs();
+    return Date.now() - effectiveCreationTime(stat) > unreadyWorktreeGraceMs();
   } catch {
     return false;
   }

@@ -639,7 +639,7 @@ export class ShellSessionPool {
       }
     }
 
-    return Bun.spawn(["bash", "--norc", "--noprofile", "-i"], {
+    return Bun.spawn(["bash", "--norc", "--noprofile"], {
       cwd,
       env,
       stdin: "pipe",

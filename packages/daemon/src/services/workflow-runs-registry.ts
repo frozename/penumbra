@@ -52,6 +52,8 @@ type Entry = WorkflowRunInfo & {
 type Waiter = {
   resolve: (record: WorkflowRunRecord | null) => void;
   timeout: ReturnType<typeof setTimeout>;
+  poll: ReturnType<typeof setInterval>;
+  settled: boolean;
 };
 
 type PersistenceStatus = "pending" | "persisted" | "persistence_failed";
@@ -87,6 +89,7 @@ type RegistryCtx = {
   waiterLimit: number;
   waitersByRunId: Map<string, Waiter[]>;
   persistenceByRunId: Map<string, PersistenceStatus>;
+  locallyRegisteredRunIds: Set<string>;
 };
 
 function safeStringify(value: unknown): string {
@@ -308,6 +311,13 @@ function hydrateInfo(ctx: RegistryCtx, workflowRunId: string, bypassExpiry = fal
             finished_at: row.completed_at ?? undefined,
           },
   };
+  if (
+    row.status !== "running" &&
+    !ctx.locallyRegisteredRunIds.has(workflowRunId) &&
+    !ctx.persistenceByRunId.has(workflowRunId)
+  ) {
+    ctx.persistenceByRunId.set(workflowRunId, "persisted");
+  }
   ctx.entries.set(workflowRunId, entry);
   return entry;
 }
@@ -368,9 +378,30 @@ function releaseWaiters(ctx: RegistryCtx, workflowRunId: string, entry: Entry): 
   if (!waiters) return;
   ctx.waitersByRunId.delete(workflowRunId);
   for (const waiter of waiters.splice(0)) {
+    waiter.settled = true;
     clearTimeout(waiter.timeout);
+    clearInterval(waiter.poll);
     waiter.resolve(entry.record ?? null);
   }
+}
+
+function settleWaiter(
+  ctx: RegistryCtx,
+  workflowRunId: string,
+  waiter: Waiter,
+  record: WorkflowRunRecord | null,
+): void {
+  if (waiter.settled) return;
+  waiter.settled = true;
+  clearTimeout(waiter.timeout);
+  clearInterval(waiter.poll);
+  const current = ctx.waitersByRunId.get(workflowRunId);
+  if (current) {
+    const idx = current.indexOf(waiter);
+    if (idx >= 0) current.splice(idx, 1);
+    if (current.length === 0) ctx.waitersByRunId.delete(workflowRunId);
+  }
+  waiter.resolve(record);
 }
 
 function evictIfNeeded(ctx: RegistryCtx): boolean {
@@ -547,17 +578,26 @@ function registryWaitForResult(
   if (waiters.length >= ctx.waiterLimit)
     return Promise.reject(new Error("waiter_capacity_exhausted"));
   return new Promise((resolve) => {
+    const pollIntervalMs = Math.max(1, Math.min(100, timeoutMs));
     const waiter: Waiter = {
       resolve,
       timeout: setTimeout(() => {
-        const current = ctx.waitersByRunId.get(workflowRunId);
-        if (current) {
-          const idx = current.indexOf(waiter);
-          if (idx >= 0) current.splice(idx, 1);
-          if (current.length === 0) ctx.waitersByRunId.delete(workflowRunId);
-        }
-        resolve(null);
+        settleWaiter(ctx, workflowRunId, waiter, null);
       }, timeoutMs),
+      poll: setInterval(() => {
+        if (waiter.settled) return;
+        const row = ctx.opts.db
+          .query<Pick<DbWorkflowRunRow, "status">, [string]>(ROW_SELECT_SQL)
+          .get(workflowRunId);
+        if (!row || row.status === "running") return;
+        ctx.entries.delete(workflowRunId);
+        void hydrateRecord(ctx, workflowRunId, true).then((hydrated) => {
+          if (hydrated?.record && hydrated.record.status !== "running") {
+            settleWaiter(ctx, workflowRunId, waiter, hydrated.record);
+          }
+        });
+      }, pollIntervalMs),
+      settled: false,
     };
     ctx.waitersByRunId.set(workflowRunId, [...waiters, waiter]);
   });
@@ -572,6 +612,7 @@ export function createWorkflowRunsRegistry(opts: RegistryOpts): WorkflowRunsRegi
     waiterLimit: opts.waiterLimit ?? DEFAULT_WAITER_LIMIT,
     waitersByRunId: new Map<string, Waiter[]>(),
     persistenceByRunId: new Map<string, PersistenceStatus>(),
+    locallyRegisteredRunIds: new Set<string>(),
   };
 
   void sweepOrphanSpills(ctx);
@@ -588,6 +629,7 @@ export function createWorkflowRunsRegistry(opts: RegistryOpts): WorkflowRunsRegi
         registered_at: startedAt,
       };
       ctx.entries.set(workflowRunId, entry);
+      ctx.locallyRegisteredRunIds.add(workflowRunId);
       ctx.persistenceByRunId.set(workflowRunId, "pending");
       opts.db
         .query(
