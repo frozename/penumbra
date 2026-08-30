@@ -11,7 +11,7 @@ function sectionTail(name: string): string {
 }
 
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function upsertSection(existing: string, workflowName: string, body: string): string {
