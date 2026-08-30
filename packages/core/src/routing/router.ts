@@ -103,9 +103,9 @@ type CandidateMetric = {
   normalizedValue: number;
 };
 
-// eslint-disable-next-line max-lines-per-function -- Preserve the existing routing decision flow while grandfathering its pre-existing size.
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing decision flow while grandfathering its pre-existing complexity.
 export function decide(input: DecideInput, deps: RouterDependencies): RoutingDecision {
-  // eslint-disable-line sonarjs/cognitive-complexity -- Preserve the existing routing decision flow while grandfathering its pre-existing complexity.
+  // eslint-disable-line max-lines-per-function -- Preserve the existing routing decision flow while grandfathering its pre-existing size.
   if (input.mode === "off") {
     return RoutingDecisionSchema.parse({
       selected: null,
