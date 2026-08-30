@@ -123,6 +123,7 @@ function runnableHandoff(
   return handoff;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve shell-session resolution while grandfathering its pre-existing complexity.
 async function resolveShellSession(
   services: DaemonServices,
   shellSessionPool: ShellSessionPool,

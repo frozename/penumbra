@@ -278,6 +278,7 @@ export async function runDreamCycle(
   }
 }
 
+// eslint-disable-next-line max-lines-per-function -- Preserve cycle context construction while grandfathering its pre-existing size.
 function buildCycleCtx(
   db: Database,
   cycleId: string,
@@ -589,6 +590,7 @@ function finalizeCycle(db: Database, ctx: CycleCtx, config: DreamConfig): void {
 
 // ── P1: consolidate stale t1 rollups ─────────────────────────────────────────
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve cycle phase-one orchestration while grandfathering its pre-existing complexity.
 async function runCycleP1(
   db: Database,
   ctx: CycleCtx,

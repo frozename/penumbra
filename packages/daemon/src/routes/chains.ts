@@ -1385,6 +1385,7 @@ function rerouteForAgent(
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve routing fallback resolution while grandfathering its pre-existing complexity.
 function resolveRoutingWithFallbacks(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1607,6 +1608,7 @@ function persistRoutingDecisionForChainStart(
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain-start orchestration while grandfathering its pre-existing complexity.
 export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1821,6 +1823,7 @@ function applyRoutingBiasesToRecommendations(
     .map((s) => s.recommendation);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve sub-dispatch fallback selection while grandfathering its pre-existing complexity.
 function maybeSelectSubDispatchFallback(opts: {
   services: Services;
   input: ChainStartRequestWithLongLived;

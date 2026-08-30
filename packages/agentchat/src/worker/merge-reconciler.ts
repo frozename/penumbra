@@ -1180,6 +1180,7 @@ async function runThoughtAnalyzerIfEnabled(ctx: ReconcileCtx, result: MergeResul
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve reconciliation result handling while grandfathering its pre-existing complexity.
 async function emitResult(ctx: ReconcileCtx, result: MergeResult): Promise<void> {
   const { deps, handoffId } = ctx;
   let progressReported = true;

@@ -87,6 +87,7 @@ export async function readAaApiKey(
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing AA model fetch flow while grandfathering its pre-existing complexity.
 export async function fetchAaModels(opts: FetchAaModelsOptions): Promise<AaFetchResult> {
   const endpoint = opts.endpoint ?? DEFAULT_AA_MODELS_ENDPOINT;
   const transport = opts.transport ?? { fetch: globalThis.fetch.bind(globalThis) };
@@ -154,6 +155,7 @@ export async function fetchAaModels(opts: FetchAaModelsOptions): Promise<AaFetch
   return failure("network", maxAttempts, undefined);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing AA response parser while grandfathering its pre-existing complexity.
 async function parseAaResponse(
   response: Response,
   now: () => Date,

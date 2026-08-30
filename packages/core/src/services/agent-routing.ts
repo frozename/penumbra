@@ -883,6 +883,7 @@ export function resolveBiasEffect(
   return { factor, exclude };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing agent allowlist resolution while grandfathering its pre-existing complexity.
 function getAllowedAgents(input: RouteAgentInput): string[] | null {
   const role = input.role;
   const roleAgents =

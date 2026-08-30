@@ -180,6 +180,7 @@ function spawnSilent(
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve isolated-install orchestration while grandfathering its pre-existing complexity.
 export async function runIsolatedInstall(
   wtPath: string,
   opts: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number } = {},
@@ -1097,6 +1098,7 @@ function ensureRealDirectory(dirPath: string): void {
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve worktree workspace-link handling while grandfathering its pre-existing complexity.
 function ensureWorktreeLocalWorkspaceLink(
   worktreeRoot: string,
   packageDir: string,
@@ -1147,6 +1149,7 @@ function ensureWorktreeLocalWorkspaceLink(
   fs.symlinkSync(relativeTarget, linkPath, "dir");
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve dependency-link planning while grandfathering its pre-existing complexity.
 export function planEscapingFileDependencyLinks(
   mainRepoRoot: string,
   worktreeRoot: string,

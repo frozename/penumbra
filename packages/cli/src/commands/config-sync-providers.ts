@@ -565,7 +565,8 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function runConfigSyncProviders(
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing provider sync workflow while grandfathering its pre-existing complexity.
+export async function runConfigSyncProviders( // eslint-disable-line max-lines-per-function -- Preserve the existing provider sync workflow while grandfathering its pre-existing size.
   opts: RunConfigSyncProvidersOpts = {},
 ): Promise<ConfigSyncProvidersResult> {
   const stdout: string[] = [];

@@ -1096,6 +1096,7 @@ async function dispatchRoute(
   return undefined;
 }
 
+// eslint-disable-next-line max-lines-per-function -- Preserve daemon request dispatch while grandfathering its pre-existing size.
 export function createDaemonFetchHandler(opts: {
   services: Services;
   token: string;

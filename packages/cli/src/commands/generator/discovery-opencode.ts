@@ -19,6 +19,7 @@ function isModelSlug(line: string): boolean {
   return line === line.trim() && /^[^\s/]+\/[^\s/]+$/.test(line);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing model-output scanner while grandfathering its pre-existing complexity.
 function findJsonObjectEnd(lines: string[], startIndex: number): number | undefined {
   let depth = 0;
   let inString = false;
@@ -53,6 +54,7 @@ function findJsonObjectEnd(lines: string[], startIndex: number): number | undefi
   return undefined;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing model-output parser while grandfathering its pre-existing complexity.
 export function parseOpencodeModelsOutput(output: string): DiscoveredModel[] {
   const lines = output.split(/\r?\n/);
   const models: DiscoveredModel[] = [];

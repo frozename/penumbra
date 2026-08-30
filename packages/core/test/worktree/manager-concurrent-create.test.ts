@@ -98,6 +98,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
   it("suffixes branch names when the requested branch already exists", async () => {
     const existingRefs = new Set(["refs/heads/feat/full-task-pool"]);
     const checkouts: string[] = [];
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the concurrent-worktree test runner fixture while grandfathering its pre-existing complexity.
     const runner: WorktreeCommandRunner = (_cmd, args) => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];
@@ -146,6 +147,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
   it("retries the next suffix when checkout loses a branch-name race", async () => {
     const existingRefs = new Set<string>();
     const checkouts: string[] = [];
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the concurrent-worktree test runner fixture while grandfathering its pre-existing complexity.
     const runner: WorktreeCommandRunner = (_cmd, args) => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];

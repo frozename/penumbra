@@ -206,6 +206,7 @@ function hasHardConstraintExclusion(decision: RoutingDecision): boolean {
  * evidenced hard-constraint wipeout throws RouterHardConstraintExhaustedError;
  * other no-selection decisions degrade to the legacy route.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve single-route resolution while grandfathering its pre-existing complexity.
 export function resolveSingleRoute(
   services: Services,
   role: string,

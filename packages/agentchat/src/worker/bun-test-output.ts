@@ -66,6 +66,7 @@ function collectUnhandledErrorNames(out: string): string[] {
   return collectUnhandledSuites(out, false);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing test-output parser while grandfathering its pre-existing complexity.
 function collectUnhandledSuites(out: string, includeFailures: boolean): string[] {
   const suitePaths = new Set<string>();
   let currentSuite: string | null = null;

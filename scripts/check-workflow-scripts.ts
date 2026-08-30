@@ -4,6 +4,7 @@ import { Script } from "node:vm";
 
 const WORKFLOW_DIR = ".claude/workflows";
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve workflow-source scanning while grandfathering its pre-existing complexity.
 function findMatchingBrace(source: string, openIndex: number): number {
   let depth = 0;
   let quote: string | null = null;
@@ -77,6 +78,7 @@ function extractMeta(source: string): { body: string; metaSource: string } {
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve workflow-source validation while grandfathering its pre-existing complexity.
 function hasNonEmptyStringProperty(source: string, property: string): boolean {
   let objectDepth = 0;
   let arrayDepth = 0;

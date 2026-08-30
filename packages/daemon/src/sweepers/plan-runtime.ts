@@ -424,6 +424,7 @@ async function processPlan(
   finalizePlanStatus(opts, plan.plan_id);
 }
 
+// eslint-disable-next-line max-lines-per-function -- Preserve plan-runtime sweeper construction while grandfathering its pre-existing size.
 export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   start(): void;
   stop(): void;

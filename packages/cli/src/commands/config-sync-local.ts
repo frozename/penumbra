@@ -270,6 +270,7 @@ async function defaultReloadConfig(storageRoot: string): Promise<unknown> {
   return await response.json();
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing config-sync orchestration while grandfathering its pre-existing complexity.
 export async function runConfigSyncLocal(
   opts: RunConfigSyncLocalOpts = {},
 ): Promise<ConfigSyncLocalResult> {

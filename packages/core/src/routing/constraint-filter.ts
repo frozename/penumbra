@@ -26,6 +26,7 @@ export type HardConstraintFilterResult = {
  * Applies non-re-admitting eligibility constraints. An empty result is intentional
  * and must never be refilled with excluded candidates.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing constraint filter while grandfathering its pre-existing complexity.
 export function applyHardConstraints(
   candidates: readonly string[],
   taskProfile: TaskProfile,

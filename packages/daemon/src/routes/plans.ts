@@ -49,6 +49,7 @@ function knownAgentsFromServices(services: Services): Set<string> {
   return new Set(cfg.agents.map((a) => a.name));
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve plan registration handling while grandfathering its pre-existing complexity.
 export async function plansRegisterRoute(req: Request, services: Services): Promise<Response> {
   // Plan registration is a maestro/CLI-driven flow (packages/cli/src/commands/plan.ts);
   // no legitimate worker-token caller registers plans. Restricting to the shared

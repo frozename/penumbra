@@ -64,6 +64,7 @@ function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTask
   return demoted;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing pool selection policy while grandfathering its pre-existing complexity.
 export function pickFromPool(
   pool: string[],
   db: Database,

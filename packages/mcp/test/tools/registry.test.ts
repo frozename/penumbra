@@ -515,6 +515,7 @@ function sampleValue(schema: unknown, key: string): unknown {
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve registry fallback fixture behavior while grandfathering its pre-existing complexity.
 function fallbackValueForKey(key: string): string {
   if (key.endsWith("_at") || key === "since" || key === "now") {
     return "2026-01-01T00:00:00.000Z";
@@ -621,6 +622,7 @@ describe("TOOL_REGISTRY", () => {
     }
   });
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the comprehensive registry fixture while grandfathering its pre-existing complexity.
   it("all registered handlers return MCP content envelopes", async () => {
     if (importError || !TOOL_REGISTRY) return;
 

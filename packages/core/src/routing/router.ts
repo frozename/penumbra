@@ -103,7 +103,9 @@ type CandidateMetric = {
   normalizedValue: number;
 };
 
+// eslint-disable-next-line max-lines-per-function -- Preserve the existing routing decision flow while grandfathering its pre-existing size.
 export function decide(input: DecideInput, deps: RouterDependencies): RoutingDecision {
+  // eslint-disable-line sonarjs/cognitive-complexity -- Preserve the existing routing decision flow while grandfathering its pre-existing complexity.
   if (input.mode === "off") {
     return RoutingDecisionSchema.parse({
       selected: null,
@@ -290,6 +292,7 @@ export function reconciliationFactorFields(reconciliation: AliasReconciliationRe
   return { rawValue, source };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing prior computation while grandfathering its pre-existing complexity.
 export function computePriors(input: ComputePriorsInput): ComputePriorsResult {
   if (!input.aaSnapshot) {
     return { priors: nullRecord(), factors: [], matchedModels: nullRecord() };
@@ -452,6 +455,7 @@ function buildMetricSpecs(profile: TaskProfile, config: TaskRouterConfig): Metri
   ];
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing candidate normalization while grandfathering its pre-existing complexity.
 function normalizeCandidateMetrics(
   agents: readonly string[],
   models: Readonly<Record<string, AaModel>>,

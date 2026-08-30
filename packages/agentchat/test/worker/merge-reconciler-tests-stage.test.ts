@@ -312,6 +312,7 @@ function scratchPathFor(handoffId: string): string {
   return join(scratchRoot, "test-baseline", handoffId);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the fixture command dispatcher while grandfathering its pre-existing complexity.
 function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
   const cmd = argv.join(" ");
   execHistory.push({ cmd, cwd: opts.cwd });

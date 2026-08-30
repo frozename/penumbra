@@ -428,6 +428,7 @@ export class OpencodeAcpAdapter implements Adapter {
     }
   }
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the ACP stream state machine while grandfathering its pre-existing complexity.
   private async *consumeMessageStream(
     input: DispatchInput,
     baseUrl: string,

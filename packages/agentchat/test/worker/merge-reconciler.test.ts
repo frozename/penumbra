@@ -1171,6 +1171,7 @@ async function runBaselineProvisioningScenario(
       worktreeMode: "isolated_install" as const,
     }));
 
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the fixture command dispatcher while grandfathering its pre-existing complexity.
     const exec = (argv: string[], execOpts: { cwd: string }): Promise<ExecResult> => {
       const cmd = argv.join(" ");
       execCalls.push({ cmd, cwd: execOpts.cwd });

@@ -43,6 +43,7 @@ const ROLE = "executor";
 const REGISTRY = ["quality-seat", "fast-seat"];
 let db: Database;
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the fixture source scanner while grandfathering its pre-existing complexity.
 function stripTypeScriptComments(source: string): string {
   let result = "";
   let quote: "'" | '"' | "`" | null = null;

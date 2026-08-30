@@ -361,6 +361,7 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve dispatch-land orchestration while grandfathering its pre-existing complexity.
 export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> {
   const fetcher = opts.fetch ?? fetch;
   const print = opts.print ?? defaultPrint;
