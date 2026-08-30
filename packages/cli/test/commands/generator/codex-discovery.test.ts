@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   discoverCodexModels,
@@ -9,6 +10,33 @@ import {
 
 const fixturePath = join(import.meta.dir, "../fixtures/codex-debug-models.json");
 const fixtureText = readFileSync(fixturePath, "utf8");
+
+async function withFakeDiscoveryCli<T>(run: () => Promise<T>): Promise<T> {
+  const binDir = mkdtempSync(join(tmpdir(), "penumbra-codex-discovery-"));
+  const previousPath = process.env.PATH;
+  try {
+    const agyPath = join(binDir, "agy");
+    writeFileSync(agyPath, "#!/bin/sh\ncat > /dev/null\nprintf 'm1\\tModel One\\n'\n");
+    chmodSync(agyPath, 0o755);
+
+    const codexPath = join(binDir, "codex");
+    writeFileSync(
+      codexPath,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"models":[{"slug":"m1","display_name":"Model One"}]}\\n\'\n',
+    );
+    chmodSync(codexPath, 0o755);
+
+    process.env.PATH = previousPath ? `${binDir}${delimiter}${previousPath}` : binDir;
+    return await run();
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
+    rmSync(binDir, { recursive: true, force: true });
+  }
+}
 
 describe("codex model discovery", () => {
   test("parseCodexDebugModelsOutput extracts slug/display/reasoning-tier variants from a captured fixture", () => {
@@ -63,4 +91,19 @@ describe("codex model discovery", () => {
     expect(runCount).toBe(1);
     expect(models).toEqual(expected);
   });
+
+  test("discoverCodexModels closes stdin for the real codex CLI runner", async () => {
+    const startedAt = Date.now();
+
+    const models = await withFakeDiscoveryCli(async () => await discoverCodexModels());
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(models).toEqual([
+      {
+        sourceProviderId: "codex",
+        modelId: "m1",
+        displayName: "Model One",
+      },
+    ]);
+  }, 5_000);
 });

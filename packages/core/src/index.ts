@@ -142,6 +142,7 @@ export {
   type RegisterPlanInput,
 } from "./plans/writer.js";
 export {
+  InvalidEntryTransition,
   InvalidPhaseTransition,
   PhaseNotFound,
   RegistrarNotFound,
@@ -396,6 +397,7 @@ export {
   type ResolveAgentPoolResult,
   type RoutingBiasEffectInput,
   type ResolvedAgentPoolMember,
+  isTextOnlyAdapter,
   resolveGateOutcomeCutoverIso,
   type RoleRoute,
   routeAgent,

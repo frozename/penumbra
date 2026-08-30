@@ -8,7 +8,10 @@ import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
 
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
-import type { CandidateConstraintFacts } from "../../src/routing/constraint-filter.js";
+import {
+  applyHardConstraints,
+  type CandidateConstraintFacts,
+} from "../../src/routing/constraint-filter.js";
 import {
   computePriors,
   decide,
@@ -393,6 +396,69 @@ describe("routing decide orchestrator", () => {
     });
   });
 
+  test("provider exclude biases fail closed per candidate when provider facts are unavailable", () => {
+    seed("blocked-seat");
+    seed("unknown-seat");
+    seed("allowed-seat");
+
+    const decision = decide(
+      baseInput({
+        agentRegistry: ["blocked-seat", "unknown-seat", "allowed-seat"],
+        agentchatConfig: {
+          role_routing: {
+            headroom_weighting: true,
+            latency_weighting: false,
+          },
+          agents: [
+            {
+              name: "blocked-seat",
+              roles: [ROLE],
+              pricing_mode: "subscription" as const,
+              subscription_provider: "openai",
+            },
+            {
+              name: "unknown-seat",
+              roles: [ROLE],
+            },
+            {
+              name: "allowed-seat",
+              roles: [ROLE],
+              pricing_mode: "api" as const,
+              api_provider: "google",
+            },
+          ],
+        },
+        aliasMap: {},
+        aaSnapshot: undefined,
+        activeBiases: [
+          {
+            bias_id: "exclude-openai",
+            scope: "provider",
+            value: "openai",
+            mode: "exclude",
+            weight: null,
+            reason: "operator exclusion",
+            created_at: "2026-08-25T11:00:00.000Z",
+            expires_at: "2026-08-26T11:00:00.000Z",
+          },
+        ],
+      }),
+      dependencies(),
+    );
+
+    expect(decision.selected?.agent).toBe("allowed-seat");
+    expect(decision.alternatives).toContainEqual({
+      routeId: "openai:blocked-seat",
+      excluded: true,
+      reasons: ["routing_bias_exclude"],
+    });
+    expect(decision.alternatives).toContainEqual({
+      routeId: "unknown:unknown-seat",
+      excluded: true,
+      reasons: ["router_facts_unavailable"],
+    });
+  });
+
   test("a small formatting change selects the fast cheap candidate", () => {
     const decision = decide(
       baseInput({
@@ -721,6 +787,24 @@ describe("routing decide orchestrator", () => {
       { registry: REGISTRY, policy: "ranked-first" },
       { registry: REGISTRY, policy: "ranked-first" },
     ]);
+  });
+
+  test("role routing fences a registry name that has no config row", () => {
+    let capturedFacts: Readonly<Record<string, CandidateConstraintFacts | undefined>> | undefined;
+    const decision = decide(
+      baseInput({
+        agentRegistry: ["missing-config-seat", "quality-seat"],
+      }),
+      dependencies({
+        applyHardConstraints: (candidates, taskProfile, harnessContext, facts, config) => {
+          capturedFacts = facts;
+          return applyHardConstraints(candidates, taskProfile, harnessContext, facts, config);
+        },
+      }),
+    );
+
+    expect(capturedFacts?.["missing-config-seat"]?.roleRoutingRolesEmpty).toBe(true);
+    expect(decision.selected?.agent).toBe("quality-seat");
   });
 
   test("agent-name keyed accumulators have null prototypes", () => {

@@ -5,6 +5,7 @@ import type { DiscoveredModel, DiscoveryDiagnostic, DiscoveryReport } from "./di
 
 const execFileAsync = promisify(execFile);
 const AGY_SOURCE_PROVIDER_ID = "agy";
+const DISCOVERY_CLI_TIMEOUT_MS = 30_000;
 
 export interface DiscoverAgyModelsOpts {
   runAgyModels?: () => Promise<string>;
@@ -47,9 +48,12 @@ export function parseAgyModelsOutput(output: string): DiscoveredModel[] {
 }
 
 async function defaultRunAgyModels(): Promise<string> {
-  const { stdout } = await execFileAsync("agy", ["models"], {
+  const promise = execFileAsync("agy", ["models"], {
     maxBuffer: 10 * 1024 * 1024,
+    timeout: DISCOVERY_CLI_TIMEOUT_MS,
   });
+  promise.child.stdin?.end();
+  const { stdout } = await promise;
   return stdout;
 }
 

@@ -50,6 +50,7 @@ import { PenumbraClient } from "../src/penumbra-client.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
+import { AlibabaUsageSynth } from "../src/usage-readers/alibaba-usage-synth.js";
 import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
 import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
 import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
@@ -67,6 +68,13 @@ import {
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
 } from "../src/worker/claim-affinity.js";
+import {
+  assessWorkerCodeStaleness,
+  resolveWorkerCodeSha,
+  resolveWorkerCodeShaAsync,
+  shouldCheckWorkerCodeStaleness,
+  WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
+} from "../src/worker/code-staleness.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
 import { postToDiscord } from "../src/worker/discord-notifier.js";
@@ -101,7 +109,7 @@ import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
 import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
-  resolveAgentProvider,
+  buildRetryRoutingMaps,
   retryBranchFields,
   type RoutingBiasLike,
   selectRetryAgent,
@@ -415,6 +423,21 @@ const workerId = resolveWorkerId({
   envValue: process.env.PENUMBRA_WORKER_ID,
   log,
 });
+const workerBootTs = new Date().toISOString();
+const workerBootCodeSha = resolveWorkerCodeSha(process.cwd());
+const workerBootCodeShaCheckedAtMs = Date.now();
+log.info(
+  {
+    worker_id: workerId,
+    code_sha: workerBootCodeSha.sha,
+    code_sha_status: workerBootCodeSha.status,
+    ...(workerBootCodeSha.status === "unknown"
+      ? { code_sha_reason: workerBootCodeSha.reason }
+      : {}),
+    boot_ts: workerBootTs,
+  },
+  "agentchat worker code snapshot",
+);
 const workerToken = process.env.PENUMBRA_TOKEN ?? "";
 const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? "").trim() || undefined;
 const workerIsolation = ((): "hard" | "sticky" | "shared" => {
@@ -812,10 +835,7 @@ async function tryAutoRetrySilentFailure(
     //  - activeBiases honors operator usage-steering excludes so the retry does
     //    not bypass a steer the first-pass route obeyed.
     // Both degrade open: an empty registry/bias set just relaxes the guard.
-    const validAgents = new Set(config.agents.map((a) => a.name));
-    const agentProviders = new Map(
-      config.agents.map((a) => [a.name, resolveAgentProvider(a)] as const),
-    );
+    const { validAgents, agentProviders, agentAdapters } = buildRetryRoutingMaps(config.agents);
     let activeBiases: RoutingBiasLike[] = [];
     try {
       activeBiases = await client.listRoutingBiases();
@@ -825,11 +845,14 @@ async function tryAutoRetrySilentFailure(
         "silent-failure retry: routing-bias fetch failed; selecting unbiased",
       );
     }
+    // shouldRetryHandoffForSilentFailure already exempts non-mutating task types,
+    // so every retry reaching this selector needs tools and keeps the filter armed.
     nextAgent = selectRetryAgent({
       candidates: ranked.candidates,
       failedAgent: failedHandoff.to_agent,
       validAgents,
       agentProviders,
+      agentAdapters,
       activeBiases,
     });
   } catch (err) {
@@ -1717,6 +1740,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== "1") {
     new ClaudeJsonlReader(),
     new ClaudeStatusLineBridge(),
     new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
+    new AlibabaUsageSynth({ client, min_emit_pct: 1 }),
     new SakanaUsageSynth({ client, min_emit_pct: 1 }),
   ];
   const ocConsoleConfig = loadOpencodeConsoleConfig();
@@ -1801,8 +1825,47 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== "1") {
   log.info({ interval_ms: 60_000, workerId }, "notification scheduler started");
 }
 
+let workerStaleWarningEmitted = false;
+let workerStaleLastCheckedAtMs: number | null = workerBootCodeShaCheckedAtMs;
+function warnIfWorkerCodeStale(): void {
+  if (workerStaleWarningEmitted) return;
+  const nowMs = Date.now();
+  if (
+    !shouldCheckWorkerCodeStaleness({
+      lastCheckedAtMs: workerStaleLastCheckedAtMs,
+      nowMs,
+      intervalMs: WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
+    })
+  ) {
+    return;
+  }
+  workerStaleLastCheckedAtMs = nowMs;
+  void resolveWorkerCodeShaAsync(process.cwd())
+    .then((current) => {
+      const staleness = assessWorkerCodeStaleness({
+        bootSha: workerBootCodeSha.sha,
+        currentSha: current.sha,
+      });
+      if (!staleness.stale) return;
+      workerStaleWarningEmitted = true;
+      log.warn(
+        {
+          worker_id: workerId,
+          boot_code_sha: workerBootCodeSha.sha,
+          current_code_sha: current.sha,
+          boot_ts: workerBootTs,
+        },
+        "worker code is stale; restart required to load current repo HEAD",
+      );
+    })
+    .catch(() => undefined);
+}
+
 const heartbeatLoop = startHeartbeatLoop({
-  emitHeartbeat: (signal) => emitHeartbeat({ client, workerId, signal, onEvent }),
+  emitHeartbeat: (signal) => {
+    warnIfWorkerCodeStale();
+    return emitHeartbeat({ client, workerId, signal, onEvent });
+  },
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
   schedule: (run, delayMs): { cancel: () => void } => {

@@ -9,14 +9,14 @@ Use this skill when you are deciding whether to hand coding work to an agent. Th
 
 ## Pre-dispatch checklist
 
-1. Call `mcp__penumbra__agent_recommend(task_type=<...>)` to get the live-ranked candidate list.
-2. Confirm the candidate is `maestro_capable` in the live agentchat registry via `mcp__penumbra__chain_list_agents`.
-3. If the candidate has been flaky recently, skim its last few entries with `mcp__penumbra__agent_rank(agent_name=..., window_days=7)`.
+1. Default: role-route. Pass `initial_agent: "executor"` (`"reviewer"` for review lanes) and let the model task router pick the seat — the handoff gets routing_resolution_reason=role_route and a routing_decisions row.
+2. Pin a concrete seat only deliberately — probe, smoke test, escalation, or a capability the router can't see — and record a one-line reason in the dispatch prompt. Never pin an anthropic seat (bypasses the standing exclude bias).
+3. `agent_recommend` / `chain_list_agents` / `agent_rank` are forensic: use them to audit a router pick or debug a bad window, not to pre-pin.
 4. Match the model to the task: paste-ready and well-scoped work can go to a fast agent; schema-touching or substantial work should go to a larger agent. [feedback_dispatch_reliability_workarounds.md]
 
 ## `chain_start` contract
 
-- `initial_agent` required. Pick the live-ranked agent that fits the task.
+- `initial_agent` required. Default to the role `"executor"` (router-resolved). A concrete seat id is a deliberate pin and carries a one-line reason.
 - `message` required. Make it paste-ready: scope, files to touch, constraints, verification commands, commit message, and a clear done-when criterion. Include the failing test verbatim when using TDD.
 - `task_type` should be one of the canonical task types so the ledger learns from the run.
 - `use_worktree: true` is the default. Penumbra owns the agent-branch worktree lifecycle.

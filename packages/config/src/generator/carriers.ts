@@ -1,10 +1,16 @@
+import { CARRIER_TOOL_OPTION_KEYS, type AgentOptions } from "../files/agents.js";
+
 export interface CarrierModelVars {
   readonly modelId: string;
   readonly reasoningTier?: string;
   readonly displayName?: string;
 }
 
-export interface BindingCarriers {
+type CarrierToolOptions = {
+  readonly [K in (typeof CARRIER_TOOL_OPTION_KEYS)[number]]?: AgentOptions[K];
+};
+
+export interface BindingCarriers extends CarrierToolOptions {
   readonly binary?: string;
   readonly args_template?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
@@ -12,6 +18,8 @@ export interface BindingCarriers {
   readonly mcp_servers?: unknown;
   readonly authMethodId?: string;
   readonly subscription_model_source?: "modelId" | "displayName";
+  readonly pass_via?: string;
+  readonly strip_patterns?: readonly string[];
 }
 
 export interface AppliedCarriers {
@@ -127,6 +135,27 @@ export function applyBindingCarriers(
     topLevel.subscription_model =
       carriers.subscription_model_source === "modelId" ? vars.modelId : vars.displayName;
     managedFields.push("subscription_model");
+  }
+
+  if (carriers.pass_via !== undefined) {
+    options.pass_via = carriers.pass_via;
+    managedFields.push("options.pass_via");
+  }
+
+  if (carriers.strip_patterns !== undefined) {
+    options.strip_patterns = [...carriers.strip_patterns];
+    managedFields.push("options.strip_patterns");
+  }
+
+  // Operator-authored literals: copied verbatim, never template-rendered.
+  // This fixed-key loop stays separate from per-kind handling so managed_fields
+  // order remains deterministic across re-syncs.
+  for (const key of CARRIER_TOOL_OPTION_KEYS) {
+    const value = carriers[key];
+    if (value !== undefined) {
+      options[key] = value;
+      managedFields.push(`options.${key}`);
+    }
   }
 
   return { options, topLevel, managedFields };

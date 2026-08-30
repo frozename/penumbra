@@ -40,8 +40,12 @@ import {
   type WorkflowFn,
   type WorkflowSpec,
 } from "@penumbra/workflows";
+import { execFile as execFileCb } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import {
   resolveRoleLlmCandidates,
@@ -288,6 +292,11 @@ import { startOrphanLanesSweeper } from "./sweepers/orphan-lanes.js";
 import { startPermissionTtlSweeper } from "./sweepers/permission-ttl.js";
 import { createPlanRuntimeSweeper } from "./sweepers/plan-runtime.js";
 import { installPrOrphanSweeper } from "./sweepers/pr-orphan-sweeper.js";
+import {
+  DEFAULT_PROVIDER_DRIFT_SWEEP_INTERVAL_MS,
+  PROVIDER_DRIFT_DRY_RUN_ARGV,
+  startProviderDriftSweeper,
+} from "./sweepers/provider-drift.js";
 import { startReconcilerSweeper } from "./sweepers/reconciler-sweep.js";
 import { createRefiningStuckRecoverySweeper } from "./sweepers/refining-stuck-recovery.js";
 import { resolveStaleAfterMs } from "./sweepers/stale-handoff-thresholds.js";
@@ -1881,6 +1890,57 @@ interface LateSweepers {
   stopGateQualityDigestSweeper: () => void;
   stopWorkflowSweeper: () => void;
   stopAaSnapshotRefreshSweeper: () => void;
+  stopProviderDriftSweeper: () => void;
+}
+
+const execFile = promisify(execFileCb);
+
+function buildProviderDriftStop(args: {
+  env: ReturnType<typeof getConfig>["env"];
+  clock: () => Date;
+  log: {
+    info?: (obj: Record<string, unknown>, msg: string) => void;
+    warn?: (obj: Record<string, unknown>, msg: string) => void;
+  };
+}): () => void {
+  const { env, clock, log } = args;
+  if (env.PENUMBRA_PROVIDER_DRIFT_SWEEP_DISABLED === true) {
+    return (): void => undefined;
+  }
+  // serve.ts lives at packages/daemon/src/, so two levels up reaches
+  // packages/ and the CLI entry resolves to packages/cli/bin/penumbra.ts.
+  const cliEntry =
+    (env.PENUMBRA_PROVIDER_DRIFT_CLI_ENTRY as string | undefined) ??
+    fileURLToPath(new URL("../../cli/bin/penumbra.ts", import.meta.url));
+  if (!existsSync(cliEntry)) {
+    log.warn?.({ cliEntry }, "provider-drift: CLI entry not found; sweeper idle");
+    return (): void => undefined;
+  }
+  return startProviderDriftSweeper(
+    {
+      runDiscoveryDryRun: async () => {
+        try {
+          const { stdout, stderr } = await execFile(
+            process.execPath,
+            [cliEntry, ...PROVIDER_DRIFT_DRY_RUN_ARGV],
+            { timeout: 120_000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+          );
+          return { exitCode: 0, stdout: stdout.split("\n"), stderr: stderr.split("\n") };
+        } catch (err) {
+          const execErr = err as { code?: number | string; stdout?: string; stderr?: string };
+          return {
+            exitCode: typeof execErr.code === "number" ? execErr.code : 1,
+            stdout: (execErr.stdout ?? "").split("\n"),
+            stderr: (execErr.stderr ?? "").split("\n"),
+          };
+        }
+      },
+      now: clock,
+      log,
+    },
+    (env.PENUMBRA_PROVIDER_DRIFT_SWEEP_INTERVAL_MS as number | undefined) ??
+      DEFAULT_PROVIDER_DRIFT_SWEEP_INTERVAL_MS,
+  );
 }
 
 function startLateSweepers(args: {
@@ -1936,6 +1996,11 @@ function startLateSweepers(args: {
         (aaSnapshotRefreshConfig.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS as number | undefined) ??
           DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
       );
+  const stopProviderDriftSweeper = buildProviderDriftStop({
+    env: aaSnapshotRefreshConfig,
+    clock: (): Date => opts.services.clock(),
+    log: opts.services.log,
+  });
   const stopWorkflowSweeper = ((): (() => void) => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -1966,6 +2031,7 @@ function startLateSweepers(args: {
     stopGateQualityDigestSweeper,
     stopWorkflowSweeper,
     stopAaSnapshotRefreshSweeper,
+    stopProviderDriftSweeper,
   };
 }
 
@@ -2013,6 +2079,7 @@ function buildStopHandler(deps: StopHandlerDeps): () => Promise<void> {
     deps.lateSweepers.stopNotificationSweeper();
     deps.lateSweepers.stopGateQualityDigestSweeper();
     deps.lateSweepers.stopAaSnapshotRefreshSweeper();
+    deps.lateSweepers.stopProviderDriftSweeper();
     deps.collaborators.ghTaskSyncSweeper.stop();
     deps.dreamingStops.stopDreaming?.();
     deps.dreamingStops.stopDigest?.();

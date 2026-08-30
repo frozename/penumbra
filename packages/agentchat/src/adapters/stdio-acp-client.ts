@@ -329,6 +329,11 @@ export class StdioAcpClient {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       const code = extractErrorCode(err);
+      console.warn("stdio-acp-client: wrote JSON-RPC error frame", {
+        method: message.method,
+        code,
+        messageLength: err.message.length,
+      });
       this.writeMessage({
         jsonrpc: "2.0",
         id: message.id,

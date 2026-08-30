@@ -37,7 +37,7 @@ const target_ref = (a && a.target_ref) || "HEAD";
 const base_ref = (a && a.base_ref) || "main";
 const fixRound = !!(a && a.fixRound);
 const laneId = a && a.laneId;
-const fixAgent = (a && a.fixAgent) || "openai-codex-deep-acp";
+const fixAgent = (a && a.fixAgent) || "executor";
 const graderModel = a && a.graderModel;
 const taskIntent =
   (a && a.taskIntent) ||

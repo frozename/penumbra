@@ -8,6 +8,8 @@ export type CandidateConstraintFacts = {
   predictedCostUsd?: number;
   quotaExhausted?: boolean;
   deniedByConfig?: boolean;
+  roleRoutingRolesEmpty?: boolean;
+  textOnlyAdapter?: boolean;
 };
 
 export type HardConstraintConfig = {
@@ -45,6 +47,14 @@ export function applyHardConstraints(
 
     if (facts.healthy === false) {
       reasons.push("unhealthy_or_unavailable");
+    }
+
+    if (harnessContext.role !== undefined && facts.roleRoutingRolesEmpty === true) {
+      reasons.push("role_routing_roles_empty");
+    }
+
+    if (harnessContext.toolFree !== true && facts.textOnlyAdapter === true) {
+      reasons.push("requires_tools_text_only_adapter");
     }
 
     if (

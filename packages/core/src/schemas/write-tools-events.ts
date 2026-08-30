@@ -57,3 +57,11 @@ export const TerminalKilledPayload = z.object({
   handoff_id: z.string(),
 });
 export type TerminalKilledPayload = z.infer<typeof TerminalKilledPayload>;
+
+export const TerminalFailedPayload = z.object({
+  method: z.string(),
+  code: z.number().int(),
+  message: z.string(),
+  handoff_id: z.string(),
+});
+export type TerminalFailedPayload = z.infer<typeof TerminalFailedPayload>;

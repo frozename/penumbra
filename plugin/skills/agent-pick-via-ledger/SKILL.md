@@ -1,11 +1,15 @@
 ---
 name: agent-pick-via-ledger
-description: Use BEFORE `chain_start` when picking an agent — call `mcp__penumbra__agent_recommend(task_type=...)` and prefer the top-ranked candidate with confidence + last-observed timestamp. Falls back to manual choice when the candidate is in a known-bad window.
+description: Forensic ledger view — use to AUDIT a router pick, justify a deliberate pin, or debug a bad window via `mcp__penumbra__agent_recommend`. Do NOT use it to pre-pin the default dispatch path: role-route (initial_agent="executor") is the default and the router owns seat selection.
 ---
 
 # Agent Pick via Ledger
 
 Use live performance data, not habit. The agentchat ledger tracks success rate and latency by `task_type`, so the best choice is the one that is winning now, not the one that won last week. `mcp__penumbra__agent_recommend` returns ranked candidates with `samples`, `success_rate`, `avg_latency`, and `last_observed_at`.
+
+## Role-route first
+
+The daemon in `mode:auto` already consumes this ledger when the caller passes a role like `executor`. Calling `agent_recommend` and then pinning its top candidate double-counts the same signal and bypasses routing_decisions capture, so treat that path as audit-only unless you are pinning deliberately.
 
 ## Workflow
 

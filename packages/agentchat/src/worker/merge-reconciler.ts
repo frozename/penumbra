@@ -53,6 +53,7 @@ export interface MergeResult {
   pr_url?: string;
   pr_number?: number;
   error_code?: "invalid_branch_base" | "invalid_branch" | "invalid_test_package_path";
+  verification_environment_error?: true;
 }
 
 type CheckStatus = "pass" | "fail" | "skipped" | "error";
@@ -1458,6 +1459,7 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
       const result: MergeResult = {
         status: "typecheck_failed",
         regression_summary: `verification environment error (typecheck): ${String(err)}`,
+        verification_environment_error: true,
       };
       await emitResult(ctx, result);
       return result;
@@ -1776,6 +1778,7 @@ async function emitTestEnvironmentError(
   const result: MergeResult = {
     status: "test_failed",
     regression_summary: `verification environment error (tests): ${regressionSummary}`,
+    verification_environment_error: true,
   };
   await emitResult(ctx, result);
   return result;
@@ -1903,6 +1906,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
       const result: MergeResult = {
         status: "test_failed",
         regression_summary: `verification environment error (tests): ${String(err)}`,
+        verification_environment_error: true,
       };
       await emitResult(ctx, result);
       return result;

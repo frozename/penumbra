@@ -30,6 +30,8 @@ import { fileURLToPath } from "node:url";
 import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import {
   loadAgentChatConfig,
+  loadAgentRoutingFromConfig,
+  providerQuotasFromAgentChatConfig,
   resolveAgentChatConfigPath,
 } from "../../../daemon/src/agentchat-config.js";
 import { type DaemonHandle, serve } from "../../../daemon/src/serve.js";
@@ -37,6 +39,7 @@ import { InProcessPermissionService } from "../../../daemon/src/services/in-proc
 import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
 import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
 import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
+import { isBilledHandSeatViolation } from "@penumbra/config";
 import { readEmbedderEnv } from "./sirius-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(
@@ -122,7 +125,7 @@ interface AgentchatBundle {
   agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null;
 }
 
-function loadAgentchatBundle(): AgentchatBundle {
+export function loadAgentchatBundle(): AgentchatBundle {
   const configPath = resolveAgentChatConfigPath(process.env);
   if (!existsSync(configPath)) {
     return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
@@ -132,27 +135,25 @@ function loadAgentchatBundle(): AgentchatBundle {
     return {
       agentchatConfig,
       agentRegistry: agentchatConfig.agents.map((agent) => agent.name),
-      agentRouting: {
-        agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
-        default_roles: agentchatConfig.default_roles,
-        role_exploration_policy:
-          agentchatConfig.role_routing?.exploration_policy ?? "unsampled-first",
-      },
-      providerQuotas: agentchatConfig.providers.map((provider) => ({
-        provider: provider.name,
-        model: provider.model,
-        quota_usd_per_24h: provider.quota_usd_per_24h,
-        quota_tokens_per_24h: provider.quota_tokens_per_24h,
-        quota_tokens_per_5h: provider.quota_tokens_per_5h,
-        pressure_caps: provider.pressure_caps,
-      })),
+      agentRouting: loadAgentRoutingFromConfig(agentchatConfig),
+      providerQuotas: providerQuotasFromAgentChatConfig(agentchatConfig),
     };
   } catch (err) {
+    if (handleAgentchatConfigLoadError(err)) {
+      throw err;
+    }
     process.stderr.write(
       `penumbra: failed to load agentchat config from ${configPath}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-    return { agentRegistry: null, agentRouting: null, providerQuotas: [], agentchatConfig: null };
+    throw err;
   }
+}
+
+export function handleAgentchatConfigLoadError(error: unknown): boolean {
+  if (isBilledHandSeatViolation(error)) {
+    throw error;
+  }
+  return false;
 }
 
 function warnLegacyOperatorConfigFiles(): void {

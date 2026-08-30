@@ -124,6 +124,10 @@ export const ChainStartInputShape = {
     .describe(
       "Optional opt-in to run bun install in the dispatch worktree instead of mirroring node_modules symlinks.",
     ),
+  tool_free: z
+    .boolean()
+    .optional()
+    .describe("Optional assertion that the dispatch will not call penumbra MCP tools."),
   task_class: TaskClassSchema.describe("Required task class for dispatch routing"),
   caller_cwd: z
     .string()
@@ -209,6 +213,7 @@ interface ChainStartInput {
   branch_base?: string;
   open_pr_on_review?: boolean;
   isolated_install?: boolean;
+  tool_free?: boolean;
   task_class?: z.input<typeof TaskClassSchema>;
   caller_cwd?: string;
 }
@@ -341,6 +346,7 @@ const OPTIONAL_BODY_FIELDS = [
   "branch_base",
   "open_pr_on_review",
   "isolated_install",
+  "tool_free",
   "task_class",
 ] as const satisfies readonly (keyof ChainStartInput)[];
 

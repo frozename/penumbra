@@ -4,6 +4,7 @@ import {
   assertNoBilledGeneratedSeats,
   assertNoBilledHttpSeats,
 } from "../../src/generator/assertions.js";
+import { GENERATOR_PROVENANCE_SOURCE } from "../../src/files/billing-gate.js";
 
 describe("assertNoBilledHttpSeats", () => {
   test("rejects a generated openai-compat-http seat with pricing_mode:'api' whose provider is outside the allowlist", () => {
@@ -83,8 +84,12 @@ describe("assertNoBilledHttpSeats", () => {
 });
 
 describe("assertNoBilledGeneratedSeats", () => {
-  const generatorSource = "providers-sync";
+  const generatorSource = GENERATOR_PROVENANCE_SOURCE;
   const opts = { allowedProviders: ["local", "sakana"], generatorSource };
+
+  test("shares the canonical provenance source constant", () => {
+    expect(GENERATOR_PROVENANCE_SOURCE).toBe("providers-sync");
+  });
 
   test.each(["stdio-acp", "opencode-acp", "agy-cli", "cli"] as const)(
     "rejects a generator-owned %s seat with pricing_mode:'api' whose provider is outside the allowlist",

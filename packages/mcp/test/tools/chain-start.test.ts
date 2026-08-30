@@ -79,6 +79,57 @@ test("ChainStartInputShape exposes the canonical dispatch_kind enum", () => {
   );
 });
 
+test("ChainStartInputShape exposes the canonical boolean tool_free hint", () => {
+  const mcpToolFreeSchema = ChainStartInputShape.tool_free;
+  const canonicalToolFreeSchema = ChainStartRequestSchema.shape.tool_free;
+
+  for (const value of [true, false] as const) {
+    expect(mcpToolFreeSchema.parse(value)).toBe(canonicalToolFreeSchema.parse(value));
+  }
+  expect(mcpToolFreeSchema.safeParse("true").success).toBe(false);
+});
+
+test("chain.start handler forwards tool_free to daemon.startChain", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+
+  await handler({ initial_agent: "executor", message: "summarize", tool_free: true });
+
+  expect(startChain).toHaveBeenCalledWith({
+    initial_agent: "executor",
+    message: "summarize",
+    tool_free: true,
+  });
+});
+
+test("chain.start handler forwards explicit false tool_free to daemon.startChain", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+
+  await handler({ initial_agent: "executor", message: "summarize", tool_free: false });
+
+  expect(startChain).toHaveBeenCalledWith({
+    initial_agent: "executor",
+    message: "summarize",
+    tool_free: false,
+  });
+});
+
+test("chain.start handler omits absent tool_free from daemon.startChain", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+
+  await handler({ initial_agent: "executor", message: "summarize" });
+
+  const recorded = calls(startChain);
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toEqual({
+    initial_agent: "executor",
+    message: "summarize",
+  });
+  expect(Object.prototype.hasOwnProperty.call(recorded[0], "tool_free")).toBe(false);
+});
+
 test.each(["BOUNDARY", "STANDARD", "TRIVIAL"] as const)(
   "chain.start handler forwards task_class=%s to daemon.startChain",
   async (task_class) => {

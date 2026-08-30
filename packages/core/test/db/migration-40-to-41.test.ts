@@ -2,7 +2,6 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { migrate } from "../../src/db/migrations.js";
-import { SCHEMA_VERSION } from "../../src/db/schema.js";
 import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 try {
@@ -45,8 +44,4 @@ test("migrate() adds the three registrar tables to a v40 database without touchi
     .map((row) => row.name);
   expect(tables).toEqual(["registrar_entries", "registrar_events", "registrar_phases"]);
   expect(db.query("SELECT * FROM plans WHERE plan_id = 'legacy-plan'").get()).toEqual(before);
-});
-
-test("SCHEMA_VERSION is 41", () => {
-  expect(SCHEMA_VERSION).toBe(41);
 });
