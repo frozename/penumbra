@@ -13,8 +13,8 @@ describe("served models client", () => {
     const requestedUrls: string[] = [];
     const models = await fetchServedModels("http://127.0.0.1:7944", {
       timeoutMs: 25,
-      fetch: async (url, init) => {
-        requestedUrls.push(String(url));
+      fetch: (url, init) => {
+        requestedUrls.push(url);
         expect(init?.signal).toBeDefined();
         return new Response(
           JSON.stringify({
@@ -35,7 +35,7 @@ describe("served models client", () => {
 
   test("returns metadata entries for inventory callers", async () => {
     const entries = await fetchServedModelEntries("http://127.0.0.1:7944", {
-      fetch: async () =>
+      fetch: () =>
         new Response(
           JSON.stringify({
             data: [
@@ -53,10 +53,10 @@ describe("served models client", () => {
     ]);
   });
 
-  test("throws when the inventory endpoint is unavailable", async () => {
-    await expect(
+  test("throws when the inventory endpoint is unavailable", () => {
+    expect(
       fetchServedModels("http://127.0.0.1:7944", {
-        fetch: async () => new Response("bad", { status: 502 }),
+        fetch: () => new Response("bad", { status: 502 }),
       }),
     ).rejects.toThrow("served models probe failed");
   });

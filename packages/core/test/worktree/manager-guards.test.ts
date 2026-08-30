@@ -35,12 +35,10 @@ test("workspace link creation rejects a package whose real path escapes the work
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect({ linkExists: fs.existsSync(linkPath), message }).toEqual({
-      linkExists: false,
-      message: expect.stringMatching(
-        new RegExp(`${escapeRegExp(linkPath)}.*${escapeRegExp(escapingTarget)}`),
-      ),
-    });
+    expect(fs.existsSync(linkPath)).toBe(false);
+    expect(message).toMatch(
+      new RegExp(`${escapeRegExp(linkPath)}.*${escapeRegExp(escapingTarget)}`),
+    );
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -90,10 +88,8 @@ test("local cache fallback rejects a source over the byte bound without creating
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect({ destinationExists: fs.existsSync(worktreeCachePath), message }).toEqual({
-      destinationExists: false,
-      message: expect.stringMatching(new RegExp(`${escapeRegExp(mainCachePath)}.*\\d+.*1024`)),
-    });
+    expect(fs.existsSync(worktreeCachePath)).toBe(false);
+    expect(message).toMatch(new RegExp(`${escapeRegExp(mainCachePath)}.*\\d+.*1024`));
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }

@@ -180,7 +180,7 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
   }
 });
 
-test("createJudgeChat advances past whitespace-only content to the cloud rung", async () => {
+test("createJudgeChat advances past whitespace-only content to the cloud rung", () => {
   const fetchMock = mock((url: string) =>
     Promise.resolve(
       new Response(
@@ -212,9 +212,9 @@ test("createJudgeChat advances past whitespace-only content to the cloud rung", 
       fetchFn: fetchMock as typeof fetch,
     });
 
-    await expect(
-      chat({ model: "local", messages: [{ role: "user", content: "hi" }] }),
-    ).resolves.toBe("cloud");
+    expect(chat({ model: "local", messages: [{ role: "user", content: "hi" }] })).resolves.toBe(
+      "cloud",
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   } finally {
     globalThis.fetch = originalFetch;

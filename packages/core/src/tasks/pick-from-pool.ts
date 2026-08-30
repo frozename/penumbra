@@ -1,17 +1,17 @@
 import type { Database } from "bun:sqlite";
 
-import type { AgentTaskType } from "../schemas/agent-performance.js";
 import type { RoutingBias } from "../readers/routing-bias.js";
+import type { AgentTaskType } from "../schemas/agent-performance.js";
 
 import {
+  isNeutralPerformanceOutcome,
+  isTextOnlyAdapter,
   resolveBiasEffect,
   resolveClassifierDeclineCutoverIso,
-  isTextOnlyAdapter,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
   SUCCESS_OUTCOME_VALUES,
-  isNeutralPerformanceOutcome,
 } from "../services/agent-routing.js";
 import { pickPreferred } from "./auction.js";
 

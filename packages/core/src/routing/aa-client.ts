@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
 import { z } from "zod";
 
-import { AaModelSchema, type AaModel, type AaModelSnapshot } from "./schemas.js";
+import { type AaModel, AaModelSchema, type AaModelSnapshot } from "./schemas.js";
 
 export const DEFAULT_AA_MODELS_ENDPOINT = "https://artificialanalysis.ai/api/v2/data/llms/models";
 export const DEFAULT_AA_API_KEY_PATH = "~/.config/penumbra/secrets/artificial-analysis.key";
@@ -62,11 +61,11 @@ const AaResponseWrapperSchema = z
         data_version: z.string().optional(),
         benchmark_version: z.string().optional(),
       })
-      .passthrough()
+      .loose()
       .optional(),
     data: z.array(z.unknown()),
   })
-  .passthrough();
+  .loose();
 
 export function expandHome(path: string): string {
   if (path === "~") return homedir();
@@ -97,8 +96,9 @@ export async function fetchAaModels(opts: FetchAaModelsOptions): Promise<AaFetch
   const maxRetryDelayMs = opts.maxRetryDelayMs ?? 60_000;
   const maxResponseBytes = opts.maxResponseBytes ?? 5_000_000;
   const sleep =
-    opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const now = opts.now ?? (() => new Date());
+    opts.sleep ??
+    ((ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = opts.now ?? ((): Date => new Date());
   let lastRateLimitDelaySeconds: number | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -125,7 +125,7 @@ export async function fetchAaModels(opts: FetchAaModelsOptions): Promise<AaFetch
     }
 
     if (response.ok) {
-      return parseAaResponse(response, now, attempt, maxResponseBytes);
+      return await parseAaResponse(response, now, attempt, maxResponseBytes);
     }
 
     if (response.status === 401) {
@@ -226,13 +226,14 @@ async function readResponseText(
       : { ok: true, text };
   }
 
-  const reader = response.body.getReader();
+  const reader = response.body.getReader() as unknown as ReadableStreamDefaultReader<Uint8Array>;
   const decoder = new TextDecoder();
   let bytes = 0;
   let text = "";
   try {
-    while (true) {
-      const { done, value } = await reader.read();
+    for (;;) {
+      const chunk = await reader.read();
+      const { done, value } = chunk;
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxResponseBytes) {
@@ -258,7 +259,7 @@ function skippedModelSample(candidate: unknown, index: number): string {
   ) {
     return candidate.slug;
   }
-  return `index:${index}`;
+  return `index:${String(index)}`;
 }
 
 function normalizePositiveInt(value: number | undefined, fallback: number): number {

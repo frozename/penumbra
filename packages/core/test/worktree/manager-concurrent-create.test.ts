@@ -98,7 +98,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
   it("suffixes branch names when the requested branch already exists", async () => {
     const existingRefs = new Set(["refs/heads/feat/full-task-pool"]);
     const checkouts: string[] = [];
-    const runner: WorktreeCommandRunner = async (_cmd, args) => {
+    const runner: WorktreeCommandRunner = (_cmd, args) => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];
         if (!wtPath) throw new Error("missing worktree path");
@@ -132,7 +132,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
       runner,
-      resolveBranchName: () => "feat/full-task-pool",
+      resolveBranchName: (): string => "feat/full-task-pool",
     });
 
     const handle1 = await manager.createWorktree("handoff-a");
@@ -146,7 +146,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
   it("retries the next suffix when checkout loses a branch-name race", async () => {
     const existingRefs = new Set<string>();
     const checkouts: string[] = [];
-    const runner: WorktreeCommandRunner = async (_cmd, args) => {
+    const runner: WorktreeCommandRunner = (_cmd, args) => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];
         if (!wtPath) throw new Error("missing worktree path");
@@ -184,7 +184,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
       runner,
-      resolveBranchName: () => "feat/x",
+      resolveBranchName: (): string => "feat/x",
     });
 
     const handle = await manager.createWorktree("handoff-race");
@@ -206,8 +206,8 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
-      resolveBranchName: () => "feat/full-task-pool",
-      onBranchNameDrift: (id, actual, stored) => {
+      resolveBranchName: (): string => "feat/full-task-pool",
+      onBranchNameDrift: (id, actual, stored): void => {
         drift.push({ handoffId: id, actual, stored });
       },
     });

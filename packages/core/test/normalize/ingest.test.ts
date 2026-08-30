@@ -123,7 +123,7 @@ test("strips privacy-tagged text from nested payload_json (objects + arrays)", (
   expect(serialized).not.toContain("NESTED_SECRET_B");
   expect(serialized).not.toContain("NESTED_SECRET_C");
   const payload = e.payload_json as {
-    messages: Array<{ role: string; content: string }>;
+    messages: { role: string; content: string }[];
     meta: { note: string; tags: string[] };
   };
   expect(payload.messages[0].content).toBe("hello  world");

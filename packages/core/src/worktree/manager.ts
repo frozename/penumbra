@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
-import { resolveHandoffBranchName } from "./branch-name.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
+import { resolveHandoffBranchName } from "./branch-name.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -347,9 +347,7 @@ export class WorktreeManager {
       let gitDir = dotGit;
       if (dotGitStat.isFile()) {
         const raw = fs.readFileSync(dotGit, "utf8").trim();
-        const match = /^gitdir:\s*(.+)$/i.exec(raw);
-        if (!match) return null;
-        const parsedGitDir = match[1];
+        const parsedGitDir = /^gitdir:\s*(\S.*)$/i.exec(raw)?.[1];
         if (parsedGitDir === undefined) return null;
         gitDir = path.isAbsolute(parsedGitDir) ? parsedGitDir : path.resolve(wtPath, parsedGitDir);
       }
