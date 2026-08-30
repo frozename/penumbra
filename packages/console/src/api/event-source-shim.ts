@@ -98,7 +98,7 @@ function drainBuffer(buffer: string, ctx: ReadLoopCtx): { buffer: string; overfl
 type ReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
 
 async function readWithIdleWatchdog(ctx: ReadLoopCtx): Promise<ReadResult> {
-  if (ctx.idleTimeoutMs <= 0) return ctx.reader.read();
+  if (ctx.idleTimeoutMs <= 0) return await ctx.reader.read();
   let timerHandle: unknown = null;
   const idlePromise = new Promise<never>((_, reject) => {
     timerHandle = ctx.setTimeoutImpl(() => {

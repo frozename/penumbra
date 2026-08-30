@@ -291,7 +291,8 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
 // --- pool: per-seat request extras ---
 
 function readRequestBody(init: RequestInit | undefined): Record<string, unknown> {
-  return JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+  const body = init?.body;
+  return JSON.parse(typeof body === "string" ? body : "{}") as Record<string, unknown>;
 }
 
 const CANONICAL_BODY_KEYS = ["max_tokens", "messages", "model", "response_format", "temperature"];

@@ -48,7 +48,9 @@ export function handleLongLivedRejectAction(
     db.query(
       "UPDATE long_lived_pending_actions SET status='rejected', decided_by=?, decided_at=? WHERE id=? AND status='pending'",
     ).run(decided_by ?? "user", now, action_id);
-    const { changes } = db.query<{ changes: number }, []>("SELECT changes() AS changes").get()!;
+    const result = db.query<{ changes: number }, []>("SELECT changes() AS changes").get();
+    if (!result) throw new Error("database did not report changes");
+    const { changes } = result;
     if (changes === 0) {
       throw new Error("not_pending");
     }

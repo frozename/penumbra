@@ -3,10 +3,10 @@ import { WORKLOADS } from "@penumbra/config";
 import {
   type AgentRecommendation,
   type AgentTaskType,
+  buildHandoffBranchName,
   type CapCheckRefuse,
   type ChainStartRequest,
   ChainStartRequestSchema,
-  buildHandoffBranchName,
   checkPressureCap,
   deriveBranchNameFromMessage,
   HandoffStatusSchema,
@@ -38,9 +38,9 @@ import { json } from "./_helpers.js";
 import {
   readActiveRoutingBiases,
   resolveSingleRoute,
-  RoutingBiasExhaustedError,
-  RouterHardConstraintExhaustedError,
   type RouterDecisionSink,
+  RouterHardConstraintExhaustedError,
+  RoutingBiasExhaustedError,
 } from "./role-routing.js";
 interface InitialRoute {
   agent: string;
@@ -1154,7 +1154,7 @@ async function maybeRunAutoRecall(
     const handle = setTimeout(() => {
       resolve(null);
     }, AUTO_RECALL_TIMEOUT_MS);
-    handle.unref?.();
+    handle.unref();
     timeoutHandle = handle;
   });
   let auto: Awaited<typeof autoPromise> | null;
@@ -1381,10 +1381,11 @@ function rerouteForAgent(
   return {
     route,
     routedAgent: route?.agent ?? initialAgent,
-    routedRole: route?.role ?? null,
+    routedRole: route === null ? null : route.role,
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve routing fallback resolution while grandfathering its pre-existing complexity.
 function resolveRoutingWithFallbacks(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1607,6 +1608,7 @@ function persistRoutingDecisionForChainStart(
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain-start orchestration while grandfathering its pre-existing complexity.
 export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -1693,7 +1695,7 @@ export async function chainStartInternal(
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
   const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
-  const branchName = (() => {
+  const branchName = ((): string | null => {
     if (input.use_worktree === false) return null;
     // input.message is the raw, pre-stamp/pre-recall message (stamped/handoffMessage
     // are computed later, below) — naming off those would bake stamped retry
@@ -1821,6 +1823,7 @@ function applyRoutingBiasesToRecommendations(
     .map((s) => s.recommendation);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve sub-dispatch fallback selection while grandfathering its pre-existing complexity.
 function maybeSelectSubDispatchFallback(opts: {
   services: Services;
   input: ChainStartRequestWithLongLived;
@@ -2608,7 +2611,6 @@ function resolveInitialRoute(opts: {
     .filter((name) => !agentRegistry || agentRegistry.includes(name));
   const isKnownRole =
     agentRouting !== null &&
-    agentRouting !== undefined &&
     (Object.hasOwn(agentRouting.default_roles, opts.initialAgent) ||
       agentRouting.agents.some((agent) => agent.roles.includes(opts.initialAgent)));
   const shouldExploreZeroHolderRole =

@@ -132,17 +132,6 @@ export {
   PlanWriter,
   type RegisterPlanInput,
 } from "./plans/writer.js";
-export {
-  InvalidEntryTransition,
-  InvalidPhaseTransition,
-  PhaseNotFound,
-  RegistrarNotFound,
-  RegistrarSlugTaken,
-  UnknownJournalRef,
-} from "./registrar/errors.js";
-export { RegistrarReader } from "./registrar/reader.js";
-export * from "./registrar/schema.js";
-export { RegistrarWriter } from "./registrar/writer.js";
 export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
   defaultProjectRegistryPath,
@@ -244,7 +233,6 @@ export {
 export { timeline } from "./readers/timeline.js";
 export { stripPrivacyTags } from "./redaction/privacy-tags.js";
 export { DEFAULT_REDACTION_RULES, type RedactionRule, RegexRedactor } from "./redaction/regex.js";
-export * from "./routing/index.js";
 export {
   MAX_WALKER_DEPTH,
   MAX_WALKER_STRING_BYTES,
@@ -257,16 +245,28 @@ export {
   WALKER_DEPTH_EXCEEDED_RULE_ID,
   WALKER_STRING_OVERSIZE_RULE_ID,
 } from "./redaction/value-patterns.js";
+export {
+  InvalidEntryTransition,
+  InvalidPhaseTransition,
+  PhaseNotFound,
+  RegistrarNotFound,
+  RegistrarSlugTaken,
+  UnknownJournalRef,
+} from "./registrar/errors.js";
+export { RegistrarReader } from "./registrar/reader.js";
+export * from "./registrar/schema.js";
+export { RegistrarWriter } from "./registrar/writer.js";
 export type { WebResearchAdapter, WebResearchResult } from "./research/types.js";
+export * from "./routing/index.js";
 export * from "./schemas/agent-performance.js";
 export * from "./schemas/agent-recommend.js";
 export { type ChainStartRequest, ChainStartRequestSchema } from "./schemas/chain.js";
 export {
+  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
   type T0Event,
   type T0EventInput,
   T0EventInputSchema,
   T0EventSchema,
-  LONG_LIVED_TICK_STATUS_EVENT_TYPE,
   TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
   type TaskDraftLifecycleEventType,
 } from "./schemas/event.js";
@@ -380,20 +380,20 @@ export {
   type AgentRecommendation,
   type DetailMode,
   type DroppedAgentPoolMember,
+  isTextOnlyAdapter,
   type ResolvableAgentProviderInput,
-  resolveBiasEffect,
   resolveAgentPool,
-  resolveProvider,
   type ResolveAgentPoolContext,
   type ResolveAgentPoolResult,
-  type RoutingBiasEffectInput,
+  resolveBiasEffect,
   type ResolvedAgentPoolMember,
-  isTextOnlyAdapter,
   resolveGateOutcomeCutoverIso,
+  resolveProvider,
   type RoleRoute,
   routeAgent,
   type RouteAgentInput,
   type RouteAgentOutput,
+  type RoutingBiasEffectInput,
 } from "./services/agent-routing.js";
 export {
   type DispatchEventInput,
@@ -432,6 +432,13 @@ export {
   resolveJudgeConfig,
 } from "./services/judge-chat.js";
 export {
+  collectLlamactlInventory,
+  type CollectLlamactlInventoryOpts,
+  type LlamactlInventory,
+  type LlamactlModelInventory,
+  type LlamactlNodeInventory,
+} from "./services/llamactl-inventory.js";
+export {
   ALLOWED_LLM_PROVIDERS,
   attemptCandidatesInOrder,
   attemptLlmCandidates,
@@ -445,22 +452,15 @@ export {
   type LlmPurpose,
   type LlmRoutingBias,
   type LlmServingCandidate,
-  type RoleLlmCandidate,
   type ResolvedLlmCandidate,
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
   resolveLlmCandidates,
   resolveLlmProvider,
   resolveRoleLlmCandidates,
+  type RoleLlmCandidate,
   tryResolveLlmProvider,
 } from "./services/llm-candidates.js";
-export {
-  collectLlamactlInventory,
-  type CollectLlamactlInventoryOpts,
-  type LlamactlInventory,
-  type LlamactlModelInventory,
-  type LlamactlNodeInventory,
-} from "./services/llamactl-inventory.js";
 export {
   type Classification,
   classifyFindings,
@@ -558,36 +558,14 @@ export type {
   WorkflowRegistry,
 } from "./workflows/registry-interface.js";
 export {
+  type BranchLandStatus,
   classifyBranchByContent,
   classifyBranchLandStatus,
   isAncestorOf,
   isThreeDotDiffEmpty,
-  type BranchLandStatus,
 } from "./worktree/branch-land-probe.js";
 export { FsPathError, resolveInsideWorktree };
 
-export {
-  selectWorktreeGcCandidates,
-  type SelectWorktreeGcCandidatesOpts,
-  type WorktreeGcCandidate,
-  type WorktreeGcCandidateReason,
-} from "./worktree/gc-candidates.js";
-export {
-  type OrphanWorktreeHandle,
-  type WorktreeCommandRunner,
-  type WorktreeCommandRunnerOptions,
-  type WorktreeHandle,
-  WorktreeManager,
-  ISOLATED_INSTALL_ARGS,
-  ISOLATED_INSTALL_CACHE_KEY,
-  isPathInsideOrEqual,
-  materializeWorkspaceLinks,
-  mirrorNodeModuleSymlinks,
-  prepareEscapingFileDependencyLinks,
-  provisionLocalCache,
-  runIsolatedInstall,
-  type WorktreeMode,
-} from "./worktree/manager.js";
 export {
   buildHandoffBranchName,
   type BuildHandoffBranchNameInput,
@@ -596,6 +574,28 @@ export {
   resolveHandoffBranchName,
   slugifyBranchSegment,
 } from "./worktree/branch-name.js";
+export {
+  selectWorktreeGcCandidates,
+  type SelectWorktreeGcCandidatesOpts,
+  type WorktreeGcCandidate,
+  type WorktreeGcCandidateReason,
+} from "./worktree/gc-candidates.js";
+export {
+  ISOLATED_INSTALL_ARGS,
+  ISOLATED_INSTALL_CACHE_KEY,
+  isPathInsideOrEqual,
+  materializeWorkspaceLinks,
+  mirrorNodeModuleSymlinks,
+  type OrphanWorktreeHandle,
+  prepareEscapingFileDependencyLinks,
+  provisionLocalCache,
+  runIsolatedInstall,
+  type WorktreeCommandRunner,
+  type WorktreeCommandRunnerOptions,
+  type WorktreeHandle,
+  WorktreeManager,
+  type WorktreeMode,
+} from "./worktree/manager.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,

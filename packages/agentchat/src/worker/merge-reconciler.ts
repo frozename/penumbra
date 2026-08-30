@@ -1,8 +1,8 @@
 // Contract acceptance probe 2026-08-27: verified status round-trips.
 import * as core from "@penumbra/core";
 import {
-  ISOLATED_INSTALL_CACHE_KEY,
   type HandoffRow,
+  ISOLATED_INSTALL_CACHE_KEY,
   type Logger,
   type Settings,
   type WorktreeCommandRunner,
@@ -19,12 +19,12 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 import { PenumbraHttpError } from "../penumbra-client.js";
-import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
 import {
   type BunTestReport,
   isKnownBunTeardownPanicPass,
   parseBunTestReport,
 } from "./bun-test-output.js";
+import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
 import {
   runThoughtAnalyzer,
   type ThoughtAnalyzerDeps,
@@ -1180,6 +1180,7 @@ async function runThoughtAnalyzerIfEnabled(ctx: ReconcileCtx, result: MergeResul
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve reconciliation result handling while grandfathering its pre-existing complexity.
 async function emitResult(ctx: ReconcileCtx, result: MergeResult): Promise<void> {
   const { deps, handoffId } = ctx;
   let progressReported = true;
@@ -1554,7 +1555,7 @@ async function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): Prom
 }
 
 function isolatedProvisioning(): CoreIsolatedProvisioning {
-  return core as CoreIsolatedProvisioning;
+  return core;
 }
 
 function coreInstallRunner(ctx: ReconcileCtx): WorktreeCommandRunner | undefined {
@@ -1709,7 +1710,7 @@ function formatNewTestFailures(newKeys: string[], outcome: BunTestCommandOutcome
   if (newKeys.length === 0) {
     return testOutcomeOutput(outcome) || "tests failed";
   }
-  const visible = newKeys.slice(0, 20).map((key) => key.replace(/^(fail|error):/, ""));
+  const visible = newKeys.slice(0, 20).map((key) => key.replace(/^fail:|^error:/, ""));
   if (newKeys.length > 20) visible.push(`... (${String(newKeys.length - 20)} more)`);
   const detail = testOutcomeOutput(outcome);
   return `new test failures:\n${visible.join("\n")}${detail ? `\n\n${detail}` : ""}`;

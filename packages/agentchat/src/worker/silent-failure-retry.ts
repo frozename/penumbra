@@ -1,6 +1,6 @@
 import {
-  NON_MUTATING_TASK_TYPES,
   isTextOnlyAdapter,
+  NON_MUTATING_TASK_TYPES,
   resolveBiasEffect,
   resolveProvider,
   type RoutingBiasEffectInput,
@@ -9,13 +9,13 @@ import {
 export { resolveProvider as resolveAgentProvider } from "@penumbra/core";
 
 export function buildRetryRoutingMaps(
-  agents: ReadonlyArray<{
+  agents: readonly {
     name: string;
     adapter?: string | null;
-    pricing_mode?: "api" | "subscription" | string;
+    pricing_mode?: string;
     subscription_provider?: string | null;
     api_provider?: string | null;
-  }>,
+  }[],
 ): {
   validAgents: ReadonlySet<string>;
   agentProviders: ReadonlyMap<string, string | null>;
@@ -213,6 +213,6 @@ export function retryBranchFields(
   if (branchType === "agent") return {};
   const withoutCollisionSuffix = slugWithSuffix.replace(/-\d+$/, "");
   const withoutIdSuffix = withoutCollisionSuffix.replace(/_[0-9a-f]{6,16}$/i, "");
-  const taskName = withoutIdSuffix.replace(/-/g, " ");
+  const taskName = withoutIdSuffix.replaceAll("-", " ");
   return { branch_type: branchType, task_name: taskName };
 }

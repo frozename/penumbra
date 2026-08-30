@@ -1,6 +1,7 @@
 import type { AgentPool } from "../files/agent-pool.js";
 import type { AgentsConfig } from "../files/agents.js";
 import type { RoutingConfig } from "../files/routing.js";
+import type { Workload } from "../files/workload.js";
 
 export interface RoutingAgentReference {
   path: string;
@@ -27,21 +28,28 @@ function collectRoutingAgentReferences(routing: RoutingConfig): RoutingAgentRefe
     }
   }
 
-  for (const [workload, config] of Object.entries(routing.workloads ?? {})) {
-    if (!config) continue;
-    if (config.synthesizer) {
-      for (const agent of collectAgentPoolNames(config.synthesizer)) {
-        refs.push({ path: `workloads.${workload}.synthesizer`, agent });
-      }
-    }
-    // The daemon also treats eligible_agents entries as live candidate seat
-    // names (packages/daemon/src/routes/agents.ts resolveWorkloadCandidateRegistry).
-    for (const agent of config.eligible_agents ?? []) {
-      refs.push({ path: `workloads.${workload}.eligible_agents`, agent });
-    }
+  const workloads = Object.entries(routing.workloads ?? {});
+  for (const [workload, config] of workloads) {
+    collectWorkloadReferences(refs, workload, config);
   }
 
   return refs;
+}
+
+function collectWorkloadReferences(
+  refs: RoutingAgentReference[],
+  workload: string,
+  config: Workload | undefined,
+): void {
+  if (!config) return;
+  if (config.synthesizer) {
+    for (const agent of collectAgentPoolNames(config.synthesizer)) {
+      refs.push({ path: `workloads.${workload}.synthesizer`, agent });
+    }
+  }
+  for (const agent of config.eligible_agents ?? []) {
+    refs.push({ path: `workloads.${workload}.eligible_agents`, agent });
+  }
 }
 
 /** Routing references whose agent name is not present in `agents`. */

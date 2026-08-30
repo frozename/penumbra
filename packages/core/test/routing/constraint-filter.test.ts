@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { applyHardConstraints } from "../../src/routing/constraint-filter.js";
 
-function taskProfile(overrides: Record<string, unknown> = {}) {
+function taskProfile(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: "1" as const,
     taskTypes: ["coding" as const],
@@ -204,7 +204,7 @@ describe("applyHardConstraints", () => {
       max_predicted_cost_usd_per_dispatch: 0.01,
     });
 
-    expect(facts["unknown-cost"]!.predictedCostUsd).toBeUndefined();
+    expect(facts["unknown-cost"].predictedCostUsd).toBeUndefined();
     expect(result).toEqual({ admitted: ["unknown-cost"], excluded: [] });
   });
 

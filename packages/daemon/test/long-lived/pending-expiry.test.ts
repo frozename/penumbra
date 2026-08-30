@@ -222,9 +222,11 @@ describe("runPendingExpiry", () => {
 
     const origQuery = (db as unknown as { query: typeof db.query }).query.bind(db);
     let intercepted = false;
-    (db as unknown as { query: typeof db.query }).query = (sql: string) => {
+    (db as unknown as { query: typeof db.query }).query = (
+      sql: string,
+    ): ReturnType<typeof origQuery> => {
       const stmt = origQuery(sql);
-      if (!intercepted && /SET status='expired'/.test(sql)) {
+      if (!intercepted && sql.includes("SET status='expired'")) {
         intercepted = true;
         origQuery(
           "UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=80 WHERE id='pa-race'",

@@ -176,7 +176,7 @@ test("maps file auth for role-tagged HTTP seats", () => {
 });
 
 test("drops external HTTP candidates that have no auth source", () => {
-  const warn = spyOn(console, "warn").mockImplementation(mock(() => {}));
+  const warn = spyOn(console, "warn").mockImplementation(mock(() => undefined));
   try {
     const candidates = llmCandidates.resolveLlmCandidates({
       purpose: "generation",
@@ -213,7 +213,7 @@ test("drops external HTTP candidates that have no auth source", () => {
 });
 
 test("drops non-loopback HTTP candidates without auth even when provider is local", () => {
-  const warn = spyOn(console, "warn").mockImplementation(mock(() => {}));
+  const warn = spyOn(console, "warn").mockImplementation(mock(() => undefined));
   try {
     expect(() =>
       llmCandidates.resolveLlmCandidates({

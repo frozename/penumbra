@@ -1,9 +1,9 @@
+import { assertHandBilledSeatsWhitelistedWithPrefix } from "@penumbra/config";
 // packages/agentchat/src/config/load.ts
 import { load as parseYaml } from "js-yaml";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { assertHandBilledSeatsWhitelistedWithPrefix } from "@penumbra/config";
 import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 import {
   AgentChatConfigSchema,

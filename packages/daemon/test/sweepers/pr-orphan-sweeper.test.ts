@@ -161,7 +161,7 @@ test("fleet PRs are identified by handoff branch_name membership with legacy age
   const { deps } = makeDeps({
     handoffReader: {
       findByBranchName: (name: string) =>
-        name === "feat/full-task-pool" ? ({ handoff_id: "h-feat" } as never) : null,
+        name === "feat/full-task-pool" ? { handoff_id: "h-feat" } : null,
     },
     ghClient: {
       listOpenPullRequests: () =>

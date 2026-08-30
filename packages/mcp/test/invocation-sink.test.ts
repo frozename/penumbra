@@ -438,7 +438,7 @@ describe("invocation sink", () => {
     const filePath = join(dir, "mcp-invocations.jsonl");
     const day1 = new Date("2026-01-01T12:00:00.000Z");
     const RealDate = Date;
-    let fakeNow = "2026-01-02T12:00:00.000Z";
+    const fakeNow = "2026-01-02T12:00:00.000Z";
 
     class FakeDate extends RealDate {
       constructor(value?: ConstructorParameters<typeof Date>[0]) {

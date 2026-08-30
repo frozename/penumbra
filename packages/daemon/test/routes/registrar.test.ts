@@ -1,7 +1,7 @@
 import {
   RegistrarDetailSchema,
-  RegistrarEventSchema,
   RegistrarEventKindSchema,
+  RegistrarEventSchema,
   RegistrarListResponseSchema,
 } from "@penumbra/api-contract";
 import {
@@ -179,7 +179,9 @@ test("enum drift trap: every RegistrarEventKindSchema option is accepted by the 
 
   try {
     for (const kind of RegistrarEventKindSchema.options) insertKind(kind);
-    expect(() => insertKind("sabotage")).toThrow();
+    expect(() => {
+      insertKind("sabotage");
+    }).toThrow();
   } finally {
     db.close();
   }
@@ -221,8 +223,11 @@ test("POST /registrar/:id/events with a worker-token principal returns 403 princ
     const response = await registrarAppendRoute(req, entry.registrar_id, daemon.services);
 
     expect(response.status).toBe(403);
-    expect(await response.json()).toEqual(
-      expect.objectContaining({ error: expect.objectContaining({ code: "principal_forbidden" }) }),
+    const responseBody: unknown = await response.json();
+    expect(responseBody).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "principal_forbidden" }) as unknown,
+      }) as unknown,
     );
   } finally {
     daemon.stop();
@@ -239,13 +244,13 @@ test("POST /registrar as the shared principal creates the entry and its phases i
     });
 
     expect(response.status).toBe(201);
-    const body = z.strictObject({ registrar_id: z.string().uuid() }).parse(await response.json());
+    const body = z.strictObject({ registrar_id: z.uuid() }).parse(await response.json());
     expect(daemon.services.registrarReader.getEntry(body.registrar_id)?.title).toBe(
       "Registrar rollout",
     );
     expect(daemon.services.registrarReader.listPhases(body.registrar_id)).toEqual([
-      expect.objectContaining({ phase_no: 1, title: "Domain", status: "active" }),
-      expect.objectContaining({ phase_no: 2, title: "HTTP routes", status: "pending" }),
+      expect.objectContaining({ phase_no: 1, title: "Domain", status: "active" }) as unknown,
+      expect.objectContaining({ phase_no: 2, title: "HTTP routes", status: "pending" }) as unknown,
     ]);
   } finally {
     daemon.stop();
@@ -311,9 +316,8 @@ test("POST /registrar/:id/events with kind='sabotage' returns 400 invalid_input 
     });
 
     expect(append.status).toBe(400);
-    expect((await append.json()) as { error: string }).toEqual(
-      expect.objectContaining({ error: "invalid_input" }),
-    );
+    const appendBody: unknown = await append.json();
+    expect(appendBody).toEqual(expect.objectContaining({ error: "invalid_input" }) as unknown);
 
     const list = await daemon.fetch(`/registrar/${registrarId}/events`, {
       headers: authHeaders(daemon.token),
@@ -577,8 +581,8 @@ test("GET /registrar returns open_blockers/open_followups/phase progress matchin
     const detailBody = RegistrarDetailSchema.parse(await detail.json());
     expect(detailBody.rollup).toEqual({ open_blockers: 1, open_follow_ups: 1 });
     expect(detailBody.phases).toEqual([
-      expect.objectContaining({ phase_no: 1, status: "complete" }),
-      expect.objectContaining({ phase_no: 2, status: "pending" }),
+      expect.objectContaining({ phase_no: 1, status: "complete" }) as unknown,
+      expect.objectContaining({ phase_no: 2, status: "pending" }) as unknown,
     ]);
   } finally {
     daemon.stop();

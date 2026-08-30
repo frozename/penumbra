@@ -58,7 +58,9 @@ export function reconcileAliases(
       continue;
     }
 
-    result[seatName] = { matched: matches[0]! };
+    const matched = matches[0];
+    if (matched === undefined) continue;
+    result[seatName] = { matched };
   }
 
   return result;

@@ -3,7 +3,7 @@ import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 import type { ChatTurnInput, ChatTurnResult } from "./loop.js";
 
 import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
-import { PenumbraHttpError, isTerminalHttpStatus } from "../penumbra-client.js";
+import { isTerminalHttpStatus, PenumbraHttpError } from "../penumbra-client.js";
 import { runChatTurn as realRunChatTurn } from "./loop.js";
 import { buildNextPrompt } from "./transcript.js";
 import { isAutoApproved } from "./trust.js";

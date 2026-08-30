@@ -179,15 +179,15 @@ import { planStatusHandler, PlanStatusInputShape } from "./plan-status.js";
 import { qualityStatusHandler, QualityStatusInputShape } from "./quality-status.js";
 import { recallStatusHandler, RecallStatusInputShape } from "./recall-status.js";
 import { recallHandler, RecallInputShape } from "./recall.js";
-import { registrarAppendHandler, RegistrarAppendInputShape } from "./registrar-append.js";
-import { registrarCreateHandler, RegistrarCreateInputShape } from "./registrar-create.js";
-import { registrarListHandler, RegistrarListInputShape } from "./registrar-list.js";
-import { registrarStatusHandler, RegistrarStatusInputShape } from "./registrar-status.js";
 import {
   reconcilerSweepOrphanPrsHandler,
   ReconcilerSweepOrphanPrsInputShape,
 } from "./reconciler-sweep-orphan-prs.js";
 import { reconcilerVerdictsHandler, ReconcilerVerdictsInputShape } from "./reconciler-verdicts.js";
+import { registrarAppendHandler, RegistrarAppendInputShape } from "./registrar-append.js";
+import { registrarCreateHandler, RegistrarCreateInputShape } from "./registrar-create.js";
+import { registrarListHandler, RegistrarListInputShape } from "./registrar-list.js";
+import { registrarStatusHandler, RegistrarStatusInputShape } from "./registrar-status.js";
 import { routingBiasClearHandler, RoutingBiasClearInputShape } from "./routing-bias-clear.js";
 import { routingBiasListHandler, RoutingBiasListInputShape } from "./routing-bias-list.js";
 import { routingBiasSetHandler, RoutingBiasSetInputShape } from "./routing-bias-set.js";
@@ -968,7 +968,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Create a registrar entry and return its registrar_id and status.",
       inputSchema: RegistrarCreateInputShape,
     },
-    makeHandler: registrarCreateHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: registrarCreateHandler,
     readOnly: false,
   },
   registrar_append: {
@@ -976,7 +976,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Append a validated event to a registrar entry.",
       inputSchema: RegistrarAppendInputShape,
     },
-    makeHandler: registrarAppendHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: registrarAppendHandler,
     readOnly: false,
   },
   registrar_list: {
@@ -984,7 +984,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "List registrar entries.",
       inputSchema: RegistrarListInputShape,
     },
-    makeHandler: registrarListHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: registrarListHandler,
     readOnly: true,
   },
   registrar_status: {
@@ -992,7 +992,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       description: "Return a registrar entry with phases, events, and rollup status.",
       inputSchema: RegistrarStatusInputShape,
     },
-    makeHandler: registrarStatusHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: registrarStatusHandler,
     readOnly: true,
   },
   session_end: {
@@ -1332,7 +1332,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Create a new task on the task board. When gh_create is provided, GitHub issue creation is queued asynchronously (check task_get gh_create_status/gh_create_error).",
       inputSchema: TaskFileInputShape,
     },
-    makeHandler: taskFileHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskFileHandler,
     readOnly: false,
   },
   task_list: {
@@ -1392,7 +1392,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
         "Lease the highest-priority eligible task for the provided agent, or null when none are available.",
       inputSchema: TaskNextInputShape,
     },
-    makeHandler: taskNextHandler as unknown as ToolDef["makeHandler"],
+    makeHandler: taskNextHandler,
     readOnly: true,
   },
   task_heartbeat: {

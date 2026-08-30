@@ -102,7 +102,7 @@ export async function discoverHttpModels(
       const statusText = response.statusText.trim();
       return skip(
         provider.providerId,
-        `HTTP ${response.status}${statusText.length === 0 ? "" : ` ${statusText}`}`,
+        `HTTP ${String(response.status)}${statusText.length === 0 ? "" : ` ${statusText}`}`,
         response.status,
       );
     }

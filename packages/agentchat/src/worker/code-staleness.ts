@@ -45,7 +45,7 @@ export interface WorkerCodeShaDeps {
 }
 
 function stripUrlCredentials(message: string): string {
-  return message.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s/@]+)@([^\s]+)/gi, "$1$3");
+  return message.replaceAll(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@([^\s]+)/gi, "$1$2");
 }
 
 function cleanErrorMessage(err: unknown): string {
@@ -65,7 +65,7 @@ export function resolveWorkerCodeSha(
   deps: WorkerCodeShaDeps = {},
 ): WorkerCodeShaResult {
   const run: WorkerCodeShaExecFileSync =
-    deps.execFileSync ?? ((file, args, options) => execFileSync(file, args, options));
+    deps.execFileSync ?? ((file, args, options): string => execFileSync(file, args, options));
   try {
     const output = run("git", ["-C", repoRoot, "rev-parse", "HEAD"], {
       encoding: "utf8",
@@ -89,7 +89,7 @@ export async function resolveWorkerCodeShaAsync(
 ): Promise<WorkerCodeShaResult> {
   const run: WorkerCodeShaExecFile =
     deps.execFile ??
-    ((file, args, options, callback) => {
+    ((file, args, options, callback): void => {
       execFile(file, [...args], options, callback);
     });
   return await new Promise<WorkerCodeShaResult>((resolve) => {

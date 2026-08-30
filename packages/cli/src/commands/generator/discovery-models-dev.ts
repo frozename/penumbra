@@ -96,7 +96,7 @@ export async function fetchModelsDevPayload(
 ): Promise<unknown> {
   const response = await (opts.fetch ?? globalThis.fetch)(MODELS_DEV_API_URL);
   if (!response.ok) {
-    throw new Error(`models.dev request failed with HTTP ${response.status}`);
+    throw new Error(`models.dev request failed with HTTP ${String(response.status)}`);
   }
-  return response.json();
+  return await response.json();
 }

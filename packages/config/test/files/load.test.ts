@@ -3,9 +3,9 @@ import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { BILLED_HAND_SEAT_WHITELIST } from "../../src/files/billing-gate.js";
 import { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "../../src/files/load.js";
 import { readUtf8 } from "../../src/files/node-fs.js";
-import { BILLED_HAND_SEAT_WHITELIST } from "../../src/files/billing-gate.js";
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 
 const fsCalls = { mkdtempSync: nodeFs.mkdtempSync };

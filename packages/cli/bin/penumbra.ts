@@ -34,7 +34,6 @@ import { runStart, runStartDetached } from "../src/commands/start.js";
 import { runStatus } from "../src/commands/status.js";
 import { runStop } from "../src/commands/stop.js";
 import { runTail } from "../src/commands/tail.js";
-import { runWatchdog } from "../src/commands/watchdog.js";
 import {
   runTaskCancel,
   runTaskList,
@@ -43,6 +42,7 @@ import {
   runTaskShow,
   runTaskWatch,
 } from "../src/commands/task.js";
+import { runWatchdog } from "../src/commands/watchdog.js";
 import { dispatchWorkflowSubcommand } from "../src/commands/workflow.js";
 import { resolveCliStorageRoot } from "../src/storage-root.js";
 
