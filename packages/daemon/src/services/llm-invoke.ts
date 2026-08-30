@@ -1,6 +1,4 @@
 import { buildAdapter, type DispatchInput } from "@penumbra/agentchat";
-import { z } from "zod";
-
 import {
   attemptLlmCandidates,
   buildChatCompletionsUrl,
@@ -15,7 +13,8 @@ import {
   resolveLlmAuthorization,
   resolveLlmCandidates,
   tryResolveLlmProvider,
-} from "../../../core/src/services/llm-candidates.js";
+} from "@penumbra/core";
+import { z } from "zod";
 
 export interface LlmInvokeInput<T extends z.ZodType> {
   baseUrl: string;

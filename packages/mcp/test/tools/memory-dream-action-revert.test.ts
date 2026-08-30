@@ -1,7 +1,6 @@
+import { revertDreamAction } from "@penumbra/daemon/dreaming/reembed";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-
-import { revertDreamAction } from "../../../daemon/src/dreaming/reembed.js";
 
 interface RevertedByRow {
   reverted_by: string | null;

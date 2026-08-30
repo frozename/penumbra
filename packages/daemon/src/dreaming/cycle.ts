@@ -1,20 +1,23 @@
-import type { DispatchEventInput, Logger, WebResearchAdapter } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
-import { buildT2EmbedText, retireNonDirectMemory } from "@penumbra/core";
+import {
+  buildT2EmbedText,
+  type DispatchEventInput,
+  type LlmCandidate,
+  type LlmServingCandidate,
+  type Logger,
+  readRoutingBiases,
+  releaseT1RollupClaims,
+  retireNonDirectMemory,
+  tryResolveLlmProvider,
+  type WebResearchAdapter,
+} from "@penumbra/core";
 import { z } from "zod";
 
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
 import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { ResearchDeps } from "./research.js";
 
-import { releaseT1RollupClaims } from "../../../core/src/db/schema.js";
-import { readRoutingBiases } from "../../../core/src/readers/routing-bias.js";
-import {
-  type LlmCandidate,
-  type LlmServingCandidate,
-  tryResolveLlmProvider,
-} from "../../../core/src/services/llm-candidates.js";
 import {
   type LlmInvokeInput,
   type LlmInvokeResult,

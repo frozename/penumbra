@@ -1,6 +1,6 @@
+import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { expect } from "bun:test";
 
-import { registerWorkerForTest } from "../../test-utils.js";
 import { makeTempDaemon } from "../helpers.js";
 import { serviceTest } from "../helpers/service-gates.js";
 

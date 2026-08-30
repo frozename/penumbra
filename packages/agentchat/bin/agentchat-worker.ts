@@ -2,15 +2,15 @@
 import type { AgentOptions, AgentPool } from "@penumbra/config";
 
 import {
+  createLogger,
   defaultProjectRegistryPath,
+  type DispatchEventInput,
+  fetchServedModels,
+  type HandoffRow,
   installGlobalCrashHandlers,
   loadProjectRegistry,
+  meaningfulOutput,
   SettingsDefaults,
-} from "@penumbra/core";
-import {
-  createLogger,
-  type DispatchEventInput,
-  type HandoffRow,
   systemUuid,
   waitForDaemonStorageRoot,
 } from "@penumbra/core";
@@ -24,8 +24,6 @@ import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../s
 import type { UsageReader } from "../src/usage-readers/index.js";
 import type { CapturePort } from "../src/worker/capture-port.js";
 
-import { fetchServedModels } from "../../core/src/index.js";
-import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
 import {
   acpWarmPoolLiveEntryCount,
   drainAgent,

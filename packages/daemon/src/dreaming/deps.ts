@@ -1,16 +1,18 @@
 import type { Database } from "bun:sqlite";
 
-import { type DispatchEventInput, type Logger, readSubscriptionPressure } from "@penumbra/core";
+import {
+  type DispatchEventInput,
+  type LlmCandidate,
+  type Logger,
+  readSubscriptionPressure,
+  resolveRoleLlmCandidates,
+  tryResolveLlmProvider,
+} from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 
 import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps, ProjectRegistryEntry } from "./cycle.js";
 
-import {
-  type LlmCandidate,
-  resolveRoleLlmCandidates,
-  tryResolveLlmProvider,
-} from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";

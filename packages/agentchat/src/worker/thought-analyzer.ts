@@ -1,14 +1,13 @@
 import type { AgentPool } from "@penumbra/config";
 
-import { type DispatchEventInput } from "@penumbra/core";
-
-import type { RuntimeThoughtsConfig } from "./thought-config.js";
-
 import {
+  type DispatchEventInput,
   type DroppedAgentPoolMember,
   resolveAgentPool,
   type ResolveAgentPoolContext,
-} from "../../../core/src/services/agent-routing.js";
+} from "@penumbra/core";
+
+import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 export interface ThoughtRow {
   sequence_n: number;

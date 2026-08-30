@@ -1,18 +1,17 @@
 import { type TextContentEnvelope } from "@novaproto/mcp-shared";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { beforeAll, expect, it } from "bun:test";
-
-import type { DaemonClient } from "@src/daemon-client.js";
-import { TOOL_REGISTRY } from "@src/tools/registry.js";
-
-import { listPendingDreamActionsQuery } from "../../../daemon/src/dreaming/digest.js";
+import { listPendingDreamActionsQuery } from "@penumbra/daemon/dreaming/digest";
 import {
   approveCuratorPattern,
   disableCuratorPattern,
   insertCuratorPattern,
   queryCuratorPatterns,
-} from "../../../daemon/src/routes/curator.js";
+} from "@penumbra/daemon/routes/curator";
+import { Database } from "bun:sqlite";
+import { beforeAll, expect, it } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,9 +1,8 @@
 import type { AgentChatConfig } from "@penumbra/config";
 import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 
-import { buildT2EmbedText, T2Promotion } from "@penumbra/core";
+import { buildT2EmbedText, resolveRoleLlmCandidates, T2Promotion } from "@penumbra/core";
 
-import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
   createJudgePool,

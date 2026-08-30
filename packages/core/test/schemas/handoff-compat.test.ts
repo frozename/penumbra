@@ -1,8 +1,7 @@
+import { HandoffRowSchema as ApiHandoffRowSchema } from "@penumbra/api-contract";
 import { expect, test } from "bun:test";
 
 import { HandoffRowSchema as CoreHandoffRowSchema } from "@src/schemas/handoff.js";
-
-import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
 
 test("api-contract and core handoff schemas parse isolated_install sqlite rows compatibly", () => {
   const row = {

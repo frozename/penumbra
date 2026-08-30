@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { HandoffRow } from "@penumbra/api-contract";
-import { Card, CardHead } from "../../ui/Card";
-import { Button } from "../../ui/Button";
-import { DaemonClient } from "../../api/client";
-import { useDaemonStore } from "../../stores/daemon-store";
-import { handoffsPending } from "../../lib/query-keys";
-import { HEARTBEAT_MS } from "../../lib/timing";
+import { Card, CardHead } from "@src/ui/Card";
+import { Button } from "@src/ui/Button";
+import { DaemonClient } from "@src/api/client";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { handoffsPending } from "@src/lib/query-keys";
+import { HEARTBEAT_MS } from "@src/lib/timing";
 
 export interface PendingHandoffsProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */

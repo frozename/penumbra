@@ -1,5 +1,6 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -7,8 +8,6 @@ import { createHash } from "node:crypto";
 import { workerHeartbeatRoute } from "@src/routes/worker-heartbeat.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
 import { WatchdogService } from "@src/services/watchdog.js";
-
-import { registerWorkerForTest } from "../../test-utils.js";
 
 try {
   if (process.platform === "darwin") {

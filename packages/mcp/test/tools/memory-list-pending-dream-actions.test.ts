@@ -1,4 +1,10 @@
+import type {
+  ListPendingDreamActionsOpts,
+  ListPendingDreamActionsResult,
+} from "@penumbra/daemon/dreaming/digest";
+
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { listPendingDreamActionsQuery } from "@penumbra/daemon/dreaming/digest";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";
 
@@ -6,12 +12,6 @@ import type { DaemonClient } from "@src/daemon-client.js";
 import { memoryListPendingDreamActionsHandler } from "@src/tools/memory-list-pending-dream-actions.js";
 import { TOOL_REGISTRY } from "@src/tools/registry.js";
 
-import type {
-  ListPendingDreamActionsOpts,
-  ListPendingDreamActionsResult,
-} from "../../../daemon/src/dreaming/digest.js";
-
-import { listPendingDreamActionsQuery } from "../../../daemon/src/dreaming/digest.js";
 import { fakeDaemon } from "../helpers.js";
 
 try {

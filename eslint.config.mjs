@@ -50,6 +50,24 @@ const LEGACY_LARGE_FILES = [
   "packages/mcp/src/tools/registry.ts",
 ];
 
+const DEEP_RELATIVE_IMPORT_EXCEPTIONS = [
+  "packages/agentchat/test/integration/reliability-smoke.test.ts",
+  "packages/agentchat/test/scripts/acp-promotion/evaluate.test.ts",
+  "packages/agentchat/test/scripts/acp-promotion/report.test.ts",
+  "packages/agentchat/test/scripts/acp-promotion/run.test.ts",
+  "packages/agentchat/test/scripts/acp-promotion/scenarios.test.ts",
+  "packages/config/test/commands/config-sync-providers.test.ts",
+  "packages/config/test/files/schemas.test.ts",
+  "packages/core/test/tasks/requires-tools-constraint.test.ts",
+  "packages/daemon/test/routes/otlp.test.ts",
+  "packages/e2e/test/task-board.test.ts",
+  "packages/mcp/test/e2e.test.ts",
+  "packages/workflows/test/integration/dispatch-drift-guard.test.ts",
+  "packages/workflows/test/integration/memory-digest-volatility.test.ts",
+  "packages/workflows/test/workflows/adversarial-plan.test.ts",
+  "packages/workflows/test/workflows/adversarial-review.test.ts",
+];
+
 export default tseslint.config(
   {
     // Global ignores MUST be the SOLE key in this object, or eslint treats them
@@ -148,6 +166,18 @@ export default tseslint.config(
       "import-x/no-cycle": "error",
       "import-x/no-duplicates": "error",
       "import-x/first": "error",
+      "no-restricted-imports": [
+        "warn",
+        {
+          patterns: [
+            {
+              group: ["../../*"],
+              message:
+                "Use @src/* (same package) or @penumbra/* (cross-package) instead of deep relative imports.",
+            },
+          ],
+        },
+      ],
       "security/detect-eval-with-expression": "error",
       "security/detect-new-buffer": "error",
       "@typescript-eslint/no-explicit-any": "warn",
@@ -244,6 +274,12 @@ export default tseslint.config(
     files: LEGACY_LARGE_FILES,
     rules: {
       "max-lines": "off",
+    },
+  },
+  {
+    files: DEEP_RELATIVE_IMPORT_EXCEPTIONS,
+    rules: {
+      "no-restricted-imports": "off",
     },
   },
   prettierConfig,

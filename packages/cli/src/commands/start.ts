@@ -12,7 +12,19 @@ import {
   loadSqliteVec,
   migrate,
   resolveEmbedder,
+  resolveStorageDbPath,
 } from "@penumbra/core";
+import { type DaemonHandle, serve } from "@penumbra/daemon";
+import {
+  loadAgentChatConfig,
+  loadAgentRoutingFromConfig,
+  providerQuotasFromAgentChatConfig,
+  resolveAgentChatConfigPath,
+} from "@penumbra/daemon/agentchat-config";
+import { InProcessPermissionService } from "@penumbra/daemon/services/in-process-permission-service";
+import { ShellSessionPool } from "@penumbra/daemon/services/shell-session-pool";
+import { createWorkflowRunsRegistry } from "@penumbra/daemon/services/workflow-runs-registry";
+import { wrapDatabaseWithSlowQueryLog } from "@penumbra/daemon/slow-query";
 import { buildRegistry as buildWorkflowRegistry } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import {
@@ -28,18 +40,6 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
-import {
-  loadAgentChatConfig,
-  loadAgentRoutingFromConfig,
-  providerQuotasFromAgentChatConfig,
-  resolveAgentChatConfigPath,
-} from "../../../daemon/src/agentchat-config.js";
-import { type DaemonHandle, serve } from "../../../daemon/src/serve.js";
-import { InProcessPermissionService } from "../../../daemon/src/services/in-process-permission-service.js";
-import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
-import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
-import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
 import { readEmbedderEnv } from "./sirius-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(

@@ -1,7 +1,7 @@
+import type { DaemonHandle } from "@penumbra/daemon";
+
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-
-import type { DaemonHandle } from "../../../daemon/src/serve.js";
 
 export interface RunStopOpts {
   storageRoot: string;

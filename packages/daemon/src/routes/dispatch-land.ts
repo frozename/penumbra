@@ -1,9 +1,11 @@
 import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
+import {
+  resolveHandoffBranchName,
+  stampAgentPerformanceGateOutcomeForHandoff,
+} from "@penumbra/core";
 import { spawn } from "node:child_process";
 import { z } from "zod";
 
-import { stampAgentPerformanceGateOutcomeForHandoff } from "../../../core/src/db/lane-ledger.js";
-import { resolveHandoffBranchName } from "../../../core/src/worktree/branch-name.js";
 import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 import { createGhCliClient, type GhClient } from "../services/gh-client.js";

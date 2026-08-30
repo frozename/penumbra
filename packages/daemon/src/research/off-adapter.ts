@@ -1,4 +1,4 @@
-import type { WebResearchAdapter, WebResearchResult } from "../../../core/src/research/types.js";
+import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
 
 export class OffAdapter implements WebResearchAdapter {
   search(_args: { query: string }): Promise<WebResearchResult[]> {

@@ -1,6 +1,6 @@
 import type { RegistrarPhase, RegistrarPhaseStatus } from "@penumbra/api-contract";
-import { Badge, type BadgeVariant } from "../../ui/Badge";
-import { fmtTs } from "../../lib/format";
+import { Badge, type BadgeVariant } from "@src/ui/Badge";
+import { fmtTs } from "@src/lib/format";
 
 const PHASE_STATUS_VARIANT: Record<RegistrarPhaseStatus, BadgeVariant> = {
   pending: "muted",

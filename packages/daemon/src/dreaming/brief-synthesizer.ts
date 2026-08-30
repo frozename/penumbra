@@ -1,9 +1,6 @@
+import { attemptCandidatesInOrder, resolveRoleLlmCandidates } from "@penumbra/core";
 import { readFileSync } from "node:fs";
 
-import {
-  attemptCandidatesInOrder,
-  resolveRoleLlmCandidates,
-} from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 
 export interface BriefSynthesizerInput {

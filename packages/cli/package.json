@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./bin/penumbra.ts",
+    "./commands/init": "./src/commands/init.ts",
+    "./commands/start": "./src/commands/start.ts",
+    "./commands/stop": "./src/commands/stop.ts"
+  },
   "bin": {
     "penumbra": "./bin/penumbra.ts"
   },

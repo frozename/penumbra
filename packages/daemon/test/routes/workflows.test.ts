@@ -7,6 +7,7 @@ import {
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { composeRecall } from "@penumbra/workflows";
+import { buildRegistry, type Registry } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -26,8 +27,6 @@ import {
   workflowsWaitRoute,
 } from "@src/routes/workflows.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
-
-import { buildRegistry, type Registry } from "../../../workflows/src/registry.js";
 
 if (process.platform === "darwin") {
   try {

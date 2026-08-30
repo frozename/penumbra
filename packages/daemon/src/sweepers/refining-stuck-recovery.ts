@@ -1,10 +1,7 @@
 import type { T0Writer } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
-import {
-  TaskDraftPayloadSchema,
-  TaskDraftStalePayloadSchema,
-} from "../../../core/src/schemas/task-draft.js";
+import { TaskDraftPayloadSchema, TaskDraftStalePayloadSchema } from "@penumbra/core";
 
 interface StuckRow {
   event_id: string;

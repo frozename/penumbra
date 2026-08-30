@@ -1,9 +1,9 @@
+import type { DaemonHandle } from "@penumbra/daemon";
+
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { DaemonHandle } from "../../daemon/src/serve.js";
 
 import { runStop } from "../src/commands/stop.js";
 

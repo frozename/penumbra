@@ -1,6 +1,6 @@
 import type { ChainSummary } from "@penumbra/api-contract";
 import type { Meta, StoryObj } from "@storybook/react";
-import { chainsByStatus } from "../../lib/query-keys";
+import { chainsByStatus } from "@src/lib/query-keys";
 import { RecentResolved } from "./RecentResolved";
 
 const meta: Meta<typeof RecentResolved> = {

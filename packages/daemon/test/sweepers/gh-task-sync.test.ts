@@ -1,3 +1,6 @@
+import type { Services } from "@penumbra/core";
+
+import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
@@ -15,10 +18,6 @@ import {
   type GhTaskSyncService,
   type GhTaskSyncSummary,
 } from "@src/sweepers/gh-task-sync.js";
-
-import type { Services } from "../../../core/src/index.js";
-
-import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "../../../core/src/index.js";
 
 try {
   if (process.platform === "darwin") {

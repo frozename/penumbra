@@ -1,31 +1,28 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import YAML from "yaml";
-
-import { assertDiscoveryNotSuspiciouslyEmpty } from "../../../config/src/generator/empty-discovery.js";
-import { assertPruneSafe } from "../../../config/src/generator/routing-refs.js";
-// Deep-relative: node_modules/@penumbra/config in this worktree symlinks to the
-// pre-change checkout, so the package specifier would not resolve this new export.
-// Resolves to the same file as @penumbra/config post-land.
 import {
+  assertDiscoveryNotSuspiciouslyEmpty,
+  assertPruneSafe,
   isGeneratorOwned,
   pruneOwnedOnly,
   upsertManagedFields,
-} from "../../../config/src/generator/upsert.js";
+} from "@penumbra/config";
 import {
   type AgentConfig,
   type AgentsConfig,
   AgentsConfigSchema,
   type RoutingConfig,
   RoutingConfigSchema,
-} from "../../../config/src/index.js";
+} from "@penumbra/config";
 import {
   collectLlamactlInventory,
   type LlamactlInventory,
   type LlamactlModelInventory,
   resolveDaemonStorageRoot,
-} from "../../../core/src/index.js";
+} from "@penumbra/core";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import YAML from "yaml";
+
 import { executeConfigSplitWrite } from "./config-split.js";
 
 const PROVENANCE_SOURCE = "llamactl-sync-local";

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { Route, Routes } from "react-router-dom";
-import { registrarDetail } from "../../lib/query-keys";
+import { registrarDetail } from "@src/lib/query-keys";
 import { RegistrarDetail } from "./RegistrarDetail";
 import { makeStoryDetail } from "./fixtures";
 

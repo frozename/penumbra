@@ -1,3 +1,7 @@
+import {
+  HandoffRowSchema as ApiHandoffRowSchema,
+  ChainStartResponseSchema,
+} from "@penumbra/api-contract";
 import { TaskRouterConfigSchema } from "@penumbra/config";
 import {
   AgentPerformanceWriter,
@@ -37,9 +41,6 @@ import {
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
-
-import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
-import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
 
 if (process.platform === "darwin") {
   try {

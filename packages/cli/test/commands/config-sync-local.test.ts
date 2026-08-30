@@ -1,3 +1,6 @@
+import type { LlamactlInventory } from "@penumbra/core";
+
+import { AgentsConfigSchema } from "@penumbra/config";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -6,10 +9,6 @@ import { join } from "node:path";
 import YAML from "yaml";
 
 import { runConfigSyncLocal } from "@src/commands/config-sync-local.js";
-
-import type { LlamactlInventory } from "../../../core/src/index.js";
-
-import { AgentsConfigSchema } from "../../../config/src/index.js";
 
 let tempDirs: string[] = [];
 

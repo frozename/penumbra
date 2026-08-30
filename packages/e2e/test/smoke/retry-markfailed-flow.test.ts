@@ -1,11 +1,11 @@
+import type { AgentChatConfig } from "@penumbra/agentchat/config/types";
+
+import { clearCustomAdapters, registerAdapter } from "@penumbra/agentchat/adapters/registry";
+import { dispatchHandoff } from "@penumbra/agentchat/cli/dispatch-handoff";
+import { createWorkerDispatcher } from "@penumbra/agentchat/worker/dispatcher";
 import { createLogger } from "@penumbra/core";
 import { expect, test } from "bun:test";
 
-import type { AgentChatConfig } from "../../../agentchat/src/config/types.js";
-
-import { clearCustomAdapters, registerAdapter } from "../../../agentchat/src/adapters/registry.js";
-import { dispatchHandoff } from "../../../agentchat/src/cli/dispatch-handoff.js";
-import { createWorkerDispatcher } from "../../../agentchat/src/worker/dispatcher.js";
 import { withDaemon } from "../helpers/with-daemon.js";
 
 test("retry exhaustion marks failed + emits chain-terminated(error) without rejecting", async () => {

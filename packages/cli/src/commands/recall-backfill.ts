@@ -1,7 +1,5 @@
-import { backfillRecallFields } from "@penumbra/core";
+import { backfillRecallFields, resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 
 export interface RecallBackfillOpts {
   storageRoot: string;

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import type { DispatchEvent } from "@penumbra/api-contract";
-import { Card, CardHead } from "../../ui/Card";
-import { Button } from "../../ui/Button";
-import { EventTypeChip } from "../../ui/EventTypeChip";
-import { useStream } from "../../hooks/useStream";
-import type { StreamMessage, StreamTopic, Subscription } from "../../api/streams";
-import { chainsByStatus, handoffsPending } from "../../lib/query-keys";
+import { Card, CardHead } from "@src/ui/Card";
+import { Button } from "@src/ui/Button";
+import { EventTypeChip } from "@src/ui/EventTypeChip";
+import { useStream } from "@src/hooks/useStream";
+import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
+import { chainsByStatus, handoffsPending } from "@src/lib/query-keys";
 import { useMissionStore } from "./store";
 
 type SubscribeImpl = <T>(

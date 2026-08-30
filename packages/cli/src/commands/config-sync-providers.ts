@@ -1,15 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
-
-import type {
-  DiscoveredModel,
-  DiscoveryDiagnostic,
-  DiscoveryReport,
-} from "./generator/discovery-types.js";
-
 import {
   type AgentConfig,
   type AgentsConfig,
@@ -32,8 +20,20 @@ import {
   seatNameFor,
   type SeatNameInput,
   upsertManagedFields,
-} from "../../../config/src/index.js";
-import { resolveDaemonStorageRoot } from "../../../core/src/index.js";
+} from "@penumbra/config";
+import { resolveDaemonStorageRoot } from "@penumbra/core";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import YAML from "yaml";
+
+import type {
+  DiscoveredModel,
+  DiscoveryDiagnostic,
+  DiscoveryReport,
+} from "./generator/discovery-types.js";
+
 import { executeConfigSplitWrite } from "./config-split.js";
 import {
   type AcpSessionSpawner,

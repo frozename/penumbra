@@ -1,11 +1,11 @@
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { agentsRecommendRoute } from "@penumbra/daemon/routes/agents";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
 import type { DaemonClient } from "@src/daemon-client.js";
 import { agentRecommendHandler } from "@src/tools/agent-recommend.js";
 
-import { agentsRecommendRoute } from "../../../daemon/src/routes/agents.js";
 import { fakeDaemon } from "../helpers.js";
 
 type AgentRecommendFn = DaemonClient["agentRecommend"];

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { usageQuotaStatus } from "../../lib/query-keys";
+import { usageQuotaStatus } from "@src/lib/query-keys";
 import { StatRow } from "./StatRow";
 
 const meta: Meta<typeof StatRow> = {

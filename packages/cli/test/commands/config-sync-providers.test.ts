@@ -1,3 +1,11 @@
+import { AgentConfigSchema as AgentchatAgentConfigSchema } from "@penumbra/agentchat/config/types";
+import {
+  AgentsConfigSchema,
+  loadProviderSourcesFromDir,
+  ModelAliasMapSchema,
+  type ProviderSourcesConfig,
+  resolveCatalogAuthority,
+} from "@penumbra/config";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,15 +22,6 @@ import {
 } from "@src/commands/config-sync-providers.js";
 import type { AcpSessionSpawner } from "@src/commands/generator/discovery-acp-session.js";
 import { parseOpencodeModelsOutput } from "@src/commands/generator/discovery-opencode.js";
-
-import { AgentConfigSchema as AgentchatAgentConfigSchema } from "../../../agentchat/src/config/types.js";
-import {
-  AgentsConfigSchema,
-  loadProviderSourcesFromDir,
-  ModelAliasMapSchema,
-  type ProviderSourcesConfig,
-  resolveCatalogAuthority,
-} from "../../../config/src/index.js";
 
 let tempDirs: string[] = [];
 

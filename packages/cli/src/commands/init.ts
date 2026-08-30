@@ -1,10 +1,10 @@
 import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
+import { resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { resolveStorageDbPath } from "../../../core/src/db/storage-db-path.js";
 import { AGENTCHAT_TEMPLATE } from "./init-agentchat-template.js";
 
 export interface RunInitOpts {

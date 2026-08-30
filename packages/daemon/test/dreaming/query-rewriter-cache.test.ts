@@ -1,3 +1,4 @@
+import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
@@ -6,9 +7,6 @@ import {
   type RewriteVerdict,
   setRewriteForMemory,
 } from "@src/dreaming/query-rewriter-cache.js";
-
-import { applySchema } from "../../../core/src/db/schema.js";
-import { loadSqliteVec } from "../../../core/src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {
