@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { exec as execCb } from "node:child_process";
-import { execFile as execFileCb } from "node:child_process";
+import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
 import type { Logger } from "../../src/logger.js";
+
 import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager.js";
 
 // node:util.promisify(child_process.exec)'s declaration overloads resolve to the
@@ -263,7 +263,7 @@ describe("WorktreeManager — project parameterization", () => {
           warns.push({ obj, msg });
         },
       } as Logger,
-      runner: (cmd, args, opts) => {
+      runner: (cmd, args, opts): ReturnType<WorktreeCommandRunner> => {
         if (cmd === "git" && args[0] === "merge-tree") {
           const err = new Error("synthetic merge-tree failure") as Error & { code?: number };
           err.code = 2;

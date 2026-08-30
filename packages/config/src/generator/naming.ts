@@ -27,8 +27,8 @@
 function normalizeSegment(segment: string): string {
   return segment
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "");
 }
 
 /** Deterministic, pure seat name for a generated (source, model slug, effort) tuple. */

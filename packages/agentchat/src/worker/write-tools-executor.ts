@@ -131,7 +131,7 @@ export class WriteToolsExecutor {
     const normalizedContent = normalizeWriteTextContent(args.content);
     await this.gate(ctx);
     const real = await this.resolvePath(args.path);
-    return this.withPathLock(real, async () => {
+    return await this.withPathLock(real, async () => {
       let prev_sha256: string | null = null;
       try {
         const st = await stat(real);
@@ -254,7 +254,7 @@ export class WriteToolsExecutor {
     await this.gate(ctx);
     if (args.old_string === "") throw new EditAmbiguousError("old_string is empty", Infinity);
     const real = await this.resolvePath(args.path);
-    return this.withPathLock(real, async () => {
+    return await this.withPathLock(real, async () => {
       let existing: string;
       try {
         existing = await readFile(real, "utf8");

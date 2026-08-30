@@ -11,11 +11,11 @@ describe("HTTP model discovery", () => {
 
     const result = await discoverHttpModels({
       provider: DEFAULT_HTTP_PROVIDER_SPECS[0],
-      resolveKeychain: async (account) => {
+      resolveKeychain: (account) => {
         resolvedAccount = account;
         return "resolved-sakana-token";
       },
-      fetch: async (input, init) => {
+      fetch: (input, init) => {
         expect(input).toBe("https://api.sakana.ai/v1/models");
         expect(new Headers(init?.headers).get("Authorization")).toBe(
           "Bearer resolved-sakana-token",
@@ -43,8 +43,8 @@ describe("HTTP model discovery", () => {
   test("a 401 response produces a legible skip, not a crash", async () => {
     const result = await discoverHttpModels({
       provider: DEFAULT_HTTP_PROVIDER_SPECS[1],
-      resolveKeychain: async () => "resolved-deepseek-token",
-      fetch: async () =>
+      resolveKeychain: () => "resolved-deepseek-token",
+      fetch: () =>
         new Response(JSON.stringify({ error: "invalid token" }), {
           status: 401,
           statusText: "Unauthorized",

@@ -1,9 +1,9 @@
+import { BilledHandSeatViolation, isBilledHandSeatViolation } from "@penumbra/config";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { BilledHandSeatViolation, isBilledHandSeatViolation } from "@penumbra/config";
 import { handleAgentchatConfigLoadError, loadAgentchatBundle } from "../src/commands/start.js";
 
 describe("handleAgentchatConfigLoadError", () => {
@@ -93,13 +93,13 @@ describe("loadAgentchatBundle", () => {
   test("rethrows ordinary parse failures when the config directory exists", () => {
     const configDir = mkdtempSync(join(tmpdir(), "penumbra-start-invalid-"));
     const previousConfigDir = process.env.PENUMBRA_CONFIG_DIR;
-    const write = process.stderr.write;
+    const write = process.stderr.write.bind(process.stderr);
     const stderr: string[] = [];
     process.env.PENUMBRA_CONFIG_DIR = configDir;
-    process.stderr.write = ((chunk: string | Uint8Array) => {
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
       stderr.push(String(chunk));
       return true;
-    }) as typeof process.stderr.write;
+    };
     try {
       mkdirSync(configDir, { recursive: true });
       writeFileSync(join(configDir, "agents.yaml"), "agents: [\n");

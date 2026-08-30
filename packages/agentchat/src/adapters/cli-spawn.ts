@@ -420,7 +420,7 @@ async function handleWatchdogExit(
 }
 
 function outputCapWarning(cap: OutputCapHit, command: string): string {
-  return `${command}: output cap exceeded on ${cap.stream}; retained ${cap.text.length} byte tail`;
+  return `${command}: output cap exceeded on ${cap.stream}; retained ${String(cap.text.length)} byte tail`;
 }
 
 async function* finalizeStreamExit(
@@ -531,7 +531,9 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
 
   // Start collecting stderr in parallel so it doesn't block stdout consumption.
   const stderrPromise = readStreamText(proc.stderr, {
-    onCapHit: (text) => onOutputCap("stderr", text),
+    onCapHit: (text) => {
+      onOutputCap("stderr", text);
+    },
   });
   stderrPromise.catch(() => {
     /* stderr drain errors are surfaced via the exit handling path */

@@ -126,6 +126,7 @@ export function buildRequiredLlmRoleFloors(
   ];
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve LLM role-floor evaluation while grandfathering its pre-existing complexity.
 export function evaluateLlmRoleFloors(input: {
   agentchatConfig?: LlmRoleAgentchatConfig | null;
   requiredRoles: LlmRoleFloorSpec[];

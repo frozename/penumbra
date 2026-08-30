@@ -25,11 +25,21 @@ export {
   AgentProvenanceSchema,
   type AgentsConfig,
   AgentsConfigSchema,
-  CARRIER_TOOL_OPTION_KEYS,
   allowedKeysFor,
+  CARRIER_TOOL_OPTION_KEYS,
   refineAgentConfigAdapterOptions,
   UNIVERSAL_OPTION_KEYS,
 } from "./files/agents.js";
+export {
+  assertHandBilledSeatsWhitelisted,
+  type AssertHandBilledSeatsWhitelistedOptions,
+  BILLED_HAND_SEAT_WHITELIST,
+  BilledHandSeatViolation,
+  GENERATOR_PROVENANCE_SOURCE,
+  type HandBilledSeatLike,
+  isBilledHandSeatViolation,
+  UNBILLED_API_PROVIDERS,
+} from "./files/billing-gate.js";
 export {
   assertHandBilledSeatsWhitelistedWithPrefix,
   loadAgentChatConfigFromDir,
@@ -41,6 +51,11 @@ export {
   ModelAliasMapSchema,
 } from "./files/model-aliases.js";
 export {
+  resolveLegacyOperatorConfigPath,
+  resolveOperatorConfigPath,
+} from "./files/operator-paths.js";
+export {
+  loadProviderSourcesFromDir,
   type ProviderBinding,
   ProviderBindingCarriersSchema,
   ProviderBindingSchema,
@@ -48,13 +63,8 @@ export {
   ProviderSourceSchema,
   type ProviderSourcesConfig,
   ProviderSourcesConfigSchema,
-  loadProviderSourcesFromDir,
   resolveCatalogAuthority,
 } from "./files/providers.js";
-export {
-  resolveLegacyOperatorConfigPath,
-  resolveOperatorConfigPath,
-} from "./files/operator-paths.js";
 export {
   KNOWN_PRESSURE_WINDOW_LABELS,
   type KnownPressureWindowLabel,
@@ -69,36 +79,26 @@ export {
 } from "./files/task-router.js";
 export { type Workload, WORKLOADS, WorkloadSchema } from "./files/workload.js";
 export {
-  assertDiscoveryNotSuspiciouslyEmpty,
-  type AssertDiscoveryNotSuspiciouslyEmptyOptions,
-} from "./generator/empty-discovery.js";
-export {
   assertNoBilledHttpSeats,
   type AssertNoBilledHttpSeatsOptions,
   type HttpSeatLike,
 } from "./generator/assertions.js";
 export {
-  assertHandBilledSeatsWhitelisted,
-  BilledHandSeatViolation,
-  GENERATOR_PROVENANCE_SOURCE,
-  type AssertHandBilledSeatsWhitelistedOptions,
-  BILLED_HAND_SEAT_WHITELIST,
-  isBilledHandSeatViolation,
-  type HandBilledSeatLike,
-  UNBILLED_API_PROVIDERS,
-} from "./files/billing-gate.js";
-export {
-  applyBindingCarriers,
   type AppliedCarriers,
+  applyBindingCarriers,
   type BindingCarriers,
   type CarrierModelVars,
   renderTemplateTokens,
 } from "./generator/carriers.js";
 export {
+  assertDiscoveryNotSuspiciouslyEmpty,
+  type AssertDiscoveryNotSuspiciouslyEmptyOptions,
+} from "./generator/empty-discovery.js";
+export {
   assertNoRoleTagCollision,
   assertUniqueSeatNames,
-  type SeatNameInput,
   seatNameFor,
+  type SeatNameInput,
 } from "./generator/naming.js";
 export {
   assertRoleFloors,

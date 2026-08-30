@@ -1,4 +1,4 @@
-import { extractSessionCandidates, stripPrivacyTags, type Services } from "@penumbra/core";
+import { extractSessionCandidates, type Services, stripPrivacyTags } from "@penumbra/core";
 import { closeSync, fstatSync, openSync, readSync, type Stats, statSync } from "node:fs";
 import { z } from "zod";
 

@@ -1,4 +1,4 @@
-import { createAaSnapshotStore, type AaSnapshotStore, type AaTransport } from "@penumbra/core";
+import { type AaSnapshotStore, type AaTransport, createAaSnapshotStore } from "@penumbra/core";
 import { describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import {
   startAaSnapshotRefreshSweeper,
 } from "../../src/sweepers/aa-snapshot-refresh.js";
 
-function aaModel(overrides: Record<string, unknown> = {}) {
+function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "aa:model:1",
     name: "Model 1",
@@ -38,7 +38,7 @@ function aaModel(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function aaResponseBody(data = [aaModel()]) {
+function aaResponseBody(data: Record<string, unknown>[] = [aaModel()]): Record<string, unknown> {
   return {
     status: "success",
     prompt_options: {
@@ -50,9 +50,11 @@ function aaResponseBody(data = [aaModel()]) {
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers,
   });
 }
 
@@ -86,12 +88,12 @@ describe("aa-snapshot-refresh sweeper", () => {
       const store = createAaSnapshotStore({
         path: snapshotPath,
         ttlSeconds: 3600,
-        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        now: (): Date => new Date("2026-08-25T12:00:00.000Z"),
       });
 
       let requestCount = 0;
       const transport: AaTransport = {
-        async fetch(_input, init) {
+        fetch(_input, init) {
           requestCount += 1;
           expect(new Headers(init?.headers).get("x-api-key")).toBe("test-aa-key");
           return jsonResponse(aaResponseBody());
@@ -113,6 +115,7 @@ describe("aa-snapshot-refresh sweeper", () => {
 
       const read = await store.read();
       expect(read.state).toBe("available");
+      if (read.state !== "available") throw new Error("expected available snapshot");
       expect(read.stale).toBe(false);
       expect(read.snapshot.models).toHaveLength(1);
       expect(read.snapshot.models[0]?.slug).toBe("model-1");
@@ -126,7 +129,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       const store = createAaSnapshotStore({
         path: snapshotPath,
         ttlSeconds: 3600,
-        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        now: (): Date => new Date("2026-08-25T12:00:00.000Z"),
       });
       await store.write({
         provenance: { collectedAt: "2026-08-25T11:50:00.000Z" },
@@ -135,7 +138,7 @@ describe("aa-snapshot-refresh sweeper", () => {
 
       let requestCount = 0;
       const transport: AaTransport = {
-        async fetch() {
+        fetch() {
           requestCount += 1;
           return jsonResponse(aaResponseBody());
         },
@@ -162,12 +165,12 @@ describe("aa-snapshot-refresh sweeper", () => {
       const store = createAaSnapshotStore({
         path: snapshotPath,
         ttlSeconds: 3600,
-        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        now: (): Date => new Date("2026-08-25T12:00:00.000Z"),
       });
 
       let requestCount = 0;
       const transport: AaTransport = {
-        async fetch() {
+        fetch() {
           requestCount += 1;
           return jsonResponse(aaResponseBody());
         },
@@ -178,7 +181,7 @@ describe("aa-snapshot-refresh sweeper", () => {
         aaSnapshotStore: store,
         transport,
         apiKeyPath: join(dir, "missing.key"),
-        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        now: (): Date => new Date("2026-08-25T12:00:00.000Z"),
         log: { warn },
       };
 
@@ -211,7 +214,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       );
 
       const transport: AaTransport = {
-        async fetch() {
+        fetch() {
           return jsonResponse({ error: "server exploded" }, { status: 500 });
         },
       };
@@ -236,6 +239,7 @@ describe("aa-snapshot-refresh sweeper", () => {
 
       const read = await store.read();
       expect(read.state).toBe("available");
+      if (read.state !== "available") throw new Error("expected available snapshot");
       expect(read.snapshot.models[0]?.slug).toBe("model-1");
     });
   });
@@ -257,7 +261,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       });
 
       const transport: AaTransport = {
-        async fetch() {
+        fetch() {
           return jsonResponse(aaResponseBody());
         },
       };
@@ -302,7 +306,7 @@ describe("aa-snapshot-refresh sweeper", () => {
 
       let requestCount = 0;
       const transport: AaTransport = {
-        async fetch() {
+        fetch() {
           requestCount += 1;
           return jsonResponse(
             { error: "rate limited" },
@@ -356,7 +360,7 @@ describe("aa-snapshot-refresh sweeper", () => {
         return value;
       };
       const oversizedRetryTransport: AaTransport = {
-        async fetch() {
+        fetch() {
           return jsonResponse(
             { error: "rate limited" },
             { status: 429, headers: { "retry-after": "7200" } },
@@ -391,7 +395,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       registeredCb = cb;
       capturedIntervalMs = ms;
       timerId = {
-        unref: () => {
+        unref: (): void => {
           unrefCallCount += 1;
         },
       };
@@ -418,7 +422,7 @@ describe("aa-snapshot-refresh sweeper", () => {
           refresh: (...args) => realStore.refresh(...args),
         };
         const transport: AaTransport = {
-          async fetch() {
+          fetch() {
             return jsonResponse(aaResponseBody());
           },
         };
@@ -462,7 +466,7 @@ describe("aa-snapshot-refresh sweeper", () => {
     global.setInterval = ((_cb: () => void, ms?: number) => {
       capturedIntervalMs = ms;
       timerId = {
-        unref: () => {
+        unref: (): void => {
           unrefCallCount += 1;
         },
       };
@@ -477,7 +481,7 @@ describe("aa-snapshot-refresh sweeper", () => {
           ttlSeconds: 3600,
         });
         const transport: AaTransport = {
-          async fetch() {
+          fetch() {
             return jsonResponse(aaResponseBody());
           },
         };
@@ -510,7 +514,7 @@ describe("aa-snapshot-refresh sweeper", () => {
     global.setInterval = ((_cb: () => void, ms?: number) => {
       capturedIntervalMs = ms;
       timerId = {
-        unref: () => {
+        unref: (): void => {
           unrefCallCount += 1;
         },
       };
@@ -525,7 +529,7 @@ describe("aa-snapshot-refresh sweeper", () => {
           ttlSeconds: 3600,
         });
         const transport: AaTransport = {
-          async fetch() {
+          fetch() {
             return jsonResponse(aaResponseBody());
           },
         };

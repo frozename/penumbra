@@ -64,6 +64,7 @@ export async function registrarCreateRoute(req: Request, services: Services): Pr
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve registrar append handling while grandfathering its pre-existing complexity.
 export async function registrarAppendRoute(
   req: Request,
   registrar_id: string,

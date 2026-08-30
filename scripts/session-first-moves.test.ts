@@ -50,8 +50,12 @@ test("reads near-duplicate promotion gate counts from dream_actions payload sour
     });
 
     expect(result.exitCode).toBe(0);
-    const output = JSON.parse(new TextDecoder().decode(result.stdout));
-    expect(output.gate_deltas).toEqual({ filtered: 1, neardup: 3 });
+    const output: unknown = JSON.parse(new TextDecoder().decode(result.stdout));
+    if (typeof output !== "object" || output === null) throw new Error("invalid script output");
+    expect((output as { gate_deltas?: unknown }).gate_deltas).toEqual({
+      filtered: 1,
+      neardup: 3,
+    });
   } finally {
     rmSync(storageRoot, { recursive: true, force: true });
   }

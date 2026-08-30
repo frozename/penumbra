@@ -36,7 +36,7 @@ function readArgs(argv: string[]): string[] {
 
 function matchesGlob(path: string, glob: string): boolean {
   const escaped = glob.replaceAll(/[.+^${}()|[\]\\]/g, "\\$&");
-  const expanded = escaped.replace(/\*\*\/|\*\*|\*/g, (token) => {
+  const expanded = escaped.replaceAll(/\*\*\/|\*\*|\*/g, (token) => {
     if (token === "**/") return "(?:.*\\/)?";
     if (token === "**") return ".*";
     return "[^/]*";

@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
-import { resolveHandoffBranchName } from "./branch-name.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
+import { resolveHandoffBranchName } from "./branch-name.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -180,6 +180,7 @@ function spawnSilent(
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve isolated-install orchestration while grandfathering its pre-existing complexity.
 export async function runIsolatedInstall(
   wtPath: string,
   opts: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number } = {},
@@ -347,9 +348,7 @@ export class WorktreeManager {
       let gitDir = dotGit;
       if (dotGitStat.isFile()) {
         const raw = fs.readFileSync(dotGit, "utf8").trim();
-        const match = /^gitdir:\s*(.+)$/i.exec(raw);
-        if (!match) return null;
-        const parsedGitDir = match[1];
+        const parsedGitDir = /^gitdir:\s*(\S.*)$/i.exec(raw)?.[1];
         if (parsedGitDir === undefined) return null;
         gitDir = path.isAbsolute(parsedGitDir) ? parsedGitDir : path.resolve(wtPath, parsedGitDir);
       }
@@ -1099,6 +1098,7 @@ function ensureRealDirectory(dirPath: string): void {
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve worktree workspace-link handling while grandfathering its pre-existing complexity.
 function ensureWorktreeLocalWorkspaceLink(
   worktreeRoot: string,
   packageDir: string,
@@ -1149,6 +1149,7 @@ function ensureWorktreeLocalWorkspaceLink(
   fs.symlinkSync(relativeTarget, linkPath, "dir");
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve dependency-link planning while grandfathering its pre-existing complexity.
 export function planEscapingFileDependencyLinks(
   mainRepoRoot: string,
   worktreeRoot: string,

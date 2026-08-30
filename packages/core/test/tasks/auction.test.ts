@@ -353,7 +353,7 @@ try {
 
   // Real cross-thread barrier instead of a wall-clock guess: each worker opens its own
   // SQLite connection, signals readiness, then blocks in Atomics.wait() until the parent
-  // releases all ${RACE_CONCURRENCY} contenders at once.
+  // releases all ${String(RACE_CONCURRENCY)} contenders at once.
   const readyAt = Date.now();
   Atomics.add(state, 0, 1);
   Atomics.notify(state, 0);
@@ -372,7 +372,7 @@ try {
 }
 `;
 
-      type WorkerOutcome = { result: unknown | null; readyAt: number; callStartAt: number };
+      type WorkerOutcome = { result: unknown; readyAt: number; callStartAt: number };
       type WorkerMessage = WorkerOutcome | { error: string };
 
       const workerStates: { worker: NodeWorker; exited: boolean }[] = [];
@@ -398,7 +398,7 @@ try {
           worker.once("exit", (code: number): void => {
             workerState.exited = true;
             if (code !== 0) {
-              reject(new Error(`worker exited ${code}`));
+              reject(new Error(`worker exited ${String(code)}`));
               return;
             }
             if (received === null) {
@@ -432,12 +432,12 @@ try {
         while (Atomics.load(barrierState, 0) < RACE_CONCURRENCY) {
           if (Date.now() >= readyDeadline) {
             throw new Error(
-              `only ${Atomics.load(barrierState, 0)}/${RACE_CONCURRENCY} workers reached the barrier within ${RACE_BARRIER_READY_TIMEOUT_MS}ms`,
+              `only ${String(Atomics.load(barrierState, 0))}/${String(RACE_CONCURRENCY)} workers reached the barrier within ${String(RACE_BARRIER_READY_TIMEOUT_MS)}ms`,
             );
           }
           Atomics.wait(barrierState, 0, Atomics.load(barrierState, 0), 10);
         }
-        console.error(`[calibration] ready-wait took ${Date.now() - __testStart}ms`);
+        console.error(`[calibration] ready-wait took ${String(Date.now() - __testStart)}ms`);
 
         const releaseAt = Date.now();
         Atomics.store(barrierState, 1, 1);
@@ -447,7 +447,7 @@ try {
         const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
         if (rejected.length > 0) {
           throw new Error(
-            `${rejected.length}/${RACE_CONCURRENCY} workers failed: ${rejected.map((r) => String(r.reason)).join("; ")}`,
+            `${String(rejected.length)}/${String(RACE_CONCURRENCY)} workers failed: ${rejected.map((r) => String(r.reason)).join("; ")}`,
           );
         }
         const fulfilled = results
@@ -466,11 +466,11 @@ try {
         const callStarts = fulfilled.map((o) => o.callStartAt);
         const spread = Math.max(...callStarts) - Math.min(...callStarts);
         expect(spread).toBeLessThan(RACE_BARRIER_SPREAD_THRESHOLD_MS);
-        console.error(`[calibration] barrier spread ${spread}ms`);
+        console.error(`[calibration] barrier spread ${String(spread)}ms`);
 
         const leaseResults = fulfilled.map((o) => o.result).filter((v) => v !== null);
         expect(leaseResults).toHaveLength(1);
-        console.error(`[calibration] total test took ${Date.now() - __testStart}ms`);
+        console.error(`[calibration] total test took ${String(Date.now() - __testStart)}ms`);
 
         const verificationDb = new Database(dbPath);
         const openLeases = verificationDb

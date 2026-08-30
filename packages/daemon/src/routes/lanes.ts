@@ -19,12 +19,7 @@ import { z } from "zod";
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { json } from "./_helpers.js";
 
-const closeLaneWithLog = closeLane as (
-  db: Parameters<typeof closeLane>[0],
-  lane_id: string,
-  fields: Parameters<typeof closeLane>[2],
-  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
-) => void;
+const closeLaneWithLog = closeLane;
 const OpenLaneBodySchema = z.object({
   lane_id: z.string().min(1),
   implementer_handoff: z.string().min(1),

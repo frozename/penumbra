@@ -2,10 +2,9 @@ import { readFileSync, statSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-
 import { z } from "zod";
 
-import { AaModelSchema, type AaModel } from "./schemas.js";
+import { type AaModel, AaModelSchema } from "./schemas.js";
 
 export const DEFAULT_AA_SNAPSHOT_PATH = "~/.penumbra/aa-snapshot.json";
 
@@ -93,8 +92,8 @@ export function createAaSnapshotStore(opts: AaSnapshotStoreOptions = {}): AaSnap
   const path = expandHome(opts.path ?? DEFAULT_AA_SNAPSHOT_PATH);
   const configuredTtlSeconds = opts.ttlSeconds;
   const ttlSeconds = opts.ttlSeconds ?? 24 * 60 * 60;
-  const now = opts.now ?? (() => new Date());
-  const debugLogger = opts.debugLogger ?? (() => undefined);
+  const now = opts.now ?? ((): Date => new Date());
+  const debugLogger = opts.debugLogger ?? ((): void => undefined);
   const syncCache: { current: SyncSnapshotCache | undefined } = { current: undefined };
 
   return {
@@ -200,7 +199,7 @@ function readSnapshotSync(
       };
     }
     const cached = cache.current;
-    if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    if (cached?.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
       return resultFor(cached.snapshot, now, "store", configuredTtlSeconds);
     }
     const raw = readFileSync(path, "utf8");
