@@ -49,7 +49,7 @@ valid/model
     let runCount = 0;
 
     const models = await discoverOpencodeModels({
-      runOpencodeModels: async () => {
+      runOpencodeModels: () => {
         runCount += 1;
         return fixtureText;
       },

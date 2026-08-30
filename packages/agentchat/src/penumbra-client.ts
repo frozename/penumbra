@@ -777,8 +777,8 @@ function extractErrorCode(body: unknown): string | undefined {
 
 function truncateBodyText(body: unknown): string {
   if (body === null) return "";
-  const text = JSON.stringify(body);
-  if (text === undefined) return "";
+  const text = JSON.stringify(body) as unknown;
+  if (typeof text !== "string") return "";
   return text.length > 2_048 ? text.slice(0, 2_048) : text;
 }
 

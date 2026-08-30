@@ -4,7 +4,6 @@ import {
   type DispatchEventInput,
   type Logger,
 } from "@penumbra/core";
-
 import { expect, mock, test, vi } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -624,19 +623,15 @@ test("handoff creation failures propagate to hop-end and dispatch.end metadata",
   const progressCalls = mockCalls<[string, Record<string, unknown>]>(d.postProgress).map(
     (call) => call[1],
   );
-  expect(progressCalls).toContainEqual(
-    expect.objectContaining({
-      type: "hop-end",
-      error: terminalError,
-    }),
-  );
-  expect(progressCalls).toContainEqual(
-    expect.objectContaining({
-      type: "chain-end",
-      reason: "handoff_creation_failed",
-      error: terminalError,
-    }),
-  );
+  expect(progressCalls.find((call) => call.type === "hop-end")).toMatchObject({
+    type: "hop-end",
+    error: terminalError,
+  });
+  expect(progressCalls.find((call) => call.type === "chain-end")).toMatchObject({
+    type: "chain-end",
+    reason: "handoff_creation_failed",
+    error: terminalError,
+  });
   expect(events).toContainEqual(
     eventMatcher<DispatchEventInput>({
       kind: "dispatch.end",

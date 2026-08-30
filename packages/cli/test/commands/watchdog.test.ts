@@ -43,8 +43,8 @@ function dependencies(
 ): WatchdogOptions["dependencies"] {
   return {
     now: () => new Date("2026-08-18T10:00:00.000Z"),
-    probeDaemon: async () => false,
-    launchctl: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+    probeDaemon: () => false,
+    launchctl: () => ({ exitCode: 0, stdout: "", stderr: "" }),
     uid: () => 501,
     plistPath: "/tmp/dev.penumbra.daemon.plist",
     error: () => undefined,
@@ -62,8 +62,8 @@ test("watchdog reports a healthy daemon without launchctl or corrective action",
   const result = await runWatchdog({
     storageRoot: setupRoot(),
     dependencies: dependencies({
-      probeDaemon: async () => true,
-      launchctl: async (args) => {
+      probeDaemon: () => true,
+      launchctl: (args) => {
         launchctlCalls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
       },
@@ -86,7 +86,7 @@ test("watchdog bootstraps an absent service only when healing is enabled", async
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: async (args) => {
+      launchctl: (args) => {
         launchctlCalls.push(args);
         return {
           exitCode: args[0] === "print" ? 1 : 0,
@@ -111,7 +111,7 @@ test("watchdog kickstarts a present but unhealthy service when healing is enable
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: async (args) => {
+      launchctl: (args) => {
         launchctlCalls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
       },
@@ -131,7 +131,7 @@ test("watchdog observe-only mode never makes a corrective launchctl call", async
   const result = await runWatchdog({
     storageRoot: setupRoot(),
     dependencies: dependencies({
-      launchctl: async (args) => {
+      launchctl: (args) => {
         launchctlCalls.push(args);
         return { exitCode: 1, stdout: "", stderr: "Could not find service" };
       },
@@ -149,7 +149,7 @@ test("watchdog does not bootstrap for an unclassified launchctl query failure", 
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: async (args) => {
+      launchctl: (args) => {
         launchctlCalls.push(args);
         return { exitCode: 1, stdout: "", stderr: "Operation not permitted" };
       },
@@ -168,7 +168,7 @@ test("watchdog records a down observation when the selected remediation fails", 
       storageRoot: root,
       heal: true,
       dependencies: dependencies({
-        launchctl: async (args) => {
+        launchctl: (args) => {
           if (args[0] === "print") {
             return { exitCode: 1, stdout: "", stderr: "Could not find service" };
           }
@@ -194,14 +194,14 @@ test("watchdog preserves the first down observation and accumulates downtime", a
     storageRoot: root,
     dependencies: dependencies({
       now: () => new Date("2026-08-18T10:00:00.000Z"),
-      launchctl: async () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
+      launchctl: () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
     }),
   });
   const second = await runWatchdog({
     storageRoot: root,
     dependencies: dependencies({
       now: () => new Date("2026-08-18T10:05:00.000Z"),
-      launchctl: async () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
+      launchctl: () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
     }),
   });
 

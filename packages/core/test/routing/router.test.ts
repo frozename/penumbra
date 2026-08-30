@@ -1,13 +1,13 @@
+import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
+
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
-
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import { migrate } from "../../src/db/migrations.js";
+import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 import {
   applyHardConstraints,
   type CandidateConstraintFacts,
@@ -15,15 +15,15 @@ import {
 import {
   computePriors,
   decide,
-  reconciliationFactorFields,
   type DecideInput,
+  reconciliationFactorFields,
   type RouterDependencies,
 } from "../../src/routing/router.js";
 import {
-  AaModelSnapshotSchema,
-  RoutingDecisionSchema,
   type AaModel,
   type AaModelSnapshot,
+  AaModelSnapshotSchema,
+  RoutingDecisionSchema,
   type TaskProfile,
 } from "../../src/routing/schemas.js";
 import { routeAgent } from "../../src/services/agent-routing.js";
@@ -43,6 +43,7 @@ const ROLE = "executor";
 const REGISTRY = ["quality-seat", "fast-seat"];
 let db: Database;
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the fixture source scanner while grandfathering its pre-existing complexity.
 function stripTypeScriptComments(source: string): string {
   let result = "";
   let quote: "'" | '"' | "`" | null = null;
@@ -261,7 +262,10 @@ function dependencies(overrides: Partial<RouterDependencies> = {}): RouterDepend
   return { now: () => NOW, ...overrides };
 }
 
-function seed(agent: string, options: { outcome?: "merged" | "failed"; latencyMs?: number } = {}) {
+function seed(
+  agent: string,
+  options: { outcome?: "merged" | "failed"; latencyMs?: number } = {},
+): void {
   const writer = new AgentPerformanceWriter(db);
   writer.upsert({
     performance_id: `${agent}-performance`,
@@ -294,7 +298,9 @@ describe("routing decide orchestrator", () => {
     seed("fast-seat");
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    db.close();
+  });
 
   test("mode:'off' returns without invoking routeAgent, the constraint filter, or any priors math", () => {
     const calls: string[] = [];
@@ -331,7 +337,7 @@ describe("routing decide orchestrator", () => {
   });
 
   test("ranked-first keeps an unsampled registry-first candidate from bypassing the priors-scored rank", () => {
-    db.exec("DELETE FROM agent_performance");
+    db.run("DELETE FROM agent_performance");
     seed("fast-seat");
 
     const decision = decide(baseInput(), dependencies());
@@ -343,7 +349,7 @@ describe("routing decide orchestrator", () => {
   });
 
   test("a zero-history selection reports score zero and names the absent local history", () => {
-    db.exec("DELETE FROM agent_performance");
+    db.run("DELETE FROM agent_performance");
 
     const decision = decide(baseInput(), dependencies());
 
@@ -502,7 +508,9 @@ describe("routing decide orchestrator", () => {
 
     expect(unpressured.selected?.agent).toBe("quality-seat");
     expect(pressured.selected?.agent).toBe("fast-seat");
-    const cashCost = (decision: ReturnType<typeof decide>) =>
+    const cashCost = (
+      decision: ReturnType<typeof decide>,
+    ): ReturnType<typeof decide>["factors"][number] | undefined =>
       decision.factors.find((factor) => factor.name === "fast-seat.predicted_cash_cost_usd");
     expect(cashCost(pressured)).toEqual(cashCost(unpressured));
     expect(pressured.factors.some((factor) => factor.name === "openai.subscription_pressure")).toBe(
@@ -569,8 +577,7 @@ describe("routing decide orchestrator", () => {
     expect(decision.fallbackChain).not.toContain("quality-seat");
     expect(
       decision.alternatives.some(
-        (alternative) =>
-          alternative.routeId === "openai:quality-seat" && alternative.excluded === false,
+        (alternative) => alternative.routeId === "openai:quality-seat" && !alternative.excluded,
       ),
     ).toBe(false);
   });
@@ -640,7 +647,7 @@ describe("routing decide orchestrator", () => {
       }),
       dependencies(),
     );
-    const prior = (decision: ReturnType<typeof decide>, agent: string) =>
+    const prior = (decision: ReturnType<typeof decide>, agent: string): number =>
       Number(decision.factors.find((factor) => factor.name === `${agent}.aa_prior`)?.rawValue);
 
     expect(stale.confidence).toBeLessThan(fresh.confidence);
@@ -672,7 +679,7 @@ describe("routing decide orchestrator", () => {
       }),
       dependencies(),
     );
-    const prior = (decision: ReturnType<typeof decide>) =>
+    const prior = (decision: ReturnType<typeof decide>): number =>
       Number(decision.factors.find((factor) => factor.name === "quality-seat.aa_prior")?.rawValue);
 
     expect(Math.abs(prior(monthsStale) - 1)).toBeLessThan(Math.abs(prior(barelyStale) - 1));
@@ -766,10 +773,10 @@ describe("routing decide orchestrator", () => {
   });
 
   test("decide passes the registry and ranked-first policy to both real routeAgent calls", () => {
-    const captured: Array<{
+    const captured: {
       registry: DecideInput["agentRegistry"];
       policy: "unsampled-first" | "ranked-first" | undefined;
-    }> = [];
+    }[] = [];
     decide(
       baseInput(),
       dependencies({
@@ -966,7 +973,10 @@ test("deterministic routing sources recursively avoid ambient randomness and clo
       const relativePath = relative(sourceDir, path);
       let source = stripTypeScriptComments(readFileSync(path, "utf8"));
       if (injectedClockBoundaries.has(relativePath)) {
-        source = source.replace("opts.now ?? (() => new Date())", "opts.now");
+        source = source.replace(
+          /opts\.now \?\? \(\(\): Date => new Date\(\)\)|opts\.now \?\? \(\(\) => new Date\(\)\)/,
+          "opts.now",
+        );
       }
       return forbidden.some((pattern) => pattern.test(source));
     })

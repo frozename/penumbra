@@ -93,7 +93,7 @@ test("ts spec closes ctx.db handle after run", async () => {
           headers: { "content-type": "application/json" },
         }),
     });
-    const fn = async (workflowCtx: WorkflowCtx): Promise<{ ok: boolean }> => {
+    const fn = (workflowCtx: WorkflowCtx): Promise<{ ok: boolean }> => {
       const db = workflowCtx.db?.();
       expect(db?.query("SELECT 1 AS ok").get()).toEqual({ ok: 1 });
       capturedDb = db ?? null;

@@ -300,7 +300,9 @@ test("event tick coalesces while a sweep is in flight without double-firing or d
 
   const originalGetTasks = plans.getTasks.bind(plans);
   let publishedCompletion = false;
-  (plans as { getTasks: PlanWriter["getTasks"] }).getTasks = (planId: string) => {
+  (plans as { getTasks: PlanWriter["getTasks"] }).getTasks = (
+    planId: string,
+  ): ReturnType<PlanWriter["getTasks"]> => {
     const tasks = originalGetTasks(planId);
     if (!publishedCompletion) {
       publishedCompletion = true;

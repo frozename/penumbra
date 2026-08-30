@@ -60,10 +60,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   if (handle) await runStop({ storageRoot: dir, handle });
-  embedderServer?.stop(true);
+  void embedderServer?.stop(true);
   embedderServer = null;
   for (const [name, value] of Object.entries(previousEmbedderEnv)) {
-    if (value === undefined) delete process.env[name];
+    if (value === undefined) Reflect.deleteProperty(process.env, name);
     else process.env[name] = value;
   }
   previousEmbedderEnv = {};

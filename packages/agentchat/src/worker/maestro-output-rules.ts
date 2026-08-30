@@ -1,4 +1,4 @@
-import { WALKER_DEPTH_EXCEEDED_RULE_ID, type ValuePatternRule } from "@penumbra/core";
+import { type ValuePatternRule, WALKER_DEPTH_EXCEEDED_RULE_ID } from "@penumbra/core";
 
 /**
  * Rules sourced from `tools/maestro-bench/bench-maestro.py` v2 evidence

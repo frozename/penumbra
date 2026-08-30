@@ -1,5 +1,5 @@
 import { DEFAULT_JUDGE_CHAT_TIMEOUT_MS, type JudgeChatFn } from "../services/judge-chat.js";
-import { TaskProfileSchema, type TaskProfile } from "./schemas.js";
+import { type TaskProfile, TaskProfileSchema } from "./schemas.js";
 import { profileTaskDeterministic, type TaskProfileHints } from "./task-profile.js";
 
 export type TaskProfileJudgeFallbackReason =
@@ -49,7 +49,7 @@ export function createTaskProfileJudgeAdapter(
   const deterministicFallback = options.deterministicFallback ?? profileTaskDeterministic;
 
   return {
-    async profileTask(message, role, hints = {}) {
+    async profileTask(message, role, hints = {}): Promise<TaskProfileJudgeResult> {
       const fallback = (reason: TaskProfileJudgeFallbackReason): TaskProfileJudgeResult => ({
         profile: deterministicFallback(message, role, hints),
         source: "deterministic",
@@ -116,7 +116,9 @@ function buildJudgeMessages(
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new TaskProfileJudgeTimeoutError()), timeoutMs);
+    const timer = setTimeout(() => {
+      reject(new TaskProfileJudgeTimeoutError());
+    }, timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -124,7 +126,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
       },
       (error: unknown) => {
         clearTimeout(timer);
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       },
     );
   });

@@ -70,8 +70,8 @@ describe("runGeneratorSafetyGate", () => {
     const result = runGeneratorSafetyGate(candidateConfig, baseCtx());
 
     expect(result.ok).toBe(false);
-    expect(result.violations.some((v) => /openai-gpt-http/.test(v))).toBe(true);
-    expect(result.violations.some((v) => /refiner/.test(v))).toBe(true);
+    expect(result.violations.some((v) => v.includes("openai-gpt-http"))).toBe(true);
+    expect(result.violations.some((v) => v.includes("refiner"))).toBe(true);
   });
 
   test("reports a generator-owned billed stdio-acp seat alongside the existing HTTP tripwire", () => {
@@ -102,8 +102,10 @@ describe("runGeneratorSafetyGate", () => {
 
     expect(result.ok).toBe(false);
     expect(result.violations).toHaveLength(2);
-    expect(result.violations.some((violation) => /openai-gpt-http/.test(violation))).toBe(true);
-    expect(result.violations.some((violation) => /openai-gpt-stdio/.test(violation))).toBe(true);
+    expect(result.violations.some((violation) => violation.includes("openai-gpt-http"))).toBe(true);
+    expect(result.violations.some((violation) => violation.includes("openai-gpt-stdio"))).toBe(
+      true,
+    );
   });
 
   test("ok:true with no violations lets the caller proceed to write", () => {

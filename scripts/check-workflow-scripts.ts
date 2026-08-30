@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Script } from "node:vm";
 
 const WORKFLOW_DIR = ".claude/workflows";
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve workflow-source scanning while grandfathering its pre-existing complexity.
 function findMatchingBrace(source: string, openIndex: number): number {
   let depth = 0;
   let quote: string | null = null;
@@ -76,6 +78,7 @@ function extractMeta(source: string): { body: string; metaSource: string } {
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve workflow-source validation while grandfathering its pre-existing complexity.
 function hasNonEmptyStringProperty(source: string, property: string): boolean {
   let objectDepth = 0;
   let arrayDepth = 0;
@@ -98,7 +101,7 @@ function hasNonEmptyStringProperty(source: string, property: string): boolean {
     for (let i = index + 1; i < source.length; i++) {
       const ch = source[i];
       if (escaped) {
-        value += ch;
+        value += ch ?? "";
         escaped = false;
       } else if (ch === "\\") {
         value += ch;
@@ -106,7 +109,7 @@ function hasNonEmptyStringProperty(source: string, property: string): boolean {
       } else if (ch === quote) {
         return { value, end: i + 1, quote };
       } else {
-        value += ch;
+        value += ch ?? "";
       }
     }
 
@@ -200,24 +203,14 @@ function checkFile(path: string): string | null {
   try {
     const source = readFileSync(path, "utf8");
     const { body, metaSource } = extractMeta(source);
-    new Function(`"use strict"; return (${metaSource});`);
+    new Script(`(${metaSource});`);
     if (!hasNonEmptyStringProperty(metaSource, "name")) {
       throw new Error("meta.name must be a non-empty string");
     }
     if (!hasNonEmptyStringProperty(metaSource, "description")) {
       throw new Error("meta.description must be a non-empty string");
     }
-    new Function(
-      "agent",
-      "parallel",
-      "pipeline",
-      "phase",
-      "log",
-      "args",
-      "budget",
-      "workflow",
-      `"use strict"; return (async () => {\n${body}\n})()`,
-    );
+    new Script(`(async () => {\n${body}\n})();`);
     return null;
   } catch (error) {
     return `${path}: ${error instanceof Error ? error.message : String(error)}`;

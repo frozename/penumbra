@@ -1,7 +1,13 @@
-import { Branding, MAX_BODY_CHARS, resolveStorageDbPath, validateT2Body } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+
+import {
+  Branding,
+  MAX_BODY_CHARS,
+  resolveStorageDbPath,
+  validateT2Body,
+} from "../packages/core/src/index.js";
 
 try {
   if (process.platform === "darwin") {

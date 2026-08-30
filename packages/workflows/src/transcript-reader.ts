@@ -106,7 +106,9 @@ function tokenizeCompleteLines(
   const lines = chunk.split("\n");
   let total = startTotal;
   for (let i = 0; i < lines.length - 1; i++) {
-    total += estimateTokensFromJsonlLine(lines[i]!);
+    const line = lines[i];
+    if (line === undefined) continue;
+    total += estimateTokensFromJsonlLine(line);
   }
   return { total, remainder: lines[lines.length - 1] ?? "" };
 }
@@ -166,7 +168,7 @@ function readTranscriptTokens(path: string, mtimeMs: number): number {
     }
   }
 
-  const appended = buffer.slice(0, actuallyRead).toString("utf8");
+  const appended = buffer.subarray(0, actuallyRead).toString("utf8");
   const combined = cached.partialLineRemainder + appended;
   const { total, remainder } = tokenizeCompleteLines(combined, cached.cachedTokenTotal);
 

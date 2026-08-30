@@ -70,6 +70,7 @@ export const RegistrarAppendInputSchema = z
   });
 
 export function registrarAppendHandler(daemon: Pick<DaemonClient, "registrarAppend">) {
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve registrar append tool handling while grandfathering its pre-existing complexity.
   return async (input: unknown): Promise<TextContentEnvelope> => {
     const { registrar_id, ...eventInput } = RegistrarAppendInputSchema.parse(input);
     const event = RegistrarEventInputSchema.parse(eventInput);

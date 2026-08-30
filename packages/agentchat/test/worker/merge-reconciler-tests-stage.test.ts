@@ -15,13 +15,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { parseBunTestReport } from "../../src/worker/bun-test-output.js";
 import {
   createMergeReconciler,
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
 } from "../../src/worker/merge-reconciler.js";
-import { parseBunTestReport } from "../../src/worker/bun-test-output.js";
 
 interface ExecResult {
   stdout: string;
@@ -312,6 +312,7 @@ function scratchPathFor(handoffId: string): string {
   return join(scratchRoot, "test-baseline", handoffId);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the fixture command dispatcher while grandfathering its pre-existing complexity.
 function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
   const cmd = argv.join(" ");
   execHistory.push({ cmd, cwd: opts.cwd });

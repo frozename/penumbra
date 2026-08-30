@@ -1,11 +1,11 @@
+import type { AaModelSnapshot } from "@penumbra/core";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
-
-import type { AaModelSnapshot } from "@penumbra/core";
 
 import { runConfigCheckAliases } from "../../src/commands/config-check-aliases.js";
 

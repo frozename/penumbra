@@ -81,9 +81,12 @@ function normalizeRegistrarEventsCreate(sql: string): string {
 }
 
 function extractRegistrarEventsCreate(sql: string): string {
-  const match = sql.match(/CREATE TABLE(?: IF NOT EXISTS)? registrar_events \([\s\S]*?\n\s*\);?/);
-  if (!match) throw new Error("registrar_events CREATE TABLE block not found");
-  return match[0];
+  const start = /CREATE TABLE(?: IF NOT EXISTS)? registrar_events \(/.exec(sql);
+  if (!start) throw new Error("registrar_events CREATE TABLE block not found");
+  const end = /\n[ \t]*\);?/.exec(sql.slice(start.index + start[0].length));
+  if (!end) throw new Error("registrar_events CREATE TABLE block not found");
+  const endIndex = start.index + start[0].length + end.index + end[0].length;
+  return sql.slice(start.index, endIndex);
 }
 
 function extractRegistrarEventsMigrationFunction(source: string): string {
@@ -176,7 +179,9 @@ test("migrate() aborts the v41 registrar_events rebuild when an existing body ex
     [multibyteBody],
   );
 
-  expect(() => migrate(db, { embeddingDim: 384 })).toThrow(
+  expect(() => {
+    migrate(db, { embeddingDim: 384 });
+  }).toThrow(
     "registrar_events contains bodies over 4096 bytes for event_id(s): 3; shorten these bodies below 4096 bytes, then restart",
   );
 
@@ -229,7 +234,7 @@ test("migrate() preserves the registrar_events AUTOINCREMENT high-water mark aft
 
 test("migrate() registrar_events CREATE TABLE DDL stays pinned to SCHEMA_DDL_BLOCK_15", () => {
   const source = readFileSync("packages/core/src/db/schema.ts", "utf8");
-  const schemaBlock = source.match(/const SCHEMA_DDL_BLOCK_15 = `([\s\S]*?)`;/)?.[1];
+  const schemaBlock = /const SCHEMA_DDL_BLOCK_15 = `([\s\S]*?)`;/.exec(source)?.[1];
   if (!schemaBlock) throw new Error("SCHEMA_DDL_BLOCK_15 not found");
   const migrationFunction = extractRegistrarEventsMigrationFunction(source);
 

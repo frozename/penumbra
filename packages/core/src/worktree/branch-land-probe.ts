@@ -95,7 +95,7 @@ export async function classifyBranchLandStatus(
     if (await isThreeDotDiffEmpty(runner, repoDir, candidateRef, baseRef)) {
       return "landed";
     }
-    return classifyBranchByContent(runner, repoDir, baseRef, candidateRef);
+    return await classifyBranchByContent(runner, repoDir, baseRef, candidateRef);
   } catch {
     return "error";
   }
