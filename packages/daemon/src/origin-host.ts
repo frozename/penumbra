@@ -9,6 +9,16 @@ export interface OriginHostOpts {
 
 const LOOPBACK_HOST_RE = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/;
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/;
+const LOOPBACK_BIND_RE = /^(?:127(?:\.\d{1,3}){3}|localhost|::1|\[::1\])$/;
+
+/**
+ * Whether a bind address only accepts connections from this machine. The Host
+ * header cannot substitute for this check: a remote client can send any Host
+ * value it likes, so a non-loopback bind is genuinely network-reachable.
+ */
+export function isLoopbackBindHost(host: string): boolean {
+  return LOOPBACK_BIND_RE.test(host.trim());
+}
 
 /**
  * Returns a guard that mirrors createBearerAuth's shape: it returns a 403

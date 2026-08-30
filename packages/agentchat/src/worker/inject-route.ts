@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 import { lookupSession } from "./session-registry.js";
 
 export interface InjectRouteDeps {
@@ -26,8 +28,7 @@ export async function workerInjectRoute(
   handoff_id: string,
   deps: InjectRouteDeps,
 ): Promise<Response> {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${deps.token}`) {
+  if (!bearerMatches(req.headers.get("authorization"), deps.token)) {
     return json({ error: "unauthorized" }, 401);
   }
 
@@ -71,6 +72,13 @@ export async function workerInjectRoute(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function bearerMatches(header: string | null, token: string): boolean {
+  if (header === null) return false;
+  const received = Buffer.from(header);
+  const expected = Buffer.from(`Bearer ${token}`);
+  return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
 async function safeJson(req: Request): Promise<unknown> {

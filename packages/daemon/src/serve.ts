@@ -77,7 +77,7 @@ import { createBoundsCallbacks } from "./maestro/bounds-callbacks.js";
 import { createBoundsTracker } from "./maestro/bounds-tracker.js";
 import { runRestartResume } from "./maestro/restart-resume.js";
 import { createHttpWorkerManager } from "./maestro/worker-manager-http.js";
-import { createOriginHostGuard } from "./origin-host.js";
+import { createOriginHostGuard, isLoopbackBindHost } from "./origin-host.js";
 import { createLongLivedReactor } from "./reactors/long-lived-reactor.js";
 import { createOrchestrateReactor } from "./reactors/orchestrate-reactor.js";
 import {
@@ -391,6 +391,16 @@ function firstNonEmpty(...candidates: (string | undefined)[]): string {
     if (candidate !== undefined && candidate !== "") return candidate;
   }
   return "";
+}
+
+const OTLP_ROUTES = new Map<string, (req: Request, services: Services) => Promise<Response>>([
+  ["/v1/logs", otlpLogsRoute],
+  ["/v1/metrics", otlpMetricsRoute],
+  ["/v1/traces", otlpTracesRoute],
+]);
+
+export function resolveDaemonBindHost(explicit?: string): string {
+  return firstNonEmpty(explicit?.trim(), process.env.PENUMBRA_DAEMON_HOST?.trim(), "127.0.0.1");
 }
 
 // Best-effort info log for code paths invoked by tests that pass a partial
@@ -1105,6 +1115,8 @@ export function createDaemonFetchHandler(opts: {
   ghTaskSyncService?: GhTaskSyncService;
   ghClient?: GhClient;
   allowRemote?: boolean;
+  /** Bind address the server listens on. Decides whether unauthenticated OTLP ingest is safe. */
+  hostname?: string;
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   workerHealthProbe?: WorkerHealthProbe;
   lagSampler?: LagSampler;
@@ -1124,6 +1136,7 @@ export function createDaemonFetchHandler(opts: {
       opts.allowRemote ??
       (process.env.PENUMBRA_ALLOW_REMOTE === "1" || process.env.NODE_ENV === "test"),
   });
+  const otlpRequiresAuth = !isLoopbackBindHost(resolveDaemonBindHost(opts.hostname));
   const taskEvents = opts.taskEvents ?? new TaskEventBus();
   const taskWriter =
     opts.taskWriter ??
@@ -1217,13 +1230,15 @@ export function createDaemonFetchHandler(opts: {
           llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
         });
       }
-      // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
-      if (req.method === "POST" && url.pathname === "/v1/logs")
-        return await otlpLogsRoute(req, opts.services);
-      if (req.method === "POST" && url.pathname === "/v1/metrics")
-        return await otlpMetricsRoute(req, opts.services);
-      if (req.method === "POST" && url.pathname === "/v1/traces")
-        return await otlpTracesRoute(req, opts.services);
+      // OTLP routes skip bearer auth only while the daemon is loopback-bound, so
+      // local exporters (claude-code, codex) can ingest without extra config. On a
+      // non-loopback bind the socket is network-reachable and unauthenticated event
+      // ingest would let anyone poison memory, so the token is required there.
+      const otlpRoute = req.method === "POST" ? OTLP_ROUTES.get(url.pathname) : undefined;
+      if (otlpRoute) {
+        const otlpDenied = otlpRequiresAuth ? auth(req) : null;
+        return otlpDenied ?? (await otlpRoute(req, opts.services));
+      }
       const denied = auth(req);
       if (denied) return denied;
       const dispatched = await dispatchRoute(req, url, ctx, routes);
@@ -1413,6 +1428,7 @@ function startHttpServer(args: {
     extraWorkerSupervisor,
     workerProbeEnabled,
   } = args;
+  const hostname = resolveDaemonBindHost(opts.hostname);
   const fetchHandler = createDaemonFetchHandler({
     services: opts.services,
     token: opts.token,
@@ -1421,12 +1437,8 @@ function startHttpServer(args: {
     ghTaskSyncService,
     workerHealthProbe,
     lagSampler,
+    hostname,
   });
-  const hostname = firstNonEmpty(
-    opts.hostname?.trim(),
-    process.env.PENUMBRA_DAEMON_HOST?.trim(),
-    "127.0.0.1",
-  );
   const server = Bun.serve({
     hostname,
     port: opts.port,
