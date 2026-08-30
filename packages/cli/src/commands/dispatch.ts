@@ -252,7 +252,7 @@ async function resolveDispatchBranchName(opts: {
   if (!res.ok) {
     return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
   }
-  const body = (await res.json()) as unknown;
+  const body = await res.json();
   if (!isHandoffGetResponse(body)) {
     return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
   }

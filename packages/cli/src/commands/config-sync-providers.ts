@@ -161,7 +161,8 @@ function isSkippedDiscoveryResult(
 
 function validDiscoveryDiagnostics(diagnostics: unknown): DiscoveryDiagnostic[] {
   if (!Array.isArray(diagnostics)) return [];
-  return diagnostics.flatMap((entry) => {
+  const valid: DiscoveryDiagnostic[] = [];
+  for (const entry of diagnostics as unknown[]) {
     if (
       entry !== null &&
       typeof entry === "object" &&
@@ -170,10 +171,13 @@ function validDiscoveryDiagnostics(diagnostics: unknown): DiscoveryDiagnostic[] 
       typeof entry.row === "string" &&
       typeof entry.reason === "string"
     ) {
-      return [{ row: entry.row, reason: entry.reason }];
+      valid.push({
+        row: entry.row,
+        reason: entry.reason,
+      });
     }
-    return [];
-  });
+  }
+  return valid;
 }
 
 function httpDiscoveryAdapter(): ProviderDiscoveryAdapter {
@@ -355,7 +359,7 @@ function renderSeatName(
   );
   const input: SeatNameInput = {
     source: "",
-    modelSlug: rendered!,
+    modelSlug: rendered ?? "",
     ...(!hasTierPlaceholder && model.reasoningTier ? { effort: model.reasoningTier } : {}),
   };
   return { name: seatNameFor(input.source, input.modelSlug, input.effort), input };
@@ -639,12 +643,12 @@ export async function runConfigSyncProviders(
         if (included.length === 0) {
           discoveryComplete = false;
           stdout.push(
-            `include_models matched 0 of ${models.length} discovered models for ${providerId} — refusing to generate or prune; fix the list`,
+            `include_models matched 0 of ${String(models.length)} discovered models for ${providerId} — refusing to generate or prune; fix the list`,
           );
           continue;
         }
         stdout.push(
-          `include_models: kept ${included.length} of ${models.length} discovered models`,
+          `include_models: kept ${String(included.length)} of ${String(models.length)} discovered models`,
         );
         for (const entry of source.include_models ?? []) {
           if (!discoveredModelIds.has(entry)) {
@@ -849,7 +853,7 @@ export async function runConfigSyncProviders(
   const pruneResult = discoveryComplete
     ? pruneOwnedOnly([...byName.values()], generatedNames, PROVENANCE_SOURCE)
     : { agents: [...byName.values()], prunes: [] };
-  for (const name of pruneResult.prunes) delete candidateAliases[name];
+  for (const name of pruneResult.prunes) Reflect.deleteProperty(candidateAliases, name);
   if (!discoveryComplete) {
     stdout.push("penumbra config sync-providers: discovery incomplete; skipping prune step");
   }
@@ -909,7 +913,7 @@ export async function runConfigSyncProviders(
   try {
     const reload = await (
       opts.reloadConfig ??
-      (() =>
+      ((): Promise<unknown> =>
         defaultReloadConfig(
           resolveDaemonStorageRoot({ explicit: opts.storageRoot ?? env.PENUMBRA_STORAGE_ROOT }),
         ))

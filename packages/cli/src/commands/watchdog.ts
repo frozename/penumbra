@@ -52,7 +52,9 @@ export async function runWatchdog(opts: RunWatchdogOptions): Promise<WatchdogRes
     launchctl: runLaunchctl,
     uid: () => process.getuid?.() ?? 0,
     plistPath: join(homedir(), "Library", "LaunchAgents", `${DAEMON_LABEL}.plist`),
-    error: (message) => console.error(message),
+    error: (message) => {
+      console.error(message);
+    },
     ...opts.dependencies,
   };
   const observedAt = dependencies.now().toISOString();

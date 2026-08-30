@@ -107,8 +107,10 @@ describe("models.dev discovery metadata", () => {
     const urls: string[] = [];
 
     const payload = await fetchModelsDevPayload({
-      fetch: async (input) => {
-        urls.push(String(input));
+      fetch: (input) => {
+        urls.push(
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        );
         return Response.json(fixturePayload);
       },
     });
