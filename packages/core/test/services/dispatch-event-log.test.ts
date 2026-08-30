@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { applySchema } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { type DispatchEventInput, DispatchEventLog } from "@src/services/dispatch-event-log.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
 
 function freshDb(): Database {
   const db = new Database(":memory:");

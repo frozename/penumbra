@@ -6,10 +6,11 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { dreamingHealthRoute } from "@src/routes/dreaming.js";
-import { recordSubsystemOutcome } from "@src/services/subsystem-health.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+
+import { dreamingHealthRoute } from "@src/routes/dreaming.js";
+import { recordSubsystemOutcome } from "@src/services/subsystem-health.js";
 
 try {
   if (process.platform === "darwin") {

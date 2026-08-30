@@ -1,5 +1,6 @@
-import { COOL_POLL_MS, HEARTBEAT_MS } from "@src/lib/timing.js";
 import { describe, expect, test } from "bun:test";
+
+import { COOL_POLL_MS, HEARTBEAT_MS } from "@src/lib/timing.js";
 
 describe("timing constants", () => {
   test("HEARTBEAT_MS is a positive number", () => {

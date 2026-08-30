@@ -1,5 +1,6 @@
-import { createDispatchEventsRetentionWorker } from "@src/workers/dispatch-events-retention.js";
 import { expect } from "bun:test";
+
+import { createDispatchEventsRetentionWorker } from "@src/workers/dispatch-events-retention.js";
 
 import { makeTempDaemon } from "../helpers.js";
 import { serviceTest } from "../helpers/service-gates.js";

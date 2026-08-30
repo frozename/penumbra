@@ -1,10 +1,11 @@
-import { ContextFileWriter } from "@src/context-file/writer.js";
-import { loadSqliteVec, migrate } from "@src/index.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { ContextFileWriter } from "@src/context-file/writer.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

@@ -1,10 +1,11 @@
+import { describe, expect, it } from "bun:test";
+
 import {
   ApprovePermissionRequestSchema,
   CreatePermissionRequestSchema,
   PermissionRequestRowSchema,
   PermissionStatusSchema,
 } from "@src/schemas/permission.js";
-import { describe, expect, it } from "bun:test";
 
 describe("PermissionStatusSchema", () => {
   it("accepts the four lifecycle states", () => {

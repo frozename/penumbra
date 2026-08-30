@@ -1,12 +1,13 @@
 import { loadSqliteVec, migrate, WorkerTokenStore } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, mock, test } from "bun:test";
+
 import {
   DEFAULT_INTERVAL_MS,
   DEFAULT_STALE_WINDOW_MS,
   runStaleWorkerTokensSweep,
   startStaleWorkerTokensSweeper,
 } from "@src/sweepers/stale-worker-tokens.js";
-import { Database } from "bun:sqlite";
-import { expect, mock, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

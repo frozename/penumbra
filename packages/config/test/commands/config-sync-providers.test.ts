@@ -1,11 +1,12 @@
-import { AgentsConfigSchema } from "@src/files/agents.js";
-import { loadProviderSourcesFromDir } from "@src/files/providers.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
+
+import { AgentsConfigSchema } from "@src/files/agents.js";
+import { loadProviderSourcesFromDir } from "@src/files/providers.js";
 
 import {
   type ProviderDiscoveryAdapter,

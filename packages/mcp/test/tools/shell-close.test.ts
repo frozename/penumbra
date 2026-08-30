@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { shellCloseHandler } from "@src/tools/shell-close.js";
 import { describe, expect, it, mock } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { shellCloseHandler } from "@src/tools/shell-close.js";
 
 import { fakeDaemon } from "../helpers.js";
 

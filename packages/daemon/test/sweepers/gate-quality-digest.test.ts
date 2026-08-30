@@ -1,15 +1,16 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import {
-  type AgentGateOutcomeSplit,
-  type AgentGateRateTrend,
-  readAgentGateOutcomeSplits,
-} from "@src/sweepers/gate-quality-digest.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import {
+  type AgentGateOutcomeSplit,
+  type AgentGateRateTrend,
+  readAgentGateOutcomeSplits,
+} from "@src/sweepers/gate-quality-digest.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,10 +1,10 @@
-import type { GhClient } from "@src/services/gh-client.js";
-
 import { loadSqliteVec, migrate, T0Writer, TaskWriter } from "@penumbra/core";
-import { tasksCancelRoute } from "@src/routes/tasks.js";
-import { createGhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { tasksCancelRoute } from "@src/routes/tasks.js";
+import type { GhClient } from "@src/services/gh-client.js";
+import { createGhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
 
 try {
   if (process.platform === "darwin") {

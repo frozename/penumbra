@@ -1,9 +1,10 @@
 import type { Logger, RecallResult } from "@penumbra/core";
-import type { PenumbraClient } from "@src/penumbra-client.js";
+
+import { describe, expect, test } from "bun:test";
 
 import { RecallContextConfigSchema } from "@src/config/types.js";
+import type { PenumbraClient } from "@src/penumbra-client.js";
 import { RecallEnricher } from "@src/worker/recall-enricher.js";
-import { describe, expect, test } from "bun:test";
 
 type RecallClient = Pick<PenumbraClient, "recall" | "corpusQuery">;
 type RecallBody = Parameters<RecallClient["recall"]>[0];

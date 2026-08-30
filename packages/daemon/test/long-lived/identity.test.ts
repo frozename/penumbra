@@ -1,7 +1,8 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
-import { verifyRunningIdentity } from "@src/long-lived/identity.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { verifyRunningIdentity } from "@src/long-lived/identity.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");

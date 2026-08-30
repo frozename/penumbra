@@ -1,11 +1,11 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import { loadSqliteVec, migrate, resolveBiasEffect, routeAgent } from "@src/index.js";
 import type { RoutingBias } from "@src/readers/routing-bias.js";
 import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import type { RouteAgentInput, RouteAgentOutput } from "@src/services/agent-routing.js";
-
-import { loadSqliteVec, migrate, resolveBiasEffect, routeAgent } from "@src/index.js";
 import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

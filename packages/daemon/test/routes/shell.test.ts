@@ -1,16 +1,17 @@
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { createDaemonFetchHandler } from "@src/serve.js";
 import {
   type RunCommandInput,
   type RunCommandResult,
   ShellSessionPool,
 } from "@src/services/shell-session-pool.js";
-import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 
 type RuntimeShellConfig = ConstructorParameters<typeof ShellSessionPool>[0]["config"];
 type PermissionToolName = "shell_run" | "shell_run.dangerous";

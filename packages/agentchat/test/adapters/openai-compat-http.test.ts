@@ -1,10 +1,10 @@
-import type { DispatchEvent } from "@src/sdk/adapter.js";
-
-import { OpenAiCompatHttpAdapter } from "@src/adapters/openai-compat-http.js";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { OpenAiCompatHttpAdapter } from "@src/adapters/openai-compat-http.js";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
 
 type FetchFn = typeof fetch;
 // Mocked fetch invocations in this test only see string-URL inputs (the

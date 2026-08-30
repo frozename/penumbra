@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
   type ClosedLaneGateStatus,
   closeLane,
@@ -7,8 +10,6 @@ import {
   recentLanes,
   stampAgentPerformanceGateOutcomeForHandoff,
 } from "@src/db/lane-ledger.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
 
 const CREATE_LANE_LEDGER_SQL = `
   CREATE TABLE IF NOT EXISTS lane_ledger (

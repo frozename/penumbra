@@ -1,10 +1,11 @@
+import { afterEach, beforeEach, expect, it } from "bun:test";
+
 import { createResearchAdapter, FirecrawlAdapter } from "@src/research/firecrawl-adapter.js";
 import {
   isInternalOrMetadataHost,
   type PinnedFetch,
   WebFetchAdapter,
 } from "@src/research/webfetch-adapter.js";
-import { afterEach, beforeEach, expect, it } from "bun:test";
 
 const originalFetch = globalThis.fetch;
 

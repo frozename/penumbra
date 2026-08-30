@@ -1,9 +1,10 @@
-import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "@src/config/load.js";
 // packages/agentchat/test/config/load.test.ts
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "@src/config/load.js";
 
 test("loadConfig parses a valid YAML config", () => {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));

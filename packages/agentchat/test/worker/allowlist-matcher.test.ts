@@ -1,5 +1,6 @@
-import { matchAllowlist } from "@src/worker/allowlist-matcher.js";
 import { describe, expect, test } from "bun:test";
+
+import { matchAllowlist } from "@src/worker/allowlist-matcher.js";
 
 describe("matchAllowlist", () => {
   test("exact match (no glob chars) succeeds", () => {

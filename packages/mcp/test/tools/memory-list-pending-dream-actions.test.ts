@@ -1,10 +1,10 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { memoryListPendingDreamActionsHandler } from "@src/tools/memory-list-pending-dream-actions.js";
-import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { memoryListPendingDreamActionsHandler } from "@src/tools/memory-list-pending-dream-actions.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 
 import type {
   ListPendingDreamActionsOpts,

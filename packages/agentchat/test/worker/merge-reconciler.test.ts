@@ -1,22 +1,9 @@
-import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
-import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
-import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
-
 import {
   type HandoffRow,
   type Logger,
   MergeResultEventSchema,
   WorktreeManager,
 } from "@penumbra/core";
-import { PenumbraHttpError } from "@src/penumbra-client.js";
-import {
-  createMergeReconciler,
-  MERGE_RESULT_STATUSES,
-  type MergeResult,
-  type ReconcilerDeps,
-  type ReconcilerVerdict,
-  resolveAffectedPackages,
-} from "@src/worker/merge-reconciler.js";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   existsSync,
@@ -30,6 +17,19 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { PenumbraHttpError } from "@src/penumbra-client.js";
+import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
+import {
+  createMergeReconciler,
+  MERGE_RESULT_STATUSES,
+  type MergeResult,
+  type ReconcilerDeps,
+  type ReconcilerVerdict,
+  resolveAffectedPackages,
+} from "@src/worker/merge-reconciler.js";
+import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
+import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 interface ExecResult {
   stdout: string;

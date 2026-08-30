@@ -1,7 +1,8 @@
 import { loadSqliteVec, migrate, T0Writer } from "@penumbra/core";
-import { createRefiningStuckRecoverySweeper } from "@src/sweepers/refining-stuck-recovery.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { createRefiningStuckRecoverySweeper } from "@src/sweepers/refining-stuck-recovery.js";
 
 import { TaskDraftReader } from "../../../core/src/readers/task-draft.js";
 

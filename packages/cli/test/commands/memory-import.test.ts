@@ -1,12 +1,13 @@
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { runMemoryImport } from "@src/commands/memory.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runMemoryImport } from "@src/commands/memory.js";
 
 import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
 import { urlToString } from "./_helpers.js";

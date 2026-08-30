@@ -8,10 +8,11 @@ import {
   migrate,
   type Services,
 } from "@penumbra/core";
-import { handoffsProgressRoute } from "@src/routes/handoffs-progress.js";
-import { handoffsCreateRoute } from "@src/routes/handoffs.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { handoffsProgressRoute } from "@src/routes/handoffs-progress.js";
+import { handoffsCreateRoute } from "@src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {

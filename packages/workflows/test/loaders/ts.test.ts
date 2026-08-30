@@ -1,8 +1,9 @@
-import { loadTsWorkflow } from "@src/loaders/ts.js";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { loadTsWorkflow } from "@src/loaders/ts.js";
 
 const VALID_MODULE = `
 import type { WorkflowSpec } from '@penumbra/workflows/schema';

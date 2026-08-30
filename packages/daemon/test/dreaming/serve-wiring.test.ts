@@ -1,9 +1,9 @@
-import type { DreamConfig } from "@src/dreaming/config.js";
-
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { buildDreamCycleDeps } from "@src/dreaming/deps.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { buildDreamCycleDeps } from "@src/dreaming/deps.js";
 
 // File-local typed placeholder factory. buildDreamCycleDeps reads only a small
 // subset of DreamConfig fields (contentQualityThreshold, phaseCostEstimatesUsd);

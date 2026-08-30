@@ -1,12 +1,5 @@
 import * as core from "@penumbra/core";
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
-import { parseBunTestReport } from "@src/worker/bun-test-output.js";
-import {
-  createMergeReconciler,
-  type MergeResult,
-  type ReconcilerDeps,
-  type ReconcilerVerdict,
-} from "@src/worker/merge-reconciler.js";
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import {
   existsSync,
@@ -21,6 +14,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { parseBunTestReport } from "@src/worker/bun-test-output.js";
+import {
+  createMergeReconciler,
+  type MergeResult,
+  type ReconcilerDeps,
+  type ReconcilerVerdict,
+} from "@src/worker/merge-reconciler.js";
 
 interface ExecResult {
   stdout: string;

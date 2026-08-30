@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   CancelTaskInputSchema,
   CompleteTaskInputSchema,
@@ -12,7 +14,6 @@ import {
   TaskRecordSchema,
   TaskStatusSchema,
 } from "@src/tasks/schema.js";
-import { describe, expect, test } from "bun:test";
 
 describe("task board schemas", () => {
   test("TaskKindSchema accepts lifecycle kinds", () => {

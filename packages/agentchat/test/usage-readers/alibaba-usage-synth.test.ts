@@ -1,7 +1,7 @@
-import type { QuotaStatusResponse } from "@src/penumbra-client.js";
-
-import { AlibabaUsageSynth } from "@src/usage-readers/alibaba-usage-synth.js";
 import { describe, expect, it } from "bun:test";
+
+import type { QuotaStatusResponse } from "@src/penumbra-client.js";
+import { AlibabaUsageSynth } from "@src/usage-readers/alibaba-usage-synth.js";
 
 interface FetchQuotaArgs {
   since?: string;

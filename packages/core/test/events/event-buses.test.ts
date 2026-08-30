@@ -1,6 +1,7 @@
+import { describe, expect, test } from "bun:test";
+
 import { type DispatchEvent, DispatchEventBus } from "@src/dispatch/event-bus.js";
 import { type TaskEvent, TaskEventBus } from "@src/tasks/event-bus.js";
-import { describe, expect, test } from "bun:test";
 
 function taskEvent(id: number): TaskEvent {
   return {

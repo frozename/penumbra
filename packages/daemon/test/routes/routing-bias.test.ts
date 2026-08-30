@@ -1,12 +1,13 @@
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import {
   routingBiasClearRoute,
   routingBiasListRoute,
   routingBiasSetRoute,
 } from "@src/routes/routing-bias.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

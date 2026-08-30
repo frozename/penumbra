@@ -1,8 +1,8 @@
-import type { AgentConfig } from "@src/files/agents.js";
-
-import { isGeneratorOwned, pruneOwnedOnly, upsertManagedFields } from "@src/generator/upsert.js";
 import { describe, expect, test } from "bun:test";
 import { isDeepStrictEqual } from "node:util";
+
+import type { AgentConfig } from "@src/files/agents.js";
+import { isGeneratorOwned, pruneOwnedOnly, upsertManagedFields } from "@src/generator/upsert.js";
 
 function baseAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {

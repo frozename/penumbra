@@ -1,11 +1,12 @@
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import {
   type GhClient,
   installPrOrphanSweeper,
   type PrOrphanSweeperDeps,
   runPrOrphanSweep,
 } from "@src/sweepers/pr-orphan-sweeper.js";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
 
 type OpenPullRequest = Awaited<ReturnType<GhClient["listOpenPullRequests"]>>[number];
 

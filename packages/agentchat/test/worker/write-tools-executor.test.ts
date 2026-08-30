@@ -1,3 +1,9 @@
+import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "@src/worker/sandbox-config.js";
 import {
   EditAmbiguousError,
@@ -10,11 +16,6 @@ import {
   TerminalNotFoundError,
 } from "@src/worker/write-tools-errors.js";
 import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
-import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { withSandboxedExecutor } from "../helpers/sandbox-fixtures.js";
 

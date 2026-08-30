@@ -1,10 +1,11 @@
 import type { Logger } from "@penumbra/core";
 
-import { ExtraWorkersConfigError, loadExtraWorkersConfig } from "@src/workers/config.js";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { ExtraWorkersConfigError, loadExtraWorkersConfig } from "@src/workers/config.js";
 
 const tempDirs: string[] = [];
 let prevHome: string | undefined;

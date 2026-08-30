@@ -1,5 +1,6 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { describe, expect, test } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { DaemonHttpError } from "@src/daemon-client.js";
 import { permissionApproveHandler } from "@src/tools/permission-approve.js";
 import { permissionGetHandler } from "@src/tools/permission-get.js";
@@ -7,7 +8,6 @@ import {
   permissionListPendingHandler,
   PermissionListPendingInputShape,
 } from "@src/tools/permission-list-pending.js";
-import { describe, expect, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -91,7 +91,6 @@ export default tseslint.config(
       parserOptions: {
         projectService: false,
         project: [
-          "./tsconfig.eslint.json",
           "./packages/*/tsconfig.eslint.json",
           "./packages/integrations/*/tsconfig.eslint.json",
         ],
@@ -101,6 +100,14 @@ export default tseslint.config(
     },
     rules: {
       // Placeholder - Phase 2 populates the calibrated rule set
+    },
+  },
+  {
+    files: ["scripts/**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        project: "./tsconfig.eslint.json",
+      },
     },
   },
   {
@@ -165,6 +172,7 @@ export default tseslint.config(
         {
           type: "natural",
           order: "asc",
+          internalPattern: ["^@src/"],
           newlinesBetween: 1,
           groups: [
             "type-import",
@@ -230,15 +238,6 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "off",
       "max-lines": "off",
       "max-lines-per-function": "off",
-    },
-  },
-  {
-    files: ["packages/core/test/readers/embed-recipe-bench.ts"],
-    rules: {
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-call": "off",
-      "@typescript-eslint/no-unsafe-return": "off",
     },
   },
   {

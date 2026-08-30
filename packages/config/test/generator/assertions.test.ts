@@ -1,9 +1,10 @@
+import { describe, expect, test } from "bun:test";
+
 import { GENERATOR_PROVENANCE_SOURCE } from "@src/files/billing-gate.js";
 import {
   assertNoBilledGeneratedSeats,
   assertNoBilledHttpSeats,
 } from "@src/generator/assertions.js";
-import { describe, expect, test } from "bun:test";
 
 describe("assertNoBilledHttpSeats", () => {
   test("rejects a generated openai-compat-http seat with pricing_mode:'api' whose provider is outside the allowlist", () => {

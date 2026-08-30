@@ -1,13 +1,13 @@
-import type { AgentConfig } from "@src/config/types.js";
+import { afterEach, describe, expect, test, vi } from "bun:test";
+import { PassThrough } from "node:stream";
 
 import {
   drainAgent,
   getOrCreateAcpWarmPool,
   resetAcpWarmPoolRegistryForTest,
 } from "@src/adapters/acp-warm-pool-registry.js";
+import type { AgentConfig } from "@src/config/types.js";
 import { invalidateChangedWarmPools } from "@src/worker/warm-pool-reload.js";
-import { afterEach, describe, expect, test, vi } from "bun:test";
-import { PassThrough } from "node:stream";
 
 import { makeMockAcpHandle } from "../helpers/stdio-acp-fixtures.js";
 

@@ -1,6 +1,7 @@
-import { createWorkerShutdown, type WorkerShutdownDeps } from "@src/worker/shutdown.js";
 import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
+
+import { createWorkerShutdown, type WorkerShutdownDeps } from "@src/worker/shutdown.js";
 
 const noop = (): void => {
   /* test mock placeholder */

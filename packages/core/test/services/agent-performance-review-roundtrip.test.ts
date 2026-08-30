@@ -1,7 +1,8 @@
-import { loadSqliteVec, migrate, routeAgent } from "@src/index.js";
-import { captureAgentPerformanceFromDispatch } from "@src/services/agent-performance-capture.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
+
+import { loadSqliteVec, migrate, routeAgent } from "@src/index.js";
+import { captureAgentPerformanceFromDispatch } from "@src/services/agent-performance-capture.js";
 
 if (process.platform === "darwin") {
   try {

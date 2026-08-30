@@ -1,3 +1,5 @@
+import { describe, expect, mock, test } from "bun:test";
+
 import {
   createProviderDriftSweepState,
   DEFAULT_PROVIDER_DRIFT_SWEEP_INTERVAL_MS,
@@ -5,7 +7,6 @@ import {
   runProviderDriftSweep,
   startProviderDriftSweeper,
 } from "@src/sweepers/provider-drift.js";
-import { describe, expect, mock, test } from "bun:test";
 
 const DRY_RUN_TERMINAL_LINE =
   "penumbra config sync-providers: dry run; pass --apply to write agents.yaml and model-aliases.yaml";

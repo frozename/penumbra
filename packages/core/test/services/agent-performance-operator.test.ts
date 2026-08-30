@@ -1,14 +1,14 @@
-import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 
 import { loadSqliteVec, migrate } from "@src/index.js";
+import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import {
   aggregateHandoffUsage,
   captureAgentPerformanceFromDispatch,
 } from "@src/services/agent-performance-capture.js";
 import { recordOperatorAgentPerformance } from "@src/services/agent-performance-operator.js";
 import { routeAgent } from "@src/services/agent-routing.js";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
 
 function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
   const out = routeAgent({ ...input, detail: "rank" });

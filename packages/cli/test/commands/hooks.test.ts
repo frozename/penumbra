@@ -1,3 +1,8 @@
+import { describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   runHooksInstallClaude,
   runHooksInstallClaudeMd,
@@ -12,10 +17,6 @@ import {
   runHooksUninstallCodexOtel,
   runHooksUninstallGeminiOtel,
 } from "@src/commands/hooks.js";
-import { describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { expectAsyncThrow, parseJson } from "./_helpers.js";
 

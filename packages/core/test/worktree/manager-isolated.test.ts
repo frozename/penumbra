@@ -1,9 +1,3 @@
-import {
-  isPathInsideOrEqual,
-  materializeWorkspaceLinks,
-  type WorktreeCommandRunner,
-  WorktreeManager,
-} from "@src/worktree/manager.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
@@ -11,6 +5,13 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+
+import {
+  isPathInsideOrEqual,
+  materializeWorkspaceLinks,
+  type WorktreeCommandRunner,
+  WorktreeManager,
+} from "@src/worktree/manager.js";
 
 const TEST_TMP_ROOT = fs.realpathSync.native(os.tmpdir());
 

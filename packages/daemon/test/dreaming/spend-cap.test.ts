@@ -1,9 +1,9 @@
-import type { DreamConfig } from "@src/dreaming/config.js";
-
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { isDreamSpendAffordable, runDreamCycle } from "@src/dreaming/cycle.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";
+
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { isDreamSpendAffordable, runDreamCycle } from "@src/dreaming/cycle.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,8 +1,9 @@
+import { describe, expect, spyOn, test } from "bun:test";
+
 import {
   createPermissionEventSource,
   type PermissionSseCreds,
 } from "@src/worker/permission-event-source.js";
-import { describe, expect, spyOn, test } from "bun:test";
 
 interface CapturedRequest {
   url: string;

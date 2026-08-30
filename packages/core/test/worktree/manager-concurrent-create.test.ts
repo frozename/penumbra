@@ -1,10 +1,11 @@
-import { type WorktreeCommandRunner, WorktreeManager } from "@src/worktree/manager.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+
+import { type WorktreeCommandRunner, WorktreeManager } from "@src/worktree/manager.js";
 
 type ExecResult = { stdout: string; stderr: string };
 type ExecOpts = { cwd?: string };

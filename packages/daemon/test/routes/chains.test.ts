@@ -14,6 +14,13 @@ import {
   type WorkflowRunsRegistry,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import {
   chainSendMessageRoute,
   chainsHistoryRoute,
@@ -30,12 +37,6 @@ import {
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 
 import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
 import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";

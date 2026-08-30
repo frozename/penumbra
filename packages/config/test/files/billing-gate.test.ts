@@ -1,9 +1,10 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   assertHandBilledSeatsWhitelisted,
   BilledHandSeatViolation,
   isBilledHandSeatViolation,
 } from "@src/files/billing-gate.js";
-import { describe, expect, test } from "bun:test";
 
 describe("assertHandBilledSeatsWhitelisted", () => {
   test("rejects a hand-authored pricing_mode:'api' seat whose api_provider is not whitelisted", () => {

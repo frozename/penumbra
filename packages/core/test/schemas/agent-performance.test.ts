@@ -1,3 +1,5 @@
+import { describe, expect, it } from "bun:test";
+
 import {
   AgentOutcomeSchema,
   AgentPerformanceCaptureFromReconcilerSchema,
@@ -10,7 +12,6 @@ import {
   mapMergeStatusToAgentOutcome,
   MergeResultStatusSchema,
 } from "@src/schemas/agent-performance.js";
-import { describe, expect, it } from "bun:test";
 
 describe("agent performance schemas", () => {
   describe("mapDispatchReasonToAgentOutcome", () => {

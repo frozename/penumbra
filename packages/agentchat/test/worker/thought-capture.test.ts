@@ -1,8 +1,9 @@
 import type { DispatchEventInput } from "@penumbra/core";
-import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
+
+import { describe, expect, it } from "bun:test";
 
 import { ThoughtCapture } from "@src/worker/thought-capture.js";
-import { describe, expect, it } from "bun:test";
+import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThoughtsConfig {
   return {

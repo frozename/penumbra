@@ -1,5 +1,6 @@
-import { chainSendMessageHandler } from "@src/tools/chain-send-message.js";
 import { expect, test } from "bun:test";
+
+import { chainSendMessageHandler } from "@src/tools/chain-send-message.js";
 
 import { installFetchMock } from "../helpers.js";
 

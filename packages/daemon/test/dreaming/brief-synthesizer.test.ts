@@ -1,4 +1,9 @@
 import { reloadAgentChatConfig } from "@penumbra/config";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   type BriefSynthesizerInput,
   buildBriefPrompt,
@@ -6,10 +11,6 @@ import {
   createBriefSynthesizerFromAgentchat,
   parseSynthesizerResponse,
 } from "@src/dreaming/brief-synthesizer.js";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 beforeAll(() => {
   delete process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"];

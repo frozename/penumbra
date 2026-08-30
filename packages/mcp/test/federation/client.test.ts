@@ -1,6 +1,10 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { DaemonClient } from "@src/daemon-client.js";
 import { registerFederatedTools } from "@src/federation/client.js";
 import { HandleStore } from "@src/handle-store.js";
 import * as registry from "@src/invocation-sink-registry.js";
@@ -8,10 +12,6 @@ import { openInvocationSink } from "@src/invocation-sink.js";
 import { setLongLivedRuntimeContextFromEnv } from "@src/long-lived-context.js";
 import { isEnvelopeResult } from "@src/responses/envelope.js";
 import { readHandleHandler } from "@src/tools/read-handle.js";
-import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 type FederationDaemon = Pick<DaemonClient, "getFederationTools" | "mcpCall">;
 type GetFederationTools = DaemonClient["getFederationTools"];

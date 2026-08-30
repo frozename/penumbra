@@ -1,6 +1,7 @@
 import { PermissionEventBus, type Services } from "@penumbra/core";
-import { permissionsEventsRoute } from "@src/routes/permissions-events.js";
 import { expect, test } from "bun:test";
+
+import { permissionsEventsRoute } from "@src/routes/permissions-events.js";
 
 type ServicesWithPermissionEvents = Services & { permissionEvents: PermissionEventBus };
 

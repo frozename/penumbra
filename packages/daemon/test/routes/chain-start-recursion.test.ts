@@ -1,8 +1,9 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { chainsStartRoute } from "@src/routes/chains.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeAll, expect, test } from "bun:test";
+
+import { chainsStartRoute } from "@src/routes/chains.js";
 
 try {
   if (process.platform === "darwin")

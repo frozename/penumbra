@@ -1,17 +1,17 @@
-import type { AgentChatConfig } from "@src/config/types.js";
-import type { DispatchOutput } from "@src/sdk/adapter.js";
-
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
-import { registerAdapter } from "@src/adapters/registry.js";
-import { runChatTurn } from "@src/cli/loop.js";
-import { PenumbraClient } from "@src/penumbra-client.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { registerAdapter } from "@src/adapters/registry.js";
+import { runChatTurn } from "@src/cli/loop.js";
+import type { AgentChatConfig } from "@src/config/types.js";
+import { PenumbraClient } from "@src/penumbra-client.js";
+import type { DispatchOutput } from "@src/sdk/adapter.js";
 
 try {
   if (process.platform === "darwin") {

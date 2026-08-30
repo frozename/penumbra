@@ -1,9 +1,10 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { MaestroSessionWriter } from "@src/maestro/writer.js";
 import { TaskWriter } from "@src/tasks/writer.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

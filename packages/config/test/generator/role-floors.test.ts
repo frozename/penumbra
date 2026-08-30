@@ -1,10 +1,10 @@
-import type { AgentConfig } from "@src/files/agents.js";
-import type { ModelAliasMap } from "@src/files/model-aliases.js";
-
-import { assertRoleFloors, CONSUMED_ROLE_TAGS } from "@src/generator/role-floors.js";
 import { describe, expect, test } from "bun:test";
 import * as nodeFs from "node:fs";
 import { join } from "node:path";
+
+import type { AgentConfig } from "@src/files/agents.js";
+import type { ModelAliasMap } from "@src/files/model-aliases.js";
+import { assertRoleFloors, CONSUMED_ROLE_TAGS } from "@src/generator/role-floors.js";
 
 function agent(name: string, roles: string[]): AgentConfig {
   return {

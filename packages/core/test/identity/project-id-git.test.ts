@@ -1,9 +1,10 @@
-import { resolveProjectId } from "@src/identity/project-id.js";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { resolveProjectId } from "@src/identity/project-id.js";
 
 let dir = "";
 

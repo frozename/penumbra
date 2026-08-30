@@ -1,7 +1,8 @@
+import { describe, expect, it, mock } from "bun:test";
+
 import { runThoughtAnalyzer } from "@src/worker/thought-analyzer.js";
 import { ThoughtCapture } from "@src/worker/thought-capture.js";
 import { loadThoughtsConfig } from "@src/worker/thought-config.js";
-import { describe, expect, it, mock } from "bun:test";
 
 import { startInProcessDaemon } from "../helpers/in-process-daemon.js";
 

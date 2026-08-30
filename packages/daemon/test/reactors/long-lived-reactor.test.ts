@@ -1,9 +1,3 @@
-import type {
-  FederationHealthSnapshot,
-  McpPool,
-  McpToolDescriptor,
-} from "@src/long-lived/mcp-pool.js";
-
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { createMcpEventBus } from "@penumbra/daemon/events/mcp-event-bus";
@@ -11,6 +5,12 @@ import { createLongLivedReactor } from "@penumbra/daemon/reactors/long-lived-rea
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock, spyOn } from "bun:test";
 import { Cron } from "croner";
+
+import type {
+  FederationHealthSnapshot,
+  McpPool,
+  McpToolDescriptor,
+} from "@src/long-lived/mcp-pool.js";
 
 interface AgentRecord {
   name: string;

@@ -1,6 +1,7 @@
-import { getHandoffToAgent } from "@src/db/handoffs.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+
+import { getHandoffToAgent } from "@src/db/handoffs.js";
 
 describe("handoffs dao", () => {
   test("returns the destination agent for a handoff", () => {

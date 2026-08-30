@@ -1,11 +1,12 @@
 import { buildServices, loadSqliteVec, migrate, type Services, TaskEventBus } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

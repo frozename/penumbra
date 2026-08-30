@@ -1,11 +1,11 @@
-import type { RoutingDecision } from "@src/routing/schemas.js";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { migrate } from "@src/db/migrations.js";
 import { SCHEMA_VERSION } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { readRoutingDecisions, writeRoutingDecision } from "@src/routing/decision-log.js";
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { RoutingDecision } from "@src/routing/schemas.js";
 
 if (process.platform === "darwin") {
   try {

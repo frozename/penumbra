@@ -1,5 +1,6 @@
-import { verifyTdd } from "@src/gates/tdd.js";
 import { expect, test } from "bun:test";
+
+import { verifyTdd } from "@src/gates/tdd.js";
 
 test("passes on bun test output with pass count", () => {
   const r = verifyTdd({ dispatchResult: { stdout: "bun test v1.3.13\n12 pass\n0 fail\n" } });

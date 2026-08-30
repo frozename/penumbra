@@ -1,5 +1,6 @@
-import { bodyJson, json } from "@src/routes/_helpers.js";
 import { expect, test } from "bun:test";
+
+import { bodyJson, json } from "@src/routes/_helpers.js";
 
 test("json helper returns JSON response with status and content type", async () => {
   const res = json({ ok: true }, 201);

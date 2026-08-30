@@ -1,16 +1,17 @@
 import type { SpawnOptionsWithoutStdio } from "node:child_process";
 
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+
 import {
   type AcpSessionSpawner,
   discoverAcpSessionModels,
   parseAcpSessionModels,
   runAcpHandshake,
 } from "@src/commands/generator/discovery-acp-session.js";
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { PassThrough } from "node:stream";
 
 import { expectAsyncThrow } from "../_helpers.js";
 

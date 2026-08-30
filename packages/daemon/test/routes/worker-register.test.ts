@@ -1,9 +1,10 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,6 +1,7 @@
+import { describe, expect, test } from "bun:test";
+
 import { TaskProfileSchema } from "@src/routing/schemas.js";
 import { profileTaskDeterministic } from "@src/routing/task-profile.js";
-import { describe, expect, test } from "bun:test";
 
 const fixtures: { name: string; message: string; role: string }[] = [
   {

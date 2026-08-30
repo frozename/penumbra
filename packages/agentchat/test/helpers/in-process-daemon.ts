@@ -12,11 +12,12 @@ import {
   ShellSessionPool,
   WatchdogService,
 } from "@penumbra/daemon/test-utils";
-import { PenumbraClient } from "@src/penumbra-client.js";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { PenumbraClient } from "@src/penumbra-client.js";
 
 try {
   if (process.platform === "darwin") {

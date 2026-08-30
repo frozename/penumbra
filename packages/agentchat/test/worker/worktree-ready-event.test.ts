@@ -1,5 +1,6 @@
-import { buildWorktreeReadyEvent } from "@src/worker/worktree-ready-event.js";
 import { expect, test } from "bun:test";
+
+import { buildWorktreeReadyEvent } from "@src/worker/worktree-ready-event.js";
 
 test("buildWorktreeReadyEvent emits path-free completion metadata", () => {
   const event = buildWorktreeReadyEvent({

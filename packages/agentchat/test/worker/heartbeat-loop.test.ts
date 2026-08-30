@@ -1,7 +1,8 @@
+import { describe, expect, test } from "bun:test";
+
 import { PenumbraHttpError } from "@src/penumbra-client.js";
 import { startHeartbeatLoop } from "@src/worker/heartbeat-loop.js";
 import { MAX_HEARTBEAT_ATTEMPTS } from "@src/worker/heartbeat-retry.js";
-import { describe, expect, test } from "bun:test";
 
 interface ScheduledTask {
   delayMs: number;

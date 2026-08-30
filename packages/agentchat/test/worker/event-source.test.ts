@@ -1,10 +1,11 @@
+import { expect, mock, test } from "bun:test";
+
 import {
   type EventSourceClient,
   type EventSourceOpts,
   type EventSourceRow,
   startEventSource,
 } from "@src/worker/event-source.js";
-import { expect, mock, test } from "bun:test";
 
 // Test-local row: extends the wider production `EventSourceRow` contract with
 // a status field used by the synthetic mock data. Keeping it as an extension

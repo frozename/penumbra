@@ -1,4 +1,4 @@
-import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 import {
   __resetExecutorRegistry,
@@ -6,7 +6,7 @@ import {
   registerExecutor,
   unregisterExecutor,
 } from "@src/worker/executor-registry.js";
-import { beforeEach, describe, expect, test } from "bun:test";
+import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
 const stubExec = (id = "stub"): WriteToolsExecutor => ({ id }) as unknown as WriteToolsExecutor;
 

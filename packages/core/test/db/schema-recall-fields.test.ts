@@ -1,8 +1,9 @@
-import { migrate } from "@src/db/migrations.js";
-import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 // packages/core/test/db/schema-recall-fields.test.ts
 import { describe, expect, test } from "bun:test";
+
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {

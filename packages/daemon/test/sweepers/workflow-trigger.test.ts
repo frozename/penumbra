@@ -1,8 +1,9 @@
+import { expect, test } from "bun:test";
+
 import {
   runWorkflowTriggerSweep,
   type WorkflowTriggerSweeperOpts,
 } from "@src/sweepers/workflow-trigger.js";
-import { expect, test } from "bun:test";
 
 type Trigger = {
   kind: "state-threshold";

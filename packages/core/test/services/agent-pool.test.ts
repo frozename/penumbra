@@ -1,5 +1,6 @@
-import { resolveAgentPool } from "@src/services/agent-routing.js";
 import { describe, expect, test } from "bun:test";
+
+import { resolveAgentPool } from "@src/services/agent-routing.js";
 
 import { AgentPoolSchema } from "../../../config/src/files/agent-pool.js";
 

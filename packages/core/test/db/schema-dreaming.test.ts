@@ -1,7 +1,8 @@
-import { applySchema, releaseT1RollupClaims, runStartupZombieSweep } from "@src/db/schema.js";
-import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 import { expect, it } from "bun:test";
+
+import { applySchema, releaseT1RollupClaims, runStartupZombieSweep } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 interface ColumnInfoRow {
   name: string;

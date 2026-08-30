@@ -1,11 +1,3 @@
-import type { AcpSessionSpawner } from "@src/commands/generator/discovery-acp-session.js";
-
-import {
-  defaultDiscoveryAdapters,
-  type ProviderDiscoveryAdapter,
-  runConfigSyncProviders,
-} from "@src/commands/config-sync-providers.js";
-import { parseOpencodeModelsOutput } from "@src/commands/generator/discovery-opencode.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,6 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import YAML from "yaml";
+
+import {
+  defaultDiscoveryAdapters,
+  type ProviderDiscoveryAdapter,
+  runConfigSyncProviders,
+} from "@src/commands/config-sync-providers.js";
+import type { AcpSessionSpawner } from "@src/commands/generator/discovery-acp-session.js";
+import { parseOpencodeModelsOutput } from "@src/commands/generator/discovery-opencode.js";
 
 import { AgentConfigSchema as AgentchatAgentConfigSchema } from "../../../agentchat/src/config/types.js";
 import {

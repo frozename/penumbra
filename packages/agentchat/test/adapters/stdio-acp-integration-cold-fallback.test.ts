@@ -1,3 +1,7 @@
+import { describe, expect, test, vi } from "bun:test";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { acpSpecHash, createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
 import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import {
@@ -6,9 +10,6 @@ import {
   type StdioAcpHandle,
 } from "@src/adapters/stdio-acp-server.js";
 import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
-import { describe, expect, test, vi } from "bun:test";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 

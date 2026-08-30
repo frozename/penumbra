@@ -1,11 +1,11 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { beforeEach, expect, mock, test } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import {
   chainStartHandler,
   ChainStartInputShape,
   resetChainStartTaskTypeDeprecationForTests,
 } from "@src/tools/chain-start.js";
-import { beforeEach, expect, mock, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

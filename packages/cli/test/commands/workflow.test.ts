@@ -1,5 +1,6 @@
-import { runWorkflowList, runWorkflowRun } from "@src/commands/workflow.js";
 import { expect, test } from "bun:test";
+
+import { runWorkflowList, runWorkflowRun } from "@src/commands/workflow.js";
 
 test("runWorkflowList prints names + descriptions", async () => {
   const calls: string[] = [];

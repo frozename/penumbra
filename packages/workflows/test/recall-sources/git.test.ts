@@ -1,9 +1,10 @@
-import { isValidGitRef, runGitDiff, runGitLog, runGitShow } from "@src/recall-sources/git.js";
 import { expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { isValidGitRef, runGitDiff, runGitLog, runGitShow } from "@src/recall-sources/git.js";
 
 function initRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "git-"));

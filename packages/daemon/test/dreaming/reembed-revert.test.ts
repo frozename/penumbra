@@ -1,7 +1,8 @@
 import { applySchema, loadSqliteVec } from "@penumbra/core";
-import { revertDreamAction } from "@src/dreaming/reembed.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
+
+import { revertDreamAction } from "@src/dreaming/reembed.js";
 
 interface RollupPromotedRow {
   t2_promoted_at: string | null;

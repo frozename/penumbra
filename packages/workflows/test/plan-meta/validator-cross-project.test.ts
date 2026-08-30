@@ -1,12 +1,13 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   type ProjectRegistryLike,
   validatePlan,
   type ValidatorTask,
 } from "@src/plan-meta/validator.js";
-import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 function fakeRegistry(ids: string[]): ProjectRegistryLike {
   const set = new Set(ids);

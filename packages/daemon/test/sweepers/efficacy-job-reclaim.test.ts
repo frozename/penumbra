@@ -6,12 +6,13 @@ import {
   loadSqliteVec,
   type Services,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import {
   runEfficacyJobReclaimSweep,
   startEfficacyJobReclaimSweeper,
 } from "@src/sweepers/efficacy-job-reclaim.js";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

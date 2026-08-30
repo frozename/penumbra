@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { TestEmbedder } from "@src/testing/index.js";
 import { T1Rollup } from "@src/writers/t1.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

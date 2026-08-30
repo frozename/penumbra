@@ -1,6 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
 import { ChainStartRequestSchema } from "@penumbra/core";
+import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
 import {
   CallerCwdNotRegisteredError,
   chainStartHandler,
@@ -8,7 +9,6 @@ import {
   ProjectIdRequiredError,
   RegistryUnavailableError,
 } from "@src/tools/chain-start.js";
-import { expect, mock, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -1,4 +1,7 @@
 import type { Logger } from "@penumbra/core";
+
+import { describe, expect, test } from "bun:test";
+
 import type { CreatePermissionResult, PenumbraClient } from "@src/penumbra-client.js";
 import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
 import type {
@@ -7,9 +10,7 @@ import type {
   PermissionDaemonClient as PermissionDaemonClientType,
   PermissionDecisionResult,
 } from "@src/worker/permission-daemon-client.js";
-
 import { PermissionDaemonClient } from "@src/worker/permission-daemon-client.js";
-import { describe, expect, test } from "bun:test";
 
 type PenumbraClientStub = Pick<PenumbraClient, "createPermission" | "getPermission">;
 

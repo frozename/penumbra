@@ -1,8 +1,8 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { afterEach, describe, expect, it } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { DaemonHttpError } from "@src/daemon-client.js";
 import { fsGlobHandler } from "@src/tools/fs-glob.js";
-import { afterEach, describe, expect, it } from "bun:test";
 
 type GlobDaemon = Pick<DaemonClient, "globInWorktree">;
 type GlobImpl = DaemonClient["globInWorktree"];

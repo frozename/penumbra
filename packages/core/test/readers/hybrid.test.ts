@@ -1,10 +1,11 @@
+import { Database } from "bun:sqlite";
+// packages/core/test/readers/hybrid.test.ts
+import { describe, expect, test } from "bun:test";
+
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { TestEmbedder } from "@src/embedder/test-embedder.js";
 import { hybridSearch } from "@src/readers/hybrid.js";
-import { Database } from "bun:sqlite";
-// packages/core/test/readers/hybrid.test.ts
-import { describe, expect, test } from "bun:test";
 try {
   if (process.platform === "darwin")
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

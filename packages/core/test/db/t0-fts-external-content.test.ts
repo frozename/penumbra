@@ -1,7 +1,8 @@
-import { applySchema, migrateT0FtsToExternalContentOnce } from "@src/db/schema.js";
-import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+
+import { applySchema, migrateT0FtsToExternalContentOnce } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {

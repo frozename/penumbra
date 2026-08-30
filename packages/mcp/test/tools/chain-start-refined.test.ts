@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { chainStartRefinedHandler } from "@src/tools/chain-start-refined.js";
 import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { chainStartRefinedHandler } from "@src/tools/chain-start-refined.js";
 
 import { fakeDaemon } from "../helpers.js";
 

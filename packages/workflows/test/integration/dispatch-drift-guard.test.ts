@@ -1,8 +1,8 @@
-import type { WorkflowFn } from "@src/index.js";
-
 import { loadSqliteVec, migrate } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+
+import type { WorkflowFn } from "@src/index.js";
 
 try {
   if (process.platform === "darwin") {

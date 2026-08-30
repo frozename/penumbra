@@ -1,9 +1,9 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { DaemonClient as DaemonClientCtor } from "@src/daemon-client.js";
-import { dispatchAuditHandler, DispatchAuditInputShape } from "@src/tools/dispatch-audit.js";
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonClient as DaemonClientCtor } from "@src/daemon-client.js";
+import { dispatchAuditHandler, DispatchAuditInputShape } from "@src/tools/dispatch-audit.js";
 
 import { connectInMemory, fakeDaemon } from "../helpers.js";
 

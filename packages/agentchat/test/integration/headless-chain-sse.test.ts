@@ -1,7 +1,3 @@
-import type { DispatchHandoffResult } from "@src/cli/dispatch-handoff.js";
-import type { AgentChatConfig } from "@src/config/types.js";
-import type { Adapter } from "@src/sdk/adapter.js";
-
 import {
   buildServices,
   createLogger,
@@ -12,16 +8,20 @@ import {
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
-import { registerAdapter } from "@src/adapters/registry.js";
-import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
-import { PenumbraClient } from "@src/penumbra-client.js";
-import { createWorkerDispatcher } from "@src/worker/dispatcher.js";
-import { startEventSource } from "@src/worker/event-source.js";
 import { Database } from "bun:sqlite";
 import { expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { registerAdapter } from "@src/adapters/registry.js";
+import type { DispatchHandoffResult } from "@src/cli/dispatch-handoff.js";
+import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import type { AgentChatConfig } from "@src/config/types.js";
+import { PenumbraClient } from "@src/penumbra-client.js";
+import type { Adapter } from "@src/sdk/adapter.js";
+import { createWorkerDispatcher } from "@src/worker/dispatcher.js";
+import { startEventSource } from "@src/worker/event-source.js";
 
 import { serviceTest } from "../helpers/service-gates.js";
 

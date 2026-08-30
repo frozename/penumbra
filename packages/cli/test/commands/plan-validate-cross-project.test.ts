@@ -1,8 +1,9 @@
-import { runPlanValidate } from "@src/commands/plan.js";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runPlanValidate } from "@src/commands/plan.js";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;

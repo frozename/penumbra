@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { TestEmbedder } from "@src/testing/index.js";
 import {
@@ -6,8 +9,6 @@ import {
   verifyMemory,
   writeDirectT2Memory,
 } from "@src/writers/t2.js";
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, test } from "bun:test";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

@@ -1,5 +1,6 @@
-import { parseMentions } from "@src/mention/parser.js";
 import { expect, test } from "bun:test";
+
+import { parseMentions } from "@src/mention/parser.js";
 
 test("extracts a single @mention at the end of a message", () => {
   expect(parseMentions("Here's the plan. @gemini please run it.")).toEqual([

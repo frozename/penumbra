@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   BoundsAxis,
   BoundsInputSchema,
@@ -6,7 +8,6 @@ import {
   TaskKindSchema,
 } from "@src/index.js";
 import { FileTaskInputSchema } from "@src/tasks/schema.js";
-import { describe, expect, test } from "bun:test";
 
 describe("maestro schemas", () => {
   test("TaskKindSchema accepts orchestrate", () => {

@@ -1,8 +1,9 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { runMemorySearchSource } from "@src/recall-sources/memory.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { runMemorySearchSource } from "@src/recall-sources/memory.js";
 
 try {
   if (process.platform === "darwin") {

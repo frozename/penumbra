@@ -1,5 +1,6 @@
-import { fetchServedModelEntries, fetchServedModels, servedModelsUrl } from "@src/index.js";
 import { describe, expect, test } from "bun:test";
+
+import { fetchServedModelEntries, fetchServedModels, servedModelsUrl } from "@src/index.js";
 
 describe("served models client", () => {
   test("builds the /v1/models URL from base URLs with or without /v1", () => {

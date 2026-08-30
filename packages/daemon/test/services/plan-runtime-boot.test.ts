@@ -6,9 +6,10 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
-import { createPlanRuntimeSweeper } from "@src/sweepers/plan-runtime.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { createPlanRuntimeSweeper } from "@src/sweepers/plan-runtime.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,7 +1,7 @@
-import type { InputEvent } from "@src/cli/input.js";
-
-import { parseInputStream } from "@src/cli/input.js";
 import { expect, test } from "bun:test";
+
+import type { InputEvent } from "@src/cli/input.js";
+import { parseInputStream } from "@src/cli/input.js";
 
 interface AsyncStringIter {
   [Symbol.asyncIterator](): AsyncStringIter;

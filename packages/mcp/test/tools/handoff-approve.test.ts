@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { approveHandoffHandler } from "@src/tools/handoff-approve.js";
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { approveHandoffHandler } from "@src/tools/handoff-approve.js";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -1,7 +1,8 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
-import { runMemoryDigest } from "@src/commands/memory.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { runMemoryDigest } from "@src/commands/memory.js";
 
 try {
   if (process.platform === "darwin") {

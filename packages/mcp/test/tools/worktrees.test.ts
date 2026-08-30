@@ -1,10 +1,10 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { expect, mock, test } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { chainStartHandler } from "@src/tools/chain-start.js";
 import { worktreeCleanupHandler } from "@src/tools/worktree-cleanup.js";
 import { worktreeInspectHandler } from "@src/tools/worktree-inspect.js";
 import { worktreeListHandler } from "@src/tools/worktree-list.js";
-import { expect, mock, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

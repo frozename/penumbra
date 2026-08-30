@@ -1,5 +1,6 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { afterEach, describe, expect, it } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { fsEditHandler } from "@src/tools/fs-edit.js";
 import { fsExecHandler } from "@src/tools/fs-exec.js";
 import { fsGlobHandler } from "@src/tools/fs-glob.js";
@@ -12,7 +13,6 @@ import { shellListHandler } from "@src/tools/shell-list.js";
 import { shellRunHandler } from "@src/tools/shell-run.js";
 import { worktreeCleanupHandler } from "@src/tools/worktree-cleanup.js";
 import { worktreeInspectHandler } from "@src/tools/worktree-inspect.js";
-import { afterEach, describe, expect, it } from "bun:test";
 
 interface TextOutput {
   content: { type: "text"; text: string }[];

@@ -1,19 +1,19 @@
-import type { DispatchEvent } from "@src/sdk/adapter.js";
-import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
-
 import {
   ConversationChainEndEventSchema,
   ConversationHopEndEventSchema,
   type DispatchEventInput,
   type Logger,
 } from "@penumbra/core";
-import { spawnCliAdapter, spawnCliAdapterStream } from "@src/adapters/cli-spawn.js";
-import { PenumbraClient, PenumbraHttpError } from "@src/penumbra-client.js";
-import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
 import { expect, mock, test, vi } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { spawnCliAdapter, spawnCliAdapterStream } from "@src/adapters/cli-spawn.js";
+import { PenumbraClient, PenumbraHttpError } from "@src/penumbra-client.js";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
+import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
+import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
 
 // Bun's mock() returns Mock<(...args: unknown[]) => unknown>; the .mock.calls
 // array is therefore unknown[][] and TypeScript loses the concrete arg tuple

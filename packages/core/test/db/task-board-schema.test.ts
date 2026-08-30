@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { migrate } from "@src/db/migrations.js";
 import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

@@ -1,11 +1,11 @@
+import { describe, expect, it, mock, spyOn } from "bun:test";
+
 import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
 import type { RuntimeNotificationConfig } from "@src/worker/notification-config.js";
-
 import {
   createNotificationScheduler,
   type NotificationSchedulerProviderRow,
 } from "@src/worker/notification-scheduler.js";
-import { describe, expect, it, mock, spyOn } from "bun:test";
 
 function makeConfig(overrides: Record<string, unknown> = {}): RuntimeNotificationConfig {
   return {

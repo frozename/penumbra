@@ -1,8 +1,8 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { chainListAgentsHandler, ChainListAgentsInputShape } from "@src/tools/chain-list-agents.js";
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { chainListAgentsHandler, ChainListAgentsInputShape } from "@src/tools/chain-list-agents.js";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -1,11 +1,11 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { expect, mock, test } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import {
   DAEMON_RELOAD_CONFIG_DESCRIPTION,
   daemonReloadConfigHandler,
   DaemonReloadConfigInputShape,
 } from "@src/tools/daemon-reload-config.js";
-import { expect, mock, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

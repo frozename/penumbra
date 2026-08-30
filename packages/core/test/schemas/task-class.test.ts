@@ -1,5 +1,6 @@
-import { TaskClassSchema } from "@src/schemas/task-class.js";
 import { describe, expect, it } from "bun:test";
+
+import { TaskClassSchema } from "@src/schemas/task-class.js";
 
 describe("task class schema", () => {
   it("accepts boundary", () => {

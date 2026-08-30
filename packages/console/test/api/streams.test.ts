@@ -1,5 +1,6 @@
-import type { EventSourceLike, ShimOpts } from "@src/api/event-source-shim.js";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+import type { EventSourceLike, ShimOpts } from "@src/api/event-source-shim.js";
 import {
   __resetBrokerForTests,
   __setSchedulers,
@@ -10,7 +11,6 @@ import {
   subscribe,
 } from "@src/api/streams.js";
 import { useDaemonStore } from "@src/stores/daemon-store.js";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 interface SseFakeController {
   send(event: string, data: string): void;

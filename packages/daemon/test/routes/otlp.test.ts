@@ -1,10 +1,11 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "@src/routes/otlp.js";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "@src/routes/otlp.js";
 
 import { ProtoWriter } from "../../../core/test/otlp/encoder.js";
 

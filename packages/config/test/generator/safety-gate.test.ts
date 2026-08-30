@@ -1,11 +1,11 @@
+import { describe, expect, test } from "bun:test";
+
 import type { AgentConfig, AgentsConfig } from "@src/files/agents.js";
 import type { ModelAliasMap } from "@src/files/model-aliases.js";
-
 import {
   type GeneratorSafetyGateContext,
   runGeneratorSafetyGate,
 } from "@src/generator/safety-gate.js";
-import { describe, expect, test } from "bun:test";
 
 function agent(overrides: Partial<AgentConfig> & { name: string }): AgentConfig {
   return {

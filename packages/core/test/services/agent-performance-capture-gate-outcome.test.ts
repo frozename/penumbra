@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { loadSqliteVec, migrate } from "@src/index.js";
 import {
   captureAgentPerformanceFromDispatch,
@@ -5,8 +8,6 @@ import {
 } from "@src/services/agent-performance-capture.js";
 import { type AgentRecommendation, routeAgent } from "@src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
 
 function getRecommendationsViaRoute(
   input: Parameters<typeof routeAgent>[0],

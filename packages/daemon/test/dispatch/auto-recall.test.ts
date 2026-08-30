@@ -1,5 +1,6 @@
-import { autoRecallForDispatch } from "@src/dispatch/auto-recall.js";
 import { expect, mock, test } from "bun:test";
+
+import { autoRecallForDispatch } from "@src/dispatch/auto-recall.js";
 
 type RecallArgs = { query: string; top_k: number; project_id?: string };
 type RecallHit = { id: string; title: string; snippet?: string };

@@ -6,9 +6,10 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
-import { runOrchestrateDeferralSweep } from "@src/sweepers/orchestrate-deferral.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { runOrchestrateDeferralSweep } from "@src/sweepers/orchestrate-deferral.js";
 
 try {
   if (process.platform === "darwin") {

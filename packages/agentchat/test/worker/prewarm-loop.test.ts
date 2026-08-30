@@ -1,7 +1,7 @@
-import type { PrewarmTarget } from "@src/worker/prewarm-targets.js";
+import { describe, expect, test } from "bun:test";
 
 import { createPrewarmLoop, type PrewarmLoopClock } from "@src/worker/prewarm-loop.js";
-import { describe, expect, test } from "bun:test";
+import type { PrewarmTarget } from "@src/worker/prewarm-targets.js";
 
 /**
  * Phase 3 — worker-local pre-warm loop. Pure + fully injected: a fake clock

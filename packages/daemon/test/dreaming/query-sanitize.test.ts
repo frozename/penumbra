@@ -1,5 +1,6 @@
-import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { describe, expect, it } from "bun:test";
+
+import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 
 describe("dreaming/query-sanitize", () => {
   it("returns null for URL-like prefixes", () => {

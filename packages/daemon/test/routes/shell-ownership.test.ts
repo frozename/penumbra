@@ -6,10 +6,11 @@ import {
   WorkerTokenStore,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "@src/serve.js";
-import { ShellSessionPool } from "@src/services/shell-session-pool.js";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { ShellSessionPool } from "@src/services/shell-session-pool.js";
 
 process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"] = "";
 

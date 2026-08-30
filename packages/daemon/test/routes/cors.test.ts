@@ -1,9 +1,10 @@
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { isLoopbackBrowserOrigin } from "@src/cors.js";
-import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
+
+import { isLoopbackBrowserOrigin } from "@src/cors.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 function createTestHandler(opts: { allowRemote?: boolean } = {}): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;

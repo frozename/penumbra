@@ -1,5 +1,6 @@
-import { buildT2EmbedText, MAX_BODY_CHARS, validateT2Body } from "@src/writers/t2-embed-text.js";
 import { expect, test } from "bun:test";
+
+import { buildT2EmbedText, MAX_BODY_CHARS, validateT2Body } from "@src/writers/t2-embed-text.js";
 
 test("buildT2EmbedText returns body for body_v1", () => {
   expect(buildT2EmbedText("Title", "Body", "body_v1")).toBe("Body");

@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { agentRankHandler, AgentRankInputSchema } from "@src/tools/agent-rank.js";
 import { describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { agentRankHandler, AgentRankInputSchema } from "@src/tools/agent-rank.js";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -1,6 +1,7 @@
-import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import { describe, expect, it } from "bun:test";
 import { PassThrough } from "node:stream";
+
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 
 interface JsonRpcReply {
   jsonrpc?: "2.0";

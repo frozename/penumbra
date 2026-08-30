@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { PermissionReader } from "@src/readers/permission.js";
 import { PermissionWriter } from "@src/writers/permission.js";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

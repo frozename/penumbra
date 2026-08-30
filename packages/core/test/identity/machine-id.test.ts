@@ -1,8 +1,9 @@
-import { MachineId } from "@src/identity/machine-id.js";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { MachineId } from "@src/identity/machine-id.js";
 
 let dir = "";
 beforeEach(() => {

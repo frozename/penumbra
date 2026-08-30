@@ -1,7 +1,8 @@
-import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
-import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+
+import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 try {
   if (process.platform === "darwin") {

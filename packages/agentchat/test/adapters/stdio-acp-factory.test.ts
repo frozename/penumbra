@@ -1,8 +1,8 @@
-import type { Adapter } from "@src/sdk/adapter.js";
+import { afterEach, describe, expect, test, vi } from "bun:test";
 
 import { resetAcpWarmPoolRegistryForTest } from "@src/adapters/acp-warm-pool-registry.js";
 import { createStdioAcpAdapter } from "@src/adapters/registry.js";
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import type { Adapter } from "@src/sdk/adapter.js";
 
 afterEach(() => {
   resetAcpWarmPoolRegistryForTest();

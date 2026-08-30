@@ -1,9 +1,10 @@
-import { OpenCodeDbReader } from "@src/usage-readers/opencode-db-reader.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { OpenCodeDbReader } from "@src/usage-readers/opencode-db-reader.js";
 
 function makeOpencodeDb(): { db: Database; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "opencode-db-"));

@@ -5,10 +5,11 @@ import {
   MaestroSessionWriter,
   migrate,
 } from "@penumbra/core";
-import { createBoundsTracker } from "@src/maestro/bounds-tracker.js";
-import { rollupCostForChain } from "@src/maestro/cost-rollup.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+
+import { createBoundsTracker } from "@src/maestro/bounds-tracker.js";
+import { rollupCostForChain } from "@src/maestro/cost-rollup.js";
 
 if (process.platform === "darwin") {
   try {

@@ -1,5 +1,6 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { expect, mock, test } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { longLivedApproveActionHandler } from "@src/tools/long-lived-approve-action-mcp.js";
 import { longLivedAuditHandler } from "@src/tools/long-lived-audit-mcp.js";
 import { longLivedGetHandler } from "@src/tools/long-lived-get-mcp.js";
@@ -16,7 +17,6 @@ import { longLivedRetireHandler } from "@src/tools/long-lived-retire-mcp.js";
 import { longLivedStateGetHandler } from "@src/tools/long-lived-state-get-mcp.js";
 import { longLivedStateSetHandler } from "@src/tools/long-lived-state-set-mcp.js";
 import { longLivedTicksHandler } from "@src/tools/long-lived-ticks-mcp.js";
-import { expect, mock, test } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

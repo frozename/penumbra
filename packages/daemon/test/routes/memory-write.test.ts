@@ -6,14 +6,15 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
-import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
-import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
+import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 
 import { registerWorkerForTest } from "../../test-utils.js";
 

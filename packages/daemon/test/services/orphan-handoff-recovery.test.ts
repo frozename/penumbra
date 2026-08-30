@@ -6,11 +6,12 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { handoffsApproveRoute, handoffsCreateRoute } from "@src/routes/handoffs.js";
 import { OrphanHandoffRecoveryService } from "@src/services/orphan-handoff-recovery.js";
 import { WatchdogService } from "@src/services/watchdog.js";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

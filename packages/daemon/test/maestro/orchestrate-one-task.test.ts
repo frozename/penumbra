@@ -7,9 +7,10 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
-import { orchestrateOneTask } from "@src/maestro/orchestrate-one-task.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { orchestrateOneTask } from "@src/maestro/orchestrate-one-task.js";
 
 try {
   if (process.platform === "darwin") {

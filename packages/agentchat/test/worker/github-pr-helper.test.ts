@@ -1,9 +1,10 @@
 import type { Logger } from "@penumbra/core";
 
-import { createDispatchPR } from "@src/worker/github-pr-helper.js";
 import { expect, mock, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+
+import { createDispatchPR } from "@src/worker/github-pr-helper.js";
 
 const noopLogger = (): void => {
   // intentionally empty: silent logger for github-pr-helper tests

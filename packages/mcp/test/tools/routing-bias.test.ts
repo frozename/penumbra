@@ -1,5 +1,6 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { describe, expect, it } from "bun:test";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import {
   routingBiasClearHandler,
@@ -10,7 +11,6 @@ import {
   RoutingBiasListInputSchema,
 } from "@src/tools/routing-bias-list.js";
 import { routingBiasSetHandler, RoutingBiasSetInputSchema } from "@src/tools/routing-bias-set.js";
-import { describe, expect, it } from "bun:test";
 
 import { fakeDaemon } from "../helpers.js";
 

@@ -1,3 +1,8 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import {
   runTaskCancel,
   runTaskList,
@@ -6,10 +11,6 @@ import {
   runTaskShow,
   runTaskWatch,
 } from "@src/commands/task.js";
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 
 let storageRoot = "";
 

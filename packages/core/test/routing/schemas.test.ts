@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   AaModelSchema,
   AaModelSnapshotSchema,
@@ -7,7 +9,6 @@ import {
   type TaskProfile,
   TaskProfileSchema,
 } from "@src/routing/schemas.js";
-import { describe, expect, test } from "bun:test";
 
 import aaLiveSample from "./fixtures/aa-live-sample.json";
 

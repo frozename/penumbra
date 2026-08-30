@@ -1,7 +1,8 @@
-import { loadSqliteVec, migrate } from "@src/index.js";
-import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
+
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 
 describe("AgentPerformanceWriter agent_kind", () => {
   let db: Database;

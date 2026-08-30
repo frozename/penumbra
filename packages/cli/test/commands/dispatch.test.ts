@@ -1,8 +1,9 @@
-import { runDispatchTimeline } from "@src/commands/dispatch.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runDispatchTimeline } from "@src/commands/dispatch.js";
 
 import { urlToString } from "./_helpers.js";
 

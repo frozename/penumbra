@@ -1,6 +1,7 @@
+import { expect, test } from "bun:test";
+
 import { normalize } from "@src/normalize/ingest.js";
 import { DEFAULT_REDACTION_RULES, RegexRedactor } from "@src/redaction/regex.js";
-import { expect, test } from "bun:test";
 
 const redactor = new RegexRedactor(DEFAULT_REDACTION_RULES);
 const ctx = {

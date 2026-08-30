@@ -1,5 +1,6 @@
-import { renderDiscordEvent } from "@src/worker/discord-events.js";
 import { describe, expect, it } from "bun:test";
+
+import { renderDiscordEvent } from "@src/worker/discord-events.js";
 
 describe("renderDiscordEvent", () => {
   it("renders dispatch end without prompt by default", () => {

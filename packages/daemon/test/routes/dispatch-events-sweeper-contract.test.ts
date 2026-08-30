@@ -7,10 +7,11 @@ import {
   type Services,
   type WorktreeHandle,
 } from "@penumbra/core";
-import { dispatchEventsGetRoute } from "@src/routes/dispatch-events.js";
-import { type BranchLandStatus, runWorktreeGcTick } from "@src/sweepers/worktree-gc.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+
+import { dispatchEventsGetRoute } from "@src/routes/dispatch-events.js";
+import { type BranchLandStatus, runWorktreeGcTick } from "@src/sweepers/worktree-gc.js";
 
 // Relative import: the daemon package's node_modules symlink resolves
 // @penumbra/api-contract to the shared home checkout, which lags this branch's

@@ -1,11 +1,12 @@
-import {
-  discoverCodexModels,
-  parseCodexDebugModelsOutput,
-} from "@src/commands/generator/discovery-codex.js";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+
+import {
+  discoverCodexModels,
+  parseCodexDebugModelsOutput,
+} from "@src/commands/generator/discovery-codex.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/codex-debug-models.json");
 const fixtureText = readFileSync(fixturePath, "utf8");

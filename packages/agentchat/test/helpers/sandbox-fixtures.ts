@@ -1,10 +1,10 @@
-import type { PermissionDecision } from "@src/sdk/adapter.js";
-
-import { DEFAULT_SANDBOX_CONFIG } from "@src/worker/sandbox-config.js";
-import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { PermissionDecision } from "@src/sdk/adapter.js";
+import { DEFAULT_SANDBOX_CONFIG } from "@src/worker/sandbox-config.js";
+import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
 export interface CapturedEvent {
   type: string;

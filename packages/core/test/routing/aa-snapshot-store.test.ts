@@ -1,12 +1,13 @@
-import {
-  type AaSnapshotStorePayload,
-  createAaSnapshotStore,
-} from "@src/routing/aa-snapshot-store.js";
 import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import {
+  type AaSnapshotStorePayload,
+  createAaSnapshotStore,
+} from "@src/routing/aa-snapshot-store.js";
 
 function snapshot(id: string, collectedAt = "2026-08-24T10:00:00.000Z"): AaSnapshotStorePayload {
   return {

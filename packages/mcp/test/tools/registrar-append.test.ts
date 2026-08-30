@@ -1,13 +1,13 @@
-import type { DaemonClient } from "@src/daemon-client.js";
+import { expect, mock, test } from "bun:test";
+import { z } from "zod";
 
+import type { DaemonClient } from "@src/daemon-client.js";
 import { DaemonHttpError } from "@src/daemon-client.js";
 import {
   registrarAppendHandler,
   RegistrarAppendInputSchema,
   RegistrarAppendInputShape,
 } from "@src/tools/registrar-append.js";
-import { expect, mock, test } from "bun:test";
-import { z } from "zod";
 
 import { fakeDaemon } from "../helpers.js";
 

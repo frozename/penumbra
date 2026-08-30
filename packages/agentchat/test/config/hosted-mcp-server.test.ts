@@ -1,5 +1,6 @@
-import { HostedMcpServerSchema } from "@src/config/types.js";
 import { describe, expect, test } from "bun:test";
+
+import { HostedMcpServerSchema } from "@src/config/types.js";
 
 describe("HostedMcpServerSchema", () => {
   test("requires name and command, with default args and env", () => {

@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { listHandoffsHandler } from "@src/tools/handoff-list.js";
 import { expect, test } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { listHandoffsHandler } from "@src/tools/handoff-list.js";
 
 import { fakeDaemon } from "../helpers.js";
 

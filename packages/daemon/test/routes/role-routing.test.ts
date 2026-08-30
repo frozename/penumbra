@@ -10,17 +10,18 @@ import {
   type Services,
   setRoutingBias,
 } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   resolveSingleRoute,
   type RouterDecisionSink,
   RouterHardConstraintExhaustedError,
   RoutingBiasExhaustedError,
 } from "@src/routes/role-routing.js";
-import { Database } from "bun:sqlite";
-import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 if (process.platform === "darwin") {
   try {

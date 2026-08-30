@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   assessWorkerCodeStaleness,
   resolveWorkerCodeSha,
@@ -6,7 +8,6 @@ import {
   WORKER_CODE_SHA_GIT_TIMEOUT_MS,
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
 } from "@src/worker/code-staleness.js";
-import { describe, expect, test } from "bun:test";
 
 describe("worker code staleness", () => {
   test("reports stale when boot sha differs from current repo HEAD sha", () => {

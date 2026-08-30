@@ -10,6 +10,9 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
 import { reconcileLongLivedAgents } from "@src/long-lived/reconciler.js";
 import {
   handoffsApproveRoute,
@@ -21,8 +24,6 @@ import {
   handoffsListPendingRoute,
 } from "@src/routes/handoffs.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
 
 import { registerWorkerForTest } from "../../test-utils.js";
 

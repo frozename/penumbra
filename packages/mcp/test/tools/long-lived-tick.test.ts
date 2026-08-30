@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { longLivedTickHandler } from "@src/tools/long-lived-tick-mcp.js";
 import { expect, mock, test } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { longLivedTickHandler } from "@src/tools/long-lived-tick-mcp.js";
 
 import { fakeDaemon } from "../helpers.js";
 

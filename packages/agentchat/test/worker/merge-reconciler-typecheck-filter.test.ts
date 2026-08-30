@@ -1,9 +1,10 @@
 import { type HandoffRow, type Logger, WorktreeManager } from "@penumbra/core";
-import { createMergeReconciler, type ReconcilerDeps } from "@src/worker/merge-reconciler.js";
 import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+import { createMergeReconciler, type ReconcilerDeps } from "@src/worker/merge-reconciler.js";
 
 interface ExecResult {
   stdout: string;

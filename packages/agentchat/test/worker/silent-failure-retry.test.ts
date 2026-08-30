@@ -1,4 +1,6 @@
 import { NON_MUTATING_TASK_TYPES, slugifyBranchSegment } from "@penumbra/core";
+import { describe, expect, test } from "bun:test";
+
 import {
   buildRetryPayloadOrNull,
   buildSilentRetryPayload,
@@ -10,7 +12,6 @@ import {
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
 } from "@src/worker/silent-failure-retry.js";
-import { describe, expect, test } from "bun:test";
 
 describe("shouldRetryForSilentFailure", () => {
   test("null/undefined perf does not trigger retry", () => {

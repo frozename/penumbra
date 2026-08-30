@@ -1,11 +1,13 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
+import { createDaemonFetchHandler } from "@src/serve.js";
 import type {
   GhClient,
   GhCreateIssueInput,
   GhIssueComment,
   GhIssueView,
 } from "@src/services/gh-client.js";
-
-import { createDaemonFetchHandler } from "@src/serve.js";
 import {
   createGhTaskSyncService,
   createGhTaskSyncSingleFlight,
@@ -13,8 +15,6 @@ import {
   type GhTaskSyncService,
   type GhTaskSyncSummary,
 } from "@src/sweepers/gh-task-sync.js";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
 
 import type { Services } from "../../../core/src/index.js";
 

@@ -1,9 +1,10 @@
+import { expect, it } from "bun:test";
+
 import {
   buildJudgePromptBlock,
   buildResearchJudgePrompt,
   sanitizeResearchMarkdown,
 } from "@src/research/sanitization.js";
-import { expect, it } from "bun:test";
 
 it("sanitize: truncates markdown at max_markdown_tokens chars", () => {
   const longMd = "x".repeat(20000);

@@ -1,8 +1,9 @@
-import { runNotesRotate } from "@src/commands/notes-rotate.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runNotesRotate } from "@src/commands/notes-rotate.js";
 
 import { expectAsyncThrow } from "./_helpers.js";
 

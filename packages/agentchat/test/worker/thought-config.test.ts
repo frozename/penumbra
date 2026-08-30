@@ -1,6 +1,7 @@
+import { describe, expect, it } from "bun:test";
+
 import { AgentChatConfigSchema } from "@src/config/types.js";
 import { loadThoughtsConfig } from "@src/worker/thought-config.js";
-import { describe, expect, it } from "bun:test";
 
 describe("thoughts config schema", () => {
   it("accepts a minimal thoughts block", () => {

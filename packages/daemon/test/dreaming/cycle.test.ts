@@ -1,14 +1,15 @@
 import type { Logger } from "@penumbra/core";
-import type { DreamConfig } from "@src/dreaming/config.js";
 
 import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+
+import type { DreamConfig } from "@src/dreaming/config.js";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "@src/dreaming/cycle.js";
 import { makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
 import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { hashQuery } from "@src/dreaming/research.js";
-import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, expect, it } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

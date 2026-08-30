@@ -1,5 +1,6 @@
-import { TestEmbedder } from "@src/embedder/test-embedder.js";
 import { expect, test } from "bun:test";
+
+import { TestEmbedder } from "@src/embedder/test-embedder.js";
 
 test("TestEmbedder returns stable vectors for the same input", async () => {
   const e = new TestEmbedder({ dim: 384 });

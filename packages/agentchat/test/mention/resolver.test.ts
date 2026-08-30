@@ -1,7 +1,7 @@
-import type { AgentChatConfig } from "@src/config/types.js";
-
-import { resolveMention } from "@src/mention/resolver.js";
 import { expect, test } from "bun:test";
+
+import type { AgentChatConfig } from "@src/config/types.js";
+import { resolveMention } from "@src/mention/resolver.js";
 
 const cfg: AgentChatConfig = {
   agents: [

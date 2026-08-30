@@ -1,10 +1,11 @@
-import type { DispatchEvent } from "@src/sdk/adapter.js";
-import type { RecordThoughtInput, ThoughtCapture } from "@src/worker/thought-capture.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { expect } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+
+import type { DispatchEvent } from "@src/sdk/adapter.js";
+import type { RecordThoughtInput, ThoughtCapture } from "@src/worker/thought-capture.js";
 
 export async function expectRejection(
   promise: Promise<unknown>,

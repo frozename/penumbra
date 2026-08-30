@@ -1,6 +1,7 @@
 import type { DispatchEventInput } from "@penumbra/core";
-import type { DispatchEvent } from "@src/sdk/adapter.js";
-import type { RecordThoughtInput } from "@src/worker/thought-capture.js";
+
+import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 
 import {
   type CapacityError,
@@ -8,8 +9,8 @@ import {
   spawnCliAdapter,
   spawnCliAdapterStream,
 } from "@src/adapters/cli-spawn.js";
-import { describe, expect, spyOn, test } from "bun:test";
-import * as childProcess from "node:child_process";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
+import type { RecordThoughtInput } from "@src/worker/thought-capture.js";
 
 import {
   expectRejection,

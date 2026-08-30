@@ -1,9 +1,10 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, expect, test } from "bun:test";
+
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { T0EventSchema } from "@src/schemas/event.js";
 import { T0Writer } from "@src/writers/t0.js";
-import { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

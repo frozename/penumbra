@@ -1,8 +1,9 @@
-import { WorktreeManager } from "@src/worktree/manager.js";
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+import { WorktreeManager } from "@src/worktree/manager.js";
 
 test("WorktreeManager exposes its configured mainRepoDir via a public accessor", () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-mainrepodir-"));

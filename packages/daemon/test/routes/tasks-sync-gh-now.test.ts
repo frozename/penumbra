@@ -1,7 +1,7 @@
-import type { GhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
+import { expect, test } from "bun:test";
 
 import { tasksSyncGhNowRoute } from "@src/routes/tasks.js";
-import { expect, test } from "bun:test";
+import type { GhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
 
 interface SyncRow {
   gh_state: string;

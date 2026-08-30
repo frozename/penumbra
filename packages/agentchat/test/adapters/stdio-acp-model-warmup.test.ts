@@ -1,13 +1,14 @@
 import type { DispatchEventInput } from "@penumbra/core";
-import type { AcpWarmPool } from "@src/adapters/acp-warm-pool.js";
-import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
-import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
-import type { DispatchInput } from "@src/sdk/adapter.js";
 
-import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
-import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 import { describe, expect, it, vi } from "bun:test";
 import { PassThrough } from "node:stream";
+
+import type { AcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
 /**
  * modelWarmupPrompt absorbs the per-process `/model` handshake that an

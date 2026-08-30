@@ -1,5 +1,6 @@
-import { OffAdapter } from "@src/research/off-adapter.js";
 import { describe, expect, it } from "bun:test";
+
+import { OffAdapter } from "@src/research/off-adapter.js";
 
 describe("OffAdapter", () => {
   it("search resolves to an empty result set", async () => {

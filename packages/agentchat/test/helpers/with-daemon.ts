@@ -1,11 +1,12 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
-import { PenumbraClient } from "@src/penumbra-client.js";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { PenumbraClient } from "@src/penumbra-client.js";
 
 export function withDaemon(): {
   client: PenumbraClient;

@@ -1,7 +1,7 @@
-import type { DaemonClient } from "@src/daemon-client.js";
-
-import { agentRecommendHandler, AgentRecommendInputSchema } from "@src/tools/agent-recommend.js";
 import { describe, expect, it } from "bun:test";
+
+import type { DaemonClient } from "@src/daemon-client.js";
+import { agentRecommendHandler, AgentRecommendInputSchema } from "@src/tools/agent-recommend.js";
 
 import { fakeDaemon } from "../helpers.js";
 

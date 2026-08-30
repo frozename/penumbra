@@ -1,7 +1,8 @@
-import { applySchema } from "@src/db/schema.js";
-import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+
+import { applySchema } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
 test("sqlite foreign keys cascade verification events when a memory is deleted", () => {
   const db = new Database(":memory:");

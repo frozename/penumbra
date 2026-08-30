@@ -1,9 +1,10 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { createDaemonFetchHandler } from "@src/serve.js";
-import { WorkerHealthProbe } from "@src/services/worker-health-probe.js";
 import { Database } from "bun:sqlite";
 import { expect, test, vi } from "bun:test";
+
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { WorkerHealthProbe } from "@src/services/worker-health-probe.js";
 
 import { registerWorkerForTest } from "../../test-utils.js";
 

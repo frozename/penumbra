@@ -1,9 +1,10 @@
+import { expect, test } from "bun:test";
+import { z } from "zod";
+
 import {
   laneLedgerRecentHandler,
   LaneLedgerRecentInputShape,
 } from "@src/tools/lane-ledger-recent.js";
-import { expect, test } from "bun:test";
-import { z } from "zod";
 
 import { installFetchMock, requestUrl } from "../helpers.js";
 

@@ -1,13 +1,14 @@
 import type { Logger } from "@penumbra/core";
 import type { execFile as nodeExecFile } from "node:child_process";
 
+import { expect, mock, test } from "bun:test";
+
 import {
   autocommitOnChainEnd,
   filterAutocommitPaths,
   parseGitStatusPaths,
 } from "@src/worker/autocommit-on-chain-end.js";
 import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
-import { expect, mock, test } from "bun:test";
 
 const handoff = {
   handoff_id: "h-auto",

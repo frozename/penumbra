@@ -1,6 +1,7 @@
+import { expect, test } from "bun:test";
+
 import { T0EventInputSchema } from "@src/schemas/event.js";
 import { assertSafeProjectId, SafeProjectIdSchema } from "@src/schemas/project-id.js";
-import { expect, test } from "bun:test";
 
 // ---------------------------------------------------------------------------
 // SafeProjectIdSchema — valid IDs

@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   FsEditAppliedPayload,
   FsWriteAppliedPayload,
@@ -5,7 +7,6 @@ import {
   TerminalKilledPayload,
   TerminalSpawnedPayload,
 } from "@src/schemas/write-tools-events.js";
-import { describe, expect, test } from "bun:test";
 
 describe("FsWriteAppliedPayload", () => {
   const valid = {

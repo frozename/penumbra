@@ -1,5 +1,6 @@
-import * as llmCandidates from "@src/services/llm-candidates.js";
 import { expect, mock, spyOn, test } from "bun:test";
+
+import * as llmCandidates from "@src/services/llm-candidates.js";
 
 const resolver = (input: unknown): unknown =>
   (llmCandidates as Record<string, (value: unknown) => unknown>).resolveRoleLlmCandidates(input);

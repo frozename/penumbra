@@ -1,6 +1,5 @@
-import type { AcpWarmPool } from "@src/adapters/acp-warm-pool.js";
-import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
-import type { AgentConfig } from "@src/config/types.js";
+import { afterEach, describe, expect, test, vi } from "bun:test";
+import { PassThrough } from "node:stream";
 
 import {
   drainAgent,
@@ -9,11 +8,12 @@ import {
   shutdownAllAcpWarmPools,
   totalAcpWarmPoolEntryCount,
 } from "@src/adapters/acp-warm-pool-registry.js";
+import type { AcpWarmPool } from "@src/adapters/acp-warm-pool.js";
 import { buildAdapter } from "@src/adapters/registry.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import { normalizeAdapterOptions } from "@src/cli/adapter-options.js";
 import { installAcpWarmPoolShutdownHandlers } from "@src/cli/loop.js";
-import { afterEach, describe, expect, test, vi } from "bun:test";
-import { PassThrough } from "node:stream";
+import type { AgentConfig } from "@src/config/types.js";
 
 interface AdapterWithDeps {
   deps: { pool?: AcpWarmPool };

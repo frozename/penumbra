@@ -1,8 +1,9 @@
-import { runChainSendMessage } from "@src/commands/chain.js";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runChainSendMessage } from "@src/commands/chain.js";
 
 import { expectAsyncThrow, urlToString } from "./_helpers.js";
 

@@ -1,3 +1,5 @@
+import { describe, expect, it, test } from "bun:test";
+
 import {
   EventTypeSchema,
   LaneSchema,
@@ -5,7 +7,6 @@ import {
   T0EventInputSchema,
   T0EventSchema,
 } from "@src/schemas/event.js";
-import { describe, expect, it, test } from "bun:test";
 
 test("parses a complete T0 event", () => {
   const e = T0EventSchema.parse({

@@ -1,9 +1,10 @@
+import { describe, expect, it } from "bun:test";
+
 import {
   assertNoRoleTagCollision,
   assertUniqueSeatNames,
   seatNameFor,
 } from "@src/generator/naming.js";
-import { describe, expect, it } from "bun:test";
 
 describe("seatNameFor", () => {
   it("is a pure function of (source, model slug, effort) — same input twice yields byte-identical names", () => {
