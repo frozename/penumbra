@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
   assessWorkerCodeStaleness,
+  resolveWorkerCodeSha,
+  resolveWorkerCodeShaAsync,
   shouldCheckWorkerCodeStaleness,
   WORKER_CODE_SHA_GIT_TIMEOUT_MS,
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
-  resolveWorkerCodeShaAsync,
-  resolveWorkerCodeSha,
 } from "../../src/worker/code-staleness.js";
 
 describe("worker code staleness", () => {

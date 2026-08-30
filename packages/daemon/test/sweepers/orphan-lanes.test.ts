@@ -369,7 +369,7 @@ test("aborts close when reviewer transitions to in-flight between SELECT and tra
     fn: (...args: unknown[]) => unknown,
   ): ((...args: unknown[]) => unknown) => {
     const callable = originalTransaction(fn);
-    return ((...args: unknown[]): unknown => {
+    return (...args: unknown[]): unknown => {
       if (!flipped) {
         db.run(`UPDATE handoffs SET status='dispatched', resolved_at=NULL WHERE handoff_id=?`, [
           "h-reviewer",
@@ -377,7 +377,7 @@ test("aborts close when reviewer transitions to in-flight between SELECT and tra
         flipped = true;
       }
       return callable(...args);
-    }) as never;
+    };
   }) as never;
 
   const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
@@ -402,13 +402,13 @@ test("aborts close when reviewer is assigned after stale outer snapshot saw none
     fn: (...args: unknown[]) => unknown,
   ): ((...args: unknown[]) => unknown) => {
     const callable = originalTransaction(fn);
-    return ((...args: unknown[]): unknown => {
+    return (...args: unknown[]): unknown => {
       if (!assigned) {
         setReviewerHandoff(db, "lane-1", "h-reviewer");
         assigned = true;
       }
       return callable(...args);
-    }) as never;
+    };
   }) as never;
 
   const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });

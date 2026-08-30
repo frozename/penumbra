@@ -8,8 +8,8 @@ import {
   migrate,
   ProjectRegistry,
   readRoutingDecisions,
-  setRoutingBias,
   type Services,
+  setRoutingBias,
   type Watchdog,
   type WorkflowRunsRegistry,
 } from "@penumbra/core";
@@ -500,7 +500,7 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
   const handles: ReturnType<typeof setTimeout>[] = [];
   const cleared: ReturnType<typeof setTimeout>[] = [];
   globalThis.setTimeout = ((callback: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    const handle = originalSetTimeout(callback, timeout, ...args);
+    const handle = originalSetTimeout(callback as (...args: never[]) => void, timeout, ...args);
     handles.push(handle);
     return handle;
   }) as typeof setTimeout;
@@ -2387,7 +2387,7 @@ test("POST /chains/start stores a human-readable branch name when worktree is en
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  const expectedId = body.handoff_id!.replaceAll(/[^0-9a-f]/gi, "").slice(0, 8);
   expect(handoff.branch_name).toBe(`feat/full-task-pool_${expectedId}`);
 });
 
@@ -2523,7 +2523,7 @@ test("POST /chains/start derives a human-readable branch name from the message w
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  const expectedId = body.handoff_id!.replaceAll(/[^0-9a-f]/gi, "").slice(0, 8);
   expect(handoff.branch_name).toBe(`task/investigate-the-queue-backlog-for-stuck_${expectedId}`);
   expect(handoff.branch_name?.startsWith("agent/")).toBe(false);
   // the human-readable part must be real content, not the id repeated
@@ -2545,7 +2545,7 @@ test("POST /chains/start does not name the branch after a silent-failure-retry s
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  const expectedId = body.handoff_id!.replaceAll(/[^0-9a-f]/gi, "").slice(0, 8);
   expect(handoff.branch_name).toBe(`task/investigate-queue-backlog_${expectedId}`);
   expect(handoff.branch_name).not.toContain("silent-failure-retry");
   expect(handoff.branch_name).not.toContain("retry-of");
@@ -2563,7 +2563,7 @@ test("POST /chains/start falls back to a literal branch name for a whitespace-on
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  const expectedId = body.handoff_id!.replaceAll(/[^0-9a-f]/gi, "").slice(0, 8);
   expect(handoff.branch_name).toBe(`task/handoff_${expectedId}`);
   expect(handoff.branch_name?.startsWith("agent/")).toBe(false);
   expect(() =>
@@ -2587,7 +2587,7 @@ test("POST /chains/start prefers an explicit task_name over a derived message sl
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   const handoff = selectHandoff(services, body.handoff_id!);
-  const expectedId = body.handoff_id!.replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  const expectedId = body.handoff_id!.replaceAll(/[^0-9a-f]/gi, "").slice(0, 8);
   expect(handoff.branch_name).toBe(`task/full-task-pool_${expectedId}`);
 });
 
@@ -3772,7 +3772,7 @@ test("chain_start auto fallback does not re-admit a bias-excluded strict role ho
   services.modelAliasMap = {};
   services.aaSnapshotStore = {
     ...services.aaSnapshotStore,
-    readSync: () => {
+    readSync: (): never => {
       throw new Error("snapshot unavailable");
     },
   };
@@ -4069,7 +4069,7 @@ test("chain_start records an auto decision as unapplied when classifier fallback
   services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
   services.modelAliasMap = {};
   services.localSeatHealth = {
-    getUnhealthyAgents: () => new Set(["codex-mini"]),
+    getUnhealthyAgents: (): Set<string> => new Set(["codex-mini"]),
   };
   services.agentchatConfig = { agents: executorRouting().agents };
   services.handoffWriter.createApproved({
@@ -4141,7 +4141,7 @@ test("chain_start with taskRouterConfig mode:'auto' fails with a legible 422 (no
   services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
   services.modelAliasMap = {};
   services.localSeatHealth = {
-    getUnhealthyAgents: () => new Set(["gemini", "codex-mini"]),
+    getUnhealthyAgents: (): Set<string> => new Set(["gemini", "codex-mini"]),
   };
 
   const res = await chainsStartRoute(
@@ -4207,7 +4207,7 @@ test("chain_start with an explicit agent: pin bypasses the router even in mode:'
   // Would hard-exclude every role candidate if the router ever evaluated
   // this dispatch -- proves the pin never reaches the router at all.
   services.localSeatHealth = {
-    getUnhealthyAgents: () => new Set(["gemini", "codex-mini"]),
+    getUnhealthyAgents: (): Set<string> => new Set(["gemini", "codex-mini"]),
   };
 
   const res = await chainsStartRoute(

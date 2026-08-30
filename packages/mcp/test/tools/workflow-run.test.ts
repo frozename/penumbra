@@ -6,6 +6,10 @@ import { WorkflowCwdRequiredError, workflowRunHandler } from "../../src/tools/wo
 import { fakeDaemon } from "../helpers.js";
 
 type WorkflowRunFn = DaemonClient["workflowRun"];
+type WorkflowOutput = {
+  resolution_warning?: string;
+  workflow_run_id?: string;
+};
 
 function makeWorkflowRun(
   result: unknown = { outcome: "success" },
@@ -85,9 +89,11 @@ test("fills cwd from handler opts when caller omits cwd, with resolution_warning
   if (!block) {
     throw new Error("expected content[0]");
   }
-  const parsed = JSON.parse(block.text);
-  expect(parsed.resolution_warning).toBe("workflow_cwd_inferred_from_mcp_cwd");
-  expect(parsed.workflow_run_id).toBe("w");
+  const parsed: unknown = JSON.parse(block.text);
+  if (typeof parsed !== "object" || parsed === null) throw new Error("invalid workflow output");
+  const output = parsed as WorkflowOutput;
+  expect(output.resolution_warning).toBe("workflow_cwd_inferred_from_mcp_cwd");
+  expect(output.workflow_run_id).toBe("w");
 });
 
 test("throws WorkflowCwdRequiredError when env gate set and cwd omitted", async () => {

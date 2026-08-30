@@ -1,8 +1,3 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import YAML from "yaml";
-
 import {
   AgentsConfigSchema,
   isCanonicalProviderValue,
@@ -10,12 +5,16 @@ import {
   type ModelAliasMap,
 } from "@penumbra/config";
 import {
+  type AaModelSnapshot,
+  type AliasUnmatchedReason,
   buildAliasIndex,
   createAaSnapshotStore,
   reconcileAliases,
-  type AaModelSnapshot,
-  type AliasUnmatchedReason,
 } from "@penumbra/core";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import YAML from "yaml";
 
 export interface AliasCoverageEntry {
   seatName: string;

@@ -1,7 +1,8 @@
 import { statSync } from "node:fs";
 
-import { resolveHandoffBranchName } from "./branch-name.js";
 import type { OrphanWorktreeHandle, WorktreeHandle } from "./manager.js";
+
+import { resolveHandoffBranchName } from "./branch-name.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
 

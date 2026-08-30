@@ -54,7 +54,13 @@ async function* hangHandoffs(opts?: {
       resolve();
       return;
     }
-    signal.addEventListener("abort", () => resolve(), { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true },
+    );
   });
   yield { handoff_id: "", status: "" };
 }
@@ -214,7 +220,13 @@ async function* yieldHandoffsThenHang(
       resolve();
       return;
     }
-    signal.addEventListener("abort", () => resolve(), { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true },
+    );
   });
 }
 

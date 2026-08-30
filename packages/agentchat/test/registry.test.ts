@@ -16,13 +16,15 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
-function neverResolvingFetchUntilAbort(): ReturnType<typeof mock> {
-  return mock((_url: string | URL, init?: RequestInit) => {
+type MockFetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
+
+function neverResolvingFetchUntilAbort(): ReturnType<typeof mock<MockFetch>> {
+  const implementation: MockFetch = (_url, init) => {
     const signal = init?.signal;
     return new Promise<Response>((_resolve, reject) => {
       if (!signal) return;
       const rejectAbort = (): void => {
-        const reason = signal.reason;
+        const reason = signal.reason as unknown;
         reject(reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
       };
       if (signal.aborted) {
@@ -31,7 +33,8 @@ function neverResolvingFetchUntilAbort(): ReturnType<typeof mock> {
       }
       signal.addEventListener("abort", rejectAbort, { once: true });
     });
-  });
+  };
+  return mock<MockFetch>(implementation);
 }
 
 async function expectRejectsBeforeWatchdog(
@@ -40,7 +43,11 @@ async function expectRejectsBeforeWatchdog(
 ): Promise<Error> {
   const result = await Promise.race<unknown>([
     promise.catch((err: unknown) => err),
-    new Promise((resolve) => setTimeout(() => resolve("watchdog"), watchdogMs)),
+    new Promise((resolve) =>
+      setTimeout(() => {
+        resolve("watchdog");
+      }, watchdogMs),
+    ),
   ]);
   if (result === "watchdog") {
     throw new Error("request did not reject before watchdog");

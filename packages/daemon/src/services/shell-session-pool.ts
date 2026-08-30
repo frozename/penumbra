@@ -80,6 +80,10 @@ interface SessionState {
   waiters: Set<() => void>;
 }
 
+function isSessionDead(state: SessionState): boolean {
+  return state.dead;
+}
+
 const REDACTION_PATTERNS: RegExp[] = [
   /sk-[A-Za-z0-9_-]{20,}/g,
   /gh[pousr]_[A-Za-z0-9_]{20,}/g,
@@ -663,7 +667,10 @@ export class ShellSessionPool {
   }
 
   private async replaceTimedOutProcess(state: SessionState): Promise<void> {
-    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+    if (
+      isSessionDead(state) ||
+      this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state
+    ) {
       return;
     }
 
@@ -684,7 +691,10 @@ export class ShellSessionPool {
       await Promise.race([oldProc.exited, this.sleep(100)]);
     }
 
-    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+    if (
+      isSessionDead(state) ||
+      this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state
+    ) {
       return;
     }
 
@@ -693,7 +703,10 @@ export class ShellSessionPool {
     this.attachProcess(state, proc);
     await this.bootstrapSession(state);
 
-    if (state.dead || this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state) {
+    if (
+      isSessionDead(state) ||
+      this.handoffs.get(state.handoffId)?.get(state.sessionId) !== state
+    ) {
       this.intentionallyKilled.add(proc);
       try {
         proc.kill("SIGKILL");

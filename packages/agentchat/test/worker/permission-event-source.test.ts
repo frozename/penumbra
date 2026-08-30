@@ -32,6 +32,7 @@ interface FakeResponse {
 function scriptedFetch(steps: FetchScenarioStep[], captured: CapturedRequest[]): typeof fetch {
   let call = 0;
   const impl = async (input: unknown, init?: RequestInit): Promise<FakeResponse> => {
+    await Promise.resolve(undefined);
     const url = typeof input === "string" ? input : String(input);
     const headers = (init?.headers ?? {}) as Record<string, string>;
     captured.push({ url, authorization: headers.authorization ?? null });
@@ -214,7 +215,7 @@ describe("createPermissionEventSource", () => {
         throw new Error("simulated boot failure");
       };
       const es = createPermissionEventSource("/permissions/events", resolveCreds, {
-        fetchImpl: (async () => {
+        fetchImpl: (() => {
           throw new Error("unreachable");
         }) as unknown as typeof fetch,
         backoffStartMs: 3,
@@ -227,7 +228,7 @@ describe("createPermissionEventSource", () => {
         expect(attempts).toBeGreaterThanOrEqual(1);
         expect(consoleError).toHaveBeenCalled();
         const logged = consoleError.mock.calls.some((call) => {
-          const meta = call[1];
+          const meta = call[1] as unknown;
           return (
             typeof meta === "object" &&
             meta !== null &&
@@ -257,7 +258,7 @@ describe("createPermissionEventSource", () => {
       };
       const backoffMs = 2000;
       const es = createPermissionEventSource("/permissions/events", resolveCreds, {
-        fetchImpl: (async () => {
+        fetchImpl: (() => {
           throw new Error("unreachable");
         }) as unknown as typeof fetch,
         backoffStartMs: backoffMs,

@@ -1,4 +1,5 @@
 import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
+
 import { Database } from "bun:sqlite";
 import { resolve as pathResolve } from "node:path";
 
@@ -26,15 +27,15 @@ import {
 import { MaestroSessionWriter } from "./maestro/writer.js";
 import { PidRegistry } from "./pid/registry.js";
 import { PlanWriter } from "./plans/writer.js";
-import { RegistrarReader } from "./registrar/reader.js";
-import { RegistrarWriter } from "./registrar/writer.js";
 import { ChainReader } from "./readers/chain.js";
 import { HandoffReader } from "./readers/handoff.js";
 import { PermissionReader } from "./readers/permission.js";
 import { RecallReader } from "./readers/recall.js";
 import { TaskDraftReader } from "./readers/task-draft.js";
 import { DEFAULT_REDACTION_RULES, RegexRedactor } from "./redaction/regex.js";
-import { createAaSnapshotStore, type AaSnapshotStore } from "./routing/aa-snapshot-store.js";
+import { RegistrarReader } from "./registrar/reader.js";
+import { RegistrarWriter } from "./registrar/writer.js";
+import { type AaSnapshotStore, createAaSnapshotStore } from "./routing/aa-snapshot-store.js";
 import { DispatchEventLog } from "./services/dispatch-event-log.js";
 import { type Settings, SettingsDefaults, type SettingsInput } from "./settings.js";
 import { InProcessSupervisor } from "./supervisor/in-process.js";

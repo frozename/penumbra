@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
 
-import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
-
-import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "./config.js";
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
+import { resolveRoleLlmCandidates } from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
+import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "./config.js";
 
 // Shared helper approach was considered but deferred: t2-judge-pool returns
 // T2MemoryExtraction[] while dreaming returns DreamingVoteRaw — the generic

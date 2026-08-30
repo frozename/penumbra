@@ -3,9 +3,8 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { isCanonicalProviderValue } from "../provider-format.js";
-
-import { AgentOptionsSchema, CARRIER_CLI_OPTION_KEYS, CARRIER_TOOL_OPTION_KEYS } from "./agents.js";
 import { deepFreeze, loaderError } from "./_loader-util.js";
+import { AgentOptionsSchema, CARRIER_CLI_OPTION_KEYS, CARRIER_TOOL_OPTION_KEYS } from "./agents.js";
 import { existsPath, readUtf8 } from "./node-fs.js";
 
 const ProviderValueSchema = z

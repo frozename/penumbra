@@ -9,6 +9,7 @@ import YAML from "yaml";
 
 import type { AcpSessionSpawner } from "../../src/commands/generator/discovery-acp-session.js";
 
+import { AgentConfigSchema as AgentchatAgentConfigSchema } from "../../../agentchat/src/config/types.js";
 import {
   AgentsConfigSchema,
   loadProviderSourcesFromDir,
@@ -16,7 +17,6 @@ import {
   type ProviderSourcesConfig,
   resolveCatalogAuthority,
 } from "../../../config/src/index.js";
-import { AgentConfigSchema as AgentchatAgentConfigSchema } from "../../../agentchat/src/config/types.js";
 import {
   defaultDiscoveryAdapters,
   type ProviderDiscoveryAdapter,
@@ -745,7 +745,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     };
     const result = await runConfigSyncProviders({ ...opts, apply: true });
 
@@ -802,7 +802,7 @@ describe("penumbra config sync-providers", () => {
         Promise.resolve({
           openai: { models: { "gpt-5.5": {}, "gpt-5.4": {} } },
         }),
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     });
 
     const generatedNames = readAgents(dir)
@@ -861,7 +861,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1070,7 +1070,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1124,7 +1124,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1155,7 +1155,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -1186,7 +1186,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     };
 
     const first = await runConfigSyncProviders(opts);
@@ -1250,7 +1250,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     };
 
     const first = await runConfigSyncProviders(opts);
@@ -1310,7 +1310,7 @@ describe("penumbra config sync-providers", () => {
         ]),
       },
       fetchModelsDevPayload: noModelsDev,
-      reloadConfig: () => Promise.resolve({ ok: true }),
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
     };
 
     const first = await runConfigSyncProviders(opts);
@@ -1402,7 +1402,7 @@ describe("penumbra config sync-providers", () => {
         ],
       },
     });
-    expect(Object.keys(alibabaSeat!.options!).sort()).toEqual(["args", "binary", "unsetEnv"]);
+    expect(Object.keys(alibabaSeat!.options).sort()).toEqual(["args", "binary", "unsetEnv"]);
 
     const agySeat = agents.find((agent) => agent.name === "google-gemini-3-5-pro-cli");
     expect(agySeat).toEqual({
@@ -1430,7 +1430,7 @@ describe("penumbra config sync-providers", () => {
         ],
       },
     });
-    expect(Object.keys(agySeat!.options!).sort()).toEqual(["args", "command"]);
+    expect(Object.keys(agySeat!.options).sort()).toEqual(["args", "command"]);
 
     const opencodeSeat = agents.find((agent) => agent.name === "opencode-go-qwen3-7-max-acp");
     expect(opencodeSeat).toEqual({
@@ -1456,7 +1456,7 @@ describe("penumbra config sync-providers", () => {
         ],
       },
     });
-    expect(Object.keys(opencodeSeat!.options!).sort()).toEqual(["model"]);
+    expect(Object.keys(opencodeSeat!.options).sort()).toEqual(["model"]);
   });
 
   test("an env template renders literally, including a TOML-shaped CODEX_CONFIG value", async () => {

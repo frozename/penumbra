@@ -5,14 +5,14 @@ import { join, resolve } from "node:path";
 import type { AaModelSnapshot } from "../packages/core/src/routing/schemas.js";
 
 import {
-  buildAliasCoverageReport,
   type AliasCoverageReport,
+  buildAliasCoverageReport,
 } from "../packages/cli/src/commands/config-check-aliases.js";
 import { loadAgentChatConfigFromDir } from "../packages/config/src/files/load.js";
 import { loadModelAliasMapFromDir } from "../packages/config/src/files/model-aliases.js";
 import { createAaSnapshotStore } from "../packages/core/src/routing/aa-snapshot-store.js";
 
-export { buildAliasCoverageReport, type AliasCoverageReport };
+export { type AliasCoverageReport, buildAliasCoverageReport };
 
 function formatReport(report: AliasCoverageReport, snapshotState: string): string {
   const lines: string[] = [`AA snapshot: ${snapshotState}`, ""];

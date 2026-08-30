@@ -689,11 +689,11 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
         let peakOneShots = 0;
         const oneShots = executor.__oneShotTerminals;
         const originalSet = oneShots.set.bind(oneShots);
-        oneShots.set = ((...args) => {
+        oneShots.set = (...args): ReturnType<typeof originalSet> => {
           const result = originalSet(...args);
           peakOneShots = Math.max(peakOneShots, oneShots.size);
           return result;
-        }) as typeof oneShots.set;
+        };
 
         const results = await Promise.allSettled(
           Array.from({ length: 5 }, () =>

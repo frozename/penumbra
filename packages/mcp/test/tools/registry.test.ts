@@ -321,7 +321,7 @@ function makeRegistryDaemon(): DaemonClient {
           return () => ({ baseUrl: "http://daemon.test", token: "test-token" });
         }
         if (prop === "maestroCapabilities") {
-          return async () => ({
+          return () => ({
             agents: [
               { name: "codex-acp-fast", maestro_capable: true, task_types: ["plan_refine"] },
             ],
@@ -330,10 +330,10 @@ function makeRegistryDaemon(): DaemonClient {
           });
         }
         if (prop === "listChainAgents") {
-          return async () => ({ agents: [{ name: "codex-acp-fast" }] });
+          return () => ({ agents: [{ name: "codex-acp-fast" }] });
         }
         if (prop === "maestroSessionStartAdhoc") {
-          return async () => ({
+          return () => ({
             status: "dispatched",
             agent_name: "codex-acp-fast",
             chain_handoff_id: TEST_ID,
@@ -341,7 +341,7 @@ function makeRegistryDaemon(): DaemonClient {
             session: registryDaemonPayload().session,
           });
         }
-        return async () => registryDaemonPayload();
+        return () => registryDaemonPayload();
       },
     },
   );
@@ -515,6 +515,7 @@ function sampleValue(schema: unknown, key: string): unknown {
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve registry fallback fixture behavior while grandfathering its pre-existing complexity.
 function fallbackValueForKey(key: string): string {
   if (key.endsWith("_at") || key === "since" || key === "now") {
     return "2026-01-01T00:00:00.000Z";
@@ -552,7 +553,10 @@ function isZodObject(value: unknown): boolean {
 function getZodObjectShape(schema: unknown): Record<string, unknown> {
   const zod = schema as ZodLike;
   const shape = zod.shape ?? zod._def?.shape ?? zod.def?.shape;
-  if (typeof shape === "function") return shape() as Record<string, unknown>;
+  if (typeof shape === "function") {
+    const resolved = (shape as () => unknown)();
+    return isPlainObject(resolved) ? resolved : {};
+  }
   if (isPlainObject(shape)) return shape;
   return {};
 }
@@ -618,6 +622,7 @@ describe("TOOL_REGISTRY", () => {
     }
   });
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the comprehensive registry fixture while grandfathering its pre-existing complexity.
   it("all registered handlers return MCP content envelopes", async () => {
     if (importError || !TOOL_REGISTRY) return;
 
@@ -637,7 +642,7 @@ describe("TOOL_REGISTRY", () => {
       process.env.PENUMBRA_LONG_LIVED_TICK_ID = "registry-tick";
       setLongLivedRuntimeContextFromEnv(process.env);
       seedRuntimeDb(storageRoot);
-      globalThis.fetch = async () =>
+      globalThis.fetch = (): Promise<Response> =>
         new Response(JSON.stringify(registryDaemonPayload()), {
           headers: { "content-type": "application/json" },
           status: 200,

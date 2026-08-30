@@ -65,13 +65,13 @@ const OptNonNegNum = NonNegNum.optional();
 const OptPosInt = PosInt.optional();
 const DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
 export const DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT = 300;
-const SakanaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
+const SakanaSynthMaxPlausiblePct = z.preprocess((v: unknown): unknown => {
   if (v === undefined) return v;
   const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SAKANA_SYNTH_MAX_PLAUSIBLE_PCT;
   return parsed;
 }, z.number().positive());
-const AlibabaSynthMaxPlausiblePct = z.preprocess((v: unknown): number | unknown => {
+const AlibabaSynthMaxPlausiblePct = z.preprocess((v: unknown): unknown => {
   if (v === undefined) return v;
   const parsed = typeof v === "string" && v.trim() === "" ? Number.NaN : Number(v);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT;

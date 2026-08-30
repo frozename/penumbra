@@ -1,9 +1,8 @@
+import { FileTaskInputSchema } from "@penumbra/core";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { FileTaskInputSchema } from "@penumbra/core";
 
 import { taskOutput, type TaskOutputCtx } from "../../src/outputs/task.js";
 import { WorkflowSpecSchema } from "../../src/schema.js";

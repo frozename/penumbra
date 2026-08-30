@@ -11,7 +11,10 @@ import {
 const DRY_RUN_TERMINAL_LINE =
   "penumbra config sync-providers: dry run; pass --apply to write agents.yaml and model-aliases.yaml";
 
-function makeLog() {
+function makeLog(): {
+  info: ReturnType<typeof mock>;
+  warn: ReturnType<typeof mock>;
+} {
   return {
     info: mock((_obj: Record<string, unknown>, _msg: string) => undefined),
     warn: mock((_obj: Record<string, unknown>, _msg: string) => undefined),
@@ -209,7 +212,7 @@ describe("provider-drift sweeper", () => {
     global.setInterval = ((_cb: () => void, ms?: number) => {
       capturedIntervalMs = ms;
       timerId = {
-        unref: () => {
+        unref: (): void => {
           unrefCallCount += 1;
         },
       };

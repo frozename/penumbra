@@ -252,7 +252,7 @@ async function resolveDispatchBranchName(opts: {
   if (!res.ok) {
     return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
   }
-  const body = (await res.json()) as unknown;
+  const body = await res.json();
   if (!isHandoffGetResponse(body)) {
     return resolveHandoffBranchName({ handoff_id: opts.handoffId, branch_name: null });
   }
@@ -361,6 +361,7 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   }
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve dispatch-land orchestration while grandfathering its pre-existing complexity.
 export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> {
   const fetcher = opts.fetch ?? fetch;
   const print = opts.print ?? defaultPrint;

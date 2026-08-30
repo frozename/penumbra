@@ -208,12 +208,14 @@ describe("allowed-shape cases still pass through", () => {
     process.env.PENUMBRA_HANDOFF_ID = "H_A";
     let received = "";
     const daemon = {
-      readInWorktree: (id: string) => {
+      readInWorktree: (
+        id: string,
+      ): Promise<{ content: string; path: string; bytes: number; truncated: boolean }> => {
         received = id;
         return Promise.resolve({ content: "x", path: "f", bytes: 1, truncated: false });
       },
     };
-    const handler = fsReadHandler(daemon as unknown as DaemonClient);
+    const handler = fsReadHandler(daemon);
     await handler({ path: "f", handoff_id: "H_A" });
     expect(received).toBe("H_A");
   });
@@ -221,12 +223,14 @@ describe("allowed-shape cases still pass through", () => {
   it("fs.read: env unset + explicit id=B -> daemon called with B (operator context)", async () => {
     let received = "";
     const daemon = {
-      readInWorktree: (id: string) => {
+      readInWorktree: (
+        id: string,
+      ): Promise<{ content: string; path: string; bytes: number; truncated: boolean }> => {
         received = id;
         return Promise.resolve({ content: "x", path: "f", bytes: 1, truncated: false });
       },
     };
-    const handler = fsReadHandler(daemon as unknown as DaemonClient);
+    const handler = fsReadHandler(daemon);
     await handler({ path: "f", handoff_id: "H_B" });
     expect(received).toBe("H_B");
   });
@@ -236,7 +240,7 @@ describe("allowed-shape cases still pass through", () => {
     let receivedId = "";
     let receivedForce: boolean | undefined;
     const daemon = {
-      cleanupWorktree: (id: string, force?: boolean) => {
+      cleanupWorktree: (id: string, force?: boolean): Promise<{ status: string }> => {
         receivedId = id;
         receivedForce = force;
         return Promise.resolve({ status: "torn_down" });
