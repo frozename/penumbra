@@ -71,27 +71,33 @@ function expectSqliteConstraint(run: () => void): void {
 test("raw INSERT with kind='bogus' throws SQLITE_CONSTRAINT", () => {
   const db = makeDb();
   seedRawEntry(db);
-  expectSqliteConstraint(() => insertRawEvent(db, { kind: "bogus" }));
+  expectSqliteConstraint(() => {
+    insertRawEvent(db, { kind: "bogus" });
+  });
 });
 
 test("raw INSERT kind='blocker' state='owed' throws", () => {
   const db = makeDb();
   seedRawEntry(db);
-  expectSqliteConstraint(() => insertRawEvent(db, { kind: "blocker", state: "owed" }));
+  expectSqliteConstraint(() => {
+    insertRawEvent(db, { kind: "blocker", state: "owed" });
+  });
 });
 
 test("raw INSERT kind='link' with link_value NULL throws", () => {
   const db = makeDb();
   seedRawEntry(db);
-  expectSqliteConstraint(() =>
-    insertRawEvent(db, { kind: "link", link_kind: "commit_sha", link_value: null }),
-  );
+  expectSqliteConstraint(() => {
+    insertRawEvent(db, { kind: "link", link_kind: "commit_sha", link_value: null });
+  });
 });
 
 test("raw INSERT state='resolved' with ref_event_id NULL throws", () => {
   const db = makeDb();
   seedRawEntry(db);
-  expectSqliteConstraint(() => insertRawEvent(db, { kind: "blocker", state: "resolved" }));
+  expectSqliteConstraint(() => {
+    insertRawEvent(db, { kind: "blocker", state: "resolved" });
+  });
 });
 
 test("raw INSERT rejects a registrar event body over 4096 bytes even when it is under 4096 characters", () => {
@@ -127,7 +133,7 @@ function makeDomain(initialNow = 100): {
     db,
     writer: new RegistrarWriter(db, () => now),
     reader: new RegistrarReader(db),
-    setNow: (value) => {
+    setNow: (value): void => {
       now = value;
     },
   };

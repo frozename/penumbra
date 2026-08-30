@@ -194,7 +194,7 @@ test("start migrates using the resolved embedder dim, not a hardcoded 384", asyn
   } finally {
     for (const [key, value] of Object.entries(priorEnv)) {
       const envKey = `PENUMBRA_EMBEDDINGS_${key === "baseUrl" ? "BASE_URL" : key === "healthPath" ? "HEALTH_PATH" : key.toUpperCase()}`;
-      if (value === undefined) delete process.env[envKey];
+      if (value === undefined) Reflect.deleteProperty(process.env, envKey);
       else process.env[envKey] = value;
     }
     rmSync(isolated, { recursive: true, force: true });

@@ -23,8 +23,6 @@ export function createDispatchAbortSignal(
 
   const controller = new AbortController();
   const state: { timeoutError: Error | null } = { timeoutError: null };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
   const abortWith = (reason?: unknown): void => {
     if (!controller.signal.aborted) controller.abort(reason);
   };
@@ -39,7 +37,7 @@ export function createDispatchAbortSignal(
     parent.addEventListener("abort", onParentAbort, { once: true });
   }
 
-  timer = setTimeout(() => {
+  const timer = setTimeout(() => {
     const err = makeTimeoutError(timeoutMs);
     err.name = "AbortError";
     state.timeoutError = err;
@@ -52,7 +50,7 @@ export function createDispatchAbortSignal(
       return state.timeoutError;
     },
     cleanup(): void {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       parent.removeEventListener("abort", onParentAbort);
     },
   };

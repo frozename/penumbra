@@ -49,7 +49,7 @@ export interface SweeperEventWriter {
 }
 
 export interface FleetBranchReader {
-  findByBranchName(name: string): unknown | null;
+  findByBranchName(name: string): unknown;
 }
 
 export interface PrOrphanSweeperDeps {

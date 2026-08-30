@@ -366,16 +366,16 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', payload: { real: t
         registered_at: 0,
       }),
       unregister: (): void => undefined,
-      recordResult: async (): Promise<void> => {
+      recordResult: (): Promise<void> => {
         recordResultCalls += 1;
         throw new Error("no such table: workflow_runs");
       },
-      recordError: async (): Promise<void> => {
+      recordError: (): Promise<void> => {
         recordErrorCalls += 1;
       },
-      getStatus: async (): Promise<null> => null,
-      getStatusLight: async (): Promise<null> => null,
-      waitForResult: async (): Promise<null> => null,
+      getStatus: (): Promise<null> => null,
+      getStatusLight: (): Promise<null> => null,
+      waitForResult: (): Promise<null> => null,
       setPersistenceStatus: (
         _id: string,
         status: "pending" | "persisted" | "persistence_failed",

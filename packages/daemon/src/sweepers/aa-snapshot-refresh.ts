@@ -1,10 +1,10 @@
 import {
-  fetchAaModels,
-  readAaApiKey,
   type AaFetchFailure,
   type AaSnapshotStore,
   type AaTransport,
+  fetchAaModels,
   type FetchAaModelsOptions,
+  readAaApiKey,
 } from "@penumbra/core";
 
 type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };

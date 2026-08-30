@@ -2,9 +2,9 @@ import {
   ApproveHandoffRequestSchema,
   classifyDispatchReliability,
   CreateHandoffRequestSchema,
-  resolveProvider,
   type HandoffStatus,
   HandoffStatusSchema,
+  resolveProvider,
   type Services,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -14,12 +14,12 @@ import type { ExtraWorkerConfig } from "../workers/config.js";
 
 import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
 import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
+import { json } from "./_helpers.js";
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { getNearestAgents } from "./chains.js";
-import { json } from "./_helpers.js";
 import { resolveSingleRoute, RoutingBiasExhaustedError } from "./role-routing.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
@@ -251,7 +251,7 @@ function resolveProviderConcurrencyDecision(
     (entry) =>
       entry.provider === provider && entry.model === undefined && entry.max_in_flight !== undefined,
   );
-  if (!quota || quota.max_in_flight === undefined) return null;
+  if (quota?.max_in_flight === undefined) return null;
 
   const providerSeatNames = agents
     .filter((agent) => resolveProvider(agent) === provider)

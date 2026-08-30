@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
+import { GENERATOR_PROVENANCE_SOURCE } from "../../src/files/billing-gate.js";
 import {
   assertNoBilledGeneratedSeats,
   assertNoBilledHttpSeats,
 } from "../../src/generator/assertions.js";
-import { GENERATOR_PROVENANCE_SOURCE } from "../../src/files/billing-gate.js";
 
 describe("assertNoBilledHttpSeats", () => {
   test("rejects a generated openai-compat-http seat with pricing_mode:'api' whose provider is outside the allowlist", () => {
@@ -23,12 +23,12 @@ describe("assertNoBilledHttpSeats", () => {
       },
     ];
 
-    expect(() =>
-      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana"] }),
-    ).toThrow(/openai-gpt-http/);
-    expect(() =>
-      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana"] }),
-    ).toThrow(/google-gemini-http/);
+    expect(() => {
+      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana"] });
+    }).toThrow(/openai-gpt-http/);
+    expect(() => {
+      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana"] });
+    }).toThrow(/google-gemini-http/);
   });
 
   test("allows an explicitly whitelisted deepseek-v4-flash-http seat", () => {
@@ -41,9 +41,9 @@ describe("assertNoBilledHttpSeats", () => {
       },
     ];
 
-    expect(() =>
-      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] }),
-    ).not.toThrow();
+    expect(() => {
+      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] });
+    }).not.toThrow();
   });
 
   test("allows a local http seat that carries api_provider:'local' when 'local' is allowed", () => {
@@ -62,9 +62,9 @@ describe("assertNoBilledHttpSeats", () => {
       },
     ];
 
-    expect(() =>
-      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] }),
-    ).not.toThrow();
+    expect(() => {
+      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] });
+    }).not.toThrow();
   });
 
   test("rejects a billed openai-compat-http seat with no api_provider", () => {
@@ -77,9 +77,9 @@ describe("assertNoBilledHttpSeats", () => {
       },
     ];
 
-    expect(() =>
-      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] }),
-    ).toThrow(/generated-http-seat/);
+    expect(() => {
+      assertNoBilledHttpSeats(agents, { allowedProviders: ["local", "sakana", "deepseek"] });
+    }).toThrow(/generated-http-seat/);
   });
 });
 
@@ -104,9 +104,9 @@ describe("assertNoBilledGeneratedSeats", () => {
         },
       ];
 
-      expect(() => assertNoBilledGeneratedSeats(agents, opts)).toThrow(
-        new RegExp(`${adapter}-generated-openai`),
-      );
+      expect(() => {
+        assertNoBilledGeneratedSeats(agents, opts);
+      }).toThrow(new RegExp(`${adapter}-generated-openai`));
     },
   );
 
@@ -120,9 +120,9 @@ describe("assertNoBilledGeneratedSeats", () => {
       },
     ];
 
-    expect(() => assertNoBilledGeneratedSeats(agents, opts)).toThrow(
-      /stdio-acp-generated-openai-default-pricing/,
-    );
+    expect(() => {
+      assertNoBilledGeneratedSeats(agents, opts);
+    }).toThrow(/stdio-acp-generated-openai-default-pricing/);
   });
 
   test("ignores a hand-authored generated-kind seat with pricing_mode:'api' whose provider is outside the allowlist", () => {
@@ -135,7 +135,9 @@ describe("assertNoBilledGeneratedSeats", () => {
       },
     ];
 
-    expect(() => assertNoBilledGeneratedSeats(agents, opts)).not.toThrow();
+    expect(() => {
+      assertNoBilledGeneratedSeats(agents, opts);
+    }).not.toThrow();
   });
 
   test.each(["stdio-acp", "opencode-acp", "agy-cli", "cli"] as const)(
@@ -151,7 +153,9 @@ describe("assertNoBilledGeneratedSeats", () => {
         },
       ];
 
-      expect(() => assertNoBilledGeneratedSeats(agents, opts)).not.toThrow();
+      expect(() => {
+        assertNoBilledGeneratedSeats(agents, opts);
+      }).not.toThrow();
     },
   );
 });

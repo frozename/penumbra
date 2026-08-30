@@ -192,7 +192,7 @@ function makeCtx(opts?: {
     });
   const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
-  const cancel = mock(opts?.cancelImpl ?? (() => Promise.resolve()));
+  const cancel = mock(opts?.cancelImpl ?? ((): Promise<void> => Promise.resolve()));
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {

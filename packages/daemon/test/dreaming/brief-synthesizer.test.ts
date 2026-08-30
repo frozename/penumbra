@@ -274,7 +274,21 @@ describe("createBriefSynthesizerFromAgentchat", () => {
           warn: (...args: unknown[]) => {
             warnCalls.push({
               fields: args.slice(0, -1),
-              msg: String(args.at(-1) ?? ""),
+              msg: ((): string => {
+                const lastArg = args.at(-1);
+                if (lastArg === undefined) return "";
+                if (typeof lastArg === "string") return lastArg;
+                if (lastArg instanceof Error) return lastArg.message;
+                if (lastArg !== null && typeof lastArg === "object") {
+                  const serialized = JSON.stringify(lastArg) as unknown;
+                  return typeof serialized === "string" ? serialized : "";
+                }
+                if (typeof lastArg === "number") return lastArg.toString();
+                if (typeof lastArg === "boolean") return lastArg.toString();
+                if (typeof lastArg === "bigint") return lastArg.toString();
+                if (typeof lastArg === "symbol") return lastArg.description ?? "";
+                return "";
+              })(),
             });
           },
         },

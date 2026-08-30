@@ -79,24 +79,32 @@ export class OpenAICompatEmbedder implements Embedder {
       throw new Error(`openai-compatible embeddings: HTTP ${String(res.status)}`);
     }
     const body = (await res.json()) as { data?: { embedding: number[]; index: number }[] };
-    if (!Array.isArray(body.data)) {
-      throw new Error(`openai-compatible embeddings: malformed response (data is not an array)`);
-    }
-    if (body.data.length !== texts.length) {
-      throw new Error(
-        `openai-compatible embeddings: response length ${String(body.data.length)} does not match request length ${String(texts.length)}`,
-      );
-    }
-    const sorted = [...body.data].sort((a, b) => a.index - b.index);
-    for (const [i, element] of sorted.entries()) {
-      const d = element;
-      if (!Array.isArray(d.embedding) || d.embedding.length !== this.dim) {
-        const got = Array.isArray(d.embedding) ? String(d.embedding.length) : "n/a";
-        throw new Error(
-          `openai-compatible embeddings: vector at index ${String(i)} has dim ${got}, expected ${String(this.dim)}`,
-        );
-      }
-    }
+    const sorted = validateEmbeddingResponse(body.data, texts.length, this.dim);
     return sorted.map((d) => new Float32Array(d.embedding));
   }
+}
+
+function validateEmbeddingResponse(
+  data: { embedding: number[]; index: number }[] | undefined,
+  expectedLength: number,
+  dimension: number,
+): { embedding: number[]; index: number }[] {
+  if (!Array.isArray(data)) {
+    throw new Error(`openai-compatible embeddings: malformed response (data is not an array)`);
+  }
+  if (data.length !== expectedLength) {
+    throw new Error(
+      `openai-compatible embeddings: response length ${String(data.length)} does not match request length ${String(expectedLength)}`,
+    );
+  }
+  const sorted = [...data].sort((a, b) => a.index - b.index);
+  for (const [index, element] of sorted.entries()) {
+    if (!Array.isArray(element.embedding) || element.embedding.length !== dimension) {
+      const got = Array.isArray(element.embedding) ? String(element.embedding.length) : "n/a";
+      throw new Error(
+        `openai-compatible embeddings: vector at index ${String(index)} has dim ${got}, expected ${String(dimension)}`,
+      );
+    }
+  }
+  return sorted;
 }

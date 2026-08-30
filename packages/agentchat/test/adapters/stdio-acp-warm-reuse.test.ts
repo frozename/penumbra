@@ -252,7 +252,8 @@ describe("StdioAcpAdapter warm-connection reuse (Option B)", () => {
       pool,
     });
 
-    await expect(adapter.dispatch(makeDispatchInput("h1", []))).resolves.toMatchObject({
+    const result = await adapter.dispatch(makeDispatchInput("h1", []));
+    expect(result).toMatchObject({
       text: "",
     });
     expect(staleServer.kill).toHaveBeenCalledTimes(1);

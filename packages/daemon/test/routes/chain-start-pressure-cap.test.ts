@@ -5,8 +5,8 @@ import {
   loadSqliteVec,
   migrate,
   type ProviderQuota,
-  setRoutingBias,
   type Services,
+  setRoutingBias,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";

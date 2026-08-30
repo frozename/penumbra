@@ -212,7 +212,7 @@ export const AgentConfigSchema = z
     if (
       data.recall_context?.enabled === true &&
       data.recall_context.scope === "global" &&
-      (data.options?.terminal === true || data.options?.fsWriteTextFile === true)
+      (data.options.terminal === true || data.options.fsWriteTextFile === true)
     ) {
       ctx.addIssue({
         code: "custom",

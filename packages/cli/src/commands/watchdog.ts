@@ -45,6 +45,7 @@ export interface RunWatchdogOptions {
   dependencies?: Partial<WatchdogDependencies>;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve watchdog orchestration while grandfathering its pre-existing complexity.
 export async function runWatchdog(opts: RunWatchdogOptions): Promise<WatchdogResult> {
   const dependencies: WatchdogDependencies = {
     now: () => new Date(),
@@ -52,7 +53,9 @@ export async function runWatchdog(opts: RunWatchdogOptions): Promise<WatchdogRes
     launchctl: runLaunchctl,
     uid: () => process.getuid?.() ?? 0,
     plistPath: join(homedir(), "Library", "LaunchAgents", `${DAEMON_LABEL}.plist`),
-    error: (message) => console.error(message),
+    error: (message) => {
+      console.error(message);
+    },
     ...opts.dependencies,
   };
   const observedAt = dependencies.now().toISOString();
@@ -169,6 +172,7 @@ function appendRecord(recordPath: string, result: WatchdogResult): void {
   appendFileSync(recordPath, `${JSON.stringify(result)}\n`, "utf8");
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing watchdog-state parser while grandfathering its pre-existing complexity.
 function readActiveDownSince(recordPath: string): string | null {
   if (!existsSync(recordPath)) return null;
   let activeDownSince: string | null = null;

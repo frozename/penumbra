@@ -1,16 +1,16 @@
-import { selectWorktreeGcCandidates, type DispatchEventInput, type Services } from "@penumbra/core";
+import { selectWorktreeGcCandidates, type Services } from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import {
-  classifyBranchLandStatus,
-  type BranchLandStatus as CoreBranchLandStatus,
-} from "../../../core/src/worktree/branch-land-probe.js";
 // Pinned to the worktree-local manager source so the new `branchSha` field on
 // teardownWorktree's return type is visible inside symlink_mirror worktrees;
 // the @penumbra/core resolution chain otherwise points back to the home repo.
 import type { WorktreeManager as WorktreeManagerLocal } from "../../../core/src/worktree/manager.js";
 
+import {
+  classifyBranchLandStatus,
+  type BranchLandStatus as CoreBranchLandStatus,
+} from "../../../core/src/worktree/branch-land-probe.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 
 type TeardownResult = Awaited<ReturnType<WorktreeManagerLocal["teardownWorktree"]>>;
@@ -98,7 +98,7 @@ function recordUnlandedSkippedSummary(
     source: "daemon",
     // Cast until `worktree.gc.unlanded_skipped` lands in the shared
     // api-contract enum; the local schema in this branch already lists it.
-    kind: "worktree.gc.unlanded_skipped" as DispatchEventInput["kind"],
+    kind: "worktree.gc.unlanded_skipped",
     ts,
     meta: {
       count: handoffIds.length,
@@ -130,7 +130,7 @@ function buildDefaultBranchLandedCheck(
       if (code === 1) return "missing";
       return "error";
     }
-    return classifyBranchLandStatus(
+    return await classifyBranchLandStatus(
       (cmd, args, opts) =>
         execFile(cmd, ["-C", mainRepoDir, ...args], {
           ...opts,
@@ -236,7 +236,7 @@ async function reapStageBranches(
       source: "daemon",
       // Cast until `worktree.gc.stage_reaped` propagates into the shared
       // api-contract node_modules copy; the local schema already lists it.
-      kind: "worktree.gc.stage_reaped" as DispatchEventInput["kind"],
+      kind: "worktree.gc.stage_reaped",
       ts: now().toISOString(),
       meta: {
         ref,

@@ -295,7 +295,7 @@ test("file dependency link planning throws when an escaping target is missing", 
           path.join(path.dirname(mainRepoRoot), "missing", "packages", "dep"),
           path.join(path.dirname(worktreeRoot), "missing", "packages", "dep"),
         ]
-          .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .map((part) => part.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"))
           .join(".*"),
       ),
     );
@@ -341,9 +341,9 @@ test("local cache provisioning rejects self-copy before removing the source", ()
     fs.mkdirSync(path.join(repoRoot, "local_cache"), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "seed");
 
-    expect(() => provisionLocalCache(repoRoot, repoRoot)).toThrow(
-      "local cache source and destination resolve to the same path",
-    );
+    expect(() => {
+      provisionLocalCache(repoRoot, repoRoot);
+    }).toThrow("local cache source and destination resolve to the same path");
     expect(fs.readFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "utf8")).toBe("seed");
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -360,9 +360,9 @@ test("local cache provisioning rejects self-copy through a filesystem alias", ()
     fs.writeFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "seed");
     fs.symlinkSync(repoRoot, aliasRoot, process.platform === "win32" ? "junction" : "dir");
 
-    expect(() => provisionLocalCache(repoRoot, aliasRoot)).toThrow(
-      "local cache source and destination resolve to the same path",
-    );
+    expect(() => {
+      provisionLocalCache(repoRoot, aliasRoot);
+    }).toThrow("local cache source and destination resolve to the same path");
     expect(fs.readFileSync(path.join(repoRoot, "local_cache", "seed.bin"), "utf8")).toBe("seed");
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });

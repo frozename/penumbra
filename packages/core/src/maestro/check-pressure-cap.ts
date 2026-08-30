@@ -1,5 +1,5 @@
-import type { SubscriptionPressureCache } from "./subscription-pressure-cache.js";
 import type { KnownPressureWindowLabel } from "../readers/cost-quota.js";
+import type { SubscriptionPressureCache } from "./subscription-pressure-cache.js";
 
 export type CapCheckPass = {
   state: "pass";

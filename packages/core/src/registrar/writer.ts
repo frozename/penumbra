@@ -79,26 +79,9 @@ export class RegistrarWriter {
     return this.db.transaction(() => {
       const entry = this.requireEntry(registrar_id);
       const phase_no = "phase_no" in validated ? validated.phase_no : undefined;
-      if (phase_no !== undefined) {
-        const phase = this.db
-          .query<
-            { phase_no: number },
-            [string, number]
-          >("SELECT phase_no FROM registrar_phases WHERE registrar_id = ? AND phase_no = ?")
-          .get(registrar_id, phase_no);
-        if (!phase) throw new PhaseNotFound(registrar_id, phase_no);
-      }
-
       const ref_event_id = "ref_event_id" in validated ? (validated.ref_event_id ?? null) : null;
-      if (ref_event_id !== null) {
-        const referenced = this.db
-          .query<
-            { event_id: number },
-            [number, string]
-          >("SELECT event_id FROM registrar_events WHERE event_id = ? AND registrar_id = ?")
-          .get(ref_event_id, registrar_id);
-        if (!referenced) throw new UnknownJournalRef(registrar_id, ref_event_id);
-      }
+      this.validatePhaseReference(registrar_id, phase_no);
+      this.validateEventReference(registrar_id, ref_event_id);
 
       const now = this.nowFn();
       // Transitions mutate their projection row before journaling; the surrounding transaction
@@ -182,6 +165,28 @@ export class RegistrarWriter {
         .get(event_id);
       return RegistrarEventSchema.parse(row);
     })();
+  }
+
+  private validatePhaseReference(registrar_id: string, phase_no: number | undefined): void {
+    if (phase_no === undefined) return;
+    const phase = this.db
+      .query<
+        { phase_no: number },
+        [string, number]
+      >("SELECT phase_no FROM registrar_phases WHERE registrar_id = ? AND phase_no = ?")
+      .get(registrar_id, phase_no);
+    if (!phase) throw new PhaseNotFound(registrar_id, phase_no);
+  }
+
+  private validateEventReference(registrar_id: string, ref_event_id: number | null): void {
+    if (ref_event_id === null) return;
+    const referenced = this.db
+      .query<
+        { event_id: number },
+        [number, string]
+      >("SELECT event_id FROM registrar_events WHERE event_id = ? AND registrar_id = ?")
+      .get(ref_event_id, registrar_id);
+    if (!referenced) throw new UnknownJournalRef(registrar_id, ref_event_id);
   }
 
   private insertEntry(registrar_id: string, input: RegistrarCreateRequest, now: number): void {

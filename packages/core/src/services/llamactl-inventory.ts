@@ -103,41 +103,55 @@ function isAgentCluster(
 
 function parseKubeconfigNodes(raw: string): LlamactlNodeInventory[] {
   const parsed = parseYaml(raw) as KubeConfigShape | null;
-  const contextsByCluster = new Map<string, string>();
+  const contextsByCluster = collectContextsByCluster(parsed);
+  const tokensByUser = collectTokensByUser(parsed);
+  return (parsed?.clusters ?? []).flatMap((entry) =>
+    parseKubeconfigNode(entry, contextsByCluster, tokensByUser),
+  );
+}
+
+function collectContextsByCluster(parsed: KubeConfigShape | null): Map<string, string> {
+  const contexts = new Map<string, string>();
   for (const context of parsed?.contexts ?? []) {
     const cluster = context.context?.cluster;
     const user = context.context?.user;
-    if (typeof cluster === "string" && typeof user === "string") {
-      contextsByCluster.set(cluster, user);
-    }
+    if (typeof cluster === "string" && typeof user === "string") contexts.set(cluster, user);
   }
-  const tokensByUser = new Map<string, string>();
+  return contexts;
+}
+
+function collectTokensByUser(parsed: KubeConfigShape | null): Map<string, string> {
+  const tokens = new Map<string, string>();
   for (const user of parsed?.users ?? []) {
     if (typeof user.name === "string" && typeof user.user?.token === "string") {
-      tokensByUser.set(user.name, user.user.token);
+      tokens.set(user.name, user.user.token);
     }
   }
+  return tokens;
+}
 
-  const nodes: LlamactlNodeInventory[] = [];
-  for (const entry of parsed?.clusters ?? []) {
-    if (typeof entry.name !== "string" || !entry.cluster || !isAgentCluster(entry.cluster)) {
-      continue;
-    }
-    const endpoint = entry.cluster.server;
-    if (typeof endpoint !== "string" || endpoint.length === 0) continue;
-    const user = contextsByCluster.get(entry.name);
-    const fingerprint = entry.cluster.fingerprint ?? extensionValue(entry.cluster, "fingerprint");
-    nodes.push({
+function parseKubeconfigNode(
+  entry: NonNullable<KubeConfigShape["clusters"]>[number],
+  contextsByCluster: Map<string, string>,
+  tokensByUser: Map<string, string>,
+): LlamactlNodeInventory[] {
+  if (typeof entry.name !== "string" || !entry.cluster || !isAgentCluster(entry.cluster)) return [];
+  const endpoint = entry.cluster.server;
+  if (typeof endpoint !== "string" || endpoint.length === 0) return [];
+  const user = contextsByCluster.get(entry.name);
+  const fingerprint = entry.cluster.fingerprint ?? extensionValue(entry.cluster, "fingerprint");
+  const token = user && tokensByUser.has(user) ? tokensByUser.get(user) : undefined;
+  return [
+    {
       name: entry.name,
       endpoint,
       ...(decodeCertificatePem(entry.cluster["certificate-authority-data"]) !== undefined
         ? { certificatePem: decodeCertificatePem(entry.cluster["certificate-authority-data"]) }
         : {}),
       ...(typeof fingerprint === "string" ? { fingerprint } : {}),
-      ...(user && tokensByUser.has(user) ? { token: tokensByUser.get(user)! } : {}),
-    });
-  }
-  return nodes;
+      ...(token === undefined ? {} : { token }),
+    },
+  ];
 }
 
 function aliasForServedModel(id: string): string {
@@ -148,7 +162,7 @@ function aliasForServedModel(id: string): string {
 function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
   const byExactIdentity = new Map<string, ServedModelEntry>();
   for (const entry of entries) {
-    const exactKey = `${entry.owned_by ?? ""}\0${entry.created ?? ""}\0${entry.id}`;
+    const exactKey = `${entry.owned_by ?? ""}\0${String(entry.created ?? "")}\0${entry.id}`;
     if (!byExactIdentity.has(exactKey)) {
       byExactIdentity.set(exactKey, entry);
     }
@@ -156,7 +170,7 @@ function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
 
   const byAlias = new Map<string, ServedModelEntry[]>();
   for (const entry of byExactIdentity.values()) {
-    const aliasKey = `${entry.owned_by ?? ""}\0${entry.created ?? ""}\0${aliasForServedModel(entry.id)}`;
+    const aliasKey = `${entry.owned_by ?? ""}\0${String(entry.created ?? "")}\0${aliasForServedModel(entry.id)}`;
     const existing = byAlias.get(aliasKey);
     if (existing) {
       existing.push(entry);
@@ -230,41 +244,23 @@ export async function collectLlamactlInventory(
 ): Promise<LlamactlInventory> {
   const env = opts.env ?? process.env;
   const exists = opts.exists ?? existsSync;
-  const readFile = opts.readFile ?? ((path: string) => readFileSync(path, "utf8"));
+  const readFile = opts.readFile ?? ((path: string): string => readFileSync(path, "utf8"));
   const fetchImpl = opts.fetch ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? 5_000;
   const messages: string[] = [];
 
-  let nodes: LlamactlNodeInventory[] = [];
-  const kubeconfigPath = resolveKubeconfigCandidates(env).find((candidate) => exists(candidate));
-  if (kubeconfigPath) {
-    try {
-      nodes = parseKubeconfigNodes(readFile(kubeconfigPath));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      messages.push(`kubeconfig parse failed: ${message}`);
-    }
-  } else {
-    messages.push("kubeconfig not found");
-  }
+  const nodes = readInventoryNodes(env, exists, readFile, messages);
 
   const healthyNodes = await Promise.all(
     nodes.map((node) => probeNodeHealth(node, fetchImpl, timeoutMs)),
   );
 
-  let servedEntries: ServedModelEntry[] = [];
-  try {
-    servedEntries = await fetchServedModelEntries(
-      opts.proxyBaseUrl ?? env.PENUMBRA_LLAMACTL_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE_URL,
-      {
-        fetch: fetchImpl,
-        timeoutMs,
-      },
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    messages.push(`served models unavailable: ${message}`);
-  }
+  const servedEntries = await readServedEntries(
+    opts.proxyBaseUrl ?? env.PENUMBRA_LLAMACTL_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE_URL,
+    fetchImpl,
+    timeoutMs,
+    messages,
+  );
 
   const catalog = await readOptionalCatalog(opts.execFile);
   const models = appendModels(servedEntries, healthyNodes);
@@ -277,4 +273,39 @@ export async function collectLlamactlInventory(
     models,
     ...(catalog ? { catalog } : {}),
   };
+}
+
+function readInventoryNodes(
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean,
+  readFile: (path: string) => string,
+  messages: string[],
+): LlamactlNodeInventory[] {
+  const path = resolveKubeconfigCandidates(env).find((candidate) => exists(candidate));
+  if (!path) {
+    messages.push("kubeconfig not found");
+    return [];
+  }
+  try {
+    return parseKubeconfigNodes(readFile(path));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    messages.push(`kubeconfig parse failed: ${message}`);
+    return [];
+  }
+}
+
+async function readServedEntries(
+  proxyBaseUrl: string,
+  fetchImpl: ServedModelsFetch,
+  timeoutMs: number,
+  messages: string[],
+): Promise<ServedModelEntry[]> {
+  try {
+    return await fetchServedModelEntries(proxyBaseUrl, { fetch: fetchImpl, timeoutMs });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    messages.push(`served models unavailable: ${message}`);
+    return [];
+  }
 }

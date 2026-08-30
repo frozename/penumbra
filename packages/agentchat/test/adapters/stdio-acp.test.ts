@@ -1567,24 +1567,24 @@ describe("StdioAcpAdapter", () => {
     startServer.mockResolvedValue(handle);
     let sessionNewAttempts = 0;
     const mockClientRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
-      async (method) => {
+      (method) => {
         if (method === "initialize") {
-          return {
+          return Promise.resolve({
             protocolVersion: 1,
             authMethods: [
               { id: "openai-api-key", type: "env_var", vars: [{ name: "OPENAI_API_KEY" }] },
             ],
-          };
+          });
         }
         if (method === "session/new") {
           sessionNewAttempts += 1;
           if (sessionNewAttempts === 1) {
             throw new Error("stdio-acp-client: Authentication required (code: -32000)");
           }
-          return { sessionId: "session-after-auth" };
+          return Promise.resolve({ sessionId: "session-after-auth" });
         }
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        return {};
+        if (method === "session/prompt") return Promise.resolve({ stopReason: "end_turn" });
+        return Promise.resolve({});
       },
     );
     const adapter = new StdioAcpAdapter(
@@ -1618,16 +1618,19 @@ describe("StdioAcpAdapter", () => {
     startServer.mockResolvedValue(handle);
     let sessionNewAttempts = 0;
     const mockClientRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
-      async (method) => {
+      (method) => {
         if (method === "initialize") {
-          return { protocolVersion: 1, authMethods: [{ id: "chat-gpt", type: "agent" }] };
+          return Promise.resolve({
+            protocolVersion: 1,
+            authMethods: [{ id: "chat-gpt", type: "agent" }],
+          });
         }
         if (method === "session/new") {
           sessionNewAttempts += 1;
           throw new Error("stdio-acp-client: Authentication required (code: -32000)");
         }
         if (method === "authenticate") throw new Error("authentication rejected");
-        return {};
+        return Promise.resolve({});
       },
     );
     const adapter = new StdioAcpAdapter(

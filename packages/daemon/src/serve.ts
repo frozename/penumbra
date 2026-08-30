@@ -14,13 +14,13 @@ import {
   AgentPerformanceWriter,
   type ChainStartRequest,
   checkEmbeddingModelVersion,
-  createAaSnapshotStore,
   type Services as CoreServices,
+  createAaSnapshotStore,
   ledgerWriteToPerformanceRow,
   MaestroSessionWriter,
   mapTaskEventToLedger,
-  readStoredEmbeddingModelVersion,
   readRoutingBiases,
+  readStoredEmbeddingModelVersion,
   resolveProjectId,
   runStartupZombieSweep,
   TaskCooldowns,
@@ -46,20 +46,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import type { GhClient } from "./services/gh-client.js";
+
 import {
-  resolveRoleLlmCandidates,
+  createJudgeChat,
+  type ResolvedJudgeConfig,
+  resolveJudgeConfig,
+} from "../../core/src/services/judge-chat.js";
+import {
   type LlmCandidate,
   type LlmServingCandidate,
   type ResolveKeychainSecret,
+  resolveRoleLlmCandidates,
 } from "../../core/src/services/llm-candidates.js";
-import {
-  createJudgeChat,
-  resolveJudgeConfig,
-  type ResolvedJudgeConfig,
-} from "../../core/src/services/judge-chat.js";
-
-import type { GhClient } from "./services/gh-client.js";
-
 import { resolveAgentChatConfigPath } from "./agentchat-config.js";
 import { createBearerAuth } from "./auth.js";
 import { corsPreflightResponse, withCorsResponseHeaders } from "./cors.js";
@@ -212,14 +211,14 @@ import {
 } from "./routes/plans.js";
 import { qualityStatusRoute } from "./routes/quality.js";
 import { recallRoute } from "./routes/recall.js";
+import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from "./routes/reconciler.js";
 import {
   registrarAppendRoute,
   registrarCreateRoute,
   registrarGetRoute,
-  registrarListRoute,
   registrarListEventsRoute,
+  registrarListRoute,
 } from "./routes/registrar.js";
-import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from "./routes/reconciler.js";
 import { reloadConfigRoute } from "./routes/reload-config.js";
 import {
   routingBiasClearRoute,
@@ -272,6 +271,13 @@ import {
 } from "./routes/worktrees.js";
 import { createLocalSeatHealthService } from "./services/local-seat-health.js";
 import { OrphanHandoffRecoveryService } from "./services/orphan-handoff-recovery.js";
+import {
+  buildRequiredLlmRoleFloors,
+  evaluateLlmRoleFloors,
+  type LlmRoleFloorEvaluation,
+  logLlmRoleFloorViolations,
+  recordSubsystemOutcome,
+} from "./services/subsystem-health.js";
 import { WatchdogService } from "./services/watchdog.js";
 import { createWorkerHealthController, WorkerHealthProbe } from "./services/worker-health-probe.js";
 import {
@@ -313,13 +319,6 @@ import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker } from "./workers/t2-promotion.js";
-import {
-  buildRequiredLlmRoleFloors,
-  evaluateLlmRoleFloors,
-  type LlmRoleFloorEvaluation,
-  logLlmRoleFloorViolations,
-  recordSubsystemOutcome,
-} from "./services/subsystem-health.js";
 
 type Services = CoreServices;
 
@@ -1107,6 +1106,7 @@ async function dispatchRoute(
   return undefined;
 }
 
+// eslint-disable-next-line max-lines-per-function -- Preserve daemon request dispatch while grandfathering its pre-existing size.
 export function createDaemonFetchHandler(opts: {
   services: Services;
   token: string;
@@ -1686,9 +1686,7 @@ function resolveJudgeRoleCandidates(
 ): LlmCandidate[] {
   return resolveRoleLlmCandidates({
     roleTag,
-    agentchatConfig: (agentchatConfig ?? {}) as Parameters<
-      typeof resolveRoleLlmCandidates
-    >[0]["agentchatConfig"],
+    agentchatConfig: agentchatConfig ?? {},
     fallbackCandidates: [
       {
         name: legacy.model,

@@ -71,7 +71,7 @@ export function createNotificationScheduler(deps: NotificationSchedulerDeps): {
     timer = setInterval(() => {
       void tick();
     }, deps.intervalMs);
-    timer.unref?.();
+    timer.unref();
   }
 
   function stop(): void {

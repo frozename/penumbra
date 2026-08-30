@@ -143,16 +143,16 @@ describe("StdioAcpAdapter warm pool reuse", () => {
             if (method === "session/new" && handle.kill.mock.calls.length > 0) {
               throw new Error("server killed before session/new");
             }
-            return client.client.request(method, params);
+            return client.client.request(method, params) as Promise<unknown>;
           });
           return asAcpClient({ ...client.client, request });
         },
         pool,
-        totalPoolEntryCount: () => 9,
+        totalPoolEntryCount: (): number => 9,
       },
     );
 
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let result: Awaited<ReturnType<StdioAcpAdapter["dispatch"]>> | undefined;
     try {
       result = await adapter.dispatch({
@@ -171,7 +171,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
       warn.mockRestore();
     }
 
-    expect(result?.text).toBe("ok-1");
+    expect(result.text).toBe("ok-1");
     expect(pool.deposit).toHaveBeenCalledTimes(1);
     expect(pool.deposit.mock.calls[0]?.[2]).toMatchObject({ onReject: "keep" });
     expect(pool.release).not.toHaveBeenCalled();

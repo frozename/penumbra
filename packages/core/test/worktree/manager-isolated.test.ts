@@ -63,7 +63,7 @@ const workspaceInstallRunner: WorktreeCommandRunner = async (cmd, args, opts = {
     createWorkspaceNodeModules(opts.cwd!);
     return { stdout: "", stderr: "" };
   }
-  return execFile(cmd, args, {
+  return await execFile(cmd, args, {
     cwd: opts.cwd,
     env: opts.env,
     timeout: opts.timeout,
@@ -461,9 +461,9 @@ describe("WorktreeManager isolated-install mode", () => {
     fs.mkdirSync(linkPath, { recursive: true });
     fs.writeFileSync(sentinelPath, "operator-owned content\n");
 
-    expect(() => materializeWorkspaceLinks(homeRepo)).toThrow(
-      /refusing to replace non-symlink isolated install workspace link/,
-    );
+    expect(() => {
+      materializeWorkspaceLinks(homeRepo);
+    }).toThrow(/refusing to replace non-symlink isolated install workspace link/);
     expect(fs.readFileSync(sentinelPath, "utf8")).toBe("operator-owned content\n");
     expect(fs.lstatSync(linkPath).isDirectory()).toBe(true);
   });
@@ -494,7 +494,7 @@ describe("WorktreeManager isolated-install mode", () => {
         fs.writeFileSync(path.join(opts.cwd!, "node_modules"), "not a directory\n");
         return { stdout: "", stderr: "" };
       }
-      return workspaceInstallRunner(cmd, args, opts);
+      return await workspaceInstallRunner(cmd, args, opts);
     };
     const manager = new WorktreeManager({
       rootDir: homeRoot,
