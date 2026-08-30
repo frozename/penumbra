@@ -357,7 +357,11 @@ async function isAuditTrustedAccept(services: Services, handoffId: string): Prom
     const report = body.report;
     if (!report) return false;
     return report.trustworthy === true && report.recommended_action === "accept";
-  } catch {
+  } catch (err) {
+    services.log.warn(
+      { handoff_id: handoffId, err: String(err) },
+      "dispatch-land: audit lookup failed; treating as untrusted",
+    );
     return false;
   }
 }

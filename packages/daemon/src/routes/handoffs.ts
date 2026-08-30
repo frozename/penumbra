@@ -805,12 +805,22 @@ export async function handoffsApproveRoute(
         { error: { code: "not_found", message: `handoff ${handoff_id} does not exist` } },
         404,
       );
+    if (cur.status !== "pending") {
+      return json(
+        {
+          error: {
+            code: "conflict",
+            message: `handoff ${handoff_id} is ${cur.status}, not pending`,
+          },
+          current_status: cur.status,
+        },
+        409,
+      );
+    }
+    services.log.warn({ handoff_id, err: String(err) }, "handoff approve/reject failed");
     return json(
-      {
-        error: { code: "conflict", message: `handoff ${handoff_id} is ${cur.status}, not pending` },
-        current_status: cur.status,
-      },
-      409,
+      { error: { code: "internal_error", message: String(err) }, current_status: cur.status },
+      500,
     );
   }
 }

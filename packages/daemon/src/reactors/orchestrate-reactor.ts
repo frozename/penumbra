@@ -290,16 +290,26 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): {
         for await (const event of activeIterator) {
           try {
             await handleFiled(opts, event.task_id, now);
-          } catch {
+          } catch (err) {
             // keep reactor alive after per-event failures
+            opts.log?.warn(
+              { task_id: event.task_id, err: String(err) },
+              "orchestrate-reactor: filed-event handling failed",
+            );
           }
         }
-      })();
+      })().catch((err: unknown) => {
+        opts.log?.warn({ err: String(err) }, "orchestrate-reactor: event loop terminated");
+      });
       state.chainCompletionPoll = setInterval((): void => {
         try {
           runReconcile();
-        } catch {
+        } catch (err) {
           // keep poller alive across per-tick failures
+          opts.log?.warn(
+            { err: String(err) },
+            "orchestrate-reactor: chain-completion reconcile tick failed",
+          );
         }
       }, ORCHESTRATE_BACKSTOP_INTERVAL_MS);
     },

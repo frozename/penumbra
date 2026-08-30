@@ -1090,7 +1090,8 @@ async function handlePermissionRequest(
       rawInput: params.toolCall?.rawInput ?? params.toolCall ?? null,
       dispatchId: ctx.input.handoff_id ?? ctx.input.conversation.id,
     });
-  } catch {
+  } catch (err) {
+    console.warn("stdio-acp: permission request failed; rejecting", { toolName, err: String(err) });
     decision = "reject";
   }
   if (decision === "approve" && allowOption?.optionId !== undefined) {

@@ -399,7 +399,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     workerControl,
     worktreeManager,
     watchdog,
-    supervisor: new InProcessSupervisor(),
+    supervisor: new InProcessSupervisor({ log }),
     pidRegistry: new PidRegistry({
       softCap: opts.softPidCap ?? 8,
       hardCap: opts.hardPidCap ?? 16,

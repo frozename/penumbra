@@ -72,6 +72,29 @@ test("failing initial tick surfaces as errored, not running", async () => {
   sup.stopAll();
 });
 
+test("tick failures are logged with the worker name", async () => {
+  const warnings: { worker?: string; err?: string }[] = [];
+  const sup = new InProcessSupervisor({
+    log: {
+      warn: (obj: unknown): void => {
+        warnings.push(obj as { worker?: string; err?: string });
+      },
+    },
+  });
+  sup.register({
+    name: "w",
+    intervalMs: 10_000,
+    tick: () => {
+      throw new Error("boom");
+    },
+  });
+  await sup.startAll();
+  sup.stopAll();
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]?.worker).toBe("w");
+  expect(warnings[0]?.err).toContain("boom");
+});
+
 test("tick errors arriving after stopAll do not clobber stopped", async () => {
   const sup = new InProcessSupervisor();
   sup.register({
