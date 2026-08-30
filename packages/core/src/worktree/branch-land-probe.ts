@@ -53,6 +53,37 @@ export async function isThreeDotDiffEmpty(
   return stdout.trim().length === 0;
 }
 
+function isUnsupportedMergeTreeWriteTreeError(err: unknown): boolean {
+  const code = extractExitCode(err);
+  const stderr = extractStderr(err);
+  return code === 128 || /(?:unknown (?:option|rev(?:ision)?)|usage:)/i.test(stderr);
+}
+
+async function classifyWithLegacyMergeTree(
+  runner: WorktreeCommandRunner,
+  repoDir: string,
+  baseRef: string,
+  candidateRef: string,
+): Promise<BranchLandStatus> {
+  try {
+    const { stdout: mergeBase } = await runner(
+      "git",
+      ["merge-base", baseRef, candidateRef],
+      { cwd: repoDir },
+    );
+    const resolvedMergeBase = mergeBase.trim();
+    if (resolvedMergeBase.length === 0) return "error";
+    const { stdout } = await runner(
+      "git",
+      ["merge-tree", resolvedMergeBase, baseRef, candidateRef],
+      { cwd: repoDir },
+    );
+    return stdout.trim().length === 0 ? "landed" : "unlanded";
+  } catch {
+    return "error";
+  }
+}
+
 export async function classifyBranchByContent(
   runner: WorktreeCommandRunner,
   repoDir: string,
@@ -78,7 +109,8 @@ export async function classifyBranchByContent(
   } catch (err) {
     const code = extractExitCode(err);
     if (code === 1) return "unlanded";
-    return "error";
+    if (!isUnsupportedMergeTreeWriteTreeError(err)) return "error";
+    return await classifyWithLegacyMergeTree(runner, repoDir, baseRef, candidateRef);
   }
 }
 

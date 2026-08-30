@@ -3,7 +3,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 import type { WorkerFatalRecord } from "../src/crash-guard.js";
 
 const crashGuard =
-  (await import("../src/crash-guard.js?crash-guard-test")) as typeof import("../src/crash-guard.js");
+  (await import("../src/crash-guard.js?crash-guard-test")) as typeof import(
+    "../src/crash-guard.js"
+  );
 const { installGlobalCrashHandlers } = crashGuard;
 
 const logged: { record: WorkerFatalRecord; msg: string }[] = [];

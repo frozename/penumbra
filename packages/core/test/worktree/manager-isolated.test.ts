@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -12,7 +13,7 @@ import {
   WorktreeManager,
 } from "../../src/worktree/manager.js";
 
-const TEST_TMP_ROOT = "/private/tmp";
+const TEST_TMP_ROOT = fs.realpathSync.native(os.tmpdir());
 
 // node:util.promisify(child_process.exec)'s declaration overloads make TS pick
 // the void-returning variant in eslint's type-aware pass; the runtime is in

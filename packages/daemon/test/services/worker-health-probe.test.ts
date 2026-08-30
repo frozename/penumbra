@@ -95,7 +95,7 @@ const flushPending = async (): Promise<void> => {
 
 afterEach(() => {
   vi.useRealTimers();
-  process.env.PENUMBRA_WORKER_PROBE_ENABLED = undefined;
+  delete process.env.PENUMBRA_WORKER_PROBE_ENABLED;
 });
 
 test("tick emits one ping with unique probe_id and worker_id", async () => {
