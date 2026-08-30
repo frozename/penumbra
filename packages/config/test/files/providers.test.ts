@@ -6,8 +6,8 @@ import { join } from "node:path";
 import {
   AgentOptionsSchema,
   loadProviderSourcesFromDir,
-  resolveCatalogAuthority,
   type ProviderSourcesConfig,
+  resolveCatalogAuthority,
 } from "../../src/index.js";
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 

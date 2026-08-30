@@ -1,4 +1,4 @@
-import { CARRIER_TOOL_OPTION_KEYS, type AgentOptions } from "../files/agents.js";
+import { type AgentOptions, CARRIER_TOOL_OPTION_KEYS } from "../files/agents.js";
 
 export interface CarrierModelVars {
   readonly modelId: string;
@@ -56,7 +56,7 @@ function renderTemplateToken(
     .replaceAll("{model}", vars.modelId)
     .replaceAll("{tier}", vars.reasoningTier ?? "")
     .replaceAll("{displayName}", vars.displayName ?? "");
-  const leftoverPlaceholder = rendered.match(/\{[a-zA-Z_]+\}/)?.[0];
+  const leftoverPlaceholder = /\{[a-zA-Z_]+\}/.exec(rendered)?.[0];
   if (leftoverPlaceholder !== undefined) {
     throw new Error(
       `carrier template token ${JSON.stringify(token)} rendered unknown placeholder ${leftoverPlaceholder}`,
@@ -104,48 +104,10 @@ export function applyBindingCarriers(
     managedFields.push("options.args");
   }
 
-  if (carriers.env !== undefined) {
-    const renderedEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(carriers.env)) {
-      renderedEnv[key] = renderTemplateToken(value, vars);
-    }
-    options.env = renderedEnv;
-    managedFields.push("options.env");
-  }
-
-  if (carriers.unset_env !== undefined) {
-    options.unsetEnv = [...carriers.unset_env];
-    managedFields.push("options.unsetEnv");
-  }
-
-  if (carriers.mcp_servers !== undefined) {
-    options.mcpServers = carriers.mcp_servers;
-    managedFields.push("options.mcpServers");
-  }
-
-  if (carriers.authMethodId !== undefined) {
-    options.authMethodId = carriers.authMethodId;
-    managedFields.push("options.authMethodId");
-  }
-
-  if (carriers.subscription_model_source !== undefined) {
-    if (carriers.subscription_model_source === "displayName" && vars.displayName === undefined) {
-      throw new Error("displayName is required for subscription_model_source displayName");
-    }
-    topLevel.subscription_model =
-      carriers.subscription_model_source === "modelId" ? vars.modelId : vars.displayName;
-    managedFields.push("subscription_model");
-  }
-
-  if (carriers.pass_via !== undefined) {
-    options.pass_via = carriers.pass_via;
-    managedFields.push("options.pass_via");
-  }
-
-  if (carriers.strip_patterns !== undefined) {
-    options.strip_patterns = [...carriers.strip_patterns];
-    managedFields.push("options.strip_patterns");
-  }
+  applyEnvironmentCarriers(options, managedFields, carriers, vars);
+  applyMetadataCarriers(options, managedFields, carriers);
+  applySubscriptionCarrier(topLevel, managedFields, carriers, vars);
+  applyOptionCarriers(options, managedFields, carriers);
 
   // Operator-authored literals: copied verbatim, never template-rendered.
   // This fixed-key loop stays separate from per-kind handling so managed_fields
@@ -159,4 +121,69 @@ export function applyBindingCarriers(
   }
 
   return { options, topLevel, managedFields };
+}
+
+function applyEnvironmentCarriers(
+  options: Record<string, unknown>,
+  managedFields: string[],
+  carriers: BindingCarriers,
+  vars: CarrierModelVars,
+): void {
+  if (carriers.env !== undefined) {
+    const renderedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(carriers.env)) {
+      renderedEnv[key] = renderTemplateToken(value, vars);
+    }
+    options.env = renderedEnv;
+    managedFields.push("options.env");
+  }
+  if (carriers.unset_env !== undefined) {
+    options.unsetEnv = [...carriers.unset_env];
+    managedFields.push("options.unsetEnv");
+  }
+}
+
+function applyMetadataCarriers(
+  options: Record<string, unknown>,
+  managedFields: string[],
+  carriers: BindingCarriers,
+): void {
+  if (carriers.mcp_servers !== undefined) {
+    options.mcpServers = carriers.mcp_servers;
+    managedFields.push("options.mcpServers");
+  }
+  if (carriers.authMethodId !== undefined) {
+    options.authMethodId = carriers.authMethodId;
+    managedFields.push("options.authMethodId");
+  }
+}
+
+function applySubscriptionCarrier(
+  topLevel: Record<string, unknown>,
+  managedFields: string[],
+  carriers: BindingCarriers,
+  vars: CarrierModelVars,
+): void {
+  if (carriers.subscription_model_source === undefined) return;
+  if (carriers.subscription_model_source === "displayName" && vars.displayName === undefined) {
+    throw new Error("displayName is required for subscription_model_source displayName");
+  }
+  topLevel.subscription_model =
+    carriers.subscription_model_source === "modelId" ? vars.modelId : vars.displayName;
+  managedFields.push("subscription_model");
+}
+
+function applyOptionCarriers(
+  options: Record<string, unknown>,
+  managedFields: string[],
+  carriers: BindingCarriers,
+): void {
+  if (carriers.pass_via !== undefined) {
+    options.pass_via = carriers.pass_via;
+    managedFields.push("options.pass_via");
+  }
+  if (carriers.strip_patterns !== undefined) {
+    options.strip_patterns = [...carriers.strip_patterns];
+    managedFields.push("options.strip_patterns");
+  }
 }
