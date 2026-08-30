@@ -45,6 +45,13 @@ export interface ExitStatus {
   signal: string | null;
 }
 
+export interface TerminalFailedAuditPayload {
+  method: string;
+  code: number;
+  message: string;
+  handoff_id?: string;
+}
+
 function errorCode(err: unknown): string | undefined {
   if (typeof err !== "object" || err === null) return undefined;
   const code = (err as { code?: unknown }).code;
@@ -378,6 +385,15 @@ export class WriteToolsExecutor {
     } finally {
       this.pendingReservations--;
     }
+  }
+
+  async auditTerminalFailure(payload: TerminalFailedAuditPayload): Promise<void> {
+    await this.opts.auditEmitter.emit("terminal.failed", {
+      method: payload.method,
+      code: payload.code,
+      message: payload.message,
+      handoff_id: payload.handoff_id ?? this.opts.handoffId,
+    });
   }
 
   terminalOutput(args: {

@@ -531,6 +531,97 @@ describe("QuotasConfigSchema", () => {
     expect(() => QuotasConfigSchema.parse(live)).not.toThrow();
   });
 
+  test("accepts quota_tokens_per_7d when present", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [{ name: "alibaba", quota_tokens_per_7d: 7_000_000 }],
+    });
+
+    expect(parsed.providers[0]?.quota_tokens_per_7d).toBe(7_000_000);
+  });
+
+  test("accepts max_in_flight on provider quotas while preserving strict provider keys", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [{ name: "anthropic", max_in_flight: 3 }],
+    });
+
+    expect(parsed.providers[0]?.max_in_flight).toBe(3);
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [{ name: "anthropic", max_in_flight: 3, max_inflight: 3 }],
+      }),
+    ).toThrow(/max_inflight/);
+  });
+
+  test("rejects model-scoped max_in_flight because max_in_flight is provider-wide", () => {
+    const result = QuotasConfigSchema.safeParse({
+      providers: [{ name: "google", model: "gemini-x", max_in_flight: 1 }],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.message.includes("max_in_flight"));
+      expect(issue).toBeDefined();
+      expect(issue?.path).toEqual(["providers", 0]);
+      expect(issue?.message).toContain("'google'");
+      expect(issue?.message).toContain("provider-wide");
+    }
+  });
+
+  test("rejects multiple max_in_flight rows for the same provider", () => {
+    const result = QuotasConfigSchema.safeParse({
+      providers: [
+        { name: "google", max_in_flight: 2 },
+        { name: "google", model: "gemini-x", max_in_flight: 1 },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.message.includes("more than once"));
+      expect(issue).toBeDefined();
+      expect(issue?.path).toEqual(["providers", 1]);
+      expect(issue?.message).toContain("'google'");
+      expect(issue?.message).toContain("max_in_flight");
+      expect(issue?.message).toContain("provider-wide");
+    }
+  });
+
+  test("accepts provider-wide max_in_flight with model-scoped rows that do not define it", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [
+        { name: "google", max_in_flight: 2 },
+        { name: "google", model: "gemini-x", quota_tokens_per_24h: 1_000_000 },
+        { name: "google", model: "gemini-y", quota_tokens_per_7d: 7_000_000 },
+      ],
+    });
+
+    expect(parsed.providers.map((provider) => provider.max_in_flight)).toEqual([
+      2,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  test("accepts quota_tokens_per_7d when absent", () => {
+    const parsed = QuotasConfigSchema.parse({
+      providers: [{ name: "alibaba" }],
+    });
+
+    expect(parsed.providers[0]?.quota_tokens_per_7d).toBeUndefined();
+  });
+
+  test.each([
+    ["zero", 0],
+    ["negative", -1],
+    ["non-integer", 7_000_000.5],
+  ])("rejects %s quota_tokens_per_7d", (_label, quota) => {
+    expect(() =>
+      QuotasConfigSchema.parse({
+        providers: [{ name: "alibaba", quota_tokens_per_7d: quota }],
+      }),
+    ).toThrow(/quota_tokens_per_7d/);
+  });
+
   test("rejects unknown pressure cap window labels", () => {
     expect(() =>
       QuotasConfigSchema.parse({

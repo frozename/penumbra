@@ -230,6 +230,7 @@ describe("ProviderQuotaConfig per-model", () => {
         "    model: gemini-3.1-pro-preview",
         "    quota_tokens_per_5h: 1000000",
         "    quota_tokens_per_24h: 4000000",
+        "    quota_tokens_per_7d: 7000000",
       ].join("\n"),
     );
     const cfg = loadConfig(yamlPath);
@@ -239,7 +240,27 @@ describe("ProviderQuotaConfig per-model", () => {
       model: "gemini-3.1-pro-preview",
       quota_tokens_per_5h: 1_000_000,
       quota_tokens_per_24h: 4_000_000,
+      quota_tokens_per_7d: 7_000_000,
     });
+  });
+
+  test("preserves provider max_in_flight caps in the worker config schema", () => {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const yamlPath = join(dir, "agentchat.yaml");
+    writeFileSync(
+      yamlPath,
+      [
+        "agents:",
+        "  - name: x",
+        "    adapter: cli-spawn",
+        "providers:",
+        "  - name: anthropic",
+        "    max_in_flight: 2",
+      ].join("\n"),
+    );
+
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.max_in_flight).toBe(2);
   });
 
   test("still accepts provider-level (no-model) entries for backwards compatibility", () => {
@@ -448,5 +469,61 @@ providers:
     writeFileSync(filePath, `agents:\n  - name: only\n    adapter: claude-cli\n`);
     const fromFile = loadConfigPathOrDir(filePath);
     expect(fromFile.agents.map((a) => a.name)).toEqual(["only"]);
+  });
+
+  describe("loadConfigFromDir (split worker dir)", () => {
+    function writeSplitDir(): string {
+      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-"));
+      writeFileSync(
+        join(dir, "agents.yaml"),
+        `
+agents:
+  - name: planner
+    adapter: claude-cli
+    options: { command: claude }
+    roles: [planner]
+`,
+      );
+      writeFileSync(
+        join(dir, "routing.yaml"),
+        `
+default_roles:
+  planner: planner
+`,
+      );
+      writeFileSync(
+        join(dir, "quotas.yaml"),
+        `
+providers:
+  - name: anthropic
+    quota_usd_per_24h: 200
+`,
+      );
+      return dir;
+    }
+
+    test("rejects an unwhitelisted billed hand seat", () => {
+      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-bad-"));
+      writeFileSync(
+        join(dir, "agents.yaml"),
+        `
+agents:
+  - name: openai-gpt52-http
+    adapter: openai-compat-http
+    pricing_mode: api
+    api_provider: openai
+`,
+      );
+      writeFileSync(join(dir, "routing.yaml"), `default_roles: {}`);
+      writeFileSync(join(dir, "quotas.yaml"), `providers: []`);
+
+      expect(() => loadConfigFromDir(dir)).toThrow(/openai-gpt52-http/);
+    });
+
+    test("loads a benign split worker dir", () => {
+      const cfg = loadConfigFromDir(writeSplitDir());
+      expect(cfg.agents[0]!.name).toBe("planner");
+      expect(cfg.providers[0]!.name).toBe("anthropic");
+    });
   });
 });

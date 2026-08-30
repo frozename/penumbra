@@ -45,6 +45,84 @@ describe("StdioAcpClient", () => {
 
       expect(handler).toHaveBeenCalledWith({ event: "fired" });
     });
+
+    it("warns with bounded metadata when writing a JSON-RPC error frame", async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout });
+      client.onRequest("terminal/wait_for_exit", () => {
+        const err = new Error("terminal not found: term-404") as Error & { code: number };
+        err.code = -32005;
+        throw err;
+      });
+
+      const consoleWarnSpy = mock();
+      const originalWarn = console.warn;
+      console.warn = consoleWarnSpy;
+
+      try {
+        stdout.write(
+          '{"jsonrpc":"2.0","id":99,"method":"terminal/wait_for_exit","params":{"terminal_id":"term-404"}}\n',
+        );
+
+        await new Promise((r) => setTimeout(r, 10));
+
+        expect(readUtf8(stdin)).toBe(
+          '{"jsonrpc":"2.0","id":99,"error":{"code":-32005,"message":"terminal not found: term-404"}}\n',
+        );
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+          "stdio-acp-client: wrote JSON-RPC error frame",
+          {
+            method: "terminal/wait_for_exit",
+            code: -32005,
+            messageLength: 28,
+          },
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+
+    it("does not persist non-terminal handler messages in the console warning", async () => {
+      const secret = "sk-FAKE-SECRET-DO-NOT-LOG-12345";
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout });
+      client.onRequest("fs/read_text_file", () => {
+        throw new Error(`fs failed with ${secret}`);
+      });
+
+      const warnings: unknown[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]): void => {
+        warnings.push(args);
+      };
+
+      try {
+        stdout.write(
+          '{"jsonrpc":"2.0","id":100,"method":"fs/read_text_file","params":{"path":"secret.txt"}}\n',
+        );
+
+        await new Promise((r) => setTimeout(r, 10));
+
+        expect(readUtf8(stdin)).toBe(
+          `{"jsonrpc":"2.0","id":100,"error":{"code":-32000,"message":"fs failed with ${secret}"}}\n`,
+        );
+        expect(JSON.stringify(warnings)).not.toContain(secret);
+        expect(warnings).toEqual([
+          [
+            "stdio-acp-client: wrote JSON-RPC error frame",
+            {
+              method: "fs/read_text_file",
+              code: -32000,
+              messageLength: 46,
+            },
+          ],
+        ]);
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
   });
 
   describe("framing: newline — non-JSON lines", () => {

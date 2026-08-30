@@ -1,4 +1,5 @@
 export {
+  DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT,
   ENV_REGISTRY,
   type EnvConfig,
   EnvSchema,
@@ -24,11 +25,16 @@ export {
   AgentProvenanceSchema,
   type AgentsConfig,
   AgentsConfigSchema,
+  CARRIER_TOOL_OPTION_KEYS,
   allowedKeysFor,
   refineAgentConfigAdapterOptions,
   UNIVERSAL_OPTION_KEYS,
 } from "./files/agents.js";
-export { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "./files/load.js";
+export {
+  assertHandBilledSeatsWhitelistedWithPrefix,
+  loadAgentChatConfigFromDir,
+  reloadAgentChatConfig,
+} from "./files/load.js";
 export {
   loadModelAliasMapFromDir,
   type ModelAliasMap,
@@ -71,6 +77,16 @@ export {
   type AssertNoBilledHttpSeatsOptions,
   type HttpSeatLike,
 } from "./generator/assertions.js";
+export {
+  assertHandBilledSeatsWhitelisted,
+  BilledHandSeatViolation,
+  GENERATOR_PROVENANCE_SOURCE,
+  type AssertHandBilledSeatsWhitelistedOptions,
+  BILLED_HAND_SEAT_WHITELIST,
+  isBilledHandSeatViolation,
+  type HandBilledSeatLike,
+  UNBILLED_API_PROVIDERS,
+} from "./files/billing-gate.js";
 export {
   applyBindingCarriers,
   type AppliedCarriers,

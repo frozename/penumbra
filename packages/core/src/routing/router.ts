@@ -7,6 +7,7 @@ import {
   buildPressureStaleKeys,
   pressureSnapshotKey,
   resolveBiasEffect,
+  isTextOnlyAdapter,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
@@ -165,6 +166,7 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
     message: input.message,
     agentchatConfig: input.agentchatConfig,
     agentRegistry: [...input.agentRegistry],
+    allowRoleExploration: true,
     activeBiases: input.activeBiases,
     applyPressure: input.applyPressure,
     unhealthyAgents: input.unhealthyAgents,
@@ -173,6 +175,7 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
     ),
     priors: priorResult.priors,
     roleExplorationPolicy: "ranked-first" as const,
+    tool_free: input.harnessContext.toolFree,
     now,
   } satisfies Omit<RouteAgentInput, "detail">;
 
@@ -488,6 +491,7 @@ function buildCandidateFacts(
     const supplied = Object.hasOwn(input.perCandidateFacts ?? {}, agent)
       ? (input.perCandidateFacts?.[agent] ?? {})
       : {};
+    const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
     const predictedCost = models[agent]
       ? predictedCostUsd(models[agent]!, input.taskProfile)
       : undefined;
@@ -497,6 +501,10 @@ function buildCandidateFacts(
       healthy: input.unhealthyAgents?.has(agent) ? false : supplied.healthy,
       // Unknown predicted cost intentionally passes the budget cap; unknown is never zero.
       predictedCostUsd: supplied.predictedCostUsd ?? predictedCost,
+      roleRoutingRolesEmpty:
+        supplied.roleRoutingRolesEmpty ??
+        (input.role ? agentConfig === undefined || agentConfig.roles.length === 0 : false),
+      textOnlyAdapter: supplied.textOnlyAdapter ?? isTextOnlyAdapter(agentConfig?.adapter),
     };
   }
   return facts;
@@ -548,11 +556,18 @@ function applyRoutingBiasExclusions(
   if (!input.activeBiases || input.activeBiases.length === 0) {
     return { admitted: [...candidates], excluded: [] };
   }
+  const hasProviderExclude = input.activeBiases.some(
+    (bias) => bias.scope === "provider" && bias.mode === "exclude",
+  );
   const admitted: string[] = [];
   const excluded: Array<{ agent: string; reasons: string[] }> = [];
   for (const agent of candidates) {
     const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
     const provider = agentConfig ? resolveProvider(agentConfig) : null;
+    if (hasProviderExclude && provider === null) {
+      excluded.push({ agent, reasons: ["router_facts_unavailable"] });
+      continue;
+    }
     if (resolveBiasEffect(agent, provider, input.activeBiases).exclude) {
       excluded.push({ agent, reasons: ["routing_bias_exclude"] });
     } else {

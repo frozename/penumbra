@@ -25,6 +25,37 @@ beforeEach(() => {
   writer = new HandoffWriter({ db });
 });
 
+function createApprovedHandoff(
+  handoff_id: string,
+  opts: {
+    to?: string;
+    dispatch_kind?: "workflow" | null;
+    workflow_run_id?: string | null;
+    resolved_at?: string | null;
+  } = {},
+): void {
+  writer.createApproved({
+    handoff_id,
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: `conv-${handoff_id}`,
+    from: "a",
+    to: opts.to ?? "b",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: null,
+    resolved_by: "u",
+    resolved_at: opts.resolved_at ?? null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    dispatch_kind: opts.dispatch_kind ?? null,
+    workflow_run_id: opts.workflow_run_id ?? null,
+  });
+}
+
 test("create() inserts a pending handoff with the given handoff_id", () => {
   const id = writer.create({
     handoff_id: "h-1",
@@ -218,6 +249,104 @@ test("claimDispatch() rejects claim when dispatch_attempts >= max_dispatch_attem
 
   const success = writer.claimDispatch("h-claim-exhausted", "worker-1");
   expect(success).toBe(false);
+});
+
+test("claimDispatch() enforces provider in-flight cap across provider seats", () => {
+  createApprovedHandoff("provider-running", { to: "claude-a" });
+  createApprovedHandoff("provider-next", { to: "claude-b" });
+  expect(
+    writer.claimDispatch("provider-running", "worker-1", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+    }),
+  ).toBe(true);
+
+  expect(
+    writer.claimDispatch("provider-next", "worker-2", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+    }),
+  ).toBe(false);
+
+  expect(writer.markCompleted("provider-running", { expected_worker_id: "worker-1" })).toBe(true);
+  expect(
+    writer.claimDispatch("provider-next", "worker-2", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+    }),
+  ).toBe(true);
+});
+
+test("claimDispatch() composes provider in-flight cap with workflow sibling cap", () => {
+  for (const id of ["wf-a", "wf-b", "wf-c"]) {
+    createApprovedHandoff(id, {
+      to: "claude-a",
+      dispatch_kind: "workflow",
+      workflow_run_id: "wf-composed",
+    });
+  }
+
+  expect(
+    writer.claimDispatch("wf-a", "worker-1", {
+      workflow_run_id: "wf-composed",
+      maxWorkflowSiblingsPerWorker: 1,
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 2,
+    }),
+  ).toBe(true);
+  expect(
+    writer.claimDispatch("wf-b", "worker-1", {
+      workflow_run_id: "wf-composed",
+      maxWorkflowSiblingsPerWorker: 1,
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 2,
+    }),
+  ).toBe(false);
+  expect(
+    writer.claimDispatch("wf-b", "worker-2", {
+      workflow_run_id: "wf-composed",
+      maxWorkflowSiblingsPerWorker: 1,
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 2,
+    }),
+  ).toBe(true);
+  expect(
+    writer.claimDispatch("wf-c", "worker-3", {
+      workflow_run_id: "wf-composed",
+      maxWorkflowSiblingsPerWorker: 1,
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 2,
+    }),
+  ).toBe(false);
+});
+
+test("claimDispatch() without provider opts preserves existing claim behavior", () => {
+  createApprovedHandoff("unrelated-provider-running", { to: "claude-a" });
+  createApprovedHandoff("no-provider-opts", { to: "claude-b" });
+  expect(writer.claimDispatch("unrelated-provider-running", "worker-1")).toBe(true);
+
+  expect(writer.claimDispatch("no-provider-opts", "worker-2")).toBe(true);
+});
+
+test("claimDispatch() counts resolved_at dispatched rows toward provider in-flight cap", () => {
+  createApprovedHandoff("resolved-running", {
+    to: "claude-a",
+    resolved_at: "2026-05-11T00:00:01Z",
+  });
+  createApprovedHandoff("resolved-next", { to: "claude-b" });
+
+  expect(
+    writer.claimDispatch("resolved-running", "worker-1", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+    }),
+  ).toBe(true);
+  expect(
+    writer.claimDispatch("resolved-next", "worker-2", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+    }),
+  ).toBe(false);
 });
 
 test("createApproved() persists workflow_run_id and max_dispatch_attempts", () => {

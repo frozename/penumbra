@@ -11,7 +11,7 @@ const RecentInputSchema = z.object({
 
 const QuotaInputSchema = z.object({
   since: z.iso.datetime().optional(),
-  window: z.enum(["24h", "5h"]).optional(),
+  window: z.enum(["24h", "5h", "7d"]).optional(),
 });
 
 const SubscriptionPressureInputSchema = z.object({

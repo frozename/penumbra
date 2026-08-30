@@ -141,7 +141,7 @@ export class DaemonClient {
   /** Returns the loose `/usage/quota_status` payload as `Record<string, unknown>`. */
   async getQuotaStatus(opts?: {
     since?: string;
-    window?: "24h" | "5h";
+    window?: "24h" | "5h" | "7d";
   }): Promise<UsageQuotaResponse> {
     return await this.request({
       path: "/usage/quota_status",

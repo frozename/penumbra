@@ -3,6 +3,7 @@ import { load as parseYaml } from "js-yaml";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { assertHandBilledSeatsWhitelistedWithPrefix } from "@penumbra/config";
 import { colonFormToSdkPattern } from "../worker/mcp-tool-name.js";
 import {
   AgentChatConfigSchema,
@@ -41,6 +42,7 @@ export function loadConfigFromDir(dir: string): ParsedAgentChatConfig {
     const message = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`agentchat config (split dir ${dir}) invalid: ${message}`);
   }
+  assertHandBilledSeatsWhitelistedWithPrefix(result.data.agents, join(dir, "agents.yaml"));
   return stampPrecomputedAllowlist(result.data);
 }
 

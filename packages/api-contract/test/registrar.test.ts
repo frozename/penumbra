@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import {
   RegistrarCreateRequestSchema,
   RegistrarEventInputSchema,
+  RegistrarEventKindSchema,
   RegistrarEventSchema,
+  RegistrarPhaseStatusSchema,
 } from "../src/index.js";
 
 const storedEvent = {
@@ -71,6 +73,28 @@ describe("RegistrarEventInputSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  test("accepts draft as an entry_transition source status by design", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "entry_transition",
+        from_status: "draft",
+        state: "active",
+      }).success,
+    ).toBe(true);
+  });
+
+  test("rejects draft as an entry_transition target status", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "entry_transition",
+        from_status: "active",
+        state: "draft",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("RegistrarCreateRequestSchema", () => {
@@ -96,5 +120,30 @@ describe("RegistrarCreateRequestSchema", () => {
         kind: "progress",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("Registrar enum guards", () => {
+  test("RegistrarPhaseStatusSchema options are unchanged", () => {
+    expect(RegistrarPhaseStatusSchema.options).toEqual([
+      "pending",
+      "active",
+      "blocked",
+      "complete",
+      "abandoned",
+    ]);
+  });
+
+  test("RegistrarEventKindSchema options include entry_transition last", () => {
+    expect(RegistrarEventKindSchema.options).toEqual([
+      "progress",
+      "caveat",
+      "blocker",
+      "follow_up",
+      "decision",
+      "phase_transition",
+      "link",
+      "entry_transition",
+    ]);
   });
 });

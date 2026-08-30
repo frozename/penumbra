@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  AgentOptionsSchema,
   loadProviderSourcesFromDir,
   resolveCatalogAuthority,
   type ProviderSourcesConfig,
@@ -78,6 +79,247 @@ anthropic:
     });
   });
 
+  test("a stdio-acp binding round-trips the seven terminal/fs tool-option carriers", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        binary: claude-agent-acp
+        fsReadTextFile: true
+        fsWriteTextFile: true
+        terminal: true
+        terminal_max_concurrent: 3
+        terminal_output_max_bytes: 65536
+        terminal_path: "/usr/bin:/bin"
+        terminal_timeout_s: 120
+`,
+    );
+
+    expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-acp"]?.carriers).toEqual({
+      binary: "claude-agent-acp",
+      fsReadTextFile: true,
+      fsWriteTextFile: true,
+      terminal: true,
+      terminal_max_concurrent: 3,
+      terminal_output_max_bytes: 65536,
+      terminal_path: "/usr/bin:/bin",
+      terminal_timeout_s: 120,
+    });
+  });
+
+  test("carriers tool options enforce the AgentOptionsSchema ranges and types", () => {
+    const dir = makeTempDir();
+    const fixture = `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        fsReadTextFile: true
+        fsWriteTextFile: true
+        terminal: true
+        terminal_max_concurrent: 3
+        terminal_output_max_bytes: 65536
+        terminal_path: "/usr/bin:/bin"
+        terminal_timeout_s: 120
+`;
+
+    const reject = (mutated: string, message: RegExp): void => {
+      writeUtf8(join(dir, "providers.yaml"), mutated);
+      expect(() => loadProviderSourcesFromDir(dir)).toThrow(message);
+    };
+
+    reject(
+      fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 0"),
+      /terminal_timeout_s/,
+    );
+    reject(
+      fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 301"),
+      /terminal_timeout_s/,
+    );
+    reject(
+      fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 1023"),
+      /terminal_output_max_bytes/,
+    );
+    reject(
+      fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 9"),
+      /terminal_max_concurrent/,
+    );
+    reject(fixture.replace("terminal: true", 'terminal: "yes"'), /terminal/);
+
+    const accept = (mutated: string, carriers: unknown): void => {
+      writeUtf8(join(dir, "providers.yaml"), mutated);
+      expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-acp"]?.carriers).toEqual(
+        carriers,
+      );
+    };
+
+    const baseCarriers = {
+      fsReadTextFile: true,
+      fsWriteTextFile: true,
+      terminal: true,
+      terminal_max_concurrent: 3,
+      terminal_output_max_bytes: 65536,
+      terminal_path: "/usr/bin:/bin",
+      terminal_timeout_s: 120,
+    };
+    accept(fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 1"), {
+      ...baseCarriers,
+      terminal_timeout_s: 1,
+    });
+    accept(fixture.replace("terminal_timeout_s: 120", "terminal_timeout_s: 300"), {
+      ...baseCarriers,
+      terminal_timeout_s: 300,
+    });
+    accept(fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 1024"), {
+      ...baseCarriers,
+      terminal_output_max_bytes: 1024,
+    });
+    accept(
+      fixture.replace("terminal_output_max_bytes: 65536", "terminal_output_max_bytes: 8388608"),
+      { ...baseCarriers, terminal_output_max_bytes: 8_388_608 },
+    );
+    accept(fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 1"), {
+      ...baseCarriers,
+      terminal_max_concurrent: 1,
+    });
+    accept(fixture.replace("terminal_max_concurrent: 3", "terminal_max_concurrent: 8"), {
+      ...baseCarriers,
+      terminal_max_concurrent: 8,
+    });
+  });
+
+  test("carriers.pass_via and carriers.strip_patterns are rejected for non-CLI binding kinds at parse time", () => {
+    const dir = makeTempDir();
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: stdio-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        pass_via: argv
+`,
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(
+      /carriers\.pass_via.*binding kind 'stdio-acp'/,
+    );
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: opencode-acp
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        strip_patterns: [secret]
+`,
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(
+      /carriers\.strip_patterns.*binding kind 'opencode-acp'/,
+    );
+  });
+
+  test("a CLI binding accepts carriers.pass_via and carriers.strip_patterns and preserves them", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: command
+    locator: claude models
+  auth: {}
+  bindings:
+    claude-cli:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-{model}
+      carriers:
+        pass_via: argv
+        strip_patterns: [secret, token]
+`,
+    );
+
+    expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-cli"]?.carriers).toEqual({
+      pass_via: "argv",
+      strip_patterns: ["secret", "token"],
+    });
+  });
+
+  test("a CLI binding rejects an invalid carriers.pass_via value at provider parse time", () => {
+    const dir = makeTempDir();
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      `
+anthropic:
+  discovery:
+    kind: command
+    locator: claude models
+  auth: {}
+  bindings:
+    claude-cli:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-{model}
+      carriers:
+        pass_via: bogus
+`,
+    );
+
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/pass_via/);
+  });
+
   test("carriers is optional — an existing openai-compat-http binding with no carriers block still parses", () => {
     const dir = makeTempDir();
     writeUtf8(
@@ -107,11 +349,15 @@ openai:
     });
   });
 
+  test("AgentOptionsSchema accepts stdin and argv but rejects other pass_via values", () => {
+    expect(() => AgentOptionsSchema.parse({ pass_via: "bogus" })).toThrow(/pass_via/);
+    expect(AgentOptionsSchema.parse({ pass_via: "argv" }).pass_via).toBe("argv");
+    expect(AgentOptionsSchema.parse({ pass_via: "stdin" }).pass_via).toBe("stdin");
+  });
+
   test("carriers rejects an unknown key", () => {
     const dir = makeTempDir();
-    writeUtf8(
-      join(dir, "providers.yaml"),
-      `
+    const fixture = `
 anthropic:
   discovery:
     kind: acp-session
@@ -127,10 +373,22 @@ anthropic:
       seat_name_template: claude-acp-{model}
       carriers:
         args_tempalte: [--model, "{model}"]
-`,
-    );
+`;
 
+    writeUtf8(join(dir, "providers.yaml"), fixture);
     expect(() => loadProviderSourcesFromDir(dir)).toThrow(/args_tempalte/);
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      fixture.replace(/args_tempalte:.*/, "terminal_allowed: [ls]"),
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/terminal_allowed/);
+
+    writeUtf8(
+      join(dir, "providers.yaml"),
+      fixture.replace(/args_tempalte:.*/, "mcpWriteTools: true"),
+    );
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/mcpWriteTools/);
   });
 
   test("carriers.args_template rejects an empty array; carriers.binary rejects an empty string", () => {
@@ -158,6 +416,33 @@ anthropic:
 
     writeUtf8(join(dir, "providers.yaml"), fixture.replace("args_template: []", 'binary: ""'));
     expect(() => loadProviderSourcesFromDir(dir)).toThrow(/binary/);
+  });
+
+  test("carriers.strip_patterns rejects empty entries and empty arrays", () => {
+    const dir = makeTempDir();
+    const fixture = `
+anthropic:
+  discovery:
+    kind: acp-session
+    locator: claude-acp
+  auth: {}
+  bindings:
+    claude-acp:
+      kind: agy-cli
+      pricing_mode: subscription
+      api_provider: anthropic
+      subscription_provider: anthropic
+      model_carrier: model
+      seat_name_template: claude-acp-{model}
+      carriers:
+        strip_patterns: [secret]
+`;
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("[secret]", "['']"));
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/strip_patterns/);
+
+    writeUtf8(join(dir, "providers.yaml"), fixture.replace("[secret]", "[]"));
+    expect(() => loadProviderSourcesFromDir(dir)).toThrow(/strip_patterns/);
   });
 
   test("resolveCatalogAuthority derives 'session-handshake' for discovery.kind 'acp-session' and 'provider-catalog' otherwise when unset", () => {

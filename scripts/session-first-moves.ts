@@ -146,6 +146,35 @@ function readGateDeltas(storageRoot: string): GateDeltas {
   return deltas;
 }
 
+type PinShare = {
+  role_24h: number;
+  pinned_24h: number;
+  role_7d: number;
+  pinned_7d: number;
+  steerable_role_7d: number;
+  steerable_pinned_7d: number;
+};
+function readPinShare(storageRoot: string): PinShare | null {
+  const dbPath = join(storageRoot, "db.sqlite");
+  if (!existsSync(dbPath)) return null;
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    return (
+      db
+        .query<
+          PinShare,
+          []
+        >(`SELECT SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_24h, SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_24h, SUM(CASE WHEN routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_7d, SUM(CASE WHEN routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS steerable_role_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS steerable_pinned_7d FROM handoffs WHERE ts >= datetime('now','-7 days')`)
+        .get() ?? null
+    );
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
 async function main(): Promise<void> {
   const gitStatusDirtyCount = parseInt(run("git status --porcelain | wc -l"), 10) || 0;
   const headSha = run("git rev-parse HEAD") || null;
@@ -173,6 +202,7 @@ async function main(): Promise<void> {
   const gateDeltas: GateDeltas = storageRoot
     ? readGateDeltas(storageRoot)
     : { filtered: null, neardup: null };
+  const pinShare = storageRoot ? readPinShare(storageRoot) : null;
 
   const result = {
     git_status_dirty_count: gitStatusDirtyCount,
@@ -184,6 +214,7 @@ async function main(): Promise<void> {
     pending_handoffs: daemonState.pendingHandoffs,
     pending_task_drafts: daemonState.pendingTaskDrafts,
     gate_deltas: gateDeltas,
+    pin_share: pinShare,
     open_lanes: daemonState.openLanes,
   };
 

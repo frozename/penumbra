@@ -6,10 +6,12 @@ import type { RoutingBias } from "../readers/routing-bias.js";
 import {
   resolveBiasEffect,
   resolveClassifierDeclineCutoverIso,
+  isTextOnlyAdapter,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
   SUCCESS_OUTCOME_VALUES,
+  isNeutralPerformanceOutcome,
 } from "../services/agent-routing.js";
 import { pickPreferred } from "./auction.js";
 
@@ -23,6 +25,7 @@ const RECENT_FAILURE_DEMOTION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 type RecentOutcomeRow = {
   outcome: string;
   failure_class: string | null;
+  environment_failure: string | null;
 };
 
 function isSuccess(row: RecentOutcomeRow): boolean {
@@ -30,7 +33,7 @@ function isSuccess(row: RecentOutcomeRow): boolean {
 }
 
 function isNeutral(row: RecentOutcomeRow): boolean {
-  return row.outcome === "no_changes" || row.outcome === "bypassed";
+  return isNeutralPerformanceOutcome(row);
 }
 
 function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTaskType): Set<string> {
@@ -38,7 +41,7 @@ function recentlyFailingAgents(pool: string[], db: Database, taskType: AgentTask
   const classifierDeclineCutover = resolveClassifierDeclineCutoverIso();
   const recencyFloor = new Date(Date.now() - RECENT_FAILURE_DEMOTION_MAX_AGE_MS).toISOString();
   const stmt = db.query<RecentOutcomeRow, [string, string, string, string, number]>(
-    `SELECT outcome, failure_class
+    `SELECT outcome, failure_class, environment_failure
      FROM agent_performance
      WHERE task_type = ? AND agent_name = ? AND ts >= ?
        AND (failure_class IS NULL OR failure_class != 'classifier_declined' OR ts < ?)
@@ -76,9 +79,27 @@ export function pickFromPool(
   tool_free?: boolean,
   activeBiases?: RoutingBias[],
 ): string {
+  if (pool.length === 0) throw new Error("pickFromPool: pool must not be empty");
+
+  let constraintFilteredPool = pool;
+  // requires_tools needs config to resolve adapters and is intentionally inert without it; production callers pass config.
+  if (tool_free !== true && agentchatConfig) {
+    const textOnlyAgents = new Set(
+      agentchatConfig.agents
+        .filter((agent) => isTextOnlyAdapter(agent.adapter))
+        .map((agent) => agent.name),
+    );
+    constraintFilteredPool = pool.filter((name) => !textOnlyAgents.has(name));
+  }
+  if (constraintFilteredPool.length === 0) {
+    throw new Error(
+      `pickFromPool: no tool-capable agents remain after requires_tools constraint (taskType=${taskType}, pool=${pool.join(",")})`,
+    );
+  }
+
   let biasFilteredPool = pool;
   if (activeBiases && activeBiases.length > 0) {
-    const nonExcluded = pool.filter((name) => {
+    const nonExcluded = constraintFilteredPool.filter((name) => {
       const conf = agentchatConfig?.agents.find((agent) => agent.name === name);
       const provider = conf ? resolveProvider(conf) : null;
       return !resolveBiasEffect(name, provider, activeBiases).exclude;
@@ -90,9 +111,12 @@ export function pickFromPool(
     } else {
       console.warn(
         "[pick-from-pool] all pool members are bias-excluded; re-admitting full pool in preference order",
-        { pool, taskType },
+        { pool: constraintFilteredPool, taskType },
       );
+      biasFilteredPool = constraintFilteredPool;
     }
+  } else {
+    biasFilteredPool = constraintFilteredPool;
   }
 
   const [firstAgent, secondAgent] = biasFilteredPool;

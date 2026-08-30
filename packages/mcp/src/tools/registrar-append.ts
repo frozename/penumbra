@@ -1,10 +1,12 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import {
   RegistrarActorSchema,
+  RegistrarEntryTransitionTargetSchema,
   RegistrarEventInputSchema,
   RegistrarEventKindSchema,
   RegistrarLinkKindSchema,
   RegistrarPhaseStatusSchema,
+  RegistrarStatusSchema,
 } from "@penumbra/api-contract";
 import { z } from "zod";
 
@@ -33,20 +35,39 @@ export const RegistrarAppendInputShape = {
       z.enum(["opened", "resolved"]),
       z.enum(["owed", "done", "dropped"]),
       RegistrarPhaseStatusSchema,
+      RegistrarEntryTransitionTargetSchema,
     ])
     .optional()
     .describe(
-      "Required for blocker (opened|resolved), follow_up (owed|done|dropped), and phase_transition (a phase status).",
+      "Required for blocker (opened|resolved), follow_up (owed|done|dropped), phase_transition target status, and entry_transition target status (active|paused|complete|abandoned).",
     ),
   ref_event_id: z.number().int().positive().optional(),
-  from_status: RegistrarPhaseStatusSchema.optional().describe(
-    "Required for phase_transition and must name the phase status being transitioned from.",
-  ),
+  from_status: z
+    .union([RegistrarPhaseStatusSchema, RegistrarStatusSchema])
+    .optional()
+    .describe(
+      "Required only for phase_transition (the phase status being transitioned from) and entry_transition (the entry status being transitioned from, including draft).",
+    ),
   link_kind: RegistrarLinkKindSchema.optional(),
   link_value: z.string().min(1).optional(),
 };
 
-const RegistrarAppendInputSchema = z.object(RegistrarAppendInputShape).strict();
+export const RegistrarAppendInputSchema = z
+  .object(RegistrarAppendInputShape)
+  .strict()
+  .superRefine((input, ctx) => {
+    if (
+      input.from_status !== undefined &&
+      input.kind !== "phase_transition" &&
+      input.kind !== "entry_transition"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["from_status"],
+        message: "from_status is only valid for phase_transition and entry_transition",
+      });
+    }
+  });
 
 export function registrarAppendHandler(daemon: Pick<DaemonClient, "registrarAppend">) {
   return async (input: unknown): Promise<TextContentEnvelope> => {
@@ -56,6 +77,15 @@ export function registrarAppendHandler(daemon: Pick<DaemonClient, "registrarAppe
       return toTextContent(await daemon.registrarAppend({ registrar_id, event }));
     } catch (err) {
       if (err instanceof DaemonHttpError && err.status === 409) {
+        const body = err.body;
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          "error" in body &&
+          body.error === "invalid_entry_transition"
+        ) {
+          throw new Error("registrar.append entry status already transitioned");
+        }
         throw new Error("registrar.append phase already transitioned");
       }
       if (err instanceof DaemonHttpError && err.status === 404) {

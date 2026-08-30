@@ -603,12 +603,12 @@ describe("resolveSingleRoute — model task router modes", () => {
     );
   });
 
-  test("mode:'auto' degrades to the legacy null route for an empty role pool", () => {
+  test("mode:'auto' throws when the role pool contains only fenced roles:[] seats", () => {
     const db = freshDb();
     const svc = services(db, {
       agents: [
-        { name: "alpha", roles: ["executor"] },
-        { name: "beta", roles: ["executor"] },
+        { name: "alpha", roles: [] },
+        { name: "beta", roles: [] },
       ],
       default_roles: {},
     });
@@ -617,7 +617,9 @@ describe("resolveSingleRoute — model task router modes", () => {
     svc.taskRouterConfig = routerConfig("auto");
     svc.modelAliasMap = {};
 
-    expect(resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {})).toBeNull();
+    expect(() =>
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {}),
+    ).toThrow(RouterHardConstraintExhaustedError);
   });
 
   test("mode:'auto' without routing hints never invokes the router", () => {

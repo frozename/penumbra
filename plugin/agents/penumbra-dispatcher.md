@@ -14,7 +14,7 @@ implement the task yourself, never edit files, and never land branches.
 Your task message contains a fenced ```dispatch block of JSON:
 
     {
-      "initial_agent": "<agent id, e.g. codex-acp-deep>" | "AUTO",
+      "initial_agent": "<role, e.g. \"executor\" (default)>" | "<concrete agent id — deliberate pin>",
       "task_class":    "BOUNDARY" | "STANDARD" | "TRIVIAL",
       "task_type":     "implement_small" | "review_adversarial" | "docs_mechanical" | ...,
       "trust_mode":    "all" | "config",
@@ -27,8 +27,7 @@ Your task message contains a fenced ```dispatch block of JSON:
 
 ## Protocol
 
-1. If `initial_agent` is `"AUTO"`, call `mcp__penumbra__agent_recommend({ task_type })`
-   and use the top-ranked candidate. Otherwise use `initial_agent` verbatim.
+1. Pass `initial_agent` verbatim to `chain_start`. Role names ("executor", "reviewer", "planner") are the default — the daemon's model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin: use it verbatim. Legacy `"AUTO"` means `"executor"`. Never call `agent_recommend` to pre-pick a seat — it is forensic/informational only.
 2. Call `mcp__penumbra__chain_start` with `initial_agent`, `message`, `task_class`,
    `task_type`, `trust_mode`, `use_worktree`, `max_hops`, and `branch_base` if the
    spec includes it. Capture whatever `conversation_id` and `handoff_id` the result returns.

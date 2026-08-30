@@ -111,7 +111,7 @@ const verified = await pipeline(
       [
         `Dispatch ONE token-opt migration to the penumbra fleet; report ONLY verbatim tool-output values. Never invent an id or SHA.`,
         ``,
-        `STEP 1: mcp__penumbra__chain_start with initial_agent="openai-codex-deep-acp", task_class="STANDARD", task_type="implement_small", task_name="${m.tool}", caller_cwd="${REPO}", message = the EXACT contract below.`,
+        `STEP 1: mcp__penumbra__chain_start with initial_agent="executor", task_class="STANDARD", task_type="implement_small", task_name="${m.tool}", caller_cwd="${REPO}", message = the EXACT contract below.`,
         `--- CONTRACT (verbatim) ---`,
         m.dispatchPrompt,
         `--- END CONTRACT ---`,

@@ -44,6 +44,20 @@ export class InvalidPhaseTransition extends Error {
   }
 }
 
+export class InvalidEntryTransition extends Error {
+  readonly registrar_id: string;
+  readonly from_status: string;
+  readonly current_status: string;
+
+  constructor(registrar_id: string, from_status: string, current_status: string) {
+    super(`registrar entry ${registrar_id} is no longer '${from_status}'`);
+    this.name = "InvalidEntryTransition";
+    this.registrar_id = registrar_id;
+    this.from_status = from_status;
+    this.current_status = current_status;
+  }
+}
+
 export class UnknownJournalRef extends Error {
   readonly registrar_id: string;
   readonly ref_event_id: number;

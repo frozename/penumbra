@@ -93,6 +93,7 @@ export const ChainStartRequestSchema = z
         message: "branch_type 'agent' is reserved for legacy handoff branches",
       })
       .optional(),
+    tool_free: z.boolean().optional(),
   })
   .loose();
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

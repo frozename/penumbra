@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "../../src/files/load.js";
 import { readUtf8 } from "../../src/files/node-fs.js";
+import { BILLED_HAND_SEAT_WHITELIST } from "../../src/files/billing-gate.js";
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 
 const fsCalls = { mkdtempSync: nodeFs.mkdtempSync };
@@ -132,5 +133,24 @@ providers:
 
     expect(Reflect.set(loaded.default_roles, "executor", "changed")).toBe(false);
     expect(loaded.default_roles.executor).toBe("claude-acp-sonnet");
+  });
+
+  test("fails loudly on an unwhitelisted billed hand seat", () => {
+    const dir = join(import.meta.dir, "fixtures", "billed-hand-seat");
+
+    expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/agents\.yaml/);
+    expect(() => loadAgentChatConfigFromDir(dir)).toThrow(/openai-gpt52-http/);
+  });
+
+  test("uses the shared billing gate prefix in errors", () => {
+    const dir = join(import.meta.dir, "fixtures", "billed-hand-seat");
+
+    expect(() => loadAgentChatConfigFromDir(dir)).toThrow(
+      new RegExp(`^${dir.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}/agents\\.yaml:`),
+    );
+  });
+
+  test("exports the hand-seat whitelist constant for other packages", () => {
+    expect(BILLED_HAND_SEAT_WHITELIST).toContain("deepseek-v4-flash-http");
   });
 });

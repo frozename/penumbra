@@ -1,10 +1,32 @@
 import {
   NON_MUTATING_TASK_TYPES,
+  isTextOnlyAdapter,
   resolveBiasEffect,
+  resolveProvider,
   type RoutingBiasEffectInput,
 } from "@penumbra/core";
 
 export { resolveProvider as resolveAgentProvider } from "@penumbra/core";
+
+export function buildRetryRoutingMaps(
+  agents: ReadonlyArray<{
+    name: string;
+    adapter?: string | null;
+    pricing_mode?: "api" | "subscription" | string;
+    subscription_provider?: string | null;
+    api_provider?: string | null;
+  }>,
+): {
+  validAgents: ReadonlySet<string>;
+  agentProviders: ReadonlyMap<string, string | null>;
+  agentAdapters: ReadonlyMap<string, string | null>;
+} {
+  return {
+    validAgents: new Set(agents.map((agent) => agent.name)),
+    agentProviders: new Map(agents.map((agent) => [agent.name, resolveProvider(agent)] as const)),
+    agentAdapters: new Map(agents.map((agent) => [agent.name, agent.adapter ?? null] as const)),
+  };
+}
 
 export interface PerformanceForRetry {
   outcome?: string;
@@ -71,8 +93,12 @@ export interface SelectRetryAgentInput {
   validAgents: ReadonlySet<string>;
   /** agent_name -> resolved provider (or null), for provider-scope biases. */
   agentProviders: ReadonlyMap<string, string | null>;
+  /** agent_name -> adapter kind (or null/absent when unknown), for requires-tools filtering. */
+  agentAdapters: ReadonlyMap<string, string | null>;
   /** Active usage-steering biases; exclude-mode entries drop matching candidates. */
   activeBiases: readonly RoutingBiasLike[];
+  /** Caller asserts the retry task is pure text and does not require tools. */
+  tool_free?: boolean;
 }
 
 function isBiasExcluded(
@@ -102,6 +128,8 @@ export function selectRetryAgent(input: SelectRetryAgentInput): string | null {
     if (candidate.agent_name === input.failedAgent) continue;
     if (candidate.score <= 0) continue;
     if (!input.validAgents.has(candidate.agent_name)) continue;
+    const adapter = input.agentAdapters.get(candidate.agent_name) ?? null;
+    if (input.tool_free !== true && isTextOnlyAdapter(adapter)) continue;
     const provider = input.agentProviders.get(candidate.agent_name) ?? null;
     if (isBiasExcluded(candidate.agent_name, provider, input.activeBiases)) continue;
     return candidate.agent_name;
