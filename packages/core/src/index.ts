@@ -9,6 +9,11 @@ export {
 export { Branding } from "./branding.js";
 export { ContextFileWriter, type ContextFileWriterOpts } from "./context-file/writer.js";
 export {
+  type GlobalCrashHandlerOpts,
+  installGlobalCrashHandlers,
+  type WorkerFatalRecord,
+} from "./crash-guard.js";
+export {
   resolveDaemonStorageRoot,
   type ResolveDaemonStorageRootOpts,
   waitForDaemonStorageRoot,
@@ -108,6 +113,10 @@ export {
   type StartMaestroSessionParams,
 } from "./maestro/writer.js";
 export { type Basis, BasisSchema, validateBasis } from "./memory-verify/basis.js";
+export {
+  MemoryVerifyAuthorizeInputShape,
+  MemoryVerifyClaimInputShape,
+} from "./memory-verify/schemas.js";
 export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
 export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
 export { parseOtlpLogs } from "./otlp/parse.js";

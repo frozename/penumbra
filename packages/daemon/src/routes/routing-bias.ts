@@ -3,6 +3,7 @@ import {
   clearRoutingBias,
   readRoutingBiases,
   type RoutingBias,
+  RoutingBiasClearInputSchema,
   type Services,
   setRoutingBias,
 } from "@penumbra/core";
@@ -37,32 +38,6 @@ const ListInputSchema = z.object({
   scope: z.enum(["provider", "agent"]).optional(),
   value: z.string().min(1).optional(),
 });
-
-const ClearInputSchema = z
-  .object({
-    bias_id: z.string().min(1).optional(),
-    scope: z.enum(["provider", "agent"]).optional(),
-    value: z.string().min(1).optional(),
-    all: z.literal(true).optional(),
-    confirm: z.literal(true).optional(),
-  })
-  .refine(
-    (data) => {
-      if (data.all) {
-        return data.confirm === true;
-      }
-      if (data.bias_id) {
-        return true;
-      }
-      if (data.scope && data.value) {
-        return true;
-      }
-      return false;
-    },
-    {
-      message: "Clear requires bias_id, (scope + value), or all:true with confirm:true",
-    },
-  );
 
 function formatTimeRemaining(ms: number): string {
   if (ms <= 0) return "0s";
@@ -132,7 +107,7 @@ export function routingBiasListRoute(req: Request, services: Services): Response
 
 export async function routingBiasClearRoute(req: Request, services: Services): Promise<Response> {
   const body = await bodyJson(req);
-  const parsed = ClearInputSchema.safeParse(body);
+  const parsed = RoutingBiasClearInputSchema.safeParse(body);
   if (!parsed.success) {
     return json({ error: { code: "invalid_params", issues: parsed.error.issues } }, 400);
   }

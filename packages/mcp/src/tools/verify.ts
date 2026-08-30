@@ -1,35 +1,12 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
-import { BasisSchema } from "@penumbra/core";
+import { MemoryVerifyClaimInputShape } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 
-export const VerifyInputShape = {
-  memory_id: z.string().min(1),
-  claimed_by: z
-    .string()
-    .min(1)
-    .max(120)
-    .regex(/^[A-Za-z0-9._:@-]+$/)
-    .optional(),
-  by: z
-    .string()
-    .min(1)
-    .max(120)
-    .regex(/^[A-Za-z0-9._:@-]+$/)
-    .describe("Deprecated: use claimed_by instead")
-    .optional(),
-  reason: z.string().min(1).max(500).optional(),
-  session_id: z
-    .string()
-    .min(1)
-    .max(120)
-    .regex(/^[A-Za-z0-9._-]+$/)
-    .optional(),
-  basis: BasisSchema,
-};
+export { MemoryVerifyClaimInputShape as VerifyInputShape } from "@penumbra/core";
 
-const VerifySchema = z.object(VerifyInputShape);
+const VerifySchema = z.object(MemoryVerifyClaimInputShape);
 
 export function verifyHandler(
   daemon: DaemonClient,

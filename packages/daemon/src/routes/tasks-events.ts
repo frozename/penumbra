@@ -4,6 +4,7 @@ import { TaskEventBus, TaskEventKindSchema } from "@penumbra/core";
 import { z } from "zod";
 
 import { json } from "./_helpers.js";
+import { sseIteratorStream } from "./_sse.js";
 
 interface TaskEventDbRow {
   task_id: string;
@@ -66,91 +67,23 @@ export function tasksEventsRoute(req: Request, services: Services, bus: TaskEven
     return true;
   };
 
-  let shutdown: (() => Promise<void>) | null = null;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller: ReadableStreamDefaultController<Uint8Array>): void {
-      const encoder = new TextEncoder();
-      const iterator = bus.subscribe(predicate);
-      let keepalive: ReturnType<typeof setInterval> | null = null;
-      let closed = false;
-
-      const write = (line: string): boolean => {
-        if (closed) return false;
-        try {
-          controller.enqueue(encoder.encode(line));
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const close = async (): Promise<void> => {
-        if (closed) return;
-        closed = true;
-        if (keepalive) clearInterval(keepalive);
-        keepalive = null;
-        try {
-          await iterator.return?.();
-        } catch {
-          /* noop */
-        }
-      };
-      shutdown = close;
-
-      if (query.data.since !== undefined) {
-        const replay = services.db
-          .query<TaskEventDbRow, [number]>(
-            `SELECT task_id, at, kind, actor, payload_json
-             FROM task_events
-             WHERE at >= ?
-             ORDER BY at ASC, id ASC
-             LIMIT 200`,
-          )
-          .all(query.data.since)
-          .map(hydrateTaskEvent)
-          .filter(predicate);
-        for (const event of replay) {
-          if (!write(`data: ${JSON.stringify(event)}\n\n`)) {
-            void close();
-            return;
-          }
-        }
-      }
-
-      write(": ok\n\n");
-
-      void (async (): Promise<void> => {
-        try {
-          for await (const event of iterator) {
-            if (!write(`data: ${JSON.stringify(event)}\n\n`)) {
-              break;
-            }
-          }
-        } finally {
-          await close();
-        }
-      })();
-
-      keepalive = setInterval(() => {
-        if (!write(": keepalive\n\n")) {
-          void close();
-        }
-      }, 30_000);
-    },
-    cancel(): void {
-      if (shutdown) {
-        void shutdown();
-      }
-      shutdown = null;
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
+  const since = query.data.since;
+  return sseIteratorStream({
+    subscribe: () => bus.subscribe(predicate),
+    replay:
+      since === undefined
+        ? undefined
+        : (): Iterable<TaskEvent> =>
+            services.db
+              .query<TaskEventDbRow, [number]>(
+                `SELECT task_id, at, kind, actor, payload_json
+                 FROM task_events
+                 WHERE at >= ?
+                 ORDER BY at ASC, id ASC
+                 LIMIT 200`,
+              )
+              .all(since)
+              .map(hydrateTaskEvent)
+              .filter(predicate),
   });
 }

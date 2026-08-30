@@ -10,6 +10,7 @@ export {
   expandHome as expandAaSnapshotStoreHome,
 } from "./aa-snapshot-store.js";
 export * from "./alias-map.js";
+export * from "./bias-schemas.js";
 export * from "./calibration.js";
 export * from "./constraint-filter.js";
 export * from "./decision-log.js";

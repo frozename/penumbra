@@ -14,7 +14,7 @@ async function getCrashGuardListenerCounts(): Promise<{
 }> {
   const cwd = fileURLToPath(new URL("../../../..", import.meta.url));
   const script = `
-    import { installGlobalCrashHandlers } from "./packages/agentchat/src/worker/crash-guard.ts";
+    import { installGlobalCrashHandlers } from "./packages/core/src/crash-guard.ts";
 
     const opts = {
       log: { error() {} },

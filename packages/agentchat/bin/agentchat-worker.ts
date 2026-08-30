@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 import type { AgentOptions, AgentPool } from "@penumbra/config";
 
-import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
+import {
+  defaultProjectRegistryPath,
+  installGlobalCrashHandlers,
+  loadProjectRegistry,
+  SettingsDefaults,
+} from "@penumbra/core";
 import {
   createLogger,
   type DispatchEventInput,
@@ -70,7 +75,6 @@ import {
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
 } from "../src/worker/code-staleness.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
-import { installGlobalCrashHandlers } from "../src/worker/crash-guard.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
 import { postToDiscord } from "../src/worker/discord-notifier.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";

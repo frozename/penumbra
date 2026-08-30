@@ -17,6 +17,7 @@ import { ZodError } from "zod";
 
 import { reconcileOrphanTickRows } from "../long-lived/tick-gate.js";
 import { json } from "./_helpers.js";
+import { SSE_HEADERS } from "./_sse.js";
 interface LongLivedAgentListRow {
   id: string;
   display_name: string;
@@ -251,11 +252,7 @@ export function longLivedStreamRoute(_req: Request, _id: string, _services: Serv
     },
   });
   return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
+    headers: SSE_HEADERS,
   });
 }
 
