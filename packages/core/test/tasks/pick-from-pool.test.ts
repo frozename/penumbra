@@ -1,8 +1,5 @@
-import { Database } from "bun:sqlite";
-import { describe, expect, spyOn, test } from "bun:test";
-
-import type { RoutingBias } from "../../src/readers/routing-bias.js";
-import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
+import type { RoutingBias } from "@src/readers/routing-bias.js";
+import type { AgentTaskType } from "@src/schemas/agent-performance.js";
 
 import {
   loadSqliteVec,
@@ -10,8 +7,10 @@ import {
   pickFromPool,
   type PressureResult,
   type RouteAgentInput,
-} from "../../src/index.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
+} from "@src/index.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

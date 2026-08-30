@@ -1,6 +1,5 @@
+import { createLocalSeatHealthService } from "@src/services/local-seat-health.js";
 import { describe, expect, test } from "bun:test";
-
-import { createLocalSeatHealthService } from "../../src/services/local-seat-health.js";
 
 const localSeat = {
   name: "local-bge",

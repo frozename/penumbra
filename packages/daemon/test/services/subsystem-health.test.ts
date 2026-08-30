@@ -1,7 +1,4 @@
 import { DispatchEventLog, loadSqliteVec, migrate } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-
 import {
   buildRequiredLlmRoleFloors,
   computeSubsystemAlerts,
@@ -9,7 +6,9 @@ import {
   evaluateLlmRoleFloors,
   readSubsystemHealth,
   recordSubsystemOutcome,
-} from "../../src/services/subsystem-health.js";
+} from "@src/services/subsystem-health.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

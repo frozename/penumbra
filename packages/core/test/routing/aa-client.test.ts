@@ -1,9 +1,8 @@
+import { type AaTransport, fetchAaModels, readAaApiKey } from "@src/routing/aa-client.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { type AaTransport, fetchAaModels, readAaApiKey } from "../../src/routing/aa-client.js";
 
 function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

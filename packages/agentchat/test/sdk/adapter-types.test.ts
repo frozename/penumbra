@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import type { DispatchInput, ToolCallContext } from "@src/sdk/adapter.js";
 
-import type { DispatchInput, ToolCallContext } from "../../src/sdk/adapter.js";
+import { describe, expect, test } from "bun:test";
 
 describe("Phase 1d adapter type extensions", () => {
   test("ToolCallContext requires dispatchId", () => {

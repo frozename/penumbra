@@ -1,7 +1,6 @@
+import { BundledEmbedder } from "@src/embedder/bundled.js";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-
-import { BundledEmbedder } from "../../src/embedder/bundled.js";
 
 export interface EmbedRecipeRow {
   id: string;

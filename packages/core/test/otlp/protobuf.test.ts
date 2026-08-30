@@ -1,6 +1,6 @@
+import { parseOtlpLogsProtobuf, ProtoReader } from "@src/otlp/protobuf.js";
 import { describe, expect, it } from "bun:test";
 
-import { parseOtlpLogsProtobuf, ProtoReader } from "../../src/otlp/protobuf.js";
 import { ProtoWriter } from "./encoder.js";
 
 describe("ProtoReader.readVarint", () => {

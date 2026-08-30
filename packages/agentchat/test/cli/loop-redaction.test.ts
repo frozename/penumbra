@@ -1,9 +1,8 @@
+import type { AgentChatConfig } from "@src/config/types.js";
+
+import { registerAdapter } from "@src/adapters/registry.js";
+import { runChatTurn } from "@src/cli/loop.js";
 import { expect, test } from "bun:test";
-
-import type { AgentChatConfig } from "../../src/config/types.js";
-
-import { registerAdapter } from "../../src/adapters/registry.js";
-import { runChatTurn } from "../../src/cli/loop.js";
 
 const config: AgentChatConfig = {
   agents: [{ name: "redactor", adapter: "mock-redactor", options: {}, roles: ["planner"] }],

@@ -1,14 +1,13 @@
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
-
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { AgentRecommendInputSchema } from "../../src/schemas/agent-recommend.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { AgentRecommendInputSchema } from "@src/schemas/agent-recommend.js";
 import {
   type AgentRecommendation,
   buildSuccessPredicate,
   routeAgent,
-} from "../../src/services/agent-routing.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
+} from "@src/services/agent-routing.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 function getRecommendationsViaRoute(
   input: Parameters<typeof routeAgent>[0],

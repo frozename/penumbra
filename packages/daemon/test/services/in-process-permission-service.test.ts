@@ -6,12 +6,11 @@ import {
   PermissionWriter,
   type Services,
 } from "@penumbra/core";
+import { permissionsDecideRoute, permissionsListRoute } from "@src/routes/permissions.js";
+import { InProcessPermissionService } from "@src/services/in-process-permission-service.js";
+import { runPermissionTtlSweep } from "@src/sweepers/permission-ttl.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { permissionsDecideRoute, permissionsListRoute } from "../../src/routes/permissions.js";
-import { InProcessPermissionService } from "../../src/services/in-process-permission-service.js";
-import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
 try {
   if (process.platform === "darwin") {

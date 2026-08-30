@@ -1,11 +1,10 @@
-import { describe, expect, it } from "bun:test";
-
 import {
   DEFAULT_BUDGET,
   estimateTokens,
   truncateToTokens,
   withinBudget,
-} from "../../src/responses/budget.js";
+} from "@src/responses/budget.js";
+import { describe, expect, it } from "bun:test";
 
 describe("estimateTokens", () => {
   it("returns ceil(len/4)", () => {

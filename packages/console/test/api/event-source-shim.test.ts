@@ -1,6 +1,5 @@
+import { createSseSource } from "@src/api/event-source-shim.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-
-import { createSseSource } from "../../src/api/event-source-shim.js";
 
 interface SseFakeController {
   send(text: string): void;

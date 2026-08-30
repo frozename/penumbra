@@ -1,7 +1,6 @@
+import { workerInjectRoute } from "@src/worker/inject-route.js";
+import { registerSession, unregisterSession } from "@src/worker/session-registry.js";
 import { expect, test } from "bun:test";
-
-import { workerInjectRoute } from "../../src/worker/inject-route.js";
-import { registerSession, unregisterSession } from "../../src/worker/session-registry.js";
 
 test("POST /sessions/:handoff_id/inject accepts a supported session and forwards the prompt", async () => {
   const injected: { role: "user"; text: string }[] = [];

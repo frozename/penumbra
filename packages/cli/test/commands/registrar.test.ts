@@ -1,10 +1,9 @@
 import { RegistrarCreateRequestSchema } from "@penumbra/api-contract";
+import { parsePhaseHeaders, runRegistrarRegister } from "@src/commands/registrar.js";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { parsePhaseHeaders, runRegistrarRegister } from "../../src/commands/registrar.js";
 
 let workDir: string;
 

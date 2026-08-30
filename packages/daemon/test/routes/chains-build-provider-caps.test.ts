@@ -1,8 +1,7 @@
 import type { ProviderQuota } from "@penumbra/core";
 
+import { buildProviderCaps } from "@src/maestro/build-provider-caps.js";
 import { describe, expect, it } from "bun:test";
-
-import { buildProviderCaps } from "../../src/maestro/build-provider-caps.js";
 
 describe("buildProviderCaps", () => {
   it("merges default + per-model rows for the same provider", () => {

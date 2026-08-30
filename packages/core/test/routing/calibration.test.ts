@@ -1,13 +1,12 @@
+import type { RoutingDecision } from "@src/routing/schemas.js";
+
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { computeCalibration } from "@src/routing/calibration.js";
+import { writeRoutingDecision } from "@src/routing/decision-log.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
-import type { RoutingDecision } from "../../src/routing/schemas.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { computeCalibration } from "../../src/routing/calibration.js";
-import { writeRoutingDecision } from "../../src/routing/decision-log.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {

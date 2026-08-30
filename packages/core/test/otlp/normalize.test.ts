@@ -1,9 +1,8 @@
+import { mapProvider, normalizeOtlpLogsToUsageEvents } from "@src/otlp/normalize.js";
+import { parseOtlpLogs } from "@src/otlp/parse.js";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-
-import { mapProvider, normalizeOtlpLogsToUsageEvents } from "../../src/otlp/normalize.js";
-import { parseOtlpLogs } from "../../src/otlp/parse.js";
 
 const FIXTURE_DIR = join(import.meta.dir, "fixtures");
 

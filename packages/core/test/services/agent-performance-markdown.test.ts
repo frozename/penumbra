@@ -1,9 +1,8 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   parseAgentPerformanceMarkdownRows,
   renderAgentPerformanceMarkdown,
-} from "../../src/services/agent-performance-markdown.js";
+} from "@src/services/agent-performance-markdown.js";
+import { describe, expect, test } from "bun:test";
 
 type ParsedMetadata = {
   legacy_marker?: string;

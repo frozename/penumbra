@@ -1,10 +1,9 @@
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { writeT2Memory } from "@src/writers/t2.js";
 import { Database } from "bun:sqlite";
 // packages/core/test/writers/t2-typed-fields.test.ts
 import { describe, expect, test } from "bun:test";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { writeT2Memory } from "../../src/writers/t2.js";
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try {
   if (process.platform === "darwin")

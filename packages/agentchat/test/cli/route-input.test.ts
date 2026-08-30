@@ -1,8 +1,7 @@
+import type { AgentChatConfig } from "@src/config/types.js";
+
+import { resolveInitialAgent } from "@src/cli/route-input.js";
 import { expect, test } from "bun:test";
-
-import type { AgentChatConfig } from "../../src/config/types.js";
-
-import { resolveInitialAgent } from "../../src/cli/route-input.js";
 
 const mockConfig: AgentChatConfig = {
   agents: [

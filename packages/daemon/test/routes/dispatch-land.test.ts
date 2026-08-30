@@ -9,20 +9,19 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { setPrincipalForTest } from "../../src/auth.js";
+import { setPrincipalForTest } from "@src/auth.js";
 import {
   __dispatchLandInternalsForTest,
   type DispatchLandDeps,
   dispatchLandRoute,
   dispatchLandTaskRoute,
-} from "../../src/routes/dispatch-land.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/dispatch-land.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // dispatch-land tests bypass the daemon fetch handler (they pass mocked deps
 // directly to dispatchLandRoute), so the auth middleware never runs. Stamp a

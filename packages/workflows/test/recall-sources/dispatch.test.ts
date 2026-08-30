@@ -1,9 +1,8 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
+import { runDispatchEventsSource } from "@src/recall-sources/dispatch.js";
+import { runHandoffPendingSource } from "@src/recall-sources/handoff.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { runDispatchEventsSource } from "../../src/recall-sources/dispatch.js";
-import { runHandoffPendingSource } from "../../src/recall-sources/handoff.js";
 
 try {
   if (process.platform === "darwin") {

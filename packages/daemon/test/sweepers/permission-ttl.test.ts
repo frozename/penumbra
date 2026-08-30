@@ -7,10 +7,9 @@ import {
   PermissionWriter,
   type Services,
 } from "@penumbra/core";
+import { runPermissionTtlSweep } from "@src/sweepers/permission-ttl.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { runPermissionTtlSweep } from "../../src/sweepers/permission-ttl.js";
 
 try {
   if (process.platform === "darwin")

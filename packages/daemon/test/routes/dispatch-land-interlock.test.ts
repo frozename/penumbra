@@ -1,19 +1,14 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-
-import { setPrincipalForTest } from "../../src/auth.js";
-import {
-  LifecycleLock,
-  lifecycleLock,
-  resetLifecycleLock,
-} from "../../src/dispatch/lifecycle-lock.js";
+import { setPrincipalForTest } from "@src/auth.js";
+import { LifecycleLock, lifecycleLock, resetLifecycleLock } from "@src/dispatch/lifecycle-lock.js";
 import {
   type DispatchLandDeps,
   dispatchLandRoute,
   dispatchLandTaskRoute,
-} from "../../src/routes/dispatch-land.js";
+} from "@src/routes/dispatch-land.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 
 // dispatch-land tests bypass the daemon fetch handler, so the auth middleware
 // never runs. Stamp a shared principal on each request so the route's

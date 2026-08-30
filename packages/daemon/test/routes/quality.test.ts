@@ -6,19 +6,18 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import {
+  EFFICACY_RUNNER_HEARTBEAT_STALE_MS,
+  memoryEfficacyRebuildRoute,
+  memoryEfficacyRecentRoute,
+} from "@src/routes/memory.js";
+import { qualityStatusRoute } from "@src/routes/quality.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-
-import {
-  EFFICACY_RUNNER_HEARTBEAT_STALE_MS,
-  memoryEfficacyRebuildRoute,
-  memoryEfficacyRecentRoute,
-} from "../../src/routes/memory.js";
-import { qualityStatusRoute } from "../../src/routes/quality.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {

@@ -1,12 +1,11 @@
 import { AgentsConfigSchema, QuotasConfigSchema, RoutingConfigSchema } from "@penumbra/config";
+import { runConfigSplit } from "@src/commands/config-split.js";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import YAML from "yaml";
-
-import { runConfigSplit } from "../../src/commands/config-split.js";
 
 let tempDirs: string[] = [];
 let stdoutLines: string[] = [];

@@ -1,6 +1,5 @@
+import { getModule, MODULES } from "@src/modules/manifest.js";
 import { describe, expect, test } from "bun:test";
-
-import { getModule, MODULES } from "../../src/modules/manifest.js";
 
 describe("module manifest", () => {
   test("keeps mission first for the default route", () => {

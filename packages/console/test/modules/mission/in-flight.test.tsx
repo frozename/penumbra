@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { InFlightChains } from "../../../src/modules/mission/InFlightChains";
-import { useDaemonStore } from "../../../src/stores/daemon-store";
+import { InFlightChains } from "@src/modules/mission/InFlightChains";
+import { useDaemonStore } from "@src/stores/daemon-store";
 
 function makeWrapper(): {
   Wrapper: ({ children }: { children: React.ReactNode }) => JSX.Element;

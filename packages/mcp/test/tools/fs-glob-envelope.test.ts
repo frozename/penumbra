@@ -1,11 +1,10 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { HandleStore } from "@src/handle-store.js";
+import { isEnvelopeResult } from "@src/responses/envelope.js";
+import { fsGlobHandler } from "@src/tools/fs-glob.js";
+import { readHandleHandler } from "@src/tools/read-handle.js";
 import { afterEach, describe, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { HandleStore } from "../../src/handle-store.js";
-import { isEnvelopeResult } from "../../src/responses/envelope.js";
-import { fsGlobHandler } from "../../src/tools/fs-glob.js";
-import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 type GlobDaemon = Pick<DaemonClient, "globInWorktree">;
 type GlobImpl = DaemonClient["globInWorktree"];

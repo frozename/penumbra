@@ -1,9 +1,10 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
 import { type TextContentEnvelope } from "@novaproto/mcp-shared";
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
 
 import { listPendingDreamActionsQuery } from "../../../daemon/src/dreaming/digest.js";
 import {
@@ -12,7 +13,6 @@ import {
   insertCuratorPattern,
   queryCuratorPatterns,
 } from "../../../daemon/src/routes/curator.js";
-import { TOOL_REGISTRY } from "../../src/tools/registry.js";
 
 try {
   if (process.platform === "darwin") {

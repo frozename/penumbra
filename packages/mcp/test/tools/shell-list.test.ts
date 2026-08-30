@@ -1,8 +1,8 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { shellListHandler } from "@src/tools/shell-list.js";
 import { describe, expect, it, mock } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { shellListHandler } from "../../src/tools/shell-list.js";
 import { fakeDaemon } from "../helpers.js";
 
 type ShellListFn = DaemonClient["shellList"];

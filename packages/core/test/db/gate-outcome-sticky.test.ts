@@ -1,7 +1,6 @@
+import { stampAgentPerformanceGateOutcomeForHandoff } from "@src/db/lane-ledger.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
-
-import { stampAgentPerformanceGateOutcomeForHandoff } from "../../src/db/lane-ledger.js";
 
 const CREATE_AGENT_PERFORMANCE_SQL = `
   CREATE TABLE IF NOT EXISTS agent_performance (

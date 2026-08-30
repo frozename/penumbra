@@ -1,7 +1,6 @@
+import { MODULES } from "@src/modules/manifest.js";
+import { useUIStore } from "@src/stores/ui-store.js";
 import { beforeEach, describe, expect, test } from "bun:test";
-
-import { MODULES } from "../../src/modules/manifest.js";
-import { useUIStore } from "../../src/stores/ui-store.js";
 
 describe("useUIStore", () => {
   beforeEach(() => {

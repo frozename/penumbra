@@ -1,13 +1,12 @@
+import type { Logger } from "@src/logger.js";
+
+import { type WorktreeHandle, WorktreeManager } from "@src/worktree/manager.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-
-import type { Logger } from "../../src/logger.js";
-
-import { type WorktreeHandle, WorktreeManager } from "../../src/worktree/manager.js";
 
 // node:util.promisify(child_process.exec)'s declaration overloads resolve to the
 // void-returning variant in eslint's type-aware pass; the runtime is in fact a

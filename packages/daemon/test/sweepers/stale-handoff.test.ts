@@ -5,17 +5,13 @@ import {
   migrate,
   type Services,
 } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { expect, mock, test } from "bun:test";
-
 import {
   resolveStaleAfterMs,
   resolveSweeperSqlCutoffMs,
-} from "../../src/sweepers/stale-handoff-thresholds.js";
-import {
-  runStaleHandoffSweep,
-  type StaleHandoffSweeperOpts,
-} from "../../src/sweepers/stale-handoff.js";
+} from "@src/sweepers/stale-handoff-thresholds.js";
+import { runStaleHandoffSweep, type StaleHandoffSweeperOpts } from "@src/sweepers/stale-handoff.js";
+import { Database } from "bun:sqlite";
+import { expect, mock, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

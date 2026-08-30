@@ -1,9 +1,8 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { fsWriteHandler } from "@src/tools/fs-write.js";
 import { afterEach, describe, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { fsWriteHandler } from "../../src/tools/fs-write.js";
 
 type WriteDaemon = Pick<DaemonClient, "writeInWorktree">;
 type WriteImpl = DaemonClient["writeInWorktree"];

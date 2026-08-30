@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
-import type { DaemonClient } from "../../src/api/client";
-import { useDaemonHealth } from "../../src/hooks/useDaemonHealth";
-import { useDaemonStore } from "../../src/stores/daemon-store";
+import type { DaemonClient } from "@src/api/client";
+import { useDaemonHealth } from "@src/hooks/useDaemonHealth";
+import { useDaemonStore } from "@src/stores/daemon-store";
 
 beforeEach(() => {
   useDaemonStore.setState({

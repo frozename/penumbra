@@ -1,9 +1,8 @@
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { installPrOrphanSweeper, runPrOrphanSweep } from "@src/sweepers/pr-orphan-sweeper.js";
+import { runReconcilerSweepTick } from "@src/sweepers/reconciler-sweep.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, test } from "bun:test";
-
-import { installPrOrphanSweeper, runPrOrphanSweep } from "../../src/sweepers/pr-orphan-sweeper.js";
-import { runReconcilerSweepTick } from "../../src/sweepers/reconciler-sweep.js";
 
 try {
   if (process.platform === "darwin") {

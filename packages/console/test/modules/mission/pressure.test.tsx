@@ -1,11 +1,11 @@
 import "../../setup";
 import { describe, expect, mock, test } from "bun:test";
 import { render, within } from "@testing-library/react";
-import { PressureGrid } from "../../../src/modules/mission/PressureGrid";
+import { PressureGrid } from "@src/modules/mission/PressureGrid";
 
 describe("PressureGrid", () => {
   test("renders first four orbs and collapses overflow", () => {
-    mock.module("../../../src/hooks/usePressureSnapshot", () => ({
+    mock.module("@src/hooks/usePressureSnapshot", () => ({
       usePressureSnapshot: () => ({
         windows: [
           {
@@ -62,7 +62,7 @@ describe("PressureGrid", () => {
   });
 
   test("renders empty state when no windows exist", () => {
-    mock.module("../../../src/hooks/usePressureSnapshot", () => ({
+    mock.module("@src/hooks/usePressureSnapshot", () => ({
       usePressureSnapshot: () => ({ windows: [], peakUsedPct: 0, isLoading: false }),
     }));
 
@@ -75,7 +75,7 @@ describe("PressureGrid", () => {
   });
 
   test("renders card head title", () => {
-    mock.module("../../../src/hooks/usePressureSnapshot", () => ({
+    mock.module("@src/hooks/usePressureSnapshot", () => ({
       usePressureSnapshot: () => ({ windows: [], peakUsedPct: 0, isLoading: false }),
     }));
 

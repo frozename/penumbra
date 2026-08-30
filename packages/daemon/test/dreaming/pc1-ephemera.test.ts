@@ -1,12 +1,11 @@
+import type { DreamConfig } from "@src/dreaming/config.js";
+
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
+import { detectT2Ephemera } from "@src/dreaming/curator/t2-ephemera-detector.js";
+import { revertDreamAction } from "@src/dreaming/reembed.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { runPC1Phase } from "../../src/dreaming/curator/pc1-ephemera.js";
-import { detectT2Ephemera } from "../../src/dreaming/curator/t2-ephemera-detector.js";
-import { revertDreamAction } from "../../src/dreaming/reembed.js";
 
 try {
   if (process.platform === "darwin") {

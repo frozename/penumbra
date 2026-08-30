@@ -1,3 +1,4 @@
+import { dispatchWorkflowSubcommand } from "@src/commands/workflow.js";
 import {
   afterAll,
   afterEach,
@@ -11,8 +12,6 @@ import {
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { dispatchWorkflowSubcommand } from "../../src/commands/workflow.js";
 
 const TOKEN = "test-token";
 

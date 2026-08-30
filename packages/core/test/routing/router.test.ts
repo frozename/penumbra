@@ -1,33 +1,33 @@
 import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
 
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import {
   applyHardConstraints,
   type CandidateConstraintFacts,
-} from "../../src/routing/constraint-filter.js";
+} from "@src/routing/constraint-filter.js";
 import {
   computePriors,
   decide,
   type DecideInput,
   reconciliationFactorFields,
   type RouterDependencies,
-} from "../../src/routing/router.js";
+} from "@src/routing/router.js";
 import {
   type AaModel,
   type AaModelSnapshot,
   AaModelSnapshotSchema,
   RoutingDecisionSchema,
   type TaskProfile,
-} from "../../src/routing/schemas.js";
-import { routeAgent } from "../../src/services/agent-routing.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
+} from "@src/routing/schemas.js";
+import { routeAgent } from "@src/services/agent-routing.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import aaLiveSample from "./fixtures/aa-live-sample.json";
 
 if (process.platform === "darwin") {

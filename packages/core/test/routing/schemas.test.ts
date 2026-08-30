@@ -1,5 +1,3 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   AaModelSchema,
   AaModelSnapshotSchema,
@@ -8,7 +6,9 @@ import {
   RoutingDecisionSchema,
   type TaskProfile,
   TaskProfileSchema,
-} from "../../src/routing/schemas.js";
+} from "@src/routing/schemas.js";
+import { describe, expect, test } from "bun:test";
+
 import aaLiveSample from "./fixtures/aa-live-sample.json";
 
 function validTaskProfile(): TaskProfile {

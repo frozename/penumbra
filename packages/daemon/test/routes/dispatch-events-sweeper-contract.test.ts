@@ -7,6 +7,8 @@ import {
   type Services,
   type WorktreeHandle,
 } from "@penumbra/core";
+import { dispatchEventsGetRoute } from "@src/routes/dispatch-events.js";
+import { type BranchLandStatus, runWorktreeGcTick } from "@src/sweepers/worktree-gc.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
@@ -17,8 +19,6 @@ import { describe, expect, test } from "bun:test";
 // worktree-isolated build; after landing, the "@penumbra/api-contract" import
 // is a drop-in replacement.
 import { DispatchEventsListResponseSchema } from "../../../api-contract/src/dispatch-events.js";
-import { dispatchEventsGetRoute } from "../../src/routes/dispatch-events.js";
-import { type BranchLandStatus, runWorktreeGcTick } from "../../src/sweepers/worktree-gc.js";
 
 try {
   if (process.platform === "darwin") {

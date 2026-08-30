@@ -1,9 +1,8 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { handoffsStatusRoute } from "@src/routes/handoffs.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { handoffsStatusRoute } from "../../src/routes/handoffs.js";
 
 try {
   if (process.platform === "darwin") {

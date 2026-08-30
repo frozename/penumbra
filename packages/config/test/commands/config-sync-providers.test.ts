@@ -1,3 +1,5 @@
+import { AgentsConfigSchema } from "@src/files/agents.js";
+import { loadProviderSourcesFromDir } from "@src/files/providers.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -9,8 +11,6 @@ import {
   type ProviderDiscoveryAdapter,
   runConfigSyncProviders,
 } from "../../../cli/src/commands/config-sync-providers.js";
-import { AgentsConfigSchema } from "../../src/files/agents.js";
-import { loadProviderSourcesFromDir } from "../../src/files/providers.js";
 
 const tempDirs: string[] = [];
 

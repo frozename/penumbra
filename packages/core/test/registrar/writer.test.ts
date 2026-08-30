@@ -1,15 +1,14 @@
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import {
   InvalidEntryTransition,
   InvalidPhaseTransition,
   RegistrarSlugTaken,
-} from "../../src/registrar/errors.js";
-import { RegistrarReader } from "../../src/registrar/reader.js";
-import { RegistrarWriter, rethrowSlugUniqueConstraint } from "../../src/registrar/writer.js";
+} from "@src/registrar/errors.js";
+import { RegistrarReader } from "@src/registrar/reader.js";
+import { RegistrarWriter, rethrowSlugUniqueConstraint } from "@src/registrar/writer.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

@@ -1,11 +1,11 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { workerReconcileOrphansRoute } from "@src/routes/worker-reconcile-orphans.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { OrphanHandoffRecoveryService } from "@src/services/orphan-handoff-recovery.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { workerReconcileOrphansRoute } from "../../src/routes/worker-reconcile-orphans.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
-import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
 import { registerWorkerForTest } from "../../test-utils.js";
 
 try {

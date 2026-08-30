@@ -1,8 +1,5 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
-
 import {
   agentsFleetLatencyRoute,
   agentsPerformanceImportMarkdownRoute,
@@ -11,8 +8,11 @@ import {
   agentsPerformanceReconcilerRoute,
   agentsRankRoute,
   agentsRecommendRoute,
-} from "../../src/routes/agents.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
+} from "@src/routes/agents.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, it } from "bun:test";
+
 import { registerWorkerForTest } from "../../test-utils.js";
 
 try {

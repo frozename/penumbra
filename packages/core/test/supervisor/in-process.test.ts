@@ -1,6 +1,5 @@
+import { InProcessSupervisor } from "@src/supervisor/in-process.js";
 import { expect, test } from "bun:test";
-
-import { InProcessSupervisor } from "../../src/supervisor/in-process.js";
 
 test("start runs the tick function then reports running", async () => {
   const sup = new InProcessSupervisor();

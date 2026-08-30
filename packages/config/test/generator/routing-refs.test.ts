@@ -1,9 +1,8 @@
+import type { AgentsConfig } from "@src/files/agents.js";
+import type { RoutingConfig } from "@src/files/routing.js";
+
+import { assertPruneSafe, collectMissingRoutingAgents } from "@src/generator/routing-refs.js";
 import { describe, expect, test } from "bun:test";
-
-import type { AgentsConfig } from "../../src/files/agents.js";
-import type { RoutingConfig } from "../../src/files/routing.js";
-
-import { assertPruneSafe, collectMissingRoutingAgents } from "../../src/generator/routing-refs.js";
 
 function agentsConfig(names: string[]): AgentsConfig {
   return {

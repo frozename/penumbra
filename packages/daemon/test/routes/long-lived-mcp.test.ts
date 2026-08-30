@@ -1,9 +1,8 @@
 import { createLogger, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { longLivedMcpCallRoute } from "@src/routes/long-lived-mcp.js";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
-
-import { longLivedMcpCallRoute } from "../../src/routes/long-lived-mcp.js";
 
 type ActionGate = NonNullable<Services["actionGate"]>;
 type HandleCall = ActionGate["handleCall"];

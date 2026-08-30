@@ -1,6 +1,5 @@
+import { createHttpWorkerManager } from "@src/maestro/worker-manager-http.js";
 import { expect, test } from "bun:test";
-
-import { createHttpWorkerManager } from "../../src/maestro/worker-manager-http.js";
 
 type FetchInput = Request | URL | string;
 type FetchCall = [input: unknown, init?: unknown];

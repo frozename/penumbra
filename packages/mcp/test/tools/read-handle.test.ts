@@ -1,8 +1,8 @@
+import { HandleStore } from "@src/handle-store.js";
+import { buildServer } from "@src/server.js";
+import { readHandleHandler } from "@src/tools/read-handle.js";
 import { describe, expect, it } from "bun:test";
 
-import { HandleStore } from "../../src/handle-store.js";
-import { buildServer } from "../../src/server.js";
-import { readHandleHandler } from "../../src/tools/read-handle.js";
 import { fakeDaemon } from "../helpers.js";
 
 interface ReadHandleEnvelope {

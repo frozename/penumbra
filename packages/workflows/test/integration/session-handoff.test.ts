@@ -1,18 +1,12 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { buildRegistry, composeRecall, evaluateTriggerEvent, executeWorkflow } from "@src/index.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import {
-  buildRegistry,
-  composeRecall,
-  evaluateTriggerEvent,
-  executeWorkflow,
-} from "../../src/index.js";
 
 try {
   if (process.platform === "darwin") {

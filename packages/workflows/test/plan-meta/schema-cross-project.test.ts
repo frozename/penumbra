@@ -1,7 +1,6 @@
+import { parsePlanMeta } from "@src/plan-meta/parser.js";
+import { PlanHeaderSchema, TaskMetaSchema } from "@src/plan-meta/schema.js";
 import { expect, test } from "bun:test";
-
-import { parsePlanMeta } from "../../src/plan-meta/parser.js";
-import { PlanHeaderSchema, TaskMetaSchema } from "../../src/plan-meta/schema.js";
 
 test("TaskMeta accepts qualified depends_on", () => {
   const r = TaskMetaSchema.safeParse({

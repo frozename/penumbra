@@ -8,10 +8,9 @@ import {
   RoutingDecisionSchema,
   type Services,
 } from "@penumbra/core";
+import { resolveSingleRoute, type RouterDecisionSink } from "@src/routes/role-routing.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
-import { resolveSingleRoute, type RouterDecisionSink } from "../../src/routes/role-routing.js";
 
 if (process.platform === "darwin") {
   try {

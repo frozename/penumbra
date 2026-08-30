@@ -1,10 +1,9 @@
-import { describe, expect, it } from "bun:test";
-
 import {
   type StampInputAgent,
   type StampInputTick,
   stampPrompt,
-} from "../../src/long-lived/prompt-stamper.js";
+} from "@src/long-lived/prompt-stamper.js";
+import { describe, expect, it } from "bun:test";
 
 const baseTick: StampInputTick = {
   id: "t1",

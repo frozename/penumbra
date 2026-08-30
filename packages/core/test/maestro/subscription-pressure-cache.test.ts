@@ -1,12 +1,11 @@
-import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
-
-import { applySchema } from "../../src/db/schema.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { applySchema } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import {
   createSubscriptionPressureCache,
   type SubscriptionPressureCacheOptions,
-} from "../../src/maestro/subscription-pressure-cache.js";
+} from "@src/maestro/subscription-pressure-cache.js";
+import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

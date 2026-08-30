@@ -1,11 +1,10 @@
+import type { UsageReader } from "@src/usage-readers/index.js";
+
+import { startUsagePoller } from "@src/usage-readers/poller.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { UsageReader } from "../../src/usage-readers/index.js";
-
-import { startUsagePoller } from "../../src/usage-readers/poller.js";
 
 const noop = (): void => undefined;
 const noopLog = { info: noop, error: noop };

@@ -1,11 +1,10 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { HandleStore } from "@src/handle-store.js";
+import { isEnvelopeResult } from "@src/responses/envelope.js";
+import { fsExecHandler } from "@src/tools/fs-exec.js";
+import { readHandleHandler } from "@src/tools/read-handle.js";
 import { afterEach, describe, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { HandleStore } from "../../src/handle-store.js";
-import { isEnvelopeResult } from "../../src/responses/envelope.js";
-import { fsExecHandler } from "../../src/tools/fs-exec.js";
-import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 type ExecDaemon = Pick<DaemonClient, "execInWorktree">;
 type ExecImpl = DaemonClient["execInWorktree"];

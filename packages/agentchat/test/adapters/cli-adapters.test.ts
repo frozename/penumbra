@@ -1,11 +1,11 @@
+import { AgyCliAdapter } from "@src/adapters/agy-cli.js";
+import { ClaudeCliAdapter } from "@src/adapters/claude-cli.js";
+import { CodexCliAdapter } from "@src/adapters/codex-cli.js";
+import { GeminiCliAdapter } from "@src/adapters/gemini-cli.js";
+import { OpencodeCliAdapter } from "@src/adapters/opencode-cli.js";
+import { buildAdapter } from "@src/adapters/registry.js";
 import { expect, test } from "bun:test";
 
-import { AgyCliAdapter } from "../../src/adapters/agy-cli.js";
-import { ClaudeCliAdapter } from "../../src/adapters/claude-cli.js";
-import { CodexCliAdapter } from "../../src/adapters/codex-cli.js";
-import { GeminiCliAdapter } from "../../src/adapters/gemini-cli.js";
-import { OpencodeCliAdapter } from "../../src/adapters/opencode-cli.js";
-import { buildAdapter } from "../../src/adapters/registry.js";
 import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
 
 test("claude-cli adapter pipes prompt → command → text", async () => {

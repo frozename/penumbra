@@ -1,6 +1,5 @@
+import { resolveNotificationRoute } from "@src/worker/notification-router.js";
 import { describe, expect, it } from "bun:test";
-
-import { resolveNotificationRoute } from "../../src/worker/notification-router.js";
 
 describe("resolveNotificationRoute", () => {
   it("returns the project route when project_id matches exactly", () => {

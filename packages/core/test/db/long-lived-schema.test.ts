@@ -1,8 +1,7 @@
 import { applySchema, SCHEMA_VERSION } from "@penumbra/core/db/schema";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 
 function fresh(): Database {
   const db = new Database(":memory:");

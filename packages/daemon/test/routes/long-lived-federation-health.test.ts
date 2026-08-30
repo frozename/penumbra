@@ -1,9 +1,8 @@
 import { createLogger, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { longLivedFederationHealthRoute } from "@src/routes/long-lived-federation-health.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { longLivedFederationHealthRoute } from "../../src/routes/long-lived-federation-health.js";
 
 type McpPool = NonNullable<Services["mcpPool"]>;
 type FederationHealth = ReturnType<McpPool["getFederationHealth"]>;

@@ -1,19 +1,17 @@
 import type { DispatchEventInput } from "@penumbra/core";
-
-import { describe, expect, test, vi } from "bun:test";
-import { PassThrough } from "node:stream";
-
 import type {
   AcpWarmPool,
   AcpWarmPoolDeposit,
   AcpWarmPoolDepositOptions,
   AcpWarmPoolEntry,
-} from "../../src/adapters/acp-warm-pool.js";
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
+} from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import { describe, expect, test, vi } from "bun:test";
+import { PassThrough } from "node:stream";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;

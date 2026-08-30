@@ -1,12 +1,12 @@
-import { expect, mock, test } from "bun:test";
+import type { DaemonClient } from "@src/daemon-client.js";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { DaemonHttpError } from "../../src/daemon-client.js";
+import { DaemonHttpError } from "@src/daemon-client.js";
 import {
   chainGetResponseHandler,
   ChainGetResponseInputShape,
-} from "../../src/tools/chain-get-response.js";
+} from "@src/tools/chain-get-response.js";
+import { expect, mock, test } from "bun:test";
+
 import { fakeDaemon } from "../helpers.js";
 
 type GetChainResponsesFn = DaemonClient["getChainResponses"];

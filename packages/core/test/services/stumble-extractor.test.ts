@@ -1,12 +1,11 @@
+import {
+  extractStumblesFromSession,
+  type SessionEventRow,
+} from "@src/services/stumble-extractor.js";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import {
-  extractStumblesFromSession,
-  type SessionEventRow,
-} from "../../src/services/stumble-extractor.js";
 
 const storedRow: SessionEventRow = {
   source: "agentchat",

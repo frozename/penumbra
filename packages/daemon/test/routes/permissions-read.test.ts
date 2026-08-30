@@ -6,14 +6,13 @@ import {
   PermissionWriter,
   type Services,
 } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-
 import {
   permissionsCreateRoute,
   permissionsGetRoute,
   permissionsListRoute,
-} from "../../src/routes/permissions.js";
+} from "@src/routes/permissions.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin")

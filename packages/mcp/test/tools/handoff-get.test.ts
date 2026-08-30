@@ -1,10 +1,10 @@
+import type { DaemonClient, HandoffShape } from "@src/daemon-client.js";
+
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { handoffGetHandler, HandoffGetInputShape } from "@src/tools/handoff-get.js";
 import { expect, test } from "bun:test";
 import { z } from "zod";
 
-import type { DaemonClient, HandoffShape } from "../../src/daemon-client.js";
-
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { handoffGetHandler, HandoffGetInputShape } from "../../src/tools/handoff-get.js";
 import { fakeDaemon } from "../helpers.js";
 
 type GetHandoffFn = DaemonClient["getHandoff"];

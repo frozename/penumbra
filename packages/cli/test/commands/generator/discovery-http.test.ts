@@ -1,9 +1,8 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   DEFAULT_HTTP_PROVIDER_SPECS,
   discoverHttpModels,
-} from "../../../src/commands/generator/discovery-http.js";
+} from "@src/commands/generator/discovery-http.js";
+import { describe, expect, test } from "bun:test";
 
 describe("HTTP model discovery", () => {
   test("discoverHttpModels resolves a keychain bearer token and fetches /v1/models", async () => {

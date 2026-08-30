@@ -1,18 +1,13 @@
+import { type AgentChatConfig } from "@src/files/agentchat-types.js";
+import { AgentConfigSchema, type AgentsConfig, AgentsConfigSchema } from "@src/files/agents.js";
+import { readUtf8 } from "@src/files/node-fs.js";
+import { type QuotasConfig, QuotasConfigSchema } from "@src/files/quotas.js";
+import { type RoutingConfig, RoutingConfigSchema } from "@src/files/routing.js";
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { AgentChatConfig as LegacyAgentChatConfig } from "../../../agentchat/src/config/types.js";
-
-import { type AgentChatConfig } from "../../src/files/agentchat-types.js";
-import {
-  AgentConfigSchema,
-  type AgentsConfig,
-  AgentsConfigSchema,
-} from "../../src/files/agents.js";
-import { readUtf8 } from "../../src/files/node-fs.js";
-import { type QuotasConfig, QuotasConfigSchema } from "../../src/files/quotas.js";
-import { type RoutingConfig, RoutingConfigSchema } from "../../src/files/routing.js";
 
 function loadFixture(name: "agents" | "routing" | "quotas"): string {
   return readUtf8(join(import.meta.dir, "fixtures", `${name}.yaml`));

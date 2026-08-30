@@ -1,21 +1,19 @@
 import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
+import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import {
+  startStdioAcpServer,
+  type StartStdioAcpServerOptions,
+  type StdioAcpHandle,
+} from "@src/adapters/stdio-acp-server.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 import { describe, expect, test, vi } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import type { DispatchInput } from "../../src/sdk/adapter.js";
-
-import { createAcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import {
-  startStdioAcpServer,
-  type StartStdioAcpServerOptions,
-  type StdioAcpHandle,
-} from "../../src/adapters/stdio-acp-server.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 

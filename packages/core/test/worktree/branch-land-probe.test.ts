@@ -1,3 +1,5 @@
+import type { WorktreeCommandRunner, WorktreeCommandRunnerOptions } from "@src/worktree/manager.js";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
@@ -5,14 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import type {
-  WorktreeCommandRunner,
-  WorktreeCommandRunnerOptions,
-} from "../../src/worktree/manager.js";
-
 const execFile = promisify(execFileCb);
 
-type ProbeModule = typeof import("../../src/worktree/branch-land-probe.js") & {
+type ProbeModule = typeof import("@src/worktree/branch-land-probe.js") & {
   classifyBranchLandStatus?: (
     runner: WorktreeCommandRunner,
     repoDir: string,
@@ -52,7 +49,7 @@ async function classifyBranchLandStatus(
   candidateRef: string,
   baseRef: string,
 ): Promise<string> {
-  const mod = (await import("../../src/worktree/branch-land-probe.js")) as ProbeModule;
+  const mod = (await import("@src/worktree/branch-land-probe.js")) as ProbeModule;
   expect(typeof mod.classifyBranchLandStatus).toBe("function");
   return await mod.classifyBranchLandStatus(runner, repoDir, candidateRef, baseRef);
 }

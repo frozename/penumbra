@@ -1,6 +1,5 @@
+import { renderPlanTree } from "@src/commands/plan-render.js";
 import { expect, test } from "bun:test";
-
-import { renderPlanTree } from "../../src/commands/plan-render.js";
 
 test("renders 3-task fixture in deterministic order", () => {
   const out = renderPlanTree({

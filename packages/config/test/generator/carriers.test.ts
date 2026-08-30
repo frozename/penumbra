@@ -1,6 +1,5 @@
+import { applyBindingCarriers, renderTemplateTokens } from "@src/generator/carriers.js";
 import { describe, expect, test } from "bun:test";
-
-import { applyBindingCarriers, renderTemplateTokens } from "../../src/generator/carriers.js";
 
 describe("renderTemplateTokens", () => {
   test("replaces {model}, {tier}, {displayName} in every token", () => {

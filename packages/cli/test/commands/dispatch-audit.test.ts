@@ -1,11 +1,11 @@
 import type { DispatchReliabilityReport } from "@penumbra/core";
 
+import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-audit.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { formatDispatchAudit, runDispatchAudit } from "../../src/commands/dispatch-audit.js";
 import { urlToString } from "./_helpers.js";
 
 const report = {

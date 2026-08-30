@@ -1,14 +1,13 @@
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
-
-import { createDaemonFetchHandler } from "../../src/serve.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 import {
   type RunCommandInput,
   type RunCommandResult,
   ShellSessionPool,
-} from "../../src/services/shell-session-pool.js";
+} from "@src/services/shell-session-pool.js";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, it } from "bun:test";
 
 // Guard against env leak from live shell (see memory: daemon_test_env_leak_project_id)
 process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"] = "";

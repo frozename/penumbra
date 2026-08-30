@@ -1,9 +1,8 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { conversationStreamRoute } from "@src/routes/conversation-stream.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { conversationStreamRoute } from "../../src/routes/conversation-stream.js";
 
 try {
   if (process.platform === "darwin") {

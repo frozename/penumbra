@@ -1,11 +1,10 @@
+import type { HandoffStatus } from "@src/schemas/handoff.js";
+
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { ChainReader } from "@src/readers/chain.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
-import type { HandoffStatus } from "../../src/schemas/handoff.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { ChainReader } from "../../src/readers/chain.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

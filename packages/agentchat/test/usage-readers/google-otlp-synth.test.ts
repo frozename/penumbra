@@ -1,8 +1,7 @@
+import type { QuotaStatusResponse } from "@src/penumbra-client.js";
+
+import { GoogleOtlpSynth } from "@src/usage-readers/google-otlp-synth.js";
 import { describe, expect, it } from "bun:test";
-
-import type { QuotaStatusResponse } from "../../src/penumbra-client.js";
-
-import { GoogleOtlpSynth } from "../../src/usage-readers/google-otlp-synth.js";
 
 interface FetchQuotaArgs {
   since?: string;

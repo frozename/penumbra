@@ -1,20 +1,18 @@
 import type { DispatchEventInput } from "@penumbra/core";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import type { StdioAcpOptions } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
+import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
-import { describe, expect, test } from "bun:test";
-import { PassThrough } from "node:stream";
-
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
-import type { StdioAcpOptions } from "../../src/adapters/stdio-acp.js";
-import type { DispatchInput } from "../../src/sdk/adapter.js";
-import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { redactTerminalErrorMessage, StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import { redactTerminalErrorMessage, StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 import {
   OperationRejectedError,
   OutsideWorktreeError,
   TerminalNotFoundError,
-} from "../../src/worker/write-tools-errors.js";
+} from "@src/worker/write-tools-errors.js";
+import { describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 
 type AcpRequestHandler = (params: unknown) => unknown;
 

@@ -1,11 +1,10 @@
+import type { FileTaskInput } from "@src/tasks/schema.js";
+
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { TaskNotFound, TaskWriter } from "@src/tasks/writer.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-
-import type { FileTaskInput } from "../../src/tasks/schema.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { TaskNotFound, TaskWriter } from "../../src/tasks/writer.js";
 
 if (process.platform === "darwin") {
   try {

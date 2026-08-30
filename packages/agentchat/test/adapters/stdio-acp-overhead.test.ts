@@ -1,16 +1,12 @@
 import type { DispatchEventInput } from "@penumbra/core";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { StartStdioAcpServerOptions, StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
 
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 import { describe, expect, test, vi } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type {
-  StartStdioAcpServerOptions,
-  StdioAcpHandle,
-} from "../../src/adapters/stdio-acp-server.js";
-import type { DispatchEvent } from "../../src/sdk/adapter.js";
-
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
 import { assertDoneEvent } from "../helpers/cli-spawn-fixtures.js";
 import { makeMockAcpClient } from "../helpers/stdio-acp-fixtures.js";
 

@@ -1,16 +1,15 @@
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
+import type { AgentDescriptor } from "@src/tasks/eligibility.js";
 
-import type { AgentDescriptor } from "../../src/tasks/eligibility.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import {
   OrchestrateAgentNotMaestroCapable,
   OrchestrateRecursionForbidden,
   OrchestrateRequiresAllowAgents,
-} from "../../src/tasks/orchestrate-validation.js";
-import { TaskWriter } from "../../src/tasks/writer.js";
+} from "@src/tasks/orchestrate-validation.js";
+import { TaskWriter } from "@src/tasks/writer.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 if (process.platform === "darwin") {
   try {

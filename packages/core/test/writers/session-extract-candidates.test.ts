@@ -1,14 +1,13 @@
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
+import type { T2MemoryExtraction } from "@src/writers/t2.js";
 
-import type { T2MemoryExtraction } from "../../src/writers/t2.js";
-
-import { loadSqliteVec, migrate } from "../../src/index.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
 import {
   extractSessionCandidates,
   type SessionExtractCandidate,
-} from "../../src/writers/session-extract.js";
-import { buildT2EmbedText } from "../../src/writers/t2-embed-text.js";
+} from "@src/writers/session-extract.js";
+import { buildT2EmbedText } from "@src/writers/t2-embed-text.js";
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

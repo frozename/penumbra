@@ -1,6 +1,5 @@
+import { checkEmbeddingModelVersion } from "@src/db/embedding-version-guard.js";
 import { expect, test } from "bun:test";
-
-import { checkEmbeddingModelVersion } from "../../src/db/embedding-version-guard.js";
 
 test("matching versions returns null", () => {
   expect(checkEmbeddingModelVersion("v1", "v1")).toBeNull();

@@ -1,11 +1,10 @@
+import { resolveProjectScope } from "@src/identity/project-resolver.js";
+import { ProjectRegistry } from "@src/projects/registry.js";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { resolveProjectScope } from "../../src/identity/project-resolver.js";
-import { ProjectRegistry } from "../../src/projects/registry.js";
 
 let dir = "";
 

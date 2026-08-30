@@ -1,6 +1,5 @@
+import { T2_PROMOTION_PROMPT } from "@src/workers/t2-promotion.js";
 import { describe, expect, it } from "bun:test";
-
-import { T2_PROMOTION_PROMPT } from "../../src/workers/t2-promotion.js";
 
 describe("t2 promotion discriminator prompt + schema", () => {
   it("includes gated discriminator fields and policy rules", () => {

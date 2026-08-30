@@ -1,12 +1,11 @@
 import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { memoryVerifyAuthorizeRoute } from "@src/routes/memory-verify.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { memoryVerifyAuthorizeRoute } from "../../src/routes/memory-verify.js";
 
 try {
   if (process.platform === "darwin") {

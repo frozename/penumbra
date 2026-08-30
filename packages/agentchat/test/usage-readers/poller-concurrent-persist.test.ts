@@ -1,15 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import type { UsageReader, UsageReaderResult } from "../../src/usage-readers/index.js";
+import type { UsageReader, UsageReaderResult } from "@src/usage-readers/index.js";
 
 import {
   resolveUsageCursorPath,
   startUsagePoller,
   usageCursorTempPath,
-} from "../../src/usage-readers/poller.js";
+} from "@src/usage-readers/poller.js";
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface PollerEvent {
   event_id: string;

@@ -1,15 +1,15 @@
+import type {
+  FederationHealthSnapshot,
+  McpPool,
+  McpToolDescriptor,
+} from "@src/long-lived/mcp-pool.js";
+
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { createMcpEventBus } from "@penumbra/daemon/events/mcp-event-bus";
 import { createLongLivedReactor } from "@penumbra/daemon/reactors/long-lived-reactor";
 import { Database } from "bun:sqlite";
 import { describe, expect, it, mock } from "bun:test";
-
-import type {
-  FederationHealthSnapshot,
-  McpPool,
-  McpToolDescriptor,
-} from "../../src/long-lived/mcp-pool.js";
 
 type LoggerArg = NonNullable<Parameters<typeof createLongLivedReactor>[0]["log"]>;
 type SpawnArg = Parameters<typeof createLongLivedReactor>[0]["spawn"];

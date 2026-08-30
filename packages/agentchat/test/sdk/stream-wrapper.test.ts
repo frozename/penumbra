@@ -1,9 +1,8 @@
+import type { Adapter, DispatchEvent, DispatchOutput } from "@src/sdk/adapter.js";
+
+import { ensureDispatchStream } from "@src/sdk/stream-wrapper.js";
 // packages/agentchat/test/sdk/stream-wrapper.test.ts
 import { expect, test } from "bun:test";
-
-import type { Adapter, DispatchEvent, DispatchOutput } from "../../src/sdk/adapter.js";
-
-import { ensureDispatchStream } from "../../src/sdk/stream-wrapper.js";
 
 test("ensureDispatchStream wraps non-streaming dispatch into a single delta + done", async () => {
   const adapter: Adapter = {

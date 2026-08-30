@@ -7,10 +7,9 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { createOrchestrateReactor } from "@src/reactors/orchestrate-reactor.js";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, mock, test } from "bun:test";
-
-import { createOrchestrateReactor } from "../../src/reactors/orchestrate-reactor.js";
 
 try {
   if (process.platform === "darwin") {

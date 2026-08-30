@@ -1,13 +1,12 @@
 import { loadSqliteVec, migrate } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-
 import {
   ApproveHandoffRequestSchema,
   CreateHandoffRequestSchema,
   HandoffRowSchema,
   HandoffStatusSchema,
-} from "../../src/schemas/handoff.js";
+} from "@src/schemas/handoff.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 test("HandoffStatusSchema accepts valid statuses", () => {
   for (const s of [

@@ -1,12 +1,11 @@
-import { describe, expect, it } from "bun:test";
-
-import type { PermissionCallbackV2Opts } from "../../src/worker/permission-callback.js";
+import type { PermissionCallbackV2Opts } from "@src/worker/permission-callback.js";
 import type {
   PermissionDecisionResult,
   RequestPermissionInput,
-} from "../../src/worker/permission-daemon-client.js";
+} from "@src/worker/permission-daemon-client.js";
 
-import { createPermissionCallback } from "../../src/worker/permission-callback.js";
+import { createPermissionCallback } from "@src/worker/permission-callback.js";
+import { describe, expect, it } from "bun:test";
 
 type DaemonClientStub = PermissionCallbackV2Opts["daemonClient"];
 

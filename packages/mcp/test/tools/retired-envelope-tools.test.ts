@@ -1,6 +1,5 @@
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import { describe, expect, it } from "bun:test";
-
-import { TOOL_REGISTRY } from "../../src/tools/registry.js";
 
 const RESPONSE_ENVELOPE_ALLOWLIST = new Set([
   "fs_edit",

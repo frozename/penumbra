@@ -1,3 +1,6 @@
+import type { GhClient } from "@src/services/gh-client.js";
+import type { GhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
+
 import {
   buildServices,
   loadProjectRegistry,
@@ -7,17 +10,13 @@ import {
   WorkerTokenStore,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { conciseTitle } from "@src/routes/tasks.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { GhClient } from "../../src/services/gh-client.js";
-import type { GhTaskSyncService } from "../../src/sweepers/gh-task-sync.js";
-
-import { conciseTitle } from "../../src/routes/tasks.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
 
 const noop = (): void => undefined;
 

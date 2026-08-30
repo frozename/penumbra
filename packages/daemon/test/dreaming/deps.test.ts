@@ -1,13 +1,12 @@
+import type { DreamConfig } from "@src/dreaming/config.js";
+
 import { reloadAgentChatConfig } from "@penumbra/config";
+import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "@src/dreaming/deps.js";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { DreamConfig } from "../../src/dreaming/config.js";
-
-import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "../../src/dreaming/deps.js";
 
 const configDir = join(tmpdir(), `penumbra-rewriter-role-${crypto.randomUUID()}`);
 

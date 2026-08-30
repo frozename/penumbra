@@ -1,7 +1,6 @@
+import { resolveEmbedder } from "@src/embedder/resolve.js";
+import { TestEmbedder } from "@src/embedder/test-embedder.js";
 import { expect, test } from "bun:test";
-
-import { resolveEmbedder } from "../../src/embedder/resolve.js";
-import { TestEmbedder } from "../../src/embedder/test-embedder.js";
 
 const originalFetch = globalThis.fetch;
 

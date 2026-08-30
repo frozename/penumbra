@@ -1,5 +1,3 @@
-import { expect, it } from "bun:test";
-
 import {
   createResearchAdapter,
   FirecrawlAdapter,
@@ -7,7 +5,8 @@ import {
   type FirecrawlSearchResponse,
   type FirecrawlTransport,
   normalizeFirecrawlSearchResponse,
-} from "../../src/research/firecrawl-adapter.js";
+} from "@src/research/firecrawl-adapter.js";
+import { expect, it } from "bun:test";
 
 function stubFirecrawl401(): FirecrawlTransport {
   return {

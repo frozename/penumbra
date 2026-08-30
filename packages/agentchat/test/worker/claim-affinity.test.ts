@@ -1,10 +1,9 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   type ClaimAffinityAgent,
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
-} from "../../src/worker/claim-affinity.js";
+} from "@src/worker/claim-affinity.js";
+import { describe, expect, test } from "bun:test";
 
 const MAIN = "/repos/penumbra";
 const LLAMACTL = "/repos/llamactl";

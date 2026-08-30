@@ -1,6 +1,5 @@
+import { createDiscordRateLimiter } from "@src/worker/discord-rate-limit.js";
 import { describe, expect, it } from "bun:test";
-
-import { createDiscordRateLimiter } from "../../src/worker/discord-rate-limit.js";
 
 describe("createDiscordRateLimiter", () => {
   it("suppresses repeated noisy events for the same webhook and coalesce key within the window", () => {

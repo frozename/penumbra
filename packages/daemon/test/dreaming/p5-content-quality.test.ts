@@ -1,16 +1,14 @@
 import type { WebResearchAdapter, WebResearchResult } from "@penumbra/core";
+import type { DreamConfig } from "@src/dreaming/config.js";
+import type { ContentQualityVerdict } from "@src/dreaming/curator/content-quality-judge.js";
+import type { ResearchDeps } from "@src/dreaming/research.js";
 
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { ContentQualityJudge } from "@src/dreaming/curator/content-quality-judge.js";
+import { buildDreamCycleDeps } from "@src/dreaming/deps.js";
+import { runP5Phase } from "@src/dreaming/research.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
-import type { DreamConfig } from "../../src/dreaming/config.js";
-import type { ContentQualityVerdict } from "../../src/dreaming/curator/content-quality-judge.js";
-import type { ResearchDeps } from "../../src/dreaming/research.js";
-
-import { ContentQualityJudge } from "../../src/dreaming/curator/content-quality-judge.js";
-import { buildDreamCycleDeps } from "../../src/dreaming/deps.js";
-import { runP5Phase } from "../../src/dreaming/research.js";
 
 interface DreamActionPayloadRow {
   payload_json: string;

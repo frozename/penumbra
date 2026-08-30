@@ -1,7 +1,6 @@
+import { AgentChatConfigSchema } from "@src/config/types.js";
+import { loadShellConfig } from "@src/worker/shell-config.js";
 import { describe, expect, it } from "bun:test";
-
-import { AgentChatConfigSchema } from "../../src/config/types.js";
-import { loadShellConfig } from "../../src/worker/shell-config.js";
 
 describe("shell config schema", () => {
   it("accepts a minimal shell block", () => {

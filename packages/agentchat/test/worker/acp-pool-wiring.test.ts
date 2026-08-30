@@ -1,9 +1,6 @@
-import { afterEach, describe, expect, test, vi } from "bun:test";
-import { PassThrough } from "node:stream";
-
-import type { AcpWarmPool } from "../../src/adapters/acp-warm-pool.js";
-import type { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import type { AgentConfig } from "../../src/config/types.js";
+import type { AcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import type { AgentConfig } from "@src/config/types.js";
 
 import {
   drainAgent,
@@ -11,10 +8,12 @@ import {
   resetAcpWarmPoolRegistryForTest,
   shutdownAllAcpWarmPools,
   totalAcpWarmPoolEntryCount,
-} from "../../src/adapters/acp-warm-pool-registry.js";
-import { buildAdapter } from "../../src/adapters/registry.js";
-import { normalizeAdapterOptions } from "../../src/cli/adapter-options.js";
-import { installAcpWarmPoolShutdownHandlers } from "../../src/cli/loop.js";
+} from "@src/adapters/acp-warm-pool-registry.js";
+import { buildAdapter } from "@src/adapters/registry.js";
+import { normalizeAdapterOptions } from "@src/cli/adapter-options.js";
+import { installAcpWarmPoolShutdownHandlers } from "@src/cli/loop.js";
+import { afterEach, describe, expect, test, vi } from "bun:test";
+import { PassThrough } from "node:stream";
 
 interface AdapterWithDeps {
   deps: { pool?: AcpWarmPool };

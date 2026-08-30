@@ -1,12 +1,8 @@
+import { discoverAgyModels, parseAgyModelsOutput } from "@src/commands/generator/discovery-agy.js";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-
-import {
-  discoverAgyModels,
-  parseAgyModelsOutput,
-} from "../../../src/commands/generator/discovery-agy.js";
 
 const fixturePath = join(import.meta.dir, "../fixtures/agy-models.txt");
 const fixtureText = readFileSync(fixturePath, "utf8");

@@ -1,10 +1,10 @@
+import { type AcpServerSpawner, startAcpServer } from "@src/adapters/acp-server.js";
 import { afterEach, describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn as nodeSpawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type AcpServerSpawner, startAcpServer } from "../../src/adapters/acp-server.js";
 import { RUN_AGENTCHAT_SERVICE_TESTS } from "../helpers/service-gates.js";
 
 const cleanupPids = new Set<number>();

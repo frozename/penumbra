@@ -1,10 +1,9 @@
-import { expect, test } from "bun:test";
-
 import {
   type BootReconcileDeps,
   type BootReconcileLogger,
   reconcileOrphansAtWorkerBoot,
-} from "../../src/worker/boot-reconcile.js";
+} from "@src/worker/boot-reconcile.js";
+import { expect, test } from "bun:test";
 
 type BootReconcileClient = BootReconcileDeps["client"];
 

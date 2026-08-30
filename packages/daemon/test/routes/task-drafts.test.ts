@@ -6,14 +6,13 @@ import {
   T0Writer,
   TaskDraftReader,
 } from "@penumbra/core";
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-
-import { observationsRoute } from "../../src/routes/observations.js";
+import { observationsRoute } from "@src/routes/observations.js";
 import {
   taskDraftsPendingEscalationsRoute,
   taskDraftsPendingRoute,
-} from "../../src/routes/task-drafts.js";
+} from "@src/routes/task-drafts.js";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 try {
   if (process.platform === "darwin") {

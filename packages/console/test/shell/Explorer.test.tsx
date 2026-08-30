@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react/pure";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Explorer } from "../../src/shell/Explorer";
-import { useDaemonStore } from "../../src/stores/daemon-store";
+import { Explorer } from "@src/shell/Explorer";
+import { useDaemonStore } from "@src/stores/daemon-store";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 

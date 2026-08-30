@@ -1,8 +1,8 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { fleetLatencyHandler, FleetLatencyInputSchema } from "@src/tools/fleet-latency.js";
 import { describe, expect, it, mock } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { fleetLatencyHandler, FleetLatencyInputSchema } from "../../src/tools/fleet-latency.js";
 import { fakeDaemon } from "../helpers.js";
 
 type FleetLatencyFn = DaemonClient["fleetLatency"];

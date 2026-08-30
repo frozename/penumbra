@@ -1,3 +1,4 @@
+import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -5,8 +6,6 @@ import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-
-import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 function freshDb(path: string): Database {
   const db = new Database(path);

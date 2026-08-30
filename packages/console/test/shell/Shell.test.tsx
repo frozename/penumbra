@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MODULES } from "../../src/modules/manifest";
-import { Shell } from "../../src/shell/Shell";
-import { useDaemonStore } from "../../src/stores/daemon-store";
-import { useUIStore } from "../../src/stores/ui-store";
+import { MODULES } from "@src/modules/manifest";
+import { Shell } from "@src/shell/Shell";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { useUIStore } from "@src/stores/ui-store";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 

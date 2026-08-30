@@ -1,7 +1,6 @@
+import { CapturePort, type NotificationEvent } from "@src/worker/capture-port.js";
+import { MaestroOutputRedactor } from "@src/worker/maestro-output-redactor.js";
 import { describe, expect, it, spyOn, test } from "bun:test";
-
-import { CapturePort, type NotificationEvent } from "../../src/worker/capture-port.js";
-import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 
 interface ObservedHit {
   rule_id: string;

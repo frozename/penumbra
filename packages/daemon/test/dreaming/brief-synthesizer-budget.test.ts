@@ -1,10 +1,9 @@
-import { describe, expect, it } from "bun:test";
-
 import {
   type BriefSynthesizerInput,
   buildBriefPrompt,
   createBriefSynthesizer,
-} from "../../src/dreaming/brief-synthesizer.js";
+} from "@src/dreaming/brief-synthesizer.js";
+import { describe, expect, it } from "bun:test";
 
 function makeMemory(id: string, body: string): BriefSynthesizerInput["recent_memories"][number] {
   return {

@@ -1,13 +1,8 @@
+import { loadSqliteVec, migrate } from "@src/index.js";
+import { TestEmbedder } from "@src/testing/index.js";
+import { type T2MemoryExtraction, T2MemoryExtractionSchema, T2Promotion } from "@src/writers/t2.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
-import { loadSqliteVec, migrate } from "../../src/index.js";
-import { TestEmbedder } from "../../src/testing/index.js";
-import {
-  type T2MemoryExtraction,
-  T2MemoryExtractionSchema,
-  T2Promotion,
-} from "../../src/writers/t2.js";
 
 try {
   if (process.platform === "darwin") {

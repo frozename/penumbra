@@ -14,6 +14,22 @@ import {
   type WorkflowRunsRegistry,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import {
+  chainSendMessageRoute,
+  chainsHistoryRoute,
+  chainsListAgentsRoute,
+  chainsResponsesRoute,
+  chainsStartRoute,
+  chainStartFromInput,
+} from "@src/routes/chains.js";
+import {
+  handoffsApproveRoute,
+  handoffsCompleteRoute,
+  handoffsCreateRoute,
+  handoffsLatestRoute,
+  handoffsStatusRoute,
+} from "@src/routes/handoffs.js";
+import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -23,22 +39,6 @@ import * as path from "node:path";
 
 import { ChainStartResponseSchema } from "../../../api-contract/src/chains.js";
 import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
-import {
-  chainSendMessageRoute,
-  chainsHistoryRoute,
-  chainsListAgentsRoute,
-  chainsResponsesRoute,
-  chainsStartRoute,
-  chainStartFromInput,
-} from "../../src/routes/chains.js";
-import {
-  handoffsApproveRoute,
-  handoffsCompleteRoute,
-  handoffsCreateRoute,
-  handoffsLatestRoute,
-  handoffsStatusRoute,
-} from "../../src/routes/handoffs.js";
-import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
   try {
@@ -3357,7 +3357,7 @@ test("GET /chains/messages returns all events for a conversation chronologically
     ('ev2', '2026-04-26T12:01:00Z', '2026-04-26T12:01:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"response":"hello"}', 'hello')
   `);
 
-  const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
+  const { chainsMessagesRoute } = await import("@src/routes/chains.js");
   const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1"),
     services,
@@ -3383,7 +3383,7 @@ test("GET /chains/messages filters by types array", async () => {
     ('ev2', '2026-04-26T12:01:00Z', '2026-04-26T12:01:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"response":"hello"}', 'hello')
   `);
 
-  const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
+  const { chainsMessagesRoute } = await import("@src/routes/chains.js");
   const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1&types=agent-response"),
     services,
@@ -3405,7 +3405,7 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
     ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{bad', 'hi')
   `);
 
-  const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
+  const { chainsMessagesRoute } = await import("@src/routes/chains.js");
   const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=c1"),
     services,
@@ -3418,14 +3418,14 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
 
 test("GET /chains/messages returns 400 if conversation_id is missing", async () => {
   const services = tempServices();
-  const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
+  const { chainsMessagesRoute } = await import("@src/routes/chains.js");
   const res = chainsMessagesRoute(new Request("http://x/chains/messages"), services);
   expect(res.status).toBe(400);
 });
 
 test("GET /chains/messages returns empty events array for unknown conversation_id", async () => {
   const services = tempServices();
-  const { chainsMessagesRoute } = await import("../../src/routes/chains.js");
+  const { chainsMessagesRoute } = await import("@src/routes/chains.js");
   const res = chainsMessagesRoute(
     new Request("http://x/chains/messages?conversation_id=unknown-id"),
     services,

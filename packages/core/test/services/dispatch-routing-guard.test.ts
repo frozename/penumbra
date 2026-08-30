@@ -1,12 +1,11 @@
-import { describe, expect, test } from "bun:test";
-
-import type { ResolvedProjectEntry } from "../../src/projects/schema.js";
+import type { ResolvedProjectEntry } from "@src/projects/schema.js";
 
 import {
   collectMentionedPaths,
   inspectPromptVsProject,
   resolveProjectIdFromAbsolutePath,
-} from "../../src/services/dispatch-routing-guard.js";
+} from "@src/services/dispatch-routing-guard.js";
+import { describe, expect, test } from "bun:test";
 
 const registry: ResolvedProjectEntry[] = [
   {

@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import * as nodeFs from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import {
   AgentOptionsSchema,
   loadProviderSourcesFromDir,
   type ProviderSourcesConfig,
   resolveCatalogAuthority,
-} from "../../src/index.js";
+} from "@src/index.js";
+import { afterEach, describe, expect, test } from "bun:test";
+import * as nodeFs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { removeRecursive, writeUtf8 } from "../_fs-helpers.js";
 
 const tempDirs: string[] = [];

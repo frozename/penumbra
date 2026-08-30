@@ -1,13 +1,12 @@
+import type { AgentChatConfig } from "@src/config/types.js";
+import type { Adapter, DispatchEvent, DispatchInput } from "@src/sdk/adapter.js";
+import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
+
 import { recentCost } from "@penumbra/core";
+import { registerAdapter } from "@src/adapters/registry.js";
+import { resolveCaptureAttribution, runChatTurn } from "@src/cli/loop.js";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
-
-import type { AgentChatConfig } from "../../src/config/types.js";
-import type { Adapter, DispatchEvent, DispatchInput } from "../../src/sdk/adapter.js";
-import type { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
-
-import { registerAdapter } from "../../src/adapters/registry.js";
-import { resolveCaptureAttribution, runChatTurn } from "../../src/cli/loop.js";
 
 interface ObservedEvent {
   ts?: string;

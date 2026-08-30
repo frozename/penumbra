@@ -1,15 +1,14 @@
 import { type AaSnapshotStore, type AaTransport, createAaSnapshotStore } from "@penumbra/core";
-import { describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import {
   createAaSnapshotRefreshSweepState,
   DEFAULT_AA_SNAPSHOT_REFRESH_INTERVAL_MS,
   runAaSnapshotRefreshSweep,
   startAaSnapshotRefreshSweeper,
-} from "../../src/sweepers/aa-snapshot-refresh.js";
+} from "@src/sweepers/aa-snapshot-refresh.js";
+import { describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

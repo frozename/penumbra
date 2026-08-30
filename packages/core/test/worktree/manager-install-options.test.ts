@@ -1,16 +1,15 @@
-import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-
 import {
   isPathInsideOrEqual,
   planEscapingFileDependencyLinks,
   provisionLocalCache,
   runIsolatedInstall,
   WorktreeManager,
-} from "../../src/worktree/manager.js";
+} from "@src/worktree/manager.js";
+import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 type RunnerOptions = {
   cwd?: string;

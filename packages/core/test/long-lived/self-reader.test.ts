@@ -1,3 +1,5 @@
+import type { WorkingMemory } from "@src/long-lived/types.js";
+
 import {
   listLongLivedPendingActionsForAgent,
   loadSqliteVec,
@@ -7,8 +9,6 @@ import {
 import { applySchema } from "@penumbra/core/db/schema";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-
-import type { WorkingMemory } from "../../src/long-lived/types.js";
 
 interface AgentRow {
   last_intent_summary: string | null;

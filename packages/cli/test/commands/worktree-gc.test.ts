@@ -1,11 +1,11 @@
 import { loadSqliteVec, migrate, type WorktreeHandle } from "@penumbra/core";
+import { PendingHandoffsError, runWorktreeGc } from "@src/commands/worktree-gc.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PendingHandoffsError, runWorktreeGc } from "../../src/commands/worktree-gc.js";
 import { expectAsyncThrow } from "./_helpers.js";
 
 try {

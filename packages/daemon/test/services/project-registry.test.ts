@@ -1,3 +1,5 @@
+import type { DaemonServices } from "@src/serve.js";
+
 import {
   buildServices,
   loadProjectRegistry,
@@ -6,15 +8,12 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { reloadConfigRoute } from "@src/routes/reload-config.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { DaemonServices } from "../../src/serve.js";
-
-import { reloadConfigRoute } from "../../src/routes/reload-config.js";
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;

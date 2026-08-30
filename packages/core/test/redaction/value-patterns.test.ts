@@ -1,6 +1,5 @@
+import { ValuePatternRedactor } from "@src/redaction/value-patterns.js";
 import { expect, test } from "bun:test";
-
-import { ValuePatternRedactor } from "../../src/redaction/value-patterns.js";
 
 test("redactString rewrites matches and records hits", () => {
   const r = new ValuePatternRedactor([

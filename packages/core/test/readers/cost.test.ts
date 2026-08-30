@@ -1,7 +1,6 @@
+import { recentCost } from "@src/readers/cost.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
-
-import { recentCost } from "../../src/readers/cost.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");

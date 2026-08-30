@@ -1,6 +1,5 @@
+import { startStdioAcpServer } from "@src/adapters/stdio-acp-server.js";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-
-import { startStdioAcpServer } from "../../src/adapters/stdio-acp-server.js";
 
 const cleanupPids = new Set<number>();
 

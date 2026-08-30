@@ -1,13 +1,12 @@
 import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchEvent } from "@src/sdk/adapter.js";
 
+import { ClaudeCliAdapter } from "@src/adapters/claude-cli.js";
+import { spawnCliAdapterStream } from "@src/adapters/cli-spawn.js";
+import { CodexCliAdapter } from "@src/adapters/codex-cli.js";
+import { GeminiCliAdapter } from "@src/adapters/gemini-cli.js";
 import { describe, expect, test } from "bun:test";
 
-import type { DispatchEvent } from "../../src/sdk/adapter.js";
-
-import { ClaudeCliAdapter } from "../../src/adapters/claude-cli.js";
-import { spawnCliAdapterStream } from "../../src/adapters/cli-spawn.js";
-import { CodexCliAdapter } from "../../src/adapters/codex-cli.js";
-import { GeminiCliAdapter } from "../../src/adapters/gemini-cli.js";
 import { assertDoneEvent } from "../helpers/cli-spawn-fixtures.js";
 
 async function collect(stream: AsyncIterable<DispatchEvent>): Promise<DispatchEvent[]> {

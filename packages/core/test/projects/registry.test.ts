@@ -1,15 +1,15 @@
-import { afterEach, expect, mock, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import {
   defaultProjectRegistryPath,
   getGithubRepo,
   loadProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
-} from "../../src/projects/registry.js";
+} from "@src/projects/registry.js";
+import { afterEach, expect, mock, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { writeBootstrapRegistry } from "./registry-fixtures.js";
 
 const dirs: string[] = [];

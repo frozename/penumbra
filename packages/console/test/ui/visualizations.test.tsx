@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { PressureOrb, providerLabel, type PressureWindowSnapshot } from "../../src/ui/PressureOrb";
-import { EventTypeChip } from "../../src/ui/EventTypeChip";
+import { PressureOrb, providerLabel, type PressureWindowSnapshot } from "@src/ui/PressureOrb";
+import { EventTypeChip } from "@src/ui/EventTypeChip";
 const C = 2 * Math.PI * 18;
 
 describe("PressureOrb", () => {

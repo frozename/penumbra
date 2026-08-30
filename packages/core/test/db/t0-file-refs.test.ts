@@ -1,9 +1,8 @@
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { Database } from "bun:sqlite";
 // packages/core/test/db/t0-file-refs.test.ts
 import { describe, expect, test } from "bun:test";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try {
   if (process.platform === "darwin")

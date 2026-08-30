@@ -1,6 +1,5 @@
+import { systemUuid, type Uuid } from "@src/utils/uuid.js";
 import { expect, test } from "bun:test";
-
-import { systemUuid, type Uuid } from "../../src/utils/uuid.js";
 
 test("systemUuid returns a v4-shaped string", () => {
   const id = systemUuid();

@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
 
-import type { DaemonClient } from "../../../src/api/client";
-import { RegistrarList } from "../../../src/modules/registrar";
+import type { DaemonClient } from "@src/api/client";
+import { RegistrarList } from "@src/modules/registrar";
 
 function makeWrapper(initialEntries: string[] = ["/registrar"]): {
   Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;

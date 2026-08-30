@@ -1,6 +1,5 @@
+import { healthRoute } from "@src/routes/health.js";
 import { expect, test } from "bun:test";
-
-import { healthRoute } from "../../src/routes/health.js";
 
 test("health route exposes LLM role floor violations", async () => {
   const response = healthRoute({

@@ -6,19 +6,18 @@ import {
   type WorktreeHandle,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { chainsStartRoute } from "@src/routes/chains.js";
+import {
+  worktreesCleanupRoute,
+  worktreesInspectRoute,
+  worktreesListRoute,
+} from "@src/routes/worktrees.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { chainsStartRoute } from "../../src/routes/chains.js";
-import {
-  worktreesCleanupRoute,
-  worktreesInspectRoute,
-  worktreesListRoute,
-} from "../../src/routes/worktrees.js";
 
 try {
   if (process.platform === "darwin")

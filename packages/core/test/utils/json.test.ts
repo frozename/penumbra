@@ -1,6 +1,5 @@
+import { safeParseJSON } from "@src/utils/json.js";
 import { describe, expect, test } from "bun:test";
-
-import { safeParseJSON } from "../../src/utils/json.js";
 
 describe("safeParseJSON", () => {
   test("parses valid JSON into the requested type", () => {

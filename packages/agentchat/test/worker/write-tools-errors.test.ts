@@ -1,5 +1,3 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   EditAmbiguousError,
   EditMissError,
@@ -9,7 +7,8 @@ import {
   OutsideWorktreeError,
   TerminalCapExceededError,
   TerminalNotFoundError,
-} from "../../src/worker/write-tools-errors.js";
+} from "@src/worker/write-tools-errors.js";
+import { describe, expect, test } from "bun:test";
 
 describe("write-tools-errors", () => {
   test("all classes extend Error", () => {

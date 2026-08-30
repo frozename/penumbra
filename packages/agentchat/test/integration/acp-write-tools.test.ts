@@ -1,5 +1,11 @@
 import type { Logger } from "@penumbra/core";
+import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
+import type { DispatchInput, PermissionDecision } from "@src/sdk/adapter.js";
 
+import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
+import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "@src/worker/sandbox-config.js";
+import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -7,14 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
-
-import type { StdioAcpHandle } from "../../src/adapters/stdio-acp-server.js";
-import type { DispatchInput, PermissionDecision } from "../../src/sdk/adapter.js";
-
-import { StdioAcpClient } from "../../src/adapters/stdio-acp-client.js";
-import { StdioAcpAdapter } from "../../src/adapters/stdio-acp.js";
-import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "../../src/worker/sandbox-config.js";
-import { WriteToolsExecutor } from "../../src/worker/write-tools-executor.js";
 
 interface CapturedEvent {
   type: string;

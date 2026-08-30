@@ -1,8 +1,8 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { memoryVerifyAuthorizeHandler } from "@src/tools/memory-verify-authorize.js";
 import { expect, test } from "bun:test";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { memoryVerifyAuthorizeHandler } from "../../src/tools/memory-verify-authorize.js";
 import { fakeDaemon } from "../helpers.js";
 
 type MemoryVerifyAuthorizeFn = DaemonClient["memoryVerifyAuthorize"];

@@ -1,6 +1,5 @@
+import { DEFAULT_ID_KIND_MAP, withActingOnEnvelope } from "@src/tools/with-acting-on.js";
 import { describe, expect, it } from "bun:test";
-
-import { DEFAULT_ID_KIND_MAP, withActingOnEnvelope } from "../../src/tools/with-acting-on.js";
 
 describe("withActingOnEnvelope", () => {
   it("adds acting_on for handoff_id and places it first", async () => {

@@ -1,9 +1,8 @@
+import { copyLocalCacheFallback, materializeWorkspaceLinks } from "@src/worktree/manager.js";
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-import { copyLocalCacheFallback, materializeWorkspaceLinks } from "../../src/worktree/manager.js";
 
 function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");

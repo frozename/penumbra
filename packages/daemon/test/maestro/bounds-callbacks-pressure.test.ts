@@ -7,10 +7,9 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { createBoundsCallbacks } from "@src/maestro/bounds-callbacks.js";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-
-import { createBoundsCallbacks } from "../../src/maestro/bounds-callbacks.js";
 
 try {
   if (process.platform === "darwin") {

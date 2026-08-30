@@ -1,14 +1,12 @@
 import type { JudgeChatFn, Services } from "@penumbra/core";
-import type { Database } from "bun:sqlite";
-
-import { expect, mock, test } from "bun:test";
-
 import type {
   MemoryEfficacyJobRunnerCollaborators,
   MemoryEfficacyJobRunnerOpts,
-} from "../../src/workers/memory-efficacy-job-runner.js";
+} from "@src/workers/memory-efficacy-job-runner.js";
+import type { Database } from "bun:sqlite";
 
-import { createMemoryEfficacyJobRunner } from "../../src/workers/memory-efficacy-job-runner.js";
+import { createMemoryEfficacyJobRunner } from "@src/workers/memory-efficacy-job-runner.js";
+import { expect, mock, test } from "bun:test";
 
 // The runner only mutates services.memoryEfficacyRunnerHeartbeatAt and forwards
 // `db` to mocked collaborators, so we narrow to that surface and document the

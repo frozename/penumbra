@@ -1,6 +1,5 @@
+import { createBearerAuth, getPrincipal } from "@src/auth.js";
 import { expect, test } from "bun:test";
-
-import { createBearerAuth, getPrincipal } from "../../src/auth.js";
 
 interface WorkerTokenStoreLike {
   lookup(plaintextToken: string): { token_hash: string; worker_id: string } | null;

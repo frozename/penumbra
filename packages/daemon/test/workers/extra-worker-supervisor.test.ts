@@ -1,16 +1,15 @@
+import type { ExtraWorkerConfig } from "@src/workers/config.js";
+
 import { buildServices, loadSqliteVec, type Logger, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { handoffsApproveRoute, handoffsCreateRoute } from "@src/routes/handoffs.js";
+import { OrphanHandoffRecoveryService } from "@src/services/orphan-handoff-recovery.js";
+import { ExtraWorkerSupervisor } from "@src/workers/supervisor.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, type Mock, test, vi } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-
-import type { ExtraWorkerConfig } from "../../src/workers/config.js";
-
-import { handoffsApproveRoute, handoffsCreateRoute } from "../../src/routes/handoffs.js";
-import { OrphanHandoffRecoveryService } from "../../src/services/orphan-handoff-recovery.js";
-import { ExtraWorkerSupervisor } from "../../src/workers/supervisor.js";
 
 try {
   if (process.platform === "darwin") {

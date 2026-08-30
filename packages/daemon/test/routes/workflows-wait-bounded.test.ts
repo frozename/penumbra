@@ -1,13 +1,12 @@
 import { ProjectRegistry, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { workflowsWaitRoute } from "@src/routes/workflows.js";
+import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { workflowsWaitRoute } from "../../src/routes/workflows.js";
-import { createWorkflowRunsRegistry } from "../../src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
   try {

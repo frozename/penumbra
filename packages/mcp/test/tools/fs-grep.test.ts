@@ -1,9 +1,8 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { DaemonHttpError } from "@src/daemon-client.js";
+import { fsGrepHandler } from "@src/tools/fs-grep.js";
 import { afterEach, describe, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { DaemonHttpError } from "../../src/daemon-client.js";
-import { fsGrepHandler } from "../../src/tools/fs-grep.js";
 
 type GrepDaemon = Pick<DaemonClient, "grepInWorktree">;
 type GrepImpl = DaemonClient["grepInWorktree"];

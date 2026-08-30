@@ -1,12 +1,11 @@
-import { describe, expect, test } from "bun:test";
-
-import type { DispatchInput } from "../../src/sdk/adapter.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
 import {
   buildClientCapabilities,
   resolvePermissionMode,
   type StdioAcpOptions,
-} from "../../src/adapters/stdio-acp.js";
+} from "@src/adapters/stdio-acp.js";
+import { describe, expect, test } from "bun:test";
 
 function baseOpts(extra: Partial<StdioAcpOptions> = {}): StdioAcpOptions {
   return { binary: "mock-acp", ...extra };

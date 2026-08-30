@@ -1,19 +1,19 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+import type { ToolDef } from "@src/tools/registry.js";
+
 import { ProjectRegistry } from "@penumbra/core";
+import { HandleStore } from "@src/handle-store.js";
+import { setLongLivedRuntimeContextFromEnv } from "@src/long-lived-context.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DaemonClient } from "../../src/daemon-client.js";
-import type { ToolDef } from "../../src/tools/registry.js";
-
-import { HandleStore } from "../../src/handle-store.js";
-import { setLongLivedRuntimeContextFromEnv } from "../../src/long-lived-context.js";
 import { fakeDaemon } from "../helpers.js";
 import { insertLongLivedTick, seedLongLivedAgent } from "./long-lived-fixtures.js";
 
-type RegistryModule = typeof import("../../src/tools/registry.js");
+type RegistryModule = typeof import("@src/tools/registry.js");
 type ToolRegistry = RegistryModule["TOOL_REGISTRY"];
 type RegistryEntry = ToolDef;
 type CreateResolverFn = RegistryModule["createProjectIdResolverFromCwd"];
@@ -28,7 +28,7 @@ let importError: unknown = null;
 
 beforeAll(async () => {
   try {
-    const mod = await import("../../src/tools/registry.js");
+    const mod = await import("@src/tools/registry.js");
     TOOL_REGISTRY = mod.TOOL_REGISTRY;
     createProjectIdResolverFromCwd = mod.createProjectIdResolverFromCwd;
     resetProjectRegistryCache = mod.__resetProjectRegistryCacheForTest;

@@ -1,11 +1,10 @@
-import { describe, expect, it } from "bun:test";
-
 import {
   FEW_SHOT_EXAMPLES,
   REWRITE_RESPONSE_SCHEMA,
   SYSTEM_PROMPT,
-} from "../../src/dreaming/dream-rewriter-prompt-content.js";
-import { buildDreamQueryRewritePrompt } from "../../src/dreaming/dream-rewriter-prompt.js";
+} from "@src/dreaming/dream-rewriter-prompt-content.js";
+import { buildDreamQueryRewritePrompt } from "@src/dreaming/dream-rewriter-prompt.js";
+import { describe, expect, it } from "bun:test";
 
 interface PromptMessage {
   role: "system" | "user" | "assistant";

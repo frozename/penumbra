@@ -1,17 +1,16 @@
+import type { DreamConfig } from "@src/dreaming/config.js";
+import type { ResearchDeps } from "@src/dreaming/research.js";
+
 import {
   applySchema,
   loadSqliteVec,
   type WebResearchAdapter,
   type WebResearchResult,
 } from "@penumbra/core";
+import { hashQuery, runP5Phase } from "@src/dreaming/research.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
-
-import type { DreamConfig } from "../../src/dreaming/config.js";
-import type { ResearchDeps } from "../../src/dreaming/research.js";
-
-import { hashQuery, runP5Phase } from "../../src/dreaming/research.js";
 
 interface DreamActionResearchRow {
   payload_json: string;

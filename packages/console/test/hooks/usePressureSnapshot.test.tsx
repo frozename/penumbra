@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizePressureSnapshot } from "../../src/hooks/usePressureSnapshot";
+import { normalizePressureSnapshot } from "@src/hooks/usePressureSnapshot";
 
 describe("usePressureSnapshot", () => {
   test("loads windows and computes peak usage", () => {

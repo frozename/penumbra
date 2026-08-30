@@ -1,7 +1,6 @@
+import { StubJudgePool } from "@src/dreaming/judge-pool.js";
+import { computeRetireScore } from "@src/dreaming/quality-signal.js";
 import { expect, it } from "bun:test";
-
-import { StubJudgePool } from "../../src/dreaming/judge-pool.js";
-import { computeRetireScore } from "../../src/dreaming/quality-signal.js";
 
 const fakeVaguenessJudge = new StubJudgePool();
 

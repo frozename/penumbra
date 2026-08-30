@@ -1,12 +1,11 @@
-import { afterEach, expect, test, vi } from "bun:test";
-
 import {
   createWorkerHealthController,
   type WorkerHealthController,
   type WorkerHealthControllerDeps,
   WorkerHealthProbe,
   type WorkerHealthSignal,
-} from "../../src/services/worker-health-probe.js";
+} from "@src/services/worker-health-probe.js";
+import { afterEach, expect, test, vi } from "bun:test";
 
 type ProbeConstructorOpts = ConstructorParameters<typeof WorkerHealthProbe>[0];
 type ProbeServices = ProbeConstructorOpts["services"];

@@ -5,11 +5,10 @@ import {
   migrate,
   type Services,
 } from "@penumbra/core";
+import { resolveDispatchedTtlMs } from "@src/workers/handoff-sweeper-thresholds.js";
+import { createHandoffSweeperWorker } from "@src/workers/handoff-sweeper.js";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
-
-import { resolveDispatchedTtlMs } from "../../src/workers/handoff-sweeper-thresholds.js";
-import { createHandoffSweeperWorker } from "../../src/workers/handoff-sweeper.js";
 
 try {
   if (process.platform === "darwin") {

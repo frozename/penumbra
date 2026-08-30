@@ -1,6 +1,5 @@
+import { colonFormToSdkPattern } from "@src/worker/mcp-tool-name.js";
 import { expect, test } from "bun:test";
-
-import { colonFormToSdkPattern } from "../../src/worker/mcp-tool-name.js";
 
 test("colonFormToSdkPattern: ha:ha_pulse converts to mcp__ha__ha_pulse", () => {
   expect(colonFormToSdkPattern("ha:ha_pulse")).toBe("mcp__ha__ha_pulse");

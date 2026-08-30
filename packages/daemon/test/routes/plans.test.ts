@@ -8,15 +8,14 @@ import {
   TaskWriter,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { setPrincipalForTest } from "@src/auth.js";
+import { plansRegisterRoute } from "@src/routes/plans.js";
+import { createDaemonFetchHandler } from "@src/serve.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { setPrincipalForTest } from "../../src/auth.js";
-import { plansRegisterRoute } from "../../src/routes/plans.js";
-import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {

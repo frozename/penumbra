@@ -1,3 +1,4 @@
+import { runConfigSyncLocal } from "@src/commands/config-sync-local.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
@@ -8,7 +9,6 @@ import YAML from "yaml";
 import type { LlamactlInventory } from "../../../core/src/index.js";
 
 import { AgentsConfigSchema } from "../../../config/src/index.js";
-import { runConfigSyncLocal } from "../../src/commands/config-sync-local.js";
 
 let tempDirs: string[] = [];
 

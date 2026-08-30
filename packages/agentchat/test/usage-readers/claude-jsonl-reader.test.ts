@@ -1,3 +1,4 @@
+import { ClaudeJsonlReader } from "@src/usage-readers/claude-jsonl-reader.js";
 import { describe, expect, it, spyOn } from "bun:test";
 import {
   appendFileSync,
@@ -10,8 +11,6 @@ import {
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { ClaudeJsonlReader } from "../../src/usage-readers/claude-jsonl-reader.js";
 
 function setupProjectsDir(): { rootDir: string } {
   const root = mkdtempSync(join(tmpdir(), "claude-projects-"));

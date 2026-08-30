@@ -1,7 +1,6 @@
 import { REFINER_INPUT_MAX_BYTES } from "@penumbra/core";
+import { makeDispatchRefineRoute } from "@src/routes/dispatch-refine.js";
 import { expect, mock, test } from "bun:test";
-
-import { makeDispatchRefineRoute } from "../../src/routes/dispatch-refine.js";
 
 function jsonReq(body: unknown): Request {
   return new Request("http://localhost/dispatch/refine", {

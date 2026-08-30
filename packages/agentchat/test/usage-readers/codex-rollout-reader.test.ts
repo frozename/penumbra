@@ -1,3 +1,4 @@
+import { CodexRolloutReader } from "@src/usage-readers/codex-rollout-reader.js";
 import { describe, expect, it } from "bun:test";
 import {
   appendFileSync,
@@ -9,8 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { CodexRolloutReader } from "../../src/usage-readers/codex-rollout-reader.js";
 
 function writeRollout(dir: string, name: string, lines: object[]): string {
   const path = join(dir, name);

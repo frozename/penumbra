@@ -1,11 +1,10 @@
+import type { DaemonClient } from "@src/daemon-client.js";
+
+import { HandleStore } from "@src/handle-store.js";
+import { isEnvelopeResult } from "@src/responses/envelope.js";
+import { fsEditHandler } from "@src/tools/fs-edit.js";
+import { readHandleHandler } from "@src/tools/read-handle.js";
 import { afterEach, describe, expect, it } from "bun:test";
-
-import type { DaemonClient } from "../../src/daemon-client.js";
-
-import { HandleStore } from "../../src/handle-store.js";
-import { isEnvelopeResult } from "../../src/responses/envelope.js";
-import { fsEditHandler } from "../../src/tools/fs-edit.js";
-import { readHandleHandler } from "../../src/tools/read-handle.js";
 
 type EditDaemon = Pick<DaemonClient, "editInWorktree">;
 type EditImpl = DaemonClient["editInWorktree"];

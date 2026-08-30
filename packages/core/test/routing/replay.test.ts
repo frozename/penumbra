@@ -1,15 +1,13 @@
 import type { ModelAliasMap, TaskRouterConfig } from "@penumbra/config";
+import type { AaModel, AaModelSnapshot } from "@src/routing/schemas.js";
+import type { TaskProfileJudge } from "@src/routing/task-profile-judge.js";
 
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { replay, type ReplayConfig } from "@src/routing/replay.js";
+import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
-import type { AaModel, AaModelSnapshot } from "../../src/routing/schemas.js";
-import type { TaskProfileJudge } from "../../src/routing/task-profile-judge.js";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js";
-import { replay, type ReplayConfig } from "../../src/routing/replay.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {

@@ -1,8 +1,7 @@
+import type { TaskRecord } from "@src/tasks/schema.js";
+
+import { synthesizeMaestroPrompt } from "@src/maestro/prompt.js";
 import { describe, expect, test } from "bun:test";
-
-import type { TaskRecord } from "../../src/tasks/schema.js";
-
-import { synthesizeMaestroPrompt } from "../../src/maestro/prompt.js";
 
 function baseTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {

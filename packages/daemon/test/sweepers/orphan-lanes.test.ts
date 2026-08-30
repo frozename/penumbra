@@ -1,8 +1,7 @@
 import { getLane, insertLane, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { runOrphanLanesSweep } from "@src/sweepers/orphan-lanes.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { runOrphanLanesSweep } from "../../src/sweepers/orphan-lanes.js";
 
 try {
   if (process.platform === "darwin")

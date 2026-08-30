@@ -1,14 +1,14 @@
+import type { DispatchHandoffResult } from "@src/cli/dispatch-handoff.js";
+import type { AgentChatConfig } from "@src/config/types.js";
+import type { Adapter } from "@src/sdk/adapter.js";
+
 import { createLogger, type HandoffRow } from "@penumbra/core";
+import { clearCustomAdapters, registerAdapter } from "@src/adapters/registry.js";
+import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import { createWorkerDispatcher } from "@src/worker/dispatcher.js";
+import { startEventSource } from "@src/worker/event-source.js";
 import { expect } from "bun:test";
 
-import type { DispatchHandoffResult } from "../../src/cli/dispatch-handoff.js";
-import type { AgentChatConfig } from "../../src/config/types.js";
-import type { Adapter } from "../../src/sdk/adapter.js";
-
-import { clearCustomAdapters, registerAdapter } from "../../src/adapters/registry.js";
-import { dispatchHandoff } from "../../src/cli/dispatch-handoff.js";
-import { createWorkerDispatcher } from "../../src/worker/dispatcher.js";
-import { startEventSource } from "../../src/worker/event-source.js";
 import { serviceTest } from "../helpers/service-gates.js";
 import { withDaemon } from "../helpers/with-daemon.js";
 

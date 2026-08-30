@@ -1,6 +1,5 @@
+import { parseDuration, runCostQuota, runCostRecent } from "@src/commands/cost.js";
 import { describe, expect, it } from "bun:test";
-
-import { parseDuration, runCostQuota, runCostRecent } from "../../src/commands/cost.js";
 
 describe("parseDuration", () => {
   it("parses Nh", () => {

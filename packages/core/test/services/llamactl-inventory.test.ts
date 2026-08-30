@@ -1,7 +1,6 @@
+import { collectLlamactlInventory } from "@src/index.js";
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-
-import { collectLlamactlInventory } from "../../src/index.js";
 
 const kubeconfig = [
   "apiVersion: v1",

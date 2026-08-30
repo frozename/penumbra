@@ -1,7 +1,6 @@
+import { AgentChatConfigSchema } from "@src/config/types.js";
+import { loadNotificationConfig } from "@src/worker/notification-config.js";
 import { describe, expect, it } from "bun:test";
-
-import { AgentChatConfigSchema } from "../../src/config/types.js";
-import { loadNotificationConfig } from "../../src/worker/notification-config.js";
 
 describe("notifications config schema", () => {
   it("accepts a channel-agnostic project route and identity mapping", () => {

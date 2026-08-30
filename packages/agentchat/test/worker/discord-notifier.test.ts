@@ -1,12 +1,11 @@
-import { describe, expect, it, mock } from "bun:test";
-
 import {
   type DiscordEmbed,
   type DiscordField,
   formatHandoffEmbed,
   formatMergeResultEmbed,
   postToDiscord,
-} from "../../src/worker/discord-notifier.js";
+} from "@src/worker/discord-notifier.js";
+import { describe, expect, it, mock } from "bun:test";
 
 interface FetchCallArgs {
   input: string | URL | Request;

@@ -9,21 +9,20 @@ import {
   TaskRecordSchema,
   TaskStatusSchema,
 } from "@penumbra/core";
+import { taskCancelHandler } from "@src/tools/task-cancel.js";
+import { taskCommentGhHandler } from "@src/tools/task-comment-gh.js";
+import { taskCompleteHandler } from "@src/tools/task-complete.js";
+import { taskFailHandler } from "@src/tools/task-fail.js";
+import { taskFileHandler } from "@src/tools/task-file.js";
+import { taskGetHandler } from "@src/tools/task-get.js";
+import { taskHeartbeatHandler } from "@src/tools/task-heartbeat.js";
+import { taskLinkGhHandler } from "@src/tools/task-link-gh.js";
+import { taskListHandler } from "@src/tools/task-list.js";
+import { taskNextHandler } from "@src/tools/task-next.js";
+import { taskSyncGhNowHandler } from "@src/tools/task-sync-gh-now.js";
+import { taskUnlinkGhHandler } from "@src/tools/task-unlink-gh.js";
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-
-import { taskCancelHandler } from "../../src/tools/task-cancel.js";
-import { taskCommentGhHandler } from "../../src/tools/task-comment-gh.js";
-import { taskCompleteHandler } from "../../src/tools/task-complete.js";
-import { taskFailHandler } from "../../src/tools/task-fail.js";
-import { taskFileHandler } from "../../src/tools/task-file.js";
-import { taskGetHandler } from "../../src/tools/task-get.js";
-import { taskHeartbeatHandler } from "../../src/tools/task-heartbeat.js";
-import { taskLinkGhHandler } from "../../src/tools/task-link-gh.js";
-import { taskListHandler } from "../../src/tools/task-list.js";
-import { taskNextHandler } from "../../src/tools/task-next.js";
-import { taskSyncGhNowHandler } from "../../src/tools/task-sync-gh-now.js";
-import { taskUnlinkGhHandler } from "../../src/tools/task-unlink-gh.js";
 
 function parseToolResult(out: TextContentEnvelope): unknown {
   return JSON.parse(out.content[0]!.text);

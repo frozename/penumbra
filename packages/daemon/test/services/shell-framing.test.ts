@@ -1,6 +1,5 @@
+import { buildFramedCommand, parseFramedOutput } from "@src/services/shell-framing.js";
 import { describe, expect, it } from "bun:test";
-
-import { buildFramedCommand, parseFramedOutput } from "../../src/services/shell-framing.js";
 
 async function runFramedSnippet(
   snippet: string,

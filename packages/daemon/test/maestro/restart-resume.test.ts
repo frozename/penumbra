@@ -7,10 +7,9 @@ import {
   TaskEventBus,
   TaskWriter,
 } from "@penumbra/core";
+import { runRestartResume } from "@src/maestro/restart-resume.js";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
-import { runRestartResume } from "../../src/maestro/restart-resume.js";
 
 try {
   if (process.platform === "darwin") {

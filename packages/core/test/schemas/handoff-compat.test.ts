@@ -1,7 +1,7 @@
+import { HandoffRowSchema as CoreHandoffRowSchema } from "@src/schemas/handoff.js";
 import { expect, test } from "bun:test";
 
 import { HandoffRowSchema as ApiHandoffRowSchema } from "../../../api-contract/src/handoffs.js";
-import { HandoffRowSchema as CoreHandoffRowSchema } from "../../src/schemas/handoff.js";
 
 test("api-contract and core handoff schemas parse isolated_install sqlite rows compatibly", () => {
   const row = {

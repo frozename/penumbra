@@ -1,10 +1,9 @@
+import { migrate } from "@src/db/migrations.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js"; // Ensure to load vector extension if required by tests!
+import { HandoffReader } from "@src/readers/handoff.js";
+import { HandoffWriter } from "@src/writers/handoff.js";
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
-import { migrate } from "../../src/db/migrations.js";
-import { loadSqliteVec } from "../../src/db/sqlite-vec.js"; // Ensure to load vector extension if required by tests!
-import { HandoffReader } from "../../src/readers/handoff.js";
-import { HandoffWriter } from "../../src/writers/handoff.js";
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");

@@ -1,11 +1,10 @@
 import type { AgentConfig } from "@penumbra/agentchat/config/types";
 
 import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { reconcileLongLivedAgents } from "@src/long-lived/reconciler.js";
+import { handleTickTeardown } from "@src/long-lived/teardown.js";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-
-import { reconcileLongLivedAgents } from "../../src/long-lived/reconciler.js";
-import { handleTickTeardown } from "../../src/long-lived/teardown.js";
 
 interface TickRow {
   outcome: string | null;

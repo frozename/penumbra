@@ -1,7 +1,5 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
-import { expect, test } from "bun:test";
-
 import {
   type ControlListenerClient,
   type ControlListenerDispatcher,
@@ -9,7 +7,8 @@ import {
   handleControlEvent,
   runWorkerControlListener,
   type WorkerControlEvent,
-} from "../../src/worker/control-listener.js";
+} from "@src/worker/control-listener.js";
+import { expect, test } from "bun:test";
 
 // Async generator factory satisfies the ControlListenerClient contract:
 // when called with an empty events array it yields nothing but still

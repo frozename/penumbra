@@ -1,9 +1,8 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   classifyDispatchReliability,
   type DispatchReliabilityInput,
-} from "../../src/services/dispatch-reliability.js";
+} from "@src/services/dispatch-reliability.js";
+import { describe, expect, test } from "bun:test";
 
 function baseInput(overrides: Partial<DispatchReliabilityInput> = {}): DispatchReliabilityInput {
   return {

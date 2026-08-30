@@ -7,10 +7,9 @@ import {
   type Watchdog,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import { chainsStartRoute } from "@src/routes/chains.js";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, test } from "bun:test";
-
-import { chainsStartRoute } from "../../src/routes/chains.js";
 
 // Real-reader regression test: verify non-stubbed recallReader + seeded t2 memory reaches recalled_memory_ids.
 try {

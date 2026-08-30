@@ -1,13 +1,9 @@
 import { WorktreeManager } from "@penumbra/core";
+import { projectIdForHandoff, resolveWorktreeForHandoff } from "@src/routes/worktree-resolve.js";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import {
-  projectIdForHandoff,
-  resolveWorktreeForHandoff,
-} from "../../src/routes/worktree-resolve.js";
 
 type WorktreeResolveDeps = Parameters<typeof projectIdForHandoff>[0];
 

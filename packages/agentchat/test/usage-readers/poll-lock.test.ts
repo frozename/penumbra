@@ -1,12 +1,8 @@
+import { acquireOrRefreshUsagePollLock, readUsagePollLock } from "@src/usage-readers/poll-lock.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import {
-  acquireOrRefreshUsagePollLock,
-  readUsagePollLock,
-} from "../../src/usage-readers/poll-lock.js";
 
 describe("usage poll machine lock", () => {
   let dir: string;

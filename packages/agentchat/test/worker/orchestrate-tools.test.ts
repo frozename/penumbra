@@ -1,10 +1,9 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   applyOrchestrateToolsToConfig,
   ORCHESTRATE_MAESTRO_TOOLS,
   withOrchestrateTools,
-} from "../../src/worker/orchestrate-tools.js";
+} from "@src/worker/orchestrate-tools.js";
+import { describe, expect, test } from "bun:test";
 
 describe("withOrchestrateTools", () => {
   test("appends the maestro tools for an orchestrate dispatch", () => {

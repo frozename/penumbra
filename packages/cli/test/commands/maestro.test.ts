@@ -1,5 +1,13 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
+import {
+  dispatchMaestroSubcommand,
+  runMaestroList,
+  runMaestroSessionGet,
+  runMaestroSessionStart,
+  runMaestroSessionStartAdhoc,
+} from "@src/commands/maestro.js";
+import { runTaskNew, runTaskShow } from "@src/commands/task.js";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -7,14 +15,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createDaemonFetchHandler } from "../../../daemon/src/serve.js";
-import {
-  dispatchMaestroSubcommand,
-  runMaestroList,
-  runMaestroSessionGet,
-  runMaestroSessionStart,
-  runMaestroSessionStartAdhoc,
-} from "../../src/commands/maestro.js";
-import { runTaskNew, runTaskShow } from "../../src/commands/task.js";
 import { expectAsyncThrow, parseJson } from "./_helpers.js";
 
 try {

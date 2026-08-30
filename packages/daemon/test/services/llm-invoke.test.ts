@@ -1,3 +1,4 @@
+import { llmInvoke } from "@src/services/llm-invoke.js";
 import { afterEach, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -8,7 +9,6 @@ import {
   type LlmCandidate,
   resolveRoleLlmCandidates,
 } from "../../../core/src/services/llm-candidates.js";
-import { llmInvoke } from "../../src/services/llm-invoke.js";
 
 const originalFetch = globalThis.fetch;
 

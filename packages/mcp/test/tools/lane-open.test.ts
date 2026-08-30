@@ -1,7 +1,7 @@
+import { laneOpenHandler, LaneOpenInputShape } from "@src/tools/lane-open.js";
 import { expect, test } from "bun:test";
 import { z } from "zod";
 
-import { laneOpenHandler, LaneOpenInputShape } from "../../src/tools/lane-open.js";
 import { bodyAsString, installFetchMock, requestUrl } from "../helpers.js";
 
 interface MockToolResult {

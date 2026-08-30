@@ -1,10 +1,9 @@
-import { expect, test } from "bun:test";
-
 import {
   MAX_WALKER_DEPTH,
   MAX_WALKER_STRING_BYTES,
   ValuePatternRedactor,
-} from "../../src/redaction/value-patterns.js";
+} from "@src/redaction/value-patterns.js";
+import { expect, test } from "bun:test";
 
 test("redactValue: non-plain object roots are preserved (Date/URL/Map/RegExp)", () => {
   const r = new ValuePatternRedactor([
