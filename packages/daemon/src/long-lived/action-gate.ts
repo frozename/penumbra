@@ -442,6 +442,7 @@ function clearTier2Cooldown(deps: ActionGateDeps, agentId: string, tool: string)
   })();
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve tier-two action execution while grandfathering its pre-existing complexity.
 async function executeTier2(
   deps: ActionGateDeps,
   agent: AgentGateConfig,

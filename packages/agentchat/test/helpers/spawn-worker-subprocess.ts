@@ -88,7 +88,8 @@ export async function spawnWorkerCrashGuardSubprocess(opts: {
   })();
 
   const fatalDeadline = Date.now() + FATAL_MARKER_TIMEOUT_MS;
-  while (!FATAL_MARKER_PATTERN.test(stderr) && !streamClosed && Date.now() < fatalDeadline) {
+  const isStreamClosed = (): boolean => streamClosed;
+  while (!FATAL_MARKER_PATTERN.test(stderr) && !isStreamClosed() && Date.now() < fatalDeadline) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 

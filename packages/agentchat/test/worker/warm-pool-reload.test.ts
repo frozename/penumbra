@@ -8,8 +8,8 @@ import {
   getOrCreateAcpWarmPool,
   resetAcpWarmPoolRegistryForTest,
 } from "../../src/adapters/acp-warm-pool-registry.js";
-import { makeMockAcpHandle } from "../helpers/stdio-acp-fixtures.js";
 import { invalidateChangedWarmPools } from "../../src/worker/warm-pool-reload.js";
+import { makeMockAcpHandle } from "../helpers/stdio-acp-fixtures.js";
 
 function warmAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {

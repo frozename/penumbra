@@ -2,12 +2,7 @@ import type { Services } from "@penumbra/core";
 
 import { closeLane } from "@penumbra/core";
 
-const closeLaneWithLog = closeLane as (
-  db: Parameters<typeof closeLane>[0],
-  lane_id: string,
-  fields: Parameters<typeof closeLane>[2],
-  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
-) => void;
+const closeLaneWithLog = closeLane;
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_GRACE_MS = 120 * 60_000;
@@ -133,7 +128,7 @@ export function runOrphanLanesSweep(
           services.log,
         );
       })();
-      if (!aborted) lane_ids.push(row.lane_id);
+      if (!((): boolean => aborted)()) lane_ids.push(row.lane_id);
     } catch (err) {
       services.log.warn(
         { lane_id: row.lane_id, err: String(err) },

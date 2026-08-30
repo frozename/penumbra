@@ -726,7 +726,7 @@ function reasonForTerminated(terminatedReason: string | undefined): string {
   return reasonMap[terminatedReason] ?? "completed";
 }
 
-function terminalErrorOf(result: DispatchHandoffResult | null): unknown | null {
+function terminalErrorOf(result: DispatchHandoffResult | null): unknown {
   return result?.terminalError ?? null;
 }
 

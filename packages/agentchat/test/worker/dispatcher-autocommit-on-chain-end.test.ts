@@ -401,13 +401,12 @@ test("autocommit warns with dropped_paths when some paths are filtered out", asy
     (call) => call[1] === "autocommit on chain end dropped paths",
   );
   expect(droppedWarn).toBeDefined();
-  expect(droppedWarn?.[0]).toEqual(
-    expect.objectContaining({
-      component: "autocommit-on-chain-end",
-      handoff_id: "123e4567-e89b-12d3-a456-426614174777",
-      dropped_paths: expect.arrayContaining([".env", "node_modules/foo/x.js"]) as unknown,
-    }),
-  );
+  expect(droppedWarn?.[0]).toMatchObject({
+    component: "autocommit-on-chain-end",
+    handoff_id: "123e4567-e89b-12d3-a456-426614174777",
+  });
+  const droppedPaths = droppedWarn?.[0]?.dropped_paths;
+  expect(Array.isArray(droppedPaths) && droppedPaths).toEqual([".env", "node_modules/foo/x.js"]);
 });
 
 test("autocommit skips malformed handoff ids", async () => {

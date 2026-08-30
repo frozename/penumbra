@@ -92,14 +92,18 @@ describe("long_lived_approve_action", () => {
     // First call - must succeed
     const r1 = handleLongLivedApproveAction(
       db,
-      { emit: () => {}, now: () => 50 },
+      { emit: () => undefined, now: () => 50 },
       { action_id: "p1" },
     );
     expect(r1.ok).toBe(true);
 
     // Second call on the same (now 'approved') action_id must throw
     expect(() =>
-      handleLongLivedApproveAction(db, { emit: () => {}, now: () => 60 }, { action_id: "p1" }),
+      handleLongLivedApproveAction(
+        db,
+        { emit: () => undefined, now: () => 60 },
+        { action_id: "p1" },
+      ),
     ).toThrow("not_pending");
 
     // Invariant: exactly one pending_goals entry - no duplicate from the second call
@@ -122,7 +126,11 @@ describe("long_lived_approve_action", () => {
 
     // Approve must reject
     expect(() =>
-      handleLongLivedApproveAction(db, { emit: () => {}, now: () => 50 }, { action_id: "p1" }),
+      handleLongLivedApproveAction(
+        db,
+        { emit: () => undefined, now: () => 50 },
+        { action_id: "p1" },
+      ),
     ).toThrow("not_pending");
 
     // Row must remain expired - not overwritten to approved

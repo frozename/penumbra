@@ -321,7 +321,7 @@ test("auth createHandoff rejection uses handoff creation failure and logs loudly
       mentions: [],
     });
     const createHandoff = mock().mockRejectedValue(
-      new PenumbraHttpError(`penumbra /handoffs: HTTP ${status}`, status, {
+      new PenumbraHttpError(`penumbra /handoffs: HTTP ${String(status)}`, status, {
         error: { code: "auth_failed" },
       }),
     );
@@ -348,7 +348,7 @@ test("auth createHandoff rejection uses handoff creation failure and logs loudly
     expect(res.terminalError).toEqual({
       status,
       code: "auth_failed",
-      message: `penumbra /handoffs: HTTP ${status} code=auth_failed`,
+      message: `penumbra /handoffs: HTTP ${String(status)} code=auth_failed`,
     });
     expect(log.error).toHaveBeenCalledTimes(1);
   }

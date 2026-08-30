@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
 import {
   discoverCodexModels,
@@ -82,7 +82,7 @@ describe("codex model discovery", () => {
     const expected = parseCodexDebugModelsOutput(fixtureText);
 
     const models = await discoverCodexModels({
-      runCodexDebugModels: async () => {
+      runCodexDebugModels: () => {
         runCount += 1;
         return fixtureText;
       },

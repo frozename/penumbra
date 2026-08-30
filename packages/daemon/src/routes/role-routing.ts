@@ -8,10 +8,10 @@ import {
   readRoutingBiases,
   readSubscriptionPressure,
   type RoleRoute,
+  routeAgent,
   type RouterAaSnapshot,
   type RoutingBias,
   type RoutingDecision,
-  routeAgent,
   type Services,
 } from "@penumbra/core";
 
@@ -206,6 +206,7 @@ function hasHardConstraintExclusion(decision: RoutingDecision): boolean {
  * evidenced hard-constraint wipeout throws RouterHardConstraintExhaustedError;
  * other no-selection decisions degrade to the legacy route.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve single-route resolution while grandfathering its pre-existing complexity.
 export function resolveSingleRoute(
   services: Services,
   role: string,
@@ -255,7 +256,7 @@ export function resolveSingleRoute(
       unhealthyAgents,
     });
     if (decision) {
-      if (hints?.decisionSink) hints.decisionSink.decision = decision;
+      if (hints.decisionSink) hints.decisionSink.decision = decision;
       if (mode === "auto") {
         if (decision.selected === null) {
           if (hasHardConstraintExclusion(decision)) {

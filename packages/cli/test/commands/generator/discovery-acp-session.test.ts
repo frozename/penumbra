@@ -1,3 +1,5 @@
+import type { SpawnOptionsWithoutStdio } from "node:child_process";
+
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -5,11 +7,12 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import {
+  type AcpSessionSpawner,
   discoverAcpSessionModels,
   parseAcpSessionModels,
   runAcpHandshake,
-  type AcpSessionSpawner,
 } from "../../../src/commands/generator/discovery-acp-session.js";
+import { expectAsyncThrow } from "../_helpers.js";
 
 interface RpcMessage {
   jsonrpc: "2.0";
@@ -188,20 +191,21 @@ describe("ACP session model discovery", () => {
     // eslint-disable-next-line no-console -- the test captures required info-level lifecycle logs.
     const originalInfo = console.info;
     // eslint-disable-next-line no-console -- the test captures required info-level lifecycle logs.
-    console.info = (...args: unknown[]) => {
+    console.info = (...args: unknown[]): void => {
       infoCalls.push(args);
     };
     const startedAt = performance.now();
 
     try {
-      await expect(
+      await expectAsyncThrow(
         runAcpHandshake({
           command: "fixture-acp",
           args: [],
           spawn: spawnChild(child),
           timeoutMs: 20,
         }),
-      ).rejects.toThrow("session/new timed out after 20ms");
+        "session/new timed out after 20ms",
+      );
     } finally {
       // eslint-disable-next-line no-console -- restore the captured info logger.
       console.info = originalInfo;
@@ -223,10 +227,15 @@ describe("ACP session model discovery", () => {
     process.env.PENUMBRA_ACP_DISCOVERY_KEEP = "keep-me";
     const child = handshakeChild();
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
-    const spawn: AcpSessionSpawner = mock((_command, _args, options) => {
+    const implementation: AcpSessionSpawner = (
+      _command: string,
+      _args: readonly string[],
+      options: SpawnOptionsWithoutStdio,
+    ) => {
       spawnedEnv = options.env;
       return child as unknown as ReturnType<AcpSessionSpawner>;
-    });
+    };
+    const spawn: AcpSessionSpawner = mock<AcpSessionSpawner>(implementation);
 
     await runAcpHandshake({
       command: "fixture-acp",
@@ -244,10 +253,15 @@ describe("ACP session model discovery", () => {
     process.env.PENUMBRA_ACP_DISCOVERY_KEEP = "keep-me";
     const child = handshakeChild();
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
-    const spawn: AcpSessionSpawner = mock((_command, _args, options) => {
+    const implementation: AcpSessionSpawner = (
+      _command: string,
+      _args: readonly string[],
+      options: SpawnOptionsWithoutStdio,
+    ) => {
       spawnedEnv = options.env;
       return child as unknown as ReturnType<AcpSessionSpawner>;
-    });
+    };
+    const spawn: AcpSessionSpawner = mock<AcpSessionSpawner>(implementation);
 
     await runAcpHandshake({
       command: "fixture-acp",

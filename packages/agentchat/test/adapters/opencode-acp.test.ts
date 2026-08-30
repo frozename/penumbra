@@ -103,8 +103,9 @@ async function* yieldEvents(events: readonly unknown[]): AsyncGenerator<AcpEvent
 
 async function* neverYieldEvents(): AsyncGenerator<AcpEvent, void, undefined> {
   await new Promise<void>(() => {
-    /* intentionally never resolves */
+    void 0;
   });
+  yield* [] as AcpEvent[];
 }
 
 interface ClientMock extends AcpClientLike {

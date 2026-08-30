@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import aaLiveSample from "./fixtures/aa-live-sample.json";
 
 import {
   AaModelSchema,
   AaModelSnapshotSchema,
   HarnessContextSchema,
+  type RoutingDecision,
   RoutingDecisionSchema,
+  type TaskProfile,
   TaskProfileSchema,
 } from "../../src/routing/schemas.js";
+import aaLiveSample from "./fixtures/aa-live-sample.json";
 
-function validTaskProfile() {
+function validTaskProfile(): TaskProfile {
   return {
     schemaVersion: "1",
     taskTypes: ["coding", "debugging"],
@@ -33,7 +35,7 @@ function validTaskProfile() {
   };
 }
 
-function validRoutingDecision() {
+function validRoutingDecision(): RoutingDecision {
   return {
     selected: {
       agent: "codex-acp-fast",
@@ -119,11 +121,13 @@ describe("routing domain schemas", () => {
   });
 
   test("RoutingDecisionSchema rejects unknown nested object keys", () => {
+    const valid = validRoutingDecision();
+    if (!valid.selected) throw new Error("fixture must select an agent");
     expect(
       RoutingDecisionSchema.safeParse({
-        ...validRoutingDecision(),
+        ...valid,
         selected: {
-          ...validRoutingDecision().selected,
+          ...valid.selected,
           injectedDirective: "x",
         },
       }).success,

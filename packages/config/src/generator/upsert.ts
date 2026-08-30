@@ -1,4 +1,4 @@
-import { CARRIER_TOOL_OPTION_KEYS, type AgentConfig } from "../files/agents.js";
+import { type AgentConfig, CARRIER_TOOL_OPTION_KEYS } from "../files/agents.js";
 
 /**
  * Shared managed-fields upsert discipline for config generators (llamactl
@@ -66,7 +66,7 @@ function deletePath(obj: Record<string, unknown>, path: string): void {
     cur[key] = clone;
     cur = clone;
   }
-  delete cur[last];
+  Reflect.deleteProperty(cur, last);
 }
 
 function formerlyManagedCarrierToolOptionPaths(

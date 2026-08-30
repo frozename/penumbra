@@ -93,46 +93,63 @@ export const QuotasConfigSchema = z
   })
   .strict()
   .superRefine((data, ctx) => {
-    // Quota rows are keyed downstream by the COMPOSITE (name, model) — see
-    // packages/daemon/src/maestro/build-provider-caps.ts. A provider-level entry
-    // (no model) is a distinct key from any model-scoped entry. Only entries
-    // sharing BOTH name AND model (including both-model-absent) collide.
-    const seen = new Map<string, number>();
-    const maxInFlightByProvider = new Map<string, number>();
-    for (const [i, entry] of data.providers.entries()) {
-      const key = JSON.stringify([entry.name, entry.model ?? null]);
-      const first = seen.get(key);
-      if (first !== undefined) {
-        const modelDesc = entry.model ? ` model '${entry.model}'` : " (no model)";
-        ctx.addIssue({
-          code: "custom",
-          path: ["providers", i],
-          message: `duplicate provider '${entry.name}'${modelDesc} (also at providers[${String(first)}]); quota rows are keyed by (name, model), so the later entry would silently drop one quota config`,
-        });
-      } else {
-        seen.set(key, i);
-      }
-
-      if (entry.max_in_flight !== undefined) {
-        if (entry.model !== undefined) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["providers", i],
-            message: `provider '${entry.name}' model '${entry.model}' cannot define max_in_flight; max_in_flight is provider-wide and must be configured on the provider-level row`,
-          });
-        }
-
-        const firstMaxInFlight = maxInFlightByProvider.get(entry.name);
-        if (firstMaxInFlight !== undefined) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["providers", i],
-            message: `provider '${entry.name}' defines max_in_flight more than once (also at providers[${String(firstMaxInFlight)}]); max_in_flight is provider-wide and only one row per provider may define it`,
-          });
-        } else {
-          maxInFlightByProvider.set(entry.name, i);
-        }
-      }
-    }
+    validateQuotaProviders(data.providers, ctx);
   });
 export type QuotasConfig = z.infer<typeof QuotasConfigSchema>;
+
+type QuotaRefineContext = z.RefinementCtx<{ providers: ProviderQuotaConfig[] }>;
+
+function validateQuotaProviders(providers: ProviderQuotaConfig[], ctx: QuotaRefineContext): void {
+  const seen = new Map<string, number>();
+  const maxInFlightByProvider = new Map<string, number>();
+  for (const [index, entry] of providers.entries()) {
+    validateDuplicateProvider(entry, index, seen, ctx);
+    validateMaxInFlight(entry, index, maxInFlightByProvider, ctx);
+  }
+}
+
+function validateDuplicateProvider(
+  entry: ProviderQuotaConfig,
+  index: number,
+  seen: Map<string, number>,
+  ctx: QuotaRefineContext,
+): void {
+  const key = JSON.stringify([entry.name, entry.model ?? null]);
+  const first = seen.get(key);
+  if (first === undefined) {
+    seen.set(key, index);
+    return;
+  }
+  const modelDesc = entry.model ? ` model '${entry.model}'` : " (no model)";
+  ctx.addIssue({
+    code: "custom",
+    path: ["providers", index],
+    message: `duplicate provider '${entry.name}'${modelDesc} (also at providers[${String(first)}]); quota rows are keyed by (name, model), so the later entry would silently drop one quota config`,
+  });
+}
+
+function validateMaxInFlight(
+  entry: ProviderQuotaConfig,
+  index: number,
+  firstByProvider: Map<string, number>,
+  ctx: QuotaRefineContext,
+): void {
+  if (entry.max_in_flight === undefined) return;
+  if (entry.model !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["providers", index],
+      message: `provider '${entry.name}' model '${entry.model}' cannot define max_in_flight; max_in_flight is provider-wide and must be configured on the provider-level row`,
+    });
+  }
+  const first = firstByProvider.get(entry.name);
+  if (first === undefined) {
+    firstByProvider.set(entry.name, index);
+    return;
+  }
+  ctx.addIssue({
+    code: "custom",
+    path: ["providers", index],
+    message: `provider '${entry.name}' defines max_in_flight more than once (also at providers[${String(first)}]); max_in_flight is provider-wide and only one row per provider may define it`,
+  });
+}

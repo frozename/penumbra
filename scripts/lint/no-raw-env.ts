@@ -11,7 +11,7 @@ const PATTERNS = [/\bprocess\.env\.PENUMBRA_[A-Z0-9_]+\b/g, /\bBun\.env\.PENUMBR
 
 function matchesGlob(path: string, glob: string): boolean {
   const escaped = glob.replaceAll(/[.+^${}()|[\]\\]/g, "\\$&");
-  const expanded = escaped.replace(/\*\*\/|\*\*|\*/g, (token) => {
+  const expanded = escaped.replaceAll(/\*\*\/|\*\*|\*/g, (token) => {
     if (token === "**/") return "(?:.*\\/)?";
     if (token === "**") return ".*";
     return "[^/]*";

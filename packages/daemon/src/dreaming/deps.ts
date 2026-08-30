@@ -6,14 +6,14 @@ import { randomUUID } from "node:crypto";
 import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps, ProjectRegistryEntry } from "./cycle.js";
 
-import { isAnyProviderOverPressure } from "../pressure.js";
-import { createResearchAdapter } from "../research/firecrawl-adapter.js";
 import {
-  resolveRoleLlmCandidates,
   type LlmCandidate,
+  resolveRoleLlmCandidates,
   tryResolveLlmProvider,
 } from "../../../core/src/services/llm-candidates.js";
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
+import { isAnyProviderOverPressure } from "../pressure.js";
+import { createResearchAdapter } from "../research/firecrawl-adapter.js";
 import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";

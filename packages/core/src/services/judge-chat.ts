@@ -6,11 +6,11 @@ import {
   type LlmCandidate,
   type LlmRoutingBias,
   type LlmServingCandidate,
+  type ResolvedLlmCandidate,
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
   resolveLlmCandidates,
   resolveLlmProvider,
-  type ResolvedLlmCandidate,
 } from "./llm-candidates.js";
 
 export type JudgeChatFn = (opts: {
@@ -80,7 +80,11 @@ export function createJudgeChat(opts: {
         try {
           return {
             ok: true as const,
-            value: await invokeJudgeCandidate(candidate, chatOpts.messages),
+            value: await invokeJudgeCandidate(candidate, chatOpts.messages, {
+              timeoutMs,
+              fetchFn: opts.fetchFn,
+              resolveKeychain: opts.resolveKeychain,
+            }),
           };
         } catch (error) {
           const normalized = error instanceof Error ? error : new Error(String(error));
@@ -107,56 +111,61 @@ export function createJudgeChat(opts: {
         .map((failure) => `${failure.candidate.name}: ${failure.error.message}`)
         .join("; ")}`,
     );
-
-    async function invokeJudgeCandidate(
-      candidate: ResolvedLlmCandidate,
-      messages: { role: string; content: string }[],
-    ): Promise<string> {
-      const controller = new AbortController();
-      const timer = setTimeout(() => {
-        controller.abort();
-      }, timeoutMs);
-      let res: Response;
-      try {
-        const headers: Record<string, string> = {
-          "content-type": "application/json",
-        };
-        const token = resolveLlmAuthorization(candidate, opts.resolveKeychain);
-        if (token) headers.authorization = `Bearer ${token}`;
-        res = await (opts.fetchFn ?? globalThis.fetch)(buildChatCompletionsUrl(candidate.baseUrl), {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model: candidate.model,
-            messages,
-          }),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        if (controller.signal.aborted) {
-          throw new Error(`judge chat: timed out after ${String(timeoutMs)}ms`);
-        }
-        throw err;
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!res.ok) {
-        const error = new Error(`judge chat: HTTP ${String(res.status)}`) as Error & {
-          status?: number;
-        };
-        error.status = res.status;
-        throw error;
-      }
-      const body = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || content.trim().length === 0) {
-        throw new Error("judge chat: empty response");
-      }
-      return content;
-    }
   };
+}
+
+async function invokeJudgeCandidate(
+  candidate: ResolvedLlmCandidate,
+  messages: { role: string; content: string }[],
+  opts: {
+    timeoutMs: number;
+    fetchFn?: typeof fetch;
+    resolveKeychain?: ResolveKeychainSecret;
+  },
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, opts.timeoutMs);
+  let res: Response;
+  try {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    const token = resolveLlmAuthorization(candidate, opts.resolveKeychain);
+    if (token) headers.authorization = `Bearer ${token}`;
+    res = await (opts.fetchFn ?? globalThis.fetch)(buildChatCompletionsUrl(candidate.baseUrl), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: candidate.model,
+        messages,
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`judge chat: timed out after ${String(opts.timeoutMs)}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const error = new Error(`judge chat: HTTP ${String(res.status)}`) as Error & {
+      status?: number;
+    };
+    error.status = res.status;
+    throw error;
+  }
+  const body = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const content = body.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || content.trim().length === 0) {
+    throw new Error("judge chat: empty response");
+  }
+  return content;
 }
 
 const DEFAULT_JUDGE_BASE_URL = "http://127.0.0.1:7944";

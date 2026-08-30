@@ -53,6 +53,37 @@ function parseSseFrame(frame: string): ParsedSseFrame | null {
   return { eventName, lastEventId, data: dataLines.join("\n") };
 }
 
+async function consumePermissionBody(
+  body: ReadableStream<Uint8Array>,
+  isStopped: () => boolean,
+  onReconnect: () => void,
+  onChunk: (chunk: string) => void,
+  resetBackoff: () => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  onReconnect();
+  try {
+    while (!isStopped()) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resetBackoff();
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split("\n\n");
+      buf = frames.pop() ?? "";
+      for (const frame of frames) onChunk(frame);
+    }
+  } finally {
+    reader.releaseLock();
+    try {
+      await body.cancel();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
 /**
  * SSE consumer for `/permissions/events`. Native EventSource (browser API +
  * bun's global) doesn't support custom headers, so the daemon's bearer auth
@@ -103,35 +134,6 @@ export function createPermissionEventSource(
 
   const isStopped = (): boolean => closed || controller.signal.aborted;
 
-  const consumeBody = async (body: ReadableStream<Uint8Array>): Promise<void> => {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    fireReconnectListeners();
-    try {
-      while (!isStopped()) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-        backoffMs = backoffStartMs;
-        buf += decoder.decode(value, { stream: true });
-        const frames = buf.split("\n\n");
-        buf = frames.pop() ?? "";
-        for (const frame of frames) {
-          handleFrame(frame);
-        }
-      }
-    } finally {
-      reader.releaseLock();
-      try {
-        await body.cancel();
-      } catch {
-        /* noop */
-      }
-    }
-  };
-
   const cancellableSleep = async (ms: number): Promise<void> => {
     if (controller.signal.aborted) return;
     await new Promise<void>((resolve) => {
@@ -166,7 +168,15 @@ export function createPermissionEventSource(
         if (!res.ok || !res.body) {
           throw new Error(`permissions SSE HTTP ${String(res.status)}`);
         }
-        await consumeBody(res.body);
+        await consumePermissionBody(
+          res.body,
+          isStopped,
+          fireReconnectListeners,
+          handleFrame,
+          () => {
+            backoffMs = backoffStartMs;
+          },
+        );
       } catch (err) {
         if (isStopped()) {
           return;
