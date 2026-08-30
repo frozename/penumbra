@@ -8,8 +8,8 @@ import {
   reloadAgentChatConfigSubsystem,
   reloadExtraWorkersSubsystem,
   reloadLongLivedReactorSubsystem,
-  reloadTaskRouterConfigSubsystem,
   type ReloadSubsystemStatus,
+  reloadTaskRouterConfigSubsystem,
   reloadWorkflowAndProjectRegistrySubsystem,
 } from "./reload-config-orchestrators.js";
 

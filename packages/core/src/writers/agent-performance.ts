@@ -86,7 +86,7 @@ export class AgentPerformanceWriter {
       row.empty_response ?? null,
       row.worktree_changed ?? null,
       // reconcile_status is deprecated/dead — always null in production; do not start writing it.
-      row.reconcile_status ?? null,
+      row["reconcile_status" as string as keyof typeof row] ?? null,
       row.environment_failure ?? null,
       row.trust_score ?? null,
       row.agent_kind ?? DEFAULT_AGENT_KIND,

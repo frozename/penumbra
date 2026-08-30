@@ -38,9 +38,9 @@ describe("llamactl inventory", () => {
         return kubeconfig;
       },
       exists: (path) => path === join("/dev-storage", "config"),
-      fetch: async (url, init) => {
+      fetch: (url, init) => {
         expect(init?.signal).toBeDefined();
-        if (String(url) === "http://127.0.0.1:7944/v1/models") {
+        if (url === "http://127.0.0.1:7944/v1/models") {
           return new Response(
             JSON.stringify({
               data: [
@@ -55,16 +55,16 @@ describe("llamactl inventory", () => {
             }),
           );
         }
-        if (String(url) === "https://mac-mini.local:7945/v1/fleet/snapshot") {
+        if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
           expect(init?.headers).toEqual({
             authorization: "Bearer ll_agt_secret",
           });
           expect(init?.tls).toEqual({ ca: "CERT" });
           return new Response(JSON.stringify({ ok: true }));
         }
-        throw new Error(`unexpected url ${String(url)}`);
+        throw new Error(`unexpected url ${url}`);
       },
-      execFile: async () => ({ ok: false, stdout: "", stderr: "missing" }),
+      execFile: () => ({ ok: false, stdout: "", stderr: "missing" }),
     });
 
     expect(inventory.status).toBe("ok");
@@ -92,10 +92,10 @@ describe("llamactl inventory", () => {
       readFile: () => {
         throw new Error("should not read");
       },
-      fetch: async () => {
+      fetch: () => {
         throw new Error("down");
       },
-      execFile: async () => {
+      execFile: () => {
         throw new Error("missing llamactl");
       },
     });
@@ -114,9 +114,9 @@ describe("llamactl inventory", () => {
         return kubeconfig;
       },
       exists: (path) => path === join("/dev-storage", "config"),
-      fetch: async (url, init) => {
+      fetch: (url, init) => {
         expect(init?.signal).toBeDefined();
-        if (String(url) === "http://127.0.0.1:7944/v1/models") {
+        if (url === "http://127.0.0.1:7944/v1/models") {
           return new Response(
             JSON.stringify({
               data: [
@@ -142,12 +142,12 @@ describe("llamactl inventory", () => {
             }),
           );
         }
-        if (String(url) === "https://mac-mini.local:7945/v1/fleet/snapshot") {
+        if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
           return new Response(JSON.stringify({ ok: true }));
         }
-        throw new Error(`unexpected url ${String(url)}`);
+        throw new Error(`unexpected url ${url}`);
       },
-      execFile: async () => ({ ok: false, stdout: "", stderr: "missing" }),
+      execFile: () => ({ ok: false, stdout: "", stderr: "missing" }),
     });
 
     expect(inventory.status).toBe("ok");

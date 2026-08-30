@@ -1,16 +1,10 @@
-import {
-  collectLlamactlInventory,
-  resolveDaemonStorageRoot,
-  type LlamactlInventory,
-  type LlamactlModelInventory,
-} from "../../../core/src/index.js";
-import {
-  AgentsConfigSchema,
-  type AgentConfig,
-  type AgentsConfig,
-  type RoutingConfig,
-  RoutingConfigSchema,
-} from "../../../config/src/index.js";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import YAML from "yaml";
+
+import { assertDiscoveryNotSuspiciouslyEmpty } from "../../../config/src/generator/empty-discovery.js";
+import { assertPruneSafe } from "../../../config/src/generator/routing-refs.js";
 // Deep-relative: node_modules/@penumbra/config in this worktree symlinks to the
 // pre-change checkout, so the package specifier would not resolve this new export.
 // Resolves to the same file as @penumbra/config post-land.
@@ -19,13 +13,19 @@ import {
   pruneOwnedOnly,
   upsertManagedFields,
 } from "../../../config/src/generator/upsert.js";
-import { assertPruneSafe } from "../../../config/src/generator/routing-refs.js";
-import { assertDiscoveryNotSuspiciouslyEmpty } from "../../../config/src/generator/empty-discovery.js";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import YAML from "yaml";
-
+import {
+  type AgentConfig,
+  type AgentsConfig,
+  AgentsConfigSchema,
+  type RoutingConfig,
+  RoutingConfigSchema,
+} from "../../../config/src/index.js";
+import {
+  collectLlamactlInventory,
+  type LlamactlInventory,
+  type LlamactlModelInventory,
+  resolveDaemonStorageRoot,
+} from "../../../core/src/index.js";
 import { executeConfigSplitWrite } from "./config-split.js";
 
 const PROVENANCE_SOURCE = "llamactl-sync-local";
@@ -67,8 +67,8 @@ function resolveConfigDir(env: Record<string, string | undefined>): string {
 function slugifySeatPart(value: string): string {
   return stripModelFileExtension(value)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
     .slice(0, 80);
 }
 
@@ -198,7 +198,7 @@ function buildSyncedAgentsConfig(
 ): { config: AgentsConfig; upserts: string[]; prunes: string[]; pruneSkipped: boolean } {
   const handAuthoredModels = new Set(
     current.agents.flatMap((agent) => {
-      const model = agent.options?.model;
+      const model = agent.options.model;
       if (typeof model !== "string") return [];
       return isGeneratorOwned(agent, PROVENANCE_SOURCE) ? [] : [model];
     }),
@@ -267,9 +267,10 @@ async function defaultReloadConfig(storageRoot: string): Promise<unknown> {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!response.ok) return { skipped: `daemon reload returned HTTP ${String(response.status)}` };
-  return response.json();
+  return await response.json();
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing config-sync orchestration while grandfathering its pre-existing complexity.
 export async function runConfigSyncLocal(
   opts: RunConfigSyncLocalOpts = {},
 ): Promise<ConfigSyncLocalResult> {
@@ -278,7 +279,7 @@ export async function runConfigSyncLocal(
   const env = opts.env ?? process.env;
   const configDir = opts.configDir ?? resolveConfigDir(env);
   const validateAgentsConfig =
-    opts.validateAgentsConfig ?? ((value) => AgentsConfigSchema.parse(value));
+    opts.validateAgentsConfig ?? ((value): AgentsConfig => AgentsConfigSchema.parse(value));
   const dryRun = opts.dryRun === true || opts.apply !== true;
 
   let current: AgentsConfig;
@@ -292,7 +293,9 @@ export async function runConfigSyncLocal(
     return { exitCode: 1, stdout, stderr };
   }
 
-  const inventory = await (opts.inventory ?? (() => collectLlamactlInventory({ env })))();
+  const inventory = await (
+    opts.inventory ?? ((): Promise<LlamactlInventory> => collectLlamactlInventory({ env }))
+  )();
   if (inventory.messages.length > 0) stdout.push(...inventory.messages);
   if (inventory.models.length === 0) {
     try {
@@ -357,7 +360,7 @@ export async function runConfigSyncLocal(
   try {
     const reload = await (
       opts.reloadConfig ??
-      (() =>
+      ((): Promise<unknown> =>
         defaultReloadConfig(
           resolveDaemonStorageRoot({ explicit: opts.storageRoot ?? env.PENUMBRA_STORAGE_ROOT }),
         ))

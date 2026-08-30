@@ -1,9 +1,9 @@
-import { inferAgentTaskTypeForRole, type AgentTaskType } from "../schemas/agent-performance.js";
+import { type AgentTaskType, inferAgentTaskTypeForRole } from "../schemas/agent-performance.js";
 import {
-  RoutingTaskTypeSchema,
-  TaskProfileSchema,
   type RoutingTaskType,
+  RoutingTaskTypeSchema,
   type TaskProfile,
+  TaskProfileSchema,
 } from "./schemas.js";
 
 export interface TaskProfileHints {
@@ -124,17 +124,22 @@ function deriveTaskTypes(
       break;
   }
 
-  if (matched.coding) selected.add("coding");
-  if (matched.debugging) selected.add("debugging");
-  if (matched.review) selected.add("code_review");
-  if (matched.architecture) selected.add("architecture");
-  if (matched.agentic) selected.add("agentic");
-  if (matched.research) selected.add("research");
-  if (matched.analysis) selected.add("analysis");
-  if (matched.writing) selected.add("writing");
-  if (matched.summarization) selected.add("summarization");
-  if (matched.multimodal) selected.add("multimodal");
-  if (matched.toolUse) selected.add("tool_use");
+  const signalTypes: [keyof typeof matched, RoutingTaskType][] = [
+    ["coding", "coding"],
+    ["debugging", "debugging"],
+    ["review", "code_review"],
+    ["architecture", "architecture"],
+    ["agentic", "agentic"],
+    ["research", "research"],
+    ["analysis", "analysis"],
+    ["writing", "writing"],
+    ["summarization", "summarization"],
+    ["multimodal", "multimodal"],
+    ["toolUse", "tool_use"],
+  ];
+  for (const [signal, taskType] of signalTypes) {
+    if (matched[signal]) selected.add(taskType);
+  }
   if (selected.size === 0) selected.add("other");
 
   return TASK_TYPE_ORDER.filter((taskType) => selected.has(taskType));
@@ -159,6 +164,18 @@ function deriveAxes(
   };
 
   applyLegacyTaskTypeAxes(axes, legacyTaskType);
+  applySignalAxes(axes, matched, legacyTaskType);
+
+  const hasSpecificSignal = countSpecificSignals(matched) > 0 || legacyTaskType !== "unknown";
+  axes.ambiguity = matched.vague || !hasSpecificSignal ? 0.82 : message.length < 30 ? 0.55 : 0.25;
+  return mapAxes(axes, round);
+}
+
+function applySignalAxes(
+  axes: DemandAxes,
+  matched: ReturnType<typeof matchSignals>,
+  legacyTaskType: AgentTaskType,
+): void {
   if (matched.coding) axes.codingDemand = Math.max(axes.codingDemand, 0.78);
   if (matched.debugging) {
     axes.reasoningDemand = Math.max(axes.reasoningDemand, 0.72);
@@ -180,27 +197,29 @@ function deriveAxes(
     axes.risk = 0.82;
     axes.reliabilityDemand = Math.max(axes.reliabilityDemand, 0.9);
   }
-  if (matched.repoWide) {
-    axes.complexity = 0.9;
-    axes.contextDemand = 0.88;
-    axes.reliabilityDemand = Math.max(axes.reliabilityDemand, 0.85);
-    if (matched.coding || legacyTaskType.startsWith("implement_")) {
-      axes.codingDemand = 0.95;
-    }
-  }
-  if (matched.small && !matched.repoWide) {
-    axes.complexity = 0.18;
-    axes.risk = matched.risk ? axes.risk : 0.1;
-    axes.contextDemand = 0.15;
-    axes.reasoningDemand = Math.min(axes.reasoningDemand, 0.3);
-    axes.agenticDemand = Math.min(axes.agenticDemand, 0.15);
-    axes.latencySensitivity = 0.9;
-    axes.costSensitivity = 0.9;
-  }
+  if (matched.repoWide) applyRepoWideAxes(axes, matched, legacyTaskType);
+  if (matched.small && !matched.repoWide) applySmallTaskAxes(axes, matched);
+}
 
-  const hasSpecificSignal = countSpecificSignals(matched) > 0 || legacyTaskType !== "unknown";
-  axes.ambiguity = matched.vague || !hasSpecificSignal ? 0.82 : message.length < 30 ? 0.55 : 0.25;
-  return mapAxes(axes, round);
+function applyRepoWideAxes(
+  axes: DemandAxes,
+  matched: ReturnType<typeof matchSignals>,
+  legacyTaskType: AgentTaskType,
+): void {
+  axes.complexity = 0.9;
+  axes.contextDemand = 0.88;
+  axes.reliabilityDemand = Math.max(axes.reliabilityDemand, 0.85);
+  if (matched.coding || legacyTaskType.startsWith("implement_")) axes.codingDemand = 0.95;
+}
+
+function applySmallTaskAxes(axes: DemandAxes, matched: ReturnType<typeof matchSignals>): void {
+  axes.complexity = 0.18;
+  axes.risk = matched.risk ? axes.risk : 0.1;
+  axes.contextDemand = 0.15;
+  axes.reasoningDemand = Math.min(axes.reasoningDemand, 0.3);
+  axes.agenticDemand = Math.min(axes.agenticDemand, 0.15);
+  axes.latencySensitivity = 0.9;
+  axes.costSensitivity = 0.9;
 }
 
 function applyLegacyTaskTypeAxes(axes: DemandAxes, taskType: AgentTaskType): void {

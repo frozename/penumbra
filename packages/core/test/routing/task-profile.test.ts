@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { TaskProfileSchema } from "../../src/routing/schemas.js";
 import { profileTaskDeterministic } from "../../src/routing/task-profile.js";
 
-const fixtures = [
+const fixtures: { name: string; message: string; role: string }[] = [
   {
     name: "repo-wide implementation",
     message:
@@ -84,7 +84,7 @@ describe("profileTaskDeterministic", () => {
   test("output validates against TaskProfileSchema for every fixture", () => {
     for (const fixture of fixtures) {
       const profile = profileTaskDeterministic(fixture.message, fixture.role);
-      expect(TaskProfileSchema.safeParse(profile).success, fixture.name).toBe(true);
+      expect(TaskProfileSchema.safeParse(profile).success).toBe(true);
     }
   });
 

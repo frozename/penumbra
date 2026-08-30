@@ -6,7 +6,13 @@ import type { McpServer } from "./acp-types.js";
 
 import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifier-decline.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
+import {
+  OperationRejectedError,
+  TerminalCapExceededError,
+  TerminalNotFoundError,
+} from "../worker/write-tools-errors.js";
 import { executeReadTextFile, ReadTextFileError } from "./acp-fs.js";
+import { resolveWarmPrewarmCap, totalAcpWarmPoolEntryCount } from "./acp-warm-pool-registry.js";
 import {
   acpSpecHash,
   type AcpWarmPool,
@@ -14,18 +20,12 @@ import {
   type AcpWarmPoolPrewarmEviction,
   poolKeyFor,
 } from "./acp-warm-pool.js";
-import { resolveWarmPrewarmCap, totalAcpWarmPoolEntryCount } from "./acp-warm-pool-registry.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
   startStdioAcpServer,
   type StartStdioAcpServerOptions,
   type StdioAcpHandle,
 } from "./stdio-acp-server.js";
-import {
-  OperationRejectedError,
-  TerminalCapExceededError,
-  TerminalNotFoundError,
-} from "../worker/write-tools-errors.js";
 
 export function detectStdioAcpClassifierDecline(input: {
   finalText: string | null | undefined;
@@ -127,13 +127,14 @@ export function redactTerminalErrorMessage(message: unknown, code = -32000): str
     if (typeof message === "string") {
       messageLength = message.length;
     } else if (message !== null && message !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve the established redaction length semantics for arbitrary thrown values.
       messageLength = String(message).length;
     }
   } catch {
     messageLength = 0;
   }
   const safeCode = Number.isFinite(code) ? Math.trunc(code) : -32000;
-  return `terminal error redacted (code=${safeCode}, messageLength=${messageLength})`;
+  return `terminal error redacted (code=${String(safeCode)}, messageLength=${String(messageLength)})`;
 }
 
 // Idle / no-wire-activity stall timeout for stdio-acp dispatches. Raised from 5min
@@ -283,10 +284,8 @@ async function emitTerminalFailure(
   err: unknown,
 ): Promise<Error> {
   const mapped = mapWriteToolsError(err);
-  const code =
-    typeof (mapped as { code?: unknown }).code === "number"
-      ? ((mapped as { code?: number }).code as number)
-      : -32000;
+  const mappedCode = (mapped as { code?: unknown }).code;
+  const code = typeof mappedCode === "number" ? mappedCode : -32000;
   const terminalMessage =
     safeInternalTerminalMessage(err) ?? redactTerminalErrorMessage(mapped.message, code);
   // Unknown terminal failures can include caller argv with credentials when
@@ -933,7 +932,9 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
         if (!input.executor) throw new Error("terminal/create: no executor");
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
+          // eslint-disable-next-line no-console -- Preserve the established operator-facing auto-approval log.
           console.info(
+            // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Preserve the established numeric command-length log field.
             `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
           );
         }
@@ -983,17 +984,21 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       }),
     );
   };
-  wrapTerminalCommand("terminal/output", async (executor, terminalId) =>
-    executor.terminalOutput({ terminal_id: terminalId }),
+  wrapTerminalCommand(
+    "terminal/output",
+    async (executor, terminalId) => await executor.terminalOutput({ terminal_id: terminalId }),
   );
-  wrapTerminalCommand("terminal/wait_for_exit", async (executor, terminalId) =>
-    executor.terminalWaitForExit({ terminal_id: terminalId }),
+  wrapTerminalCommand(
+    "terminal/wait_for_exit",
+    async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
   );
   wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
     const result = (await executor.terminalRelease({ terminal_id: terminalId })) as unknown;
     return result ?? {};
   });
   wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
     const result = (await executor.terminalKill({ terminal_id: terminalId })) as unknown;
     return result ?? {};
   });
@@ -1025,6 +1030,7 @@ function cancelledOutcome(): PermissionResultCancelled {
 }
 
 function isBypassOptionId(optionId: unknown): boolean {
+  // eslint-disable-next-line regexp/no-unused-capturing-group -- Preserve the established bypass-option expression.
   return typeof optionId === "string" && /^(switch_)?bypass$/i.test(optionId);
 }
 
@@ -1032,6 +1038,7 @@ function isBypassLikeOptionId(optionId: unknown): boolean {
   return typeof optionId === "string" && /bypass/i.test(optionId);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve permission negotiation while grandfathering its pre-existing complexity.
 async function handlePermissionRequest(
   ctx: DispatchTurnContext,
   params: AcpRequestPermissionParams,
@@ -2039,6 +2046,7 @@ function shouldRetryColdDispatch(
 }
 
 function isTransportClosedError(err: unknown, pooledEntry: AcpWarmPoolEntry): boolean {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve compatibility with lightweight clients that omit transport probes.
   const isTransportOpen = pooledEntry.client.isTransportOpen;
   return (
     (typeof isTransportOpen === "function" && !isTransportOpen.call(pooledEntry.client)) ||

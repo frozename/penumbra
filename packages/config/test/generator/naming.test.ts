@@ -35,67 +35,67 @@ describe("seatNameFor", () => {
 
 describe("assertNoRoleTagCollision", () => {
   it("rejects a generated seat name identical to a live role tag", () => {
-    expect(() =>
-      assertNoRoleTagCollision(["codex-gpt-5-5-high", "reviewer"], ["executor", "reviewer"]),
-    ).toThrow(/reviewer/);
+    expect(() => {
+      assertNoRoleTagCollision(["codex-gpt-5-5-high", "reviewer"], ["executor", "reviewer"]);
+    }).toThrow(/reviewer/);
   });
 
   it("does not throw when no generated name collides with a role tag", () => {
-    expect(() =>
+    expect(() => {
       assertNoRoleTagCollision(
         ["codex-gpt-5-5-high", "sakana-fugu-base"],
         ["executor", "reviewer"],
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   it("aggregates every colliding name into a single thrown error", () => {
-    expect(() =>
+    expect(() => {
       assertNoRoleTagCollision(
         ["executor", "reviewer", "codex-gpt-5-5-high"],
         ["executor", "reviewer"],
-      ),
-    ).toThrow(/executor.*reviewer|reviewer.*executor/s);
+      );
+    }).toThrow(/executor.*reviewer|reviewer.*executor/s);
   });
 });
 
 describe("assertUniqueSeatNames", () => {
   it("throws when two different raw inputs normalize to the same seat name (gpt-5.5 vs gpt-5-5)", () => {
-    expect(() =>
+    expect(() => {
       assertUniqueSeatNames([
         { source: "codex", modelSlug: "gpt-5.5" },
         { source: "codex", modelSlug: "gpt-5-5" },
-      ]),
-    ).toThrow(/codex-gpt-5-5/);
+      ]);
+    }).toThrow(/codex-gpt-5-5/);
   });
 
   it("does not throw when every generated seat name is unique", () => {
-    expect(() =>
+    expect(() => {
       assertUniqueSeatNames([
         { source: "codex", modelSlug: "gpt-5.5" },
         { source: "sakana", modelSlug: "fugu-base" },
         { source: "codex", modelSlug: "gpt-5.5", effort: "high" },
-      ]),
-    ).not.toThrow();
+      ]);
+    }).not.toThrow();
   });
 
   it("aggregates multiple distinct collision groups into a single thrown error", () => {
-    expect(() =>
+    expect(() => {
       assertUniqueSeatNames([
         { source: "codex", modelSlug: "gpt-5.5" },
         { source: "codex", modelSlug: "gpt-5-5" },
         { source: "vendor", modelSlug: "anthropic/claude" },
         { source: "vendor", modelSlug: "anthropic-claude" },
-      ]),
-    ).toThrow(/codex-gpt-5-5.*vendor-anthropic-claude|vendor-anthropic-claude.*codex-gpt-5-5/s);
+      ]);
+    }).toThrow(/codex-gpt-5-5.*vendor-anthropic-claude|vendor-anthropic-claude.*codex-gpt-5-5/s);
   });
 });
 
 it("assertUniqueSeatNames treats identical duplicate inputs as one logical seat, not a collision", () => {
-  expect(() =>
+  expect(() => {
     assertUniqueSeatNames([
       { source: "codex", modelSlug: "gpt-5.5" },
       { source: "codex", modelSlug: "gpt-5.5" },
-    ]),
-  ).not.toThrow();
+    ]);
+  }).not.toThrow();
 });

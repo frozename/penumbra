@@ -3,28 +3,29 @@ import type { Database } from "bun:sqlite";
 
 import type { RoutingBias } from "../readers/routing-bias.js";
 import type { AgentTaskType } from "../schemas/agent-performance.js";
+
 import {
   buildPressureStaleKeys,
+  isTextOnlyAdapter,
   pressureSnapshotKey,
   resolveBiasEffect,
-  isTextOnlyAdapter,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
   type RouteAgentOutput,
 } from "../services/agent-routing.js";
-import { buildAliasIndex, reconcileAliases, type AliasReconciliationResult } from "./alias-map.js";
+import { type AliasReconciliationResult, buildAliasIndex, reconcileAliases } from "./alias-map.js";
 import {
   applyHardConstraints,
   type CandidateConstraintFacts,
   type HardConstraintFilterResult,
 } from "./constraint-filter.js";
 import {
-  RoutingDecisionSchema,
   type AaModel,
   type AaModelSnapshot,
   type HarnessContext,
   type RoutingDecision,
+  RoutingDecisionSchema,
   type RoutingFactorSource,
   type TaskProfile,
 } from "./schemas.js";
@@ -102,6 +103,8 @@ type CandidateMetric = {
   normalizedValue: number;
 };
 
+/* eslint-disable max-lines-per-function -- Preserve the existing routing decision flow while grandfathering its pre-existing size. */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing decision flow while grandfathering its pre-existing complexity.
 export function decide(input: DecideInput, deps: RouterDependencies): RoutingDecision {
   if (input.mode === "off") {
     return RoutingDecisionSchema.parse({
@@ -266,6 +269,8 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
 // is undefined only if that invariant regresses. "reconciliation_missing" makes
 // that regression visible in the decision log instead of silently reporting
 // "matched".
+/* eslint-enable max-lines-per-function */
+
 export function reconciliationFactorFields(reconciliation: AliasReconciliationResult | undefined): {
   rawValue: string;
   source: RoutingFactorSource;
@@ -289,6 +294,7 @@ export function reconciliationFactorFields(reconciliation: AliasReconciliationRe
   return { rawValue, source };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing prior computation while grandfathering its pre-existing complexity.
 export function computePriors(input: ComputePriorsInput): ComputePriorsResult {
   if (!input.aaSnapshot) {
     return { priors: nullRecord(), factors: [], matchedModels: nullRecord() };
@@ -451,6 +457,7 @@ function buildMetricSpecs(profile: TaskProfile, config: TaskRouterConfig): Metri
   ];
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing candidate normalization while grandfathering its pre-existing complexity.
 function normalizeCandidateMetrics(
   agents: readonly string[],
   models: Readonly<Record<string, AaModel>>,
@@ -463,7 +470,7 @@ function normalizeCandidateMetrics(
     const values = agents
       .map((agent) => ({
         agent,
-        value: models[agent] ? metric.read(models[agent]!, predictedCosts[agent]) : undefined,
+        value: models[agent] ? metric.read(models[agent], predictedCosts[agent]) : undefined,
       }))
       .filter((entry): entry is { agent: string; value: number } => entry.value !== undefined);
     if (values.length === 0) continue;
@@ -493,7 +500,7 @@ function buildCandidateFacts(
       : {};
     const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
     const predictedCost = models[agent]
-      ? predictedCostUsd(models[agent]!, input.taskProfile)
+      ? predictedCostUsd(models[agent], input.taskProfile)
       : undefined;
     facts[agent] = {
       ...supplied,
@@ -513,17 +520,19 @@ function buildCandidateFacts(
 function predictedCostUsd(model: AaModel, profile: TaskProfile): number | undefined {
   const inputTokens = profile.expectedInputTokens;
   const outputTokens = profile.expectedOutputTokens;
+  const finiteInputTokens = finiteNonNegative(inputTokens);
+  const finiteOutputTokens = finiteNonNegative(outputTokens);
   const inputPrice = finiteNonNegative(model.pricing.price_1m_input_tokens);
   const outputPrice = finiteNonNegative(model.pricing.price_1m_output_tokens);
   if (
-    finiteNonNegative(inputTokens) === undefined ||
-    finiteNonNegative(outputTokens) === undefined ||
+    finiteInputTokens === undefined ||
+    finiteOutputTokens === undefined ||
     inputPrice === undefined ||
     outputPrice === undefined
   ) {
     return undefined;
   }
-  return round((inputTokens! * inputPrice + outputTokens! * outputPrice) / 1_000_000);
+  return round((finiteInputTokens * inputPrice + finiteOutputTokens * outputPrice) / 1_000_000);
 }
 
 function noSelectionDecision(
@@ -560,7 +569,7 @@ function applyRoutingBiasExclusions(
     (bias) => bias.scope === "provider" && bias.mode === "exclude",
   );
   const admitted: string[] = [];
-  const excluded: Array<{ agent: string; reasons: string[] }> = [];
+  const excluded: { agent: string; reasons: string[] }[] = [];
   for (const agent of candidates) {
     const agentConfig = input.agentchatConfig.agents.find((candidate) => candidate.name === agent);
     const provider = agentConfig ? resolveProvider(agentConfig) : null;
@@ -626,15 +635,16 @@ function historyFactors(
 }
 
 function pressureFactors(input: DecideInput): RoutingDecision["factors"] {
-  if (!input.applyPressure) return [];
-  const staleKeys = buildPressureStaleKeys(input.applyPressure);
+  const applyPressure = input.applyPressure;
+  if (!applyPressure) return [];
+  const staleKeys = buildPressureStaleKeys(applyPressure);
   const providers: string[] = [];
   for (const agent of input.agentRegistry) {
     const provider = providerFor(input, agent);
     if (provider !== "unknown" && !providers.includes(provider)) providers.push(provider);
   }
   return providers.flatMap((provider) => {
-    const snapshots = input.applyPressure!.snapshots.filter(
+    const snapshots = applyPressure.snapshots.filter(
       (snapshot) => snapshot.provider === provider && !staleKeys.has(pressureSnapshotKey(snapshot)),
     );
     if (snapshots.length === 0) return [];

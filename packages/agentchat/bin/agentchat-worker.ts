@@ -2,7 +2,6 @@
 import type { AgentOptions, AgentPool } from "@penumbra/config";
 
 import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from "@penumbra/core";
-import { fetchServedModels } from "../../core/src/index.js";
 import {
   createLogger,
   type DispatchEventInput,
@@ -20,6 +19,7 @@ import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../s
 import type { UsageReader } from "../src/usage-readers/index.js";
 import type { CapturePort } from "../src/worker/capture-port.js";
 
+import { fetchServedModels } from "../../core/src/index.js";
 import { meaningfulOutput } from "../../core/src/services/agent-performance-capture.js";
 import {
   acpWarmPoolLiveEntryCount,
@@ -40,12 +40,11 @@ import { resolveAdapterApiKey } from "../src/adapters/secret.js";
 import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
 import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
 import { loadConfigPathOrDir } from "../src/config/load.js";
-import { invalidateChangedWarmPools } from "../src/worker/warm-pool-reload.js";
 import { PenumbraClient } from "../src/penumbra-client.js";
+import { AlibabaUsageSynth } from "../src/usage-readers/alibaba-usage-synth.js";
 import { ClaudeJsonlReader } from "../src/usage-readers/claude-jsonl-reader.js";
 import { ClaudeStatusLineBridge } from "../src/usage-readers/claude-statusline-bridge.js";
 import { CodexRolloutReader } from "../src/usage-readers/codex-rollout-reader.js";
-import { AlibabaUsageSynth } from "../src/usage-readers/alibaba-usage-synth.js";
 import { GoogleOtlpSynth } from "../src/usage-readers/google-otlp-synth.js";
 import { loadOpencodeConsoleConfig } from "../src/usage-readers/opencode-console-config.js";
 import { OpenCodeConsoleReader } from "../src/usage-readers/opencode-console-reader.js";
@@ -106,10 +105,10 @@ import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
   buildRetryRoutingMaps,
+  isNonMutatingTaskType,
   retryBranchFields,
   type RoutingBiasLike,
   selectRetryAgent,
-  isNonMutatingTaskType,
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
@@ -117,6 +116,7 @@ import {
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
 import { ThoughtCapture } from "../src/worker/thought-capture.js";
 import { loadThoughtsConfig } from "../src/worker/thought-config.js";
+import { invalidateChangedWarmPools } from "../src/worker/warm-pool-reload.js";
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,

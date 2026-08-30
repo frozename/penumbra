@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { DispatchEventBus, type DispatchEvent } from "../../src/dispatch/event-bus.js";
-import { TaskEventBus, type TaskEvent } from "../../src/tasks/event-bus.js";
+import { type DispatchEvent, DispatchEventBus } from "../../src/dispatch/event-bus.js";
+import { type TaskEvent, TaskEventBus } from "../../src/tasks/event-bus.js";
 
 function taskEvent(id: number): TaskEvent {
   return {
@@ -44,6 +44,7 @@ describe("in-memory event buses", () => {
       for (let i = 0; i < 3; i += 1) {
         const next = await subscriber.next();
         expect(next.done).toBe(false);
+        if (next.done) throw new Error("subscriber ended unexpectedly");
         drained.push(next.value);
       }
 
@@ -74,6 +75,7 @@ describe("in-memory event buses", () => {
       for (let i = 0; i < 3; i += 1) {
         const next = await subscriber.next();
         expect(next.done).toBe(false);
+        if (next.done) throw new Error("subscriber ended unexpectedly");
         drained.push(next.value);
       }
 

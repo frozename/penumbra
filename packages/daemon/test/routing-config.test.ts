@@ -1,9 +1,8 @@
+import { loadModelAliasMapFromDir } from "@penumbra/config";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { loadModelAliasMapFromDir } from "@penumbra/config";
 
 import type { DaemonServices } from "../src/serve.js";
 
@@ -69,7 +68,7 @@ function prepareReload(daemon: TempDaemon, configDir: string): void {
 }
 
 async function reload(daemon: TempDaemon): Promise<Response> {
-  return fetch(`${daemon.url}/agentchat/reload`, {
+  return await fetch(`${daemon.url}/agentchat/reload`, {
     method: "POST",
     headers: { authorization: `Bearer ${daemon.token}` },
   });

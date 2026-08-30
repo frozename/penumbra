@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  createAaSnapshotStore,
   type AaSnapshotStorePayload,
+  createAaSnapshotStore,
 } from "../../src/routing/aa-snapshot-store.js";
 
 function snapshot(id: string, collectedAt = "2026-08-24T10:00:00.000Z"): AaSnapshotStorePayload {
@@ -56,13 +56,14 @@ describe("Artificial Analysis snapshot store", () => {
       });
       await store.write(snapshot("old"));
 
-      const result = await store.refresh(async () => {
+      const result = await store.refresh(() => {
         throw new Error("upstream unavailable");
       });
 
       expect(result.state).toBe("available");
       expect(result.source).toBe("last_known_good");
       expect(result.refreshError?.message).toBe("Artificial Analysis snapshot refresh failed");
+      if (result.state !== "available") throw new Error("expected available snapshot");
       expect(result.snapshot.models[0]?.id).toBe("aa:model:old");
       expect(existsSync(path)).toBe(true);
     } finally {
@@ -82,7 +83,7 @@ describe("Artificial Analysis snapshot store", () => {
         debugLogger: (error) => debugErrors.push(error),
       });
 
-      const result = await store.refresh(async () => {
+      const result = await store.refresh(() => {
         throw new Error("upstream unavailable with secret token");
       });
 
@@ -116,6 +117,7 @@ describe("Artificial Analysis snapshot store", () => {
       expect(result.state).toBe("available");
       expect(result.stale).toBe(true);
       expect(result.ageSeconds).toBe(150);
+      if (result.state !== "available") throw new Error("expected available snapshot");
       expect(result.snapshot.models[0]?.id).toBe("aa:model:old");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -133,7 +135,7 @@ describe("Artificial Analysis snapshot store", () => {
       });
       await store.write(snapshot("old"));
 
-      const refresh = store.refresh(async () => snapshot("new"));
+      const refresh = store.refresh(() => snapshot("new"));
       const reads = await Promise.all(
         Array.from({ length: 50 }, async () => {
           try {
@@ -170,7 +172,7 @@ describe("Artificial Analysis snapshot store", () => {
       );
 
       expect(writes.every((write) => write.status === "fulfilled")).toBe(true);
-      const finalSnapshot = JSON.parse(await readFile(path, "utf8")) as unknown;
+      const finalSnapshot: unknown = JSON.parse(await readFile(path, "utf8")) as unknown;
       expect(finalSnapshot).toHaveProperty("models");
       expect(finalSnapshot).toHaveProperty("provenance");
     } finally {
@@ -197,6 +199,7 @@ describe("Artificial Analysis snapshot store", () => {
       const result = await second.read();
 
       expect(result.state).toBe("available");
+      if (result.state !== "available") throw new Error("expected available snapshot");
       expect(result.snapshot.models[0]?.id).toBe("aa:model:old");
       expect(result.ageSeconds).toBe(600);
     } finally {
@@ -336,12 +339,14 @@ describe("Artificial Analysis snapshot store", () => {
         {
           name: "corrupt-json",
           state: "corrupt",
-          write: (path) => writeFileSync(path, '{"fetchedAtIso":', "utf8"),
+          write: (path): void => {
+            writeFileSync(path, '{"fetchedAtIso":', "utf8");
+          },
         },
         {
           name: "malformed-timestamp",
           state: "corrupt",
-          write: (path) =>
+          write: (path): void => {
             writeFileSync(
               path,
               `${JSON.stringify({
@@ -351,12 +356,15 @@ describe("Artificial Analysis snapshot store", () => {
                 models: snapshot("old").models,
               })}\n`,
               "utf8",
-            ),
+            );
+          },
         },
         {
           name: "oversized",
           state: "corrupt",
-          write: (path) => writeFileSync(path, Buffer.alloc(4 * 1024 * 1024 + 1)),
+          write: (path): void => {
+            writeFileSync(path, Buffer.alloc(4 * 1024 * 1024 + 1));
+          },
         },
       ];
 

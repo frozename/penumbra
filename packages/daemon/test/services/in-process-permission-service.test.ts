@@ -356,7 +356,7 @@ test("aborting a request releases suppression when durable cleanup returns no ro
     handoff: { handoff_id: "h-1", conversation_id: "c-1" },
   });
   const durableDecide = services.permissionWriter.decide.bind(services.permissionWriter);
-  services.permissionWriter.decide = (permissionId, input) => {
+  services.permissionWriter.decide = (permissionId, input): null => {
     durableDecide(permissionId, input);
     return null;
   };

@@ -165,9 +165,9 @@ it("defaults an omitted skipPhases to run P7", async () => {
   const db = openTestDb();
   const { skipPhases: _skipPhases, ...configWithoutSkipPhases } = testConfig();
 
-  const cyclePromise = runDreamCycle(db, configWithoutSkipPhases as DreamConfig);
-  await expect(cyclePromise).resolves.toEqual(expect.any(String));
+  const cyclePromise = runDreamCycle(db, configWithoutSkipPhases as unknown as DreamConfig);
   const cycleId = await cyclePromise;
+  expect(typeof cycleId).toBe("string");
 
   const row = db.prepare(`SELECT phases_run FROM dream_cycles WHERE cycle_id = ?`).get(cycleId) as {
     phases_run: string;
@@ -323,7 +323,7 @@ function p1DedupConfig(): DreamConfig {
   return testConfig({
     autoPromoteMinJudges: 2,
     skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
-  } as Partial<DreamConfig>);
+  });
 }
 
 it("P1 does not re-queue promote_t1 for a never-promoted rollup across cycles", async () => {
@@ -470,7 +470,8 @@ it("P8 sets completed outcome with non-null ended_at and non-empty phases_run", 
   };
   expect(row.outcome).toBe("completed");
   expect(row.ended_at).toBeGreaterThan(0);
-  expect(JSON.parse(row.phases_run)).toContain("P0");
+  const phases: unknown = JSON.parse(row.phases_run) as unknown;
+  expect(Array.isArray(phases) && phases).toContain("P0");
 });
 
 it("in-process mutex prevents overlapping cycles", async () => {

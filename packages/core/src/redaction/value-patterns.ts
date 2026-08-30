@@ -166,7 +166,8 @@ export class ValuePatternRedactor {
         }
         let serialized: string;
         try {
-          serialized = JSON.stringify(input) ?? String(input);
+          const serializedValue = JSON.stringify(input) as unknown;
+          serialized = typeof serializedValue === "string" ? serializedValue : String(input);
         } catch {
           serialized = String(input);
         }

@@ -1,11 +1,11 @@
-import { TaskRouterConfigSchema, type TaskRouterConfig } from "@penumbra/config";
+import { type TaskRouterConfig, TaskRouterConfigSchema } from "@penumbra/config";
 import {
+  type AaSnapshotStore,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
   loadSqliteVec,
   migrate,
   RoutingDecisionSchema,
-  type AaSnapshotStore,
   type Services,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
@@ -56,10 +56,10 @@ function writePerf(db: Database, agent: string, taskType = "implement_small"): v
 
 function missingAaSnapshotStore(): AaSnapshotStore {
   return {
-    read: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    read: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
     readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    write: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    refresh: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
   };
 }
 
@@ -121,7 +121,7 @@ describe("role routing hard fences", () => {
           routeId: "openai:fenced",
           excluded: true,
           reasons: ["role_routing_roles_empty"],
-        }),
+        }) as unknown,
       );
       expect(decision.alternatives).not.toContainEqual(
         expect.objectContaining({
@@ -206,7 +206,7 @@ describe("role routing hard fences", () => {
         routeId: "openai:http-seat",
         excluded: true,
         reasons: ["requires_tools_text_only_adapter"],
-      }),
+      }) as unknown,
     );
     expect(decision.fallbackChain).not.toContain("http-seat");
   });

@@ -278,7 +278,7 @@ export class HandoffWriter {
       "status IN ('approved','redirected')",
       "dispatch_attempts < max_dispatch_attempts",
     ];
-    const params: Array<string | number> = [worker_id, last_dispatch_started_at, handoff_id];
+    const params: (string | number)[] = [worker_id, last_dispatch_started_at, handoff_id];
 
     if (
       opts?.workflow_run_id &&
@@ -319,7 +319,7 @@ export class HandoffWriter {
     const changes = this.db
       .query<
         unknown,
-        Array<string | number>
+        (string | number)[]
       >(`UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE ${whereClauses.join(" AND ")}`)
       .run(...params);
     return changes.changes > 0;

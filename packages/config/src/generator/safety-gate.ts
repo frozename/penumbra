@@ -52,16 +52,18 @@ export function runGeneratorSafetyGate(
     }
   };
 
-  guard(() =>
-    assertNoBilledHttpSeats(candidateConfig.agents, { allowedProviders: ctx.allowedProviders }),
-  );
-  guard(() =>
+  guard(() => {
+    assertNoBilledHttpSeats(candidateConfig.agents, { allowedProviders: ctx.allowedProviders });
+  });
+  guard(() => {
     assertNoBilledGeneratedSeats(candidateConfig.agents, {
       allowedProviders: ctx.allowedProviders,
       generatorSource: ctx.generatorSource,
-    }),
-  );
-  guard(() => assertRoleFloors(candidateConfig.agents, ctx.aliasMap));
+    });
+  });
+  guard(() => {
+    assertRoleFloors(candidateConfig.agents, ctx.aliasMap);
+  });
   const generatedSeatNames = ctx.seatNameInputs.flatMap((input) => {
     try {
       return [seatNameFor(input.source, input.modelSlug, input.effort)];
@@ -69,9 +71,15 @@ export function runGeneratorSafetyGate(
       return [];
     }
   });
-  guard(() => assertNoRoleTagCollision(generatedSeatNames, ctx.roleTags));
-  guard(() => assertUniqueSeatNames(ctx.seatNameInputs));
-  guard(() => assertPruneSafe(ctx.candidatePrunes, ctx.routing));
+  guard(() => {
+    assertNoRoleTagCollision(generatedSeatNames, ctx.roleTags);
+  });
+  guard(() => {
+    assertUniqueSeatNames(ctx.seatNameInputs);
+  });
+  guard(() => {
+    assertPruneSafe(ctx.candidatePrunes, ctx.routing);
+  });
 
   const generatedNameSet = new Set(generatedSeatNames);
   const roleTagSet = new Set(ctx.roleTags);

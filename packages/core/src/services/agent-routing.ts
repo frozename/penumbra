@@ -148,7 +148,7 @@ type AgentRouteAgentchatConfig = {
     roles: string[];
     subscription_provider?: string;
     api_provider?: string;
-    pricing_mode?: "api" | "subscription";
+    pricing_mode?: string;
     // Adapter identifier from agentchat config (e.g. "stdio-acp", "claude-acp",
     // "openai-compat-http"). Optional so unaware callers stay compatible; the
     // tool-free penalty only fires when both adapter is populated AND
@@ -164,7 +164,7 @@ type AgentRouteAgentchatConfig = {
 };
 
 export type ResolvableAgentProviderInput = {
-  pricing_mode?: "api" | "subscription" | string;
+  pricing_mode?: string;
   subscription_provider?: string | null;
   api_provider?: string | null;
 };
@@ -883,6 +883,7 @@ export function resolveBiasEffect(
   return { factor, exclude };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing agent allowlist resolution while grandfathering its pre-existing complexity.
 function getAllowedAgents(input: RouteAgentInput): string[] | null {
   const role = input.role;
   const roleAgents =

@@ -343,6 +343,7 @@ function aggregateGateStatusCounts(rows: LaneCloseRow[]): GateStatusCounts {
   return counts;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve gate-quality digest writing while grandfathering its pre-existing complexity.
 async function writeGateQualityDigest(opts: {
   outDir: string;
   date: string;

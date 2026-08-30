@@ -94,7 +94,13 @@ jobs:
           echo "all test shards passed"
         continue-on-error: true
       - name: lint (advisory - whole-repo burn-down tracker, see strict-lint ratchet)
+        # eslint over this many packages exceeds node's default ~2 GB heap and
+        # dies with SIGABRT (exit 134) before reporting any findings.
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: bun run lint || true
         continue-on-error: true
       - name: lint:strict (BLOCKING - ratcheted packages must stay at eslint --max-warnings=0)
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: bun run lint:strict

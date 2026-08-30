@@ -27,10 +27,13 @@ export class HandleStore {
     const id = randomUUID();
     const bytes = Buffer.byteLength(content, "utf8");
     while (this.entries.size > 0 && this.totalBytes + bytes > this.maxTotalBytes) {
-      const oldestId = this.entries.keys().next().value as string;
+      const oldestId = this.entries.keys().next().value;
+      if (oldestId === undefined) break;
       this.deleteEntry(oldestId);
     }
-    const timer = setTimeout(() => this.deleteEntry(id), this.ttlMs);
+    const timer = setTimeout(() => {
+      this.deleteEntry(id);
+    }, this.ttlMs);
     if (typeof timer.unref === "function") timer.unref();
     this.entries.set(id, { content, bytes, expiresAt: Date.now() + this.ttlMs, timer });
     this.totalBytes += bytes;

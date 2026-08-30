@@ -329,6 +329,7 @@ class AcpWarmPoolImpl implements AcpWarmPool {
       signalCode?: NodeJS.Signals | null;
     };
     const stdout = handle.stdout as StdioAcpHandle["stdout"] & { closed?: boolean };
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve compatibility with lightweight clients that omit transport probes.
     const transportOpen = entry.client.isTransportOpen;
     return (
       !entry.tornDown &&

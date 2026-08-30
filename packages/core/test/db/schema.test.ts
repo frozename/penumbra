@@ -318,7 +318,9 @@ test("applySchema migrates a dream_query_rewrites table with an orphan row witho
   // Boot condition: the connection enforces foreign keys.
   db.run("PRAGMA foreign_keys = ON");
 
-  expect(() => applySchema(db)).not.toThrow();
+  expect(() => {
+    applySchema(db);
+  }).not.toThrow();
 
   // The rewrite ran: new-shape column present and the orphan row survived the upgrade.
   const columns = db
@@ -346,7 +348,9 @@ test("applySchema migrates a dream_query_rewrites table with an orphan row witho
       []
     >(`SELECT rowid FROM sqlite_master WHERE type='table' AND name='dream_query_rewrites'`)
     .get()?.rowid;
-  expect(() => applySchema(db)).not.toThrow();
+  expect(() => {
+    applySchema(db);
+  }).not.toThrow();
   const rowidAfter = db
     .query<
       { rowid: number },

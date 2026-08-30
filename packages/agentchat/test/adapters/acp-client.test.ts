@@ -149,7 +149,7 @@ test("sendMessage aborts the SSE stream and surfaces the send error when POST re
       // A ReadableStream that never emits chunks but honors abort. When the
       // signal aborts, reader.read() rejects, unblocking the for-await.
       const body = new ReadableStream<Uint8Array>({
-        start(controller) {
+        start(controller): void {
           const onAbort = (): void => {
             eventStreamAborted.value = true;
             controller.error(new DOMException("aborted", "AbortError"));

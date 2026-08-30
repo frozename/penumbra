@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { fetchAaModels, readAaApiKey, type AaTransport } from "../../src/routing/aa-client.js";
+import { type AaTransport, fetchAaModels, readAaApiKey } from "../../src/routing/aa-client.js";
 
-function aaModel(overrides: Record<string, unknown> = {}) {
+function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "aa:model:1",
     name: "Model 1",
@@ -32,7 +32,7 @@ function aaModel(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function aaResponse(data = [aaModel()]) {
+function aaResponse(data: Record<string, unknown>[] = [aaModel()]): Record<string, unknown> {
   return {
     status: "success",
     prompt_options: {
@@ -43,10 +43,12 @@ function aaResponse(data = [aaModel()]) {
   };
 }
 
-function jsonResponse(body: unknown, init: ResponseInit = {}) {
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers,
   });
 }
 
@@ -65,7 +67,7 @@ describe("Artificial Analysis API client", () => {
   test("sends a raw x-api-key header, not Authorization: Bearer", async () => {
     const seenHeaders: Headers[] = [];
     const transport: AaTransport = {
-      async fetch(_input, init) {
+      fetch(_input, init) {
         seenHeaders.push(new Headers(init?.headers));
         return jsonResponse(aaResponse());
       },
@@ -80,16 +82,16 @@ describe("Artificial Analysis API client", () => {
   });
 
   test("aborts via AbortSignal.timeout rather than hanging", async () => {
-    const originalTimeout = AbortSignal.timeout;
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
     const controller = new AbortController();
     let timeoutMs: number | null = null;
-    AbortSignal.timeout = ((ms: number) => {
+    AbortSignal.timeout = (ms: number): AbortSignal => {
       timeoutMs = ms;
       return controller.signal;
-    }) as typeof AbortSignal.timeout;
+    };
     try {
       const transport: AaTransport = {
-        async fetch(_input, init) {
+        fetch(_input, init) {
           expect(init?.signal).toBe(controller.signal);
           return jsonResponse(aaResponse());
         },
@@ -108,7 +110,7 @@ describe("Artificial Analysis API client", () => {
     let attempts = 0;
     const delays: number[] = [];
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         attempts += 1;
         if (attempts === 1) {
           return jsonResponse(
@@ -144,7 +146,7 @@ describe("Artificial Analysis API client", () => {
   test("caps Retry-After sleeps at maxRetryDelayMs", async () => {
     const delays: number[] = [];
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         return jsonResponse(
           { error: "rate limited" },
           { status: 429, headers: { "retry-after": "120" } },
@@ -170,7 +172,7 @@ describe("Artificial Analysis API client", () => {
   test("non-finite maxAttempts falls back to the default attempt count", async () => {
     let attempts = 0;
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         attempts += 1;
         if (attempts <= 3) {
           return jsonResponse({ error: "unavailable" }, { status: 503 });
@@ -196,7 +198,7 @@ describe("Artificial Analysis API client", () => {
   test("the key never appears in a thrown error's message or the typed failure", async () => {
     const key = "super-secret-aa-key";
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         throw new Error(`network failure for ${key}`);
       },
     };
@@ -212,7 +214,7 @@ describe("Artificial Analysis API client", () => {
 
   test("a response missing tier-gated fields validates with those fields absent, not zero-filled", async () => {
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         return jsonResponse(
           aaResponse([
             aaModel({
@@ -246,7 +248,7 @@ describe("Artificial Analysis API client", () => {
 
   test("one invalid model row is skipped while valid rows are kept and skip provenance is recorded", async () => {
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         return jsonResponse(
           aaResponse([
             aaModel({ slug: "kept-model" }),
@@ -273,7 +275,7 @@ describe("Artificial Analysis API client", () => {
 
   test("oversized responses fail before JSON parsing", async () => {
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         return new Response(JSON.stringify(aaResponse([aaModel({ name: "x".repeat(200) })])), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -296,7 +298,7 @@ describe("Artificial Analysis API client", () => {
   test("invalid response failures report the real attempt number", async () => {
     let attempts = 0;
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         attempts += 1;
         if (attempts === 1) {
           return jsonResponse({ error: "unavailable" }, { status: 503 });
@@ -325,7 +327,7 @@ describe("Artificial Analysis API client", () => {
   test('a 401 with body {"error":"API key is required"} maps to a typed auth failure, not a retry', async () => {
     let attempts = 0;
     const transport: AaTransport = {
-      async fetch() {
+      fetch() {
         attempts += 1;
         return jsonResponse({ error: "API key is required" }, { status: 401 });
       },

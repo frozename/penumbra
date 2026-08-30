@@ -262,7 +262,7 @@ test("spawnCliAdapter kills child and surfaces output-cap warning when stdout ex
       (event) =>
         event.kind === "proc.kill.sent" &&
         event.meta?.reason === "output_capacity" &&
-        event.meta?.stream === "stdout",
+        event.meta.stream === "stdout",
     ),
   ).toBe(true);
 });
@@ -295,9 +295,7 @@ test("spawnCliAdapterStream kills child and surfaces truncated tail after output
   const done = seen.find((event) => event.type === "done");
   expect(done).toBeDefined();
   expect(typeof done).toBe("object");
-  expect((done as Extract<DispatchEvent, { type: "done" }>).result.text.length).toBeLessThanOrEqual(
-    16_777_216,
-  );
+  expect(done!.result.text.length).toBeLessThanOrEqual(16_777_216);
   expect(thrown).toBeInstanceOf(Error);
   expect((thrown as Error).message).toMatch(/output cap exceeded/i);
   expect(

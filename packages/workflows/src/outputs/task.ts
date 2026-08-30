@@ -84,7 +84,7 @@ export async function taskOutput(
     created_by_kind: "workflow",
     created_by_id: ctx.workflow.name,
     origin: ctx.workflow.origin ?? undefined,
-  } as FileTaskInput;
+  };
 
   try {
     const res = await fetch(`${daemon.baseUrl}/tasks`, {
