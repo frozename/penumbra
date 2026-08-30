@@ -180,7 +180,7 @@ export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): Resolved
   return eligible.map((candidate, index): ResolvedLlmCandidate => {
     return {
       ...candidate,
-      provider: candidate.provider as LlmProvider,
+      provider: candidate.provider,
       tier: index === 0 ? "primary" : "fallback",
     };
   });
@@ -191,7 +191,7 @@ export function resolveLlmProvider(baseUrl: string, explicitProvider?: string): 
     if (!ALLOWED_PROVIDER_SET.has(explicitProvider)) {
       throw new Error(`LLM provider '${explicitProvider}' is not allowed`);
     }
-    return explicitProvider as LlmProvider;
+    return explicitProvider;
   }
 
   let hostname: string;
@@ -231,7 +231,7 @@ export async function attemptLlmCandidates<T, E>(
     candidate: ResolvedLlmCandidate,
   ) => Promise<{ ok: true; value: T } | { ok: false; error: E }>,
 ): Promise<LlmCandidateAttemptResult<T, E>> {
-  return attemptCandidatesInOrder(candidates, attempt);
+  return await attemptCandidatesInOrder(candidates, attempt);
 }
 
 export async function attemptCandidatesInOrder<C, T, E>(

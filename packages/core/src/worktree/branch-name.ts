@@ -36,17 +36,17 @@ export function resolveHandoffBranchName(handoff: HandoffBranchNameInput): strin
 export function slugifyBranchSegment(input: string): string {
   const normalized = input
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replaceAll(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replaceAll(/^-|-$/g, "");
   if (normalized.length <= MAX_SLUG_LENGTH) return normalized;
 
   const capped = normalized.slice(0, MAX_SLUG_LENGTH);
   const lastDash = capped.lastIndexOf("-");
   const cut = lastDash > 0 ? capped.slice(0, lastDash) : capped;
-  return cut.replace(/^-|-$/g, "");
+  return cut.replaceAll(/^-|-$/g, "");
 }
 
 function validateBranchType(branchType: string): string {
@@ -68,7 +68,7 @@ function branchTypeFor(input: BuildHandoffBranchNameInput): string {
 }
 
 function shortHandoffId(handoffId: string): string {
-  const hex = handoffId.replace(/[^0-9a-f]/gi, "").toLowerCase();
+  const hex = handoffId.replaceAll(/[^0-9a-f]/gi, "").toLowerCase();
   return hex.slice(0, 8) || "handoff";
 }
 

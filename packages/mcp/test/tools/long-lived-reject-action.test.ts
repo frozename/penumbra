@@ -87,14 +87,18 @@ describe("long_lived_reject_action", () => {
     // First call - must succeed
     const r1 = handleLongLivedRejectAction(
       db,
-      { emit: () => {}, now: () => 50 },
+      { emit: () => undefined, now: () => 50 },
       { action_id: "p1", reason: "too risky" },
     );
     expect(r1.ok).toBe(true);
 
     // Second call on the same (now 'rejected') action_id must throw
     expect(() =>
-      handleLongLivedRejectAction(db, { emit: () => {}, now: () => 60 }, { action_id: "p1" }),
+      handleLongLivedRejectAction(
+        db,
+        { emit: () => undefined, now: () => 60 },
+        { action_id: "p1" },
+      ),
     ).toThrow("not_pending");
 
     // Invariant: exactly one recent_decisions entry - no duplicate from the second call
@@ -117,7 +121,11 @@ describe("long_lived_reject_action", () => {
 
     // Reject must refuse
     expect(() =>
-      handleLongLivedRejectAction(db, { emit: () => {}, now: () => 50 }, { action_id: "p1" }),
+      handleLongLivedRejectAction(
+        db,
+        { emit: () => undefined, now: () => 50 },
+        { action_id: "p1" },
+      ),
     ).toThrow("not_pending");
 
     // Row must remain expired - not overwritten to rejected

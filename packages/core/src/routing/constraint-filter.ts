@@ -19,13 +19,14 @@ export type HardConstraintConfig = {
 
 export type HardConstraintFilterResult = {
   admitted: string[];
-  excluded: Array<{ agent: string; reasons: string[] }>;
+  excluded: { agent: string; reasons: string[] }[];
 };
 
 /**
  * Applies non-re-admitting eligibility constraints. An empty result is intentional
  * and must never be refilled with excluded candidates.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing routing constraint filter while grandfathering its pre-existing complexity.
 export function applyHardConstraints(
   candidates: readonly string[],
   taskProfile: TaskProfile,
@@ -34,7 +35,7 @@ export function applyHardConstraints(
   config: HardConstraintConfig,
 ): HardConstraintFilterResult {
   const admitted: string[] = [];
-  const excluded: Array<{ agent: string; reasons: string[] }> = [];
+  const excluded: { agent: string; reasons: string[] }[] = [];
   const estimatedInputTokens =
     harnessContext.estimatedInputTokens ?? taskProfile.expectedInputTokens;
   const expectedOutputTokens =
@@ -57,12 +58,11 @@ export function applyHardConstraints(
       reasons.push("requires_tools_text_only_adapter");
     }
 
+    const capabilities = facts.capabilities;
     if (
       taskProfile.requiredCapabilities.length > 0 &&
-      facts.capabilities !== undefined &&
-      taskProfile.requiredCapabilities.some(
-        (capability) => !facts.capabilities!.includes(capability),
-      )
+      capabilities !== undefined &&
+      taskProfile.requiredCapabilities.some((capability) => !capabilities.includes(capability))
     ) {
       reasons.push("missing_required_capability_or_modality");
     }

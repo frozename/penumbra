@@ -3,19 +3,15 @@ import { describe, expect, test } from "bun:test";
 
 import type { RoutingBias } from "../../src/readers/routing-bias.js";
 import type { AgentTaskType } from "../../src/schemas/agent-performance.js";
-import {
-  loadSqliteVec,
-  migrate,
-  pickFromPool,
-  routeAgent,
-  type RouteAgentInput,
-} from "../../src/index.js";
-import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
+
 import {
   buildRetryRoutingMaps,
-  selectRetryAgent,
   type RetryAgentCandidate,
+  selectRetryAgent,
 } from "../../../agentchat/src/worker/silent-failure-retry.js";
+import { loadSqliteVec, migrate, pickFromPool } from "../../src/index.js";
+import { routeAgent, type RouteAgentInput } from "../../src/services/agent-routing.js";
+import { AgentPerformanceWriter } from "../../src/writers/agent-performance.js";
 
 if (process.platform === "darwin") {
   try {
@@ -28,6 +24,14 @@ if (process.platform === "darwin") {
 const NOW = "2026-08-27T12:00:00.000Z";
 
 type AgentchatConfig = NonNullable<RouteAgentInput["agentchatConfig"]>;
+type RouteCheck = {
+  detail: string;
+  route: { agent: string } | null;
+};
+
+function runRoute(input: RouteAgentInput): RouteCheck {
+  return routeAgent(input) as unknown as RouteCheck;
+}
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -88,7 +92,7 @@ describe("requires-tools hard constraint", () => {
     writePerf(db, "http-seat");
     writePerf(db, "tool-seat");
 
-    const out = routeAgent({
+    const out = runRoute({
       db,
       detail: "single",
       role: "executor",
@@ -101,7 +105,8 @@ describe("requires-tools hard constraint", () => {
     });
 
     expect(out.detail).toBe("single");
-    expect(out.route?.agent).toBe("tool-seat");
+    if (!out.route) throw new Error("expected a route");
+    expect(out.route.agent).toBe("tool-seat");
   });
 
   test("tool_free:true keeps the same text-only HTTP seat eligible", () => {
@@ -109,7 +114,7 @@ describe("requires-tools hard constraint", () => {
     writePerf(db, "http-seat");
     writePerf(db, "tool-seat");
 
-    const out = routeAgent({
+    const out = runRoute({
       db,
       detail: "single",
       role: "executor",
@@ -123,14 +128,15 @@ describe("requires-tools hard constraint", () => {
     });
 
     expect(out.detail).toBe("single");
-    expect(out.route?.agent).toBe("http-seat");
+    if (!out.route) throw new Error("expected a route");
+    expect(out.route.agent).toBe("http-seat");
   });
 
   test("auto role exploration leaves a text-only seat available to the outer constraint filter", () => {
     const db = freshDb();
     writePerf(db, "http-seat");
 
-    const out = routeAgent({
+    const out = runRoute({
       db,
       detail: "single",
       role: "executor",
@@ -143,14 +149,15 @@ describe("requires-tools hard constraint", () => {
     });
 
     expect(out.detail).toBe("single");
-    expect(out.route?.agent).toBe("http-seat");
+    if (!out.route) throw new Error("expected a route");
+    expect(out.route.agent).toBe("http-seat");
   });
 
   test("legacy role routing never selects a text-only seat", () => {
     const db = freshDb();
     writePerf(db, "http-seat");
 
-    const out = routeAgent({
+    const out = runRoute({
       db,
       detail: "single",
       role: "executor",

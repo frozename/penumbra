@@ -1,4 +1,4 @@
-import type { Logger } from "@penumbra/core";
+import type { Logger, RecallResult } from "@penumbra/core";
 
 import { describe, expect, test } from "bun:test";
 
@@ -198,11 +198,13 @@ describe("RecallEnricher", () => {
   });
 
   describe("prompt-injection scan", () => {
-    function poisonedResult(body: string) {
+    function poisonedResult(body: string): RecallResult {
       return {
         id: "r-poison",
         tier: "t2" as const,
         score: 0.9,
+        fusedScore: 0,
+        sources: ["t2"],
         title: null,
         body,
         project_id: "other-project",

@@ -122,7 +122,7 @@ describe("subsystem health", () => {
         subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
         tier: "fallback",
         ok: false,
-        ts: `2026-08-18T12:0${i}:00.000Z`,
+        ts: `2026-08-18T12:0${String(i)}:00.000Z`,
         reason: "timeout",
       });
     }

@@ -1,4 +1,4 @@
-import { ValuePatternRedactor, type ValuePatternRule, type Logger } from "@penumbra/core";
+import { type Logger, ValuePatternRedactor, type ValuePatternRule } from "@penumbra/core";
 
 import type { RecallContextConfig } from "../config/types.js";
 import type { PenumbraClient } from "../penumbra-client.js";

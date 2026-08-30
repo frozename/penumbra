@@ -234,7 +234,7 @@ describe("StdioAcpClient", () => {
       const client = new StdioAcpClient({ stdin, stdout, framing: "content-length" });
 
       const destroySpy = mock(stdout.destroy.bind(stdout));
-      stdout.destroy = destroySpy as typeof stdout.destroy;
+      stdout.destroy = destroySpy;
 
       const reqPromise = client.request("test/oversize", {});
       const settled: { rejected: boolean; error?: unknown } = { rejected: false };
@@ -270,7 +270,7 @@ describe("StdioAcpClient", () => {
       const client = new StdioAcpClient({ stdin, stdout, framing: "content-length" });
 
       const destroySpy = mock(stdout.destroy.bind(stdout));
-      stdout.destroy = destroySpy as typeof stdout.destroy;
+      stdout.destroy = destroySpy;
 
       const reqPromise = client.request("test/oversize-header", {});
       const settled: { rejected: boolean; error?: unknown } = { rejected: false };

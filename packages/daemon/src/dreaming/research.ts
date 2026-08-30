@@ -301,7 +301,7 @@ function readCachedOutcome(
   ctx: ActionContext,
 ): { kind: "negative" } | { kind: "positive"; outcome: FetchOutcome } | { kind: "miss" } {
   const cached = readCache(db, ctx.cacheKey);
-  if (cached == null) return { kind: "miss" };
+  if (cached === null) return { kind: "miss" };
   if (Number(cached.is_negative) === 1) {
     return cached.expires_at > ctx.now ? { kind: "negative" } : { kind: "miss" };
   }

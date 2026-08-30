@@ -1,5 +1,3 @@
-import type { Logger } from "pino";
-
 import { loadAgentChatConfigFromDir } from "@penumbra/config";
 import {
   type AaSnapshotStorePayload,
@@ -47,9 +45,9 @@ type LogFnKey = "info" | "warn" | "error" | "debug" | "trace" | "fatal";
 
 /** Logger.info/warn/error are pino overloads; mockImplementation requires the union signature.
  *  Centralized cast satisfies the overload set without leaking `any` to callers. */
-function noopLogFn(key: LogFnKey): Logger[LogFnKey] {
+function noopLogFn(key: LogFnKey): (...args: never[]) => void {
   void key;
-  return (..._args: unknown[]): undefined => undefined;
+  return (..._args: never[]): void => undefined;
 }
 
 /** ExtraWorkerSupervisor is a class with many private fields; tests only need `reconcile`. */

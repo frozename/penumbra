@@ -25,7 +25,7 @@ const gitRunner: WorktreeCommandRunner = (cmd, args, opts) =>
   execFile(cmd, args, { ...opts, encoding: opts?.encoding ?? "utf8" });
 
 async function git(repoDir: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return gitRunner("git", args, { cwd: repoDir });
+  return await gitRunner("git", args, { cwd: repoDir });
 }
 
 async function setupTempRepo(prefix: string): Promise<string> {
@@ -54,7 +54,7 @@ async function classifyBranchLandStatus(
 ): Promise<string> {
   const mod = (await import("../../src/worktree/branch-land-probe.js")) as ProbeModule;
   expect(typeof mod.classifyBranchLandStatus).toBe("function");
-  return mod.classifyBranchLandStatus!(runner, repoDir, candidateRef, baseRef);
+  return await mod.classifyBranchLandStatus(runner, repoDir, candidateRef, baseRef);
 }
 
 describe("classifyBranchLandStatus", () => {
@@ -75,7 +75,13 @@ describe("classifyBranchLandStatus", () => {
     await git(repoDir, ["merge", "--squash", branch]);
     await git(repoDir, ["commit", "-m", "squash land"]);
 
-    await expect(git(repoDir, ["merge-base", "--is-ancestor", branch, "main"])).rejects.toThrow();
+    let ancestorCheckRejected = false;
+    try {
+      await git(repoDir, ["merge-base", "--is-ancestor", branch, "main"]);
+    } catch {
+      ancestorCheckRejected = true;
+    }
+    expect(ancestorCheckRejected).toBe(true);
 
     const status = await classifyBranchLandStatus(gitRunner, repoDir, branch, "main");
 

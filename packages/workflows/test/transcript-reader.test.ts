@@ -176,7 +176,7 @@ test("incremental cache: second call after append is dramatically faster", async
     lines.push(
       JSON.stringify({
         type: "message",
-        message: { role: "user", content: [{ type: "text", text: `line-${i}` }] },
+        message: { role: "user", content: [{ type: "text", text: `line-${String(i)}` }] },
       }),
     );
   }

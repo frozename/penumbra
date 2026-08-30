@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+
 import { z } from "zod";
 
 import type { LaneCloseMetadata } from "../schemas/lane-close-metadata.js";

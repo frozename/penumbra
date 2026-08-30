@@ -1,12 +1,12 @@
-import { TaskRouterConfigSchema, type TaskRouterConfig } from "@penumbra/config";
+import { type TaskRouterConfig, TaskRouterConfigSchema } from "@penumbra/config";
 import {
+  type AaSnapshotStore,
+  type AaSnapshotStorePayload,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
   createAaSnapshotStore,
   loadSqliteVec,
   migrate,
-  type AaSnapshotStore,
-  type AaSnapshotStorePayload,
   type Services,
   setRoutingBias,
 } from "@penumbra/core";
@@ -18,9 +18,9 @@ import { join } from "node:path";
 
 import {
   resolveSingleRoute,
-  RoutingBiasExhaustedError,
-  RouterHardConstraintExhaustedError,
   type RouterDecisionSink,
+  RouterHardConstraintExhaustedError,
+  RoutingBiasExhaustedError,
 } from "../../src/routes/role-routing.js";
 
 if (process.platform === "darwin") {
@@ -127,10 +127,10 @@ function routing(): AgentRoutingConfig {
 
 function missingAaSnapshotStore(): AaSnapshotStore {
   return {
-    read: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    read: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
     readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    write: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    refresh: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
   };
 }
 
@@ -306,7 +306,7 @@ describe("resolveSingleRoute", () => {
 
     const svc = services(db);
     svc.localSeatHealth = {
-      getUnhealthyAgents: () => new Set(["alpha"]),
+      getUnhealthyAgents: (): Set<string> => new Set(["alpha"]),
     };
 
     expect(resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial")).toEqual({
@@ -322,7 +322,7 @@ describe("resolveSingleRoute", () => {
 
     const svc = services(db);
     svc.localSeatHealth = {
-      getUnhealthyAgents: () => {
+      getUnhealthyAgents: (): never => {
         throw new Error("health unavailable");
       },
     };
@@ -412,12 +412,8 @@ describe("resolveSingleRoute — model task router modes", () => {
       expect(sink.decision).not.toBeNull();
       expect(sink.decision?.dataFreshness.artificial_analysis).toBe("fresh");
       expect(sink.decision?.dataFreshness.artificial_analysis_collected_at).toBe(NOW);
-      expect(sink.decision?.factors).toContainEqual(
-        expect.objectContaining({
-          name: "alpha.aa_prior",
-          source: "artificial_analysis",
-        }),
-      );
+      const prior = sink.decision?.factors.find((factor) => factor.name === "alpha.aa_prior");
+      expect(prior?.source).toBe("artificial_analysis");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -469,12 +465,10 @@ describe("resolveSingleRoute — model task router modes", () => {
       expect(staleSink.decision?.dataFreshness.artificial_analysis_age_seconds).toBe(
         expectedAgeSeconds,
       );
-      expect(staleSink.decision?.factors).toContainEqual(
-        expect.objectContaining({
-          name: "aa_staleness_discount",
-          source: "config",
-        }),
+      const discount = staleSink.decision?.factors.find(
+        (factor) => factor.name === "aa_staleness_discount",
       );
+      expect(discount?.source).toBe("config");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -487,10 +481,25 @@ describe("resolveSingleRoute — model task router modes", () => {
     svc.taskRouterConfig = routerConfig("shadow");
     svc.modelAliasMap = {};
     svc.aaSnapshotStore = {
-      read: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-      readSync: () => ({ state: "corrupt", stale: false, ageSeconds: null, source: "corrupt" }),
-      write: async () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-      refresh: async () => ({
+      read: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
+        state: "missing",
+        stale: false,
+        ageSeconds: null,
+        source: "missing",
+      }),
+      readSync: (): { state: "corrupt"; stale: false; ageSeconds: null; source: "corrupt" } => ({
+        state: "corrupt",
+        stale: false,
+        ageSeconds: null,
+        source: "corrupt",
+      }),
+      write: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
+        state: "missing",
+        stale: false,
+        ageSeconds: null,
+        source: "missing",
+      }),
+      refresh: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
         state: "missing",
         stale: false,
         ageSeconds: null,
@@ -543,7 +552,7 @@ describe("resolveSingleRoute — model task router modes", () => {
     const svc = services(db);
     svc.taskRouterConfig = routerConfig("auto");
     svc.modelAliasMap = {};
-    svc.localSeatHealth = { getUnhealthyAgents: () => new Set(["alpha", "beta"]) };
+    svc.localSeatHealth = { getUnhealthyAgents: (): Set<string> => new Set(["alpha", "beta"]) };
 
     let caught: unknown;
     try {
@@ -578,14 +587,10 @@ describe("resolveSingleRoute — model task router modes", () => {
       role: "reviewer",
       taskType: "review_adversarial",
     });
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        role: "reviewer",
-        mode: "auto",
-        error: expect.any(String),
-      }),
-      expect.any(String),
-    );
+    const warning = warnSpy.mock.calls[0];
+    expect(warning?.[0]).toMatchObject({ role: "reviewer", mode: "auto" });
+    expect(typeof warning?.[0]?.error).toBe("string");
+    expect(typeof warning?.[1]).toBe("string");
   });
 
   test("mode:'auto' degrades to the legacy route when pressure excludes every candidate", () => {

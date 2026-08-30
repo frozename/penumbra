@@ -83,46 +83,14 @@ export class CodexRolloutReader implements UsageReader {
     const seenInWindow = new Set<string>();
 
     for (const filePath of files) {
-      const fileCursor = newCursor.files[filePath];
-      const stats = fs.statSync(filePath);
-      const { mtimeMs: mtime_ms, size } = stats;
-      if (mtime_ms < cutoff) {
-        continue;
-      }
-      seenInWindow.add(filePath);
-      const offset = fileCursor?.byte_offset ?? 0;
-      if (offset >= size) {
-        continue;
-      }
-      const slice = readTail(filePath, offset, size - offset);
-
-      const scan = scanRolloutSlice(slice);
-      const modelProvider = fileCursor?.model_provider ?? scan.modelProvider;
-      if (scan.latestRateLimits) {
-        allRateLimitSnapshots.push(
-          ...this.buildRateLimitSnapshots(scan.latestRateLimits, modelProvider),
-        );
-      }
-      if (scan.rawUsage.length > 0) {
-        const provider = modelProvider ?? this.canonicalizeProvider(undefined);
-        for (const entry of scan.rawUsage) {
-          allUsageDeltas.push({
-            provider,
-            model: entry.model,
-            tokens_input: entry.tokens_input,
-            tokens_output: entry.tokens_output,
-            tokens_cache_read: entry.tokens_cache_read,
-            cost_usd: null,
-            window_start: entry.timestamp,
-            window_end: entry.timestamp,
-          });
-        }
-      }
-      newCursor.files[filePath] = {
-        byte_offset: size,
-        mtime_ms,
-        ...(modelProvider ? { model_provider: modelProvider } : {}),
-      };
+      this.readRolloutFile(
+        filePath,
+        newCursor,
+        cutoff,
+        seenInWindow,
+        allRateLimitSnapshots,
+        allUsageDeltas,
+      );
     }
 
     newCursor.files = Object.fromEntries(
@@ -133,6 +101,48 @@ export class CodexRolloutReader implements UsageReader {
       cursor: newCursor,
       usage_deltas: allUsageDeltas,
       rate_limit_snapshots: allRateLimitSnapshots,
+    };
+  }
+
+  private readRolloutFile(
+    filePath: string,
+    cursor: CodexRolloutCursor,
+    cutoff: number,
+    seenInWindow: Set<string>,
+    allRateLimitSnapshots: RateLimitDelta[],
+    allUsageDeltas: UsageReaderDelta[],
+  ): void {
+    const fileCursor = cursor.files[filePath];
+    const { mtimeMs: mtime_ms, size } = fs.statSync(filePath);
+    if (mtime_ms < cutoff) return;
+    seenInWindow.add(filePath);
+    const offset = fileCursor?.byte_offset ?? 0;
+    if (offset >= size) return;
+
+    const scan = scanRolloutSlice(readTail(filePath, offset, size - offset));
+    const modelProvider = fileCursor?.model_provider ?? scan.modelProvider;
+    if (scan.latestRateLimits) {
+      allRateLimitSnapshots.push(
+        ...this.buildRateLimitSnapshots(scan.latestRateLimits, modelProvider),
+      );
+    }
+    const provider = modelProvider ?? this.canonicalizeProvider(undefined);
+    for (const entry of scan.rawUsage) {
+      allUsageDeltas.push({
+        provider,
+        model: entry.model,
+        tokens_input: entry.tokens_input,
+        tokens_output: entry.tokens_output,
+        tokens_cache_read: entry.tokens_cache_read,
+        cost_usd: null,
+        window_start: entry.timestamp,
+        window_end: entry.timestamp,
+      });
+    }
+    cursor.files[filePath] = {
+      byte_offset: size,
+      mtime_ms,
+      ...(modelProvider ? { model_provider: modelProvider } : {}),
     };
   }
 
@@ -216,41 +226,57 @@ interface RolloutScanResult {
   rawUsage: RawUsageEntry[];
 }
 
+type RolloutScanState = {
+  latestRateLimits: Record<string, unknown> | null;
+  modelProvider: string | undefined;
+  currentModel: string | null;
+  rawUsage: RawUsageEntry[];
+};
+
 function scanRolloutSlice(slice: string): RolloutScanResult {
-  let latestRateLimits: Record<string, unknown> | null = null;
-  let modelProvider: string | undefined;
-  let currentModel: string | null = null;
-  const rawUsage: RawUsageEntry[] = [];
+  const state: RolloutScanState = {
+    latestRateLimits: null,
+    modelProvider: undefined,
+    currentModel: null,
+    rawUsage: [],
+  };
   for (const rawLine of slice.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const obj = parseJsonRecord(line);
-    if (!obj) continue;
-    const payload = readRecord(obj, "payload");
-    if (!payload) continue;
-    modelProvider ??= normalizeModelProvider(readString(payload, "model_provider"));
-    const sessionModel = readString(payload, "model");
-    if (sessionModel) currentModel = sessionModel;
-    const rateLimits = readTokenCountRateLimits(obj, payload);
-    if (rateLimits) {
-      latestRateLimits = rateLimits;
-    }
-    const lastTokenUsage = readLastTokenUsage(obj, payload);
-    if (lastTokenUsage) {
-      const input = numberFrom(lastTokenUsage.input_tokens);
-      const cached = numberFrom(lastTokenUsage.cached_input_tokens);
-      const output = numberFrom(lastTokenUsage.output_tokens);
-      const timestamp = readString(obj, "timestamp") ?? new Date().toISOString();
-      rawUsage.push({
-        timestamp,
-        model: currentModel,
-        tokens_input: Math.max(0, input - cached),
-        tokens_output: output,
-        tokens_cache_read: cached,
-      });
-    }
+    scanRolloutLine(rawLine, state);
   }
-  return { latestRateLimits, modelProvider, rawUsage };
+  return state;
+}
+
+function scanRolloutLine(rawLine: string, state: RolloutScanState): void {
+  const line = rawLine.trim();
+  if (!line) return;
+  const obj = parseJsonRecord(line);
+  if (!obj) return;
+  const payload = readRecord(obj, "payload");
+  if (!payload) return;
+  state.modelProvider ??= normalizeModelProvider(readString(payload, "model_provider"));
+  const sessionModel = readString(payload, "model");
+  if (sessionModel) state.currentModel = sessionModel;
+  state.latestRateLimits = readTokenCountRateLimits(obj, payload) ?? state.latestRateLimits;
+  const lastTokenUsage = readLastTokenUsage(obj, payload);
+  if (lastTokenUsage) {
+    state.rawUsage.push(toRawUsageEntry(lastTokenUsage, obj, state.currentModel));
+  }
+}
+
+function toRawUsageEntry(
+  usage: Record<string, unknown>,
+  obj: Record<string, unknown>,
+  model: string | null,
+): RawUsageEntry {
+  const input = numberFrom(usage.input_tokens);
+  const cached = numberFrom(usage.cached_input_tokens);
+  return {
+    timestamp: readString(obj, "timestamp") ?? new Date().toISOString(),
+    model,
+    tokens_input: Math.max(0, input - cached),
+    tokens_output: numberFrom(usage.output_tokens),
+    tokens_cache_read: cached,
+  };
 }
 
 function normalizeModelProvider(value: string | null): string | undefined {

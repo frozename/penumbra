@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
 import {
   discoverAgyModels,
@@ -63,7 +63,7 @@ describe("agy model discovery", () => {
 
   test("discoverAgyModels reports malformed rows while preserving valid rows", async () => {
     const result = (await discoverAgyModels({
-      runAgyModels: async () =>
+      runAgyModels: () =>
         [
           "no-tab-row",
           "first-tab\tName\twith tab",
@@ -72,7 +72,7 @@ describe("agy model discovery", () => {
         ].join("\n"),
     })) as unknown as {
       models: ReturnType<typeof parseAgyModelsOutput>;
-      diagnostics: Array<{ row: string; reason: string }>;
+      diagnostics: { row: string; reason: string }[];
     };
 
     expect(result.models).toEqual([
@@ -97,7 +97,7 @@ describe("agy model discovery", () => {
     let runCount = 0;
 
     const result = (await discoverAgyModels({
-      runAgyModels: async () => {
+      runAgyModels: () => {
         runCount += 1;
         return fixtureText;
       },

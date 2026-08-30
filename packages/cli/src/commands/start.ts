@@ -1,6 +1,7 @@
 import type { AgentRoutingConfig, Logger, ProviderQuota } from "@penumbra/core";
 
 import { loadShellConfig } from "@penumbra/agentchat/worker/shell-config";
+import { isBilledHandSeatViolation } from "@penumbra/config";
 import {
   applyRuntimePragmas,
   assertEmbedderDim,
@@ -39,7 +40,6 @@ import { InProcessPermissionService } from "../../../daemon/src/services/in-proc
 import { ShellSessionPool } from "../../../daemon/src/services/shell-session-pool.js";
 import { createWorkflowRunsRegistry } from "../../../daemon/src/services/workflow-runs-registry.js";
 import { wrapDatabaseWithSlowQueryLog } from "../../../daemon/src/slow-query.js";
-import { isBilledHandSeatViolation } from "@penumbra/config";
 import { readEmbedderEnv } from "./sirius-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(

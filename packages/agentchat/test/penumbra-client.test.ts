@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PenumbraClient, PenumbraHttpError, isTerminalHttpStatus } from "../src/penumbra-client.js";
+import { isTerminalHttpStatus, PenumbraClient, PenumbraHttpError } from "../src/penumbra-client.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
 // Test-only typed fetch shape: agentchat constructs Request objects from

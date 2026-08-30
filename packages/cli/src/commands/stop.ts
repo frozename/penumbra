@@ -27,7 +27,7 @@ function cleanupStopArtifacts(pidPath: string, portPath: string, hadHandle: bool
 export function runStop(opts: RunStopOpts): Promise<number> {
   const pidPath = join(opts.storageRoot, "pid");
   const portPath = join(opts.storageRoot, "port");
-  return (async () => {
+  return (async (): Promise<number> => {
     try {
       await opts.handle?.stop();
     } catch (err) {

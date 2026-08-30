@@ -166,13 +166,17 @@ test("loopback CORS preserves incremental SSE delivery", async () => {
   const reader = response.body.getReader();
   const first = await Promise.race([
     reader.read(),
-    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
+    new Promise<"timeout">((resolve) =>
+      setTimeout(() => {
+        resolve("timeout");
+      }, 200),
+    ),
   ]);
 
   expect(first).not.toBe("timeout");
   if (first === "timeout") throw new Error("SSE response buffered instead of streaming");
   expect(first.done).toBe(false);
-  expect(new TextDecoder().decode(first.value)).toContain(": ok\n\n");
+  expect(new TextDecoder().decode(first.value as Uint8Array)).toContain(": ok\n\n");
   await reader.cancel();
 });
 
