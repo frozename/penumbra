@@ -23,16 +23,28 @@ function freshDb(): Database {
   return db;
 }
 
-function writePerf(db: Database, agent: string, taskType = "review_adversarial"): void {
+function writePerf(
+  db: Database,
+  agent: string,
+  taskType = "review_adversarial",
+  opts: {
+    handoffId?: string;
+    source?: string;
+    outcome?: string;
+    environmentFailure?: "y" | null;
+    ts?: string;
+  } = {},
+): void {
+  const handoffId = opts.handoffId ?? `handoff-${agent}`;
   new AgentPerformanceWriter(db).upsert({
-    performance_id: `perf-${agent}`,
-    ts: NOW,
-    handoff_id: `handoff-${agent}`,
+    performance_id: opts.handoffId ? `perf-${opts.handoffId}` : `perf-${agent}`,
+    ts: opts.ts ?? NOW,
+    handoff_id: handoffId,
     conversation_id: "conv",
     project_id: "proj",
     agent_name: agent,
     task_type: taskType,
-    outcome: "merged",
+    outcome: opts.outcome ?? "merged",
     rounds: agent === "a" ? 1 : 5,
     smoke_pass: "y",
     reviewer_findings: 0,
@@ -40,8 +52,9 @@ function writePerf(db: Database, agent: string, taskType = "review_adversarial")
     cost_usd: null,
     tokens_used: 100,
     latency_ms: agent === "a" ? 10_000 : 60_000,
-    source: "test",
+    source: opts.source ?? "test",
     notes: null,
+    environment_failure: opts.environmentFailure ?? null,
     metadata_json: "{}",
   });
 }
@@ -316,6 +329,99 @@ describe("resolveAgent", () => {
         }),
       ),
     ).toBe("dead-pin-seat");
+  });
+
+  test("keeps a single pinned agent when recent failures are not worker-sourced", () => {
+    const db = freshDb();
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h3",
+      ts: "2026-08-31T10:02:00.000Z",
+      outcome: "failed",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h2",
+      ts: "2026-08-31T10:01:00.000Z",
+      outcome: "failed",
+      source: "reconciler",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h1",
+      ts: "2026-08-31T10:00:00.000Z",
+      outcome: "failed",
+    });
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("dead-pin-seat");
+  });
+
+  test("routes away from a single pinned agent when non-environmental failures are separated by environmental rows", () => {
+    const db = freshDb();
+    // Non-failed environmental rows prove the env filter runs before the LIMIT/failure check.
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "env-sep-h5",
+      ts: "2026-08-31T10:04:00.000Z",
+      outcome: "completed_with_output",
+      environmentFailure: "y",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "env-sep-h4",
+      ts: "2026-08-31T10:03:00.000Z",
+      outcome: "failed",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "env-sep-h3",
+      ts: "2026-08-31T10:02:00.000Z",
+      outcome: "completed_with_output",
+      environmentFailure: "y",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "env-sep-h2",
+      ts: "2026-08-31T10:01:00.000Z",
+      outcome: "failed",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "env-sep-h1",
+      ts: "2026-08-31T10:00:00.000Z",
+      outcome: "failed",
+    });
+
+    const result = resolveAgent(
+      { kind: "single", agent: "dead-pin-seat" },
+      "review_adversarial",
+      ctx({
+        config: {
+          role_routing: { headroom_weighting: false },
+          agents: [
+            { name: "dead-pin-seat", roles: ["reviewer"] },
+            { name: "healthy-seat", roles: ["reviewer"] },
+          ],
+        },
+        db: () => db,
+      }),
+      { fallback_role: "reviewer" },
+    );
+
+    expect(result).not.toBe("dead-pin-seat");
   });
 
   test("keeps the configured single agent when no fallback role is provided", () => {
