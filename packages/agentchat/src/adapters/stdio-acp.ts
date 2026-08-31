@@ -1,4 +1,6 @@
-import type { DispatchEventInput } from "@penumbra/core";
+import { type DispatchEventInput, FsPathError, resolveInsideWorktree } from "@penumbra/core";
+
+import path from "node:path";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { CapturePort } from "../worker/capture-port.js";
@@ -8,6 +10,7 @@ import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifi
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
 import {
   OperationRejectedError,
+  OutsideWorktreeError,
   TerminalCapExceededError,
   TerminalNotFoundError,
 } from "../worker/write-tools-errors.js";
@@ -895,6 +898,25 @@ function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): vo
   }
 }
 
+async function validateTerminalCwd(cwd: string | undefined, worktreeRoot: string): Promise<string> {
+  // Missing cwd and "." intentionally default to the dispatch worktree root.
+  if (cwd === undefined || cwd === ".") return await resolveInsideWorktree(".", worktreeRoot);
+  try {
+    return await resolveInsideWorktree(cwd, worktreeRoot);
+  } catch (err) {
+    if (err instanceof FsPathError) {
+      if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
+      // Missing cwd paths are acceptable only after resolveInsideWorktree has
+      // checked the nearest existing ancestor for symlink escapes.
+      if (err.code === "not_found") {
+        const worktreeReal = await resolveInsideWorktree(".", worktreeRoot);
+        return path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(worktreeReal, cwd);
+      }
+    }
+    throw err;
+  }
+}
+
 function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (opts.terminal !== true) return;
   const { client, input, arm } = ctx;
@@ -930,19 +952,20 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       arm();
       try {
         if (!input.executor) throw new Error("terminal/create: no executor");
+        const resolvedCwd = await validateTerminalCwd(params.cwd, ctx.cwd);
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
           // eslint-disable-next-line no-console -- Preserve the established operator-facing auto-approval log.
           console.info(
             // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Preserve the established numeric command-length log field.
-            `stdio-acp: terminal/create auto-approved cwd=${params.cwd ?? "."} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
+            `stdio-acp: terminal/create auto-approved cwd=${resolvedCwd} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
           );
         }
         const result = await input.executor.terminalCreate(
           {
             command: params.command,
             argv: params.args,
-            cwd: params.cwd,
+            cwd: resolvedCwd,
             output_byte_limit: params.output_byte_limit ?? params.outputByteLimit,
           },
           {
@@ -950,7 +973,7 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
             rawInput: {
               argv: params.args ?? null,
               cmd: params.command ?? null,
-              cwd: params.cwd ?? ".",
+              cwd: resolvedCwd,
             },
             dispatchId: input.handoff_id ?? "unknown",
           },

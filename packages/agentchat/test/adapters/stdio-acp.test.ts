@@ -734,7 +734,7 @@ describe("StdioAcpAdapter", () => {
     });
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const adapter = new StdioAcpAdapter(
-      { binary: "mock-acp", terminal: true },
+      { binary: "mock-acp", terminal: true, cwd: "/tmp" },
       {
         startServer: vi.fn(startStdioAcpServerStub),
         createClient: (): StdioAcpClient =>

@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -51,8 +52,10 @@ describe("resolveInsideWorktree", () => {
   });
 
   it("rejects a symlink whose realpath is outside the worktree", async () => {
-    fs.writeFileSync("/tmp/fs-paths-target.txt", "secret");
-    fs.symlinkSync("/tmp/fs-paths-target.txt", path.join(tmp, "link"));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-paths-outside-"));
+    const outsideTarget = path.join(outsideDir, "target.txt");
+    fs.writeFileSync(outsideTarget, "secret");
+    fs.symlinkSync(outsideTarget, path.join(tmp, "link"));
     try {
       await resolveInsideWorktree(path.join(tmp, "link"), tmp);
       throw new Error("should have thrown");
@@ -61,7 +64,67 @@ describe("resolveInsideWorktree", () => {
       expect((err as FsPathError).code).toBe("outside_worktree");
       expect((err as FsPathError).message).toBe("path is outside the worktree");
     } finally {
-      fs.unlinkSync("/tmp/fs-paths-target.txt");
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing descendant below a symlink whose realpath is outside the worktree", async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-paths-outside-"));
+    fs.symlinkSync(outsideDir, path.join(tmp, "link"));
+    try {
+      await resolveInsideWorktree(path.join(tmp, "link", "missing", "child"), tmp);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FsPathError);
+      expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlink cycle inside the worktree as outside_worktree", async () => {
+    fs.symlinkSync("cycle", path.join(tmp, "cycle"));
+
+    try {
+      await resolveInsideWorktree(path.join(tmp, "cycle", "missing", "child"), tmp);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FsPathError);
+      expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
+    }
+  });
+
+  it("rejects non-ENOENT failures while walking missing-path ancestors", async () => {
+    const existing = path.join(tmp, "existing");
+    fs.mkdirSync(existing);
+    const cycleAncestor = path.join(existing, "cycle");
+    const missingAncestor = path.join(cycleAncestor, "missing");
+    const candidate = path.join(missingAncestor, "child");
+    const tmpReal = fs.realpathSync(tmp);
+
+    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation((async (input) => {
+      const inputPath = String(input);
+      if (inputPath === tmp) return tmpReal;
+      if (inputPath === candidate || inputPath === missingAncestor) {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }
+      if (inputPath === cycleAncestor) {
+        throw Object.assign(new Error("too many symbolic links"), { code: "ELOOP" });
+      }
+      return fs.realpathSync(inputPath);
+    }) as typeof fsPromises.realpath);
+
+    try {
+      await resolveInsideWorktree(candidate, tmp);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FsPathError);
+      expect((err as FsPathError).code).toBe("outside_worktree");
+      expect((err as FsPathError).message).toBe("path is outside the worktree");
+    } finally {
+      realpathSpy.mockRestore();
     }
   });
 
@@ -82,6 +145,18 @@ describe("resolveInsideWorktree", () => {
   it('throws FsPathError with code "not_found" for missing path', async () => {
     try {
       await resolveInsideWorktree(path.join(tmp, "nope.txt"), tmp);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FsPathError);
+      expect((err as FsPathError).code).toBe("not_found");
+    }
+  });
+
+  it("keeps normal ENOENT missing chains classified as not_found", async () => {
+    fs.mkdirSync(path.join(tmp, "existing"));
+
+    try {
+      await resolveInsideWorktree(path.join(tmp, "existing", "missing", "child"), tmp);
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(FsPathError);

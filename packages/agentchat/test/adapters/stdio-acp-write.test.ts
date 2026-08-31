@@ -1,6 +1,9 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
@@ -320,6 +323,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       cwd: "/tmp",
       output_byte_limit: 1234,
     });
+    const tmpReal = await realpath("/tmp");
 
     expect(result).toMatchObject({ terminal_id: "term-123" });
     expect(calls).toEqual([
@@ -327,12 +331,12 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
         args: {
           command: "echo hello",
           argv: ["echo", "hello"],
-          cwd: "/tmp",
+          cwd: tmpReal,
           output_byte_limit: 1234,
         },
         ctx: {
           toolName: "terminal.create",
-          rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: "/tmp" },
+          rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: tmpReal },
           dispatchId: "handoff-1",
         },
       },
@@ -395,7 +399,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       {
         command: "echo hello",
         argv: undefined,
-        cwd: undefined,
+        cwd: await realpath("/tmp"),
         output_byte_limit: 4321,
       },
     ]);
@@ -421,7 +425,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       {
         command: "echo hello",
         argv: undefined,
-        cwd: undefined,
+        cwd: await realpath("/tmp"),
         output_byte_limit: 1234,
       },
     ]);
@@ -1048,11 +1052,10 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(serializedLogs).not.toContain(secret);
       expect(serializedLogs).not.toContain(rawCommand);
       expect(serializedLogs).not.toContain(JSON.stringify(rawArgv));
+      const tmpReal = await realpath("/tmp");
       expect(logs).toEqual([
         [
-          expect.stringMatching(
-            /^stdio-acp: terminal\/create auto-approved cwd=\/tmp program=curl commandLength=\d+$/,
-          ),
+          `stdio-acp: terminal/create auto-approved cwd=${tmpReal} program=curl commandLength=${String(rawCommand.length)}`,
         ],
       ]);
       expect(harness.events.some((event) => event.kind === "terminal.failed")).toBe(true);
@@ -1256,5 +1259,293 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
         ")",
     );
     expect(JSON.stringify(writtenFrames)).not.toContain(secret);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Boundary check: terminal/create must reject a cwd outside the dispatch's
+  // own worktree root at the wire boundary, before the executor is invoked.
+  // ---------------------------------------------------------------------------
+
+  test("terminal/create rejects cwd outside the dispatch worktree with -32001 and audits without auto-approval log", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-outside-"));
+    try {
+      const secret = "sk-FAKE-CWD-SECRET-DO-NOT-LOG-12345";
+      const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
+      const outsideCwd = path.join(outsideRoot, "raw-cwd-secret");
+      let executorCalled = false;
+      const logs: unknown[] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]): void => {
+        logs.push(args);
+      };
+      try {
+        const harness = createHarness(
+          { terminal: true, cwd: worktreeRoot },
+          {
+            terminalCreate: (): Promise<unknown> => {
+              executorCalled = true;
+              return Promise.resolve({ terminal_id: "term-123" });
+            },
+          },
+          { trust_mode: "all" },
+        );
+
+        await harness.runDispatch();
+        const handler = harness.getHandler("terminal/create");
+        const { error } = await captureError(handler?.({ command, cwd: outsideCwd }));
+
+        expect(executorCalled).toBe(false);
+        expect(error).toBeInstanceOf(Error);
+        expect(errorCode(error)).toBe(-32001);
+        expect(harness.auditEvents).toContainEqual(
+          expect.objectContaining({
+            type: "terminal.failed",
+            payload: expect.objectContaining({
+              method: "terminal/create",
+              code: -32001,
+            }),
+          }),
+        );
+        expect(harness.events.some((event) => event.kind === "terminal.failed")).toBe(true);
+        expect(logs).toEqual([]);
+        const serializedFailureSinks = JSON.stringify({
+          auditEvents: harness.auditEvents,
+          events: harness.events,
+          errorMessage: error?.message,
+          logs,
+        });
+        expect(serializedFailureSinks).not.toContain(command);
+        expect(serializedFailureSinks).not.toContain(secret);
+        expect(serializedFailureSinks).not.toContain(outsideCwd);
+      } finally {
+        console.info = originalInfo;
+      }
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create rejects cwd '/' with -32001 before invoking the executor", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    try {
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const { error } = await captureError(handler?.({ command: "echo hello", cwd: "/" }));
+
+      expect(executorCalled).toBe(false);
+      expect(error).toBeInstanceOf(Error);
+      expect(errorCode(error)).toBe(-32001);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create rejects an escaping symlink with missing descendants before invoking the executor", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-outside-"));
+    try {
+      const linkPath = path.join(worktreeRoot, "outside-link");
+      await symlink(outsideRoot, linkPath);
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const { error } = await captureError(
+        handler?.({ command: "echo hello", cwd: path.join(linkPath, "missing", "child") }),
+      );
+
+      expect(executorCalled).toBe(false);
+      expect(error).toBeInstanceOf(Error);
+      expect(errorCode(error)).toBe(-32001);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create rejects a cwd through a symlink cycle before invoking the executor", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    try {
+      const cyclePath = path.join(worktreeRoot, "cycle");
+      await symlink("cycle", cyclePath);
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const { error } = await captureError(
+        handler?.({ command: "echo hello", cwd: path.join(cyclePath, "missing", "child") }),
+      );
+
+      expect(executorCalled).toBe(false);
+      expect(error).toBeInstanceOf(Error);
+      expect(errorCode(error)).toBe(-32001);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create rejects an absolute symlink to outside before invoking the executor", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-outside-"));
+    try {
+      const linkPath = path.join(worktreeRoot, "outside-link");
+      await symlink(outsideRoot, linkPath);
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const { error } = await captureError(handler?.({ command: "echo hello", cwd: linkPath }));
+
+      expect(executorCalled).toBe(false);
+      expect(error).toBeInstanceOf(Error);
+      expect(errorCode(error)).toBe(-32001);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create rejects dot-dot cwd traversal before invoking the executor", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-outside-"));
+    try {
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const { error } = await captureError(
+        handler?.({
+          command: "echo hello",
+          cwd: path.join(worktreeRoot, "..", path.basename(outsideRoot)),
+        }),
+      );
+
+      expect(executorCalled).toBe(false);
+      expect(error).toBeInstanceOf(Error);
+      expect(errorCode(error)).toBe(-32001);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create accepts cwd inside the dispatch worktree and passes the canonical cwd", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    try {
+      const subdir = path.join(worktreeRoot, "subdir");
+      await mkdir(subdir, { recursive: true });
+      const linkPath = path.join(worktreeRoot, "inside-link");
+      await symlink(subdir, linkPath);
+      const calls: { args: unknown; ctx: unknown }[] = [];
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (args, ctx): Promise<unknown> => {
+            executorCalled = true;
+            calls.push({ args, ctx });
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const result = await handler?.({ command: "echo hello", cwd: linkPath });
+
+      expect(executorCalled).toBe(true);
+      expect(result).toMatchObject({ terminal_id: "term-123" });
+      expect(calls).toEqual([
+        {
+          args: {
+            command: "echo hello",
+            argv: undefined,
+            cwd: await realpath(subdir),
+            output_byte_limit: undefined,
+          },
+          ctx: {
+            toolName: "terminal.create",
+            rawInput: { argv: null, cmd: "echo hello", cwd: await realpath(subdir) },
+            dispatchId: "handoff-1",
+          },
+        },
+      ]);
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("terminal/create accepts a missing cwd and defaults to the worktree root", async () => {
+    const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "penumbra-cwd-boundary-"));
+    try {
+      let executorCalled = false;
+      const harness = createHarness(
+        { terminal: true, cwd: worktreeRoot },
+        {
+          terminalCreate: (): Promise<unknown> => {
+            executorCalled = true;
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
+        },
+      );
+
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const result = await handler?.({ command: "echo hello" });
+
+      expect(executorCalled).toBe(true);
+      expect(result).toMatchObject({ terminal_id: "term-123" });
+    } finally {
+      await rm(worktreeRoot, { recursive: true, force: true });
+    }
   });
 });
