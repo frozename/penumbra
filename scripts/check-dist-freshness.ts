@@ -71,6 +71,18 @@ for (const entry of entries) {
 
 const ARTIFACT_SUFFIX = /(?:\.d\.ts|\.js)$/;
 
+function siblingTsBuildInfoFiles(pkg: string): string[] {
+  let children;
+  try {
+    children = readdirSync(pkg, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return children
+    .filter((child) => child.isFile() && child.name.endsWith(".tsbuildinfo"))
+    .map((child) => join(pkg, child.name));
+}
+
 function walkStrayArtifacts(dir: string): void {
   let children;
   try {
@@ -112,6 +124,8 @@ for (const entry of entries) {
   walkStrayArtifacts(srcDir);
 }
 
+const staleTsBuildInfoFiles = stale.flatMap((pkg) => siblingTsBuildInfoFiles(pkg));
+
 if (strayArtifacts.length > 0) {
   if (CHECK_MODE) {
     console.error(`stray src artifacts (${String(strayArtifacts.length)}):`);
@@ -137,15 +151,31 @@ if (CHECK_MODE) {
   for (const p of stale) {
     console.error(`  ${p}`);
   }
+  if (staleTsBuildInfoFiles.length > 0) {
+    console.error(`stale tsbuildinfo files (${String(staleTsBuildInfoFiles.length)}):`);
+    for (const p of staleTsBuildInfoFiles) {
+      console.error(`  ${p}`);
+    }
+  }
   process.exit(2);
 }
 
 for (const p of stale) {
   rmSync(join(p, "dist"), { recursive: true, force: true });
 }
+for (const p of staleTsBuildInfoFiles) {
+  rmSync(p, { force: true });
+}
 const removedParts = [];
 if (stale.length > 0) {
   removedParts.push(`${String(stale.length)} stale dist dir${stale.length === 1 ? "" : "s"}`);
+}
+if (staleTsBuildInfoFiles.length > 0) {
+  removedParts.push(
+    `${String(staleTsBuildInfoFiles.length)} stale tsbuildinfo file${
+      staleTsBuildInfoFiles.length === 1 ? "" : "s"
+    }`,
+  );
 }
 if (strayArtifacts.length > 0) {
   removedParts.push(

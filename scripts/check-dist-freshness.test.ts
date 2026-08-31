@@ -88,6 +88,57 @@ describe("check-dist-freshness", () => {
     });
   });
 
+  test("stale dist with sibling tsbuildinfo -> removes both", () => {
+    withTmp((root) => {
+      const pkg = mkPkg(root, "alpha");
+      writeFileSync(join(pkg, "src", "index.ts"), "export {}");
+      writeFileSync(join(pkg, "dist", "index.d.ts"), "export {}");
+      writeFileSync(join(pkg, "tsconfig.tsbuildinfo"), "{}");
+      setMtime(join(pkg, "src", "index.ts"), 2_000);
+      setMtime(join(pkg, "dist", "index.d.ts"), 1_000);
+
+      const r = run(root);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain("removed 1 stale dist dir");
+      expect(r.stdout).toContain("1 stale tsbuildinfo file");
+      expect(existsSync(join(pkg, "dist"))).toBe(false);
+      expect(existsSync(join(pkg, "tsconfig.tsbuildinfo"))).toBe(false);
+    });
+  });
+
+  test("fresh dist with sibling tsbuildinfo -> untouched", () => {
+    withTmp((root) => {
+      const pkg = mkPkg(root, "alpha");
+      writeFileSync(join(pkg, "src", "index.ts"), "export {}");
+      writeFileSync(join(pkg, "dist", "index.d.ts"), "export {}");
+      writeFileSync(join(pkg, "tsconfig.tsbuildinfo"), "{}");
+      setMtime(join(pkg, "src", "index.ts"), 1_000);
+      setMtime(join(pkg, "dist", "index.d.ts"), 2_000);
+
+      const r = run(root);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe("all dist fresh");
+      expect(existsSync(join(pkg, "tsconfig.tsbuildinfo"))).toBe(true);
+    });
+  });
+
+  test("--check mode never deletes the sibling tsbuildinfo", () => {
+    withTmp((root) => {
+      const pkg = mkPkg(root, "alpha");
+      writeFileSync(join(pkg, "src", "index.ts"), "export {}");
+      writeFileSync(join(pkg, "dist", "index.d.ts"), "export {}");
+      writeFileSync(join(pkg, "tsconfig.tsbuildinfo"), "{}");
+      setMtime(join(pkg, "src", "index.ts"), 2_000);
+      setMtime(join(pkg, "dist", "index.d.ts"), 1_000);
+
+      const r = run(root, ["--check"]);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(join(pkg, "tsconfig.tsbuildinfo"));
+      expect(existsSync(join(pkg, "dist"))).toBe(true);
+      expect(existsSync(join(pkg, "tsconfig.tsbuildinfo"))).toBe(true);
+    });
+  });
+
   test("missing dist → exit 0, nothing to scrub", () => {
     withTmp((root) => {
       const pkg = join(root, "alpha");
