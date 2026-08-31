@@ -57,7 +57,7 @@ async function waitForMockCallCount(fn: unknown, expected: number, label: string
   const deadline = Date.now() + 2_000;
   while (mockCalls(fn).length < expected) {
     if (Date.now() >= deadline) {
-      throw new Error(`${label} was called ${mockCalls(fn).length} times, expected ${expected}`);
+      throw new Error(`${label} was called ${String(mockCalls(fn).length)} times, expected ${String(expected)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -138,7 +138,9 @@ test("terminal 409 claim conflict clears event-source dedup so re-emitted handof
       void dispatcher.handle(row as TestHandoff);
     },
   });
-  const forgetSpy = mock((id: string) => handle.forget(id));
+  const forgetSpy = mock((id: string) => {
+    handle.forget(id);
+  });
   d.onClaimRetryable = forgetSpy;
 
   push(baseHandoff("h1"));
