@@ -242,10 +242,10 @@ async function runLlamactl(args: Args): Promise<number> {
   }
 
   const baseUrl =
-    args.siriusBaseUrl ?? process.env["PENUMBRA_SIRIUS_BASE_URL"] ?? "http://127.0.0.1:18080";
-  const token = process.env["PENUMBRA_SIRIUS_TOKEN"] ?? "test";
-  const model = process.env["PENUMBRA_SIRIUS_MODEL"] ?? "text-embedding-3-small";
-  const dim = process.env["PENUMBRA_SIRIUS_DIM"] ?? "1536";
+    args.siriusBaseUrl ?? process.env["PENUMBRA_EMBEDDINGS_BASE_URL"] ?? "http://127.0.0.1:18080";
+  const token = process.env["PENUMBRA_EMBEDDINGS_TOKEN"] ?? "test";
+  const model = process.env["PENUMBRA_EMBEDDINGS_MODEL"] ?? "text-embedding-3-small";
+  const dim = process.env["PENUMBRA_EMBEDDINGS_DIM"] ?? "1536";
 
   writeOut(`waiting for sirius at ${baseUrl}/healthz ...`);
   const healthDeadline = Date.now() + 30_000;
@@ -273,12 +273,12 @@ async function runLlamactl(args: Args): Promise<number> {
     return 3;
   }
 
-  // Set sirius env vars so runStart picks them up.
-  process.env["PENUMBRA_EMBEDDER_PREFER_SIRIUS"] = "true";
-  process.env["PENUMBRA_SIRIUS_BASE_URL"] = baseUrl;
-  process.env["PENUMBRA_SIRIUS_TOKEN"] = token;
-  process.env["PENUMBRA_SIRIUS_MODEL"] = model;
-  process.env["PENUMBRA_SIRIUS_DIM"] = dim;
+  // Set embeddings env vars so runStart picks them up.
+  process.env["PENUMBRA_EMBEDDINGS_MODE"] = "remote";
+  process.env["PENUMBRA_EMBEDDINGS_BASE_URL"] = baseUrl;
+  process.env["PENUMBRA_EMBEDDINGS_TOKEN"] = token;
+  process.env["PENUMBRA_EMBEDDINGS_MODEL"] = model;
+  process.env["PENUMBRA_EMBEDDINGS_DIM"] = dim;
 
   const userProvidedSandbox = args.sandbox !== undefined;
   const sandbox = args.sandbox ?? mkdtempSync(join(tmpdir(), "penumbra-harness-llamactl-"));

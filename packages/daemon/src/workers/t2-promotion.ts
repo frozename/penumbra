@@ -93,8 +93,8 @@ interface JudgeResponse {
 }
 
 export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionWorker {
-  // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
-  // and no override passed in), short-circuit to a no-op worker. The previous
+  // If no LLM judge is configured (no PENUMBRA_JUDGE_BASE_URL and no override
+  // passed in), short-circuit to a no-op worker. The previous
   // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
   // default port on common dev setups and produced an unbounded stream of
   // "Sirius returned 404" warnings every cycle.
@@ -106,7 +106,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
     });
   if (!rawJudge) {
     opts.services.log.info(
-      "no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)",
+      "no PENUMBRA_JUDGE_BASE_URL configured — t2 promotion worker disabled (set it to enable)",
     );
     return {
       tick(): Promise<void> {
@@ -511,10 +511,10 @@ export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
 export function createDefaultLLMJudge(
   services: Services,
 ): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
-  const url = process.env.PENUMBRA_SIRIUS_BASE_URL ?? process.env.SIRIUS_URL;
+  const url = process.env.PENUMBRA_JUDGE_BASE_URL;
   if (!url) return null;
-  const model = process.env.PENUMBRA_JUDGE_MODEL ?? process.env.PENUMBRA_SIRIUS_MODEL ?? "gpt-4o";
-  const token = process.env.PENUMBRA_SIRIUS_TOKEN ?? "";
+  const model = process.env.PENUMBRA_JUDGE_MODEL ?? "gpt-4o";
+  const token = process.env.PENUMBRA_JUDGE_TOKEN ?? "";
   services.log.info({ url, model, hasToken: Boolean(token) }, "t2 promotion: LLM judge configured");
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
@@ -538,7 +538,7 @@ export function createDefaultLLMJudge(
       });
 
       if (!res.ok) {
-        throw new Error(`Sirius returned ${String(res.status)}: ${await res.text()}`);
+        throw new Error(`judge returned ${String(res.status)}: ${await res.text()}`);
       }
 
       const json = (await res.json()) as JudgeResponse;

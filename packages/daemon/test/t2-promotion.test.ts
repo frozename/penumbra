@@ -80,13 +80,11 @@ beforeAll(() => {
   writeFileSync(join(_fixtureDir, "routing.yaml"), "default_roles: {}\n");
   writeFileSync(join(_fixtureDir, "quotas.yaml"), "providers: []\n");
   _savedEnv.agentchat = process.env.PENUMBRA_CONFIG_DIR;
-  _savedEnv.sirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
-  _savedEnv.sirius2 = process.env.SIRIUS_URL;
+  _savedEnv.judge = process.env.PENUMBRA_JUDGE_BASE_URL;
   _savedEnv.t2EmbedRecipe = process.env.PENUMBRA_T2_EMBED_RECIPE;
   process.env.PENUMBRA_CONFIG_DIR = _fixtureDir;
   process.env.PENUMBRA_T2_EMBED_RECIPE = "body_v1";
-  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-  delete process.env.SIRIUS_URL;
+  delete process.env.PENUMBRA_JUDGE_BASE_URL;
 });
 afterAll(() => {
   if (_savedEnv.agentchat !== undefined) process.env.PENUMBRA_CONFIG_DIR = _savedEnv.agentchat;
@@ -94,8 +92,7 @@ afterAll(() => {
   if (_savedEnv.t2EmbedRecipe !== undefined)
     process.env.PENUMBRA_T2_EMBED_RECIPE = _savedEnv.t2EmbedRecipe;
   else delete process.env.PENUMBRA_T2_EMBED_RECIPE;
-  if (_savedEnv.sirius !== undefined) process.env.PENUMBRA_SIRIUS_BASE_URL = _savedEnv.sirius;
-  if (_savedEnv.sirius2 !== undefined) process.env.SIRIUS_URL = _savedEnv.sirius2;
+  if (_savedEnv.judge !== undefined) process.env.PENUMBRA_JUDGE_BASE_URL = _savedEnv.judge;
   rmSync(_fixtureDir, { recursive: true, force: true });
 });
 
@@ -445,7 +442,7 @@ test("extractT2JudgeRequestExtras accepts only plain requestExtras objects", () 
 });
 
 serviceTest(
-  "t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)",
+  "t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_JUDGE_BASE_URL)",
   async () => {
     const d = makeTempDaemon();
     d.services.supervisor.stopAll();
@@ -467,12 +464,10 @@ serviceTest(
     writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
     writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
     const oldEnv = {
-      sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
-      sirius2: process.env.SIRIUS_URL,
+      judge: process.env.PENUMBRA_JUDGE_BASE_URL,
       agentchat: process.env.PENUMBRA_CONFIG_DIR,
     };
-    delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-    delete process.env.SIRIUS_URL;
+    delete process.env.PENUMBRA_JUDGE_BASE_URL;
     process.env.PENUMBRA_CONFIG_DIR = dir;
     try {
       const oldTs = "2026-04-20T00:00:00.000Z";
@@ -497,8 +492,7 @@ serviceTest(
       expect(row?.t2_promoted_at).toBeNull();
       expect(row?.failed_promotion_attempts).toBe(0);
     } finally {
-      if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
-      if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
+      if (oldEnv.judge) process.env.PENUMBRA_JUDGE_BASE_URL = oldEnv.judge;
       if (oldEnv.agentchat) process.env.PENUMBRA_CONFIG_DIR = oldEnv.agentchat;
       else delete process.env.PENUMBRA_CONFIG_DIR;
       rmSync(dir, { recursive: true, force: true });
@@ -510,7 +504,7 @@ serviceTest(
 test("agentchat-based pool passes requestExtras from memory-refiner agents", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
   const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
-  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const oldSirius = process.env.PENUMBRA_JUDGE_BASE_URL;
   const seenBodies: Record<string, unknown>[] = [];
   const server = serve({
     port: 0,
@@ -527,7 +521,7 @@ test("agentchat-based pool passes requestExtras from memory-refiner agents", asy
     },
   });
   const port = serverPort(server.port);
-  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+  delete process.env.PENUMBRA_JUDGE_BASE_URL;
   process.env.PENUMBRA_CONFIG_DIR = dir;
   writeFileSync(
     join(dir, "agents.yaml"),
@@ -576,8 +570,8 @@ agents:
     await server.stop(true);
     if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
     else delete process.env.PENUMBRA_CONFIG_DIR;
-    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
-    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    if (oldSirius) process.env.PENUMBRA_JUDGE_BASE_URL = oldSirius;
+    else delete process.env.PENUMBRA_JUDGE_BASE_URL;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -587,11 +581,11 @@ serviceTest("worker falls back to single-judge env config when no memory-refiner
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-"));
   const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
-  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
-  const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
+  const oldSirius = process.env.PENUMBRA_JUDGE_BASE_URL;
+  const oldToken = process.env.PENUMBRA_JUDGE_TOKEN;
   process.env.PENUMBRA_CONFIG_DIR = dir;
-  process.env.PENUMBRA_SIRIUS_BASE_URL = "http://judge";
-  process.env.PENUMBRA_SIRIUS_TOKEN = "token";
+  process.env.PENUMBRA_JUDGE_BASE_URL = "http://judge";
+  process.env.PENUMBRA_JUDGE_TOKEN = "token";
   writeFileSync(
     join(dir, "agents.yaml"),
     `
@@ -617,10 +611,10 @@ agents:
     infoSpy.mockRestore();
     if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
     else delete process.env.PENUMBRA_CONFIG_DIR;
-    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
-    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-    if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
-    else delete process.env.PENUMBRA_SIRIUS_TOKEN;
+    if (oldSirius) process.env.PENUMBRA_JUDGE_BASE_URL = oldSirius;
+    else delete process.env.PENUMBRA_JUDGE_BASE_URL;
+    if (oldToken) process.env.PENUMBRA_JUDGE_TOKEN = oldToken;
+    else delete process.env.PENUMBRA_JUDGE_TOKEN;
     rmSync(dir, { recursive: true, force: true });
     d.stop();
   }
@@ -1149,9 +1143,9 @@ test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => 
       return new Response("OK");
     },
   });
-  const prevUrl = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const prevUrl = process.env.PENUMBRA_JUDGE_BASE_URL;
   const prevTimeout = process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
-  process.env.PENUMBRA_SIRIUS_BASE_URL = `http://localhost:${String(server.port)}`;
+  process.env.PENUMBRA_JUDGE_BASE_URL = `http://localhost:${String(server.port)}`;
   process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = "50";
   try {
     const stub = makeServicesStub({
@@ -1170,8 +1164,8 @@ test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => 
     expect((caught as Error).message).toMatch(/judge default timed out after 50ms/);
   } finally {
     await server.stop(true);
-    if (prevUrl === undefined) delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-    else process.env.PENUMBRA_SIRIUS_BASE_URL = prevUrl;
+    if (prevUrl === undefined) delete process.env.PENUMBRA_JUDGE_BASE_URL;
+    else process.env.PENUMBRA_JUDGE_BASE_URL = prevUrl;
     if (prevTimeout === undefined) delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
     else process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = prevTimeout;
   }

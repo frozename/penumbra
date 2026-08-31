@@ -713,26 +713,6 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Embeddings mode selection: bundled, remote, or auto.",
   },
 
-  // ── sirius (deprecated embedding aliases) ───────────────────────────
-  PENUMBRA_SIRIUS_BASE_URL: {
-    schema: OptStr,
-    description: "Base URL for sirius-gateway.",
-  },
-  PENUMBRA_SIRIUS_DIM: {
-    schema: NonNegInt,
-    default: 1536,
-    description: "Embedding dimension for sirius.",
-  },
-  PENUMBRA_SIRIUS_MODEL: {
-    schema: OptStr,
-    description: "Model for sirius requests.",
-  },
-  PENUMBRA_SIRIUS_TOKEN: {
-    schema: OptStr,
-    description: "Bearer token for sirius-gateway.",
-    isSensitive: true,
-  },
-
   // ── judge ───────────────────────────────────────────────────────────
   PENUMBRA_JUDGE_BASE_URL: {
     schema: OptStr,
@@ -752,11 +732,6 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Bearer token for the judge LLM.",
     isSensitive: true,
-  },
-  PENUMBRA_EMBEDDER_PREFER_SIRIUS: {
-    schema: Bool,
-    default: false,
-    description: "Prefer sirius for embeddings.",
   },
   PENUMBRA_EMBEDDING_MODEL_VERSION: {
     schema: z.string(),

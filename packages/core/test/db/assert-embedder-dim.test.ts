@@ -20,7 +20,7 @@ test("assertEmbedderDim throws when embedder dim differs from stored dim", () =>
   expect(() => {
     assertEmbedderDim(db, 1536, "sirius");
   }).toThrow(
-    "embedding dim mismatch: embedder 'sirius' produces 1536-dim vectors but the store is 384-dim. Re-embed the corpus or fix PENUMBRA_SIRIUS_DIM/PENUMBRA_EMBEDDINGS_DIM.",
+    "embedding dim mismatch: embedder 'sirius' produces 1536-dim vectors but the store is 384-dim. Re-embed the corpus or fix PENUMBRA_EMBEDDINGS_DIM.",
   );
 });
 

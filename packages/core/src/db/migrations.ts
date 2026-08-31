@@ -13,7 +13,7 @@ export function assertEmbedderDim(db: Database, embedderDim: number, embedderNam
   if (storedDim === undefined || storedDim === embedderDim) return;
   const name = embedderName ?? "unknown";
   throw new Error(
-    `embedding dim mismatch: embedder '${name}' produces ${String(embedderDim)}-dim vectors but the store is ${String(storedDim)}-dim. Re-embed the corpus or fix PENUMBRA_SIRIUS_DIM/PENUMBRA_EMBEDDINGS_DIM.`,
+    `embedding dim mismatch: embedder '${name}' produces ${String(embedderDim)}-dim vectors but the store is ${String(storedDim)}-dim. Re-embed the corpus or fix PENUMBRA_EMBEDDINGS_DIM.`,
   );
 }
 

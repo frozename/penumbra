@@ -1,6 +1,6 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 
-import { readEmbedderEnv } from "../src/commands/sirius-env.js";
+import { readEmbedderEnv } from "../src/commands/embedder-env.js";
 
 test("readEmbedderEnv returns undefined when no vars are set", () => {
   expect(readEmbedderEnv({})).toBeUndefined();
@@ -48,36 +48,16 @@ test("readEmbedderEnv keeps empty healthPath to signal probe skip", () => {
   expect(opts?.remote?.healthPath).toBe("");
 });
 
-test("readEmbedderEnv maps legacy PENUMBRA_SIRIUS_* vars and warns once", () => {
-  const warn = spyOn(console, "warn").mockImplementation(() => undefined);
-  const env = {
-    PENUMBRA_SIRIUS_BASE_URL: "http://legacy:8080",
-    PENUMBRA_SIRIUS_MODEL: "legacy-model",
-    PENUMBRA_SIRIUS_DIM: "1536",
-    PENUMBRA_SIRIUS_TOKEN: "legacy-token",
-    PENUMBRA_EMBEDDER_PREFER_SIRIUS: "true",
-  };
-
-  const first = readEmbedderEnv(env);
-  const second = readEmbedderEnv(env);
-
-  expect(first).toEqual({
-    mode: "auto",
-    remote: {
-      baseUrl: "http://legacy:8080",
-      model: "legacy-model",
-      dim: 1536,
-      token: "legacy-token",
-      authHeader: "Authorization",
-      authScheme: "Bearer",
-      healthPath: "/healthz",
-    },
-  });
-  expect(second).toEqual(first);
-  expect(warn).toHaveBeenCalledTimes(1);
-  expect(String(warn.mock.calls[0]?.[0] ?? "")).toContain("PENUMBRA_EMBEDDINGS_");
-
-  warn.mockRestore();
+test("readEmbedderEnv ignores the removed PENUMBRA_SIRIUS_* aliases", () => {
+  expect(
+    readEmbedderEnv({
+      PENUMBRA_SIRIUS_BASE_URL: "http://legacy:8080",
+      PENUMBRA_SIRIUS_MODEL: "legacy-model",
+      PENUMBRA_SIRIUS_DIM: "1536",
+      PENUMBRA_SIRIUS_TOKEN: "legacy-token",
+      PENUMBRA_EMBEDDER_PREFER_SIRIUS: "true",
+    }),
+  ).toBeUndefined();
 });
 
 test("readEmbedderEnv throws in remote mode when baseUrl is missing", () => {

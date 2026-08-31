@@ -16,10 +16,10 @@ const GATE = process.env.PENUMBRA_E2E_LLAMACTL === "1";
 const MANIFEST =
   process.env.PENUMBRA_E2E_LLAMACTL_MANIFEST ??
   join(import.meta.dir, "..", "fixtures", "llamactl-sirius-embedder.yaml");
-const SIRIUS_BASE_URL = process.env.PENUMBRA_SIRIUS_BASE_URL ?? "http://127.0.0.1:18080";
-const SIRIUS_TOKEN = process.env.PENUMBRA_SIRIUS_TOKEN ?? "test";
-const SIRIUS_MODEL = process.env.PENUMBRA_SIRIUS_MODEL ?? "text-embedding-3-small";
-const SIRIUS_DIM = process.env.PENUMBRA_SIRIUS_DIM ?? "1536";
+const SIRIUS_BASE_URL = process.env.PENUMBRA_EMBEDDINGS_BASE_URL ?? "http://127.0.0.1:18080";
+const SIRIUS_TOKEN = process.env.PENUMBRA_EMBEDDINGS_TOKEN ?? "test";
+const SIRIUS_MODEL = process.env.PENUMBRA_EMBEDDINGS_MODEL ?? "text-embedding-3-small";
+const SIRIUS_DIM = process.env.PENUMBRA_EMBEDDINGS_DIM ?? "1536";
 
 async function llamactlApply(): Promise<void> {
   const proc = Bun.spawn({
@@ -83,11 +83,11 @@ beforeEach(async () => {
   sb = makeSandbox();
   expect((await captureOutput(spawnPenumbra(["init"], sb.dir))).exitCode).toBe(0);
   daemon = spawnPenumbra(["start"], sb.dir, {
-    PENUMBRA_EMBEDDER_PREFER_SIRIUS: "true",
-    PENUMBRA_SIRIUS_BASE_URL: SIRIUS_BASE_URL,
-    PENUMBRA_SIRIUS_TOKEN: SIRIUS_TOKEN,
-    PENUMBRA_SIRIUS_MODEL: SIRIUS_MODEL,
-    PENUMBRA_SIRIUS_DIM: SIRIUS_DIM,
+    PENUMBRA_EMBEDDINGS_MODE: "remote",
+    PENUMBRA_EMBEDDINGS_BASE_URL: SIRIUS_BASE_URL,
+    PENUMBRA_EMBEDDINGS_TOKEN: SIRIUS_TOKEN,
+    PENUMBRA_EMBEDDINGS_MODEL: SIRIUS_MODEL,
+    PENUMBRA_EMBEDDINGS_DIM: SIRIUS_DIM,
   });
   daemonStdoutBuf = "";
   const daemonProc = daemon;
