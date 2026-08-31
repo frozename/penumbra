@@ -2,10 +2,13 @@ import { loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { WorkflowSpec } from "../src/schema.js";
+
+import { executeWorkflow } from "../src/exec.js";
 import { runSessionEventsSource } from "../src/recall-sources/session-events.js";
 import { composeRecall } from "../src/recall.js";
 
@@ -267,6 +270,44 @@ test("composes file.contents source output", async () => {
       byte_size: Buffer.byteLength("recall body\n"),
     });
     expect(bundle.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+test("object-valued recall payloads are trimmed before rendering a session reminder", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-object-budget-"));
+  const db = new Database(":memory:");
+  try {
+    mkdirSync(join(dir, "docs/notes"), { recursive: true });
+    const hugeBody = "NOTE_START\n" + "x".repeat(65_536);
+    writeFileSync(join(dir, "docs/notes/maestro-continuation-2026-05-05.md"), hugeBody);
+
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      repoRoot: dir,
+      project: "demo",
+      sources: [{ source: "latest_continuation_note", args: { max_bytes: 65_536 } }],
+      budgetTokens: 100,
+    });
+    const spec: WorkflowSpec = {
+      name: "object-budget",
+      description: "object budget test",
+      triggers: [],
+      recall: [{ source: "latest_continuation_note", args: { max_bytes: 65_536 } }],
+      output: [{ kind: "session-reminder" }],
+      run: { kind: "markdown-template", template: "{{recall.latest_continuation_note.body}}" },
+    };
+
+    const result = await executeWorkflow({ spec, bundle, storageRoot: dir });
+
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(100);
+    expect(bundle.warnings.some((w) => w.includes("recall budget exceeded"))).toBe(true);
+    expect(result.sessionReminder ?? "").not.toContain("NOTE_START");
+    expect(Buffer.byteLength(result.sessionReminder ?? "", "utf8")).toBeLessThanOrEqual(400);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     db.close();

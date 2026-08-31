@@ -509,6 +509,13 @@ export {
   type StumbleCandidate,
   type StumbleEvidence,
 } from "./services/stumble-extractor.js";
+export {
+  collectSessionFirstMoves,
+  type CollectSessionFirstMovesInput,
+  type GateDeltas,
+  type PinShare,
+  type SessionFirstMoves,
+} from "./session-first-moves.js";
 export { type Settings, SettingsDefaults, type SettingsInput, SettingsSchema } from "./settings.js";
 export { InProcessSupervisor } from "./supervisor/in-process.js";
 export { type AgentRankRow, pickPreferred } from "./tasks/auction.js";

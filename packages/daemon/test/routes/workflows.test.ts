@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  bootPickupMeta,
   fileSessionSummarizeStumbles,
   MAX_DRAFTS_PER_SESSION,
   workflowsHistoryRoute,
@@ -1124,6 +1125,22 @@ test("POST /workflows/status returns explicit not_found for unknown ids", async 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("bootPickupMeta drops unserializable first-moves meta and emits a warning", () => {
+  const warnings: Record<string, unknown>[] = [];
+  const meta = bootPickupMeta(
+    { count: 1n },
+    {
+      warn: (fields: Record<string, unknown>) => {
+        warnings.push(fields);
+      },
+    },
+  );
+
+  expect(meta).toBeNull();
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]?.kind).toBe("continuity.boot_pickup");
 });
 
 test("POST /workflows/wait returns 200 (not 400 untrusted_cwd) for a same-project run", async () => {

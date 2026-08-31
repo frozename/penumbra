@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 
 const DEFAULT_MAX_BYTES = 65_536;
@@ -53,11 +54,21 @@ function decodeUtf8Prefix(buffer: Buffer): string | null {
   return null;
 }
 
+function resolveUserPath(cwd: string, path: string, storageRoot?: string): string {
+  if (path === "penumbra-storage:" || path.startsWith("penumbra-storage:")) {
+    const relPath = path.slice("penumbra-storage:".length);
+    return storageRoot ? resolve(storageRoot, relPath) : resolve(cwd, path);
+  }
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
+  return resolve(cwd, path);
+}
+
 function isPathAllowed(realAbsPath: string, candidateRoots: string[], cwd: string): boolean {
   for (const root of candidateRoots) {
     let realRoot: string;
     try {
-      realRoot = realpathSync(resolve(cwd, root));
+      realRoot = realpathSync(resolveUserPath(cwd, root));
     } catch {
       continue;
     }
@@ -93,7 +104,7 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
   if (requested.length === 0) {
     return { result: { path: "", body: null, error: "not_found" }, warnings: [] };
   }
-  const absPath = resolve(input.cwd, requested);
+  const absPath = resolveUserPath(input.cwd, requested, input.storageRoot);
   const candidateRoots = [input.cwd, input.storageRoot, ...(input.args.allowed_roots ?? [])].filter(
     (root): root is string => typeof root === "string" && root.length > 0,
   );

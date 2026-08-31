@@ -571,13 +571,14 @@ type WorkflowExecOpts = {
 async function composeWorkflowBundle(
   opts: Pick<
     WorkflowExecOpts,
-    "entry" | "services" | "cwd" | "project" | "agentRegistry" | "templateCtx"
+    "entry" | "services" | "cwd" | "project" | "repoRoot" | "agentRegistry" | "templateCtx"
   >,
 ): Promise<Awaited<ReturnType<typeof composeRecall>>> {
   return await composeRecall({
     db: opts.services.db,
     embedder: opts.services.embedder,
     cwd: opts.cwd,
+    repoRoot: opts.repoRoot,
     project: opts.project,
     sources: opts.entry.spec.recall,
     budgetTokens: opts.entry.spec.recall_budget_tokens,
@@ -934,6 +935,108 @@ function recordWorkflowTriggerSessionEvent(opts: {
   }
 }
 
+const SESSION_EVENT_META_MAX_BYTES = 8192;
+const SESSION_STAMP_RE =
+  /^<!--\s*penumbra:session\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->/i;
+
+type ContinuationNoteRecall = {
+  path: string;
+  body: string;
+};
+
+function continuationNoteFromBundle(
+  bundle: Awaited<ReturnType<typeof composeRecall>>,
+): ContinuationNoteRecall | null {
+  const raw = bundle.byKey["latest_continuation_note"];
+  if (typeof raw !== "object" || raw === null) return null;
+  const note = raw as { path?: unknown; body?: unknown };
+  if (typeof note.path !== "string" || note.path.length === 0) return null;
+  if (typeof note.body !== "string") return null;
+  return { path: note.path, body: note.body };
+}
+
+function relatedSessionIdFromContinuationNote(body: string): string | null {
+  const lines = body.split(/\r?\n/, 5);
+  for (const line of lines) {
+    const match = SESSION_STAMP_RE.exec(line);
+    if (match) return match[1] ?? null;
+  }
+  return null;
+}
+
+function truncateUtf8ToBytes(value: string, maxBytes: number): string {
+  let end = value.length;
+  while (Buffer.byteLength(value.slice(0, end), "utf8") > maxBytes && end > 0) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+export function bootPickupMeta(
+  firstMoves: unknown,
+  log?: { warn(fields: Record<string, unknown>, message: string): void },
+): Record<string, unknown> | null {
+  const meta: Record<string, unknown> = { first_moves: firstMoves ?? null };
+  try {
+    if (Buffer.byteLength(JSON.stringify(meta), "utf8") <= SESSION_EVENT_META_MAX_BYTES) {
+      return meta;
+    }
+    const firstMovesBlob = JSON.stringify(firstMoves ?? null);
+    let budget = SESSION_EVENT_META_MAX_BYTES - 128;
+    while (budget > 0) {
+      const compact: Record<string, unknown> = {
+        first_moves: truncateUtf8ToBytes(firstMovesBlob, budget),
+        first_moves_truncated: true,
+      };
+      if (Buffer.byteLength(JSON.stringify(compact), "utf8") <= SESSION_EVENT_META_MAX_BYTES) {
+        return compact;
+      }
+      budget -= 256;
+    }
+    return { first_moves: "", first_moves_truncated: true };
+  } catch (err) {
+    log?.warn(
+      { err, kind: "continuity.boot_pickup" },
+      "boot pickup session event meta serialization failed; recording without meta",
+    );
+    return null;
+  }
+}
+
+function recordBootPickupSessionEvent(opts: {
+  services: Services;
+  body: WorkflowTriggerBody;
+  cwd: string;
+  project: string;
+  bundle: Awaited<ReturnType<typeof composeRecall>>;
+}): boolean {
+  if (opts.body.event?.kind !== "lifecycle" || opts.body.event.event !== "session-start") {
+    return false;
+  }
+  const note = continuationNoteFromBundle(opts.bundle);
+  if (!note) return false;
+  try {
+    opts.services.sessionEventLog.record({
+      session_id: opts.body.session_id ?? null,
+      related_session_id: relatedSessionIdFromContinuationNote(note.body),
+      project_id: opts.project !== "unknown" ? opts.project : null,
+      cwd: opts.cwd,
+      transcript_path: opts.body.transcript_path ?? null,
+      ref_path: note.path,
+      kind: "continuity.boot_pickup",
+      ts: opts.services.clock().toISOString(),
+      meta: bootPickupMeta(opts.bundle.byKey["session_first_moves"], opts.services.log),
+    });
+  } catch (err) {
+    opts.services.log.warn(
+      { err, kind: "continuity.boot_pickup" },
+      "boot pickup session event ingest failed; continuing workflow hook",
+    );
+    return false;
+  }
+  return true;
+}
+
 function filterMatchedByLifecycle(
   matched: WorkflowSpec[],
   lifecycleEvent: string | undefined,
@@ -963,6 +1066,7 @@ async function executeMatchedTriggerSpec(opts: {
   repoRoot: string;
   services: Services;
   additionalContextParts: string[];
+  bootPickupRecorded: { value: boolean };
 }): Promise<Response | undefined> {
   const {
     spec,
@@ -1030,6 +1134,15 @@ async function executeMatchedTriggerSpec(opts: {
       },
     };
     const bundle = await composeWorkflowBundle(execOpts);
+    if (!opts.bootPickupRecorded.value) {
+      opts.bootPickupRecorded.value = recordBootPickupSessionEvent({
+        services,
+        body,
+        cwd,
+        project,
+        bundle,
+      });
+    }
     const result = await startWorkflowExecution(execOpts, bundle);
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
   } finally {
@@ -1063,6 +1176,7 @@ async function runAllMatchedTriggerSpecs(opts: {
   repoRoot: string;
   services: Services;
   additionalContextParts: string[];
+  bootPickupRecorded: { value: boolean };
 }): Promise<Response | undefined> {
   for (const spec of opts.matched) {
     const entry = opts.reg.getEntry(spec.name);
@@ -1078,6 +1192,7 @@ async function runAllMatchedTriggerSpecs(opts: {
       repoRoot: opts.repoRoot,
       services: opts.services,
       additionalContextParts: opts.additionalContextParts,
+      bootPickupRecorded: opts.bootPickupRecorded,
     });
     if (earlyResponse) return earlyResponse;
   }
@@ -1105,6 +1220,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   const matched = selectMatchedSpecs(reg, body.event, body.hookContext);
 
   const additionalContextParts: string[] = [];
+  const bootPickupRecorded = { value: false };
   const earlyResponse = await runAllMatchedTriggerSpecs({
     reg,
     matched,
@@ -1116,6 +1232,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     repoRoot,
     services,
     additionalContextParts,
+    bootPickupRecorded,
   });
   if (earlyResponse) return earlyResponse;
 

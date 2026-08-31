@@ -60,6 +60,14 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
       allowed_roots: z.array(z.string()).optional(),
     }),
   }),
+  z.object({
+    source: z.literal("latest_continuation_note"),
+    args: ArgsRecord.optional(),
+  }),
+  z.object({
+    source: z.literal("session_first_moves"),
+    args: ArgsRecord.optional(),
+  }),
   z.object({ source: z.literal("dispatch_events"), args: ArgsRecord }),
   z.object({ source: z.literal("session_events"), args: ArgsRecord }),
   z.object({ source: z.literal("handoff_list_pending"), args: ArgsRecord.optional() }),

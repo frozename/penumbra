@@ -12,8 +12,10 @@ import { runFileContents } from "./recall-sources/file-contents.js";
 import { runFsGlob } from "./recall-sources/fs.js";
 import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
+import { runLatestContinuationNoteSource } from "./recall-sources/latest-continuation-note.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
 import { runSessionEventsSource, type SessionEvent } from "./recall-sources/session-events.js";
+import { runSessionFirstMovesSource } from "./recall-sources/session-first-moves.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
 export type RecallBundle = {
@@ -26,6 +28,7 @@ export type ComposeRecallOpts = {
   db: Database;
   embedder: { embed(texts: string[]): Promise<Float32Array[]> };
   cwd: string;
+  repoRoot?: string;
   storageRoot?: string;
   project: string;
   sources: RecallSource[];
@@ -53,6 +56,23 @@ function resolveArgs(
   return out;
 }
 
+function normalizeFileContentsArgs(args: Record<string, unknown>): {
+  path: string;
+  max_bytes?: number;
+  allowed_roots?: string[];
+} {
+  const path = typeof args.path === "string" ? args.path : "";
+  const maxBytes = typeof args.max_bytes === "number" ? args.max_bytes : undefined;
+  const allowedRoots = Array.isArray(args.allowed_roots)
+    ? args.allowed_roots.filter((root): root is string => typeof root === "string")
+    : undefined;
+  return {
+    path: path === "~/.penumbra/pending-handoff.md" ? "penumbra-storage:pending-handoff.md" : path,
+    ...(maxBytes !== undefined ? { max_bytes: maxBytes } : {}),
+    ...(allowedRoots !== undefined ? { allowed_roots: allowedRoots } : {}),
+  };
+}
+
 function mergeBucket(bucket: Record<string, unknown>, key: string, value: unknown): void {
   const existing = bucket[key];
   if (existing === undefined) {
@@ -77,6 +97,7 @@ type RunSourceDeps = {
   db: Database;
   embedder: ComposeRecallOpts["embedder"];
   cwd: string;
+  repoRoot: string | undefined;
   storageRoot: string | undefined;
   project: string;
   agentRegistry: ComposeRecallOpts["agentRegistry"];
@@ -89,7 +110,7 @@ async function runOneSource(
   byKey: Record<string, unknown>,
   warnings: string[],
 ): Promise<void> {
-  const { db, embedder, cwd, storageRoot, project, agentRegistry } = deps;
+  const { db, embedder, cwd, repoRoot, storageRoot, project, agentRegistry } = deps;
   switch (src.source) {
     case "memory_search": {
       const out = await runMemorySearchSource({ db, embedder, args: { project, ...args } });
@@ -116,8 +137,28 @@ async function runOneSource(
       return;
     }
     case "file.contents": {
-      const out = await runFileContents({ cwd, storageRoot, args: args as never });
+      const out = await runFileContents({
+        cwd,
+        storageRoot,
+        args: normalizeFileContentsArgs(args),
+      });
       mergeBucket(byKey, "file.contents", out.result);
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "latest_continuation_note": {
+      const out = await runLatestContinuationNoteSource({ cwd, repoRoot, storageRoot, args });
+      mergeBucket(
+        byKey,
+        "latest_continuation_note",
+        out.result ?? { path: null, body: "no continuation note found", truncated: false },
+      );
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "session_first_moves": {
+      const out = await runSessionFirstMovesSource({ db, cwd, project, args });
+      mergeBucket(byKey, "session_first_moves", out.result);
       warnings.push(...out.warnings);
       return;
     }
@@ -166,6 +207,19 @@ async function runOneSource(
 
 type SizedItem = { key: string; ts: string; tokens: number; ref: unknown };
 
+function tokenSize(value: unknown): number {
+  try {
+    return estTokens(JSON.stringify(value));
+  } catch {
+    return estTokens(String(value));
+  }
+}
+
+function trimObjectRecall(value: Record<string, unknown>): Record<string, unknown> | null {
+  if (typeof value.body !== "string") return null;
+  return { ...value, body: "", truncated: true };
+}
+
 function computeSizes(byKey: Record<string, unknown>): { total: number; sized: SizedItem[] } {
   let total = 0;
   const sized: SizedItem[] = [];
@@ -173,13 +227,18 @@ function computeSizes(byKey: Record<string, unknown>): { total: number; sized: S
     if (Array.isArray(val)) {
       for (const element of val as unknown[]) {
         const item = element as { ts?: string; created_at?: string };
-        const tokens = estTokens(JSON.stringify(item));
+        const tokens = tokenSize(item);
         sized.push({ key, ts: item.ts ?? item.created_at ?? "", tokens, ref: item });
         total += tokens;
       }
     } else if (typeof val === "string") {
       const tokens = estTokens(val);
       sized.push({ key, ts: "", tokens, ref: val });
+      total += tokens;
+    } else if (typeof val === "object" && val !== null) {
+      const item = val as { ts?: string; created_at?: string };
+      const tokens = tokenSize(item);
+      sized.push({ key, ts: item.ts ?? item.created_at ?? "", tokens, ref: item });
       total += tokens;
     }
   }
@@ -197,7 +256,7 @@ function trimToBudget(
     const aHasTs = a.ts.length > 0;
     const bHasTs = b.ts.length > 0;
     if (aHasTs !== bHasTs) return aHasTs ? -1 : 1;
-    if (!aHasTs && !bHasTs) return 0;
+    if (!aHasTs && !bHasTs) return b.tokens - a.tokens;
     return a.ts.localeCompare(b.ts);
   });
   const toDrop = new Set<unknown>();
@@ -212,6 +271,8 @@ function trimToBudget(
       byKey[key] = (val as unknown[]).filter((v) => !toDrop.has(v));
     } else if (typeof val === "string" && toDrop.has(val)) {
       byKey[key] = "";
+    } else if (typeof val === "object" && val !== null && toDrop.has(val)) {
+      byKey[key] = trimObjectRecall(val as Record<string, unknown>);
     }
   }
   warnings.push(
@@ -221,7 +282,7 @@ function trimToBudget(
 }
 
 export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBundle> {
-  const { db, embedder, cwd, storageRoot, project, sources } = opts;
+  const { db, embedder, cwd, repoRoot, storageRoot, project, sources } = opts;
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET;
   const byKey: Record<string, unknown> = {};
   const warnings: string[] = [];
@@ -229,6 +290,7 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     db,
     embedder,
     cwd,
+    repoRoot,
     storageRoot,
     project,
     agentRegistry: opts.agentRegistry,

@@ -1,0 +1,134 @@
+import type { Database } from "bun:sqlite";
+
+export type GateDeltas = { filtered: number | null; neardup: number | null };
+
+export type PinShare = {
+  role_24h: number | null;
+  pinned_24h: number | null;
+  role_7d: number | null;
+  pinned_7d: number | null;
+  steerable_role_7d: number | null;
+  steerable_pinned_7d: number | null;
+};
+
+export type SessionFirstMoves = {
+  git_status_dirty_count: number | null;
+  head_sha: string | null;
+  origin_main_sha: string | null;
+  daemon_pid: number | null;
+  daemon_healthy: boolean;
+  worker_count: number | null;
+  worker_pids: number[];
+  pending_handoffs: number | null;
+  pending_task_drafts: number | null;
+  gate_deltas: GateDeltas;
+  pin_share: PinShare | null;
+  open_lanes: number | null;
+};
+
+export type CollectSessionFirstMovesInput = {
+  db: Database;
+  git_status_dirty_count?: number | null;
+  head_sha?: string | null;
+  origin_main_sha?: string | null;
+  daemon_pid?: number | null;
+  daemon_healthy?: boolean;
+  worker_count?: number | null;
+  worker_pids?: number[];
+  pending_handoffs?: number | null;
+  pending_task_drafts?: number | null;
+  project_id?: string | null;
+  open_lanes?: number | null;
+};
+
+function readCount(db: Database, sql: string): number | null {
+  try {
+    const row = db.query<{ c: number }, []>(sql).get();
+    return row?.c ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readGateDeltas(db: Database): GateDeltas {
+  return {
+    filtered: readCount(
+      db,
+      "SELECT COUNT(*) AS c FROM t1_rollups WHERE promotion_filtered_at IS NOT NULL",
+    ),
+    neardup: readCount(
+      db,
+      "SELECT COUNT(*) AS c FROM dream_actions WHERE json_extract(payload_json,'$.source') = 't2_promotion_near_dup_gate' AND status IN ('queued', 'approved', 'auto_applied')",
+    ),
+  };
+}
+
+function readPinShare(db: Database): PinShare | null {
+  try {
+    return (
+      db
+        .query<
+          PinShare,
+          []
+        >(`SELECT SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_24h, SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_24h, SUM(CASE WHEN routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_7d, SUM(CASE WHEN routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS steerable_role_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS steerable_pinned_7d FROM handoffs WHERE ts >= datetime('now','-7 days')`)
+        .get() ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function readPendingTaskDrafts(db: Database, projectId: string | null | undefined): number | null {
+  if (!projectId) return null;
+  try {
+    const row = db
+      .query<{ c: number }, [string]>(
+        `WITH ranked AS (
+       SELECT
+         event_type,
+         ROW_NUMBER() OVER (
+           PARTITION BY json_extract(payload_json, '$.draft_id')
+           ORDER BY ts DESC, ingest_ts DESC
+         ) AS rn
+       FROM t0_events
+       WHERE event_type IN (
+         'task_draft','task_draft_refining','task_draft_promoted',
+         'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+       )
+         AND project_id = ?
+         AND json_valid(payload_json)
+         AND json_extract(payload_json, '$.draft_id') IS NOT NULL
+     )
+     SELECT COUNT(*) AS c FROM ranked WHERE rn = 1 AND event_type = 'task_draft'`,
+      )
+      .get(projectId);
+    return row?.c ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function collectSessionFirstMoves(input: CollectSessionFirstMovesInput): SessionFirstMoves {
+  const workerPids = input.worker_pids ?? [];
+  const workerCount = Object.hasOwn(input, "worker_count") ? input.worker_count : workerPids.length;
+  return {
+    git_status_dirty_count: input.git_status_dirty_count ?? null,
+    head_sha: input.head_sha ?? null,
+    origin_main_sha: input.origin_main_sha ?? null,
+    daemon_pid: input.daemon_pid ?? null,
+    // PID presence only; this does not call the daemon health endpoint.
+    daemon_healthy: input.daemon_healthy ?? input.daemon_pid !== null,
+    worker_count: workerCount ?? null,
+    worker_pids: workerPids,
+    pending_handoffs:
+      input.pending_handoffs ??
+      readCount(input.db, "SELECT COUNT(*) AS c FROM handoffs WHERE status='pending'"),
+    pending_task_drafts:
+      input.pending_task_drafts ?? readPendingTaskDrafts(input.db, input.project_id),
+    gate_deltas: readGateDeltas(input.db),
+    pin_share: readPinShare(input.db),
+    open_lanes:
+      input.open_lanes ??
+      readCount(input.db, "SELECT COUNT(*) AS c FROM lane_ledger WHERE gate_status='open'"),
+  };
+}

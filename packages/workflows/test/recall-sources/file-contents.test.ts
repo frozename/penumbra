@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runFileContents } from "@src/recall-sources/file-contents.js";
@@ -118,6 +118,51 @@ test("file.contents allows paths inside storageRoot", async () => {
     expect(out.result.body).toBe("allowed\n");
     expect(out.result.truncated).toBe(false);
     expect(out.result.byte_size).toBe(Buffer.byteLength("allowed\n"));
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test("file.contents keeps ~/.penumbra literal home-dir semantics", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const storageRoot = mkdtempSync(join(tmpdir(), "file-contents-storage-"));
+  const relPath = ".penumbra/penumbra-file-contents-literal-home-test.txt";
+  writeFileSync(join(storageRoot, "penumbra-file-contents-literal-home-test.txt"), "storage\n");
+  try {
+    const out = await runFileContents({
+      cwd: dir,
+      storageRoot,
+      args: { path: `~/${relPath}`, allowed_roots: ["~/.penumbra"] },
+    });
+
+    expect(out.result).toEqual({
+      path: join(homedir(), relPath),
+      body: null,
+      error: "not_found",
+    });
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test("file.contents supports an explicit storage-root-relative token", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const storageRoot = mkdtempSync(join(tmpdir(), "file-contents-storage-"));
+  const target = join(storageRoot, "pending-handoff.md");
+  writeFileSync(target, "pending draft\n");
+  try {
+    const out = await runFileContents({
+      cwd: dir,
+      storageRoot,
+      args: { path: "penumbra-storage:pending-handoff.md" },
+    });
+
+    expect(out.result.path).toBe(target);
+    expect(out.result.body).toBe("pending draft\n");
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });

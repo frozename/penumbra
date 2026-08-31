@@ -20,6 +20,16 @@ recall:
       since: "{{session_start}}"
       limit: 3
   - source: handoff_list_pending
+  - source: latest_continuation_note
+    args:
+      max_bytes: 65536
+  - source: session_first_moves
+    args: {}
+  - source: file.contents
+    args:
+      path: ~/.penumbra/pending-handoff.md
+      allowed_roots: ["~/.penumbra"]
+      max_bytes: 65536
 recall_budget_tokens: 2000
 output:
   - kind: session-reminder
@@ -64,10 +74,25 @@ Pending handoffs:
 - `{{handoff_id}}` ({{status}}) — {{message}}
   {{/each}}
 
+Newest continuation note:
+{{recall.latest_continuation_note.body}}
+
+Pending handoff draft:
+{{recall.file.contents.body}}
+
 First moves:
 
-1. `git status --short && launchctl list | grep penumbra && git log --oneline origin/main -5`
-2. `mcp__penumbra__handoff_list_pending` → confirm clean
-3. Carry forward whatever was queued; pick direction with the user from open work above.
+- git_status_dirty_count: {{recall.session_first_moves.git_status_dirty_count}}
+- head_sha: {{recall.session_first_moves.head_sha}}
+- origin_main_sha: {{recall.session_first_moves.origin_main_sha}}
+- daemon_pid: {{recall.session_first_moves.daemon_pid}}
+- daemon_healthy: {{recall.session_first_moves.daemon_healthy}}
+- worker_count: {{recall.session_first_moves.worker_count}}
+- worker_pids: {{recall.session_first_moves.worker_pids}}
+- pending_handoffs: {{recall.session_first_moves.pending_handoffs}}
+- pending_task_drafts: {{recall.session_first_moves.pending_task_drafts}}
+- gate_deltas: {{recall.session_first_moves.gate_deltas}}
+- open_lanes: {{recall.session_first_moves.open_lanes}}
+- pin_share: {{recall.session_first_moves.pin_share}}
 
 If a workflow matches this prompt, prefer invoking it via `/<slash>` over hand-rolling the equivalent.
