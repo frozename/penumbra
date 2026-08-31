@@ -80,8 +80,15 @@ export interface ChunkedJudgeOpts {
 
 type T2ExtractionJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
+export interface T2PromotionStatus {
+  enabled: boolean;
+  reason: "judge_configured" | "judge_unconfigured";
+  judge_env: "PENUMBRA_JUDGE_BASE_URL";
+}
+
 export interface T2PromotionWorker {
   tick(): Promise<void>;
+  status: T2PromotionStatus;
 }
 
 interface JudgeChoice {
@@ -109,6 +116,11 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
       "no PENUMBRA_JUDGE_BASE_URL configured — t2 promotion worker disabled (set it to enable)",
     );
     return {
+      status: {
+        enabled: false,
+        reason: "judge_unconfigured",
+        judge_env: "PENUMBRA_JUDGE_BASE_URL",
+      },
       tick(): Promise<void> {
         // No-op: judge unconfigured. Restart the daemon after setting the env var to enable.
         return Promise.resolve();
@@ -154,6 +166,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
   // rollup of a tick, skip the rest of the rollups in that tick (no point
   // hammering an unreachable judge N times in a row). Resets every tick.
   return {
+    status: { enabled: true, reason: "judge_configured", judge_env: "PENUMBRA_JUDGE_BASE_URL" },
     async tick(): Promise<void> {
       if (activePool) activePool.resetTickHealth();
       const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);

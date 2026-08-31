@@ -314,7 +314,7 @@ import { createMemoryEfficacyJobRunner } from "./workers/memory-efficacy-job-run
 import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
-import { createT2PromotionWorker } from "./workers/t2-promotion.js";
+import { createT2PromotionWorker, type T2PromotionStatus } from "./workers/t2-promotion.js";
 
 type Services = CoreServices;
 
@@ -353,6 +353,7 @@ export type DaemonServices = CoreServices & {
   workerAuthz?: Map<string, { project_id?: string; isolation: ExtraWorkerConfig["isolation"] }>;
   workerHealthProbe?: WorkerHealthProbe;
   llmRoleFloorEvaluation?: LlmRoleFloorEvaluation;
+  t2PromotionStatus?: T2PromotionStatus;
 };
 
 // Returns the single captured group from `pattern.exec(input)`, or undefined.
@@ -1224,6 +1225,7 @@ export function createDaemonFetchHandler(opts: {
           db: opts.services.db,
           now: opts.services.clock,
           llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
+          t2Promotion: daemonServices.t2PromotionStatus,
         });
       }
       // OTLP routes skip bearer auth only while the daemon is loopback-bound, so
@@ -2342,6 +2344,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const { lagSampler, watchdog } = setupBootDiagnostics(opts, daemonServices);
   const cronWorkers = createCronWorkerSet(opts, dreamConfig);
   const { rollup, promotion, retention, dispatchEventsRetention, sweeper } = cronWorkers;
+  daemonServices.t2PromotionStatus = promotion.status;
   const efficacyJobRunner = createEfficacyJobRunnerEntry(opts);
   const recovery = setupRecoverySweepers({
     opts,

@@ -480,6 +480,11 @@ serviceTest(
 
       // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
       const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
+      expect(worker.status).toEqual({
+        enabled: false,
+        reason: "judge_unconfigured",
+        judge_env: "PENUMBRA_JUDGE_BASE_URL",
+      });
       await worker.tick();
 
       // Rollup is untouched: not promoted, no failure counter increment.
