@@ -154,10 +154,7 @@ Register `penumbra-mcp` once in your harness config. Every harness then has the 
 Standard install:
 
 ```bash
-# penumbra links two @nova/* packages from a sibling `nova` checkout,
-# so clone both side by side (penumbra/ and nova/ as siblings).
 git clone https://github.com/frozename/penumbra
-git clone --depth 1 https://github.com/frozename/nova
 cd penumbra
 bun install
 
@@ -176,7 +173,7 @@ claude mcp add -s user penumbra -- bun /absolute/path/to/penumbra/packages/mcp/b
 bun packages/cli/bin/penumbra.ts stop
 ```
 
-> The `nova` sibling provides the `@nova/contracts` and `@nova/mcp-shared` packages that `@penumbra/core` and `@penumbra/mcp` link via a relative `file:` path; `bun install` fails without it. `nova` is public, so no token is needed.
+> The `@novaproto/*` packages penumbra depends on come from the npm registry — no sibling checkout is required. `bun install` runs `bun run deps-check` afterwards, which fails loudly if any external dependency did not actually get linked (`bun install` alone can exit 0 when it silently fails).
 
 For Gemini CLI: edit `~/.gemini/settings.json` → `mcpServers.penumbra`.
 For Codex CLI: edit `~/.codex/config.toml` → `[mcp_servers.penumbra]`.
@@ -189,17 +186,12 @@ Have an AI agent do it for you. Paste this prompt into Claude Code, Gemini CLI, 
 Install penumbra from https://github.com/frozename/penumbra into this machine.
 
 Steps:
-1. Clone BOTH repos as siblings under ~/code (create dirs if needed):
-   - `git clone https://github.com/frozename/penumbra ~/code/penumbra`
-   - `git clone --depth 1 https://github.com/frozename/nova ~/code/nova`
-   penumbra links @nova/contracts + @nova/mcp-shared from ../nova via a
-   relative file: path, so nova MUST sit next to penumbra or install fails.
+1. Clone the repo (create dirs if needed):
+   `git clone https://github.com/frozename/penumbra ~/code/penumbra`
 2. Run `bun install` inside ~/code/penumbra. If bun is missing, install it
-   via the official one-liner from bun.sh. Then VERIFY the install actually
-   linked the @nova deps: `bun pm ls --all | grep @nova` must show both packages —
-   `bun install` can exit 0 even when a file: dep failed to link, so do not
-   trust the exit code alone. If @nova is missing, confirm ~/code/nova exists
-   and re-run.
+   via the official one-liner from bun.sh. The install's postinstall step runs
+   `bun run deps-check`, which fails loudly when a dependency did not link —
+   if it reports anything, fix that before continuing.
 3. Create the storage root + token (one-time):
    `bun packages/cli/bin/penumbra.ts init`
 4. Start the daemon detached: `bun packages/cli/bin/penumbra.ts start --detach`
