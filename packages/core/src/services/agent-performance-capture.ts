@@ -116,7 +116,7 @@ function upsertAgentPerformanceWithGuardedGateOutcome(
   };
 }
 
-function carryForwardFailedOutcomeForReconcilerNoChanges(
+function carryForwardOutcomeForReconcilerNoChanges(
   db: Database,
   handoffId: string,
   outcome: AgentOutcome,
@@ -128,7 +128,38 @@ function carryForwardFailedOutcomeForReconcilerNoChanges(
       [string]
     >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
     .get(handoffId);
-  return existing?.outcome === "failed" ? "failed" : outcome;
+  return existing?.outcome === "failed" || existing?.outcome === "completed_with_output"
+    ? existing.outcome
+    : outcome;
+}
+
+function hasMeaningfulFinalResponse(db: Database, handoff: HandoffRow, handoffId: string): boolean {
+  const responses = new ChainReader(db).getResponses(handoff.conversation_id, "final", {
+    handoff_id: handoffId,
+  });
+  return meaningfulOutput(responses.map((r) => r.text).join("\n")).meaningful;
+}
+
+function resolveReconcilerOutcome(
+  db: Database,
+  input: AgentPerformanceCaptureFromReconciler,
+  handoff: HandoffRow,
+): AgentOutcome {
+  const explicitTaskType = input.task_type ?? handoff.chain_task_type ?? undefined;
+  const outcome = carryForwardOutcomeForReconcilerNoChanges(
+    db,
+    input.handoff_id,
+    mapMergeStatusToAgentOutcome(input.result.status),
+  );
+  if (
+    outcome === "no_changes" &&
+    explicitTaskType &&
+    (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType) &&
+    hasMeaningfulFinalResponse(db, handoff, input.handoff_id)
+  ) {
+    return "completed_with_output";
+  }
+  return outcome;
 }
 
 export function captureAgentPerformanceFromReconciler(opts: {
@@ -148,11 +179,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
-  const outcome = carryForwardFailedOutcomeForReconcilerNoChanges(
-    opts.db,
-    input.handoff_id,
-    mapMergeStatusToAgentOutcome(input.result.status),
-  );
+  const outcome = resolveReconcilerOutcome(opts.db, input, handoff);
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,

@@ -22,6 +22,21 @@ if (process.platform === "darwin") {
 describe("captureAgentPerformanceFromReconciler", () => {
   let db: Database;
 
+  function insertFinalResponse(eventId: string, response: string): void {
+    db.prepare(
+      `
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `,
+    ).run(
+      eventId,
+      "2026-04-30T12:01:55Z",
+      "2026-04-30T12:01:55Z",
+      "conv",
+      JSON.stringify({ handoff_id: "h1", response }),
+    );
+  }
+
   beforeEach(() => {
     db = new Database(":memory:");
     loadSqliteVec(db);
@@ -1321,6 +1336,112 @@ describe("captureAgentPerformanceFromReconciler", () => {
       outcome: "failed",
       reliability_status: "no_worktree_activity",
     });
+  });
+
+  it("upgrades reconciler no_changes to completed_with_output for explicit non-mutating task output", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+    insertFinalResponse(
+      "reconciler-output-r1",
+      "Substantive review output with enough detail to count as a completed response.",
+    );
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-output",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "no_changes" },
+      },
+    });
+
+    expect(row.task_type).toBe("review_adversarial");
+    expect(row.outcome).toBe("completed_with_output");
+  });
+
+  it("does not downgrade existing completed_with_output when reconciler reports no_changes", () => {
+    db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
+      "review_adversarial",
+      "h1",
+    );
+    insertFinalResponse(
+      "worker-output-r1",
+      "Completed review output with enough detail to count as meaningful output.",
+    );
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-worker-output",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+    db.prepare(`DELETE FROM t0_events WHERE event_id = ?`).run("worker-output-r1");
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-no-output",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "no_changes" },
+      },
+    });
+
+    expect(row.outcome).toBe("completed_with_output");
+    const persisted = db
+      .query<
+        { outcome: string },
+        []
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+    expect(persisted?.outcome).toBe("completed_with_output");
+  });
+
+  it("does not upgrade reconciler no_changes from inferred-only non-mutating task output", () => {
+    db.prepare(`UPDATE handoffs SET message = ? WHERE handoff_id = ?`).run(
+      "Task type: review_adversarial\nReview the implementation",
+      "h1",
+    );
+    insertFinalResponse(
+      "inferred-output-r1",
+      "Inferred review output with enough detail to count as a completed response.",
+    );
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-inferred-output",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        result: { status: "no_changes" },
+      },
+    });
+
+    expect(row.task_type).toBe("review_adversarial");
+    expect(row.outcome).toBe("no_changes");
+  });
+
+  it("keeps reconciler no_changes for mutating tasks with output", () => {
+    insertFinalResponse(
+      "mutating-output-r1",
+      "Implementation summary output with enough detail to count as a completed response.",
+    );
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-reconciler-mutating-output",
+      clock: () => new Date("2026-04-30T12:04:00Z"),
+      input: {
+        handoff_id: "h1",
+        task_type: "implement_substantial",
+        result: { status: "no_changes" },
+      },
+    });
+
+    expect(row.task_type).toBe("implement_substantial");
+    expect(row.outcome).toBe("no_changes");
   });
 
   it("still lets reconciler merged replace a non-failed dispatch outcome", () => {
