@@ -869,17 +869,22 @@ test("streaming argv dispatch with a missing binary rejects cleanly and later st
   );
 });
 
-test("lost claim race (claim throws 409): dispatch is NOT called; no rethrow", async () => {
+test("lost claim race (claim throws 409): dispatch NOT called; onClaimRetryable fires so the host forgets dedup", async () => {
   const onClaimRetryable = mock();
+  const events: DiscordNotificationEvent[] = [];
   const d = deps({
     claim: mock().mockRejectedValue(new PenumbraHttpError("/handoffs/h1/claim", 409)),
     onClaimRetryable,
+    onDispatchEvent: (event) => events.push(event),
   });
   const dispatcher = createWorkerDispatcher(d);
   await dispatcher.handle(baseHandoff("h1"));
   await dispatcher.idle();
   expect(d.dispatch).not.toHaveBeenCalled();
-  expect(onClaimRetryable).not.toHaveBeenCalled();
+  expect(onClaimRetryable).toHaveBeenCalledTimes(1);
+  expect(onClaimRetryable).toHaveBeenCalledWith("h1");
+  expect(events.some((event) => event.kind === "claim_retry")).toBe(false);
+  expect(dispatcher.__internals().claimRetryStateSize).toBe(0);
 });
 
 test("claim 404 is treated as terminal, not retryable", async () => {

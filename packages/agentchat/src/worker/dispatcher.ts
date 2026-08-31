@@ -65,10 +65,11 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
    */
   autocommitOnChainEnd?: (handoff: H) => Promise<void>;
   /**
-   * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
-   * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
-   * eligible for re-discovery so a future SSE/poll event re-triggers handle().
-   * Without this, dedup state in the event source would suppress the row.
+   * Called when this worker did not win the row: retryable claim failure,
+   * terminal 409 claim conflict, or barrier-failure markFailed fallback.
+   * The host (e.g. the worker bin) should mark the handoff_id as eligible for
+   * re-discovery so a future SSE/poll event re-triggers handle(). Without this,
+   * dedup state in the event source would suppress the row.
    */
   onClaimRetryable?: (handoff_id: string) => void;
   onEvent?: (event: DispatchEventInput) => void;
@@ -420,6 +421,11 @@ async function attemptClaim(
         { handoff_id: handoff.handoff_id, status, err: String(err) },
         "claim failed; terminal",
       );
+      // 409 = lost the claim race (CAS conflict / spread cap): the row lives
+      // on and can be requeued or re-offered on the bus later; drop dedup state
+      // so that re-emit is not suppressed. Other terminal statuses (404 row
+      // gone, 4xx caller error) stay dropped.
+      if (status === 409) deps.onClaimRetryable?.(handoff.handoff_id);
       return { ok: false };
     }
     scheduleClaimRetry(deps, handoff, claimRetryState, err, status);
