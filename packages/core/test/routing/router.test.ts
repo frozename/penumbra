@@ -583,6 +583,107 @@ describe("routing decide orchestrator", () => {
     ).toBe(false);
   });
 
+  test("alternatives include admitted unranked candidates after ranked candidates and before exclusions", () => {
+    const decision = decide(
+      baseInput({
+        agentRegistry: ["quality-seat", "fast-seat", "cold-seat", "blocked-seat"],
+        agentchatConfig: {
+          role_routing: {
+            headroom_weighting: true,
+            latency_weighting: false,
+          },
+          agents: [
+            ...AGENTCHAT_CONFIG.agents,
+            {
+              name: "cold-seat",
+              roles: [ROLE],
+              pricing_mode: "api" as const,
+              api_provider: "anthropic",
+            },
+            {
+              name: "blocked-seat",
+              roles: [ROLE],
+              pricing_mode: "api" as const,
+              api_provider: "mistral",
+            },
+          ],
+        },
+        perCandidateFacts: {
+          "blocked-seat": { healthy: false },
+        },
+      }),
+      dependencies(),
+    );
+
+    expect(decision.selected?.agent).toBe("quality-seat");
+    expect(decision.alternatives).toEqual([
+      {
+        routeId: "google:fast-seat",
+        score: expect.any(Number),
+        excluded: false,
+        reasons: ["Scored but not selected by the routing engine."],
+      },
+      {
+        routeId: "anthropic:cold-seat",
+        excluded: false,
+        reasons: ["Admitted; no ranked local history in window."],
+      },
+      {
+        routeId: "mistral:blocked-seat",
+        excluded: true,
+        reasons: ["unhealthy_or_unavailable"],
+      },
+    ]);
+    expect(decision.alternatives.map((alternative) => alternative.routeId)).not.toContain(
+      "openai:quality-seat",
+    );
+    expect(new Set(decision.alternatives.map((alternative) => alternative.routeId)).size).toBe(
+      decision.alternatives.length,
+    );
+  });
+
+  test("pressure filtering omits admitted unranked alternatives for over-pressure providers", () => {
+    const decision = decide(
+      baseInput({
+        agentRegistry: ["quality-seat", "fast-seat", "cold-seat"],
+        agentchatConfig: {
+          role_routing: {
+            headroom_weighting: true,
+            latency_weighting: false,
+          },
+          agents: [
+            ...AGENTCHAT_CONFIG.agents,
+            {
+              name: "cold-seat",
+              roles: [ROLE],
+              pricing_mode: "api" as const,
+              api_provider: "anthropic",
+            },
+          ],
+        },
+        applyPressure: {
+          snapshots: [
+            {
+              provider: "anthropic",
+              window_label: "weekly",
+              model: null,
+              used_pct: 95,
+              resets_at: NOW.getTime() + 3_600_000,
+              observed_at: NOW.toISOString(),
+              source_kind: "subscription",
+            },
+          ],
+        },
+      }),
+      dependencies(),
+    );
+
+    expect(decision.selected?.agent).toBe("quality-seat");
+    expect(
+      decision.alternatives.some((alternative) => alternative.routeId === "anthropic:cold-seat"),
+    ).toBe(false);
+  });
+
   test("a stale-keyed pressure snapshot emits no pressure factor", () => {
     const decision = decide(
       baseInput({

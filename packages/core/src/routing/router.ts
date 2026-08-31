@@ -222,6 +222,12 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
       excluded: false,
       reasons: ["Scored but not selected by the routing engine."],
     }));
+  const admittedUnrankedAlternatives = admittedUnrankedToAlternatives(
+    input,
+    combinedConstraintResult,
+    ranked.map((candidate) => candidate.agent_name),
+    selectedAgent,
+  );
   const excludedAlternatives = excludedToAlternatives(input, combinedConstraintResult);
   const fallbackChain = ranked
     .map((candidate) => candidate.agent_name)
@@ -241,7 +247,7 @@ export function decide(input: DecideInput, deps: RouterDependencies): RoutingDec
     taskProfile: input.taskProfile,
     score: round(selectedRank?.score ?? 0),
     confidence,
-    alternatives: [...rankedAlternatives, ...excludedAlternatives],
+    alternatives: [...rankedAlternatives, ...admittedUnrankedAlternatives, ...excludedAlternatives],
     factors,
     fallbackChain,
     dataFreshness: dataFreshness(input.aaSnapshot),
@@ -609,6 +615,26 @@ function excludedToAlternatives(
     excluded: true,
     reasons: candidate.reasons,
   }));
+}
+
+function admittedUnrankedToAlternatives(
+  input: DecideInput,
+  constraints: HardConstraintFilterResult,
+  rankedAgents: readonly string[],
+  selectedAgent: string | null,
+): RoutingDecision["alternatives"] {
+  const ranked = new Set(rankedAgents);
+  const excluded = new Set(constraints.excluded.map((candidate) => candidate.agent));
+  return constraints.admitted
+    .filter((agent) => agent !== selectedAgent)
+    .filter((agent) => !ranked.has(agent))
+    .filter((agent) => !excluded.has(agent))
+    .filter((agent) => passesPressure(input, agent))
+    .map((agent) => ({
+      routeId: routeId(input, agent),
+      excluded: false,
+      reasons: ["Admitted; no ranked local history in window."],
+    }));
 }
 
 function routeId(input: DecideInput, agent: string): string {

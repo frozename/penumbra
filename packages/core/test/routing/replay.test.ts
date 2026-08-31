@@ -523,7 +523,7 @@ describe("router replay", () => {
       metadata_json: "{}",
     });
 
-    const registry = ["quality-seat", "fast-seat", "expensive-seat"];
+    const registry = ["quality-seat", "fast-seat", "cold-seat", "expensive-seat"];
     const aliasMap: ModelAliasMap = {
       ...ALIASES,
       "expensive-seat": { aa_creator: "openai", aa_slug: "expensive-model" },
@@ -532,6 +532,12 @@ describe("router replay", () => {
       ...AGENTCHAT_CONFIG,
       agents: [
         ...AGENTCHAT_CONFIG.agents,
+        {
+          name: "cold-seat",
+          roles: [ROLE],
+          pricing_mode: "api" as const,
+          api_provider: "anthropic",
+        },
         {
           name: "expensive-seat",
           roles: [ROLE],
@@ -571,6 +577,9 @@ describe("router replay", () => {
     expect(excludedExpensive).toBeDefined();
     expect(excludedExpensive?.count).toBe(2);
     expect(excludedExpensive?.reasons).toContain("hard_budget");
+    expect(report.mostExcludedRoutes.some((route) => route.routeId === "anthropic:cold-seat")).toBe(
+      false,
+    );
 
     expect(report.lowConfidenceDecisions).toHaveLength(1);
     expect(report.lowConfidenceDecisions[0]?.handoffId).toBe("low-confidence-handoff");
