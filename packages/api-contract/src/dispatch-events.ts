@@ -31,6 +31,8 @@ export const DispatchEventKindSchema = z.enum([
   "watchdog.tick",
   "watchdog.auto_fail",
   "claim",
+  "claim.provider_cap_refused",
+  "claim.reoffer",
   "agent.thought",
   "agent.thought.overflow",
   "agent.thought.digest",

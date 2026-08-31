@@ -359,6 +359,57 @@ test("forget(id) drops the dedup entry so a future event for that id re-fires th
   await handle.stop();
 });
 
+test("forget(id) then a second SSE event for the same id re-fires the handler over the SSE path", async () => {
+  const handler = mock((_row: EventSourceRow) => undefined);
+  const queue: HandoffRow[] = [];
+  let wake: (() => void) | undefined;
+  const push = (row: HandoffRow): void => {
+    queue.push(row);
+    wake?.();
+    wake = undefined;
+  };
+  async function* pushableHandoffs(opts?: {
+    signal?: AbortSignal;
+  }): AsyncGenerator<HandoffRow, void, undefined> {
+    while (!opts?.signal?.aborted) {
+      if (queue.length === 0) {
+        await new Promise<void>((resolve) => {
+          const onAbort = (): void => {
+            resolve();
+          };
+          wake = resolve;
+          opts?.signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        continue;
+      }
+      const next = queue.shift();
+      if (next) yield next;
+    }
+  }
+  const client: EventSourceClient = {
+    listHandoffs: mock(() => Promise.resolve({ handoffs: [] as HandoffRow[] })),
+    subscribeHandoffEvents: pushableHandoffs,
+  };
+  const handle = startEventSource({
+    client,
+    statuses: ["approved"],
+    onEvent: handler,
+    pollIntervalMs: 10_000,
+  });
+
+  push({ handoff_id: "sse-1", status: "approved" });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(handler).toHaveBeenCalledTimes(1);
+  push({ handoff_id: "sse-1", status: "approved" });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(handler).toHaveBeenCalledTimes(1);
+  handle.forget("sse-1");
+  push({ handoff_id: "sse-1", status: "approved" });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(handler).toHaveBeenCalledTimes(2);
+  await handle.stop();
+});
+
 test("dedup set stays bounded by dedupCapacity under a flood of distinct ids", async () => {
   const handler = mock((_row: EventSourceRow) => undefined);
   const capacity = 5;

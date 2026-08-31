@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { DispatchEventsListResponseSchema } from "../src/dispatch-events.js";
+import {
+  DispatchEventKindSchema,
+  DispatchEventsListResponseSchema,
+} from "../src/dispatch-events.js";
 
 describe("dispatch event contract", () => {
   it("accepts legacy worktree_setup events from old workers and rows", () => {
@@ -35,5 +38,10 @@ describe("dispatch event contract", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it("DispatchEventKindSchema accepts claim.reoffer and claim.provider_cap_refused", () => {
+    expect(DispatchEventKindSchema.safeParse("claim.reoffer").success).toBe(true);
+    expect(DispatchEventKindSchema.safeParse("claim.provider_cap_refused").success).toBe(true);
   });
 });

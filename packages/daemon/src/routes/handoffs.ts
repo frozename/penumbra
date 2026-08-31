@@ -4,7 +4,6 @@ import {
   CreateHandoffRequestSchema,
   type HandoffStatus,
   HandoffStatusSchema,
-  resolveProvider,
   type Services,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -14,6 +13,12 @@ import type { ExtraWorkerConfig } from "../workers/config.js";
 
 import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
 import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
+import {
+  countProviderInFlight,
+  type ProviderConcurrencyDecision,
+  recordProviderCapRefusal,
+  resolveProviderConcurrencyDecision,
+} from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
@@ -78,13 +83,6 @@ interface ClaimSpreadDecision {
   active_worker_count: number;
   sibling_count: number;
   max_per_worker: number;
-}
-
-interface ProviderConcurrencyDecision {
-  provider: string;
-  providerSeatNames: string[];
-  max_in_flight: number;
-  in_flight_count: number;
 }
 
 interface WorkerTokenWorkerRow {
@@ -220,58 +218,16 @@ function claimSpreadCapResponse(handoff_id: string, decision: ClaimSpreadDecisio
   );
 }
 
-function countProviderInFlight(services: DaemonServices, providerSeatNames: string[]): number {
-  const placeholders = providerSeatNames.map(() => "?").join(",");
-  const row = services.db
-    .query<CountRow, string[]>(
-      `SELECT COUNT(*) AS n
-         FROM handoffs
-        WHERE status='dispatched'
-          AND to_agent IN (${placeholders})`,
-    )
-    .get(...providerSeatNames);
-  return row?.n ?? 0;
-}
-
-function resolveProviderConcurrencyDecision(
-  services: DaemonServices,
-  handoff: { to_agent: string },
-): ProviderConcurrencyDecision | null {
-  const agentchatConfig = services.agentchatConfig;
-  if (!agentchatConfig) return null;
-  const agents = agentchatConfig.agents;
-  if (!Array.isArray(agents)) return null;
-  const handoffAgent = agents.find((agent) => agent.name === handoff.to_agent);
-  if (!handoffAgent) return null;
-
-  const provider = resolveProvider(handoffAgent);
-  if (!provider) return null;
-
-  const quota = services.providerQuotas.find(
-    (entry) =>
-      entry.provider === provider && entry.model === undefined && entry.max_in_flight !== undefined,
-  );
-  if (quota?.max_in_flight === undefined) return null;
-
-  const providerSeatNames = agents
-    .filter((agent) => resolveProvider(agent) === provider)
-    .map((agent) => agent.name);
-  if (providerSeatNames.length === 0) return null;
-
-  return {
-    provider,
-    providerSeatNames,
-    max_in_flight: quota.max_in_flight,
-    in_flight_count: countProviderInFlight(services, providerSeatNames),
-  };
-}
-
 function providerConcurrencyCapResponse(
+  services: DaemonServices,
   handoff_id: string,
+  worker_id: string,
   decision: ProviderConcurrencyDecision,
+  path: "precheck" | "cas_loss",
 ): Response {
   // This status MUST remain retryable per agentchat isTerminalHttpStatus(); terminal claim
   // refusals are dropped by workers, and this fleet-wide cap leaves no alternate claimer.
+  recordProviderCapRefusal(services, { handoff_id, worker_id, decision, path });
   return json(
     {
       error: {
@@ -290,11 +246,21 @@ function enforceProviderConcurrencyCap(
   services: DaemonServices,
   handoff: { to_agent: string },
   handoff_id: string,
+  worker_id: string,
 ): { decision: ProviderConcurrencyDecision | null; response?: Response } {
   const decision = resolveProviderConcurrencyDecision(services, handoff);
   if (!decision) return { decision: null };
   if (decision.in_flight_count >= decision.max_in_flight) {
-    return { decision, response: providerConcurrencyCapResponse(handoff_id, decision) };
+    return {
+      decision,
+      response: providerConcurrencyCapResponse(
+        services,
+        handoff_id,
+        worker_id,
+        decision,
+        "precheck",
+      ),
+    };
   }
   return { decision };
 }
@@ -902,7 +868,13 @@ function buildClaimConflictResponse(
   if (providerDecision && after && (after.status === "approved" || after.status === "redirected")) {
     const in_flight_count = countProviderInFlight(services, providerDecision.providerSeatNames);
     if (in_flight_count >= providerDecision.max_in_flight) {
-      return providerConcurrencyCapResponse(handoff_id, { ...providerDecision, in_flight_count });
+      return providerConcurrencyCapResponse(
+        services,
+        handoff_id,
+        worker_id,
+        { ...providerDecision, in_flight_count },
+        "cas_loss",
+      );
     }
   }
   return json(
@@ -975,7 +947,7 @@ export async function handoffsClaimRoute(
   if (cap.response) return cap.response;
   const spreadDecision = cap.decision;
 
-  const providerCap = enforceProviderConcurrencyCap(services, cur, handoff_id);
+  const providerCap = enforceProviderConcurrencyCap(services, cur, handoff_id, body.data.worker_id);
   if (providerCap.response) return providerCap.response;
   const providerDecision = providerCap.decision;
 

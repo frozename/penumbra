@@ -268,6 +268,10 @@ import {
 import { createLocalSeatHealthService } from "./services/local-seat-health.js";
 import { OrphanHandoffRecoveryService } from "./services/orphan-handoff-recovery.js";
 import {
+  createProviderCapacityReoffer,
+  type ProviderCapacityReoffer,
+} from "./services/provider-capacity-reoffer.js";
+import {
   buildRequiredLlmRoleFloors,
   evaluateLlmRoleFloors,
   type LlmRoleFloorEvaluation,
@@ -317,6 +321,7 @@ import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker, type T2PromotionStatus } from "./workers/t2-promotion.js";
 
 type Services = CoreServices;
+const PROVIDER_REOFFER_SWEEP_INTERVAL_MS = 30_000;
 
 export interface ServeOpts {
   services: Services;
@@ -1258,6 +1263,7 @@ interface CronWorkers {
   sweeper: CronTickWorker;
   watchdog: CronTickWorker;
   localSeatHealth?: CronTickWorker;
+  providerCapacityReoffer?: CronTickWorker;
 }
 
 function registerCronWorkers(services: Services, workers: CronWorkers): void {
@@ -1300,6 +1306,13 @@ function registerCronWorkers(services: Services, workers: CronWorkers): void {
       tick: (): Promise<void> => localSeatHealth.tick(),
     });
   }
+  const providerCapacityReoffer = workers.providerCapacityReoffer;
+  if (providerCapacityReoffer)
+    supervisor.register({
+      name: "provider-capacity-reoffer",
+      intervalMs: PROVIDER_REOFFER_SWEEP_INTERVAL_MS,
+      tick: (): Promise<void> => providerCapacityReoffer.tick(),
+    });
   void supervisor.startAll();
 }
 
@@ -1780,6 +1793,8 @@ interface RecoverySweepers {
   stopStaleHandoffSweeper: () => void;
   orphanHandoffRecovery: OrphanHandoffRecoveryService;
   stopOrphanHandoffRecovery: () => void;
+  providerCapacityReoffer: ProviderCapacityReoffer;
+  stopProviderCapacityReoffer: () => void;
   workerHealthProbe: WorkerHealthProbe;
   workerProbeEnabled: boolean;
   stopWorkerProbe: () => void;
@@ -1839,6 +1854,15 @@ function setupRecoverySweepers(args: {
   });
   daemonServices.orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
+  const providerCapacityReoffer = createProviderCapacityReoffer({ services: opts.services });
+  providerCapacityReoffer.start();
+  opts.services.log.info(
+    { sweep_interval_ms: PROVIDER_REOFFER_SWEEP_INTERVAL_MS },
+    "provider-capacity-reoffer: started",
+  );
+  const stopProviderCapacityReoffer = (): void => {
+    providerCapacityReoffer.stop();
+  };
   const workerHealthProbe = new WorkerHealthProbe({
     services: daemonServices,
     intervalMs: Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS ?? "15000") || 15_000,
@@ -1885,6 +1909,8 @@ function setupRecoverySweepers(args: {
     stopStaleHandoffSweeper,
     orphanHandoffRecovery,
     stopOrphanHandoffRecovery,
+    providerCapacityReoffer,
+    stopProviderCapacityReoffer,
     workerHealthProbe,
     workerProbeEnabled,
     stopWorkerProbe,
@@ -2075,6 +2101,7 @@ function buildStopHandler(deps: StopHandlerDeps): () => Promise<void> {
     deps.recovery.stopStaleWorkerTokensSweeper();
     deps.recovery.stopStaleHandoffSweeper();
     deps.recovery.stopOrphanHandoffRecovery();
+    deps.recovery.stopProviderCapacityReoffer();
     deps.recovery.stopEfficacyJobReclaimSweeper();
     deps.recovery.stopReconcilerSweeper();
     deps.recovery.prOrphanSweeper.stop();
@@ -2384,7 +2411,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskCooldowns: collaborators.taskCooldowns,
     taskEvents: collaborators.taskEvents,
   });
-  registerCronWorkers(opts.services, { ...cronWorkers, watchdog, localSeatHealth });
+  registerCronWorkers(opts.services, {
+    ...cronWorkers,
+    watchdog,
+    localSeatHealth,
+    providerCapacityReoffer: recovery.providerCapacityReoffer,
+  });
   efficacyJobRunner.start();
   const dreamingStops = setupDreamingCron(opts.services, runtimeDreamConfig);
   const { server, port } = startHttpServer({
