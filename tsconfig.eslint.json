@@ -5,7 +5,11 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "exactOptionalPropertyTypes": true,
-    "noPropertyAccessFromIndexSignature": true
+    "noPropertyAccessFromIndexSignature": true,
+    // Fresh installs may not have workspace dist types; lint root scripts against source.
+    "paths": {
+      "@penumbra/core": ["./packages/core/src/index.ts"]
+    }
   },
   "include": ["scripts/**/*.ts"],
   "exclude": ["node_modules", "**/dist", "coverage", ".penumbra"]
