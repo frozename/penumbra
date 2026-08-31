@@ -1,82 +1,75 @@
 # Dispatch examples — common agentchat invocations
 
-Concrete patterns for `agentchat new`, `agentchat-worker`, and the MCP `chain.start` tool. Pair with `agent-fleet.md` for picking the right agent and `openai-compat-keys.md` for credential refs.
+Concrete patterns for `agentchat-worker`, the daemon's `/chains/start` route, and the MCP `chain.start` tool. Pair with `agent-fleet.md` for picking the right agent and `openai-compat-keys.md` for credential refs.
 
 ## One-shot, headless (the most common pattern)
 
-Pipe a prompt to `agentchat new --auto`. The bin treats stdin as a single message (no blank-line splitting) and dispatches one hop, halting after the first reply.
-
-```bash
-echo "@local-gemma26 Reply with exactly: OK" \
-  | bun packages/agentchat/bin/agentchat.ts new --auto --max-hops 1
-```
-
-Expected output:
-
-```
-[local-gemma26]
-OK
-```
-
-`--auto` enables auto-approval of every continuation handoff. With `--max-hops 1` the chain caps after one dispatch even if the reply contains a `@mention`.
-
-## Multi-hop with a hop budget
-
-```bash
-echo "@planner: triage the new bug report and route to @executor" \
-  | bun packages/agentchat/bin/agentchat.ts new --auto --max-hops 5 --transcript-budget 16384
-```
-
-`--transcript-budget` limits how much prior context is wrapped into each hop's prompt. The transcript is truncated from the front (oldest user message stays last; older agent replies drop first).
-
-## Inline file attachments (`--attach`)
-
-`openai-compat-http` agents (local llama-server, NVIDIA NIM, mac-mini gemma) have NO native file-reading tools. Use `--attach <path>` to pre-pend file content to the first user message using the same `--- File: <name> ---` header that llama-server's web chat UI uses.
-
-```bash
-echo "@local-gemma26 Review the attached file. Output: Bugs, Concerns, Verdict (LGTM or NEEDS FIXES). Stay under 400 words." \
-  | bun packages/agentchat/bin/agentchat.ts new --auto --max-hops 1 \
-      --attach packages/agentchat/src/worker/dispatcher.ts
-```
-
-Repeatable: `--attach a.md --attach b.md ...`. Files are inlined into the FIRST user message only; subsequent hops use the conversation transcript.
-
-## Per-edge trust (`--trust`)
-
-Use `--trust` (instead of `--auto`) when you want only specific edges auto-approved. Each agent's `auto_approve_to` field in `agentchat.yaml` lists which targets it can dispatch to without human approval. Untrusted edges leave the next handoff `pending`.
-
-```bash
-echo "@planner: implement the rate-limiter described in the spec" \
-  | bun packages/agentchat/bin/agentchat.ts new --trust --max-hops 5
-```
-
-If `planner.auto_approve_to: [executor]`, the planner→executor edge auto-approves. If executor's reply mentions `@reviewer` and `executor.auto_approve_to` does NOT include `reviewer`, the chain pauses — the bin prints `[chain stopped at untrusted edge, handoff abc12345 queued]` and you can approve manually:
-
-```bash
-bun packages/agentchat/bin/agentchat.ts approve abc12345
-```
-
-## Bin streaming vs worker dispatch
-
-The interactive bin (`agentchat new --auto`) dispatches in-process and streams adapter output live to stdout. Latency-sensitive interactive workflows want the bin.
-
-The worker (`agentchat-worker`, phase-1) drains approved handoffs out-of-process. Use it when the chain runs without a TTY — cron jobs, MCP-driven kicks, webhooks.
+Start the worker once, then kick a single-hop chain through the daemon.
 
 ```bash
 # Start the worker (keep it running):
 bun packages/agentchat/bin/agentchat-worker.ts \
   --storage-root /tmp/penumbra-live --concurrency 4 --poll-interval 1000
 
-# Then kick off a chain headlessly via daemon HTTP:
+# Kick a one-hop chain:
 curl -X POST "http://127.0.0.1:$(cat /tmp/penumbra-live/port)/chains/start" \
   -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
   -H 'content-type: application/json' \
-  -d '{"initial_agent":"local-gemma26","message":"@executor: ping","max_hops":5,"trust_mode":"all"}'
+  -d '{"initial_agent":"local-gemma26","message":"Reply with exactly: OK","max_hops":1,"trust_mode":"all"}'
 ```
 
-The chain runs entirely in the worker; the curl call returns immediately with `{conversation_id, handoff_id}`. Poll `GET /handoffs?conversation_id=<id>&status=pending,approved,dispatched` until empty to detect chain idle.
+The call returns immediately with `{conversation_id, handoff_id}`; the worker runs the chain. `trust_mode: "all"` auto-approves every continuation handoff, and `max_hops: 1` caps the chain after one dispatch even if the reply contains a `@mention`.
 
-In phase 1 the bin and worker can both produce/dispatch approved handoffs — `claimDispatch` makes worker-vs-worker races safe, but the bin doesn't go through claim, so don't run `--auto` and the worker against the same conversation simultaneously.
+Read the reply with the MCP `chain.get_response` tool, or poll the daemon:
+
+```bash
+curl -s -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
+  "http://127.0.0.1:$(cat /tmp/penumbra-live/port)/handoffs?conversation_id=<id>&status=pending,approved,dispatched"
+# empty result = chain idle
+```
+
+## Multi-hop with a hop budget
+
+```bash
+curl -X POST "http://127.0.0.1:$(cat /tmp/penumbra-live/port)/chains/start" \
+  -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
+  -H 'content-type: application/json' \
+  -d '{"initial_agent":"planner","message":"triage the new bug report and route to @executor","max_hops":5,"trust_mode":"all"}'
+```
+
+At the hop cap the chain stops and leaves the next handoff `pending`; resume it with `bun packages/agentchat/bin/agentchat.ts approve <prefix>`.
+
+## Passing file contents to models without file tools
+
+`openai-compat-http` agents (local llama-server, NVIDIA NIM, mac-mini gemma) have NO native file-reading tools. Inline the file into the chain message using the `--- File: <name> ---` header that llama-server's web chat UI uses, so any model trained on that template reads it naturally:
+
+```bash
+FILE=packages/agentchat/src/worker/dispatcher.ts
+jq -n --arg body "Review the attached file. Output: Bugs, Concerns, Verdict (LGTM or NEEDS FIXES).\n\n--- File: dispatcher.ts ---\n$(cat "$FILE")" \
+  '{initial_agent:"local-gemma26", message:$body, max_hops:1, trust_mode:"all"}' \
+  | curl -X POST "http://127.0.0.1:$(cat /tmp/penumbra-live/port)/chains/start" \
+      -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
+      -H 'content-type: application/json' --data-binary @-
+```
+
+Agents reached via `gemini-cli` / `claude-cli` / `codex-cli` already have native file-reading tools and need none of this.
+
+## Per-edge trust (`trust_mode: "config"`)
+
+Use `trust_mode: "config"` when you want only specific edges auto-approved. Each agent's `auto_approve_to` field in `agentchat.yaml` lists which targets it may dispatch to without human approval; untrusted edges leave the next handoff `pending`.
+
+```bash
+curl -X POST "http://127.0.0.1:$(cat /tmp/penumbra-live/port)/chains/start" \
+  -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
+  -H 'content-type: application/json' \
+  -d '{"initial_agent":"planner","message":"implement the rate-limiter described in the spec","max_hops":5,"trust_mode":"config"}'
+```
+
+If `planner.auto_approve_to: [executor]`, the planner→executor edge auto-approves. If executor's reply mentions `@reviewer` and `executor.auto_approve_to` does NOT include `reviewer`, the chain pauses and you approve manually:
+
+```bash
+bun packages/agentchat/bin/agentchat.ts approve abc12345
+```
 
 ## MCP `chain.start` (for non-shell callers)
 
@@ -95,9 +88,7 @@ chain.start({
 
 ## Common pitfalls
 
-**`parseInputStream` whole-mode behavior on piped stdin.** When stdin is a pipe (non-TTY), the bin treats the entire stream as ONE message — no blank-line splitting, no `done` sentinel. Multi-paragraph markdown stays intact. In TTY mode (interactive), blank lines still separate messages.
-
-**Attachment header convention.** `--attach` uses the EXACT `\n\n--- File: <basename> ---\n<content>` template that llama-server's web UI uses, so any model trained on that template (Gemma 4, Qwen 3.x) reads attachments naturally without needing tool-use support.
+**Attachment header convention.** Inline file content with the EXACT `\n\n--- File: <basename> ---\n<content>` template that llama-server's web UI uses, so any model trained on that template (Gemma 4, Qwen 3.x) reads it naturally without needing tool-use support.
 
 **Cloud rate limits.** NVIDIA NIM free tier is ~40 rpm. If you fan-out 5 models × 5 prompts in parallel you'll hit the cap mid-run and get empty bodies. Serialize when running batches.
 

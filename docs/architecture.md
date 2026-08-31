@@ -94,7 +94,7 @@ This is the "one MCP server, every harness" property: register `penumbra-mcp` on
 `packages/agentchat` carries two things:
 
 1. **The ACP adapter layer** (`src/adapters`) — the code that actually talks to a concrete agent. The adapter registry (`src/adapters/registry.ts`) maps an adapter kind to an implementation: `stdio-acp`, `openai-compat-http`, `claude-cli`, `gemini-cli`, `codex-cli`, `opencode-cli`, `opencode-acp`, `agy-cli`. See [The ACP adapter layer](#the-acp-adapter-layer).
-2. **The headless `agentchat-worker`** — the process the daemon spawns to execute approved dispatches out-of-process, driving the chosen adapter against the agent subprocess in its worktree. This is the live path: an MCP `chain_start` call is serviced by the daemon through this worker. (`packages/agentchat` also still ships the interactive `@mention` chat at `bin/agentchat.ts new`, but it is **deprecated** in favor of `chain_start` — the worker, not the chat UI, is what the dispatch machinery uses.)
+2. **The headless `agentchat-worker`** — the process the daemon spawns to execute approved dispatches out-of-process, driving the chosen adapter against the agent subprocess in its worktree. This is the only dispatch path: an MCP `chain_start` call is serviced by the daemon through this worker. The `agentchat` bin itself no longer dispatches — the deprecated interactive `@mention` chat (`agentchat new`) was removed, leaving only queue inspection and handoff resolution (`queue`, `approve`, `reject`, `discord`).
 
 ### `@penumbra/cli` — the operator CLI
 

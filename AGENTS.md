@@ -10,7 +10,7 @@ Bun + TypeScript monorepo (`bun` package manager, workspaces). Top-level package
 
 - `packages/core` — shared primitives: schemas (zod), writers (HandoffWriter, T0Writer, T1Rollup), readers, in-memory event bus (HandoffEventBus), context-file generator (ContextFileWriter), `WorktreeManager`, dispatch-reliability classifier, supervisor for periodic workers, long-lived state writer (with notes tail-truncation).
 - `packages/daemon` — long-running HTTP server. Hosts the t0 ingest endpoint, recall over t1+t2 vectors, handoffs CRUD + claim/complete/SSE routes, `chains/start`, `dispatch/land`, the workflow runtime, long-lived reactor, and the sweeper layer (`stale-handoff`, `handoff-sweeper`, `worktree-gc`, `reconciler-sweep`).
-- `packages/agentchat` — the ACP adapter layer + the headless `agentchat-worker` that dispatches approved handoffs out-of-bin via ACP adapters (`stdio-acp`, `claude-cli`, `gemini-cli`, `codex-cli`, `opencode-cli`, `opencode-acp`, `agy-cli`, `openai-compat-http`). Also ships the **deprecated** interactive `@mention` chat (`agentchat new`); prefer MCP `chain_start`.
+- `packages/agentchat` — the ACP adapter layer + the headless `agentchat-worker` that dispatches approved handoffs out-of-bin via ACP adapters (`stdio-acp`, `claude-cli`, `gemini-cli`, `codex-cli`, `opencode-cli`, `opencode-acp`, `agy-cli`, `openai-compat-http`). Dispatch is started via MCP `chain_start`; the `agentchat` bin only inspects and resolves the queue (`queue`, `approve`, `reject`, `discord`).
 - `packages/cli` — `penumbra` operator CLI. `start --detach`, `stop`, `status`, `repair`, `init`, `worktree gc`, `notes rotate`, `plan {list,start,status,…}`, `task`, export/import.
 - `packages/console` — local web UI (Vite-built, with a Storybook component workbench, served from the daemon). Mission view (in-flight chains, pending handoffs, recent verdicts) consumes `@penumbra/api-contract`.
 - `packages/api-contract` — type-only shared shapes (handoffs, sessions, dispatch events, tasks, errors). Frontend / future MCP / e2e all import from here.
@@ -39,9 +39,9 @@ bun test packages/core/test/
 bun packages/cli/bin/penumbra.ts start --detach
 bun packages/cli/bin/penumbra.ts stop
 
-# Run agentchat (interactive + auto modes):
-echo "@local-gemma26 reply with: OK" \
-  | bun packages/agentchat/bin/agentchat.ts new --auto --max-hops 1
+# Inspect / resolve the handoff queue:
+bun packages/agentchat/bin/agentchat.ts queue
+bun packages/agentchat/bin/agentchat.ts approve <handoff-id-prefix>
 
 # Headless worker (talks to the daemon):
 bun packages/agentchat/bin/agentchat-worker.ts --storage-root /tmp/penumbra-live
@@ -279,11 +279,11 @@ Operational notes:
 `packages/agentchat/docs/` carries the calibration + dispatch references — these are the load-bearing docs for "which agent for what task":
 
 - `agent-fleet.md` — full fleet calibration table + routing guidance for the current local, CLI, direct-HTTP, NVIDIA, and Groq agents.
-- `dispatch-examples.md` — concrete `--auto` / `--attach` / `--max-hops` / `--trust` recipes; bin-vs-worker; MCP `chain.start`.
+- `dispatch-examples.md` — concrete `chains/start` recipes (`max_hops`, `trust_mode`, inlined file content); worker setup; MCP `chain.start`.
 - `openai-compat-keys.md` — `apiKey` / `apiKeyEnv` / `apiKeyKeychain` / `apiKeyFile` resolution precedence.
 - `scripts/bench.ts` / `bench-grade.ts` / `bench-fleet.ts` — per-model bench-2, grading, and fleet sweep.
 
-The daemon and headless worker read the split agentchat config at `~/.config/penumbra/{agents,routing,quotas}.yaml`. Note: the interactive `agentchat new` bin and `penumbra init` still default to the legacy single-file `~/.config/agentchat/agentchat.yaml` (override both with `AGENTCHAT_CONFIG`); run `penumbra config split --source <agentchat.yaml> --dest ~/.config/penumbra` to migrate.
+The daemon and headless worker read the split agentchat config at `~/.config/penumbra/{agents,routing,quotas}.yaml`. Note: `penumbra init` still defaults to the legacy single-file `~/.config/agentchat/agentchat.yaml` (override with `AGENTCHAT_CONFIG`); run `penumbra config split --source <agentchat.yaml> --dest ~/.config/penumbra` to migrate.
 The live fleet roster lives in `~/.config/penumbra/agents.yaml` (with `review_personas` and related routing metadata in `~/.config/penumbra/routing.yaml`). It carries `description` / `tags` / `quirks` / `terminal_timeout_s` / `caps` per agent and is the source of truth for fleet composition: CLI agents (`@gemini`, `@gemini-flash`, `@claude`, `@codex`, `@codex-frontier`, `@codex-mini`), ACP agents (`claude-acp-sonnet`, `codex-acp-deep`, `codex-acp-fast`, `gemini-acp-pro`, `gemini-acp-flash`, `oc-deepseek-v4-pro`, …), direct-HTTP Gemini variants, local swap targets, and provider-hosted NVIDIA/Groq agents. Read those files before dispatching; do not mirror agent counts here.
 
 ## Related fleet tools

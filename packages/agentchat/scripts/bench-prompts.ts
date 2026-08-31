@@ -49,8 +49,8 @@ export const BENCH_TASKS: BenchTask[] = [
   {
     id: "T6",
     description: "format under tension (no bugs)",
-    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/cli/attachments.ts`,
-    fixtureLabel: "attachments.ts",
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/cli/transcript.ts`,
+    fixtureLabel: "transcript.ts",
     question:
       "Find any actual logical bugs in this file. Style preferences, refactoring opportunities, and naming nits do not count. If there are no actual bugs, output EXACTLY this token and nothing else: NO_BUGS",
     maxTokens: 60,
