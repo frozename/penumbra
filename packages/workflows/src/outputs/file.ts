@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type FileOutputMode = "overwrite" | "append" | "skip-if-exists" | "unique-suffix";
@@ -68,19 +68,56 @@ function containmentWarning(input: {
   return null;
 }
 
+let tempPathSequence = 0;
+
+function tempPathFor(targetPath: string): string {
+  tempPathSequence = (tempPathSequence + 1) % Number.MAX_SAFE_INTEGER;
+  return `${targetPath}.${String(process.pid)}.${String(Date.now())}.${String(tempPathSequence)}.tmp`;
+}
+
+async function writeTempFile(targetPath: string, body: string): Promise<string> {
+  const tmpPath = tempPathFor(targetPath);
+  try {
+    await writeFile(tmpPath, body, { flag: "wx", encoding: "utf8" });
+  } catch (err: unknown) {
+    await rm(tmpPath, { force: true });
+    throw err;
+  }
+  return tmpPath;
+}
+
+async function writeAtomic(targetPath: string, body: string): Promise<void> {
+  const tmpPath = await writeTempFile(targetPath, body);
+  try {
+    await rename(tmpPath, targetPath);
+  } catch (err: unknown) {
+    await rm(tmpPath, { force: true });
+    throw err;
+  }
+}
+
+async function writeAtomicIfAbsent(targetPath: string, body: string): Promise<boolean> {
+  const tmpPath = await writeTempFile(targetPath, body);
+  try {
+    // Local notes live on APFS/ext4-like filesystems where hardlink create-if-absent is supported.
+    await link(tmpPath, targetPath);
+    return true;
+  } catch (err: unknown) {
+    if (errorCode(err) === "EEXIST") return false;
+    throw err;
+  } finally {
+    await rm(tmpPath, { force: true });
+  }
+}
+
 async function writeUniqueSuffix(targetPath: string, body: string): Promise<FileOutputResult> {
   const ext = extname(targetPath);
   const base = ext.length > 0 ? targetPath.slice(0, -ext.length) : targetPath;
   const MAX_ATTEMPTS = 1000;
   for (let n = 1; n <= MAX_ATTEMPTS; n++) {
     const candidate = n === 1 ? targetPath : `${base}-${String(n)}${ext}`;
-    try {
-      await writeFile(candidate, body, { flag: "wx", encoding: "utf8" });
-      return { warnings: [], path: candidate, skipped: false };
-    } catch (err: unknown) {
-      if (errorCode(err) === "EEXIST") continue;
-      throw err;
-    }
+    const written = await writeAtomicIfAbsent(candidate, body);
+    if (written) return { warnings: [], path: candidate, skipped: false };
   }
   throw new Error(
     `Exceeded maximum unique-suffix attempts (${String(MAX_ATTEMPTS)}) for ${targetPath}`,
@@ -96,21 +133,23 @@ async function writeByMode(
     return await writeUniqueSuffix(targetPath, body);
   }
   if (mode === "append") {
-    await appendFile(targetPath, body, "utf8");
+    // Atomic tmp+rename is for whole-file writes; read-modify-rename loses concurrent appends.
+    await appendFile(targetPath, body, { encoding: "utf8" });
     return { warnings: [], path: targetPath, skipped: false };
   }
   if (mode === "skip-if-exists") {
     try {
-      await writeFile(targetPath, body, { flag: "wx", encoding: "utf8" });
+      await readFile(targetPath, "utf8");
+      return { warnings: [], path: targetPath, skipped: true };
     } catch (err: unknown) {
-      if (errorCode(err) === "EEXIST") {
-        return { warnings: [], path: targetPath, skipped: true };
+      if (errorCode(err) !== "ENOENT") {
+        throw err;
       }
-      throw err;
     }
-    return { warnings: [], path: targetPath, skipped: false };
+    const written = await writeAtomicIfAbsent(targetPath, body);
+    return { warnings: [], path: targetPath, skipped: !written };
   }
-  await writeFile(targetPath, body, "utf8");
+  await writeAtomic(targetPath, body);
   return { warnings: [], path: targetPath, skipped: false };
 }
 

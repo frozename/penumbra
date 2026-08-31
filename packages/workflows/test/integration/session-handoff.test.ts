@@ -3,11 +3,20 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildRegistry, composeRecall, evaluateTriggerEvent, executeWorkflow } from "@src/index.js";
+import { emitNextSessionPromptOutput, PRESERVE_NEXT_SESSION_PROMPT } from "@src/outputs/index.js";
 
 try {
   if (process.platform === "darwin") {
@@ -139,28 +148,34 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       budgetTokens: spec.recall_budget_tokens,
     });
 
-    const tempOutFile = join(root, "maestro-continuation.md");
-    const patchedSpec = {
-      ...spec,
-      output: [
-        { kind: "file" as const, path: tempOutFile },
-        { kind: "next-session-prompt" as const },
-      ],
-    };
+    const notesDir = join(root, "docs/notes");
+    mkdirSync(notesDir, { recursive: true });
+    const preservedMorningNote = join(notesDir, "maestro-continuation-2026-08-31-morning.md");
+    const preservedPmNote = join(notesDir, "maestro-continuation-2026-08-31-pm.md");
+    const preservedEveningNote = join(notesDir, "maestro-continuation-2026-08-31-evening.md");
+    writeFileSync(preservedMorningNote, "operator morning note\n");
+    writeFileSync(preservedPmNote, "operator pm note\n");
+    writeFileSync(preservedEveningNote, "operator evening note\n");
 
     const result = await executeWorkflow({
-      spec: patchedSpec,
+      spec,
       bundle,
       storageRoot: root,
+      repoRoot: root,
       captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
     });
 
     expect(result.outcome).toBe("success");
-    expect(existsSync(tempOutFile)).toBe(true);
-    const body = readFileSync(tempOutFile, "utf8");
+    const emittedNotes = readdirSync(notesDir).filter((name) => name.endsWith(".skeleton.md"));
+    expect(emittedNotes).toHaveLength(1);
+    expect(emittedNotes[0]).toBe("maestro-continuation-2026-08-31-pm.skeleton.md");
+    const body = readFileSync(join(notesDir, emittedNotes[0]!), "utf8");
     expect(body).toContain("Maestro continuation prompt");
     expect(body).toContain("second commit");
     expect(body).toContain("h-pending-1");
+    expect(readFileSync(preservedMorningNote, "utf8")).toBe("operator morning note\n");
+    expect(readFileSync(preservedPmNote, "utf8")).toBe("operator pm note\n");
+    expect(readFileSync(preservedEveningNote, "utf8")).toBe("operator evening note\n");
 
     const stats = db
       .query("SELECT samples, successes FROM workflow_stats WHERE workflow_name='session-handoff'")
@@ -178,6 +193,28 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     ]);
 
     expect(existsSync(join(root, "pending-handoff.md"))).toBe(true);
+
+    writeFileSync(join(notesDir, emittedNotes[0]!), "stale skeleton\n");
+    const secondBundle = {
+      ...bundle,
+      byKey: {
+        ...bundle.byKey,
+        "git.log": "second-run-marker",
+      },
+    };
+    const secondResult = await executeWorkflow({
+      spec,
+      bundle: secondBundle,
+      storageRoot: root,
+      repoRoot: root,
+      captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
+    });
+
+    expect(secondResult.outcome).toBe("success");
+    const refreshedBody = readFileSync(join(notesDir, emittedNotes[0]!), "utf8");
+    expect(refreshedBody).toContain("second-run-marker");
+    expect(refreshedBody).not.toBe("stale skeleton\n");
+    expect(readFileSync(preservedPmNote, "utf8")).toBe("operator pm note\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
@@ -267,6 +304,30 @@ test("stop trigger writes lightweight checkpoint, while pre-compact keeps full h
     expect(stopBody).not.toContain("### Commit context");
     expect(stopBody).not.toContain("## First moves");
     expect(stopBundle.estimatedTokens).toBeLessThan(300);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("session-handoff sentinel output path still no-ops without clobbering", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sh-sentinel-"));
+  const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
+  try {
+    const preservedNote = join(root, "pending-handoff.md");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(preservedNote, "keep me\n");
+
+    const result = await emitNextSessionPromptOutput({
+      body: PRESERVE_NEXT_SESSION_PROMPT,
+      storageRoot: root,
+      workflowName: "session-handoff",
+    });
+
+    expect(result.skipped).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(readFileSync(preservedNote, "utf8")).toBe("keep me\n");
+    expect(existsSync(preservedNote)).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });

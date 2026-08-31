@@ -52,8 +52,8 @@ process_gates:
   - verification-before-complete
 output:
   - kind: file
-    path: docs/notes/maestro-continuation-{{date}}-{{period}}.md
-    mode: skip-if-exists
+    path: docs/notes/maestro-continuation-{{date}}-{{period}}.skeleton.md
+    mode: overwrite
   - kind: next-session-prompt
 run:
   kind: markdown-template
