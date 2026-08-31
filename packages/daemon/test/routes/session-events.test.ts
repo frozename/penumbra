@@ -1,6 +1,6 @@
+import { SessionEventsListResponseSchema } from "@penumbra/api-contract";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { SessionEventsListResponseSchema } from "@penumbra/api-contract";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -54,7 +54,7 @@ function startHarness(opts: { workflowRegistry?: Services["workflowRegistry"] } 
   };
 }
 
-function jsonHeaders(): HeadersInit {
+function jsonHeaders(): Record<string, string> {
   return { "content-type": "application/json" };
 }
 

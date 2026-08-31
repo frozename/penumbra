@@ -13,7 +13,7 @@ import { runFsGlob } from "./recall-sources/fs.js";
 import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
-import { type SessionEvent, runSessionEventsSource } from "./recall-sources/session-events.js";
+import { runSessionEventsSource, type SessionEvent } from "./recall-sources/session-events.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
 export type RecallBundle = {

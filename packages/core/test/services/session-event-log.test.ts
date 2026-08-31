@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { applySchema } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
-import { SessionEventLog, type SessionEventInput } from "@src/services/session-event-log.js";
+import { type SessionEventInput, SessionEventLog } from "@src/services/session-event-log.js";
 
 try {
   if (process.platform === "darwin") {

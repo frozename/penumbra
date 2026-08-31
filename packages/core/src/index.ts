@@ -237,13 +237,6 @@ export {
 } from "./readers/routing-bias.js";
 export { search } from "./readers/search.js";
 export {
-  SessionEventLog,
-  type SessionEventInput,
-  type SessionEventKind,
-  type SessionEventQuery,
-  type SessionEventRow,
-} from "./services/session-event-log.js";
-export {
   type PressureResult,
   type PressureSnapshot,
   type PressureWarning,
@@ -503,6 +496,13 @@ export {
   type ServedModelsFetch,
   servedModelsUrl,
 } from "./services/served-models-client.js";
+export {
+  type SessionEventInput,
+  type SessionEventKind,
+  SessionEventLog,
+  type SessionEventQuery,
+  type SessionEventRow,
+} from "./services/session-event-log.js";
 export {
   extractStumblesFromSession,
   type ExtractStumblesInput,

@@ -8,6 +8,8 @@ import { join } from "node:path";
 
 import { createSessionEventsRetentionWorker } from "@src/workers/session-events-retention.js";
 
+type TimeoutCallback = (...args: unknown[]) => void;
+
 try {
   if (process.platform === "darwin") {
     Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
@@ -40,12 +42,12 @@ test("prunes rows older than retentionDays in batches, stops at a partial batch,
   const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
   let yieldCount = 0;
   const yields: number[] = [];
-  globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+  globalThis.setTimeout = ((handler: TimeoutCallback, timeout?: number, ...args: unknown[]) => {
     yieldCount += 1;
     yields.push(timeout ?? 0);
-    if (typeof handler === "function") {
-      queueMicrotask(() => handler(...args));
-    }
+    queueMicrotask(() => {
+      handler(...args);
+    });
     return 0 as ReturnType<typeof setTimeout>;
   }) as typeof setTimeout;
 
@@ -90,10 +92,10 @@ test("retention caps each tick and reports backlog remaining", async () => {
   });
   const infoSpy = spyOn(services.log, "info").mockImplementation(() => undefined);
   const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
-  globalThis.setTimeout = ((handler: TimerHandler, _timeout?: number, ...args: unknown[]) => {
-    if (typeof handler === "function") {
-      queueMicrotask(() => handler(...args));
-    }
+  globalThis.setTimeout = ((handler: TimeoutCallback, _timeout?: number, ...args: unknown[]) => {
+    queueMicrotask(() => {
+      handler(...args);
+    });
     return 0 as ReturnType<typeof setTimeout>;
   }) as typeof setTimeout;
 

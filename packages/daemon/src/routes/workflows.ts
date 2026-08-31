@@ -10,8 +10,8 @@ import {
   extractStumblesFromSession,
   type ExtractStumblesInput,
   resolveProjectScope,
-  type SessionEventKind,
   type Services,
+  type SessionEventKind,
   TaskDraftPayloadSchema,
 } from "@penumbra/core";
 import {
@@ -895,6 +895,10 @@ function sessionEventKindForTrigger(event: Trigger): SessionEventKind | null {
       return "session.stop";
     case "session-end":
       return "session.end";
+    case "post-tool-use":
+    case "pre-tool-use":
+    case "user-prompt-submit":
+      return null;
     default:
       return null;
   }

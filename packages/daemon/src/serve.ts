@@ -111,7 +111,6 @@ import {
   dispatchEventsPostRoute,
   dispatchEventsStreamRoute,
 } from "./routes/dispatch-events.js";
-import { sessionEventsGetRoute, sessionEventsPostRoute } from "./routes/session-events.js";
 import { dispatchLandRoute, dispatchLandTaskRoute } from "./routes/dispatch-land.js";
 import { makeDispatchRefineRoute } from "./routes/dispatch-refine.js";
 import {
@@ -223,6 +222,7 @@ import {
   routingBiasSetRoute,
 } from "./routes/routing-bias.js";
 import { sessionEndRoute } from "./routes/session-end.js";
+import { sessionEventsGetRoute, sessionEventsPostRoute } from "./routes/session-events.js";
 import { sessionCurrentRoute, sessionsTouchRoute } from "./routes/sessions.js";
 import { shellCloseRoute, shellListRoute, shellRunRoute } from "./routes/shell.js";
 import { taskDraftsPendingEscalationsRoute, taskDraftsPendingRoute } from "./routes/task-drafts.js";
@@ -314,9 +314,9 @@ import { startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
 import { startWorktreeGcSweeper } from "./sweepers/worktree-gc.js";
 import { type ExtraWorkerConfig, loadExtraWorkersConfig } from "./workers/config.js";
 import { createDispatchEventsRetentionWorker } from "./workers/dispatch-events-retention.js";
-import { createSessionEventsRetentionWorker } from "./workers/session-events-retention.js";
 import { createHandoffSweeperWorker } from "./workers/handoff-sweeper.js";
 import { createMemoryEfficacyJobRunner } from "./workers/memory-efficacy-job-runner.js";
+import { createSessionEventsRetentionWorker } from "./workers/session-events-retention.js";
 import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";

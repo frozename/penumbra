@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { composeRecall } from "../src/recall.js";
 import { runSessionEventsSource } from "../src/recall-sources/session-events.js";
+import { composeRecall } from "../src/recall.js";
 
 try {
   if (process.platform === "darwin") {
