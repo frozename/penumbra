@@ -116,7 +116,8 @@ export function redactCredentials(text: string): string {
 export const DAEMON_SECRET_ENV_KEYS: readonly string[] = [
   "PENUMBRA_TOKEN",
   "PENUMBRA_DAEMON_TOKEN",
-  "PENUMBRA_SIRIUS_TOKEN",
+  "PENUMBRA_JUDGE_TOKEN",
+  "PENUMBRA_EMBEDDINGS_TOKEN",
 ];
 
 const CHILD_ENV_ALLOWLIST = [

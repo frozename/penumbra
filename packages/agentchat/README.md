@@ -40,58 +40,31 @@ to approve handoffs.
      reviewer: codex
    ```
 
-3. Run a conversation:
+3. Start a chain (headless, through the daemon + worker):
    ```
-   agentchat new my-project
-   > Add rate limiting to /api/login
+   chain_start({ initial_agent: "claude", message: "Add rate limiting to /api/login", max_hops: 5, trust_mode: "all" })
    ```
+   See [Daemon-driven worker](#daemon-driven-worker) for the HTTP equivalent.
 
 ## Commands
 
-- `agentchat new [project]` — start a new conversation
 - `agentchat queue` — list pending handoffs
 - `agentchat approve <id> [--redirect <name>]` — approve or redirect
 - `agentchat reject <id> [--reason <text>]` — reject
 
-### Attaching files (`--attach <path>`)
+## Chain trust modes
 
-`agentchat new` accepts repeatable `--attach <path>` flags. Each file's text contents are pre-pended to the FIRST user message using the same `--- File: <basename> ---` header convention that llama-server's web chat UI uses, so any local model trained on that template (gemma 4, qwen 3.x, etc.) reads the file naturally without needing tool-use support. Attachments are inlined into the prompt — there is no separate transport channel.
+Chains are started through the daemon (`chain_start` / `POST /chains/start`) and `trust_mode` decides how continuation handoffs are approved:
 
-```
-agentchat new --auto --attach docs/spec.md --attach plan.md <<< "@executor reconcile the spec with the plan"
-```
+| `trust_mode` | trust model                                      | use when                                                   |
+| ------------ | ------------------------------------------------ | ---------------------------------------------------------- |
+| omitted      | manual approval at every handoff                 | you want to review each step                               |
+| `"all"`      | trust everything for this chain                  | one-off chains; quick exploration                          |
+| `"config"`   | per-edge whitelist via `auto_approve_to` in YAML | production-shaped use; you've decided which edges are safe |
 
-Use this when dispatching to local models served via `openai-compat-http` (e.g. local-qwen, planner/executor on llama-server). Models reached via `gemini-cli` / `claude-cli` / `codex-cli` already have native file-reading tools and don't need this.
+`max_hops` (default 5) caps the chain; at the cap the next handoff is left `pending` and can be resumed with `agentchat approve <prefix>`.
 
-## Auto-dispatch mode
-
-Three modes for handling agent-to-agent handoffs:
-
-| flag      | trust model                                      | use when                                                   |
-| --------- | ------------------------------------------------ | ---------------------------------------------------------- |
-| (none)    | manual approval at every handoff                 | default; you want to review each step                      |
-| `--auto`  | trust everything for this session                | one-off chains; quick exploration                          |
-| `--trust` | per-edge whitelist via `auto_approve_to` in YAML | production-shaped use; you've decided which edges are safe |
-
-Both `--auto` and `--trust` use the chain loop and respect:
-
-- **`--max-hops N`** (default: 5) caps the chain. At the cap, the chain stops and leaves the handoff `pending`. Resume manually with `agentchat approve <prefix>`.
-- **`--transcript-budget T`** (default: 8192) limits the context window. Each hop receives a compiled transcript of the conversation so far, plus a wrapped `From @<sender>: <message>` block. Oldest blocks are dropped if the budget is exceeded.
-- **Project context.** If you start a session with a project name (`agentchat new my-project`) and `<storage>/context/my-project/latest.md` exists (penumbra's `ContextFileWriter` produces it), its contents are prepended to every chained hop as a `# Project context` section. Preserved during budget-trimming alongside the wrapper.
-
-If both `--auto` and `--trust` are set, `--auto` wins (trust everything).
-
-### Forcing the initial agent (`--initial-agent <name>`)
-
-`agentchat new --initial-agent <name>` bypasses mention parsing entirely and dispatches the first hop to the named agent. Use this when piped input contains attached file content whose `@-mentions` would otherwise win against the prompt's intended agent (the parser picks the first `@-mention` in the concatenated message; attachments come first via `--attach`).
-
-```
-agentchat new --auto --max-hops 1 --initial-agent local-gemma26 --attach docs/spec.md <<< "Review the attached spec for inconsistencies."
-```
-
-The override fails fast with the configured agent list if the name isn't found.
-
-### Per-edge trust (`--trust`)
+### Per-edge trust (`trust_mode: "config"`)
 
 Add `auto_approve_to` to any agent in the YAML to whitelist the targets that
 agent's outbound handoffs may dispatch to without manual approval. Entries
@@ -113,24 +86,11 @@ agents:
     auto_approve_to: [reviewer] # executor only auto-handoffs to reviewer
 ```
 
-Run with `agentchat new --trust`. When a handoff targets an agent NOT in
-the sender's `auto_approve_to`, the chain stops and leaves the handoff
-`pending`:
+When a handoff targets an agent NOT in the sender's `auto_approve_to`, the chain
+stops and leaves the handoff `pending`; approve it manually:
 
 ```
-[chain stopped at untrusted edge, handoff de09486b… queued — resume with 'agentchat approve de09486b']
-```
-
-### Example
-
-```bash
-agentchat new my-project --auto --max-hops 3
-> @planner outline the steps
-[planner]
-Step 1. @executor please implement.
-[auto-approved → executor]
-[executor]
-Done.
+agentchat approve de09486b
 ```
 
 ## Mention semantics
@@ -156,7 +116,7 @@ Each agent in `agentchat.yaml` accepts three optional descriptive fields. They a
   tags: [local, gemma4, moe, fast, structured-output, code-review, no-tools]
   quirks:
     - "5/5 on bench-2 — strong default"
-    - "no native file/shell tools — inline contents via --attach"
+    - "no native file/shell tools — inline file contents into the message"
     - "tends to label concern findings as bug; re-read before acting"
   options: { ... }
 ```
@@ -263,7 +223,7 @@ contains an `error` field and whose `payload_summary` is `error: …`,
 prints the error inline, and returns to the prompt. No handoff is
 queued for an errored turn.
 
-## Daemon-driven worker (phase 1)
+## Daemon-driven worker
 
 `agentchat-worker` is a long-running process that dispatches approved handoffs out-of-process. It enables headless chains: any caller can produce an approved handoff and the worker drives the chain to completion without a TTY.
 
@@ -285,4 +245,4 @@ Poll for completion:
     GET /handoffs?conversation_id=<id>&status=pending,approved,dispatched
     # empty result = chain idle
 
-The interactive `agentchat new --auto` bin still dispatches in-process. In phase 1 the bin does NOT go through the `/handoffs/<id>/claim` gate, so running it concurrently with `agentchat-worker` against the same conversation can double-dispatch a handoff — soft rule: don't. Phase 2 routes the bin through the worker and `claim` becomes the single dispatch gate; the integration test `test/integration/worker-bin-coexistence.test.ts` is `test.skip` until then.
+The worker is the only dispatch path: every dispatch goes through the `/handoffs/<id>/claim` gate, which makes concurrent workers safe. The interactive `@mention` chat that used to dispatch in-process (`agentchat new`) has been removed — the `agentchat` bin now only inspects and resolves the queue (`queue`, `approve`, `reject`, `discord`).

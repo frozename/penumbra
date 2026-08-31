@@ -11,6 +11,8 @@
   "scripts": {
     "test": "bun test",
     "dist-check": "bun scripts/check-dist-freshness.ts",
+    "deps-check": "bun scripts/check-external-deps.ts",
+    "postinstall": "bun scripts/check-external-deps.ts",
     "lint:no-raw-env": "bun scripts/lint/no-raw-env.ts",
     "lint:no-sync-exec": "bun scripts/lint/no-sync-exec.ts",
     "typecheck": "bun scripts/check-dist-freshness.ts && tsc --build",

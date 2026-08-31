@@ -41,7 +41,7 @@ t2 rows are produced by **auto-promotion** from t1. A background worker (`packag
 
 3. The judge returns candidate memories. The promotion worker (`t2-promotion.ts`) deduplicates them by title and by semantic similarity (cosine ≥ 0.85) before handing survivors to the writer. An optional extra filter — `isPromotionCandidate` in `t2.ts`, gated behind `PENUMBRA_EXTRACTION_FILTER_GATE` (default off) — additionally **gates out** a candidate when it is tagged `promote: false`, marked `is_episodic: true`, tagged `obs_type: "standing_brief"`, or fails the density floor (body under 80 characters with `depth < 2`). Survivors are written with an embedding into `t2_vec`.
 
-The judge is **optional and pluggable**. If no judge endpoint is configured (no `PENUMBRA_SIRIUS_BASE_URL` / `SIRIUS_URL`, and no agentchat agent tagged with the `memory-refiner` role), the promotion worker becomes a no-op and logs that it is disabled — t0 and t1 keep working without it.
+The judge is **optional and pluggable**. If no judge endpoint is configured (no `PENUMBRA_JUDGE_BASE_URL`, and no agentchat agent tagged with the `memory-refiner` role), the promotion worker becomes a no-op and logs that it is disabled — t0 and t1 keep working without it. The daemon's `GET /health` reports that state as `t2Promotion: { enabled: false, reason: "judge_unconfigured", judge_env: "PENUMBRA_JUDGE_BASE_URL" }` so operators can see the degraded memory quality without reading logs.
 
 ### Recall: semantic + FTS, scoped
 

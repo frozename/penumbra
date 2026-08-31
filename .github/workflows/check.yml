@@ -16,15 +16,6 @@ jobs:
           # Pinned to a known stable release — `latest` can resolve to a canary
           # build, which has surfaced NAPI-teardown panics (exit 133) under load.
           bun-version: 1.3.14
-      - name: checkout @nova file-dependency (public sibling repo)
-        # packages/core and packages/mcp depend on @nova/* via
-        # file:../../../nova/packages/..., which resolves to a SIBLING of this
-        # checkout (<workspace>/../nova). Without it, `bun install
-        # --frozen-lockfile` fails to link the two @nova packages (ENOENT) and the
-        # whole job dies before typecheck/test ever run. nova is public, so the
-        # clone needs no token. Tracks nova main; pin a SHA here if reproducibility
-        # against a specific nova revision becomes necessary.
-        run: git clone --depth 1 https://github.com/frozename/nova.git ../nova
       - name: install ripgrep
         # The fs_grep feature (packages/daemon/src/fs-search.ts) shells out to
         # `rg`, and an import-guard test greps source via `rg`. ripgrep is not

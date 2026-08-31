@@ -181,25 +181,16 @@ export interface ResolvedJudgeConfig {
 }
 
 // Single source of truth for daemon judge/refiner endpoint resolution.
-// Precedence keeps legacy PENUMBRA_SIRIUS_* and SIRIUS_URL working as
-// back-compat fallbacks. `extraModelEnv` lets a caller (e.g. dispatch-refine)
-// prepend higher-priority model env names like PENUMBRA_REFINER_MODEL.
+// `extraModelEnv` lets a caller (e.g. dispatch-refine) prepend higher-priority
+// model env names like PENUMBRA_REFINER_MODEL.
 export function resolveJudgeConfig(
   env: Record<string, string | undefined> = process.env,
   opts: { extraModelEnv?: string[] } = {},
 ): ResolvedJudgeConfig {
-  const baseUrlSources = [
-    env.PENUMBRA_JUDGE_BASE_URL,
-    env.PENUMBRA_SIRIUS_BASE_URL,
-    env.SIRIUS_URL,
-  ];
-  const baseUrl = baseUrlSources.find((v) => !!v) ?? DEFAULT_JUDGE_BASE_URL;
+  const configuredBaseUrl = env.PENUMBRA_JUDGE_BASE_URL;
+  const baseUrl = configuredBaseUrl ?? DEFAULT_JUDGE_BASE_URL;
 
-  const modelEnvNames = [
-    ...(opts.extraModelEnv ?? []),
-    "PENUMBRA_JUDGE_MODEL",
-    "PENUMBRA_SIRIUS_MODEL",
-  ];
+  const modelEnvNames = [...(opts.extraModelEnv ?? []), "PENUMBRA_JUDGE_MODEL"];
   let model = DEFAULT_JUDGE_MODEL;
   let modelFromEnv = false;
   for (const name of modelEnvNames) {
@@ -211,7 +202,7 @@ export function resolveJudgeConfig(
     }
   }
 
-  const token = env.PENUMBRA_JUDGE_TOKEN ?? env.PENUMBRA_SIRIUS_TOKEN ?? "";
+  const token = env.PENUMBRA_JUDGE_TOKEN ?? "";
   const provider = resolveLlmProvider(baseUrl);
 
   return {
@@ -219,7 +210,7 @@ export function resolveJudgeConfig(
     model,
     provider,
     token,
-    usedDefaultBaseUrl: !baseUrlSources.some((v) => !!v),
+    usedDefaultBaseUrl: !configuredBaseUrl,
     usedDefaultModel: !modelFromEnv,
   };
 }

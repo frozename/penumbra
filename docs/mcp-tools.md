@@ -84,7 +84,7 @@ Cross-agent dispatch with a paper trail. `chain_start` kicks off an agentchat ch
 | --- | --- |
 | `chain_start` | Kick off an agentchat chain by sending a message to the initial agent. The worker dispatches headlessly; poll `handoff_list_pending` to monitor. |
 | `chain_start_simple` | Minimal-schema wrapper for `chain_start` — takes `{initial_agent, message[, project_id]}` and hardcodes sensible defaults (task_class=STANDARD, max_hops=2, …). |
-| `chain_start_refined` | Same schema as `chain_start`, but reshapes `message` through a fast LLM refiner into imperative-first form before dispatch. Requires `PENUMBRA_SIRIUS_BASE_URL`; adds ~5–15s. |
+| `chain_start_refined` | Same schema as `chain_start`, but reshapes `message` through a fast LLM refiner into imperative-first form before dispatch. Requires `PENUMBRA_JUDGE_BASE_URL`; adds ~5–15s. |
 | `chain_status` | Lean status for a handoff: `{ status, error_summary, worker_id, latency_seconds }`. ~30x cheaper than `handoff_get` for polling. |
 | `chain_wait` | Block until the conversation reaches a terminal state (completed/failed) or timeout. |
 | `chain_cancel` | Request cancellation of an in-flight handoff by `handoff_id`. |

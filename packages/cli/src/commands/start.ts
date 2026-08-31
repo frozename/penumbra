@@ -40,7 +40,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readEmbedderEnv } from "./sirius-env.js";
+import { readEmbedderEnv } from "./embedder-env.js";
 
 const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(
   import.meta.url,

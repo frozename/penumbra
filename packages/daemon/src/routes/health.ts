@@ -2,12 +2,14 @@ import type { Database } from "bun:sqlite";
 
 import type { LagSampler } from "../lag-sampler.js";
 import type { LlmRoleFloorEvaluation } from "../services/subsystem-health.js";
+import type { T2PromotionStatus } from "../workers/t2-promotion.js";
 
 type HealthRouteOpts = {
   sampler?: LagSampler;
   db?: Database;
   now?: () => Date;
   llmRoleFloors?: LlmRoleFloorEvaluation;
+  t2Promotion?: T2PromotionStatus;
 };
 
 export function healthRoute(opts: HealthRouteOpts = {}): Response {
@@ -41,6 +43,9 @@ export function healthRoute(opts: HealthRouteOpts = {}): Response {
   }
   if (opts.llmRoleFloors) {
     payload.llmRoleFloors = opts.llmRoleFloors;
+  }
+  if (opts.t2Promotion) {
+    payload.t2Promotion = opts.t2Promotion;
   }
   return Response.json(payload);
 }

@@ -26,18 +26,15 @@ Install Bun via the official one-liner if you don't have it:
 curl -fsSL https://bun.sh/install | bash
 ```
 
-### The `@nova` sibling dependency
+### The `@novaproto` dependencies
 
-`@penumbra/core` and `@penumbra/mcp` depend on `@nova/contracts` and `@nova/mcp-shared` via a `file:` path that points **outside** this checkout — `file:../../../nova/packages/...`, i.e. a sibling of the penumbra repo. `bun install --frozen-lockfile` cannot link those two packages without it.
+`@penumbra/mcp` depends on `@novaproto/mcp-shared` from the npm registry. These were once `file:` links into a sibling `nova` checkout; no sibling clone is needed anymore.
 
-Clone `nova` next to penumbra before installing:
+Because `bun install` can exit 0 even when a dependency fails to link, the root `postinstall` runs `bun run deps-check` (`scripts/check-external-deps.ts`). It verifies every `@novaproto/*` and every non-registry (`file:`/`link:`/`portal:`) dependency actually resolves, and fails with the offending package name when one does not. Run it by hand any time an install looks suspicious:
 
 ```bash
-# from the parent directory that contains your penumbra checkout
-git clone --depth 1 https://github.com/frozename/nova.git nova
+bun run deps-check
 ```
-
-This is exactly what CI does (`.github/workflows/check.yml` clones `nova` into `../nova`). `nova` is public, so no token is needed.
 
 ---
 
@@ -46,7 +43,7 @@ This is exactly what CI does (`.github/workflows/check.yml` clones `nova` into `
 ```bash
 git clone https://github.com/frozename/penumbra
 cd penumbra
-bun install            # links the workspace + the @nova file deps
+bun install            # installs the workspace + verifies external deps linked
 bun run typecheck      # confirm the tree builds
 ```
 
@@ -173,12 +170,11 @@ The repo uses Husky + lint-staged. On commit, [`.husky/pre-commit`](./.husky/pre
 The CI gate is [`.github/workflows/check.yml`](./.github/workflows/check.yml), the `check` job. It triggers on **every pull request** and on **pushes to `main`** (15-minute timeout, `ubuntu-latest`). In order, it:
 
 1. Checks out the repo and sets up Bun, **pinned to `1.3.14`** — `latest` has resolved to canary builds that surfaced the NAPI-teardown panic (exit 133) under load.
-2. Clones the public `nova` sibling repo into `../nova` so the `@nova/*` `file:` dependencies link.
-3. Installs `ripgrep` (the `fs_grep` feature and an import-guard test shell out to `rg`).
-4. `bun install --frozen-lockfile`.
-5. **`bun run typecheck`** — a hard gate. A failing typecheck reds the build.
-6. **Tests** — sharded per package (each package's tests run in their own Bun process via `scripts/bun-test-gate.ts`, plus a final shard for root `test/` and `scripts/`), Playwright/e2e/`dist` paths excluded. _Currently advisory_ (`continue-on-error`) while a handful of Linux-specific test-tail failures are tracked; **install and typecheck remain hard gates.**
-7. **`bun run lint`** — _currently advisory_ while the strict rule set is ratcheted down.
+2. Installs `ripgrep` (the `fs_grep` feature and an import-guard test shell out to `rg`).
+3. `bun install --frozen-lockfile`.
+4. **`bun run typecheck`** — a hard gate. A failing typecheck reds the build.
+5. **Tests** — sharded per package (each package's tests run in their own Bun process via `scripts/bun-test-gate.ts`, plus a final shard for root `test/` and `scripts/`), Playwright/e2e/`dist` paths excluded. _Currently advisory_ (`continue-on-error`) while a handful of Linux-specific test-tail failures are tracked; **install and typecheck remain hard gates.**
+6. **`bun run lint`** — _currently advisory_ while the strict rule set is ratcheted down.
 
 When opening a PR, treat **typecheck as the blocking gate**, and run the [merge-gate slices](#the-merge-gate) and a full `bun run lint` locally before pushing. Don't introduce new lint violations even though the lint step is advisory — the goal is to ratchet the count _down_.
 

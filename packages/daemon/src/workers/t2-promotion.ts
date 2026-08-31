@@ -80,8 +80,15 @@ export interface ChunkedJudgeOpts {
 
 type T2ExtractionJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
+export interface T2PromotionStatus {
+  enabled: boolean;
+  reason: "judge_configured" | "judge_unconfigured";
+  judge_env: "PENUMBRA_JUDGE_BASE_URL";
+}
+
 export interface T2PromotionWorker {
   tick(): Promise<void>;
+  status: T2PromotionStatus;
 }
 
 interface JudgeChoice {
@@ -93,11 +100,11 @@ interface JudgeResponse {
 }
 
 export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionWorker {
-  // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
-  // and no override passed in), short-circuit to a no-op worker. The previous
+  // If no LLM judge is configured (no PENUMBRA_JUDGE_BASE_URL and no override
+  // passed in), short-circuit to a no-op worker. The previous
   // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
   // default port on common dev setups and produced an unbounded stream of
-  // "Sirius returned 404" warnings every cycle.
+  // judge 404 warnings every cycle.
   let activePool: JudgePool | null = null;
   const rawJudge =
     opts.llm ??
@@ -106,9 +113,14 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
     });
   if (!rawJudge) {
     opts.services.log.info(
-      "no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)",
+      "no PENUMBRA_JUDGE_BASE_URL configured — t2 promotion worker disabled (set it to enable)",
     );
     return {
+      status: {
+        enabled: false,
+        reason: "judge_unconfigured",
+        judge_env: "PENUMBRA_JUDGE_BASE_URL",
+      },
       tick(): Promise<void> {
         // No-op: judge unconfigured. Restart the daemon after setting the env var to enable.
         return Promise.resolve();
@@ -154,6 +166,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
   // rollup of a tick, skip the rest of the rollups in that tick (no point
   // hammering an unreachable judge N times in a row). Resets every tick.
   return {
+    status: { enabled: true, reason: "judge_configured", judge_env: "PENUMBRA_JUDGE_BASE_URL" },
     async tick(): Promise<void> {
       if (activePool) activePool.resetTickHealth();
       const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);
@@ -379,8 +392,8 @@ export function stripJsonFence(content: string): string {
 function isJudgeUnreachable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
-  // ECONNREFUSED / DNS failure / aborted-by-timeout / Sirius non-2xx all flagged.
-  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|Sirius returned/i.test(msg);
+  // ECONNREFUSED / DNS failure / aborted-by-timeout / judge non-2xx all flagged.
+  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|judge returned/i.test(msg);
 }
 
 function splitTranscriptOnEventBoundaries(transcript: string): string[] {
@@ -511,10 +524,10 @@ export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
 export function createDefaultLLMJudge(
   services: Services,
 ): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
-  const url = process.env.PENUMBRA_SIRIUS_BASE_URL ?? process.env.SIRIUS_URL;
+  const url = process.env.PENUMBRA_JUDGE_BASE_URL;
   if (!url) return null;
-  const model = process.env.PENUMBRA_JUDGE_MODEL ?? process.env.PENUMBRA_SIRIUS_MODEL ?? "gpt-4o";
-  const token = process.env.PENUMBRA_SIRIUS_TOKEN ?? "";
+  const model = process.env.PENUMBRA_JUDGE_MODEL ?? "gpt-4o";
+  const token = process.env.PENUMBRA_JUDGE_TOKEN ?? "";
   services.log.info({ url, model, hasToken: Boolean(token) }, "t2 promotion: LLM judge configured");
 
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
@@ -538,7 +551,7 @@ export function createDefaultLLMJudge(
       });
 
       if (!res.ok) {
-        throw new Error(`Sirius returned ${String(res.status)}: ${await res.text()}`);
+        throw new Error(`judge returned ${String(res.status)}: ${await res.text()}`);
       }
 
       const json = (await res.json()) as JudgeResponse;

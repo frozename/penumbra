@@ -128,6 +128,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Enable daemon tests that require live service-style integration harnesses.",
   },
+  PENUMBRA_UPDATE_SCHEMA_SNAPSHOT: {
+    schema: Bool,
+    default: false,
+    description:
+      "Rewrite the committed db schema snapshot fixture instead of asserting against it.",
+  },
   PENUMBRA_AUTO_RECALL_ENABLED: {
     schema: Bool,
     default: true,
@@ -713,26 +719,6 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Embeddings mode selection: bundled, remote, or auto.",
   },
 
-  // ── sirius (deprecated embedding aliases) ───────────────────────────
-  PENUMBRA_SIRIUS_BASE_URL: {
-    schema: OptStr,
-    description: "Base URL for sirius-gateway.",
-  },
-  PENUMBRA_SIRIUS_DIM: {
-    schema: NonNegInt,
-    default: 1536,
-    description: "Embedding dimension for sirius.",
-  },
-  PENUMBRA_SIRIUS_MODEL: {
-    schema: OptStr,
-    description: "Model for sirius requests.",
-  },
-  PENUMBRA_SIRIUS_TOKEN: {
-    schema: OptStr,
-    description: "Bearer token for sirius-gateway.",
-    isSensitive: true,
-  },
-
   // ── judge ───────────────────────────────────────────────────────────
   PENUMBRA_JUDGE_BASE_URL: {
     schema: OptStr,
@@ -752,11 +738,6 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Bearer token for the judge LLM.",
     isSensitive: true,
-  },
-  PENUMBRA_EMBEDDER_PREFER_SIRIUS: {
-    schema: Bool,
-    default: false,
-    description: "Prefer sirius for embeddings.",
   },
   PENUMBRA_EMBEDDING_MODEL_VERSION: {
     schema: z.string(),
