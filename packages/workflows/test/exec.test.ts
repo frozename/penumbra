@@ -1,7 +1,7 @@
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,14 @@ import type { WorkflowSpec } from "../src/schema.js";
 
 import { buildWorkflowCtx } from "../src/ctx.js";
 import { executeWorkflow } from "../src/exec.js";
+
+if (process.platform === "darwin") {
+  try {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  } catch {
+    // already loaded
+  }
+}
 
 function fakeServices(): Services {
   return {
@@ -287,6 +295,63 @@ test("required task sink failure → outcome=run_error (daemon unreachable)", as
   }
 });
 
+test("next-session-prompt with an empty body completes success with warnings preserved", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const spec: WorkflowSpec = {
+      name: "next-session-prompt-empty",
+      description: "n",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "next-session-prompt" }],
+      run: { kind: "markdown-template", template: " \n\t " },
+    };
+
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+
+    expect(result.outcome).toBe("success");
+    expect(result.artifacts).toEqual([]);
+    expect(result.warnings).toEqual([
+      "output next-session-prompt: empty body — skipped write to preserve existing artifact",
+    ]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("next-session-prompt write failure still returns outcome=run_error", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "exec-"));
+  try {
+    const storageRootFile = join(tmp, "not-a-directory");
+    writeFileSync(storageRootFile, "occupied");
+    const spec: WorkflowSpec = {
+      name: "next-session-prompt-write-failure",
+      description: "n",
+      triggers: [{ kind: "manual" }],
+      recall: [],
+      output: [{ kind: "next-session-prompt" }],
+      run: { kind: "markdown-template", template: "non-empty" },
+    };
+
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: storageRootFile,
+    });
+
+    expect(result.outcome).toBe("run_error");
+    expect(result.errorMessage).toContain("required output sink");
+    expect(result.errorMessage).toContain("next-session-prompt");
+    expect(result.warnings.length).toBeGreaterThan(0);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("optional task sink failure → outcome=success with warning preserved", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "exec-"));
   try {
@@ -385,13 +450,6 @@ test("required file sink blocked outside repo root → outcome=run_error", async
 });
 
 test("captureCtx wires capture and writes t0 + workflow_stats rows", async () => {
-  if (process.platform === "darwin") {
-    try {
-      Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
-    } catch {
-      // already loaded
-    }
-  }
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

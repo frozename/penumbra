@@ -42,6 +42,7 @@ export async function emitNextSessionPromptOutput(input: {
       warnings: [
         "output next-session-prompt: empty body — skipped write to preserve existing artifact",
       ],
+      skipped: true,
     };
   }
 
