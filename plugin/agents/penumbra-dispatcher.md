@@ -22,8 +22,12 @@ Your task message contains a fenced ```dispatch block of JSON:
       "max_hops":      8,
       "timeout_ms":    1800000,
       "branch_base":   "<optional git ref / prior agent branch to base the worktree on>",
-      "message":       "<the actual work instruction for the worker>"
+      "response_mode": "full" | "first_line" | "none"
     }
+
+The actual work instruction may be omitted from the JSON block and provided in a
+`## Task message` section. Pass that task message verbatim as the `chain_start`
+`message` argument and do not restate it elsewhere.
 
 ## Protocol
 
@@ -32,11 +36,11 @@ Your task message contains a fenced ```dispatch block of JSON:
    `task_type`, `trust_mode`, `use_worktree`, `max_hops`, and `branch_base` if the
    spec includes it. Capture whatever `conversation_id` and `handoff_id` the result returns.
 3. Wait for terminal with SHORT polls so you never stall. First compute a FINITE
-   iteration budget `N = min(25, ceil((spec.timeout_ms || 1800000) / 90000))` — this is
+   iteration budget `N = min(25, ceil((spec.timeout_ms || 1800000) / 240000))` — this is
    always a finite number even when the spec omits `timeout_ms`, so you NEVER loop
    unbounded. Repeatedly call
-   `mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 })` — each returns
-   within ~90s, under the workflow runtime's no-progress watchdog — until status is
+   `mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 240000 })` — each returns
+   within ~240s, under the workflow runtime's no-progress watchdog — until status is
    terminal (completed/failed) OR you have made `N` calls. Do NOT issue a single long
    blocking wait (it trips the watchdog → kill + retry → duplicate dispatches), and do
    NOT keep waiting past `N` iterations. Between polls you MAY call
@@ -51,10 +55,13 @@ Your task message contains a fenced ```dispatch block of JSON:
    commit, and put "no terminal dispatch.end event; salvaged via worktree inspection" in
    `error_summary`. Only if inspection shows NO commits (or an unrecoverable dirty tree)
    → `ok=false`, `status="stalled"`.
-5. On a terminal `completed` state, call
+5. Response handling depends on `spec.response_mode || "full"`. For `"full"`, call
    `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })` for the
-   worker's reported outcome. (Skip if you salvaged via inspection and the worker left
-   no final response.)
+   worker's reported outcome. For `"first_line"`, call `chain_get_response` only on a
+   terminal `completed` state, return only the first non-empty response line as
+   `check_line`, and if that line signals failure include only the last 4000 chars as
+   `failure_tail`. For `"none"`, skip `chain_get_response` entirely. Skip response
+   fetching if you salvaged via inspection and the worker left no final response.
 6. Return StructuredOutput per schema. Set `ok=true` for a `completed` terminal state OR
    a `completed_via_inspection` salvage that found commits. On `failed` / `stalled` /
    transport error set `ok=false` with `status` and a short `error_summary`. Do NOT

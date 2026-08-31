@@ -14,6 +14,11 @@ export const meta = {
 //   agentType?: 'penumbra-dispatcher'   // set once the subagent is registered (needs a session restart to load)
 // }
 
+// 240s per slice stays under the workflow runtime's no-progress watchdog while
+// cutting poll turns ~2.7x; the tool itself accepts unbounded timeout_ms.
+const CHAIN_WAIT_SLICE_MS = 240000
+
+const __penumbraFanoutResult = await (async () => {
 // args may arrive as an object OR as a JSON string (the Workflow `args` field is
 // untyped, so a JSON object passed in the tool call can reach the script stringified).
 // task-spec-validation:begin
@@ -84,6 +89,7 @@ validateSpec({
     'task_name',
     'branch_type',
     'branch_base',
+    'response_mode',
   ],
   tasks: input && input.tasks,
   requireTasks: true,
@@ -102,6 +108,7 @@ validateSpec({
     'timeout_ms',
     'message',
     'branch_base',
+    'response_mode',
   ],
   taskRequiredKeys: ['message'],
 })
@@ -141,7 +148,9 @@ const DISPATCH_RESULT = {
     conversation_id: { type: 'string' },
     handoff_id: { type: 'string' },
     branch: { type: 'string', description: 'handoff branch_name if a worktree branch was created' },
-    response: { type: 'string', description: 'final worker response text (may be truncated)' },
+    response: { type: 'string', maxLength: 6000, description: 'final worker response text (may be truncated)' },
+    check_line: { type: 'string', maxLength: 300, description: 'first non-empty worker response line for lean result modes' },
+    failure_tail: { type: 'string', maxLength: 4500, description: 'tail of worker response when a lean check line reports failure' },
     error_summary: { type: 'string', description: 'short reason when ok=false' },
     latency_seconds: { type: 'number' },
   },
@@ -156,6 +165,7 @@ function buildSpec(t) {
     use_worktree: t.use_worktree ?? defaults.use_worktree ?? true,
     max_hops: t.max_hops || defaults.max_hops || 8,
     timeout_ms: t.timeout_ms || defaults.timeout_ms || 1800000,
+    response_mode: t.response_mode || defaults.response_mode || 'full',
     message: t.message,
   }
   const taskName = t.task_name || t.label || t.name || t.title || defaults.task_name
@@ -171,21 +181,26 @@ function buildSpec(t) {
 
 function buildPrompt(t) {
   const spec = buildSpec(t)
+  const dispatchSpec = { ...spec }
+  delete dispatchSpec.message
   return [
     'You are a penumbra dispatch proxy. Broker exactly ONE penumbra chain dispatch and report its outcome.',
     'Do NOT implement the task yourself, edit files, or land branches — you only dispatch one chain and report the result.',
-    'CRITICAL: pass the spec.message string INLINE as the mcp__penumbra__chain_start `message` argument. Do NOT stage it to a file, /tmp, a heredoc, or `cat >` — filesystem writes are NOT allowlisted in workflow agents, so they are permission-denied and stall the whole run. You need NO Bash at all; use only the mcp__penumbra__chain_* MCP tools.',
+    'CRITICAL: pass the Task message section INLINE as the mcp__penumbra__chain_start `message` argument. Do NOT stage it to a file, /tmp, a heredoc, or `cat >` — filesystem writes are NOT allowlisted in workflow agents, so they are permission-denied and stall the whole run. You need NO Bash at all; use only the mcp__penumbra__chain_* MCP tools.',
     '',
-    'Dispatch spec:',
+    'Dispatch spec (message intentionally omitted here):',
     '```dispatch',
-    JSON.stringify(spec, null, 2),
+    JSON.stringify(dispatchSpec, null, 2),
     '```',
+    '',
+    '## Task message (pass VERBATIM as chain_start message argument, do not restate elsewhere)',
+    spec.message,
     '',
     'Protocol:',
     '1. Pass initial_agent verbatim to chain_start. A role name ("executor", "reviewer", "planner") is the DEFAULT: the daemon model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin — pass it verbatim, never substitute it. If initial_agent is the literal "AUTO" (legacy), use "executor". Do NOT call agent_recommend to pre-pick a seat; it is forensic only.',
     '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, task_name, branch_type, and branch_base if present in the spec. Capture conversation_id, handoff_id, and provisional branch_name from the result; the chain_start value is provisional because a collision suffix may be applied by the worker.',
-    '3. Poll with SHORT waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: 90000 }) — each returns within ~90s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / 90000) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.',
-    '4. Call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) for the worker response.',
+    `3. Poll with bounded waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: ${CHAIN_WAIT_SLICE_MS} }) — each returns within ~240s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / ${CHAIN_WAIT_SLICE_MS}) iterations. Do NOT issue a single long blocking wait. Use mcp__penumbra__chain_status({ handoff_id }) for cheap liveness if needed. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
+    '4. Response handling depends on spec.response_mode. For "full" (the default), call mcp__penumbra__chain_get_response({ conversation_id, which: "final" }) and return the worker response in response. For "first_line", call chain_get_response only on a completed terminal state, return only the first non-empty line as check_line, and if that line signals failure include only the last 4000 chars as failure_tail. For "none", skip chain_get_response entirely; the terminal chain_wait payload already carries status, branch_name, and last_handoff_id.',
     '5. Return StructuredOutput per schema. ok=true only on a completed terminal state; otherwise ok=false with status and error_summary. Report branch as the FINAL branch_name if a worktree was created. Do not retry.',
   ].join('\n')
 }
@@ -198,6 +213,7 @@ const results = await parallel(
       label: t.label || `dispatch:${t.initial_agent || defaults.initial_agent || 'executor'}#${i}`,
       phase: 'Dispatch',
       schema: DISPATCH_RESULT,
+      effort: 'low',
       ...(dispatcherModel && dispatcherModel !== 'inherit' ? { model: dispatcherModel } : {}),
       ...(agentType ? { agentType } : {}),
     }),
@@ -224,3 +240,6 @@ return {
   branches: completed.map((r) => r.branch).filter(Boolean),
   results: clean,
 }
+})()
+
+export default __penumbraFanoutResult

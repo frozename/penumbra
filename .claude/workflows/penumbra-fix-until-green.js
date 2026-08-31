@@ -11,6 +11,7 @@ export const meta = {
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
 //         dispatcherModel?, graderModel? }
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
+const __penumbraFixUntilGreenResult = await (async () => {
 // task-spec-validation:begin
 function validateSpec(spec) {
   const workflowName = spec.workflowName || 'workflow'
@@ -91,6 +92,7 @@ validateSpec({
     'task_name',
     'branch_type',
     'branch_base',
+    'response_mode',
   ],
   tasks: input.task ? [input.task] : [],
   requireTasks: true,
@@ -104,6 +106,7 @@ validateSpec({
     'branch_type',
     'task_class',
     'task_type',
+    'response_mode',
   ],
   taskRequiredKeys: ['message'],
 })
@@ -142,11 +145,11 @@ const RUBRIC_RESULT = {
           index: { type: 'integer' },
           criterion: { type: 'string' },
           pass: { type: 'boolean' },
-          evidence: { type: 'string' },
+          evidence: { type: 'string', maxLength: 600 },
         },
       },
     },
-    notes: { type: 'string' },
+    notes: { type: 'string', maxLength: 600 },
   },
 }
 
@@ -175,22 +178,29 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
   ].join('\n')
 }
 
-function parseCheck(responseText) {
-  const text = String(responseText || '')
+function parseCheck(result) {
+  const hasLeanFields = result && typeof result === 'object' && typeof result.check_line === 'string'
+  const text = hasLeanFields ? String(result.check_line || '') : String(result || '')
   // The worker is told to BEGIN its final message with the marker, so only the first
   // non-empty line counts — avoids a false PASS from the marker echoed inside
   // instructions or failure output.
   const firstLine = (text.split('\n').map((l) => l.trim()).find((l) => l.length > 0)) || ''
   if (/^CHECK_RESULT:\s*PASS\b/i.test(firstLine)) return { passed: true, output: '' }
+  if (hasLeanFields) {
+    return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
+  }
   return { passed: false, output: text.slice(-4000) }
 }
 
 function rubricPrompt(branch, handoffId) {
+  const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
+  const messagePreview = `${String(task.message || '').slice(0, 400)}…`
   return [
     `You are an independent rubric grader. Your job is to REFUTE the work, not confirm it. Do not edit, dispatch, land, push, or alter branches.`,
     ``,
     `Original task:`,
-    task.message,
+    `Title: ${title}`,
+    `Message preview: ${messagePreview}`,
     ``,
     `The worker reported CHECK_RESULT: PASS for this command:`,
     check,
@@ -198,7 +208,7 @@ function rubricPrompt(branch, handoffId) {
     `Candidate branch: ${branch}`,
     `Handoff id: ${handoffId}`,
     ``,
-    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and any read-only git commands needed to understand the branch. Grade every rubric criterion below against the actual diff and task intent.`,
+    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and run git diff --stat first. Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.`,
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
     `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
@@ -314,6 +324,7 @@ for (let i = 0; i < maxRounds; i++) {
     initial_agent: agentForRound,
     task_class: task.task_class || defaults.task_class || 'STANDARD',
     task_type: task.task_type || defaults.task_type || 'implement_small',
+    response_mode: 'first_line',
     message: roundMessage(i, prevBranch, prevOutput),
   }
   if (i === 0) {
@@ -333,7 +344,7 @@ for (let i = 0; i < maxRounds; i++) {
     break
   }
 
-  const verdict = parseCheck(r.response)
+  const verdict = parseCheck(r && Object.prototype.hasOwnProperty.call(r, 'check_line') ? r : r.response)
   prevBranch = r.branch
   prevOutput = verdict.output
   log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
@@ -343,6 +354,7 @@ for (let i = 0; i < maxRounds; i++) {
         label: `rubric#${i + 1}`,
         phase: 'Iterate',
         schema: RUBRIC_RESULT,
+        effort: 'low',
         ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
       })
       // Decide from the grader's explicit overall_pass when present;
@@ -382,3 +394,6 @@ return {
   check,
   rubric,
 }
+})()
+
+export default __penumbraFixUntilGreenResult
