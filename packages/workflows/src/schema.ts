@@ -13,6 +13,7 @@ export const TriggerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("lifecycle"),
     event: z.enum([
       "session-start",
+      "session-end",
       "pre-compact",
       "stop",
       "user-prompt-submit",
@@ -60,6 +61,7 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
     }),
   }),
   z.object({ source: z.literal("dispatch_events"), args: ArgsRecord }),
+  z.object({ source: z.literal("session_events"), args: ArgsRecord }),
   z.object({ source: z.literal("handoff_list_pending"), args: ArgsRecord.optional() }),
   z.object({ source: z.literal("agents"), args: ArgsRecord.optional() }),
   z.object({ source: z.literal("fs_glob"), args: ArgsRecord }),

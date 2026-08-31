@@ -4,6 +4,8 @@ import type {
   RegistrarEvent,
   RegistrarEventInput,
   RegistrarListResponse,
+  SessionEventsListResponse,
+  SessionEventsQuery,
 } from "@penumbra/api-contract";
 import type {
   AgentRankOutput,
@@ -512,6 +514,16 @@ export class DaemonClient {
 
   async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
     return await this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
+  }
+
+  async sessionEventsRecent(req: SessionEventsQuery = {}): Promise<SessionEventsListResponse> {
+    const qs = new URLSearchParams();
+    if (req.session_id) qs.set("session_id", req.session_id);
+    if (req.kind_prefix) qs.set("kind_prefix", req.kind_prefix);
+    if (req.since) qs.set("since", req.since);
+    if (req.limit !== undefined) qs.set("limit", String(req.limit));
+    const q = qs.toString();
+    return await this.get(q ? `/session-events?${q}` : "/session-events");
   }
 
   async dispatchAudit(handoff_id: string): Promise<{ report: DispatchReliabilityReport }> {

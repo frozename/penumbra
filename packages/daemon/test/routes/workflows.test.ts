@@ -1,6 +1,8 @@
 import {
   buildServices,
   type ExtractStumblesInput,
+  loadSqliteVec,
+  migrate,
   ProjectRegistry,
   type Services,
   TaskDraftPayloadSchema,
@@ -53,7 +55,7 @@ function mockServices(partial: Record<string, unknown>): Services {
       ? (partial.log as Record<string, unknown>)
       : {};
   const merged: Record<string, unknown> = { ...partial, log: { ...noopLog, ...partialLog } };
-  return merged as unknown as Services;
+  return merged as Services;
 }
 
 function mockRegistry(partial: Record<string, unknown>): Registry {
@@ -1850,7 +1852,7 @@ test("POST /workflows/trigger includes memory-digest markdown on session-start",
     markTrustedRoot(root);
     mkdirSync(join(root, "workflows/memory-digest"), { recursive: true });
     copyFileSync(
-      join(process.cwd(), "plugin/workflows/memory-digest/workflow.ts"),
+      join(import.meta.dir, "../../../..", "plugin/workflows/memory-digest/workflow.ts"),
       join(root, "workflows/memory-digest/workflow.ts"),
     );
     const reg = await buildRegistry({
@@ -2090,6 +2092,54 @@ test("POST /workflows/trigger fires lifecycle event and returns matched names", 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { matched: string[] };
     expect(body.matched).toEqual(["lt"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/trigger records NULL session_id when lifecycle body omits session_id", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wft-null-session-"));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, "playbooks/lt"), { recursive: true });
+    mkdirSync(join(root, "workflows"), { recursive: true });
+    writeFileSync(
+      join(root, "playbooks/lt/playbook.md"),
+      `---\nname: lt\ndescription: D\ntriggers:\n  - kind: lifecycle\n    event: stop\nrecall: []\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nlife body\n`,
+    );
+    const reg = await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    });
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    const services = buildServices({
+      env: {},
+      input: {},
+      storageRoot: root,
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      workflowRegistry: reg,
+      clock: () => new Date("2026-05-01T00:00:00.000Z"),
+    });
+    const req = new Request("http://localhost/workflows/trigger", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ event: { kind: "lifecycle", event: "stop" }, cwd: root }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+
+    const row = db
+      .query<
+        { session_id: string | null; kind: string },
+        []
+      >("SELECT session_id, kind FROM session_events")
+      .get();
+    expect(row).toEqual({ session_id: null, kind: "session.stop" });
+    services.supervisor.stopAll();
+    db.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2553,6 +2603,53 @@ test("workflows/trigger logs a warning and reports registry_unavailable when wor
   expect(body.additionalContext).toBeNull();
   expect(body.registry_unavailable).toBe(true);
   expect(warnCalls.length).toBeGreaterThan(0);
+});
+
+test("workflows/trigger short-circuits unavailable registry before cwd validation and telemetry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-unavailable-global-"));
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: root,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    workflowRegistry: undefined,
+    clock: () => new Date("2026-05-01T00:00:00.000Z"),
+  });
+  try {
+    const req = new Request("http://localhost/workflows/trigger", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: { kind: "lifecycle", event: "session-start" },
+        cwd: root,
+        session_id: "s-degraded",
+      }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      matched: string[];
+      additionalContext: string | null;
+      registry_unavailable?: boolean;
+    };
+    expect(body).toEqual({
+      matched: [],
+      additionalContext: null,
+      registry_unavailable: true,
+    });
+    const count = db
+      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM session_events")
+      .get();
+    expect(count?.count).toBe(0);
+  } finally {
+    services.supervisor.stopAll();
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("workflows/suggest logs a warning and reports registry_unavailable when workflowRegistry is unset", async () => {

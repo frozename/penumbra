@@ -5,6 +5,7 @@ export const SettingsSchema = z.object({
   // dispatch_events is high-volume operational telemetry (~95% heartbeats) with
   // no rollup; prune it on its own (shorter) horizon so it doesn't grow unbounded.
   dispatchEventsRetentionDays: z.number().int().positive().default(14),
+  sessionEventsRetentionDays: z.number().int().positive().default(180),
   t1RollupIntervalSec: z.number().int().positive().default(60),
   t1SessionIdleMinutes: z.number().int().positive().default(10),
   t2PromotionDelayHours: z.number().int().nonnegative().default(24),
@@ -29,6 +30,7 @@ export type SettingsInput = Partial<Settings>;
 const envKeyFor: Record<keyof Settings, string> = {
   t0RetentionDays: "PENUMBRA_T0_RETENTION_DAYS",
   dispatchEventsRetentionDays: "PENUMBRA_DISPATCH_EVENTS_RETENTION_DAYS",
+  sessionEventsRetentionDays: "PENUMBRA_SESSION_EVENTS_RETENTION_DAYS",
   t1RollupIntervalSec: "PENUMBRA_T1_ROLLUP_INTERVAL_SEC",
   t1SessionIdleMinutes: "PENUMBRA_T1_SESSION_IDLE_MINUTES",
   t2PromotionDelayHours: "PENUMBRA_T2_PROMOTION_DELAY_HOURS",
@@ -45,6 +47,7 @@ const envKeyFor: Record<keyof Settings, string> = {
 const parsers: Record<keyof Settings, (raw: string) => unknown> = {
   t0RetentionDays: Number,
   dispatchEventsRetentionDays: Number,
+  sessionEventsRetentionDays: Number,
   t1RollupIntervalSec: Number,
   t1SessionIdleMinutes: Number,
   t2PromotionDelayHours: Number,

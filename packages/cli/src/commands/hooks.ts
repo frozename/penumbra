@@ -480,6 +480,7 @@ export const PENUMBRA_HOOK_EVENTS = [
   "SessionStart",
   "PreCompact",
   "Stop",
+  "SessionEnd",
 ] as const;
 const PENUMBRA_HOOK_RE = /penumbra(?:\.ts)?'?\s+hook\s+claude-code/;
 

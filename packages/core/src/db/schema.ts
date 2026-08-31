@@ -386,6 +386,27 @@ const SCHEMA_DDL_BLOCK_01 = `
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff_kind ON dispatch_events(handoff_id, kind);
 
+      CREATE TABLE IF NOT EXISTS session_events (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        -- Nullable by design since first ship: absent hook session ids are stored as NULL, not a sentinel.
+        session_id         TEXT,
+        related_session_id TEXT,
+        project_id         TEXT,
+        cwd                TEXT,
+        transcript_path    TEXT,
+        ref_path           TEXT,
+        kind               TEXT NOT NULL,
+        ts                 TEXT NOT NULL,
+        meta_json          TEXT,
+        -- 8192 is deliberately larger than dispatch_events: boot_pickup carries first-moves JSON.
+        CHECK (meta_json IS NULL OR length(meta_json) <= 8192)
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, ts);
+      CREATE INDEX IF NOT EXISTS idx_session_events_kind_ts ON session_events(kind, ts);
+      CREATE INDEX IF NOT EXISTS idx_session_events_ref ON session_events(ref_path);
+      CREATE INDEX IF NOT EXISTS idx_session_events_related ON session_events(related_session_id);
+      CREATE INDEX IF NOT EXISTS idx_session_events_ts ON session_events(ts DESC, id DESC);
+
       CREATE TABLE IF NOT EXISTS subsystem_health (
         subsystem TEXT PRIMARY KEY,
         tier TEXT NOT NULL,

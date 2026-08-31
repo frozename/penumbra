@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { composeRecall } from "../src/recall.js";
+import { runSessionEventsSource } from "../src/recall-sources/session-events.js";
 
 try {
   if (process.platform === "darwin") {
@@ -98,6 +99,84 @@ test("composes bundle from multiple sources, partial failures captured as warnin
   expect(bundle.byKey["handoff_list_pending"]).toBeDefined();
   expect(bundle.byKey["git.log"]).toBeDefined();
   expect(bundle.warnings.some((w) => w.includes("git.log"))).toBe(true);
+});
+
+test("composeRecall resolves a session_events source into byKey", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.run(`
+    INSERT INTO session_events (session_id, kind, ts, meta_json)
+    VALUES ('s-1', 'continuity.boot_pickup', '2026-05-04T11:00:00Z', '{"picked_up":true}');
+  `);
+
+  const bundle = await composeRecall({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    cwd: process.cwd(),
+    project: "demo",
+    sources: [{ source: "session_events", args: { kind_prefix: "continuity." } }],
+    budgetTokens: 8000,
+  });
+
+  expect(bundle.byKey["session_events"]).toEqual([
+    expect.objectContaining({
+      session_id: "s-1",
+      kind: "continuity.boot_pickup",
+      meta_json: '{"picked_up":true}',
+    }),
+  ]);
+  expect(bundle.warnings).toEqual([]);
+});
+
+test("session_events recall source clamps absurd limits to 500 rows", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const insert = db.transaction((count: number) => {
+    for (let i = 0; i < count; i += 1) {
+      db.run(
+        `INSERT INTO session_events (session_id, kind, ts, meta_json)
+         VALUES ('s-1', 'session.start', ?, NULL)`,
+        [`2026-05-04T11:${String(i).padStart(2, "0")}:00Z`],
+      );
+    }
+  });
+  insert(501);
+
+  const output = runSessionEventsSource({ db, args: { limit: 1_000_000_000 } });
+  expect(output.events).toHaveLength(500);
+  expect(output.warnings).toEqual([]);
+  db.close();
+});
+
+test("session_events recall source escapes kind_prefix wildcards", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.run(`
+    INSERT INTO session_events (session_id, kind, ts, meta_json)
+    VALUES
+      ('s-1', '%literal', '2026-05-04T11:00:00Z', NULL),
+      ('s-1', '_literal', '2026-05-04T11:01:00Z', NULL),
+      ('s-1', 'continuity.boot_pickup', '2026-05-04T11:02:00Z', NULL),
+      ('s-1', 'continuityXboot_pickup', '2026-05-04T11:03:00Z', NULL),
+      ('s-1', 'session.start', '2026-05-04T11:04:00Z', NULL)
+  `);
+
+  expect(
+    runSessionEventsSource({ db, args: { kind_prefix: "%" } }).events.map((e) => e.kind),
+  ).toEqual(["%literal"]);
+  expect(
+    runSessionEventsSource({ db, args: { kind_prefix: "_" } }).events.map((e) => e.kind),
+  ).toEqual(["_literal"]);
+  expect(
+    runSessionEventsSource({ db, args: { kind_prefix: "continuity." } }).events.map((e) => e.kind),
+  ).toEqual(["continuity.boot_pickup"]);
+  db.close();
 });
 
 test("budget trim drops oldest items first", async () => {

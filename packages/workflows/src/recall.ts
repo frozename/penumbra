@@ -13,6 +13,7 @@ import { runFsGlob } from "./recall-sources/fs.js";
 import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
+import { type SessionEvent, runSessionEventsSource } from "./recall-sources/session-events.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
 export type RecallBundle = {
@@ -136,6 +137,12 @@ async function runOneSource(
       warnings.push(...out.warnings);
       return;
     }
+    case "session_events": {
+      const out = runSessionEventsSource({ db, args });
+      mergeBucket(byKey, "session_events", out.events);
+      warnings.push(...out.warnings);
+      return;
+    }
     case "handoff_list_pending": {
       const out = runHandoffPendingSource({ db, args });
       mergeBucket(byKey, "handoff_list_pending", out.handoffs);
@@ -248,4 +255,4 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   return { byKey, warnings, estimatedTokens: finalTotal };
 }
 
-export type { DispatchEvent, DispatchSummary, Handoff, MemoryHit };
+export type { DispatchEvent, DispatchSummary, Handoff, MemoryHit, SessionEvent };

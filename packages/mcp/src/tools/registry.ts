@@ -192,6 +192,10 @@ import { routingBiasClearHandler, RoutingBiasClearInputShape } from "./routing-b
 import { routingBiasListHandler, RoutingBiasListInputShape } from "./routing-bias-list.js";
 import { routingBiasSetHandler, RoutingBiasSetInputShape } from "./routing-bias-set.js";
 import { searchHandler, SearchInputShape } from "./search.js";
+import {
+  sessionEventsRecentHandler,
+  SessionEventsRecentInputShape,
+} from "./session-events-recent.js";
 import { sessionEndHandler, SessionEndInputShape } from "./session-end.js";
 import { shellCloseHandler, ShellCloseInputShape } from "./shell-close.js";
 import { shellListHandler, ShellListInputShape } from "./shell-list.js";
@@ -1034,6 +1038,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: DispatchTimelineInputShape,
     },
     makeHandler: dispatchTimelineHandler as unknown as ToolDef["makeHandler"],
+    readOnly: true,
+  },
+  session_events: {
+    descriptor: {
+      description:
+        "Returns recent session_events rows filtered by session_id, kind_prefix, or since.",
+      inputSchema: SessionEventsRecentInputShape,
+    },
+    makeHandler: sessionEventsRecentHandler as unknown as ToolDef["makeHandler"],
     readOnly: true,
   },
   dispatch_audit: {

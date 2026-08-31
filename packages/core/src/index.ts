@@ -237,6 +237,13 @@ export {
 } from "./readers/routing-bias.js";
 export { search } from "./readers/search.js";
 export {
+  SessionEventLog,
+  type SessionEventInput,
+  type SessionEventKind,
+  type SessionEventQuery,
+  type SessionEventRow,
+} from "./services/session-event-log.js";
+export {
   type PressureResult,
   type PressureSnapshot,
   type PressureWarning,

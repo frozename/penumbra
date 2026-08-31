@@ -10,6 +10,7 @@ import {
   extractStumblesFromSession,
   type ExtractStumblesInput,
   resolveProjectScope,
+  type SessionEventKind,
   type Services,
   TaskDraftPayloadSchema,
 } from "@penumbra/core";
@@ -879,7 +880,55 @@ type WorkflowTriggerBody = {
   hookContext?: { tool_name?: string | null; file_path?: string | null };
   transcript_path?: string | null;
   session_id?: string | null;
+  related_session_id?: string | null;
+  ref_path?: string | null;
 };
+
+function sessionEventKindForTrigger(event: Trigger): SessionEventKind | null {
+  if (event.kind !== "lifecycle") return null;
+  switch (event.event) {
+    case "session-start":
+      return "session.start";
+    case "pre-compact":
+      return "session.pre_compact";
+    case "stop":
+      return "session.stop";
+    case "session-end":
+      return "session.end";
+    default:
+      return null;
+  }
+}
+
+function recordWorkflowTriggerSessionEvent(opts: {
+  services: Services;
+  body: WorkflowTriggerBody;
+  cwd: string;
+  project: string;
+}): void {
+  const event = opts.body.event;
+  if (!event) return;
+  const kind = sessionEventKindForTrigger(event);
+  if (!kind) return;
+  try {
+    opts.services.sessionEventLog.record({
+      session_id: opts.body.session_id ?? null,
+      related_session_id: opts.body.related_session_id ?? null,
+      project_id: opts.project !== "unknown" ? opts.project : null,
+      cwd: opts.cwd,
+      transcript_path: opts.body.transcript_path ?? null,
+      ref_path: opts.body.ref_path ?? null,
+      kind,
+      ts: opts.services.clock().toISOString(),
+      meta: {
+        hookContext: opts.body.hookContext ?? null,
+      },
+    });
+  } catch (err) {
+    // Deliberate fail-open: telemetry-write failure must never break hook round-trip.
+    opts.services.log.warn({ err, kind }, "session event ingest failed; continuing workflow hook");
+  }
+}
 
 function filterMatchedByLifecycle(
   matched: WorkflowSpec[],
@@ -1042,12 +1091,14 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   const filePathFromBody =
     typeof body?.hookContext?.file_path === "string" ? body.hookContext.file_path : null;
   if (!body?.event) return json({ error: { code: "bad_request", message: "event required" } }, 400);
-  const matched = selectMatchedSpecs(reg, body.event, body.hookContext);
 
   const cwd = body.cwd ?? process.cwd();
   const scope = resolveWorkflowScopeOrReject(cwd, services);
   if (!scope.ok) return scope.response;
   const { project, repoRoot } = scope;
+  recordWorkflowTriggerSessionEvent({ services, body, cwd, project });
+
+  const matched = selectMatchedSpecs(reg, body.event, body.hookContext);
 
   const additionalContextParts: string[] = [];
   const earlyResponse = await runAllMatchedTriggerSpecs({

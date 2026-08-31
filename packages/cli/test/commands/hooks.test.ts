@@ -460,6 +460,7 @@ describe("hooks install --claude-memory", () => {
       "SessionStart",
       "PreCompact",
       "Stop",
+      "SessionEnd",
     ]);
 
     const settings = readClaudeSettings(claudeDir);
@@ -470,6 +471,7 @@ describe("hooks install --claude-memory", () => {
       "SessionStart",
       "PreCompact",
       "Stop",
+      "SessionEnd",
     ]) {
       const groups = settings.hooks?.[ev] ?? [];
       const cmds = groups.flatMap((e) => e.hooks.map((h) => h.command));
@@ -632,11 +634,42 @@ describe("hooks uninstall --claude-memory", () => {
 });
 
 describe("PENUMBRA_HOOK_EVENTS", () => {
-  it("includes SessionStart, PreCompact, Stop", async () => {
+  it("includes SessionStart, PreCompact, Stop, SessionEnd", async () => {
     const { PENUMBRA_HOOK_EVENTS } = await import("@src/commands/hooks.js");
     expect(PENUMBRA_HOOK_EVENTS).toContain("SessionStart");
     expect(PENUMBRA_HOOK_EVENTS).toContain("PreCompact");
     expect(PENUMBRA_HOOK_EVENTS).toContain("Stop");
+    expect(PENUMBRA_HOOK_EVENTS).toContain("SessionEnd");
+  });
+
+  it("installs the SessionEnd memory hook", async () => {
+    const claudeDir = tmpClaudeDir({});
+    await runHooksInstallClaudeMemory({
+      claudeDir,
+      storageRoot: "/opt/penumbra/storage",
+      binPath: "/opt/penumbra/bin/penumbra.ts",
+      skipDaemonCheck: true,
+    });
+
+    const settings = readClaudeSettings(claudeDir);
+    const sessionEnd = settings.hooks?.SessionEnd ?? [];
+    expect(sessionEnd).toHaveLength(1);
+    expect(sessionEnd[0]?.hooks[0]?.command).toContain("hook claude-code");
+  });
+
+  it("uninstalls the SessionEnd memory hook", async () => {
+    const claudeDir = tmpClaudeDir({});
+    await runHooksInstallClaudeMemory({
+      claudeDir,
+      storageRoot: "/opt/penumbra/storage",
+      binPath: "/opt/penumbra/bin/penumbra.ts",
+      skipDaemonCheck: true,
+    });
+    const result = await runHooksUninstallClaudeMemory({ claudeDir });
+
+    const settings = readClaudeSettings(claudeDir);
+    expect(result.events).toContain("SessionEnd");
+    expect(settings.hooks?.SessionEnd).toBeUndefined();
   });
 });
 

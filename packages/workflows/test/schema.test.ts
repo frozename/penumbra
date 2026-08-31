@@ -91,3 +91,16 @@ test("accepts ts-function run kind", () => {
   const r = WorkflowSpecSchema.parse(input);
   expect(r.run.kind).toBe("ts-function");
 });
+
+test("TriggerSchema accepts kind:lifecycle, event:session-end", () => {
+  const input = {
+    name: "session-end-workflow",
+    description: "y",
+    triggers: [{ kind: "lifecycle", event: "session-end" }],
+    recall: [],
+    output: [],
+    run: { kind: "markdown-template", template: "" },
+  };
+  const r = WorkflowSpecSchema.parse(input);
+  expect(r.triggers).toEqual([{ kind: "lifecycle", event: "session-end" }]);
+});

@@ -111,6 +111,7 @@ import {
   dispatchEventsPostRoute,
   dispatchEventsStreamRoute,
 } from "./routes/dispatch-events.js";
+import { sessionEventsGetRoute, sessionEventsPostRoute } from "./routes/session-events.js";
 import { dispatchLandRoute, dispatchLandTaskRoute } from "./routes/dispatch-land.js";
 import { makeDispatchRefineRoute } from "./routes/dispatch-refine.js";
 import {
@@ -313,6 +314,7 @@ import { startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
 import { startWorktreeGcSweeper } from "./sweepers/worktree-gc.js";
 import { type ExtraWorkerConfig, loadExtraWorkersConfig } from "./workers/config.js";
 import { createDispatchEventsRetentionWorker } from "./workers/dispatch-events-retention.js";
+import { createSessionEventsRetentionWorker } from "./workers/session-events-retention.js";
 import { createHandoffSweeperWorker } from "./workers/handoff-sweeper.js";
 import { createMemoryEfficacyJobRunner } from "./workers/memory-efficacy-job-runner.js";
 import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
@@ -899,6 +901,8 @@ const ROUTES: Route[] = [
     dispatchEventsStreamRoute(req, ctx.services),
   ),
   staticRoute("GET", "/dispatch/events", (req, ctx) => dispatchEventsGetRoute(req, ctx.services)),
+  staticRoute("POST", "/session-events", (req, ctx) => sessionEventsPostRoute(req, ctx.services)),
+  staticRoute("GET", "/session-events", (req, ctx) => sessionEventsGetRoute(req, ctx.services)),
   staticRoute("POST", "/dispatch/land", (req, ctx) => dispatchLandRoute(req, ctx.services)),
   staticRoute("POST", "/dispatch/refine", (req, ctx) => ctx.dispatchRefineHandler(req)),
   regexRoute("GET", /^\/dispatch\/land\/([^/]+)$/, (req, ctx, id) =>
@@ -1260,6 +1264,7 @@ interface CronWorkers {
   promotion: CronTickWorker;
   retention: CronTickWorker;
   dispatchEventsRetention: CronTickWorker;
+  sessionEventsRetention: CronTickWorker;
   sweeper: CronTickWorker;
   watchdog: CronTickWorker;
   localSeatHealth?: CronTickWorker;
@@ -1287,6 +1292,11 @@ function registerCronWorkers(services: Services, workers: CronWorkers): void {
     name: "dispatch-events-retention",
     intervalMs: 3600 * 1000,
     tick: (): Promise<void> => workers.dispatchEventsRetention.tick(),
+  });
+  supervisor.register({
+    name: "session-events-retention",
+    intervalMs: 3600 * 1000,
+    tick: (): Promise<void> => workers.sessionEventsRetention.tick(),
   });
   supervisor.register({
     name: "handoff-sweeper",
@@ -1617,6 +1627,7 @@ interface CronWorkerSet {
   promotion: ReturnType<typeof createT2PromotionWorker>;
   retention: ReturnType<typeof createT0RetentionWorker>;
   dispatchEventsRetention: ReturnType<typeof createDispatchEventsRetentionWorker>;
+  sessionEventsRetention: ReturnType<typeof createSessionEventsRetentionWorker>;
   sweeper: ReturnType<typeof createHandoffSweeperWorker>;
 }
 
@@ -1640,6 +1651,10 @@ function createCronWorkerSet(opts: ServeOpts, dreamConfig: DreamConfig): CronWor
     dispatchEventsRetention: createDispatchEventsRetentionWorker({
       services: opts.services,
       retentionDays: opts.services.settings.dispatchEventsRetentionDays,
+    }),
+    sessionEventsRetention: createSessionEventsRetentionWorker({
+      services: opts.services,
+      retentionDays: opts.services.settings.sessionEventsRetentionDays,
     }),
     sweeper: createHandoffSweeperWorker({
       services: opts.services,
@@ -2380,7 +2395,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
   // would suppress the default SIGTERM/SIGINT process termination.
   const { lagSampler, watchdog } = setupBootDiagnostics(opts, daemonServices);
   const cronWorkers = createCronWorkerSet(opts, dreamConfig);
-  const { rollup, promotion, retention, dispatchEventsRetention, sweeper } = cronWorkers;
+  const { rollup, promotion, retention, dispatchEventsRetention, sessionEventsRetention, sweeper } =
+    cronWorkers;
   const efficacyJobRunner = createEfficacyJobRunnerEntry(opts);
   const recovery = setupRecoverySweepers({
     opts,

@@ -39,6 +39,7 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
 
 export type LifecycleEvent =
   | "session-start"
+  | "session-end"
   | "pre-compact"
   | "stop"
   | "user-prompt-submit"
@@ -63,10 +64,12 @@ export async function runLifecycleForward(opts: {
   await opts.forwardFn({ kind: "lifecycle", event: opts.event, hookContext: opts.hookContext });
 }
 
-function lifecycleToHookEventName(event: LifecycleEvent): string {
+export function lifecycleToHookEventName(event: LifecycleEvent): string {
   switch (event) {
     case "session-start":
       return "SessionStart";
+    case "session-end":
+      return "SessionEnd";
     case "pre-compact":
       return "PreCompact";
     case "stop":
@@ -89,6 +92,8 @@ export function claudeCodeEventToLifecycle(name: string | undefined | null): Lif
       return null;
     case "SessionStart":
       return "session-start";
+    case "SessionEnd":
+      return "session-end";
     case "PreCompact":
       return "pre-compact";
     case "Stop":
