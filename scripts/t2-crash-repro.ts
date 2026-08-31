@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import type { Embedder } from "../packages/core/src/embedder/interface.js";
 
-import { readEmbedderEnv } from "../packages/cli/src/commands/sirius-env.js";
+import { readEmbedderEnv } from "../packages/cli/src/commands/embedder-env.js";
 import { assertEmbedderDim } from "../packages/core/src/db/migrations.js";
 import { applyRuntimePragmas, loadSqliteVec } from "../packages/core/src/db/sqlite-vec.js";
 import { BundledEmbedder } from "../packages/core/src/embedder/bundled.js";

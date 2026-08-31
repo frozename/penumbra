@@ -104,7 +104,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
   // passed in), short-circuit to a no-op worker. The previous
   // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
   // default port on common dev setups and produced an unbounded stream of
-  // "Sirius returned 404" warnings every cycle.
+  // judge 404 warnings every cycle.
   let activePool: JudgePool | null = null;
   const rawJudge =
     opts.llm ??
@@ -392,8 +392,8 @@ export function stripJsonFence(content: string): string {
 function isJudgeUnreachable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
-  // ECONNREFUSED / DNS failure / aborted-by-timeout / Sirius non-2xx all flagged.
-  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|Sirius returned/i.test(msg);
+  // ECONNREFUSED / DNS failure / aborted-by-timeout / judge non-2xx all flagged.
+  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|judge returned/i.test(msg);
 }
 
 function splitTranscriptOnEventBoundaries(transcript: string): string[] {
