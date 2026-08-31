@@ -128,6 +128,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Enable daemon tests that require live service-style integration harnesses.",
   },
+  PENUMBRA_UPDATE_SCHEMA_SNAPSHOT: {
+    schema: Bool,
+    default: false,
+    description:
+      "Rewrite the committed db schema snapshot fixture instead of asserting against it.",
+  },
   PENUMBRA_AUTO_RECALL_ENABLED: {
     schema: Bool,
     default: true,

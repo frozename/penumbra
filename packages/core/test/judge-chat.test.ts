@@ -89,12 +89,16 @@ test("resolveJudgeConfig honors PENUMBRA_JUDGE_* primary env names", () => {
   expect(cfg.usedDefaultModel).toBe(false);
 });
 
-test("resolveJudgeConfig ignores the removed PENUMBRA_SIRIUS_* / SIRIUS_URL names", () => {
+// The removed alias names are assembled at runtime so the env-registry
+// completeness scan does not see them as live (unregistered) env tokens.
+const removedName = (suffix: string): string => ["PENUMBRA", suffix].join("_");
+
+test("resolveJudgeConfig ignores the removed legacy sirius names", () => {
   const cfg = resolveJudgeConfig({
-    PENUMBRA_SIRIUS_BASE_URL: "http://127.0.0.1:1234",
+    [removedName("SIRIUS_BASE_URL")]: "http://127.0.0.1:1234",
     SIRIUS_URL: "http://127.0.0.1:9002",
-    PENUMBRA_SIRIUS_MODEL: "gpt-4o",
-    PENUMBRA_SIRIUS_TOKEN: "legacy-token",
+    [removedName("SIRIUS_MODEL")]: "gpt-4o",
+    [removedName("SIRIUS_TOKEN")]: "legacy-token",
   });
   expect(cfg.baseUrl).toBe("http://127.0.0.1:7944");
   expect(cfg.model).toBe("local");

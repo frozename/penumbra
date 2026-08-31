@@ -1608,16 +1608,18 @@ interface CronWorkerSet {
 }
 
 function createCronWorkerSet(opts: ServeOpts, dreamConfig: DreamConfig): CronWorkerSet {
+  const promotion = createT2PromotionWorker({
+    services: opts.services,
+    delayHours: opts.services.settings.t2PromotionDelayHours,
+    minEvents: dreamConfig.t2PromotionMinEvents ?? 5,
+  });
+  (opts.services as DaemonServices).t2PromotionStatus = promotion.status;
   return {
     rollup: createRollupWorker({
       services: opts.services,
       idleMinutes: opts.services.settings.t1SessionIdleMinutes,
     }),
-    promotion: createT2PromotionWorker({
-      services: opts.services,
-      delayHours: opts.services.settings.t2PromotionDelayHours,
-      minEvents: dreamConfig.t2PromotionMinEvents ?? 5,
-    }),
+    promotion,
     retention: createT0RetentionWorker({
       services: opts.services,
       retentionDays: opts.services.settings.t0RetentionDays,
@@ -2344,7 +2346,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const { lagSampler, watchdog } = setupBootDiagnostics(opts, daemonServices);
   const cronWorkers = createCronWorkerSet(opts, dreamConfig);
   const { rollup, promotion, retention, dispatchEventsRetention, sweeper } = cronWorkers;
-  daemonServices.t2PromotionStatus = promotion.status;
   const efficacyJobRunner = createEfficacyJobRunnerEntry(opts);
   const recovery = setupRecoverySweepers({
     opts,

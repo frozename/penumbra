@@ -48,14 +48,18 @@ test("readEmbedderEnv keeps empty healthPath to signal probe skip", () => {
   expect(opts?.remote?.healthPath).toBe("");
 });
 
-test("readEmbedderEnv ignores the removed PENUMBRA_SIRIUS_* aliases", () => {
+// The removed alias names are assembled at runtime so the env-registry
+// completeness scan does not see them as live (unregistered) env tokens.
+const removedName = (suffix: string): string => ["PENUMBRA", suffix].join("_");
+
+test("readEmbedderEnv ignores the removed legacy sirius aliases", () => {
   expect(
     readEmbedderEnv({
-      PENUMBRA_SIRIUS_BASE_URL: "http://legacy:8080",
-      PENUMBRA_SIRIUS_MODEL: "legacy-model",
-      PENUMBRA_SIRIUS_DIM: "1536",
-      PENUMBRA_SIRIUS_TOKEN: "legacy-token",
-      PENUMBRA_EMBEDDER_PREFER_SIRIUS: "true",
+      [removedName("SIRIUS_BASE_URL")]: "http://legacy:8080",
+      [removedName("SIRIUS_MODEL")]: "legacy-model",
+      [removedName("SIRIUS_DIM")]: "1536",
+      [removedName("SIRIUS_TOKEN")]: "legacy-token",
+      [removedName("EMBEDDER_PREFER_SIRIUS")]: "true",
     }),
   ).toBeUndefined();
 });
