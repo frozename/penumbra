@@ -11,8 +11,10 @@ import {
 } from "../../../packages/core/src/readers/routing-bias.js";
 import { readSubscriptionPressure } from "../../../packages/core/src/readers/subscription-pressure.js";
 import type { WorkflowCtx } from "@penumbra/workflows";
+import type { Database } from "bun:sqlite";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
+const DEAD_PIN_CONSECUTIVE_FAILURES = 3;
 type AgentPoolLike =
   | string
   | string[]
@@ -37,6 +39,26 @@ export function parseAgentField(raw: unknown): AgentField | null {
   if (agents.length === 1 && typeof raw === "string") return { kind: "single", agent: agents[0]! };
   if (agents.length > 0) return { kind: "pool", agents };
   return null;
+}
+
+function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string): boolean {
+  try {
+    const rows = db
+      .query<{ outcome: string }, [string, string, number]>(
+        `SELECT outcome
+         FROM agent_performance
+         WHERE agent_name = ? AND task_type = ? AND source = 'worker'
+           AND (environment_failure IS NULL OR environment_failure != 'y')
+         ORDER BY ts DESC
+         LIMIT ?`,
+      )
+      .all(agent, taskType, DEAD_PIN_CONSECUTIVE_FAILURES);
+    return (
+      rows.length === DEAD_PIN_CONSECUTIVE_FAILURES && rows.every((row) => row.outcome === "failed")
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function resolveAgent(
@@ -75,9 +97,12 @@ export function resolveAgent(
   if (field.kind === "single") {
     const preferredConfig = agentchatConfig.agents.find((agent) => agent.name === field.agent);
     const provider = preferredConfig ? resolveProvider(preferredConfig) : null;
-    if (!resolveBiasEffect(field.agent, provider, activeBiases).exclude) return field.agent;
     const fallbackRole = opts.fallback_role;
     if (!fallbackRole) return field.agent;
+    const biasExcluded = resolveBiasEffect(field.agent, provider, activeBiases).exclude;
+    const deadPinExcluded = hasRecentDeadPinFailures(db, field.agent, taskType);
+    const pinExcluded = biasExcluded || deadPinExcluded;
+    if (!pinExcluded) return field.agent;
 
     const fallbackAgents = agentchatConfig.agents
       .filter((agent) => agent.name !== field.agent && agent.roles.includes(fallbackRole))
@@ -109,6 +134,7 @@ export function resolveAgent(
         if (alternative) return alternative;
       }
     } catch {}
+    if (deadPinExcluded && !biasExcluded) return fallbackAgents[0]!;
     return field.agent;
   }
 

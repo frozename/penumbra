@@ -46,6 +46,55 @@ function writePerf(db: Database, agent: string, taskType = "review_adversarial")
   });
 }
 
+function writeWorkerPerf(
+  db: Database,
+  row: {
+    agent: string;
+    handoffId: string;
+    ts: string;
+    outcome: string;
+    taskType?: string;
+    environmentFailure?: "y" | null;
+  },
+): void {
+  new AgentPerformanceWriter(db).upsert({
+    performance_id: `perf-${row.handoffId}`,
+    ts: row.ts,
+    handoff_id: row.handoffId,
+    conversation_id: `conv-${row.handoffId}`,
+    project_id: "proj",
+    agent_name: row.agent,
+    task_type: row.taskType ?? "review_adversarial",
+    outcome: row.outcome,
+    rounds: 5,
+    smoke_pass: "n",
+    reviewer_findings: 0,
+    maestro_score: null,
+    cost_usd: null,
+    tokens_used: 100,
+    latency_ms: 60_000,
+    source: "worker",
+    notes: null,
+    environment_failure: row.environmentFailure ?? null,
+    metadata_json: "{}",
+  });
+}
+
+function writeDeadPinWorkerRows(
+  db: Database,
+  rows: Array<{ suffix: string; ts: string; outcome: string; environmentFailure?: "y" | null }>,
+): void {
+  for (const row of rows) {
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: `dead-pin-seat-${row.suffix}`,
+      ts: row.ts,
+      outcome: row.outcome,
+      environmentFailure: row.environmentFailure,
+    });
+  }
+}
+
 function writePressure(db: Database, provider: string, usedPct: number): void {
   db.prepare(
     `
@@ -153,6 +202,122 @@ describe("agentPoolToNames", () => {
 });
 
 describe("resolveAgent", () => {
+  test("routes away from a single pinned agent after three recent worker failures", () => {
+    const db = freshDb();
+    writeDeadPinWorkerRows(db, [
+      { suffix: "h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      { suffix: "h2", ts: "2026-08-31T10:01:00.000Z", outcome: "failed" },
+      { suffix: "h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+    ]);
+
+    const result = resolveAgent(
+      { kind: "single", agent: "dead-pin-seat" },
+      "review_adversarial",
+      ctx({
+        config: {
+          role_routing: { headroom_weighting: false },
+          agents: [
+            { name: "dead-pin-seat", roles: ["reviewer"] },
+            { name: "healthy-seat", roles: ["reviewer"] },
+          ],
+        },
+        db: () => db,
+      }),
+      { fallback_role: "reviewer" },
+    );
+
+    expect(result).not.toBe("dead-pin-seat");
+  });
+
+  test("keeps a single pinned agent when any recent worker row completed", () => {
+    const db = freshDb();
+    writeDeadPinWorkerRows(db, [
+      { suffix: "mixed-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      {
+        suffix: "mixed-h2",
+        ts: "2026-08-31T10:01:00.000Z",
+        outcome: "completed_with_output",
+      },
+      { suffix: "mixed-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+    ]);
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("dead-pin-seat");
+  });
+
+  test("keeps a single pinned agent when a recent worker failure was environmental", () => {
+    const db = freshDb();
+    writeDeadPinWorkerRows(db, [
+      { suffix: "env-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      {
+        suffix: "env-h2",
+        ts: "2026-08-31T10:01:00.000Z",
+        outcome: "failed",
+        environmentFailure: "y",
+      },
+      { suffix: "env-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+    ]);
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("dead-pin-seat");
+  });
+
+  test("keeps a dead single pinned agent when no fallback role is provided", () => {
+    const db = freshDb();
+    writeDeadPinWorkerRows(db, [
+      { suffix: "nofallback-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      { suffix: "nofallback-h2", ts: "2026-08-31T10:01:00.000Z", outcome: "failed" },
+      { suffix: "nofallback-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+    ]);
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+      ),
+    ).toBe("dead-pin-seat");
+  });
+
   test("keeps the configured single agent when no fallback role is provided", () => {
     const db = freshDb();
     writePerf(db, "a");
