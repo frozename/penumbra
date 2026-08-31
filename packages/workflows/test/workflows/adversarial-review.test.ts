@@ -16,6 +16,12 @@ import { parse as parseYaml } from "yaml";
 // once and cast the exports to typed views, so the rest of the file lints
 // with real type info.
 import * as adversarialReviewModule from "../../../../plugin/workflows/adversarial-review/workflow.js";
+import {
+  EMPTY_HEADING_SYNTHESIS,
+  REAL_2026_08_31_SYNTHESIS_WITH_PREAMBLE,
+  REAL_2026_08_31_SYNTHESIS_WITH_QUALIFIED_HEADINGS,
+  WELL_FORMED_SYNTHESIS,
+} from "./adversarial-review-fixtures.js";
 
 type ReviewModule = {
   default: WorkflowSpec;
@@ -44,6 +50,17 @@ if (process.platform === "darwin") {
 }
 
 const NOW = new Date(Date.now() - 60_000).toISOString();
+
+const MISFIRED_SYNTHESIS =
+  "What do you want a workflow authored for? I don't see an actual task attached to this invocation.";
+
+const COMPACT_INLINE_SECTION_SYNTHESIS = `Land with revisions: address the high-severity regression before landing.
+
+## Shared concerns: Security and performance both flagged the same broken invariant.
+## Contradictions: none
+## Severity-ranked findings: 1. high: Broken invariant (security, performance)
+## Recommended actions: 1. Fix finding 1 before landing.
+## Skipped/failed personas: none`;
 
 function baseRecall(): RecallBundle {
   return {
@@ -167,6 +184,16 @@ type MakeReviewCtxResult = {
   cancel: ReturnType<typeof mock<CancelImplReview>>;
 };
 
+type AdversarialReviewWorkflowResult = {
+  ok: boolean;
+  outcome: string;
+  out_dir: string;
+  synthesis_path: string | null;
+  synthesizer_status: string | null;
+  synth_failed?: boolean;
+  pool_exhausted?: boolean;
+};
+
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
   dispatchImpl?: DispatchImplReview;
@@ -185,7 +212,13 @@ function makeCtx(opts?: {
     Promise.resolve({
       status: "completed" as const,
       final_agent: "agent",
-      response_text: `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+      response_text:
+        conversationId === "codex-conv" ||
+        conversationId === "codex-acp-deep-conv" ||
+        conversationId === "google-gemini-cli-conv" ||
+        conversationId === "deepseek-v4-flash-http-conv"
+          ? WELL_FORMED_SYNTHESIS
+          : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
     });
   const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
@@ -211,6 +244,24 @@ function makeCtx(opts?: {
     db: opts?.db,
   };
   return { ctx, root, writes, dispatch, awaitChain, cancel };
+}
+
+async function runWorkflowWithSynthResponse(responseText: string): Promise<{
+  result: AdversarialReviewWorkflowResult;
+  root: string;
+}> {
+  const { ctx, root } = makeCtx({
+    awaitImpl: (conversationId) =>
+      Promise.resolve({
+        status: "completed",
+        final_agent: "agent",
+        response_text:
+          conversationId === "codex-conv"
+            ? responseText
+            : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+      }),
+  });
+  return { result: (await fn(ctx, baseRecall())) as AdversarialReviewWorkflowResult, root };
 }
 
 function loadConfigWithRouting(routingYaml: string): ReturnType<typeof loadAgentChatConfigFromDir> {
@@ -521,7 +572,7 @@ test("persona mapping uses personas.<name>.preferred_agent, not workload key", a
       return {
         status: "completed",
         final_agent: "codex",
-        response_text: "synthesized review",
+        response_text: WELL_FORMED_SYNTHESIS,
       };
     },
   });
@@ -639,7 +690,187 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(personaIds).toBeDefined();
     expect(personaIds.security).toBe("security-handoff");
     expect(personaIds.performance).toBe("performance-handoff");
-    expect(synthContent).toContain("review for codex-conv");
+    expect(synthContent).toContain(WELL_FORMED_SYNTHESIS);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer completed non-synthesis body fails closed through result schema", async () => {
+  const { ctx, root } = makeCtx({
+    awaitImpl: (conversationId) =>
+      Promise.resolve({
+        status: "completed",
+        final_agent: "agent",
+        response_text:
+          conversationId === "codex-conv"
+            ? MISFIRED_SYNTHESIS
+            : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+      }),
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      outcome: string;
+      out_dir: string;
+      synthesis_path: string | null;
+      synthesizer_status: string | null;
+      synth_failed?: boolean;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("success_partial");
+    expect(result.synthesizer_status).toBe("failed");
+    expect(result.synth_failed).toBe(true);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain("<synthesizer failed: invalid_synthesis_output>");
+    expect(synthContent).toContain(MISFIRED_SYNTHESIS);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer accepts completed body with prompt-required verdict and sections", async () => {
+  const { ctx, root } = makeCtx({
+    awaitImpl: (conversationId) =>
+      Promise.resolve({
+        status: "completed",
+        final_agent: "agent",
+        response_text:
+          conversationId === "codex-conv"
+            ? WELL_FORMED_SYNTHESIS
+            : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+      }),
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      out_dir: string;
+      synthesizer_status: string | null;
+      synth_failed?: boolean;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe("completed");
+    expect(result.synth_failed).toBe(false);
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain(WELL_FORMED_SYNTHESIS);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer accepts compact sections with inline content after headings", async () => {
+  const { result, root } = await runWorkflowWithSynthResponse(COMPACT_INLINE_SECTION_SYNTHESIS);
+  try {
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe("completed");
+    expect(result.synth_failed).toBe(false);
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain(COMPACT_INLINE_SECTION_SYNTHESIS);
+    expect(synthContent).not.toContain("<synthesizer failed: invalid_synthesis_output>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [name, synthesis] of [
+  [
+    "real 2026-08-31 synthesis with qualified headings",
+    REAL_2026_08_31_SYNTHESIS_WITH_QUALIFIED_HEADINGS,
+  ],
+  [
+    "real 2026-08-31 synthesis with preamble before verdict",
+    REAL_2026_08_31_SYNTHESIS_WITH_PREAMBLE,
+  ],
+] as const) {
+  test(`synthesizer accepts ${name}`, async () => {
+    const { result, root } = await runWorkflowWithSynthResponse(synthesis);
+    try {
+      expect(result.ok).toBe(true);
+      expect(result.synthesizer_status).toBe("completed");
+      expect(result.synth_failed).toBe(false);
+      const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+      expect(synthContent).toContain(synthesis);
+      expect(synthContent).not.toContain("<synthesizer failed: invalid_synthesis_output>");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("synthesizer rejects headings with no section content", async () => {
+  const { result, root } = await runWorkflowWithSynthResponse(EMPTY_HEADING_SYNTHESIS);
+  try {
+    expect(result.ok).toBe(false);
+    expect(result.synthesizer_status).toBe("failed");
+    expect(result.synth_failed).toBe(true);
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain("<synthesizer failed: invalid_synthesis_output>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("marker-prefixed complete synthesis keeps completed status", async () => {
+  const responseText = `<synthesizer failed: invalid_synthesis_output>\n\n${REAL_2026_08_31_SYNTHESIS_WITH_PREAMBLE}`;
+  const { result, root } = await runWorkflowWithSynthResponse(responseText);
+  try {
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe("completed");
+    expect(result.synth_failed).toBe(false);
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    expect(synthContent).toContain(REAL_2026_08_31_SYNTHESIS_WITH_PREAMBLE);
+    expect(synthContent).not.toContain("<synthesizer failed: invalid_synthesis_output>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review synthesizer pool fails over from google primary to deepseek fallback", async () => {
+  const dispatchedAgents: string[] = [];
+  const { ctx, root, cancel } = makeCtx({
+    dispatchImpl: ({ agent }) => {
+      dispatchedAgents.push(agent);
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
+    },
+    awaitImpl: (conversationId) =>
+      Promise.resolve({
+        status: "completed",
+        final_agent: conversationId.replace(/-conv$/, ""),
+        response_text:
+          conversationId === "google-gemini-cli-conv"
+            ? "<synthesizer failed: timeout>"
+            : conversationId === "deepseek-v4-flash-http-conv"
+              ? WELL_FORMED_SYNTHESIS
+              : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
+      }),
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["google-gemini-cli", "deepseek-v4-flash-http"];
+
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      out_dir: string;
+      synthesizer_status: string | null;
+      synth_failed?: boolean;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe("completed");
+    expect(result.synth_failed).toBe(false);
+    expect(dispatchedAgents).toEqual([
+      "security",
+      "performance",
+      "google-gemini-cli",
+      "deepseek-v4-flash-http",
+    ]);
+    expect(cancel).toHaveBeenCalledWith("google-gemini-cli-conv");
+    const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
+    const fm = parseSynthesisFrontmatter(synthContent);
+    expect(fm?.synthesizer_agent).toBe("deepseek-v4-flash-http");
+    expect(fm?.synthesizer_failover_from).toBe("google-gemini-cli");
+    expect(fm?.synthesizer_failover_to).toBe("deepseek-v4-flash-http");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -901,7 +1132,7 @@ workloads:
     eligible_agents:
       - security
     fan_out: 1
-    synthesizer: claude-acp-sonnet
+    synthesizer: [google-gemini-cli, deepseek-v4-flash-http]
 `);
   const { ctx, root } = makeCtx({
     args: { content_path: contentPath },
@@ -1031,6 +1262,13 @@ test("substantive response without findings is not downgraded", async () => {
           status: "completed",
           final_agent: "security",
           response_text: longNoJson,
+        };
+      }
+      if (conversationId === "codex-conv") {
+        return {
+          status: "completed",
+          final_agent: "codex",
+          response_text: WELL_FORMED_SYNTHESIS,
         };
       }
       return {
@@ -1318,7 +1556,7 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
         return {
           status: "completed",
           final_agent: "codex",
-          response_text: "final synthesizer text",
+          response_text: WELL_FORMED_SYNTHESIS,
         };
       }
       return {
@@ -1337,7 +1575,7 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
     expect(result.synthesis_path).toBeTruthy();
     const synthesis = await readFile(result.synthesis_path!, "utf8");
     expect(synthesis).toContain("> Synthesizer retried once after 503 no_worker_registered");
-    expect(synthesis).toContain("final synthesizer text");
+    expect(synthesis).toContain(WELL_FORMED_SYNTHESIS);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1363,7 +1601,7 @@ test("fails over synthesizer pool when completed output is the failure marker", 
         return {
           status: "completed",
           final_agent: "gemini",
-          response_text: "final synthesizer text",
+          response_text: WELL_FORMED_SYNTHESIS,
         };
       }
       return {
@@ -1390,8 +1628,64 @@ test("fails over synthesizer pool when completed output is the failure marker", 
     expect(fm?.synthesizer_failover_from).toBe("codex");
     expect(fm?.synthesizer_failover_to).toBe("gemini");
     expect(synthesis).toContain("> Synthesizer failover: codex -> gemini");
-    expect(synthesis).toContain("final synthesizer text");
+    expect(synthesis).toContain(WELL_FORMED_SYNTHESIS);
     expect(synthesis).not.toContain("<synthesizer failed: failed>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("continues synthesizer pool failover through a third member", async () => {
+  const synthAgents: string[] = [];
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: ({ agent }) => {
+      if (["codex", "gemini", "deepseek"].includes(agent)) synthAgents.push(agent);
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
+    },
+    awaitImpl: (conversationId: string) => {
+      if (conversationId === "codex-conv" || conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: conversationId.replace("-conv", ""),
+          response_text: "<synthesizer failed: failed>",
+        };
+      }
+      if (conversationId === "deepseek-conv") {
+        return {
+          status: "completed",
+          final_agent: "deepseek",
+          response_text: WELL_FORMED_SYNTHESIS,
+        };
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini", "deepseek"];
+
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesis_path: string | null;
+      pool_exhausted?: boolean;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.pool_exhausted).toBeUndefined();
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(synthAgents).toEqual(["codex", "gemini", "deepseek"]);
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    const fm = parseSynthesisFrontmatter(synthesis);
+    expect(fm?.synthesizer_agent).toBe("deepseek");
+    expect(fm?.pool_exhausted).toBeUndefined();
+    expect(synthesis).toContain("> Synthesizer failover: codex -> deepseek");
+    expect(synthesis).toContain(WELL_FORMED_SYNTHESIS);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1414,7 +1708,7 @@ test("cancels timed-out synthesizer conversation before failover", async () => {
         return {
           status: "completed",
           final_agent: "gemini",
-          response_text: "final synthesizer text",
+          response_text: WELL_FORMED_SYNTHESIS,
         };
       }
       return {
@@ -1453,7 +1747,7 @@ test("cancels thrown synthesizer conversation before failover", async () => {
         return {
           status: "completed",
           final_agent: "gemini",
-          response_text: "final synthesizer text",
+          response_text: WELL_FORMED_SYNTHESIS,
         };
       }
       return {
@@ -1481,7 +1775,7 @@ test("cancels thrown synthesizer conversation before failover", async () => {
 
 test("does not fail over when a long synthesis merely quotes the failure marker", async () => {
   const synthAgents: string[] = [];
-  const quotingSynthesis = `<synthesizer failed: failed> is the marker this review discusses.\n\n${"The synthesis itself succeeded and analyzes the failover handling in depth. ".repeat(10)}`;
+  const quotingSynthesis = `${WELL_FORMED_SYNTHESIS}\n\nNote: <synthesizer failed: failed> is the marker this review discusses.`;
   const { ctx, root } = makeCtx({
     args: { personas: ["security"] },
     dispatchImpl: ({ agent }) => {
@@ -1555,15 +1849,76 @@ test("caps synthesis failover when every pool agent returns a failure marker", a
       ok: boolean;
       synthesis_path: string | null;
       synthesizer_status: string | null;
+      pool_exhausted?: boolean;
     };
     expect(result.ok).toBe(false);
     expect(result.synthesizer_status).toBe("failed");
+    expect(result.pool_exhausted).toBe(true);
     expect(dispatch).toHaveBeenCalledTimes(3);
     expect(synthAgents).toEqual(["codex", "gemini"]);
     expect(result.synthesis_path).toBeTruthy();
     const synthesis = await readFile(result.synthesis_path!, "utf8");
     expect(synthesis).toContain("> Synthesizer failover: codex -> gemini");
     expect(synthesis).toContain("<synthesizer failed: failed>");
+    const fm = parseSynthesisFrontmatter(synthesis);
+    expect(fm?.pool_exhausted).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("marks pool exhausted when final synthesizer pool attempt throws", async () => {
+  const synthAgents: string[] = [];
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security"] },
+    dispatchImpl: ({ agent }) => {
+      if (["codex", "gemini", "deepseek"].includes(agent)) synthAgents.push(agent);
+      return Promise.resolve({ conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` });
+    },
+    awaitImpl: (conversationId: string) => {
+      if (conversationId === "codex-conv" || conversationId === "gemini-conv") {
+        return {
+          status: "completed",
+          final_agent: conversationId.replace("-conv", ""),
+          response_text: "<synthesizer failed: failed>",
+        };
+      }
+      if (conversationId === "deepseek-conv") {
+        throw new Error("lost final synthesizer stream");
+      }
+      return {
+        status: "completed",
+        final_agent: "security",
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.synthesizer = ["codex", "gemini", "deepseek"];
+
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesis_path: string | null;
+      synthesizer_status: string | null;
+      pool_exhausted?: boolean;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.synthesizer_status).toBe("failed");
+    expect(result.pool_exhausted).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(synthAgents).toEqual(["codex", "gemini", "deepseek"]);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthesis = await readFile(result.synthesis_path!, "utf8");
+    expect(synthesis).toContain("> Synthesizer failover: codex -> deepseek");
+    expect(synthesis).toContain("<synthesizer failed: lost final synthesizer stream>");
+    const fm = parseSynthesisFrontmatter(synthesis);
+    expect(fm?.pool_exhausted).toBe(true);
+    expect(fm?.synthesizer_agent).toBe("deepseek");
+    expect(fm?.synthesizer_failover_from).toBe("codex");
+    expect(fm?.synthesizer_failover_to).toBe("deepseek");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1741,8 +2096,15 @@ test("awaitChain uses persona timeout_ms override when configured", async () => 
   const seenTimeouts: number[] = [];
   const { ctx, root } = makeCtx({
     args: { personas: ["security"] },
-    awaitImpl: (_conversationId, options) => {
+    awaitImpl: (conversationId, options) => {
       seenTimeouts.push(options?.timeoutMs ?? -1);
+      if (conversationId === "codex-conv") {
+        return {
+          status: "completed",
+          final_agent: "codex",
+          response_text: WELL_FORMED_SYNTHESIS,
+        };
+      }
       return {
         status: "completed",
         final_agent: "agent",

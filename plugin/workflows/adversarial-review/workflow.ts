@@ -9,6 +9,12 @@ import {
   resolveAgent,
   type AgentField,
 } from "../_shared/pool-resolver.js";
+import {
+  REQUIRED_SYNTHESIS_SECTION_LABELS,
+  SYNTHESIS_OUTPUT_SECTIONS,
+  SYNTHESIS_VERDICT_INSTRUCTION,
+  SYNTHESIS_VERDICT_PATTERN,
+} from "./synthesis-contract.js";
 
 type ReviewPersona = {
   name: string;
@@ -611,6 +617,100 @@ function isFailedSynthesisOutput(text: string | null): boolean {
   return trimmed.length < 500 && /^<synthesizer failed(?::|\b)/i.test(trimmed);
 }
 
+function stripLeadingSynthesizerFailedMarker(text: string | null): string | null {
+  if (!text) return text;
+  return text.replace(/^\s*<synthesizer failed(?::[^>\r\n]*)?>\s*/i, "");
+}
+
+type SynthesisSectionHeadingPattern = {
+  label: string;
+  regex: RegExp;
+};
+
+function buildSynthesisSectionHeadingRegex(label: string): RegExp {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^\\s*(?:#{1,6}\\s*)?(?:\\d+\\.\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:(?:\\s*\\([^\\r\\n)]{1,80}\\))?\\s*(?:[:—-]\\s*(.*))?|\\s+[^:\\r\\n—-]{1,80}\\s*[:—-]\\s*(.*))$`,
+    "i",
+  );
+}
+
+const SYNTHESIS_SECTION_HEADING_PATTERNS: SynthesisSectionHeadingPattern[] =
+  REQUIRED_SYNTHESIS_SECTION_LABELS.map((label) => ({
+    label,
+    regex: buildSynthesisSectionHeadingRegex(label),
+  }));
+
+function synthesisSectionHeadingRegex(label: string): RegExp {
+  return (
+    SYNTHESIS_SECTION_HEADING_PATTERNS.find((pattern) => pattern.label === label)?.regex ??
+    buildSynthesisSectionHeadingRegex(label)
+  );
+}
+
+function matchSynthesisSectionHeading(line: string, label: string): RegExpMatchArray | null {
+  return line.match(synthesisSectionHeadingRegex(label));
+}
+
+function isSynthesisSectionHeading(line: string): boolean {
+  return SYNTHESIS_SECTION_HEADING_PATTERNS.some((pattern) => pattern.regex.test(line));
+}
+
+function hasSynthesisSectionWithContent(lines: string[], label: string): boolean {
+  let start = -1;
+  let inlineContent = "";
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = matchSynthesisSectionHeading(lines[index] ?? "", label);
+    if (!match) continue;
+    start = index;
+    inlineContent = `${match[1] ?? ""}${match[2] ?? ""}`;
+    break;
+  }
+  if (start === -1) return false;
+  if (inlineContent.trim().length > 0) return true;
+
+  const contentLines: string[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (isSynthesisSectionHeading(line)) break;
+    contentLines.push(line);
+  }
+  return contentLines.join("\n").trim().length > 0;
+}
+
+function hasSynthesisVerdict(lines: string[]): boolean {
+  return lines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 5)
+    .some((line) => SYNTHESIS_VERDICT_PATTERN.test(line));
+}
+
+function isValidSynthesisOutput(text: string | null): boolean {
+  const stripped = stripLeadingSynthesizerFailedMarker(text)?.trim();
+  if (!stripped) return false;
+  if (isFailedSynthesisOutput(stripped)) return false;
+  const lines = stripped.split(/\r?\n/);
+  if (!hasSynthesisVerdict(lines)) return false;
+  return REQUIRED_SYNTHESIS_SECTION_LABELS.every((label) =>
+    hasSynthesisSectionWithContent(lines, label),
+  );
+}
+
+function renderSynthesisBody(
+  wait: { status: "completed" | "failed" | "timeout"; response_text: string | null },
+  frontmatter: string,
+): string {
+  if (wait.status !== "completed") return frontmatter + `<synthesizer failed: ${wait.status}>`;
+  if (isValidSynthesisOutput(wait.response_text)) {
+    return frontmatter + (stripLeadingSynthesizerFailedMarker(wait.response_text) ?? "");
+  }
+  if (isFailedSynthesisOutput(wait.response_text)) return frontmatter + (wait.response_text ?? "");
+  return (
+    frontmatter + `<synthesizer failed: invalid_synthesis_output>\n\n${wait.response_text ?? ""}`
+  );
+}
+
 function synthesisPrompt(
   synth: ReviewSynthesizer,
   selected: ReviewPersona[],
@@ -633,6 +733,9 @@ function synthesisPrompt(
       : "";
 
   const priorFindingsSection = priorFindings ? `${priorFindings}\n\n` : "";
+  const outputSections = SYNTHESIS_OUTPUT_SECTIONS.map(
+    (section, index) => `${index + 2}. ${section.label} - ${section.instruction}`,
+  ).join("\n");
 
   return `${synth.system_prompt}
 
@@ -645,12 +748,8 @@ ${sections.join("\n\n")}
 
 Reply with the synthesis content as your message. Do NOT write any files; do NOT use any file-writing tools. The harness will save your reply text directly. Your reply should contain, in this order:
 
-1. Headline — one sentence: should this change land as-is, with revisions, or be rejected?
-2. Shared concerns — issues raised by 2+ personas (or "none — single persona" if only one).
-3. Contradictions — where personas disagreed (or "none").
-4. Severity-ranked findings — combine all personas' JSON findings into one flat ranked list (high → low). Dedupe near-identical findings; cite which personas raised each.
-5. Recommended actions — concrete, ordered. Each action references finding numbers.
-6. Skipped/failed personas — note any DISPATCH FAILED entries with their reason.
+1. Headline - ${SYNTHESIS_VERDICT_INSTRUCTION}
+${outputSections}
 
 Begin your reply with the headline. No preamble.`;
 }
@@ -664,6 +763,7 @@ function buildSynthesisFrontmatter(args: {
   synthesizer_agent: string;
   synthesizer_failover_from?: string;
   synthesizer_failover_to?: string;
+  pool_exhausted?: boolean;
 }): string {
   const lines = [
     "---",
@@ -675,6 +775,7 @@ function buildSynthesisFrontmatter(args: {
     lines.push(`synthesizer_failover_from: ${args.synthesizer_failover_from}`);
     lines.push(`synthesizer_failover_to: ${args.synthesizer_failover_to}`);
   }
+  if (args.pool_exhausted) lines.push("pool_exhausted: true");
   lines.push("persona_handoff_ids:");
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
     lines.push(`  ${key}: ${id}`);
@@ -912,6 +1013,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthHandoffId: string | null = null;
   let synthRetryUsed = false;
   let synthFailover: { from: string; to: string } | null = null;
+  let synthPoolExhausted = false;
+  let finalSynthAgentForFailure = synthAgent;
+  const attemptedSynthAgents = new Set<string>();
   const personaHandoffIds: Record<string, string> = {};
   for (const r of personaResults) {
     if (r.handoff_id) {
@@ -929,19 +1033,33 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }> => {
     let attempts = 0;
     let currentAgent = synthAgent;
-    const failoverAgent = (failedAgent: string): string | null => {
-      if (synthFailover || synthesizer.preferred_agent.kind !== "pool") return null;
+    const markSynthPoolExhausted = (): void => {
+      if (
+        synthesizer.preferred_agent.kind === "pool" &&
+        attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length
+      ) {
+        synthPoolExhausted = true;
+      }
+    };
+    const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
+      synthFailover = { from: synthFailover?.from ?? failedAgent, to: nextAgent };
+    };
+    const failoverAgent = (): string | null => {
+      if (synthesizer.preferred_agent.kind !== "pool") return null;
+      if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
       const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
-        excludeAgents: [failedAgent],
+        excludeAgents: Array.from(attemptedSynthAgents),
         fallback_role: "reviewer",
         tool_free: true,
       });
-      return nextAgent !== failedAgent ? nextAgent : null;
+      return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
     };
     while (true) {
       let dispatchConversationId: string | null = null;
       try {
         attempts += 1;
+        finalSynthAgentForFailure = currentAgent;
+        attemptedSynthAgents.add(currentAgent);
         const dispatch = await ctx.dispatch({
           agent: currentAgent,
           message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
@@ -950,20 +1068,21 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           task_class: "TRIVIAL",
         });
         dispatchConversationId = dispatch.conversation_id;
+        synthHandoffId = dispatch.handoff_id;
         const wait = await ctx.awaitChain(dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,
         });
-        if (wait.status === "completed" && !isFailedSynthesisOutput(wait.response_text)) {
+        if (wait.status === "completed" && isValidSynthesisOutput(wait.response_text)) {
           return { agent: currentAgent, dispatch, wait };
         }
-        const nextAgent =
-          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
+        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
         if (nextAgent) {
           await ctx.cancel(dispatch.conversation_id).catch(() => {});
-          synthFailover = { from: currentAgent, to: nextAgent };
+          recordSynthFailover(currentAgent, nextAgent);
           currentAgent = nextAgent;
           continue;
         }
+        markSynthPoolExhausted();
         return { agent: currentAgent, dispatch, wait };
       } catch (err) {
         if (
@@ -975,14 +1094,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           await sleep(RETRY_BACKOFF_MS);
           continue;
         }
-        const nextAgent =
-          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent(currentAgent) : null;
+        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
         if (nextAgent) {
           if (dispatchConversationId) await ctx.cancel(dispatchConversationId).catch(() => {});
-          synthFailover = { from: currentAgent, to: nextAgent };
+          recordSynthFailover(currentAgent, nextAgent);
           currentAgent = nextAgent;
           continue;
         }
+        markSynthPoolExhausted();
         throw err;
       }
     }
@@ -1002,7 +1121,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       : "";
     synthHandoffId = synthDispatch.handoff_id;
     synthStatus =
-      synthWait.status === "completed" && isFailedSynthesisOutput(synthWait.response_text)
+      synthWait.status === "completed" && !isValidSynthesisOutput(synthWait.response_text)
         ? "failed"
         : synthWait.status;
     synthesisPath = join(absoluteOutDir, "synthesis.md");
@@ -1015,15 +1134,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       synthesizer_agent: finalSynthAgent,
       synthesizer_failover_from: synthFailover?.from,
       synthesizer_failover_to: synthFailover?.to,
+      pool_exhausted: synthPoolExhausted,
     });
     await ctx.fileWrite(
       synthesisPath,
       synthRetryBanner +
         synthFailoverBanner +
         partialBanner +
-        (synthWait.status === "completed"
-          ? frontmatter + (synthWait.response_text ?? "")
-          : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
+        renderSynthesisBody(synthWait, frontmatter),
     );
   } catch (err) {
     const synthRetryBanner = synthRetryUsed
@@ -1041,9 +1159,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           persona_handoff_ids: personaHandoffIds,
           target_ref: parsedArgs.target_ref,
           base_ref: parsedArgs.base_ref,
-          synthesizer_agent: synthFailover?.to ?? synthAgent,
+          synthesizer_agent: finalSynthAgentForFailure,
           synthesizer_failover_from: synthFailover?.from,
           synthesizer_failover_to: synthFailover?.to,
+          pool_exhausted: synthPoolExhausted,
         })
       : "";
     await ctx.fileWrite(
@@ -1056,9 +1175,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     );
   }
 
+  const finalOutcome =
+    synthStatus !== "completed" && outcome !== "failed" ? "success_partial" : outcome;
+
   return {
-    ok: outcome !== "failed" && synthStatus === "completed",
-    outcome,
+    ok: finalOutcome !== "failed" && synthStatus === "completed",
+    outcome: finalOutcome,
     ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
     failed_personas: failedPersonas,
     completed_personas: personaResults
@@ -1074,6 +1196,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     synthesis_path: synthesisPath,
     synthesizer_status: synthStatus,
     synth_failed: synthStatus !== "completed",
+    ...(synthPoolExhausted ? { pool_exhausted: true } : {}),
   };
 };
 

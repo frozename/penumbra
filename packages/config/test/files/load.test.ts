@@ -136,6 +136,37 @@ providers:
     expect(loaded.default_roles.executor).toBe("claude-acp-sonnet");
   });
 
+  test("review synthesizer fixture uses non-anthropic failover pool", () => {
+    const dir = makeTempDir();
+    writeConfigDir(dir);
+
+    const loaded = loadAgentChatConfigFromDir(dir);
+
+    expect(loaded.workloads?.review_adversarial?.synthesizer).toEqual([
+      "google-gemini-cli",
+      "deepseek-v4-flash-http",
+    ]);
+  });
+
+  test("loads legacy string-form review synthesizer config", () => {
+    const dir = makeTempDir();
+    writeConfigDir(dir, {
+      routing: fixture("routing").replace(
+        `    synthesizer:
+      - google-gemini-cli
+      - deepseek-v4-flash-http`,
+        "    synthesizer: claude-acp-sonnet",
+      ),
+    });
+
+    const loaded = loadAgentChatConfigFromDir(dir);
+
+    // packages/config/src/files/workload.ts keeps synthesizer on AgentPinSchema,
+    // which accepts the legacy string arm as well as pool arrays.
+    expect(loaded.workloads?.review_adversarial?.synthesizer).toBe("claude-acp-sonnet");
+    expect(loaded.agents.some((agent) => agent.name === "claude-acp-sonnet")).toBe(true);
+  });
+
   test("fails loudly on an unwhitelisted billed hand seat", () => {
     const dir = join(import.meta.dir, "fixtures", "billed-hand-seat");
 

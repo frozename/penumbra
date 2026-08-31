@@ -309,7 +309,7 @@ describe("RoutingConfigSchema", () => {
           eligible_roles: ["reviewer"],
           eligible_agents: ["architect", "security", "performance"],
           fan_out: 3,
-          synthesizer: "claude-acp-sonnet",
+          synthesizer: ["google-gemini-cli", "deepseek-v4-flash-http"],
         },
         plan_refine: {
           eligible_roles: ["planner"],
