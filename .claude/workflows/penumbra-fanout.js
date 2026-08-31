@@ -18,7 +18,6 @@ export const meta = {
 // cutting poll turns ~2.7x; the tool itself accepts unbounded timeout_ms.
 const CHAIN_WAIT_SLICE_MS = 240000
 
-const __penumbraFanoutResult = await (async () => {
 // args may arrive as an object OR as a JSON string (the Workflow `args` field is
 // untyped, so a JSON object passed in the tool call can reach the script stringified).
 // task-spec-validation:begin
@@ -240,6 +239,3 @@ return {
   branches: completed.map((r) => r.branch).filter(Boolean),
   results: clean,
 }
-})()
-
-export default __penumbraFanoutResult

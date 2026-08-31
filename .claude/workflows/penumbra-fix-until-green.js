@@ -11,7 +11,6 @@ export const meta = {
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
 //         dispatcherModel?, graderModel? }
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
-const __penumbraFixUntilGreenResult = await (async () => {
 // task-spec-validation:begin
 function validateSpec(spec) {
   const workflowName = spec.workflowName || 'workflow'
@@ -394,6 +393,3 @@ return {
   check,
   rubric,
 }
-})()
-
-export default __penumbraFixUntilGreenResult
