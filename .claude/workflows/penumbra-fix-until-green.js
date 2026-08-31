@@ -128,6 +128,10 @@ const RUBRIC_RESULT = {
   additionalProperties: false,
   required: ['criteria'],
   properties: {
+    overall_pass: {
+      type: 'boolean',
+      description: 'explicit verdict for the whole rubric; decide from this field',
+    },
     criteria: {
       type: 'array',
       items: {
@@ -146,6 +150,16 @@ const RUBRIC_RESULT = {
   },
 }
 
+// The worker is the check runner. To keep bash constructs (e.g. `for n in $files`)
+// from being misinterpreted by a default zsh shell, always spawn the check via bash -c.
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
+
+function bashCheckCommand(cmd) {
+  return `bash -c ${shellQuote(cmd)}`
+}
+
 function roundMessage(roundIndex, prevBranch, prevOutput) {
   const head =
     roundIndex === 0
@@ -154,8 +168,8 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
   return [
     head,
     '',
-    'When done, run this check in the repo:',
-    `    ${check}`,
+    'When done, run this check in the repo by spawning bash with the command as a single argument:',
+    `    ${bashCheckCommand(check)}`,
     'If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.',
     'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.',
   ].join('\n')
@@ -187,7 +201,7 @@ function rubricPrompt(branch, handoffId) {
     `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and any read-only git commands needed to understand the branch. Grade every rubric criterion below against the actual diff and task intent.`,
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
-    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
   ].join('\n')
 }
 
@@ -252,17 +266,38 @@ function matchRubricGrade(rubric, grade) {
 }
 // rubric-match:end
 
+// Rubric verdict contract: decide from the explicit `overall_pass` boolean when
+// it is present; otherwise fall back to requiring every `criteria[i].pass` to be
+// `true`. Never infer PASS/FAIL by string-matching `notes` or the exact-text matcher.
+function rubricVerdict(grade) {
+  if (grade && typeof grade.overall_pass === 'boolean') {
+    return grade.overall_pass
+  }
+  const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
+  return criteria.length > 0 && criteria.every((c) => c && c.pass === true)
+}
+
 function rubricFailureOutput(grade) {
+  if (rubricVerdict(grade)) return ''
   const matched = matchRubricGrade(rubric, grade)
   const missing = matched.missing
   const missingSet = new Set(missing)
   const failed = matched.results.filter((c) => !c.pass && !missingSet.has(c.criterion))
-  if (!failed.length && !missing.length) return ''
-  return [
-    'The check command passed, but independent rubric grading failed these criteria:',
-    ...failed.map((c) => `- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`),
-    ...missing.map((c) => `- ${c}: grader did not return this criterion`),
-  ].join('\n')
+
+  const lines = ['The check command passed, but independent rubric grading failed these criteria:']
+  for (const c of failed) {
+    lines.push(`- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`)
+  }
+  for (const c of missing) {
+    lines.push(`- ${c}: grader did not return this criterion`)
+  }
+  if (!failed.length && !missing.length) {
+    lines.push('The rubric grader returned overall_pass=false or an incomplete result.')
+    if (grade && grade.notes) {
+      lines.push(`Grader notes: ${grade.notes}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 phase('Iterate')
@@ -310,8 +345,10 @@ for (let i = 0; i < maxRounds; i++) {
         schema: RUBRIC_RESULT,
         ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
       })
-      const failedOutput = rubricFailureOutput(grade)
-      const rubricPassed = !failedOutput
+      // Decide from the grader's explicit overall_pass when present;
+      // fall back to all(criteria.pass). Never infer from the notes string.
+      const rubricPassed = rubricVerdict(grade)
+      const failedOutput = rubricPassed ? '' : rubricFailureOutput(grade)
       rounds.push({
         round: i + 1,
         agent: agentForRound,
