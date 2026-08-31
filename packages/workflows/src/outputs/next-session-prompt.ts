@@ -1,7 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type NextSessionPromptResult = { warnings: string[]; path?: string };
+export type NextSessionPromptResult = { warnings: string[]; path?: string; skipped?: boolean };
+
+export const PRESERVE_NEXT_SESSION_PROMPT = "<!-- penumbra:preserve-next-session-prompt -->";
 
 function sectionHead(name: string): string {
   return `<!-- penumbra:section ${name} -->`;
@@ -31,6 +33,10 @@ export async function emitNextSessionPromptOutput(input: {
   storageRoot: string;
   workflowName: string;
 }): Promise<NextSessionPromptResult> {
+  if (input.body.trim() === PRESERVE_NEXT_SESSION_PROMPT) {
+    return { warnings: [], skipped: true };
+  }
+
   if (input.body.trim() === "") {
     return {
       warnings: [

@@ -162,3 +162,204 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("session-memory-sweep writes no-candidates next-session-prompt output", async () => {
+  const root = join(tmpdir(), `session-memory-sweep-empty-${crypto.randomUUID()}`);
+  const workflowsDir = join(root, "workflows");
+  const sessionId = "session-empty";
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  try {
+    mkdirSync(join(workflowsDir, "session-memory-sweep"), { recursive: true });
+    writeFileSync(
+      join(workflowsDir, "session-memory-sweep", "workflow.ts"),
+      readFileSync(
+        join(import.meta.dir, "../../../../plugin/workflows/session-memory-sweep/workflow.ts"),
+        "utf8",
+      ),
+    );
+
+    const registry = await buildRegistry({ workflowsDir });
+    expect(registry.errors).toEqual([]);
+    const entry = registry.getEntry("session-memory-sweep");
+    expect(entry).toBeTruthy();
+
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    insertEvent(
+      db,
+      "e1",
+      sessionId,
+      "The close-time session memory sweep can validly find no durable cross-session learning after reviewing a long enough transcript. ".repeat(
+        2,
+      ),
+    );
+    insertEvent(
+      db,
+      "e2",
+      sessionId,
+      "The workflow should still produce a non-empty next-session-prompt section instead of failing the required sink.",
+    );
+    insertEvent(
+      db,
+      "e3",
+      sessionId,
+      "An explicit no new candidates marker is the downstream observable effect.",
+    );
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname !== "/memory/session-extract")
+          return new Response("not found", { status: 404 });
+        const body = (await req.json()) as { session_id?: string };
+        expect(body.session_id).toBe(sessionId);
+        return Response.json({ candidates: [] });
+      },
+    });
+    writeFileSync(join(root, "port"), String(server.port));
+    writeFileSync(join(root, "token"), "test-token");
+
+    const spec = {
+      ...entry!.spec,
+      output: [{ kind: "next-session-prompt" as const }],
+    };
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: root,
+      project: "penumbra",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens,
+    });
+
+    const previousMinEvents = process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+    process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = "3";
+    try {
+      const result = await executeWorkflow({
+        spec,
+        bundle,
+        fn: entry!.fn,
+        storageRoot: root,
+        ctx: {
+          config: {},
+          cwd: root,
+          storageRoot: root,
+          project: "penumbra",
+          args: { session_id: sessionId, project_id: "penumbra" },
+          db: (): Database => db,
+          dispatch: () =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: () =>
+            Promise.resolve({
+              status: "timeout" as const,
+              final_agent: null,
+              response_text: null,
+            }),
+          fileWrite: () => Promise.resolve("/tmp/out"),
+        },
+        captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
+      });
+
+      expect(result.outcome).toBe("success");
+      const promptPath = join(root, "pending-handoff.md");
+      expect(existsSync(promptPath)).toBe(true);
+      const body = readFileSync(promptPath, "utf8");
+      expect(body).toContain("no new candidates");
+    } finally {
+      if (previousMinEvents === undefined)
+        delete process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
+      else process.env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS = previousMinEvents;
+    }
+  } finally {
+    await server?.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session-memory-sweep preserves existing next-session-prompt output when disabled", async () => {
+  const root = join(tmpdir(), `session-memory-sweep-disabled-${crypto.randomUUID()}`);
+  const workflowsDir = join(root, "workflows");
+  const sessionId = "session-disabled";
+  try {
+    mkdirSync(join(workflowsDir, "session-memory-sweep"), { recursive: true });
+    writeFileSync(
+      join(workflowsDir, "session-memory-sweep", "workflow.ts"),
+      readFileSync(
+        join(import.meta.dir, "../../../../plugin/workflows/session-memory-sweep/workflow.ts"),
+        "utf8",
+      ),
+    );
+
+    const registry = await buildRegistry({ workflowsDir });
+    expect(registry.errors).toEqual([]);
+    const entry = registry.getEntry("session-memory-sweep");
+    expect(entry).toBeTruthy();
+
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+
+    const promptPath = join(root, "pending-handoff.md");
+    const existingPrompt = [
+      "<!-- penumbra:section session-memory-sweep -->",
+      "## Session memory candidates",
+      "",
+      "1. [create] Existing candidate",
+      "<!-- /penumbra:section session-memory-sweep -->",
+      "",
+    ].join("\n");
+    writeFileSync(promptPath, existingPrompt);
+
+    const spec = {
+      ...entry!.spec,
+      output: [{ kind: "next-session-prompt" as const }],
+    };
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: root,
+      project: "penumbra",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens,
+    });
+
+    const previousEnabled = process.env.PENUMBRA_SESSION_SWEEP_ENABLED;
+    process.env.PENUMBRA_SESSION_SWEEP_ENABLED = "0";
+    try {
+      const result = await executeWorkflow({
+        spec,
+        bundle,
+        fn: entry!.fn,
+        storageRoot: root,
+        ctx: {
+          config: {},
+          cwd: root,
+          storageRoot: root,
+          project: "penumbra",
+          args: { session_id: sessionId, project_id: "penumbra" },
+          db: (): Database => db,
+          dispatch: () =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: () =>
+            Promise.resolve({
+              status: "timeout" as const,
+              final_agent: null,
+              response_text: null,
+            }),
+          fileWrite: () => Promise.resolve("/tmp/out"),
+        },
+        captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
+      });
+
+      expect(result.outcome).toBe("success");
+      expect(readFileSync(promptPath, "utf8")).toBe(existingPrompt);
+    } finally {
+      if (previousEnabled === undefined) delete process.env.PENUMBRA_SESSION_SWEEP_ENABLED;
+      else process.env.PENUMBRA_SESSION_SWEEP_ENABLED = previousEnabled;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

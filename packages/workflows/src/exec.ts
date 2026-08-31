@@ -288,6 +288,7 @@ async function emitOneSink(
         artifacts.push(r.path);
         return {};
       }
+      if (r.skipped) return {};
       if (sink.optional) return {};
       return {
         requiredFailure: {

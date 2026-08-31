@@ -26,6 +26,8 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
   const out = await handler({
     title: "Direct memory",
     body: "Body",
+    slug: "direct-memory",
+    hook: "When direct memory has provenance fields",
     why: "Operator requested durable memory",
     source_quote: "Body",
     obs_type: "operator_note",
@@ -37,6 +39,8 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
   expect(calls[0]).toEqual({
     title: "Direct memory",
     body: "Body",
+    slug: "direct-memory",
+    hook: "When direct memory has provenance fields",
     why: "Operator requested durable memory",
     source_quote: "Body",
     obs_type: "operator_note",
@@ -46,7 +50,7 @@ test("memory_write_t2 forwards why/source_quote/obs_type when provided", async (
   expect(firstText(out.content)).toContain('"memory_id": "m1"');
 });
 
-test("memory_write_t2 still forwards writes when why/source_quote/obs_type are omitted", async () => {
+test("memory_write_t2 still forwards writes when optional provenance fields are omitted", async () => {
   const calls: unknown[] = [];
   const memoryWriteT2: MemoryWriteT2Fn = (req) => {
     calls.push(req);
@@ -57,12 +61,74 @@ test("memory_write_t2 still forwards writes when why/source_quote/obs_type are o
   const out = await handler({
     title: "Direct memory baseline",
     body: "Body",
+    slug: "direct-memory-baseline",
+    hook: "When direct memory only has required fields",
   });
 
   expect(calls).toHaveLength(1);
   expect(calls[0]).toEqual({
     title: "Direct memory baseline",
     body: "Body",
+    slug: "direct-memory-baseline",
+    hook: "When direct memory only has required fields",
   });
   expect(firstText(out.content)).toContain('"memory_id": "m2"');
+});
+
+test("memory_write_t2 rejects missing slug or hook before forwarding to daemon", async () => {
+  const calls: unknown[] = [];
+  const handler = memoryWriteT2Handler(
+    fakeDaemon({
+      memoryWriteT2: (req) => {
+        calls.push(req);
+        return Promise.resolve({ memory_id: "m3", created: true });
+      },
+    }),
+  );
+
+  await expect(
+    handler({
+      title: "Missing slug",
+      body: "Body",
+      hook: "When direct memory has no slug",
+    }),
+  ).rejects.toThrow();
+  await expect(
+    handler({
+      title: "Missing hook",
+      body: "Body",
+      slug: "missing-hook",
+    }),
+  ).rejects.toThrow();
+  expect(calls).toHaveLength(0);
+});
+
+test("memory_write_t2 rejects visually empty slug or hook before forwarding to daemon", async () => {
+  const calls: unknown[] = [];
+  const handler = memoryWriteT2Handler(
+    fakeDaemon({
+      memoryWriteT2: (req) => {
+        calls.push(req);
+        return Promise.resolve({ memory_id: "m4", created: true });
+      },
+    }),
+  );
+
+  await expect(
+    handler({
+      title: "Invisible slug",
+      body: "Body",
+      slug: "\u200B\u200D",
+      hook: "When direct memory has no visible slug",
+    }),
+  ).rejects.toThrow();
+  await expect(
+    handler({
+      title: "Invisible hook",
+      body: "Body",
+      slug: "invisible-hook",
+      hook: "\u200B\u200D",
+    }),
+  ).rejects.toThrow();
+  expect(calls).toHaveLength(0);
 });

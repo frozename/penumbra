@@ -157,7 +157,46 @@ test("renders session memory candidates without writing t2", async () => {
   expect(t2Rows?.count).toBe(0);
 });
 
-test("returns empty string for an empty db", async () => {
+test("renders no-candidates marker when extraction returns no candidates", async () => {
+  const db = freshDb();
+  insertEvent(db, {
+    id: "e1",
+    sessionId: "session-1",
+    eventType: "agent-prompt",
+    summary:
+      "Close-time memory sweep needs a non-empty next-session prompt section even when extraction finds nothing durable. ".repeat(
+        2,
+      ),
+  });
+  insertEvent(db, {
+    id: "e2",
+    sessionId: "session-1",
+    eventType: "agent-response",
+    summary:
+      "The workflow should write an explicit no-candidates marker instead of tripping the required output sink.",
+  });
+  insertEvent(db, {
+    id: "e3",
+    sessionId: "session-1",
+    eventType: "agent-response",
+    summary: "That keeps session close handoff output observable without creating t2 rows.",
+  });
+
+  const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+    fn(
+      makeCtx(db, {
+        extractSessionCandidates: async () => ({ candidates: [] }),
+      }),
+      { byKey: {}, warnings: [] },
+    ),
+  );
+
+  expect(result).toBe("no new candidates");
+  const t2Rows = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM t2_memories").get();
+  expect(t2Rows?.count).toBe(0);
+});
+
+test("returns preserve marker for an empty db", async () => {
   const db = freshDb();
   const result = await fn(
     makeCtx(db, {
@@ -167,10 +206,10 @@ test("returns empty string for an empty db", async () => {
     }),
     { byKey: {}, warnings: [] },
   );
-  expect(result).toBe("");
+  expect(result).toBe("<!-- penumbra:preserve-next-session-prompt -->");
 });
 
-test("returns empty string when the session is below the promotion event threshold", async () => {
+test("returns preserve marker when the session is below the promotion event threshold", async () => {
   const db = freshDb();
   insertEvent(db, {
     id: "e1",
@@ -196,7 +235,7 @@ test("returns empty string when the session is below the promotion event thresho
     ),
   );
 
-  expect(result).toBe("");
+  expect(result).toBe("<!-- penumbra:preserve-next-session-prompt -->");
 });
 
 test("registers pre-compact and stop lifecycle triggers", async () => {

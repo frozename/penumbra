@@ -178,6 +178,47 @@ describe("runMemoryImport", () => {
     expect(printed).toContain("PLAN first.md");
   });
 
+  test("dry-run trims required frontmatter fields and skips whitespace-only values", async () => {
+    writeMemoryFile(
+      "trimmed.md",
+      `---
+name: "  Trimmed Memory  "
+description: "  Trimmed hook  "
+metadata:
+  type: feedback
+---
+
+Trimmed body`,
+    );
+    writeMemoryFile(
+      "blank-description.md",
+      `---
+name: "Blank Description"
+description: "   "
+metadata:
+  type: feedback
+---
+
+Blank body`,
+    );
+
+    const result = await runMemoryImport({ root, dryRun: true, apply: false });
+
+    expect(result).toMatchObject({ would_write: 1, skipped: 1, errors: 0 });
+    expect(result.rows[0]).toMatchObject({
+      file: "blank-description.md",
+      status: "skipped",
+      reason: "missing_required_fields",
+    });
+    expect(result.rows[1]).toMatchObject({
+      file: "trimmed.md",
+      status: "would_write",
+      title: "Trimmed Memory",
+      hook: "Trimmed hook",
+      slug: "trimmed-memory",
+    });
+  });
+
   test("dry-run does not write rows to t2_memories", async () => {
     writeMemoryFile(
       "keep-same.md",

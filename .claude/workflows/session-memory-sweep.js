@@ -71,9 +71,36 @@ const APPROVE_SCHEMA = {
   },
 };
 
+const VISUALLY_EMPTY_CHARS_RE = /[\s\p{Z}\u200B-\u200D\u2060\uFEFF]/gu;
+function hasNonWhitespaceCharacter(value) {
+  return typeof value === "string" && value.replaceAll(VISUALLY_EMPTY_CHARS_RE, "").length > 0;
+}
+
 if (Array.isArray(input.approve)) {
   phase("Approve");
   const approved = input.approve;
+  const invalid = approved.flatMap((candidate, index) => {
+    const slug =
+      candidate &&
+      candidate.action === "update" &&
+      typeof candidate.update_existing_slug === "string"
+        ? candidate.update_existing_slug
+        : candidate?.slug;
+    const errors = [];
+    if (!hasNonWhitespaceCharacter(slug)) errors.push("missing non-blank slug");
+    if (!hasNonWhitespaceCharacter(candidate?.hook)) errors.push("missing non-blank hook");
+    return errors.length === 0
+      ? []
+      : [
+          {
+            slug: typeof slug === "string" ? slug : `candidate-${String(index + 1)}`,
+            error: `candidate ${String(index + 1)}: ${errors.join("; ")}`,
+          },
+        ];
+  });
+  if (invalid.length > 0) {
+    return { ok: false, results: invalid };
+  }
   return await agent(
     [
       "Use ToolSearch to load the Penumbra memory_write_t2 MCP tool, then write each approved candidate verbatim.",

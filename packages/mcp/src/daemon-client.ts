@@ -116,8 +116,8 @@ export class DaemonClient {
   async memoryWriteT2(req: {
     title: string;
     body: string;
-    slug?: string | null;
-    hook?: string | null;
+    slug: string;
+    hook: string;
     sub_kind?: string | null;
     cc_kind?: string | null;
     why?: string | null;

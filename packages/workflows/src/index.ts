@@ -6,6 +6,7 @@ export { executeWorkflow } from "./exec.js";
 export type { ExecuteOpts, ExecuteOutcome, ExecuteResult, WorkflowFn } from "./exec.js";
 export { GATES } from "./gates/index.js";
 export type { GateInput, GateName, GateResult, GateSeverity, GateVerifier } from "./gates/index.js";
+export { PRESERVE_NEXT_SESSION_PROMPT } from "./outputs/index.js";
 export { loadMarkdownPlaybook } from "./loaders/markdown.js";
 export { loadTsWorkflow } from "./loaders/ts.js";
 export { parsePlanMeta, parsePlanMetaFile } from "./plan-meta/parser.js";

@@ -1,4 +1,5 @@
 import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
+import { nonBlankStringSchema } from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -6,8 +7,8 @@ import type { DaemonClient } from "../daemon-client.js";
 export const MemoryWriteT2InputShape = {
   title: z.string().min(1),
   body: z.string().min(1),
-  slug: z.string().optional().nullable(),
-  hook: z.string().optional().nullable(),
+  slug: nonBlankStringSchema("slug"),
+  hook: nonBlankStringSchema("hook"),
   sub_kind: z.string().optional().nullable(),
   cc_kind: z.string().optional().nullable(),
   why: z.string().optional().nullable(),

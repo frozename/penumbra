@@ -42,7 +42,7 @@ Local-first, three-tier memory (t0 raw events → t1 session rollups → t2 long
 | `memory_search` | Step 1 of 3-layer recall: compact index of hits (id + title + snippet + score) over `t1_fts`/`t2_fts` with metadata filters. |
 | `memory_timeline` | Step 2: chronological neighbors around an anchor t2 memory. |
 | `memory_get_observations` | Step 3: hydrate full bodies for IDs from `memory_search`/`memory_timeline`. Batch — don't call once per ID. |
-| `memory_write_t2` | Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), with optional backlink parsing. |
+| `memory_write_t2` | Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), requiring `slug` and `hook` so rows render in the digest, with optional backlink parsing; breaking for out-of-repo MCP clients that omit them or send visually empty values. |
 | `memory_verify` | Mark a t2 memory as verified and update its freshness metadata. |
 | `memory_verify_authorize` | Authorize memory verification with basis validation and record authorization provenance. |
 | `memory_verification_events` | Read the audit trail for a verified memory (verifier identity, claimed-by, reason, timestamp). |

@@ -1,6 +1,9 @@
 export { emitClipboardOutput } from "./clipboard.js";
 export { emitFileOutput } from "./file.js";
-export { emitNextSessionPromptOutput } from "./next-session-prompt.js";
+export {
+  emitNextSessionPromptOutput,
+  PRESERVE_NEXT_SESSION_PROMPT,
+} from "./next-session-prompt.js";
 export { emitObservationOutput } from "./observation.js";
 export type { ObservationOutputInput, ObservationOutputResult } from "./observation.js";
 export { emitSessionReminder } from "./session-reminder.js";

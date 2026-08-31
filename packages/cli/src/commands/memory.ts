@@ -1,4 +1,4 @@
-import { parseWikiLinks, resolveStorageDbPath } from "@penumbra/core";
+import { hasNonWhitespaceCharacter, parseWikiLinks, resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -138,13 +138,20 @@ function evaluateFrontmatter(
   | { ok: true; value: ParsedFrontmatter }
   | { ok: false; status: "skipped" | "error"; reason: string } {
   const metadata = parsed.metadata as Record<string, unknown> | undefined;
-  const name = typeof parsed.name === "string" ? parsed.name : undefined;
-  const description = typeof parsed.description === "string" ? parsed.description : undefined;
+  const name = typeof parsed.name === "string" ? parsed.name.trim() : undefined;
+  const description =
+    typeof parsed.description === "string" ? parsed.description.trim() : undefined;
   const claudeCodeKind =
     (metadata && typeof metadata.type === "string" ? metadata.type : undefined) ??
     (typeof parsed.type === "string" ? parsed.type : undefined);
 
-  if (!name || !description || !claudeCodeKind) {
+  if (
+    !name ||
+    !hasNonWhitespaceCharacter(name) ||
+    !description ||
+    !hasNonWhitespaceCharacter(description) ||
+    !claudeCodeKind
+  ) {
     print(`SKIP ${file}: missing_required_fields\n`);
     return { ok: false, status: "skipped", reason: "missing_required_fields" };
   }

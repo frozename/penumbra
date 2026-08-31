@@ -11,11 +11,12 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
 import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
+import { fn as memoryDigestFn } from "../../../../plugin/workflows/memory-digest/workflow.js";
 
 const SHARED_TOKEN = "shared-token";
 
@@ -205,6 +206,8 @@ describe("POST /memory/write", () => {
         body: JSON.stringify({
           title: "Unsafe project",
           body: "blocked",
+          slug: "unsafe-project",
+          hook: "When validating unsafe project ids",
           project_id: projectId,
         }),
       });
@@ -228,6 +231,8 @@ describe("POST /memory/write", () => {
       body: JSON.stringify({
         title: "Safe project",
         body: "stored",
+        slug: "safe-project",
+        hook: "When validating safe project ids",
         project_id: "proj-safe",
       }),
     });
@@ -241,6 +246,169 @@ describe("POST /memory/write", () => {
       >(`SELECT project_id FROM t2_memories WHERE memory_id = ?`)
       .get(written.memory_id);
     expect(row?.project_id).toBe("proj-safe");
+  });
+
+  test("POST /memory/write rejects missing slug or hook before creating digest-invisible rows", async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+    const previousMemoryDir = process.env.PENUMBRA_CC_MEMORY_DIR;
+    process.env.PENUMBRA_CC_MEMORY_DIR = join(root, "cc-memory");
+    const projectDir = join(root, "penumbra");
+    const projectId = basename(projectDir);
+
+    try {
+      for (const body of [
+        {
+          title: "Missing slug",
+          body: "This direct memory would never render into the digest.",
+          hook: "When direct memory writes are missing slugs",
+          project_id: projectId,
+        },
+        {
+          title: "Missing hook",
+          body: "This direct memory would never render into the digest.",
+          slug: "missing-hook-direct-memory",
+          project_id: projectId,
+        },
+      ]) {
+        const res = await fetch("http://x/memory/write", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${SHARED_TOKEN}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+
+        expect(res.status).toBe(400);
+        const responseBody = (await res.json()) as { error: { code: string } };
+        expect(responseBody.error.code).toBe("validation_error");
+      }
+
+      const rowCount = db
+        .query<
+          { c: number },
+          []
+        >(`SELECT COUNT(*) AS c FROM t2_memories WHERE title IN ('Missing slug', 'Missing hook')`)
+        .get()!;
+      expect(rowCount.c).toBe(0);
+
+      const digest = await memoryDigestFn(
+        {
+          config: {},
+          cwd: projectDir,
+          storageRoot: join(root, "storage"),
+          project: projectId,
+          args: {},
+          db: (): Database => db,
+          dispatch: () =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: () =>
+            Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
+          fileWrite: () => Promise.resolve("/tmp/out"),
+        },
+        { byKey: {}, warnings: [] },
+      );
+      expect(digest).toBe("");
+    } finally {
+      if (previousMemoryDir === undefined) delete process.env.PENUMBRA_CC_MEMORY_DIR;
+      else process.env.PENUMBRA_CC_MEMORY_DIR = previousMemoryDir;
+    }
+  });
+
+  test("POST /memory/write rejects visually empty slug or hook before forwarding to storage", async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    for (const body of [
+      {
+        title: "Invisible slug",
+        body: "This direct memory has no visible slug characters.",
+        slug: "\u200B\u200D",
+        hook: "When validating direct memory slugs",
+      },
+      {
+        title: "Invisible hook",
+        body: "This direct memory has no visible hook characters.",
+        slug: "invisible-hook",
+        hook: "\u200B\u200D",
+      },
+    ]) {
+      const res = await fetch("http://x/memory/write", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      expect(res.status).toBe(400);
+      const responseBody = (await res.json()) as { error: { code: string } };
+      expect(responseBody.error.code).toBe("validation_error");
+    }
+
+    const rowCount = db
+      .query<
+        { c: number },
+        []
+      >(`SELECT COUNT(*) AS c FROM t2_memories WHERE title IN ('Invisible slug', 'Invisible hook')`)
+      .get()!;
+    expect(rowCount.c).toBe(0);
+  });
+
+  test("POST /memory/write rows with slug and hook render through the memory digest", async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+    const previousMemoryDir = process.env.PENUMBRA_CC_MEMORY_DIR;
+    const memoryDir = join(root, "cc-memory");
+    const projectDir = join(root, "penumbra");
+    const projectId = basename(projectDir);
+    process.env.PENUMBRA_CC_MEMORY_DIR = memoryDir;
+
+    try {
+      const res = await fetch("http://x/memory/write", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Digest-visible direct memory",
+          body: "Direct T2 writes need slug and hook so the memory digest can load them.",
+          slug: "digest-visible-direct-memory",
+          hook: "When filing direct T2 memory",
+          project_id: projectId,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+
+      const digest = await memoryDigestFn(
+        {
+          config: {},
+          cwd: projectDir,
+          storageRoot: join(root, "storage"),
+          project: projectId,
+          args: {},
+          db: (): Database => db,
+          dispatch: () =>
+            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+          awaitChain: () =>
+            Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
+          fileWrite: () => Promise.resolve("/tmp/out"),
+        },
+        { byKey: {}, warnings: [] },
+      );
+
+      expect(digest).toContain("Loaded 1 digest row");
+      const memoryFile = readFileSync(join(memoryDir, "MEMORY.md"), "utf8");
+      expect(memoryFile).toContain("Digest-visible direct memory");
+      expect(memoryFile).toContain("When filing direct T2 memory");
+    } finally {
+      if (previousMemoryDir === undefined) delete process.env.PENUMBRA_CC_MEMORY_DIR;
+      else process.env.PENUMBRA_CC_MEMORY_DIR = previousMemoryDir;
+    }
   });
 
   test("2) POST /memory/write re-imports the same slug (UPSERT, same memory_id, updated body)", async () => {
@@ -257,6 +425,7 @@ describe("POST /memory/write", () => {
         title: "Slug upsert",
         body: "version one",
         slug: "stable-slug",
+        hook: "When upserting a stable slug",
       }),
     });
     expect(first.status).toBe(200);
@@ -281,6 +450,7 @@ describe("POST /memory/write", () => {
         title: "Slug upsert",
         body: "version two",
         slug: "stable-slug",
+        hook: "When upserting a stable slug",
       }),
     });
     expect(second.status).toBe(200);
@@ -328,7 +498,12 @@ describe("POST /memory/write", () => {
           authorization: `Bearer ${SHARED_TOKEN}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ title: "T", body: "Body text" }),
+        body: JSON.stringify({
+          title: "T",
+          body: "Body text",
+          slug: "embed-body-default",
+          hook: "When embedding direct memory body text",
+        }),
       });
       expect(res.status).toBe(200);
       expect(seen).toEqual([["Body text"]]);
@@ -360,7 +535,12 @@ describe("POST /memory/write", () => {
           authorization: `Bearer ${SHARED_TOKEN}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ title: "Title text", body: "Body text" }),
+        body: JSON.stringify({
+          title: "Title text",
+          body: "Body text",
+          slug: "embed-title-recipe",
+          hook: "When embedding direct memory title text",
+        }),
       });
       expect(res.status).toBe(200);
       expect(seen).toEqual([["Title text"]]);
@@ -388,6 +568,8 @@ describe("POST /memory/write", () => {
       body: JSON.stringify({
         title: "Ref note",
         body: "see [[target-a]] for details",
+        slug: "ref-note",
+        hook: "When resolving direct memory backlinks",
       }),
     });
     expect(res.status).toBe(200);
@@ -437,6 +619,8 @@ describe("POST /memory/write", () => {
       body: JSON.stringify({
         title: "Unresolved note",
         body: "reference [[never-exists-slug]]",
+        slug: "unresolved-note",
+        hook: "When preserving unresolved direct memory backlinks",
       }),
     });
     expect(res.status).toBe(200);
@@ -484,6 +668,8 @@ describe("POST /memory/write", () => {
       body: JSON.stringify({
         title: "Shared write",
         body: "this passes",
+        slug: "shared-write",
+        hook: "When shared bearer writes direct memory",
       }),
     });
     expect(res.status).toBe(200);
@@ -509,6 +695,8 @@ describe("POST /memory/write", () => {
       body: JSON.stringify({
         title: "Blocked write",
         body: "should fail",
+        slug: "blocked-write",
+        hook: "When worker token callers attempt direct writes",
       }),
     });
 
@@ -534,6 +722,7 @@ describe("POST /memory/write", () => {
         title: "Project A",
         body: "Initial content",
         slug: "shared",
+        hook: "When resolving project A backlinks",
         project_id: "project-a",
       }),
     });
@@ -550,6 +739,7 @@ describe("POST /memory/write", () => {
         title: "Project B",
         body: "Refs [[shared]]",
         slug: "shared",
+        hook: "When resolving project B backlinks",
         project_id: "project-b",
       }),
     });
@@ -597,6 +787,7 @@ describe("POST /memory/write", () => {
         title: "Reconciled backlinks",
         body: "first body [[alpha]]",
         slug: "s1",
+        hook: "When reconciling direct memory backlinks",
       }),
     });
     expect(first.status).toBe(200);
@@ -620,6 +811,7 @@ describe("POST /memory/write", () => {
         title: "Reconciled backlinks",
         body: "second body [[beta]]",
         slug: "s1",
+        hook: "When reconciling direct memory backlinks",
       }),
     });
     expect(second.status).toBe(200);
@@ -664,6 +856,7 @@ describe("POST /memory/write", () => {
         title: "Dedup unresolved",
         body: "still missing [[missing]]",
         slug: "s2",
+        hook: "When deduplicating unresolved backlinks",
       }),
     });
     expect(first.status).toBe(200);
@@ -680,6 +873,7 @@ describe("POST /memory/write", () => {
         title: "Dedup unresolved",
         body: "still missing [[missing]]",
         slug: "s2",
+        hook: "When deduplicating unresolved backlinks",
       }),
     });
     expect(second.status).toBe(200);
@@ -781,6 +975,7 @@ describe("POST /memory/write", () => {
           title: "Seed source",
           body: "updated body [[missing-link]]",
           slug: "shared-source",
+          hook: "When transactionally reconciling backlinks",
         }),
       }),
     );
@@ -815,6 +1010,7 @@ describe("POST /memory/write", () => {
         title: "Project A",
         body: "from project A",
         slug: "shared",
+        hook: "When writing project A direct memory",
         project_id: "proj-a",
       }),
     });
@@ -831,6 +1027,7 @@ describe("POST /memory/write", () => {
         title: "Project B",
         body: "from project B",
         slug: "shared",
+        hook: "When writing project B direct memory",
         project_id: "proj-b",
       }),
     });
@@ -856,6 +1053,7 @@ describe("POST /memory/write", () => {
         title: "Project A",
         body: "updated project A",
         slug: "shared",
+        hook: "When updating project A direct memory",
         project_id: "proj-a",
       }),
     });
@@ -896,6 +1094,7 @@ describe("POST /memory/write", () => {
         title: "Legacy",
         body: "rewritten",
         slug: "legacy",
+        hook: "When rewriting legacy direct memory",
         project_id: "other",
         cc_kind: "reference",
       }),

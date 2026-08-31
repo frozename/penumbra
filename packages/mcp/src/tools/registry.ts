@@ -501,7 +501,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   memory_write_t2: {
     descriptor: {
       description:
-        "Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), with optional backlink parsing.",
+        "Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), requiring slug and hook, with optional backlink parsing.",
       inputSchema: MemoryWriteT2InputShape,
     },
     makeHandler: memoryWriteT2Handler,

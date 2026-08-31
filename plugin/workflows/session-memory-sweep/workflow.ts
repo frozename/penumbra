@@ -7,6 +7,7 @@ import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
 const DEFAULT_MAX_CANDIDATES = 10;
 const MIN_TRANSCRIPT_CHARS = 200;
 const FALLBACK_T2_PROMOTION_MIN_EVENTS = 5;
+const PRESERVE_NEXT_SESSION_PROMPT = "<!-- penumbra:preserve-next-session-prompt -->";
 
 type Candidate = {
   action: "create" | "update";
@@ -255,7 +256,7 @@ function renderCandidates(candidates: Candidate[]): string {
 }
 
 export const fn: WorkflowFn<Args> = async (ctx) => {
-  if (process.env.PENUMBRA_SESSION_SWEEP_ENABLED === "0") return "";
+  if (process.env.PENUMBRA_SESSION_SWEEP_ENABLED === "0") return PRESERVE_NEXT_SESSION_PROMPT;
 
   const { db, shouldClose } = resolveDb(ctx);
   const projectId = ctx.args.project_id ?? ctx.project ?? null;
@@ -274,13 +275,13 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
     if (shouldClose) db.close();
   }
 
-  if (!transcript) return "";
-  if (transcript.transcript.length < MIN_TRANSCRIPT_CHARS) return "";
+  if (!transcript) return PRESERVE_NEXT_SESSION_PROMPT;
+  if (transcript.transcript.length < MIN_TRANSCRIPT_CHARS) return PRESERVE_NEXT_SESSION_PROMPT;
   const minEvents = resolveIntEnv(
     "PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS",
     await resolveDefaultMinEvents(),
   );
-  if (transcript.eventCount < minEvents) return "";
+  if (transcript.eventCount < minEvents) return PRESERVE_NEXT_SESSION_PROMPT;
 
   const extract =
     ctx.args.extractSessionCandidates ?? ((body) => fetchCandidates(ctx.storageRoot, body));
@@ -290,7 +291,7 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
     project_id: projectId,
     max_candidates: maxCandidates,
   });
-  if (result.candidates.length === 0) return "";
+  if (result.candidates.length === 0) return renderCandidates([]);
   return renderCandidates(result.candidates.slice(0, maxCandidates));
 };
 
