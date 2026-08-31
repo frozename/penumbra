@@ -32,6 +32,8 @@ export const DispatchEventKindSchema = z.enum([
   "watchdog.auto_fail",
   "claim",
   "claim.provider_cap_refused",
+  // claim.reoffer meta varies by cause: provider-capacity causes include capacity fields,
+  // while orphan_requeue includes recovery fields such as from_worker_id/attempt/max_attempts.
   "claim.reoffer",
   "agent.thought",
   "agent.thought.overflow",

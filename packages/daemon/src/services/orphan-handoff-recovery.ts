@@ -1,5 +1,7 @@
 import type { HandoffRow, Services } from "@penumbra/core";
 
+import { resolveProviderConcurrencyDecision } from "./provider-concurrency.js";
+
 // Post-dispatch.start handoffs only recover when the worker's staleness is
 // this many multiples of the base threshold — deep enough that a transient
 // pause cannot trigger a double-dispatch.
@@ -34,6 +36,13 @@ interface RecoveryResult {
   _requeuedRows: HandoffRow[];
 }
 
+interface RequeuedReoffer {
+  row: HandoffRow;
+  from_worker_id: string;
+  attempt: number;
+  max_attempts: number;
+}
+
 export class OrphanHandoffRecoveryService {
   private staleMs: number;
   private intervalMs: number;
@@ -53,11 +62,12 @@ export class OrphanHandoffRecoveryService {
   }
 
   recoverForWorker(workerId: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
+    const ts = this.services.clock().toISOString();
     const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
     if (opts?.workerKnownDead) {
       deepStale.push(workerId);
     }
-    return this.recoverForWorkerIds([workerId], deepStale);
+    return this.recoverForWorkerIds([workerId], deepStale, ts);
   }
 
   async recoverAll(): Promise<void> {
@@ -84,15 +94,21 @@ export class OrphanHandoffRecoveryService {
   }
 
   runOnce(workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
+    const ts = this.services.clock().toISOString();
     if (workerId) {
-      return this.recoverForWorker(workerId, opts);
+      const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
+      if (opts?.workerKnownDead) {
+        deepStale.push(workerId);
+      }
+      return this.recoverForWorkerIds([workerId], deepStale, ts);
     }
-    return this.recoverAllInner();
+    return this.recoverAllInner(ts);
   }
 
   private recoverForWorkerIds(
     staleWorkerIds: string[],
     additionalVeryStaleWorkerIds: string[] = [],
+    ts: string,
   ): RecoveryResult {
     let requeued = 0;
     let exhausted = 0;
@@ -100,6 +116,7 @@ export class OrphanHandoffRecoveryService {
     const _requeuedRows: HandoffRow[] = [];
     const exhaustedRowIds: string[] = [];
     const requeuedRowIds: string[] = [];
+    const reoffers: RequeuedReoffer[] = [];
 
     if (staleWorkerIds.length === 0) {
       return {
@@ -154,7 +171,7 @@ export class OrphanHandoffRecoveryService {
               handoff_id: orphan.handoff_id,
               source: "daemon",
               kind: "worker.recovery.exhausted",
-              ts: new Date().toISOString(),
+              ts,
               meta: {
                 attempt,
                 max_attempts: maxAttempts,
@@ -174,7 +191,7 @@ export class OrphanHandoffRecoveryService {
               handoff_id: orphan.handoff_id,
               source: "daemon",
               kind: "worker.recovery.requeued",
-              ts: new Date().toISOString(),
+              ts,
               meta: {
                 attempt,
                 max_attempts: maxAttempts,
@@ -201,21 +218,57 @@ export class OrphanHandoffRecoveryService {
         _exhaustedRows.push(orphan);
         exhaustedRowIds.push(orphan.handoff_id);
       } else if (result === "requeued") {
+        const row: HandoffRow = { ...orphan, status: "approved", worker_id: null };
         requeued++;
-        _requeuedRows.push(orphan);
+        _requeuedRows.push(row);
         requeuedRowIds.push(orphan.handoff_id);
+        if (!resolveProviderConcurrencyDecision(this.services, { to_agent: row.to_agent })) {
+          reoffers.push({
+            row,
+            from_worker_id: orphan.worker_id,
+            attempt,
+            max_attempts: maxAttempts,
+          });
+        }
       }
     }
 
+    this.emitReoffers(reoffers, ts);
     return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
   }
 
-  private recoverAllInner(): RecoveryResult {
+  private emitReoffers(reoffers: RequeuedReoffer[], ts: string): void {
+    for (const reoffer of reoffers) {
+      this.services.handoffEvents.emit(reoffer.row);
+      try {
+        this.services.dispatchEventLog.record({
+          handoff_id: reoffer.row.handoff_id,
+          worker_id: null,
+          source: "daemon",
+          kind: "claim.reoffer",
+          ts,
+          meta: {
+            cause: "orphan_requeue",
+            from_worker_id: reoffer.from_worker_id,
+            attempt: reoffer.attempt,
+            max_attempts: reoffer.max_attempts,
+          },
+        });
+      } catch (err) {
+        this.services.log.warn(
+          { err, handoff_id: reoffer.row.handoff_id },
+          "orphan-recovery: claim reoffer event record failed",
+        );
+      }
+    }
+  }
+
+  private recoverAllInner(ts: string): RecoveryResult {
     const deepStaleWorkerIds = this.listDeepStaleNeverHeartbeatWorkerIds();
     const staleWorkerIds = [
       ...new Set([...this.services.watchdog.getStaleWorkers(this.staleMs), ...deepStaleWorkerIds]),
     ];
-    return this.recoverForWorkerIds(staleWorkerIds, deepStaleWorkerIds);
+    return this.recoverForWorkerIds(staleWorkerIds, deepStaleWorkerIds, ts);
   }
 
   private listDeepStaleNeverHeartbeatWorkerIds(): string[] {

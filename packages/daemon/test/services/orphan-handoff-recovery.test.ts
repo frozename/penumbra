@@ -1,6 +1,7 @@
 import {
   buildServices,
   type DispatchEventInput,
+  type HandoffRow,
   loadSqliteVec,
   migrate,
   type Services,
@@ -562,4 +563,185 @@ test("OrphanHandoffRecoveryService lists orphans ordered by ts ASC", async () =>
   expect(orphans[0].handoff_id).toBe(c2.handoff_id); // 00:00:01
   expect(orphans[1].handoff_id).toBe(c3.handoff_id); // 00:00:02
   expect(orphans[2].handoff_id).toBe(c1.handoff_id); // 00:00:03
+});
+
+test("OrphanHandoffRecoveryService re-offers requeued rows for non-capped providers on the worker bus", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-non-capped";
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const emitted: HandoffRow[] = [];
+  services.handoffEvents.subscribe((row) => emitted.push(row));
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
+
+  expect(emitted.some((r) => r.handoff_id === c1.handoff_id && r.status === "approved")).toBe(true);
+
+  const reofferRows = services.db
+    .query<
+      { meta_json: string | null },
+      [string]
+    >("SELECT meta_json FROM dispatch_events WHERE handoff_id=? AND kind='claim.reoffer'")
+    .all(c1.handoff_id);
+  expect(reofferRows).toHaveLength(1);
+  expect(JSON.parse(reofferRows[0]?.meta_json ?? "{}")).toMatchObject({
+    cause: "orphan_requeue",
+    from_worker_id: w1,
+  });
+});
+
+test("OrphanHandoffRecoveryService emits re-offer even when claim.reoffer event recording fails", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-reoffer-record-fails";
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const emitted: HandoffRow[] = [];
+  services.handoffEvents.subscribe((row) => emitted.push(row));
+
+  const originalRecord = services.dispatchEventLog.record.bind(services.dispatchEventLog);
+  services.dispatchEventLog.record = (event: DispatchEventInput): void => {
+    if (event.kind === "claim.reoffer") {
+      throw new Error("claim.reoffer record failed");
+    }
+    originalRecord(event);
+  };
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+  expect(emitted.some((row) => row.handoff_id === c1.handoff_id && row.status === "approved")).toBe(
+    true,
+  );
+});
+
+test("OrphanHandoffRecoveryService emits re-offer before telemetry can observe a re-claim race", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-reclaim-race";
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const observedStatusesAtEmit: Array<HandoffRow["status"] | null> = [];
+  services.handoffEvents.subscribe((row) => {
+    if (row.handoff_id === c1.handoff_id) {
+      observedStatusesAtEmit.push(services.handoffReader.get(c1.handoff_id)?.status ?? null);
+    }
+  });
+
+  const originalRecord = services.dispatchEventLog.record.bind(services.dispatchEventLog);
+  services.dispatchEventLog.record = (event: DispatchEventInput): void => {
+    if (event.kind === "claim.reoffer") {
+      services.handoffWriter.claimDispatch(c1.handoff_id, "racing-worker");
+    }
+    originalRecord(event);
+  };
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+  expect(observedStatusesAtEmit).toEqual(["approved"]);
+  expect(services.handoffReader.get(c1.handoff_id)?.status).toBe("dispatched");
+});
+
+test("OrphanHandoffRecoveryService continues re-offer batch when one deleted row cannot record telemetry", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-deleted-reoffer";
+  const c1 = await createPendingHandoff(services, {
+    conversation_id: "deleted-row",
+    max_dispatch_attempts: 3,
+    triggered_by_event_id: "e-deleted",
+  });
+  const c2 = await createPendingHandoff(services, {
+    conversation_id: "surviving-row",
+    max_dispatch_attempts: 3,
+    triggered_by_event_id: "e-surviving",
+  });
+  await approveAndClaim(services, c1.handoff_id, w1);
+  await approveAndClaim(services, c2.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const emitted: string[] = [];
+  services.handoffEvents.subscribe((row) => emitted.push(row.handoff_id));
+
+  const originalRecord = services.dispatchEventLog.record.bind(services.dispatchEventLog);
+  services.dispatchEventLog.record = (event: DispatchEventInput): void => {
+    if (event.kind === "claim.reoffer" && event.handoff_id === c1.handoff_id) {
+      services.db
+        .query<never, [string]>("DELETE FROM handoffs WHERE handoff_id=?")
+        .run(c1.handoff_id);
+      throw new Error("handoff disappeared before telemetry");
+    }
+    originalRecord(event);
+  };
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 2, exhausted: 0 });
+  expect(emitted).toContain(c1.handoff_id);
+  expect(emitted).toContain(c2.handoff_id);
+  expect(services.handoffReader.get(c1.handoff_id)).toBeNull();
+  expect(services.handoffReader.get(c2.handoff_id)?.status).toBe("approved");
+});
+
+test("OrphanHandoffRecoveryService does not re-offer requeued rows for capped providers (reoffer reactor owns that path)", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+  };
+  services.providerQuotas = [{ provider: "anthropic", max_in_flight: 1 }];
+
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-capped";
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const emitted: HandoffRow[] = [];
+  services.handoffEvents.subscribe((row) => emitted.push(row));
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  expect(emitted).toEqual([]);
+
+  const reofferRows = services.db
+    .query<
+      { meta_json: string | null },
+      [string]
+    >("SELECT meta_json FROM dispatch_events WHERE handoff_id=? AND kind='claim.reoffer'")
+    .all(c1.handoff_id);
+  expect(reofferRows).toHaveLength(0);
 });
