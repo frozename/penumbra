@@ -5,7 +5,12 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "exactOptionalPropertyTypes": true,
-    "noPropertyAccessFromIndexSignature": true
+    "noPropertyAccessFromIndexSignature": true,
+    "paths": {
+      "@src/*": ["./src/*"],
+      "@penumbra/workflows": ["../workflows/src/index.ts"],
+      "@penumbra/workflows/schema": ["../workflows/src/schema.ts"]
+    }
   },
   "include": [
     "src/**/*.ts",
