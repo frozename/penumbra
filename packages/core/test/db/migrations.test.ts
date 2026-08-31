@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { migrate } from "@src/db/migrations.js";
+import { assertSchemaNotNewer, migrate } from "@src/db/migrations.js";
 import { SCHEMA_VERSION } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
@@ -108,4 +108,28 @@ test("migrate creates long_lived_pending_actions.meta_json", () => {
   expect(row?.name).toBe("meta_json");
   expect(row?.type).toBe("TEXT");
   expect(row?.notnull).toBe(0);
+});
+
+test("migrate refuses a db stamped with a newer schema_version", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const newer = SCHEMA_VERSION + 1;
+  db.run("UPDATE db_meta SET value=? WHERE key='schema_version'", [String(newer)]);
+
+  expect(() => {
+    migrate(db, { embeddingDim: 384 });
+  }).toThrow(`schema_version ${String(newer)} is newer than this build supports`);
+
+  const stamped = db
+    .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key=?")
+    .get("schema_version");
+  expect(stamped?.value).toBe(String(newer));
+});
+
+test("assertSchemaNotNewer accepts a fresh db with no db_meta table", () => {
+  const db = new Database(":memory:");
+  expect(() => {
+    assertSchemaNotNewer(db);
+  }).not.toThrow();
 });

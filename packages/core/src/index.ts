@@ -41,7 +41,12 @@ export {
   stampAgentPerformanceGateOutcome,
   stampAgentPerformanceGateOutcomeForHandoff,
 } from "./db/lane-ledger.js";
-export { assertEmbedderDim, migrate, type MigrateOpts } from "./db/migrations.js";
+export {
+  assertEmbedderDim,
+  assertSchemaNotNewer,
+  migrate,
+  type MigrateOpts,
+} from "./db/migrations.js";
 export {
   applySchema,
   releaseT1RollupClaims,
