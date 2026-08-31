@@ -130,7 +130,6 @@ export {
   MemoryVerifyClaimInputShape,
 } from "./memory-verify/schemas.js";
 export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
-export { hasNonWhitespaceCharacter, nonBlankStringSchema } from "./schemas/non-blank.js";
 export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
 export { parseOtlpLogs } from "./otlp/parse.js";
 export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";
@@ -308,6 +307,7 @@ export {
   LaneCloseMetadataSchema,
 } from "./schemas/lane-close-metadata.js";
 export { type T2MemoryRow, T2MemorySchema } from "./schemas/memory.js";
+export { hasNonWhitespaceCharacter, nonBlankStringSchema } from "./schemas/non-blank.js";
 export {
   type ApprovePermissionRequest,
   ApprovePermissionRequestSchema,

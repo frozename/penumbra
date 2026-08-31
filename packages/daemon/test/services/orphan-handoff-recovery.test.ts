@@ -641,7 +641,7 @@ test("OrphanHandoffRecoveryService emits re-offer before telemetry can observe a
   services.watchdog.recordHeartbeat(w1);
   await delay(1);
 
-  const observedStatusesAtEmit: Array<HandoffRow["status"] | null> = [];
+  const observedStatusesAtEmit: (HandoffRow["status"] | null)[] = [];
   services.handoffEvents.subscribe((row) => {
     if (row.handoff_id === c1.handoff_id) {
       observedStatusesAtEmit.push(services.handoffReader.get(c1.handoff_id)?.status ?? null);

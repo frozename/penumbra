@@ -1,5 +1,4 @@
 import { type DispatchEventInput, FsPathError, resolveInsideWorktree } from "@penumbra/core";
-
 import path from "node:path";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
@@ -905,47 +904,59 @@ async function validateTerminalCwd(cwd: string | undefined, worktreeRoot: string
     return await resolveInsideWorktree(cwd, worktreeRoot);
   } catch (err) {
     if (err instanceof FsPathError) {
-      if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
-      // Missing cwd paths are acceptable only after resolveInsideWorktree has
-      // checked the nearest existing ancestor for symlink escapes.
-      if (err.code === "not_found") {
-        const worktreeReal = await resolveInsideWorktree(".", worktreeRoot);
-        return path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(worktreeReal, cwd);
-      }
+      return await recoverTerminalCwdFromFsPathError(cwd, worktreeRoot, err);
     }
     throw err;
   }
 }
 
-function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
-  if (opts.terminal !== true) return;
+async function recoverTerminalCwdFromFsPathError(
+  cwd: string,
+  worktreeRoot: string,
+  err: FsPathError,
+): Promise<string> {
+  if (err.code === "outside_worktree") throw new OutsideWorktreeError(err.message);
+  // Missing cwd paths are acceptable only after resolveInsideWorktree has
+  // checked the nearest existing ancestor for symlink escapes.
+  if (err.code === "not_found") {
+    const worktreeReal = await resolveInsideWorktree(".", worktreeRoot);
+    return path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(worktreeReal, cwd);
+  }
+  throw err;
+}
+
+const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): string => {
+  const terminalId = params.terminal_id ?? params.terminalId;
+  if (terminalId === undefined)
+    throw new InternalTerminalHandlerError(`${method}: missing terminal_id or terminalId`);
+  return terminalId;
+};
+
+const commandStringFromParams = (params: AcpTerminalCreateParams): string =>
+  params.command ?? params.args?.join(" ") ?? "";
+
+const commandProgramFromParams = (params: AcpTerminalCreateParams): string => {
+  const command = commandStringFromParams(params).trimStart();
+  return command.split(/\s+/, 1)[0] ?? "";
+};
+
+const withTerminalAliases = (result: unknown): unknown => {
+  if (result === null || typeof result !== "object") return result;
+  const aliases: Record<string, unknown> = {};
+  const terminalId = (result as { terminal_id?: unknown }).terminal_id;
+  if (terminalId !== undefined && !("terminalId" in result)) {
+    aliases.terminalId = terminalId;
+  }
+  const exitStatus = (result as { exit_status?: unknown }).exit_status;
+  if (exitStatus !== undefined && !("exitStatus" in result)) {
+    aliases.exitStatus = exitStatus;
+  }
+  if (Object.keys(aliases).length === 0) return result;
+  return { ...result, ...aliases };
+};
+
+function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
   const { client, input, arm } = ctx;
-  const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): string => {
-    const terminalId = params.terminal_id ?? params.terminalId;
-    if (terminalId === undefined)
-      throw new InternalTerminalHandlerError(`${method}: missing terminal_id or terminalId`);
-    return terminalId;
-  };
-  const commandStringFromParams = (params: AcpTerminalCreateParams): string =>
-    params.command ?? params.args?.join(" ") ?? "";
-  const commandProgramFromParams = (params: AcpTerminalCreateParams): string => {
-    const command = commandStringFromParams(params).trimStart();
-    return command.split(/\s+/, 1)[0] ?? "";
-  };
-  const withTerminalAliases = (result: unknown): unknown => {
-    if (result === null || typeof result !== "object") return result;
-    const aliases: Record<string, unknown> = {};
-    const terminalId = (result as { terminal_id?: unknown }).terminal_id;
-    if (terminalId !== undefined && !("terminalId" in result)) {
-      aliases.terminalId = terminalId;
-    }
-    const exitStatus = (result as { exit_status?: unknown }).exit_status;
-    if (exitStatus !== undefined && !("exitStatus" in result)) {
-      aliases.exitStatus = exitStatus;
-    }
-    if (Object.keys(aliases).length === 0) return result;
-    return { ...result, ...aliases };
-  };
   client.onRequest(
     "terminal/create",
     typedRequest<AcpTerminalCreateParams>(async (params) => {
@@ -986,41 +997,52 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
       }
     }),
   );
-  type TerminalExecutor = NonNullable<DispatchInput["executor"]>;
-  const wrapTerminalCommand = (
-    method: string,
-    fn: (executor: TerminalExecutor, terminalId: string) => Promise<unknown>,
-  ): void => {
-    client.onRequest(
-      method,
-      typedRequest<AcpTerminalIdParams>(async (params) => {
+}
+
+type TerminalExecutor = NonNullable<DispatchInput["executor"]>;
+
+function registerTerminalCommandHandler(
+  ctx: DispatchTurnContext,
+  method: string,
+  fn: (executor: TerminalExecutor, terminalId: string) => Promise<unknown>,
+): void {
+  const { client, input, arm } = ctx;
+  client.onRequest(
+    method,
+    typedRequest<AcpTerminalIdParams>(async (params) => {
+      arm();
+      try {
+        const executor = input.executor;
+        if (!executor) throw new Error(`${method}: no executor`);
+        return withTerminalAliases(await fn(executor, terminalIdFromParams(method, params)));
+      } catch (err) {
+        throw await emitTerminalFailure(input, method, err);
+      } finally {
         arm();
-        try {
-          const executor = input.executor;
-          if (!executor) throw new Error(`${method}: no executor`);
-          return withTerminalAliases(await fn(executor, terminalIdFromParams(method, params)));
-        } catch (err) {
-          throw await emitTerminalFailure(input, method, err);
-        } finally {
-          arm();
-        }
-      }),
-    );
-  };
-  wrapTerminalCommand(
+      }
+    }),
+  );
+}
+
+function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
+  if (opts.terminal !== true) return;
+  registerTerminalCreateHandler(ctx);
+  registerTerminalCommandHandler(
+    ctx,
     "terminal/output",
     async (executor, terminalId) => await executor.terminalOutput({ terminal_id: terminalId }),
   );
-  wrapTerminalCommand(
+  registerTerminalCommandHandler(
+    ctx,
     "terminal/wait_for_exit",
     async (executor, terminalId) => await executor.terminalWaitForExit({ terminal_id: terminalId }),
   );
-  wrapTerminalCommand("terminal/release", async (executor, terminalId) => {
+  registerTerminalCommandHandler(ctx, "terminal/release", async (executor, terminalId) => {
     // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
     const result = (await executor.terminalRelease({ terminal_id: terminalId })) as unknown;
     return result ?? {};
   });
-  wrapTerminalCommand("terminal/kill", async (executor, terminalId) => {
+  registerTerminalCommandHandler(ctx, "terminal/kill", async (executor, terminalId) => {
     // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- Preserve the executor response while retaining the empty-object fallback.
     const result = (await executor.terminalKill({ terminal_id: terminalId })) as unknown;
     return result ?? {};

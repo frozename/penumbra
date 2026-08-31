@@ -616,10 +616,11 @@ describe("routing decide orchestrator", () => {
     );
 
     expect(decision.selected?.agent).toBe("quality-seat");
+    expect(typeof decision.alternatives[0]?.score).toBe("number");
     expect(decision.alternatives).toEqual([
       {
         routeId: "google:fast-seat",
-        score: expect.any(Number),
+        score: decision.alternatives[0]?.score,
         excluded: false,
         reasons: ["Scored but not selected by the routing engine."],
       },

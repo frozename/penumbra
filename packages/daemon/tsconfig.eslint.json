@@ -7,5 +7,12 @@
     "exactOptionalPropertyTypes": true,
     "noPropertyAccessFromIndexSignature": true
   },
-  "include": ["src/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "test-utils.ts"]
+  "include": [
+    "src/**/*.ts",
+    "bin/**/*.ts",
+    "scripts/**/*.ts",
+    "test/**/*.ts",
+    "test-utils.ts",
+    "../../plugin/workflows/memory-digest/workflow.ts"
+  ]
 }

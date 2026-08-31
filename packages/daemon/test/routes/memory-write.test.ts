@@ -1,3 +1,5 @@
+import type { WorkflowFn } from "@penumbra/workflows";
+
 import {
   buildServices,
   type Embedder,
@@ -16,7 +18,9 @@ import { basename, join } from "node:path";
 import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
 import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
-import { fn as memoryDigestFn } from "../../../../plugin/workflows/memory-digest/workflow.js";
+
+const { fn: memoryDigestFn }: { fn: WorkflowFn } =
+  await import("../../../../plugin/workflows/memory-digest/workflow.js");
 
 const SHARED_TOKEN = "shared-token";
 

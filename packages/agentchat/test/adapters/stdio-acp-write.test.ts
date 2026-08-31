@@ -1,7 +1,7 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
-import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -1274,11 +1274,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
       const outsideCwd = path.join(outsideRoot, "raw-cwd-secret");
       let executorCalled = false;
-      const logs: unknown[] = [];
-      const originalInfo = console.info;
-      console.info = (...args: unknown[]): void => {
-        logs.push(args);
-      };
+      const infoSpy = spyOn(console, "info").mockImplementation((): void => undefined);
       try {
         const harness = createHarness(
           { terminal: true, cwd: worktreeRoot },
@@ -1298,28 +1294,28 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
         expect(executorCalled).toBe(false);
         expect(error).toBeInstanceOf(Error);
         expect(errorCode(error)).toBe(-32001);
-        expect(harness.auditEvents).toContainEqual(
-          expect.objectContaining({
-            type: "terminal.failed",
-            payload: expect.objectContaining({
-              method: "terminal/create",
-              code: -32001,
-            }),
-          }),
-        );
+        const auditEvent = harness.auditEvents.find((event) => event.type === "terminal.failed");
+        expect(auditEvent?.type).toBe("terminal.failed");
+        const auditPayload = auditEvent?.payload;
+        if (auditPayload === null || typeof auditPayload !== "object") {
+          throw new Error("expected terminal.failed audit payload");
+        }
+        expect((auditPayload as Record<string, unknown>).method).toBe("terminal/create");
+        expect((auditPayload as Record<string, unknown>).code).toBe(-32001);
         expect(harness.events.some((event) => event.kind === "terminal.failed")).toBe(true);
-        expect(logs).toEqual([]);
+        const consoleInfoCalls = infoSpy.mock.calls;
+        expect(consoleInfoCalls).toEqual([]);
         const serializedFailureSinks = JSON.stringify({
           auditEvents: harness.auditEvents,
           events: harness.events,
           errorMessage: error?.message,
-          logs,
+          consoleInfoCalls,
         });
         expect(serializedFailureSinks).not.toContain(command);
         expect(serializedFailureSinks).not.toContain(secret);
         expect(serializedFailureSinks).not.toContain(outsideCwd);
       } finally {
-        console.info = originalInfo;
+        infoSpy.mockRestore();
       }
     } finally {
       await rm(worktreeRoot, { recursive: true, force: true });

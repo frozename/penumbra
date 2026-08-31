@@ -15,6 +15,16 @@ function firstText(content: { type: string; text?: string }[]): string {
   return block.text;
 }
 
+async function expectRejects(operation: () => Promise<unknown>): Promise<void> {
+  let rejected = false;
+  try {
+    await operation();
+  } catch {
+    rejected = true;
+  }
+  expect(rejected).toBe(true);
+}
+
 test("memory_write_t2 forwards why/source_quote/obs_type when provided", async () => {
   const calls: unknown[] = [];
   const memoryWriteT2: MemoryWriteT2Fn = (req) => {
@@ -86,20 +96,20 @@ test("memory_write_t2 rejects missing slug or hook before forwarding to daemon",
     }),
   );
 
-  await expect(
+  await expectRejects(() =>
     handler({
       title: "Missing slug",
       body: "Body",
       hook: "When direct memory has no slug",
     }),
-  ).rejects.toThrow();
-  await expect(
+  );
+  await expectRejects(() =>
     handler({
       title: "Missing hook",
       body: "Body",
       slug: "missing-hook",
     }),
-  ).rejects.toThrow();
+  );
   expect(calls).toHaveLength(0);
 });
 
@@ -114,21 +124,21 @@ test("memory_write_t2 rejects visually empty slug or hook before forwarding to d
     }),
   );
 
-  await expect(
+  await expectRejects(() =>
     handler({
       title: "Invisible slug",
       body: "Body",
       slug: "\u200B\u200D",
       hook: "When direct memory has no visible slug",
     }),
-  ).rejects.toThrow();
-  await expect(
+  );
+  await expectRejects(() =>
     handler({
       title: "Invisible hook",
       body: "Body",
       slug: "invisible-hook",
       hook: "\u200B\u200D",
     }),
-  ).rejects.toThrow();
+  );
   expect(calls).toHaveLength(0);
 });

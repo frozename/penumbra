@@ -104,7 +104,7 @@ describe("resolveInsideWorktree", () => {
     const candidate = path.join(missingAncestor, "child");
     const tmpReal = fs.realpathSync(tmp);
 
-    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation((async (input) => {
+    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation(((input) => {
       const inputPath = String(input);
       if (inputPath === tmp) return tmpReal;
       if (inputPath === candidate || inputPath === missingAncestor) {

@@ -45,28 +45,37 @@ async function resolveMissingLeaf(
 ): Promise<never> {
   let existingAncestor = candidate;
   while (existingAncestor !== path.dirname(existingAncestor)) {
-    try {
-      const ancestorReal = await fs.realpath(existingAncestor);
-      const missingRel = path.relative(existingAncestor, candidate);
-      const real = path.resolve(ancestorReal, missingRel);
-      if (!isInside(worktreeReal, real)) {
-        throw outsideWorktreeError();
-      }
-      throw new FsPathError("not_found", `file not found: ${userPath}`);
-    } catch (err) {
-      if (err instanceof FsPathError) throw err;
-      const code = errorCodeOf(err);
-      if (code !== "ENOENT" && code !== "ENOTDIR") {
-        throw outsideWorktreeError();
-      }
-      existingAncestor = path.dirname(existingAncestor);
-    }
+    await resolveMissingLeafAtAncestor(existingAncestor, candidate, worktreeReal, userPath);
+    existingAncestor = path.dirname(existingAncestor);
   }
 
   if (!isInside(worktreeAbs, candidate)) {
     throw outsideWorktreeError();
   }
   throw new FsPathError("not_found", `file not found: ${userPath}`);
+}
+
+async function resolveMissingLeafAtAncestor(
+  existingAncestor: string,
+  candidate: string,
+  worktreeReal: string,
+  userPath: string,
+): Promise<void> {
+  try {
+    const ancestorReal = await fs.realpath(existingAncestor);
+    const missingRel = path.relative(existingAncestor, candidate);
+    const real = path.resolve(ancestorReal, missingRel);
+    if (!isInside(worktreeReal, real)) {
+      throw outsideWorktreeError();
+    }
+    throw new FsPathError("not_found", `file not found: ${userPath}`);
+  } catch (err) {
+    if (err instanceof FsPathError) throw err;
+    const code = errorCodeOf(err);
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      throw outsideWorktreeError();
+    }
+  }
 }
 
 export async function resolveInsideWorktree(userPath: string, worktree: string): Promise<string> {

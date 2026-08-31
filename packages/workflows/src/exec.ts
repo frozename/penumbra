@@ -243,6 +243,60 @@ async function handleTaskSink(
   };
 }
 
+async function handleFileSink(
+  sink: Extract<WorkflowSpec["output"][number], { kind: "file" }>,
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+): Promise<SinkOutcome> {
+  const { body, tplCtx, opts } = octx;
+  const r = await emitFileOutput({
+    path: resolveTemplateVars(sink.path, tplCtx),
+    body,
+    mode: sink.mode,
+    repoRoot: opts.repoRoot,
+  });
+  warnings.push(...r.warnings);
+  if (r.path) {
+    artifacts.push(r.path);
+    return {};
+  }
+  if (sink.optional) return {};
+  return {
+    requiredFailure: {
+      kind: "file",
+      reason: r.warnings[r.warnings.length - 1] ?? "file sink failed",
+    },
+  };
+}
+
+async function handleNextSessionPromptSink(
+  sink: Extract<WorkflowSpec["output"][number], { kind: "next-session-prompt" }>,
+  octx: OutputCtx,
+  artifacts: string[],
+  warnings: string[],
+): Promise<SinkOutcome> {
+  const { body, storageRoot } = octx;
+  const r = await emitNextSessionPromptOutput({
+    body,
+    storageRoot,
+    workflowName: octx.spec.name,
+  });
+  warnings.push(...r.warnings);
+  if (r.path) {
+    artifacts.push(r.path);
+    return {};
+  }
+  if (r.skipped) return {};
+  if (sink.optional) return {};
+  return {
+    requiredFailure: {
+      kind: "next-session-prompt",
+      reason: r.warnings[r.warnings.length - 1] ?? "next-session-prompt failed",
+    },
+  };
+}
+
 async function emitOneSink(
   sink: WorkflowSpec["output"][number],
   octx: OutputCtx,
@@ -250,53 +304,17 @@ async function emitOneSink(
   warnings: string[],
   sessionReminderTexts: string[],
 ): Promise<SinkOutcome> {
-  const { body, storageRoot, tplCtx, opts } = octx;
+  const { body } = octx;
   switch (sink.kind) {
-    case "file": {
-      const r = await emitFileOutput({
-        path: resolveTemplateVars(sink.path, tplCtx),
-        body,
-        mode: sink.mode,
-        repoRoot: opts.repoRoot,
-      });
-      warnings.push(...r.warnings);
-      if (r.path) {
-        artifacts.push(r.path);
-        return {};
-      }
-      if (sink.optional) return {};
-      return {
-        requiredFailure: {
-          kind: "file",
-          reason: r.warnings[r.warnings.length - 1] ?? "file sink failed",
-        },
-      };
-    }
+    case "file":
+      return await handleFileSink(sink, octx, artifacts, warnings);
     case "clipboard": {
       const r = await emitClipboardOutput({ body });
       warnings.push(...r.warnings);
       return {};
     }
-    case "next-session-prompt": {
-      const r = await emitNextSessionPromptOutput({
-        body,
-        storageRoot,
-        workflowName: octx.spec.name,
-      });
-      warnings.push(...r.warnings);
-      if (r.path) {
-        artifacts.push(r.path);
-        return {};
-      }
-      if (r.skipped) return {};
-      if (sink.optional) return {};
-      return {
-        requiredFailure: {
-          kind: "next-session-prompt",
-          reason: r.warnings[r.warnings.length - 1] ?? "next-session-prompt failed",
-        },
-      };
-    }
+    case "next-session-prompt":
+      return await handleNextSessionPromptSink(sink, octx, artifacts, warnings);
     case "session-reminder": {
       const r = emitSessionReminder({ text: body });
       if (r.text) sessionReminderTexts.push(r.text);
