@@ -1,18 +1,19 @@
 import type { Database } from "bun:sqlite";
 
 import type { HandoffEventBus } from "../events/handoff-events.js";
+import type { HandoffTransitionBus, LeftDispatchedEvent } from "../events/handoff-transitions.js";
 import type { CreateHandoffRequest, HandoffRow } from "../schemas/handoff.js";
-
+type SqlParam = string | number | null;
+type DispatchedExitStatus = "approved" | "completed" | "failed" | "expired";
 export interface HandoffWriterOpts {
   db: Database;
   events?: HandoffEventBus;
+  transitions?: HandoffTransitionBus;
 }
-
 export interface CreateHandoffParams extends CreateHandoffRequest {
   handoff_id: string;
   ts: string;
 }
-
 export interface CreateApprovedParams {
   handoff_id: string;
   ts: string;
@@ -42,26 +43,25 @@ export interface CreateApprovedParams {
   workflow_run_id?: string | null;
   max_dispatch_attempts?: number | null;
 }
-
 export interface ApproveOpts {
   resolved_by: string;
   resolved_at: string;
   redirect_to?: string;
 }
-
 export interface ApproveResult {
   status: "approved" | "redirected" | "rejected";
   redirected_to: string | null;
 }
-
 export class HandoffWriter {
   private readonly db: Database;
   private readonly events: HandoffEventBus | undefined;
+  private readonly transitions: HandoffTransitionBus | undefined;
+  private syncTransitionInOwnedTransactionDepth = 0;
   constructor(opts: HandoffWriterOpts) {
     this.db = opts.db;
     this.events = opts.events;
+    this.transitions = opts.transitions;
   }
-
   create(params: CreateHandoffParams): string {
     const root_handoff_id = this.resolveRootHandoffId(
       params.handoff_id,
@@ -196,7 +196,6 @@ export class HandoffWriter {
     }
     return params.handoff_id;
   }
-
   approve(handoff_id: string, opts: ApproveOpts): ApproveResult {
     const status = opts.redirect_to ? "redirected" : "approved";
     const redirected_to = opts.redirect_to ?? null;
@@ -233,35 +232,90 @@ export class HandoffWriter {
       throw new Error(`conflict: handoff ${handoff_id} is not pending`);
     }
   }
-
-  /** Atomically transitions any non-terminal status (pending, approved, redirected, dispatched) → failed. */
+  /** The only dispatched-exit status writer. Emits synchronously outside a transaction; inside one, defers and verifies commit so rollbacks emit nothing. */
+  private exitDispatched(args: {
+    handoff_id: string;
+    extraSet: string;
+    setParams: SqlParam[];
+    extraWhere?: string;
+    extraParams?: SqlParam[];
+    to_status: DispatchedExitStatus;
+    ts: string;
+  }): boolean {
+    const row = this.db
+      .query<
+        { to_agent: string },
+        SqlParam[]
+      >(`UPDATE handoffs SET status=?${args.extraSet ? ", " + args.extraSet : ""} WHERE handoff_id=? AND status='dispatched' ${args.extraWhere ?? ""} RETURNING to_agent`)
+      .get(args.to_status, ...args.setParams, args.handoff_id, ...(args.extraParams ?? []));
+    if (!row) return false;
+    const evt: LeftDispatchedEvent = {
+      kind: "left_dispatched",
+      handoff_id: args.handoff_id,
+      to_agent: row.to_agent,
+      to_status: args.to_status,
+      ts: args.ts,
+    };
+    if (!this.transitions) return true;
+    if (!this.db.inTransaction || this.syncTransitionInOwnedTransactionDepth > 0) {
+      this.transitions.emit(evt);
+      return true;
+    }
+    queueMicrotask(() => {
+      const cur = this.db
+        .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id=?")
+        .get(args.handoff_id);
+      if (!cur || cur.status === "dispatched") return;
+      this.transitions?.emit(evt);
+    });
+    return true;
+  }
+  /**
+   * Atomically transitions any non-terminal status -> failed. Two arms: dispatched rows go through exitDispatched (emits left_dispatched); the general arm's WHERE excludes 'dispatched' by construction so it can never silently leave dispatched. The general arm still admits 'expired' -> failed (unchanged).
+   */
   markFailed(
     handoff_id: string,
     opts: { reason: string; ts?: string; resolved_by?: string; expected_worker_id?: string },
   ): boolean {
     const ts = opts.ts ?? new Date().toISOString();
-    if (opts.expected_worker_id !== undefined) {
-      const changes = this.db
-        .query<unknown, [string, string | null, string, string, string]>(
-          `UPDATE handoffs
-              SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
-            WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed') AND worker_id=?`,
-        )
-        .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id, opts.expected_worker_id);
-      return changes.changes > 0;
+    const hadOuterTransaction = this.db.inTransaction;
+    if (!hadOuterTransaction) this.syncTransitionInOwnedTransactionDepth++;
+    try {
+      return this.db.transaction(() => {
+        const exited = this.exitDispatched({
+          handoff_id,
+          extraSet: "resolution_reason=?, resolved_by=?, resolved_at=?",
+          setParams: [opts.reason, opts.resolved_by ?? null, ts],
+          extraWhere: opts.expected_worker_id !== undefined ? "AND worker_id=?" : "",
+          extraParams: opts.expected_worker_id !== undefined ? [opts.expected_worker_id] : [],
+          to_status: "failed",
+          ts,
+        });
+        if (exited) return true;
+
+        if (opts.expected_worker_id !== undefined) {
+          const changes = this.db
+            .query<unknown, [string, string | null, string, string, string]>(
+              `UPDATE handoffs
+                  SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
+                WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed', 'dispatched') AND worker_id=?`,
+            )
+            .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id, opts.expected_worker_id);
+          return changes.changes > 0;
+        }
+        const changes = this.db
+          .query<unknown, [string, string | null, string, string]>(
+            `UPDATE handoffs
+                SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
+              WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed', 'dispatched')`,
+          )
+          .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id);
+        return changes.changes > 0;
+      })();
+    } finally {
+      if (!hadOuterTransaction) this.syncTransitionInOwnedTransactionDepth--;
     }
-    const changes = this.db
-      .query<unknown, [string, string | null, string, string]>(
-        `UPDATE handoffs
-            SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
-          WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed')`,
-      )
-      .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id);
-
-    return changes.changes > 0;
   }
-
-  /** Atomically claim approved → dispatched. Returns true if this caller won. */
   claimDispatch(
     handoff_id: string,
     worker_id: string,
@@ -324,64 +378,78 @@ export class HandoffWriter {
       .run(...params);
     return changes.changes > 0;
   }
-
   recordBranchName(handoff_id: string, branch_name: string): boolean {
     const changes = this.db
       .query<unknown, [string, string]>(`UPDATE handoffs SET branch_name = ? WHERE handoff_id = ?`)
       .run(branch_name, handoff_id);
     return changes.changes > 0;
   }
-
-  /** CAS reclaim — transitions a dispatched row back to approved and clears worker_id. */
   requeueOrphanedDispatch(handoffId: string, deadWorkerId: string): boolean {
-    const changes = this.db
-      .query<unknown, [string, string]>(
-        `UPDATE handoffs SET status='approved', worker_id=NULL
-         WHERE handoff_id=? AND status='dispatched' AND worker_id=?`,
-      )
-      .run(handoffId, deadWorkerId);
-    return changes.changes === 1;
+    const ts = new Date().toISOString();
+    return this.exitDispatched({
+      handoff_id: handoffId,
+      extraSet: "worker_id=NULL",
+      setParams: [],
+      extraWhere: "AND worker_id=?",
+      extraParams: [deadWorkerId],
+      to_status: "approved",
+      ts,
+    });
   }
-
-  /** Transitions a dispatched row to terminal failed with resolution_reason='failed_worker_restart: attempts exhausted'. */
   failOrphanedDispatchExhausted(handoffId: string, deadWorkerId: string): boolean {
     const ts = new Date().toISOString();
     const reason = "failed_worker_restart: attempts exhausted";
-    const changes = this.db
-      .query<unknown, [string, string, string, string]>(
-        `UPDATE handoffs SET status='failed', resolution_reason=?, resolved_at=?, worker_id=NULL
-         WHERE handoff_id=? AND status='dispatched' AND worker_id=?`,
-      )
-      .run(reason, ts, handoffId, deadWorkerId);
-    return changes.changes === 1;
+    return this.exitDispatched({
+      handoff_id: handoffId,
+      extraSet: "resolution_reason=?, resolved_at=?, worker_id=NULL",
+      setParams: [reason, ts],
+      extraWhere: "AND worker_id=?",
+      extraParams: [deadWorkerId],
+      to_status: "failed",
+      ts,
+    });
   }
-
-  /** Atomically dispatched → completed. Returns true if this caller won (i.e. the row was actually transitioned). */
+  expireDispatchedIdle(
+    handoff_id: string,
+    opts: { ts: string; reason: string; activitySinceIso: string },
+  ): boolean {
+    return this.exitDispatched({
+      handoff_id,
+      extraSet: "resolved_at=?, resolution_reason=?",
+      setParams: [opts.ts, opts.reason],
+      extraWhere: "AND NOT EXISTS (SELECT 1 FROM dispatch_events WHERE handoff_id=? AND ts >= ?)",
+      extraParams: [handoff_id, opts.activitySinceIso],
+      to_status: "expired",
+      ts: opts.ts,
+    });
+  }
+  expirePendingOlderThan(opts: { olderThanIso: string; ts: string; reason: string }): number {
+    const changes = this.db
+      .query<
+        unknown,
+        [string, string, string]
+      >(`UPDATE handoffs SET status='expired', resolved_at=?, resolution_reason=? WHERE status='pending' AND ts < ?`)
+      .run(opts.ts, opts.reason, opts.olderThanIso);
+    return changes.changes;
+  }
   markCompleted(
     handoff_id: string,
     opts: { ts?: string; expected_worker_id?: string } = {},
   ): boolean {
     const ts = opts.ts ?? new Date().toISOString();
-    if (opts.expected_worker_id !== undefined) {
-      const changes = this.db
-        .query<unknown, [string, string, string]>(
-          `UPDATE handoffs
-              SET status='completed', resolved_at=?
-            WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL AND worker_id=?`,
-        )
-        .run(ts, handoff_id, opts.expected_worker_id);
-      return changes.changes > 0;
-    }
-    const changes = this.db
-      .query<unknown, [string, string]>(
-        `UPDATE handoffs
-            SET status='completed', resolved_at=?
-          WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL`,
-      )
-      .run(ts, handoff_id);
-    return changes.changes > 0;
+    return this.exitDispatched({
+      handoff_id,
+      extraSet: "resolved_at=?",
+      setParams: [ts],
+      extraWhere:
+        opts.expected_worker_id !== undefined
+          ? "AND cancel_requested_at IS NULL AND worker_id=?"
+          : "AND cancel_requested_at IS NULL",
+      extraParams: opts.expected_worker_id !== undefined ? [opts.expected_worker_id] : [],
+      to_status: "completed",
+      ts,
+    });
   }
-
   private resolveRootHandoffId(handoff_id: string, parent_handoff_id: string | null): string {
     if (parent_handoff_id === null) return handoff_id;
     const parent = this.db
@@ -396,7 +464,6 @@ export class HandoffWriter {
     }
     return parent.root_handoff_id ?? parent_handoff_id;
   }
-
   /** Marks all handoffs in a conversation as cancel-requested. */
   requestCancellation(conversation_id: string, ts: string): boolean {
     const changes = this.db

@@ -4,6 +4,7 @@ import { beforeEach, expect, test } from "bun:test";
 
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { HandoffTransitionBus, type LeftDispatchedEvent } from "@src/events/handoff-transitions.js";
 import type { HandoffRow } from "@src/schemas/handoff.js";
 import { HandoffWriter } from "@src/writers/handoff.js";
 try {
@@ -54,6 +55,429 @@ function createApprovedHandoff(
     workflow_run_id: opts.workflow_run_id ?? null,
   });
 }
+
+function captureTransitions(): LeftDispatchedEvent[] {
+  const bus = new HandoffTransitionBus();
+  const seen: LeftDispatchedEvent[] = [];
+  bus.subscribe((event) => seen.push(event));
+  writer = new HandoffWriter({ db, transitions: bus });
+  return seen;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function readHandoffStatus(handoff_id: string): {
+  status: string;
+  worker_id: string | null;
+  resolution_reason: string | null;
+  resolved_at: string | null;
+} {
+  const row = db
+    .query<
+      {
+        status: string;
+        worker_id: string | null;
+        resolution_reason: string | null;
+        resolved_at: string | null;
+      },
+      [string]
+    >("SELECT status, worker_id, resolution_reason, resolved_at FROM handoffs WHERE handoff_id=?")
+    .get(handoff_id);
+  if (!row) throw new Error(`missing handoff ${handoff_id}`);
+  return row;
+}
+
+test("markCompleted() emits left_dispatched{to_status:'completed', to_agent} on the transition bus", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-complete-emit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-complete-emit", "w1")).toBe(true);
+
+  expect(writer.markCompleted("h-complete-emit", { expected_worker_id: "w1" })).toBe(true);
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-complete-emit",
+      to_agent: "seat-a",
+      to_status: "completed",
+    },
+  ]);
+  expect(typeof seen[0]?.ts).toBe("string");
+});
+
+test("markCompleted() on a cancel-requested row returns false and emits nothing", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-complete-cancel-no-emit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-complete-cancel-no-emit", "w1")).toBe(true);
+  writer.requestCancellation("conv-h-complete-cancel-no-emit", "cancel-ts");
+
+  expect(writer.markCompleted("h-complete-cancel-no-emit", { expected_worker_id: "w1" })).toBe(
+    false,
+  );
+  expect(readHandoffStatus("h-complete-cancel-no-emit").status).toBe("dispatched");
+  expect(seen).toEqual([]);
+});
+
+test("markFailed() on a dispatched row emits left_dispatched{to_status:'failed'} with and without expected_worker_id", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-fail-emit-a", { to: "seat-a" });
+  createApprovedHandoff("h-fail-emit-b", { to: "seat-b" });
+  expect(writer.claimDispatch("h-fail-emit-a", "w1")).toBe(true);
+  expect(writer.claimDispatch("h-fail-emit-b", "w2")).toBe(true);
+
+  expect(writer.markFailed("h-fail-emit-a", { reason: "crash", expected_worker_id: "w1" })).toBe(
+    true,
+  );
+  expect(writer.markFailed("h-fail-emit-b", { reason: "crash" })).toBe(true);
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-fail-emit-a",
+      to_agent: "seat-a",
+      to_status: "failed",
+    },
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-fail-emit-b",
+      to_agent: "seat-b",
+      to_status: "failed",
+    },
+  ]);
+  expect(seen.every((event) => typeof event.ts === "string")).toBe(true);
+});
+
+test("markFailed() on an approved row returns true and emits nothing", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-fail-approved-no-emit", { to: "seat-a" });
+
+  expect(writer.markFailed("h-fail-approved-no-emit", { reason: "cancelled" })).toBe(true);
+  expect(readHandoffStatus("h-fail-approved-no-emit").status).toBe("failed");
+  expect(seen).toEqual([]);
+});
+
+test("markFailed() on an expired row returns true and emits nothing", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-fail-expired-no-emit", { to: "seat-a" });
+  db.query("UPDATE handoffs SET status='expired' WHERE handoff_id='h-fail-expired-no-emit'").run();
+
+  expect(writer.markFailed("h-fail-expired-no-emit", { reason: "terminal cleanup" })).toBe(true);
+  expect(readHandoffStatus("h-fail-expired-no-emit").status).toBe("failed");
+  expect(seen).toEqual([]);
+});
+
+test("markFailed() with a mismatched expected_worker_id on a dispatched row returns false, leaves the row dispatched, emits nothing", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-fail-worker-mismatch", { to: "seat-a" });
+  expect(writer.claimDispatch("h-fail-worker-mismatch", "worker-a")).toBe(true);
+
+  expect(
+    writer.markFailed("h-fail-worker-mismatch", {
+      reason: "wrong worker",
+      expected_worker_id: "worker-b",
+    }),
+  ).toBe(false);
+  expect(readHandoffStatus("h-fail-worker-mismatch")).toMatchObject({
+    status: "dispatched",
+    worker_id: "worker-a",
+  });
+  expect(seen).toEqual([]);
+});
+
+test("requeueOrphanedDispatch() emits left_dispatched{to_status:'approved'}", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-requeue-emit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-requeue-emit", "dead-worker")).toBe(true);
+
+  expect(writer.requeueOrphanedDispatch("h-requeue-emit", "dead-worker")).toBe(true);
+  expect(readHandoffStatus("h-requeue-emit")).toMatchObject({
+    status: "approved",
+    worker_id: null,
+  });
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-requeue-emit",
+      to_agent: "seat-a",
+      to_status: "approved",
+    },
+  ]);
+  expect(typeof seen[0]?.ts).toBe("string");
+});
+
+test("requeueOrphanedDispatch() with a different worker_id returns false and emits nothing", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-requeue-mismatch", { to: "seat-a" });
+  expect(writer.claimDispatch("h-requeue-mismatch", "worker-a")).toBe(true);
+
+  expect(writer.requeueOrphanedDispatch("h-requeue-mismatch", "worker-b")).toBe(false);
+  expect(readHandoffStatus("h-requeue-mismatch")).toMatchObject({
+    status: "dispatched",
+    worker_id: "worker-a",
+  });
+  expect(seen).toEqual([]);
+});
+
+test("failOrphanedDispatchExhausted() emits left_dispatched{to_status:'failed'}", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-exhausted-emit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-exhausted-emit", "dead-worker")).toBe(true);
+
+  expect(writer.failOrphanedDispatchExhausted("h-exhausted-emit", "dead-worker")).toBe(true);
+  expect(readHandoffStatus("h-exhausted-emit").resolution_reason).toBe(
+    "failed_worker_restart: attempts exhausted",
+  );
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-exhausted-emit",
+      to_agent: "seat-a",
+      to_status: "failed",
+    },
+  ]);
+  expect(typeof seen[0]?.ts).toBe("string");
+});
+
+test("expireDispatchedIdle() expires a dispatched row with no recent dispatch_events and emits left_dispatched{to_status:'expired'}", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-expire-emit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-expire-emit", "worker-1")).toBe(true);
+
+  expect(
+    writer.expireDispatchedIdle("h-expire-emit", {
+      ts: "2026-05-11T00:10:00.000Z",
+      reason: "idle timeout",
+      activitySinceIso: "2026-05-11T00:05:00.000Z",
+    }),
+  ).toBe(true);
+  expect(readHandoffStatus("h-expire-emit")).toMatchObject({
+    status: "expired",
+    resolution_reason: "idle timeout",
+    resolved_at: "2026-05-11T00:10:00.000Z",
+  });
+  expect(seen).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-expire-emit",
+      to_agent: "seat-a",
+      to_status: "expired",
+      ts: "2026-05-11T00:10:00.000Z",
+    },
+  ]);
+});
+
+test("expireDispatchedIdle() returns false and emits nothing when a dispatch_event at or after activitySinceIso exists", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-expire-recent-event", { to: "seat-a" });
+  expect(writer.claimDispatch("h-expire-recent-event", "worker-1")).toBe(true);
+  db.query(
+    `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "h-expire-recent-event",
+    "worker-1",
+    "worker",
+    "agent.heartbeat",
+    "2026-05-11T00:06:00.000Z",
+    "{}",
+  );
+
+  expect(
+    writer.expireDispatchedIdle("h-expire-recent-event", {
+      ts: "2026-05-11T00:10:00.000Z",
+      reason: "idle timeout",
+      activitySinceIso: "2026-05-11T00:05:00.000Z",
+    }),
+  ).toBe(false);
+  expect(readHandoffStatus("h-expire-recent-event").status).toBe("dispatched");
+  expect(seen).toEqual([]);
+});
+
+test("exitDispatched writes exactly the emitted to_status for every transition", () => {
+  const seen = captureTransitions();
+  for (const id of [
+    "h-exit-complete",
+    "h-exit-fail",
+    "h-exit-requeue",
+    "h-exit-exhausted",
+    "h-exit-expire",
+  ]) {
+    createApprovedHandoff(id, { to: `seat-${id}` });
+    expect(writer.claimDispatch(id, `worker-${id}`)).toBe(true);
+  }
+
+  expect(
+    writer.markCompleted("h-exit-complete", { expected_worker_id: "worker-h-exit-complete" }),
+  ).toBe(true);
+  expect(writer.markFailed("h-exit-fail", { reason: "crash" })).toBe(true);
+  expect(writer.requeueOrphanedDispatch("h-exit-requeue", "worker-h-exit-requeue")).toBe(true);
+  expect(writer.failOrphanedDispatchExhausted("h-exit-exhausted", "worker-h-exit-exhausted")).toBe(
+    true,
+  );
+  expect(
+    writer.expireDispatchedIdle("h-exit-expire", {
+      ts: "2026-05-11T00:10:00.000Z",
+      reason: "idle timeout",
+      activitySinceIso: "2026-05-11T00:05:00.000Z",
+    }),
+  ).toBe(true);
+
+  expect(seen.map((event) => event.to_status)).toEqual([
+    "completed",
+    "failed",
+    "approved",
+    "failed",
+    "expired",
+  ]);
+  for (const event of seen) {
+    expect(readHandoffStatus(event.handoff_id).status).toBe(event.to_status);
+  }
+});
+
+test("an exit inside a transaction that rolls back emits nothing", async () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-exit-rollback", { to: "seat-a" });
+  expect(writer.claimDispatch("h-exit-rollback", "worker-a")).toBe(true);
+
+  expect(() =>
+    db.transaction(() => {
+      writer.markCompleted("h-exit-rollback", { expected_worker_id: "worker-a" });
+      throw new Error("boom");
+    })(),
+  ).toThrow("boom");
+
+  await flushMicrotasks();
+  expect(readHandoffStatus("h-exit-rollback").status).toBe("dispatched");
+  expect(seen).toEqual([]);
+});
+
+test("an exit inside a transaction that commits emits exactly once after commit", async () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-exit-commit", { to: "seat-a" });
+  expect(writer.claimDispatch("h-exit-commit", "worker-a")).toBe(true);
+
+  db.transaction(() => {
+    expect(writer.markCompleted("h-exit-commit", { expected_worker_id: "worker-a" })).toBe(true);
+  })();
+
+  expect(seen).toEqual([]);
+  await flushMicrotasks();
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-exit-commit",
+      to_agent: "seat-a",
+      to_status: "completed",
+    },
+  ]);
+});
+
+test("an exit outside any transaction emits synchronously", () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-exit-sync", { to: "seat-a" });
+  expect(writer.claimDispatch("h-exit-sync", "worker-a")).toBe(true);
+
+  expect(writer.markCompleted("h-exit-sync", { expected_worker_id: "worker-a" })).toBe(true);
+
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-exit-sync",
+      to_agent: "seat-a",
+      to_status: "completed",
+    },
+  ]);
+});
+
+test("markFailed() on a dispatched row inside an outer db.transaction emits once and commits", async () => {
+  const seen = captureTransitions();
+  createApprovedHandoff("h-fail-outer-tx", { to: "seat-a" });
+  expect(writer.claimDispatch("h-fail-outer-tx", "worker-a")).toBe(true);
+
+  const result = db.transaction(() =>
+    writer.markFailed("h-fail-outer-tx", { reason: "crash", expected_worker_id: "worker-a" }),
+  )();
+
+  expect(result).toBe(true);
+  expect(readHandoffStatus("h-fail-outer-tx").status).toBe("failed");
+  await flushMicrotasks();
+  expect(seen.map(({ ts: _ts, ...event }) => event)).toEqual([
+    {
+      kind: "left_dispatched",
+      handoff_id: "h-fail-outer-tx",
+      to_agent: "seat-a",
+      to_status: "failed",
+    },
+  ]);
+});
+
+test("expirePendingOlderThan() expires only pending rows older than the cutoff, returns the count, emits nothing", () => {
+  const seen = captureTransitions();
+  writer.create({
+    handoff_id: "h-pending-old",
+    ts: "2026-05-11T00:00:00.000Z",
+    conversation_id: "c-pending-old",
+    from: "a",
+    to: "seat-a",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: "e-old",
+  });
+  writer.create({
+    handoff_id: "h-pending-new",
+    ts: "2026-05-11T00:10:00.000Z",
+    conversation_id: "c-pending-new",
+    from: "a",
+    to: "seat-a",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: "e-new",
+  });
+  createApprovedHandoff("h-approved-old", { to: "seat-a" });
+
+  const count = writer.expirePendingOlderThan({
+    olderThanIso: "2026-05-11T00:05:00.000Z",
+    ts: "2026-05-11T00:20:00.000Z",
+    reason: "pending timeout",
+  });
+
+  expect(count).toBe(1);
+  expect(readHandoffStatus("h-pending-old").status).toBe("expired");
+  expect(readHandoffStatus("h-pending-new").status).toBe("pending");
+  expect(readHandoffStatus("h-approved-old").status).toBe("approved");
+  expect(seen).toEqual([]);
+});
+
+test("a writer built without a transition bus performs every dispatched exit without throwing", () => {
+  writer = new HandoffWriter({ db });
+  for (const id of [
+    "h-no-bus-complete",
+    "h-no-bus-fail",
+    "h-no-bus-requeue",
+    "h-no-bus-exhausted",
+    "h-no-bus-expire",
+  ]) {
+    createApprovedHandoff(id, { to: "seat-a" });
+    expect(writer.claimDispatch(id, `worker-${id}`)).toBe(true);
+  }
+
+  expect(writer.markCompleted("h-no-bus-complete")).toBe(true);
+  expect(writer.markFailed("h-no-bus-fail", { reason: "crash" })).toBe(true);
+  expect(writer.requeueOrphanedDispatch("h-no-bus-requeue", "worker-h-no-bus-requeue")).toBe(true);
+  expect(
+    writer.failOrphanedDispatchExhausted("h-no-bus-exhausted", "worker-h-no-bus-exhausted"),
+  ).toBe(true);
+  expect(
+    writer.expireDispatchedIdle("h-no-bus-expire", {
+      ts: "2026-05-11T00:10:00.000Z",
+      reason: "idle timeout",
+      activitySinceIso: "2026-05-11T00:05:00.000Z",
+    }),
+  ).toBe(true);
+});
 
 test("create() inserts a pending handoff with the given handoff_id", () => {
   const id = writer.create({

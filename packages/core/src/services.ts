@@ -15,6 +15,7 @@ import { DbMeta } from "./db/meta.js";
 import { DispatchEventBus } from "./dispatch/event-bus.js";
 import { ConversationStreamBus } from "./events/conversation-stream.js";
 import { HandoffEventBus } from "./events/handoff-events.js";
+import { HandoffTransitionBus } from "./events/handoff-transitions.js";
 import { PermissionEventBus } from "./events/permission-events.js";
 import { WorkerControlBus } from "./events/worker-control.js";
 import { MachineId } from "./identity/machine-id.js";
@@ -236,6 +237,7 @@ export interface Services {
   taskDraftReader: TaskDraftReader;
   chainReader: ChainReader;
   handoffEvents: HandoffEventBus;
+  handoffTransitions: HandoffTransitionBus;
   permissionWriter: PermissionWriter;
   permissionReader: PermissionReader;
   permissionEvents: PermissionEventBus;
@@ -333,6 +335,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const log = createLogger({ component: "penumbra" });
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
   const handoffEvents = new HandoffEventBus();
+  const handoffTransitions = new HandoffTransitionBus();
   const permissionEvents = new PermissionEventBus();
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
@@ -383,12 +386,17 @@ export function buildServices(opts: BuildServicesOpts): Services {
     projectCache: new ProjectCache({ db: opts.db, clock }),
     redactor: new RegexRedactor(DEFAULT_REDACTION_RULES),
     t0Writer: new T0Writer(opts.db),
-    handoffWriter: new HandoffWriter({ db: opts.db, events: handoffEvents }),
+    handoffWriter: new HandoffWriter({
+      db: opts.db,
+      events: handoffEvents,
+      transitions: handoffTransitions,
+    }),
     recallReader: new RecallReader({ db: opts.db, embedder: opts.embedder }),
     handoffReader: new HandoffReader({ db: opts.db }),
     taskDraftReader: new TaskDraftReader({ db: opts.db }),
     chainReader: new ChainReader(opts.db),
     handoffEvents,
+    handoffTransitions,
     permissionWriter: new PermissionWriter({ db: opts.db }),
     permissionReader: new PermissionReader({ db: opts.db }),
     permissionEvents,

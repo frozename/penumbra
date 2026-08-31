@@ -28,6 +28,7 @@ function insertHandoffRow(opts: {
   ts: string;
   conversation_id: string;
   root_handoff_id: string | null;
+  to?: string;
   project_id?: string | null;
   parent_handoff_id?: string | null;
   status?: "pending" | "approved" | "redirected" | "dispatched";
@@ -43,7 +44,7 @@ function insertHandoffRow(opts: {
       opts.project_id ?? null,
       opts.conversation_id,
       "claude",
-      "gemini",
+      opts.to ?? "gemini",
       null,
       `m-${opts.handoff_id}`,
       opts.status ?? "approved",
@@ -125,6 +126,96 @@ beforeEach(() => {
   migrate(db, { embeddingDim: 384 });
   writer = new HandoffWriter({ db });
   reader = new HandoffReader({ db });
+});
+
+test("listClaimableForSeats() returns approved/redirected rows for the seats oldest-first, honouring limit and dispatch_attempts", () => {
+  insertHandoffRow({
+    handoff_id: "a1",
+    ts: isoAt(0),
+    conversation_id: "conv-a1",
+    root_handoff_id: "a1",
+    to: "seat-a",
+    status: "approved",
+  });
+  insertHandoffRow({
+    handoff_id: "a2",
+    ts: isoAt(1),
+    conversation_id: "conv-a2",
+    root_handoff_id: "a2",
+    to: "seat-b",
+    status: "redirected",
+  });
+  insertHandoffRow({
+    handoff_id: "a3",
+    ts: isoAt(2),
+    conversation_id: "conv-a3",
+    root_handoff_id: "a3",
+    to: "seat-a",
+    status: "approved",
+  });
+  insertHandoffRow({
+    handoff_id: "x",
+    ts: isoAt(0),
+    conversation_id: "conv-x",
+    root_handoff_id: "x",
+    to: "seat-z",
+    status: "approved",
+  });
+  insertHandoffRow({
+    handoff_id: "d",
+    ts: isoAt(0),
+    conversation_id: "conv-d",
+    root_handoff_id: "d",
+    to: "seat-a",
+    status: "dispatched",
+  });
+  insertHandoffRow({
+    handoff_id: "e",
+    ts: isoAt(3),
+    conversation_id: "conv-e",
+    root_handoff_id: "e",
+    to: "seat-a",
+    status: "approved",
+  });
+  db.query(
+    "UPDATE handoffs SET dispatch_attempts=3, max_dispatch_attempts=3 WHERE handoff_id='e'",
+  ).run();
+
+  expect(
+    reader
+      .listClaimableForSeats({ seatNames: ["seat-a", "seat-b"], limit: 2 })
+      .map((row) => row.handoff_id),
+  ).toEqual(["a1", "a2"]);
+  expect(
+    reader
+      .listClaimableForSeats({ seatNames: ["seat-a", "seat-b"], limit: 10 })
+      .map((row) => row.handoff_id),
+  ).toEqual(["a1", "a2", "a3"]);
+  expect(reader.listClaimableForSeats({ seatNames: [], limit: 10 })).toEqual([]);
+});
+
+test("countClaimableForSeats() equals listClaimableForSeats length and is 0 for empty seatNames", () => {
+  for (const [id, to, status] of [
+    ["a1", "seat-a", "approved"],
+    ["a2", "seat-b", "redirected"],
+    ["a3", "seat-a", "approved"],
+    ["x", "seat-z", "approved"],
+    ["d", "seat-a", "dispatched"],
+  ] as const) {
+    insertHandoffRow({
+      handoff_id: id,
+      ts: isoAt(0),
+      conversation_id: `conv-${id}`,
+      root_handoff_id: id,
+      to,
+      status,
+    });
+  }
+
+  const list = reader.listClaimableForSeats({ seatNames: ["seat-a", "seat-b"], limit: 10 });
+  expect(reader.countClaimableForSeats(["seat-a", "seat-b"])).toBe(list.length);
+  expect(reader.countClaimableForSeats(["seat-a", "seat-b"])).toBe(3);
+  expect(reader.countClaimableForSeats([])).toBe(0);
 });
 
 interface SampleHandoffParams {

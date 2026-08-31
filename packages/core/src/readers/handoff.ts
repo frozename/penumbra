@@ -22,6 +22,12 @@ function normalizeHandoffRow(row: HandoffRow): HandoffRow {
   };
 }
 
+function claimableForSeatsWhere(placeholders: string): string {
+  return `status IN ('approved','redirected')
+              AND dispatch_attempts < max_dispatch_attempts
+              AND to_agent IN (${placeholders})`;
+}
+
 export class HandoffReader {
   private readonly db: Database;
   constructor(opts: HandoffReaderOpts) {
@@ -87,6 +93,33 @@ export class HandoffReader {
       .query<HandoffRow, string[]>(sql)
       .all(...params)
       .map(normalizeHandoffRow);
+  }
+
+  /** Oldest-first claimable rows for a provider's seats. */
+  listClaimableForSeats(opts: { seatNames: string[]; limit: number }): HandoffRow[] {
+    if (opts.seatNames.length === 0 || opts.limit <= 0) return [];
+    const placeholders = opts.seatNames.map(() => "?").join(",");
+    return this.db
+      .query<HandoffRow, (string | number)[]>(
+        `SELECT * FROM handoffs
+            WHERE ${claimableForSeatsWhere(placeholders)}
+            ORDER BY ts ASC, handoff_id ASC
+            LIMIT ?`,
+      )
+      .all(...opts.seatNames, opts.limit)
+      .map(normalizeHandoffRow);
+  }
+
+  countClaimableForSeats(seatNames: string[]): number {
+    if (seatNames.length === 0) return 0;
+    const placeholders = seatNames.map(() => "?").join(",");
+    const row = this.db
+      .query<{ n: number }, string[]>(
+        `SELECT COUNT(*) AS n FROM handoffs
+            WHERE ${claimableForSeatsWhere(placeholders)}`,
+      )
+      .get(...seatNames);
+    return row?.n ?? 0;
   }
 
   /** Returns dispatched rows whose worker_id is in the stale set. */

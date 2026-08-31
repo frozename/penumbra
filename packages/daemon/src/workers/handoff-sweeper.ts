@@ -45,19 +45,11 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts): HandoffSwe
         // --- pending: flat TTL, unchanged behaviour ---
         const pendingThreshold = new Date(now.getTime() - pendingTtlMs).toISOString();
         const expirePending = opts.services.db.transaction(() => {
-          const stmt = opts.services.db.query(`
-            UPDATE handoffs
-            SET
-              status = 'expired',
-              resolved_at = ?1,
-              resolution_reason = ?2
-            WHERE status = 'pending' AND ts < ?3
-          `);
-          return stmt.run(
-            nowIso,
-            `expired by sweeper after ${String(pendingTtlMs)}ms in pending`,
-            pendingThreshold,
-          ).changes;
+          return opts.services.handoffWriter.expirePendingOlderThan({
+            olderThanIso: pendingThreshold,
+            ts: nowIso,
+            reason: `expired by sweeper after ${String(pendingTtlMs)}ms in pending`,
+          });
         });
 
         // --- dispatched: event-aware + per-task-class TTL ---
@@ -95,19 +87,19 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts): HandoffSwe
 
         const expireDispatched = opts.services.db.transaction(() => {
           if (toExpire.length === 0) return 0;
-          const stmt = opts.services.db.query(
-            `UPDATE handoffs SET status = 'expired', resolved_at = ?1, resolution_reason = ?2 WHERE handoff_id = ?3 AND status = 'dispatched' AND NOT EXISTS (SELECT 1 FROM dispatch_events WHERE handoff_id = ?3 AND ts >= ?4)`,
-          );
           let changes = 0;
           for (const { handoff_id, ttlMs, chain_task_type } of toExpire) {
             const suffix = chain_task_type ? ` (task_type=${chain_task_type})` : "";
             const threshold = new Date(now.getTime() - ttlMs).toISOString();
-            changes += stmt.run(
-              nowIso,
-              `expired by sweeper after ${String(ttlMs)}ms in dispatched${suffix}`,
-              handoff_id,
-              threshold,
-            ).changes;
+            if (
+              opts.services.handoffWriter.expireDispatchedIdle(handoff_id, {
+                ts: nowIso,
+                reason: `expired by sweeper after ${String(ttlMs)}ms in dispatched${suffix}`,
+                activitySinceIso: threshold,
+              })
+            ) {
+              changes += 1;
+            }
           }
           return changes;
         });

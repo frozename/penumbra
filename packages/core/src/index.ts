@@ -73,6 +73,13 @@ export {
 } from "./events/conversation-stream.js";
 export { HandoffEventBus, type HandoffEventListener } from "./events/handoff-events.js";
 export {
+  HandoffTransitionBus,
+  type HandoffTransitionEvent,
+  type HandoffTransitionListener,
+  type LeftDispatchedEvent,
+  type LeftDispatchedToStatus,
+} from "./events/handoff-transitions.js";
+export {
   type EmittedPermissionEvent,
   type PermissionEvent,
   PermissionEventBus,
