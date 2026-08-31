@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { ChainReader } from "@src/readers/chain.js";
+import { AgentPerformanceCaptureFromDispatchSchema } from "@src/schemas/agent-performance.js";
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
@@ -666,6 +667,210 @@ describe("captureAgentPerformanceFromReconciler", () => {
       silent_failure: true,
       tool_failure_count: 0,
     });
+  });
+
+  it("honors worker dispatch_end_emitted attestation when dispatch.end races capture", () => {
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id=?`,
+    ).run("health_check", "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-1", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const input = AgentPerformanceCaptureFromDispatchSchema.parse({
+      handoff_id: "h1",
+      reason: "completed",
+      worktree_changed: false,
+      final_response_chars: 100,
+      has_meaningful_output: true,
+      dispatch_end_emitted: true,
+    });
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-dispatch-end-hint",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input,
+    });
+
+    const stored = db
+      .query<
+        { reliability_status: string | null },
+        [string]
+      >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.reliability_status).toBe("no_worktree_activity");
+  });
+
+  it("keeps missing_dispatch_end fail-closed when dispatch_end_emitted is absent", () => {
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id=?`,
+    ).run("health_check", "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-1", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const input = AgentPerformanceCaptureFromDispatchSchema.parse({
+      handoff_id: "h1",
+      reason: "completed",
+      worktree_changed: false,
+      final_response_chars: 100,
+      has_meaningful_output: true,
+    });
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-no-dispatch-end-hint",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input,
+    });
+
+    const stored = db
+      .query<
+        { reliability_status: string | null },
+        [string]
+      >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.reliability_status).toBe("missing_dispatch_end");
+  });
+
+  it("maps non-mutating unchanged-worktree output to completed_with_output", () => {
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id=?`,
+    ).run("health_check", "2026-04-30T12:02:00Z", "h1");
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({ status: "ok", worktree_changed: false }),
+    );
+
+    const input = AgentPerformanceCaptureFromDispatchSchema.parse({
+      handoff_id: "h1",
+      reason: "completed",
+      worktree_changed: false,
+      final_response_chars: 100,
+      has_meaningful_output: true,
+    });
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-non-mutating-output",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input,
+    });
+
+    const stored = db
+      .query<
+        { outcome: string },
+        [string]
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.outcome).toBe("completed_with_output");
+  });
+
+  it("does not let worker-supplied task_type unlock the non-mutating silent-failure exemption", () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1, resolved_at=? WHERE handoff_id=?`).run(
+      "2026-04-30T12:02:00Z",
+      "h1",
+    );
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-1", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const input = AgentPerformanceCaptureFromDispatchSchema.parse({
+      handoff_id: "h1",
+      reason: "completed",
+      task_type: "health_check",
+      worktree_changed: false,
+      final_response_chars: 100,
+      has_meaningful_output: true,
+      dispatch_end_emitted: true,
+    });
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-worker-task-type-no-exemption",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input,
+    });
+
+    const stored = db
+      .query<
+        { outcome: string },
+        [string]
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.outcome).toBe("failed");
+  });
+
+  it("keeps unchanged-worktree silent failure for mutating task types", () => {
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id=?`,
+    ).run("implement_small", "2026-04-30T12:02:00Z", "h1");
+    db.prepare(
+      `
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `,
+    ).run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({ status: "ok", worktree_changed: false }),
+    );
+
+    const input = AgentPerformanceCaptureFromDispatchSchema.parse({
+      handoff_id: "h1",
+      reason: "completed",
+      worktree_changed: false,
+      final_response_chars: 100,
+      has_meaningful_output: true,
+    });
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-mutating-silent",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input,
+    });
+
+    const stored = db
+      .query<
+        { outcome: string },
+        [string]
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.outcome).toBe("failed");
   });
 
   it("tags classifier declines from dispatch.end meta without changing the failed outcome enum", () => {

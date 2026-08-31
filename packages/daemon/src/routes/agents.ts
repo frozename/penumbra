@@ -302,6 +302,55 @@ export function computeRouteForRole(input: AgentRouteForInput): AgentRouteForOut
   };
 }
 
+function workerMismatchResponse(): Response {
+  return json(
+    {
+      error: {
+        code: "handoff_worker_mismatch",
+        message: "worker token does not own this handoff",
+      },
+    },
+    403,
+  );
+}
+
+function applyDispatchCaptureTrustBoundary(opts: {
+  principal: ReturnType<typeof getPrincipal>;
+  handoffWorkerId: string | null;
+  input: {
+    final_response_chars?: number;
+    has_meaningful_output?: boolean;
+    task_type?: AgentTaskType;
+    worktree_changed?: boolean | null;
+    dispatch_end_emitted?: boolean;
+  };
+}): Response | null {
+  const { principal, handoffWorkerId, input } = opts;
+  if (principal?.kind === "worker") {
+    // A null owner is legitimate (orphan recovery, pre-claim capture) —
+    // only an actual DIFFERENT owner is a mismatch.
+    if (handoffWorkerId !== null && handoffWorkerId !== principal.worker_id) {
+      return workerMismatchResponse();
+    }
+    if (handoffWorkerId === null) {
+      delete input.dispatch_end_emitted;
+    }
+    return null;
+  }
+
+  // Non-worker principals (shared bearer: CLI-loop captures, tooling)
+  // cannot prove handoff ownership. Strip the trust-sensitive hints so
+  // capture falls back to server-derived values (scoped t0 read,
+  // chain_task_type, computed worktree signals) instead of rejecting the
+  // capture outright.
+  delete input.final_response_chars;
+  delete input.has_meaningful_output;
+  delete input.task_type;
+  delete input.worktree_changed;
+  delete input.dispatch_end_emitted;
+  return null;
+}
+
 export async function agentsPerformanceReconcilerRoute(
   req: Request,
   services: Services,
@@ -344,31 +393,12 @@ export async function agentsPerformanceDispatchRoute(
       >(`SELECT worker_id FROM handoffs WHERE handoff_id = ?`)
       .get(input.handoff_id);
     if (!handoffOwner) return json({ error: { code: "not_found" } }, 404);
-    if (principal?.kind === "worker") {
-      // A null owner is legitimate (orphan recovery, pre-claim capture) —
-      // only an actual DIFFERENT owner is a mismatch.
-      if (handoffOwner.worker_id !== null && handoffOwner.worker_id !== principal.worker_id) {
-        return json(
-          {
-            error: {
-              code: "handoff_worker_mismatch",
-              message: "worker token does not own this handoff",
-            },
-          },
-          403,
-        );
-      }
-    } else {
-      // Non-worker principals (shared bearer: CLI-loop captures, tooling)
-      // cannot prove handoff ownership. Strip the trust-sensitive hints so
-      // capture falls back to server-derived values (scoped t0 read,
-      // chain_task_type, computed worktree signals) instead of rejecting the
-      // capture outright.
-      delete (input as Record<string, unknown>).final_response_chars;
-      delete (input as Record<string, unknown>).has_meaningful_output;
-      delete (input as Record<string, unknown>).task_type;
-      delete (input as Record<string, unknown>).worktree_changed;
-    }
+    const trustBoundaryResponse = applyDispatchCaptureTrustBoundary({
+      principal,
+      handoffWorkerId: handoffOwner.worker_id,
+      input,
+    });
+    if (trustBoundaryResponse) return trustBoundaryResponse;
     const performance = captureAgentPerformanceFromDispatch({
       db: services.db,
       uuid: services.uuid,

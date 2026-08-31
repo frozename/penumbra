@@ -63,6 +63,12 @@ interface OperatorCaptureResponse {
   };
 }
 
+interface DispatchCaptureResponse {
+  performance: {
+    reliability_status: string | null;
+  };
+}
+
 function makeHandlerFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
   return (input, init): Promise<Response> => {
     const req = input instanceof Request ? input : new Request(input, init);
@@ -183,6 +189,109 @@ describe("agent routes", () => {
     expect(count?.count).toBe(0);
   });
 
+  it("ignores dispatch_end_emitted from worker token when handoff has no owner", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    const registered = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "tok",
+      worker_id: "worker-b",
+      fetcher: makeHandlerFetcher(handler),
+    });
+    db.prepare(
+      `UPDATE handoffs SET worker_id = NULL, use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id = ?`,
+    ).run("health_check", "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-b", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-b",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const res = await handler(
+      new Request("http://x/agents/performance/dispatch", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${registered.worker_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          reason: "completed",
+          task_type: "health_check",
+          worktree_changed: false,
+          final_response_chars: 66,
+          has_meaningful_output: true,
+          dispatch_end_emitted: true,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as DispatchCaptureResponse;
+    expect(body.performance.reliability_status).toBe("missing_dispatch_end");
+    const stored = db
+      .query<
+        { reliability_status: string | null },
+        [string]
+      >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.reliability_status).toBe("missing_dispatch_end");
+  });
+
+  it("honors dispatch_end_emitted from worker token that owns the handoff", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    const registered = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "tok",
+      worker_id: "worker-a",
+      fetcher: makeHandlerFetcher(handler),
+    });
+    db.prepare(
+      `UPDATE handoffs SET worker_id = ?, use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id = ?`,
+    ).run("worker-a", "health_check", "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-a", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-a",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const res = await handler(
+      new Request("http://x/agents/performance/dispatch", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${registered.worker_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          reason: "completed",
+          task_type: "health_check",
+          worktree_changed: false,
+          final_response_chars: 66,
+          has_meaningful_output: true,
+          dispatch_end_emitted: true,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as DispatchCaptureResponse;
+    expect(body.performance.reliability_status).toBe("no_worktree_activity");
+  });
+
   it("returns 404 before dispatch performance capture when handoff is missing", async () => {
     const handler = createDaemonFetchHandler({ services, token: "tok" });
     const registered = await registerWorkerForTest({
@@ -212,6 +321,55 @@ describe("agent routes", () => {
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: { code: "not_found" } });
+  });
+
+  it("strips dispatch_end_emitted from non-worker dispatch performance captures", async () => {
+    const handler = createDaemonFetchHandler({ services, token: "tok" });
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, chain_task_type=?, resolved_at=? WHERE handoff_id=?`,
+    ).run("health_check", "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "worker-1", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "acp.session.start",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({}),
+    );
+
+    const res = await handler(
+      new Request("http://x/agents/performance/dispatch", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          handoff_id: "h1",
+          reason: "completed",
+          task_type: "health_check",
+          worktree_changed: false,
+          final_response_chars: 100,
+          has_meaningful_output: true,
+          dispatch_end_emitted: true,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as DispatchCaptureResponse;
+    expect(body.performance.reliability_status).toBe("missing_dispatch_end");
+    const stored = db
+      .query<
+        { reliability_status: string | null },
+        [string]
+      >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
+      .get("h1");
+    expect(stored?.reliability_status).toBe("missing_dispatch_end");
   });
 
   it("returns rank output", async () => {

@@ -363,6 +363,7 @@ export class PenumbraClient {
     task_type?: string;
     reason: "completed" | "max_hops" | "cancelled" | "error";
     worktree_changed?: boolean | null;
+    dispatch_end_emitted?: boolean;
     wall_ms?: number | null;
     framework_overhead_ms?: number | null;
     final_response_chars?: number;

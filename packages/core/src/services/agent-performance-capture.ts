@@ -227,6 +227,7 @@ function computeDispatchSignals(
   useWorktree: boolean,
   worktreeChangedHint: boolean | null | undefined,
   parsedDispatchEndMeta: Record<string, unknown> | null,
+  explicitTaskType: string | undefined,
 ): {
   silent_failure: boolean;
   tool_failure_count: number;
@@ -255,7 +256,12 @@ function computeDispatchSignals(
   // touching the worktree. The worker captures worktree_changed at
   // dispatch.end (commit 090adb1); reading it here keeps the agent-rank
   // outcome aligned with the reliability classifier's no_worktree_activity.
-  const silentFailure = useWorktree && worktreeChanged === false;
+  const silentFailure =
+    useWorktree &&
+    worktreeChanged === false &&
+    !(
+      explicitTaskType && (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType)
+    );
   const classifierDeclined = parsedDispatchEndMeta?.classifier_declined === true;
   const declineReason =
     classifierDeclined && typeof parsedDispatchEndMeta.decline_reason === "string"
@@ -296,8 +302,10 @@ function classifyDispatchReliabilityFromDb(
   handoffId: string,
   handoff: HandoffRow,
   worktreeChangedHint: boolean | null | undefined,
+  dispatchEndEmittedHint: boolean | undefined,
   parsedDispatchEndMeta: Record<string, unknown> | null,
   responses: AgentResponseEvent[],
+  nowIso: string,
 ): DispatchReliabilityReport {
   const eventRows = db
     .prepare<
@@ -305,6 +313,17 @@ function classifyDispatchReliabilityFromDb(
       [string]
     >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
     .all(handoffId);
+  if (
+    dispatchEndEmittedHint === true &&
+    !eventRows.some((event) => event.kind === "dispatch.end")
+  ) {
+    // This synthetic row is local to classifier input and is never written to
+    // dispatch_events. A worker crash between capture POST and finalizeDispatch's
+    // emit can leave an attested row whose real event never landed; that is the
+    // same trust model as worktree_changed and is visible through the handoff's
+    // dispatched-exit funnel.
+    eventRows.push({ kind: "dispatch.end", ts: handoff.resolved_at ?? nowIso });
+  }
   let worktreeChanged: boolean | null = null;
   let dispatchEndCommitted: boolean | null = null;
   if (parsedDispatchEndMeta) {
@@ -479,12 +498,14 @@ export function captureAgentPerformanceFromDispatch(opts: {
     normalizeNonnegativeInteger(parsedAcpSessionMeta?.framework_overhead_ms) ??
     normalizeNonnegativeInteger(input.framework_overhead_ms) ??
     normalizeNonnegativeInteger(parsedDispatchEndMeta?.framework_overhead_ms);
+  const explicitTaskType = handoff.chain_task_type ?? undefined;
   const signals = computeDispatchSignals(
     opts.db,
     input.handoff_id,
     useWorktree,
     input.worktree_changed,
     parsedDispatchEndMeta,
+    explicitTaskType,
   );
 
   const { responseSummary, responses, hasNonEmptyResponse } = resolveDispatchResponses(
@@ -501,8 +522,10 @@ export function captureAgentPerformanceFromDispatch(opts: {
     input.handoff_id,
     handoff,
     input.worktree_changed,
+    input.dispatch_end_emitted,
     parsedDispatchEndMeta,
     reliabilityResponses,
+    nowIso,
   );
   const recoveryCancel = detectRecoveryCancel(
     opts.db,

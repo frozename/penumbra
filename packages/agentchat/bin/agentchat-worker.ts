@@ -762,6 +762,10 @@ async function maybeCaptureDispatchOutcome(
       // doesn't have to read dispatch_events (which races the events POST
       // and can return stale "no row yet" misses).
       worktree_changed: worktreeChanged,
+      // This call runs inside finalizeDispatch; its finally block always
+      // emits dispatch.end for this same handoff, but the events POST can
+      // race the capture POST.
+      dispatch_end_emitted: true,
       wall_ms: wallMs,
       framework_overhead_ms: frameworkOverheadMs,
       final_response_chars: finalResponseSummary.chars,

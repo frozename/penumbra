@@ -130,6 +130,10 @@ export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   // dispatch_events, since the events POST and the capture POST race and
   // the events row may not be visible yet.
   worktree_changed: z.boolean().nullable().optional(),
+  // Worker attestation that finalizeDispatch is emitting dispatch.end for
+  // this dispatch. The events POST and capture POST race, so the event row may
+  // not be visible when daemon-side reliability classification runs.
+  dispatch_end_emitted: z.boolean().optional(),
   wall_ms: z.number().nonnegative().nullable().optional(),
   framework_overhead_ms: z.number().nonnegative().nullable().optional(),
   final_response_chars: z.number().int().nonnegative().max(65536).optional(),
