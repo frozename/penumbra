@@ -2310,9 +2310,10 @@ function setupDreamingCron(services: Services, runtimeDreamConfig: DreamConfig):
   return stops;
 }
 
-export function serve(opts: ServeOpts): DaemonHandle {
-  const daemonServices = opts.services as DaemonServices;
-  const configDir = resolveAgentChatConfigPath(process.env);
+function loadServeRouterConfigs(
+  opts: ServeOpts,
+  configDir: string,
+): { modelAliasMap: ModelAliasMap; taskRouterConfig: TaskRouterConfig } {
   let taskRouterConfig: TaskRouterConfig;
   try {
     taskRouterConfig = loadTaskRouterConfigFromDir(configDir);
@@ -2329,6 +2330,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
     opts.services.log.error({ err: message }, `${message}; falling back to defaults`);
     modelAliasMap = {};
   }
+  return { modelAliasMap, taskRouterConfig };
+}
+
+export function serve(opts: ServeOpts): DaemonHandle {
+  const daemonServices = opts.services as DaemonServices;
+  const configDir = resolveAgentChatConfigPath(process.env);
+  const { modelAliasMap, taskRouterConfig } = loadServeRouterConfigs(opts, configDir);
   daemonServices.taskRouterConfig = taskRouterConfig;
   daemonServices.modelAliasMap = modelAliasMap;
   daemonServices.aaSnapshotStore = createAaSnapshotStore({
