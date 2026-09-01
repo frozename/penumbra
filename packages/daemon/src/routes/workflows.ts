@@ -960,6 +960,10 @@ function continuationNoteFromBundle(
 }
 
 function relatedSessionIdFromContinuationNote(body: string): string | null {
+  return sessionStampFromBodyPrefix(body);
+}
+
+function sessionStampFromBodyPrefix(body: string): string | null {
   const lines = body.split(/\r?\n/, 5);
   for (const line of lines) {
     const match = SESSION_STAMP_RE.exec(line);
@@ -1046,9 +1050,7 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
 }
 
 function sessionStampFromSkeletonBody(body: string): string | null {
-  const firstLine = body.split(/\r?\n/, 1)[0] ?? "";
-  const match = SESSION_STAMP_RE.exec(firstLine);
-  return match?.[1] ?? null;
+  return sessionStampFromBodyPrefix(body);
 }
 
 function periodKeyFromSkeletonPath(path: string): string | null {

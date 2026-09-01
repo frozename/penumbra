@@ -616,6 +616,25 @@ test("a session-handoff run records continuity.skeleton_generated with ref_path 
   }
 });
 
+test("skeleton_generated reads the session stamp from the first five skeleton lines", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174223";
+  const { harness: h, repo } = await continuityHarness({
+    body: `{{recall.missing}}\n<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    if (typeof event.meta !== "object" || event.meta === null) {
+      throw new Error("expected skeleton meta object");
+    }
+    expect((event.meta as { session_stamp?: unknown }).session_stamp).toBe(stamp);
+  } finally {
+    h.stop();
+  }
+});
+
 test("a session-handoff skeleton ref_path resolves back to the source session", async () => {
   const stamp = "123e4567-e89b-12d3-a456-426614174333";
   const { harness: h, repo } = await continuityHarness({

@@ -27,6 +27,22 @@ Body line 1
 Body line 2 — {{recall.memory_search}}
 `;
 
+function fixtureWithBody(body: string): string {
+  return `---
+name: example
+description: A demo playbook
+triggers:
+  - kind: slash
+    command: example
+recall: []
+output:
+  - kind: clipboard
+run:
+  kind: markdown-template
+---
+${body}`;
+}
+
 test("parses frontmatter and lifts body into run.template", () => {
   const dir = mkdtempSync(join(tmpdir(), "pb-"));
   try {
@@ -39,6 +55,37 @@ test("parses frontmatter and lifts body into run.template", () => {
       expect(spec.run.template).toContain("# Example");
       expect(spec.run.template).toContain("{{recall.memory_search}}");
       expect(spec.run.template).not.toContain("---"); // frontmatter stripped
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips blank lines between frontmatter and markdown template body", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pb-"));
+  try {
+    const path = join(dir, "playbook.md");
+    writeFileSync(path, fixtureWithBody("\n<!-- penumbra:session x -->\nBody\n"));
+    const spec = loadMarkdownPlaybook(path);
+    expect(spec.run.kind).toBe("markdown-template");
+    if (spec.run.kind === "markdown-template") {
+      expect(spec.run.template).toStartWith("<!-- penumbra:session x -->");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("preserves markdown template body when content starts immediately after frontmatter", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pb-"));
+  try {
+    const path = join(dir, "playbook.md");
+    const body = "<!-- penumbra:session x -->\nBody\n";
+    writeFileSync(path, fixtureWithBody(body));
+    const spec = loadMarkdownPlaybook(path);
+    expect(spec.run.kind).toBe("markdown-template");
+    if (spec.run.kind === "markdown-template") {
+      expect(spec.run.template).toBe(body);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

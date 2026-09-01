@@ -105,6 +105,18 @@ type RunSourceDeps = {
   agentRegistry: ComposeRecallOpts["agentRegistry"];
 };
 
+function withUnpushed(
+  result: Awaited<ReturnType<typeof runSessionFirstMovesSource>>["result"],
+): Record<string, unknown> {
+  return {
+    ...result,
+    unpushed:
+      result.head_sha && result.origin_main_sha && result.head_sha === result.origin_main_sha
+        ? 0
+        : "differs - run git rev-list --count origin/main..main",
+  };
+}
+
 async function runOneSource(
   src: RecallSource,
   args: Record<string, unknown>,
@@ -160,15 +172,7 @@ async function runOneSource(
     }
     case "session_first_moves": {
       const out = await runSessionFirstMovesSource({ db, cwd, project, args });
-      mergeBucket(byKey, "session_first_moves", {
-        ...out.result,
-        unpushed:
-          out.result.head_sha &&
-          out.result.origin_main_sha &&
-          out.result.head_sha === out.result.origin_main_sha
-            ? 0
-            : "differs - run git rev-list --count origin/main..main",
-      });
+      mergeBucket(byKey, "session_first_moves", withUnpushed(out.result));
       warnings.push(...out.warnings);
       return;
     }

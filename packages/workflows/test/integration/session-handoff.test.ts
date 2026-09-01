@@ -43,6 +43,19 @@ function seedRepo(dir: string): string {
   return dir;
 }
 
+function normalizedTableRows(body: string): string[] {
+  return body
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("|"))
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim())
+        .join("|"),
+    );
+}
+
 test("session-handoff playbook fires on pre-compact, renders file, captures outcome", async () => {
   const root = mkdtempSync(join(tmpdir(), "sh-int-"));
   const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
@@ -223,9 +236,10 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(body).toContain("second commit");
     expect(body).toContain("h-pending-1");
     expect(body).toContain("## Live state");
-    expect(body).toContain("| HEAD | Origin main | Unpushed | Dirty count |");
-    expect(body).toContain("| Daemon PID | Daemon healthy | Worker PIDs | Pending handoffs |");
-    expect(body).toContain("| Open lanes | Gate deltas | Pin share |");
+    const tableRows = normalizedTableRows(body);
+    expect(tableRows).toContain("HEAD|Origin main|Unpushed|Dirty count");
+    expect(tableRows).toContain("Daemon PID|Daemon healthy|Worker PIDs|Pending handoffs");
+    expect(tableRows).toContain("Pending task drafts|Open lanes|Gate deltas|Pin share");
     expect(body).toContain("codex-fast");
     expect(body).toContain("exclude agent:codex-fast");
     expect(body).toContain("active outage");
