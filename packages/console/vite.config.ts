@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+
+const srcDir = fileURLToPath(new URL("./src/", import.meta.url));
 
 // Provide sane dev defaults so `bun run dev` works without an explicit env.
 // E2E and other callers set these explicitly and take precedence.
@@ -19,6 +22,9 @@ if (!process.env.PENUMBRA_TOKEN) {
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [{ find: /^@src\//, replacement: srcDir }],
+  },
   envPrefix: ["VITE_", "PENUMBRA_"],
   server: {
     port: 5176,
