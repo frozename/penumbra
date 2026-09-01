@@ -35,6 +35,80 @@ test("picks the newest-mtime candidate among bare and .skeleton.md files", async
   }
 });
 
+test("prefers the bare note over a newer same-period skeleton", async () => {
+  const repo = makeRepo();
+  try {
+    const bare = join(repo, "docs/notes/maestro-continuation-2026-09-01-am.md");
+    const skeleton = join(repo, "docs/notes/maestro-continuation-2026-09-01-am.skeleton.md");
+    writeFileSync(bare, "<!-- penumbra:session 1da59864-f2be-46da-b780-6558233ca712 -->\n# note\n");
+    writeFileSync(skeleton, "<!-- penumbra:session none -->\n# skeleton\n");
+    const bareTime = new Date("2026-09-01T05:25:00.000Z");
+    const skeletonTime = new Date("2026-09-01T11:22:00.000Z");
+    await Promise.all([
+      utimes(bare, bareTime, bareTime),
+      utimes(skeleton, skeletonTime, skeletonTime),
+    ]);
+
+    const out = await runLatestContinuationNoteSource({ cwd: repo, args: {} });
+
+    if (out.result === null) throw new Error("expected continuation note");
+    expect(out.result.path).toBe(bare);
+    expect(out.result.body).toBe(
+      "<!-- penumbra:session 1da59864-f2be-46da-b780-6558233ca712 -->\n# note\n",
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("prefers the newest period skeleton when no bare note exists for that period", async () => {
+  const repo = makeRepo();
+  try {
+    const olderBare = join(repo, "docs/notes/maestro-continuation-2026-09-01-am.md");
+    const newerSkeleton = join(repo, "docs/notes/maestro-continuation-2026-09-01-pm.skeleton.md");
+    writeFileSync(olderBare, "older bare note\n");
+    writeFileSync(newerSkeleton, "newer skeleton note\n");
+    const olderTime = new Date("2026-09-01T05:25:00.000Z");
+    const newerTime = new Date("2026-09-01T11:22:00.000Z");
+    await Promise.all([
+      utimes(olderBare, olderTime, olderTime),
+      utimes(newerSkeleton, newerTime, newerTime),
+    ]);
+
+    const out = await runLatestContinuationNoteSource({ cwd: repo, args: {} });
+
+    if (out.result === null) throw new Error("expected continuation note");
+    expect(out.result.path).toBe(newerSkeleton);
+    expect(out.result.body).toBe("newer skeleton note\n");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("prefers the bare note when it is newer than the same-period skeleton", async () => {
+  const repo = makeRepo();
+  try {
+    const bare = join(repo, "docs/notes/maestro-continuation-2026-09-01-am.md");
+    const skeleton = join(repo, "docs/notes/maestro-continuation-2026-09-01-am.skeleton.md");
+    writeFileSync(bare, "newer bare note\n");
+    writeFileSync(skeleton, "older skeleton note\n");
+    const bareTime = new Date("2026-09-01T11:22:00.000Z");
+    const skeletonTime = new Date("2026-09-01T05:25:00.000Z");
+    await Promise.all([
+      utimes(bare, bareTime, bareTime),
+      utimes(skeleton, skeletonTime, skeletonTime),
+    ]);
+
+    const out = await runLatestContinuationNoteSource({ cwd: repo, args: {} });
+
+    if (out.result === null) throw new Error("expected continuation note");
+    expect(out.result.path).toBe(bare);
+    expect(out.result.body).toBe("newer bare note\n");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("ignores a newer unapproved .draft.md file and picks the bare note", async () => {
   const repo = makeRepo();
   try {

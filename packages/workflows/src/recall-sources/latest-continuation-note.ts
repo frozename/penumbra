@@ -19,13 +19,39 @@ export type LatestContinuationNoteOutput = {
 
 type Candidate = { path: string; mtimeMs: number };
 
+function periodKey(path: string): string {
+  if (path.endsWith(".skeleton.md")) return path.slice(0, -".skeleton.md".length) + ".md";
+  if (path.endsWith(".draft.md")) return path.slice(0, -".draft.md".length) + ".md";
+  return path;
+}
+
+function pickPerPeriod(candidates: Candidate[]): Candidate[] {
+  const winners = new Map<string, Candidate>();
+  for (const candidate of candidates) {
+    const key = periodKey(candidate.path);
+    const current = winners.get(key);
+    if (!current) {
+      winners.set(key, candidate);
+      continue;
+    }
+    const currentIsBare = !current.path.endsWith(".skeleton.md");
+    const candidateIsBare = !candidate.path.endsWith(".skeleton.md");
+    if (candidateIsBare !== currentIsBare) {
+      if (candidateIsBare) winners.set(key, candidate);
+      continue;
+    }
+    if (candidate.mtimeMs > current.mtimeMs) winners.set(key, candidate);
+  }
+  return [...winners.values()];
+}
+
 async function scanNotesDir(repoRoot: string, statFile: typeof stat): Promise<Candidate[]> {
   const out: Candidate[] = [];
   const notesDir = join(repoRoot, "docs/notes");
   const glob = new Glob("maestro-continuation-*.md");
   try {
     for await (const path of glob.scan({ cwd: notesDir, onlyFiles: true })) {
-      // Approval writes the bare note, so unapproved drafts are never boot candidates.
+      // Unapproved drafts are never candidates; among the rest, a period's bare note beats its .skeleton.md regardless of mtime (pickPerPeriod), then the newest period wins.
       if (path.endsWith(".draft.md")) continue;
       try {
         const info = await statFile(join(notesDir, path));
@@ -44,7 +70,7 @@ export async function runLatestContinuationNoteSource(
   input: LatestContinuationNoteInput,
 ): Promise<LatestContinuationNoteOutput> {
   const repoRoot = input.repoRoot ?? input.cwd;
-  const candidates = (await scanNotesDir(repoRoot, input.statFile ?? stat)).sort(
+  const candidates = pickPerPeriod(await scanNotesDir(repoRoot, input.statFile ?? stat)).sort(
     (a, b) => b.mtimeMs - a.mtimeMs,
   );
   const newest = candidates[0];
