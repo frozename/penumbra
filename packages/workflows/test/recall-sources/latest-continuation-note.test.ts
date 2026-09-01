@@ -35,6 +35,49 @@ test("picks the newest-mtime candidate among bare and .skeleton.md files", async
   }
 });
 
+test("ignores a newer unapproved .draft.md file and picks the bare note", async () => {
+  const repo = makeRepo();
+  try {
+    const approved = join(repo, "docs/notes/maestro-continuation-2026-05-02.md");
+    const draft = join(repo, "docs/notes/maestro-continuation-2026-05-03.draft.md");
+    writeFileSync(approved, "approved note\n");
+    writeFileSync(draft, "draft note\n");
+    const approvedTime = new Date("2026-05-02T00:00:00.000Z");
+    const draftTime = new Date("2026-05-03T00:00:00.000Z");
+    await Promise.all([
+      utimes(approved, approvedTime, approvedTime),
+      utimes(draft, draftTime, draftTime),
+    ]);
+
+    const out = await runLatestContinuationNoteSource({ cwd: repo, args: {} });
+
+    if (out.result === null) throw new Error("expected approved continuation note");
+    expect(out.result.path).toBe(approved);
+    expect(out.result.body).toBe("approved note\n");
+    expect(out.result.truncated).toBe(false);
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("returns null when only an unapproved .draft.md continuation file is present", async () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(
+      join(repo, "docs/notes/maestro-continuation-2026-05-03.draft.md"),
+      "draft note\n",
+    );
+
+    const out = await runLatestContinuationNoteSource({ cwd: repo, args: {} });
+
+    expect(out.result).toBeNull();
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("returns null, not a throw, when docs/notes/ is empty", async () => {
   const repo = makeRepo();
   try {

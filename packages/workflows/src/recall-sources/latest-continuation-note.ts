@@ -25,6 +25,8 @@ async function scanNotesDir(repoRoot: string, statFile: typeof stat): Promise<Ca
   const glob = new Glob("maestro-continuation-*.md");
   try {
     for await (const path of glob.scan({ cwd: notesDir, onlyFiles: true })) {
+      // Approval writes the bare note, so unapproved drafts are never boot candidates.
+      if (path.endsWith(".draft.md")) continue;
       try {
         const info = await statFile(join(notesDir, path));
         if (info.isFile()) out.push({ path: join("docs/notes", path), mtimeMs: info.mtimeMs });

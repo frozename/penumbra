@@ -13,6 +13,7 @@ The workflow is role-routed through `initial_agent: "executor"` with `tool_free:
 `use_worktree: false`, and `max_hops: 1`. It registers the draft for operator approval
 through `session_note_drafts`, supersedes older awaiting drafts for the same period, then
 atomically renames a sibling temp file into the final `.draft.md` path.
+`.draft.md` files are never boot candidates; only the approved `...{period}.md` is.
 
 Failure is fail-closed: if the current-period skeleton is absent, dispatch is unavailable,
 the chain times out, or the response is malformed, the workflow returns a skipped result and
