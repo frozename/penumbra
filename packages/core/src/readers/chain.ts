@@ -27,6 +27,7 @@ export interface AgentResponseEvent {
   text: string;
   error?: { message: string };
   ts: string;
+  handoff_id: string | null;
 }
 
 export class ChainReader {
@@ -70,30 +71,20 @@ export class ChainReader {
       ${orderSql}
       ${limitSql}
     `;
-    const getUnscoped = (): ResponseRow[] =>
-      this.db
-        .query<ResponseRow, string[]>(`${baseSelect}${orderLimit}`)
-        .all(conversation_id, ...projectArgs);
-    let rows = opts.handoff_id
-      ? this.db
-          .query<
-            ResponseRow,
-            string[]
-          >(`${baseSelect} AND json_valid(payload_json) AND json_extract(payload_json, '$.handoff_id') = ? ${orderLimit}`)
-          .all(conversation_id, ...projectArgs, opts.handoff_id)
-      : getUnscoped();
-    if (opts.handoff_id && rows.length === 0) {
-      // Compatibility fallback for pre-handoff_id agent-response rows ONLY:
-      // rows that carry a handoff_id belong to some OTHER handoff in the
-      // conversation — inheriting them would let a response-less handoff take
-      // credit for a sibling's output. Remove after one deployment cycle.
-      rows = this.db
-        .query<
-          ResponseRow,
-          string[]
-        >(`${baseSelect} AND (NOT json_valid(payload_json) OR json_extract(payload_json, '$.handoff_id') IS NULL) ${orderLimit}`)
-        .all(conversation_id, ...projectArgs);
-    }
+    // When a handoff scope is present, fail closed with an exact payload
+    // handoff_id match. Unstamped rows are only visible to unscoped callers.
+    const handoffScope = opts.handoff_id;
+    const rows =
+      handoffScope !== undefined
+        ? this.db
+            .query<
+              ResponseRow,
+              string[]
+            >(`${baseSelect} AND json_valid(payload_json) AND json_extract(payload_json, '$.handoff_id') = ? ${orderLimit}`)
+            .all(conversation_id, ...projectArgs, handoffScope)
+        : this.db
+            .query<ResponseRow, string[]>(`${baseSelect}${orderLimit}`)
+            .all(conversation_id, ...projectArgs);
 
     return rows.map((row) => {
       const payload = parseAgentResponsePayload(row.payload_json);
@@ -104,6 +95,7 @@ export class ChainReader {
             ? row.user_id
             : (row.source_detail ?? row.source),
         text: payload.text,
+        handoff_id: payload.handoff_id,
         ...(payload.error ? { error: { message: payload.error } } : {}),
       };
     });
@@ -350,18 +342,24 @@ export class ChainReader {
   }
 }
 
-function parseAgentResponsePayload(payload_json: string): { text: string; error?: string } {
+function parseAgentResponsePayload(payload_json: string): {
+  text: string;
+  error?: string;
+  handoff_id: string | null;
+} {
   try {
     const payload = JSON.parse(payload_json) as {
       response?: unknown;
       error?: unknown;
       text?: unknown;
+      handoff_id?: unknown;
     };
-    if (typeof payload.response === "string") return { text: payload.response };
-    if (typeof payload.text === "string") return { text: payload.text };
-    if (typeof payload.error === "string") return { text: "", error: payload.error };
-    return { text: "" };
+    const handoff_id = typeof payload.handoff_id === "string" ? payload.handoff_id : null;
+    if (typeof payload.response === "string") return { text: payload.response, handoff_id };
+    if (typeof payload.text === "string") return { text: payload.text, handoff_id };
+    if (typeof payload.error === "string") return { text: "", error: payload.error, handoff_id };
+    return { text: "", handoff_id };
   } catch {
-    return { text: "", error: "malformed payload_json" };
+    return { text: "", error: "malformed payload_json", handoff_id: null };
   }
 }

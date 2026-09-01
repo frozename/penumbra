@@ -272,12 +272,21 @@ export class PenumbraClient {
   async getChainResponses(
     conversation_id: string,
     which: "final" | "all" = "final",
+    handoff_id?: string,
   ): Promise<{
-    responses: { agent: string; text: string; error?: { message: string }; ts: string }[];
+    responses: {
+      agent: string;
+      text: string;
+      error?: { message: string };
+      ts: string;
+      handoff_id?: string | null;
+    }[];
   }> {
-    return await this.get(
-      `/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`,
-    );
+    let url = `/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`;
+    if (handoff_id !== undefined) {
+      url += `&handoff_id=${encodeURIComponent(handoff_id)}`;
+    }
+    return await this.get(url);
   }
   async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
     return await this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);

@@ -542,7 +542,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
   );
 
   const reliabilityResponses: AgentResponseEvent[] = responseSummary?.hasMeaningfulOutput
-    ? [{ text: "output", ts: nowIso, agent: handoff.to_agent }]
+    ? [{ text: "output", ts: nowIso, agent: handoff.to_agent, handoff_id: input.handoff_id }]
     : responses;
   const reliabilityReport = classifyDispatchReliabilityFromDb(
     opts.db,

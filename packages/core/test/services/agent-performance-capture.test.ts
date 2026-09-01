@@ -420,7 +420,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
     }
   });
 
-  it("keeps daemon fallback and worker-provided meaningful-output classification aligned", () => {
+  it("keeps daemon-read and worker-provided meaningful-output classification aligned", () => {
     db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
       "review_adversarial",
       "h1",
@@ -438,11 +438,12 @@ describe("captureAgentPerformanceFromReconciler", () => {
       "2026-04-30T12:01:55Z",
       "conv",
       JSON.stringify({
+        handoff_id: "h1",
         response: text,
       }),
     );
 
-    const fallbackRow = captureAgentPerformanceFromDispatch({
+    const daemonReadRow = captureAgentPerformanceFromDispatch({
       db,
       uuid: () => "perf-threshold-response",
       clock: () => new Date("2026-04-30T12:03:00Z"),
@@ -463,8 +464,8 @@ describe("captureAgentPerformanceFromReconciler", () => {
       },
     });
 
-    expect(fallbackRow.outcome).toBe("completed_with_output");
-    expect(workerRow.outcome).toBe(fallbackRow.outcome);
+    expect(daemonReadRow.outcome).toBe("completed_with_output");
+    expect(workerRow.outcome).toBe(daemonReadRow.outcome);
   });
 
   it("treats worker-provided meaningful-output fields as authoritative", () => {
@@ -1053,7 +1054,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.notes).toBe("completed");
   });
 
-  it("promotes review output from legacy agent-response rows without handoff_id", () => {
+  it("promotes review output from stamped agent-response rows", () => {
     db.prepare(`UPDATE handoffs SET chain_task_type = ? WHERE handoff_id = ?`).run(
       "review_adversarial",
       "h1",
@@ -1064,12 +1065,13 @@ describe("captureAgentPerformanceFromReconciler", () => {
       VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
     `,
     ).run(
-      "legacy-r1",
+      "stamped-r1",
       "2026-04-30T12:01:55Z",
       "2026-04-30T12:01:55Z",
       "conv",
       JSON.stringify({
-        response: "Legacy review output with enough substance to count as a completed response.",
+        handoff_id: "h1",
+        response: "Stamped review output with enough substance to count as a completed response.",
       }),
     );
 

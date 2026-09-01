@@ -118,13 +118,17 @@ export function formatChainWait(r: ChainWaitResult, elapsedMsHint = 0): string {
 }
 
 export interface ChainGetResponseResult {
-  responses: { ts: string; agent: string; text: string }[];
+  responses: { ts: string; agent: string; text: string; handoff_id?: string | null }[];
 }
 export function formatChainGetResponse(r: ChainGetResponseResult): string {
   const n = r.responses.length;
-  const agent = n > 0 ? (r.responses[n - 1]?.agent ?? "no-agent") : "no-agent";
+  const response = n > 0 ? r.responses[n - 1] : undefined;
+  const agent = response?.agent ?? "no-agent";
+  const id = response?.handoff_id
+    ? `  ${dimColor(`h-${truncateId(response.handoff_id.replaceAll("-", ""), 7)}`)}`
+    : "";
   const noun = n === 1 ? "response" : "responses";
-  return `● chain_get_response  ${agent}  ${String(n)} ${noun}`;
+  return `● chain_get_response  ${agent}${id}  ${String(n)} ${noun}`;
 }
 
 export interface HandoffGetResult {

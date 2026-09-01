@@ -611,6 +611,8 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
         return Promise.resolve(
           Response.json({ report: { status: "complete", trustworthy: true } }),
         );
+      if (req.url.includes("/chains/responses"))
+        return Promise.resolve(Response.json({ responses: [] }));
       if (req.url.includes("/worktrees/"))
         return Promise.resolve(
           Response.json({
@@ -625,6 +627,7 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
 
     await client.getDispatchTimeline("h-1");
     await client.dispatchAudit("h-1");
+    await client.getChainResponses("conv 1", "final", "h/first");
     await client.inspectWorktree("h-1");
     await client.grepInWorktree("h-1", {
       pattern: "ACP_WRITE_OK",
@@ -636,8 +639,33 @@ test("PenumbraClient dispatch and worktree read methods call daemon routes", asy
     expect(seen).toEqual([
       "GET /dispatch/events?handoff_id=h-1",
       "GET /dispatch/audit?handoff_id=h-1",
+      "GET /chains/responses?conversation_id=conv%201&which=final&handoff_id=h%2Ffirst",
       "GET /worktrees/h-1",
       "POST /worktrees/h-1/grep",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PenumbraClient.getChainResponses forwards an explicitly empty handoff_id", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-client-empty-handoff-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    const seen: string[] = [];
+    const fetchImpl: FetchImpl = (input, init) => {
+      const req = toRequest(input, init);
+      const url = new URL(req.url);
+      seen.push(`${req.method} ${url.pathname}${url.search}`);
+      return Promise.resolve(Response.json({ responses: [] }));
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+
+    await client.getChainResponses("conv 1", "final", "");
+
+    expect(seen).toEqual([
+      "GET /chains/responses?conversation_id=conv%201&which=final&handoff_id=",
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });

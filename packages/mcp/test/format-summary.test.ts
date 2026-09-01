@@ -128,6 +128,21 @@ describe("per-tool formatters", () => {
     ).toBe("● chain_get_response  claude-acp-sonnet  1 response");
   });
 
+  test("formatChainGetResponse includes handoff_id prefix when present", () => {
+    expect(
+      formatChainGetResponse({
+        responses: [
+          {
+            ts: "...",
+            agent: "claude-acp-sonnet",
+            text: "...",
+            handoff_id: "7d3a91ab-1234-5678",
+          },
+        ],
+      }),
+    ).toBe("● chain_get_response  claude-acp-sonnet  h-7d3a91a…  1 response");
+  });
+
   test("formatChainGetResponse plural", () => {
     expect(
       formatChainGetResponse({

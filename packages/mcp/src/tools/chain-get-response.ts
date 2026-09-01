@@ -13,6 +13,13 @@ export const ChainGetResponseInputShape = {
     .optional()
     .default("final")
     .describe("Whether to return only the final response or all responses in chronological order."),
+  handoff_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Scope to the response of one hop (the handoff_id returned by chain_start). Omit for the latest response across the conversation.",
+    ),
 };
 
 interface NotFoundBody {
@@ -20,10 +27,16 @@ interface NotFoundBody {
 }
 
 export const chainGetResponseHandler =
-  (daemon: DaemonClient): ToolHandler<{ conversation_id: string; which?: "final" | "all" }> =>
+  (
+    daemon: DaemonClient,
+  ): ToolHandler<{ conversation_id: string; which?: "final" | "all"; handoff_id?: string }> =>
   async (args): Promise<ToolResult> => {
     try {
-      const payload = await daemon.getChainResponses(args.conversation_id, args.which);
+      const payload = await daemon.getChainResponses(
+        args.conversation_id,
+        args.which,
+        args.handoff_id,
+      );
       return {
         content: [
           {

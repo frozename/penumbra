@@ -366,3 +366,126 @@ test("getMessages with types filter combines with limit", () => {
   expect(events.length).toBe(2);
   expect(events.every((e) => e.event_type === "agent-response")).toBe(true);
 });
+
+test("getResponses returns each response handoff_id and scopes by handoff_id", () => {
+  insertEvent({
+    event_id: "ev-hop-1",
+    ts: isoAt(1),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "planner",
+    payload_json: JSON.stringify({ response: "first hop", handoff_id: "h-first" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-2",
+    ts: isoAt(2),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "executor",
+    payload_json: JSON.stringify({ response: "second hop", handoff_id: "h-second" }),
+  });
+
+  const all = reader.getResponses("c-hop", "all");
+  expect(all.map((response) => response.handoff_id)).toEqual(["h-first", "h-second"]);
+
+  const scoped = reader.getResponses("c-hop", "all", { handoff_id: "h-first" });
+  expect(scoped).toEqual([
+    {
+      agent: "planner",
+      text: "first hop",
+      ts: isoAt(1),
+      handoff_id: "h-first",
+    },
+  ]);
+});
+
+test("getResponses with handoff_id does not fall back to unstamped sibling rows", () => {
+  insertEvent({
+    event_id: "ev-unstamped-sibling",
+    ts: isoAt(1),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "sibling",
+    payload_json: JSON.stringify({ response: "sibling output" }),
+  });
+
+  const scoped = reader.getResponses("c-hop", "all", { handoff_id: "h-requested" });
+
+  expect(scoped).toEqual([]);
+});
+
+test("getResponses with handoff_id returns only exact matching rows", () => {
+  insertEvent({
+    event_id: "ev-hop-1",
+    ts: isoAt(1),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "planner",
+    payload_json: JSON.stringify({ response: "first hop", handoff_id: "h-first" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-2",
+    ts: isoAt(2),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "executor",
+    payload_json: JSON.stringify({ response: "second hop", handoff_id: "h-second" }),
+  });
+  insertEvent({
+    event_id: "ev-unstamped",
+    ts: isoAt(3),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "legacy",
+    payload_json: JSON.stringify({ response: "legacy unstamped" }),
+  });
+
+  const scoped = reader.getResponses("c-hop", "all", { handoff_id: "h-second" });
+
+  expect(scoped).toEqual([
+    {
+      agent: "executor",
+      text: "second hop",
+      ts: isoAt(2),
+      handoff_id: "h-second",
+    },
+  ]);
+});
+
+test("getResponses final with handoff_id returns that hop latest response", () => {
+  insertEvent({
+    event_id: "ev-hop-1-old",
+    ts: isoAt(1),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "planner",
+    payload_json: JSON.stringify({ response: "first hop old", handoff_id: "h-first" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-1-new",
+    ts: isoAt(2),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "planner",
+    payload_json: JSON.stringify({ response: "first hop new", handoff_id: "h-first" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-2",
+    ts: isoAt(3),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    user_id: "executor",
+    payload_json: JSON.stringify({ response: "later second hop", handoff_id: "h-second" }),
+  });
+
+  const scoped = reader.getResponses("c-hop", "final", { handoff_id: "h-first" });
+
+  expect(scoped).toEqual([
+    {
+      agent: "planner",
+      text: "first hop new",
+      ts: isoAt(2),
+      handoff_id: "h-first",
+    },
+  ]);
+});

@@ -2179,7 +2179,15 @@ export function chainsResponsesRoute(req: Request, services: Services): Response
   }
   const whichParam = url.searchParams.get("which");
   const which = whichParam === "all" ? "all" : "final";
-  const responses = services.chainReader.getResponses(conversation_id, which);
+  const handoffId = url.searchParams.get("handoff_id");
+  if (handoffId !== null && handoffId.length === 0) {
+    return json({ error: { code: "invalid_param", message: "handoff_id must be non-empty" } }, 400);
+  }
+  const responses = services.chainReader.getResponses(
+    conversation_id,
+    which,
+    handoffId ? { handoff_id: handoffId } : {},
+  );
   if (responses.length === 0 && !services.chainReader.conversationExists(conversation_id)) {
     return json(
       { error: { code: "not_found", message: "no chain events found for conversation" } },

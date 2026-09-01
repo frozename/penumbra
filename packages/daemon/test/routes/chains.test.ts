@@ -109,7 +109,13 @@ type ChainHistoryBody = {
 };
 
 type ChainResponseListBody = {
-  responses: { agent: string; text: string; ts: string; error?: { message: string } }[];
+  responses: {
+    agent: string;
+    text: string;
+    ts: string;
+    handoff_id?: string | null;
+    error?: { message: string };
+  }[];
 };
 
 type ChainMessagesBody = {
@@ -3181,6 +3187,107 @@ test("GET /chains/responses returns agent responses for a conversation", async (
   expect(bodyAll.responses[1]?.text).toBe("hello from executor");
 });
 
+test("GET /chains/responses can scope final response to one handoff_id", async () => {
+  const services = tempServices();
+  services.db
+    .query(
+      `INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "h-first",
+      "2026-04-26T12:00:00Z",
+      null,
+      "c-hop",
+      "user",
+      "planner",
+      null,
+      "first",
+      "completed",
+    );
+  services.db
+    .query(
+      `INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "h-second",
+      "2026-04-26T12:05:00Z",
+      null,
+      "c-hop",
+      "planner",
+      "executor",
+      null,
+      "second",
+      "completed",
+    );
+  writeAgentResponse(services, {
+    event_id: "ev-hop-1",
+    ts: "2026-04-26T12:01:00Z",
+    user_id: "planner",
+    session_id: "c-hop",
+    payload_json: { response: "first hop", handoff_id: "h-first" },
+  });
+  writeAgentResponse(services, {
+    event_id: "ev-hop-2",
+    ts: "2026-04-26T12:06:00Z",
+    user_id: "executor",
+    session_id: "c-hop",
+    payload_json: { response: "second hop", handoff_id: "h-second" },
+  });
+
+  const latestRes = chainsResponsesRoute(
+    new Request("http://x/chains/responses?conversation_id=c-hop&which=final"),
+    services,
+  );
+  expect(latestRes.status).toBe(200);
+  const latestBody = await readJsonBody<ChainResponseListBody>(latestRes);
+  expect(latestBody.responses).toEqual([
+    {
+      agent: "executor",
+      text: "second hop",
+      ts: "2026-04-26T12:06:00Z",
+      handoff_id: "h-second",
+    },
+  ]);
+
+  const scopedRes = chainsResponsesRoute(
+    new Request("http://x/chains/responses?conversation_id=c-hop&which=final&handoff_id=h-first"),
+    services,
+  );
+  expect(scopedRes.status).toBe(200);
+  const scopedBody = await readJsonBody<ChainResponseListBody>(scopedRes);
+  expect(scopedBody.responses).toEqual([
+    {
+      agent: "planner",
+      text: "first hop",
+      ts: "2026-04-26T12:01:00Z",
+      handoff_id: "h-first",
+    },
+  ]);
+});
+
+test("GET /chains/responses returns empty scoped responses for unstamped sibling rows", async () => {
+  const services = tempServices();
+  writeAgentResponse(services, {
+    event_id: "ev-unstamped-sibling",
+    ts: "2026-04-26T12:01:00Z",
+    user_id: "planner",
+    session_id: "c-hop",
+    payload_json: { response: "unstamped sibling" },
+  });
+
+  const res = chainsResponsesRoute(
+    new Request("http://x/chains/responses?conversation_id=c-hop&which=all&handoff_id=h-first"),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseListBody>(res);
+  expect(body.responses).toEqual([]);
+});
+
 test("GET /chains/responses returns agent name from user_id for production agent-response rows", async () => {
   const services = tempServices();
   writeAgentResponse(services, {
@@ -3200,7 +3307,12 @@ test("GET /chains/responses returns agent name from user_id for production agent
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.responses).toEqual([
-    { agent: "planner", text: "hello from planner", ts: "2026-04-26T12:00:00Z" },
+    {
+      agent: "planner",
+      text: "hello from planner",
+      ts: "2026-04-26T12:00:00Z",
+      handoff_id: null,
+    },
   ]);
 });
 
@@ -3227,6 +3339,15 @@ test("GET /chains/responses returns 404 only for unknown conversations and prese
   });
 });
 
+test("GET /chains/responses returns 400 for empty handoff_id", () => {
+  const services = tempServices();
+  const res = chainsResponsesRoute(
+    new Request("http://x/chains/responses?conversation_id=c1&handoff_id="),
+    services,
+  );
+  expect(res.status).toBe(400);
+});
+
 test("GET /chains/responses decodes multiline responses and surfaces error payloads", async () => {
   const services = tempServices();
   writeAgentResponse(services, {
@@ -3251,12 +3372,18 @@ test("GET /chains/responses decodes multiline responses and surfaces error paylo
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   expect(body.responses).toEqual([
-    { agent: "planner", text: "line1\nline2", ts: "2026-04-26T12:00:00Z" },
+    {
+      agent: "planner",
+      text: "line1\nline2",
+      ts: "2026-04-26T12:00:00Z",
+      handoff_id: null,
+    },
     {
       agent: "planner",
       text: "",
       error: { message: "adapter crashed" },
       ts: "2026-04-26T12:01:00Z",
+      handoff_id: null,
     },
   ]);
 });
@@ -3287,6 +3414,7 @@ test("GET /chains/responses handles malformed payload_json rows without 500ing",
       text: "",
       error: { message: "malformed payload_json" },
       ts: "2026-04-26T12:00:00Z",
+      handoff_id: null,
     },
   ]);
 });
@@ -3325,7 +3453,12 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
   expect(resFinal.status).toBe(200);
   const bodyFinal = await resFinal.json();
   expect(bodyFinal.responses).toEqual([
-    { agent: "reviewer", text: "third", ts: "2026-04-26T12:00:00Z" },
+    {
+      agent: "reviewer",
+      text: "third",
+      ts: "2026-04-26T12:00:00Z",
+      handoff_id: null,
+    },
   ]);
 
   const resAll = chainsResponsesRoute(

@@ -40,6 +40,7 @@ export const ChainResponseEventSchema = z
     agent: z.string(),
     text: z.string(),
     ts: z.string(),
+    handoff_id: z.string().nullable().optional(),
     error: z.object({ message: z.string() }).optional(),
   })
   .loose();
