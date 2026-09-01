@@ -24,9 +24,13 @@ import {
   evaluateTriggerEvent,
   executeWorkflow,
 } from "@penumbra/workflows";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 
+import {
+  hydrateSessionHandoffTemplateCtx,
+  recordContinuitySessionEvents,
+  sessionStampFromBodyPrefix,
+} from "../workflows/session-stamp.js";
 import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
 import { conversationsCancelRoute } from "./conversations.js";
@@ -35,7 +39,6 @@ const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
 const EVENT_TIME_WINDOW_MS_DEFAULT = 86_400_000;
-const SKELETON_STAMP_READ_LIMIT_BYTES = 4096;
 const SESSION_HANDOFF_DRAFT_RESULT_MAX_BYTES = 64 * 1024;
 
 export const MAX_DRAFTS_PER_SESSION = 20;
@@ -529,15 +532,17 @@ function prepareWorkflowRun(
 }
 
 function attachRunPersistHandlers(
-  runPromise: Promise<unknown>,
+  runPromise: Promise<WorkflowExecutionResult>,
   workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined,
   workflowRunId: string | null,
   start: number,
   services: Services,
+  onSuccess?: (result: WorkflowExecutionResult) => void | Promise<void>,
 ): void {
   void runPromise
     .then(
-      async (result: unknown) => {
+      async (result: WorkflowExecutionResult) => {
+        await onSuccess?.(result);
         if (workflowRunId && workflowRuns) {
           await persistRunResult(workflowRuns, workflowRunId, start, result);
         }
@@ -573,6 +578,107 @@ type WorkflowExecOpts = {
   sessionId: string;
   observationCtx?: { sessionId?: string | null; projectId?: string | null };
 };
+
+type WorkflowExecutionResult = Awaited<ReturnType<typeof executeWorkflow>>;
+
+function buildWorkflowRunTemplateCtx(opts: {
+  services: Services;
+  sessionId: string | null;
+  start: number;
+  project: string;
+  args: Record<string, unknown>;
+  repoRoot: string;
+}): TemplateVarContext {
+  return {
+    now: (): Date => new Date(),
+    project: opts.project,
+    sessionStart: resolveSessionStart(opts.services.db, opts.sessionId, opts.start),
+    tz: process.env.TZ ?? "UTC",
+    args: opts.args,
+    repoRoot: opts.repoRoot,
+    sessionId: opts.sessionId,
+  };
+}
+
+function resolveWorkflowTemplateCtx(opts: {
+  name: string;
+  entry: NonNullable<ReturnType<Registry["getEntry"]>>;
+  templateCtx: TemplateVarContext;
+  repoRoot: string;
+}): TemplateVarContext {
+  return hydrateSessionHandoffTemplateCtx({
+    name: opts.name,
+    spec: opts.entry.spec,
+    templateCtx: opts.templateCtx,
+    repoRoot: opts.repoRoot,
+  }).templateCtx;
+}
+
+function buildWorkflowRunExecOpts(opts: {
+  prepared: WorkflowRunPrepared;
+  services: Services;
+  project: string;
+  repoRoot: string;
+  templateCtx: TemplateVarContext;
+  agentRegistry: { listAgents: () => { name: string }[] } | undefined;
+  workflowRunId: string | null;
+}): WorkflowExecOpts {
+  return {
+    entry: opts.prepared.entry,
+    services: opts.services,
+    cwd: opts.prepared.cwd,
+    project: opts.project,
+    repoRoot: opts.repoRoot,
+    args: opts.prepared.args,
+    templateCtx: opts.templateCtx,
+    agentRegistry: opts.agentRegistry,
+    workflowRunId: opts.workflowRunId,
+    sessionId: "daemon-direct",
+  };
+}
+
+function buildRunContinuityRecorder(opts: {
+  services: Services;
+  sessionId: string | null;
+  cwd: string;
+  project: string;
+  entry: NonNullable<ReturnType<Registry["getEntry"]>>;
+}): (result: WorkflowExecutionResult) => void {
+  return (result: WorkflowExecutionResult): void => {
+    recordContinuitySessionEvents({
+      services: opts.services,
+      sessionId: opts.sessionId,
+      transcriptPath: null,
+      cwd: opts.cwd,
+      project: opts.project,
+      specName: opts.entry.spec.name,
+      artifacts: result.artifacts,
+      trigger: "run",
+    });
+  };
+}
+
+async function persistWaitedWorkflowRun(opts: {
+  workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined;
+  workflowRunId: string | null;
+  start: number;
+  services: Services;
+  result: WorkflowExecutionResult;
+}): Promise<void> {
+  if (!opts.workflowRunId || !opts.workflowRuns) return;
+  try {
+    await persistRunResult(opts.workflowRuns, opts.workflowRunId, opts.start, opts.result);
+  } catch (err) {
+    opts.services.log.error(
+      {
+        component: "workflow_run_persist",
+        workflow_run_id: opts.workflowRunId,
+        err: serializeError(err),
+      },
+      "workflow_run wait:true persistence failed; returning result to caller",
+    );
+  }
+}
 
 type DaemonWorkflowCtx = WorkflowCtx & {
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
@@ -666,43 +772,6 @@ function startWorkflowExecution(
   });
 }
 
-async function waitAndPersist(
-  runPromise: Promise<unknown>,
-  workflowRuns: WorkflowRunsRegistryWithLifecycle | undefined,
-  workflowRunId: string | null,
-  start: number,
-  services: Services,
-): Promise<Response> {
-  const result = await runPromise;
-  if (workflowRunId && workflowRuns) {
-    workflowRuns.setExecutionRecord(workflowRunId, {
-      status: "completed",
-      started_at: start,
-      finished_at: Date.now(),
-      result,
-    });
-    try {
-      await workflowRuns.recordResult(workflowRunId, result);
-    } catch (err) {
-      // Persistence failure must not clobber the completed in-memory record or
-      // discard the caller's real result. Mark persistence_failed and fall
-      // through — do not rethrow into the outer catch, whose recordError path
-      // overwrites the completed record via hydrateRecord's running-row
-      // passthrough.
-      workflowRuns.setPersistenceStatus(workflowRunId, "persistence_failed");
-      services.log.error(
-        {
-          component: "workflow_run_persist",
-          workflow_run_id: workflowRunId,
-          err: serializeError(err),
-        },
-        "workflow_run wait:true persistence failed; returning result to caller",
-      );
-    }
-  }
-  return json(result);
-}
-
 export async function workflowsRunRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
   if (!reg)
@@ -720,19 +789,9 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   if (!scope.ok) return scope.response;
   const { project, repoRoot } = scope;
 
-  const start = Date.now();
-  const sessionStart = resolveSessionStart(services.db, prepared.body.session_id ?? null, start);
-  const templateCtx: TemplateVarContext = {
-    now: (): Date => new Date(),
-    project,
-    sessionStart,
-    tz: process.env.TZ ?? "UTC",
-    args,
-    repoRoot,
-    sessionId: prepared.body.session_id ?? null,
-  };
   const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
   const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
+  const start = Date.now();
   const workflowRunId = workflowRuns?.register(name, project) ?? null;
   if (workflowRuns && workflowRunId === null) {
     return json(
@@ -744,24 +803,53 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   }
   const shouldWait = prepared.body.wait ?? false;
   try {
-    const execOpts: WorkflowExecOpts = {
-      entry,
+    const sessionId = prepared.body.session_id ?? null;
+    const baseTemplateCtx = buildWorkflowRunTemplateCtx({
       services,
-      cwd,
+      sessionId,
+      start,
+      project,
+      args,
+      repoRoot,
+    });
+    const templateCtx = resolveWorkflowTemplateCtx({
+      name,
+      entry,
+      templateCtx: baseTemplateCtx,
+      repoRoot,
+    });
+    const execOpts = buildWorkflowRunExecOpts({
+      prepared,
+      services,
       project,
       repoRoot,
-      args,
       templateCtx,
       agentRegistry,
       workflowRunId,
-      sessionId: "daemon-direct",
-    };
+    });
     const bundle = await composeWorkflowBundle(execOpts);
     const runPromise = startWorkflowExecution(execOpts, bundle);
+    const recordOnSuccess = buildRunContinuityRecorder({
+      services,
+      sessionId,
+      cwd,
+      project,
+      entry,
+    });
     if (shouldWait) {
-      return await waitAndPersist(runPromise, workflowRuns, workflowRunId, start, services);
+      const result = await runPromise;
+      recordOnSuccess(result);
+      await persistWaitedWorkflowRun({ workflowRuns, workflowRunId, start, services, result });
+      return json(result);
     }
-    attachRunPersistHandlers(runPromise, workflowRuns, workflowRunId, start, services);
+    attachRunPersistHandlers(
+      runPromise,
+      workflowRuns,
+      workflowRunId,
+      start,
+      services,
+      recordOnSuccess,
+    );
     return json({ workflow_run_id: workflowRunId, started_at: start });
   } catch (error) {
     if (workflowRunId && workflowRuns) {
@@ -954,8 +1042,6 @@ function recordWorkflowTriggerSessionEvent(opts: {
 }
 
 const SESSION_EVENT_META_MAX_BYTES = 8192;
-const SESSION_STAMP_RE =
-  /^<!--\s*penumbra:session\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->/i;
 
 type ContinuationNoteRecall = {
   path: string;
@@ -975,15 +1061,6 @@ function continuationNoteFromBundle(
 
 function relatedSessionIdFromContinuationNote(body: string): string | null {
   return sessionStampFromBodyPrefix(body);
-}
-
-function sessionStampFromBodyPrefix(body: string): string | null {
-  const lines = body.split(/\r?\n/, 5);
-  for (const line of lines) {
-    const match = SESSION_STAMP_RE.exec(line);
-    if (match) return match[1] ?? null;
-  }
-  return null;
 }
 
 function truncateUtf8ToBytes(value: string, maxBytes: number): string {
@@ -1057,102 +1134,6 @@ function recordBootPickupSessionEvent(opts: {
     return false;
   }
   return true;
-}
-
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
-  return err instanceof Error && "code" in err;
-}
-
-function sessionStampFromSkeletonBody(body: string): string | null {
-  return sessionStampFromBodyPrefix(body);
-}
-
-function periodKeyFromSkeletonPath(path: string): string | null {
-  const match = /^maestro-continuation-(.+)\.skeleton\.md$/.exec(basename(path));
-  return match?.[1] ?? null;
-}
-
-function readSkeletonStampPrefix(path: string): string {
-  const buffer = Buffer.alloc(SKELETON_STAMP_READ_LIMIT_BYTES);
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "r");
-    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-function statIfExists(path: string): ReturnType<typeof statSync> | null {
-  try {
-    return statSync(path);
-  } catch (err) {
-    if (isErrnoException(err) && err.code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-function recordContinuitySessionEvents(opts: {
-  services: Services;
-  body: WorkflowTriggerBody;
-  cwd: string;
-  project: string;
-  specName: string;
-  artifacts: string[];
-  runResult?: unknown;
-}): void {
-  if (opts.specName !== "session-handoff") return;
-  const skeletonArtifact = opts.artifacts.find(
-    (artifact) => periodKeyFromSkeletonPath(artifact) !== null,
-  );
-  if (!skeletonArtifact) return;
-  const skeletonPath = resolve(skeletonArtifact);
-  const periodKey = periodKeyFromSkeletonPath(skeletonPath);
-  if (periodKey === null) return;
-  try {
-    const skeletonStampPrefix = readSkeletonStampPrefix(skeletonPath);
-    const skeletonStat = statSync(skeletonPath);
-    opts.services.sessionEventLog.record({
-      session_id: opts.body.session_id ?? null,
-      related_session_id: null,
-      project_id: opts.project !== "unknown" ? opts.project : null,
-      cwd: opts.cwd,
-      transcript_path: opts.body.transcript_path ?? null,
-      ref_path: skeletonPath,
-      kind: "continuity.skeleton_generated",
-      ts: opts.services.clock().toISOString(),
-      meta: {
-        session_stamp: sessionStampFromSkeletonBody(skeletonStampPrefix),
-        byte_size: skeletonStat.size,
-        period_key: periodKey,
-      },
-    });
-
-    const barePath = skeletonPath.replace(/\.skeleton\.md$/, ".md");
-    const bareStat = statIfExists(barePath);
-    if (!bareStat || bareStat.mtime.getTime() <= skeletonStat.mtime.getTime()) return;
-    opts.services.sessionEventLog.record({
-      session_id: opts.body.session_id ?? null,
-      related_session_id: null,
-      project_id: opts.project !== "unknown" ? opts.project : null,
-      cwd: opts.cwd,
-      transcript_path: opts.body.transcript_path ?? null,
-      ref_path: barePath,
-      kind: "continuity.note_superseded",
-      ts: opts.services.clock().toISOString(),
-      meta: {
-        skeleton_path: skeletonPath,
-        note_mtime: bareStat.mtime.toISOString(),
-        skeleton_mtime: skeletonStat.mtime.toISOString(),
-      },
-    });
-  } catch (err) {
-    opts.services.log.warn(
-      { err, kind: "continuity.skeleton_generated" },
-      "continuity session event ingest failed; continuing workflow hook",
-    );
-  }
 }
 
 type SessionHandoffDraftResult = {
@@ -1324,7 +1305,7 @@ async function executeMatchedTriggerSpec(opts: {
   };
   const start = Date.now();
   const sessionStart = resolveSessionStart(services.db, sessionIdFromBody, start);
-  const templateCtx: TemplateVarContext = {
+  const baseTemplateCtx: TemplateVarContext = {
     now: (): Date => new Date(),
     project,
     sessionStart,
@@ -1335,6 +1316,12 @@ async function executeMatchedTriggerSpec(opts: {
     args,
     sessionId: sessionIdFromBody,
   };
+  const templateCtx = resolveWorkflowTemplateCtx({
+    name: spec.name,
+    entry,
+    templateCtx: baseTemplateCtx,
+    repoRoot,
+  });
   const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
   const workflowRuns = services.workflowRuns;
   const workflowRunId = workflowRuns?.register(spec.name, project) ?? null;
@@ -1379,12 +1366,13 @@ async function executeMatchedTriggerSpec(opts: {
     const result = await startWorkflowExecution(execOpts, bundle);
     recordContinuitySessionEvents({
       services,
-      body,
+      sessionId: sessionIdFromBody,
+      transcriptPath: body.transcript_path ?? null,
       cwd,
       project,
       specName: spec.name,
       artifacts: result.artifacts,
-      runResult: result.runResult,
+      trigger: "hook",
     });
     recordDraftComposedSessionEvent({
       services,

@@ -71,7 +71,9 @@ export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string 
         case "session_id":
           return ctx.sessionId ?? "";
         case "session_stamp_value":
-          return ctx.sessionId ?? "none";
+          return ctx.sessionId ?? "";
+        case "session_stamp_line":
+          return ctx.sessionId ? `<!-- penumbra:session ${ctx.sessionId} -->` : "";
         case "now_minus_24h":
           return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
         case "cwd":

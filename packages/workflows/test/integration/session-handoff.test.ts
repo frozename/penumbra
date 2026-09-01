@@ -312,7 +312,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
   }
 });
 
-test("session-handoff skeleton first line uses none stamp without a session id", async () => {
+test("session-handoff skeleton omits the stamp line without a session id", async () => {
   const root = mkdtempSync(join(tmpdir(), "sh-none-stamp-"));
   const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
   const playbookSrc = join(import.meta.dir, "../../../../plugin/playbooks/session-handoff");
@@ -365,7 +365,69 @@ test("session-handoff skeleton first line uses none stamp without a session id",
     const emitted = readdirSync(notesDir).find((name) => name.endsWith(".skeleton.md"));
     if (!emitted) throw new Error("expected emitted skeleton");
     const body = readFileSync(join(notesDir, emitted), "utf8");
-    expect(body.split("\n")[0]).toBe("<!-- penumbra:session none -->");
+    expect(body).not.toContain("penumbra:session");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("session-handoff skeleton stamps the live session id when present", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sh-live-stamp-"));
+  const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
+  const playbookSrc = join(import.meta.dir, "../../../../plugin/playbooks/session-handoff");
+  try {
+    const pbDir = join(root, "playbooks/session-handoff");
+    mkdirSync(pbDir, { recursive: true });
+    writeFileSync(
+      join(pbDir, "playbook.md"),
+      readFileSync(join(playbookSrc, "playbook.md"), "utf8"),
+    );
+    mkdirSync(join(root, "workflows"), { recursive: true });
+
+    const reg = await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    });
+    const spec = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "pre-compact" })[0]!;
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+
+    const fixedNow = new Date("2026-08-31T18:00:00Z");
+    const sessionId = "123e4567-e89b-12d3-a456-426614174555";
+    const templateCtx: TemplateVarContext = {
+      now: (): Date => fixedNow,
+      project: "penumbra",
+      sessionStart: "2026-08-31T17:00:00.000Z",
+      tz: "UTC",
+      cwd: repo,
+      repoRoot: root,
+      sessionId,
+    };
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repo,
+      project: "penumbra",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens,
+    });
+
+    await executeWorkflow({
+      spec,
+      bundle,
+      storageRoot: root,
+      repoRoot: root,
+      templateCtx,
+      captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
+    });
+
+    const notesDir = join(root, "docs/notes");
+    const emitted = readdirSync(notesDir).find((name) => name.endsWith(".skeleton.md"));
+    if (!emitted) throw new Error("expected emitted skeleton");
+    const body = readFileSync(join(notesDir, emitted), "utf8");
+    expect(body.split("\n")[0]).toBe(`<!-- penumbra:session ${sessionId} -->`);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });

@@ -35,7 +35,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDaemonFetchHandler } from "@src/serve.js";
+import { createDaemonFetchHandler, runWorkflowTriggerEntry } from "@src/serve.js";
+import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 
 try {
   if (process.platform === "darwin") {
@@ -55,6 +56,7 @@ function startHarness(
   opts: {
     workflowRegistry?: Services["workflowRegistry"];
     projectRegistry?: Services["projectRegistry"];
+    workflowRuns?: Services["workflowRuns"];
   } = {},
 ): Harness {
   const db = new Database(":memory:");
@@ -71,6 +73,7 @@ function startHarness(
     clock: () => new Date("2026-05-01T00:00:03.000Z"),
     workflowRegistry: opts.workflowRegistry,
     projectRegistry: opts.projectRegistry,
+    workflowRuns: opts.workflowRuns,
   });
   const handler = createDaemonFetchHandler({ services, token });
   return {
@@ -141,6 +144,7 @@ type ContinuityPlaybookOpts = {
   output?: string;
   outputPath?: string;
   body: string;
+  workflowRuns?: Services["workflowRuns"];
 };
 
 type SessionEventRows = ReturnType<typeof SessionEventsListResponseSchema.parse>["events"];
@@ -162,6 +166,7 @@ async function continuityHarness(
     projectRegistry: new ProjectRegistry(
       new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
     ),
+    workflowRuns: opts.workflowRuns,
     workflowRegistry: await buildRegistry({
       playbooksDir: join(root, "playbooks"),
       workflowsDir: join(root, "workflows"),
@@ -251,6 +256,20 @@ function findSkeletonPath(repo: string): string {
   const skeleton = entries.find((entry) => entry.endsWith(".skeleton.md"));
   if (!skeleton) throw new Error("expected skeleton output");
   return join(realpathSync(repo), "docs/notes", skeleton);
+}
+
+function readSessionEventMeta(event: SessionEventRows[number]): Record<string, unknown> {
+  if (typeof event.meta !== "object" || event.meta === null) {
+    throw new Error("expected event meta object");
+  }
+  return event.meta as Record<string, unknown>;
+}
+
+function createWorkflowRunsDb(): Database {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  return db;
 }
 
 test("POST /session-events with an unknown kind returns 400", async () => {
@@ -646,11 +665,13 @@ test("a session-handoff run records continuity.skeleton_generated with ref_path 
       session_stamp?: unknown;
       byte_size?: unknown;
       period_key?: unknown;
+      trigger?: unknown;
     };
     expect(meta.session_stamp).toBe(stamp);
     expect(typeof meta.byte_size).toBe("number");
     expect((meta.byte_size as number) > 0).toBe(true);
     expect(typeof meta.period_key).toBe("string");
+    expect(meta.trigger).toBe("hook");
   } finally {
     h.stop();
   }
@@ -669,7 +690,9 @@ test("skeleton_generated reads the session stamp from the first five skeleton li
     if (typeof event.meta !== "object" || event.meta === null) {
       throw new Error("expected skeleton meta object");
     }
-    expect((event.meta as { session_stamp?: unknown }).session_stamp).toBe(stamp);
+    const meta = event.meta as { session_stamp?: unknown; trigger?: unknown };
+    expect(meta.session_stamp).toBe(stamp);
+    expect(meta.trigger).toBe("hook");
   } finally {
     h.stop();
   }
@@ -691,6 +714,196 @@ test("a session-handoff skeleton ref_path resolves back to the source session", 
     expect(h.services.sessionEventLog.resolveSourceSessionForNote(skeletonPath)).toBe(
       "s-continuity",
     );
+  } finally {
+    h.stop();
+  }
+});
+
+test("POST /workflows/run for session-handoff with wait:true records continuity rows with trigger run", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174666";
+  const workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-1",
+    clock: () => new Date("2026-05-01T00:00:00Z"),
+    db: createWorkflowRunsDb(),
+    storageRoot: tmpdir(),
+  });
+  const { harness: h, repo } = await continuityHarness({
+    workflowRuns,
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    const res = await h.fetch("/workflows/run", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: "session-handoff", cwd: repo, wait: true, session_id: stamp }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ outcome: "success" });
+
+    const events = await listContinuityEvents(h);
+    const skeleton = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(skeleton.session_id).toBe(stamp);
+    expect(readSessionEventMeta(skeleton).trigger).toBe("run");
+  } finally {
+    h.stop();
+  }
+});
+
+test("POST /workflows/run for session-handoff without a session id reuses an existing stamped skeleton", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174777";
+  const workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-2",
+    clock: () => new Date("2026-05-01T00:00:00Z"),
+    db: createWorkflowRunsDb(),
+    storageRoot: tmpdir(),
+  });
+  const { harness: h, repo } = await continuityHarness({
+    workflowRuns,
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    const res = await h.fetch("/workflows/run", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: "session-handoff", cwd: repo, wait: true }),
+    });
+    expect(res.status).toBe(200);
+    await res.json();
+
+    const events = await listContinuityEvents(h);
+    const skeleton = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(skeleton.session_id).toBeNull();
+    expect(readSessionEventMeta(skeleton).session_stamp).toBe(stamp);
+    expect(readSessionEventMeta(skeleton).trigger).toBe("run");
+  } finally {
+    h.stop();
+  }
+});
+
+test("POST /workflows/trigger for session-handoff without a session id preserves an existing stamped skeleton", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174a11";
+  const outputPath = "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md";
+  const { harness: h, repo } = await continuityHarness({
+    outputPath,
+    body: "{{session_stamp_line}}\nUpdated skeleton\n",
+  });
+  try {
+    const skeletonPath = join(repo, outputPath);
+    mkdirSync(join(repo, "docs/notes"), { recursive: true });
+    writeFileSync(skeletonPath, `<!-- penumbra:session ${stamp} -->\nExisting skeleton\n`);
+
+    const res = await h.fetch("/workflows/trigger", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        event: { kind: "lifecycle", event: "pre-compact" },
+        cwd: repo,
+        transcript_path: "/tmp/transcript-continuity-hook.jsonl",
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const skeletonBody = readFileSync(skeletonPath, "utf8");
+    expect(skeletonBody.split(/\r?\n/, 1)[0]).toBe(`<!-- penumbra:session ${stamp} -->`);
+
+    const events = await listContinuityEvents(h);
+    const skeleton = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(skeleton.session_id).toBeNull();
+    expect(readSessionEventMeta(skeleton).session_stamp).toBe(stamp);
+    expect(readSessionEventMeta(skeleton).trigger).toBe("hook");
+  } finally {
+    h.stop();
+  }
+});
+
+test("POST /workflows/run for session-handoff with wait:false records continuity rows after completion", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174888";
+  const workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-3",
+    clock: () => new Date("2026-05-01T00:00:00Z"),
+    db: createWorkflowRunsDb(),
+    storageRoot: tmpdir(),
+  });
+  const { harness: h, repo } = await continuityHarness({
+    workflowRuns,
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    const res = await h.fetch("/workflows/run", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: "session-handoff", cwd: repo, session_id: stamp }),
+    });
+    expect(res.status).toBe(200);
+    const runBody = (await res.json()) as { workflow_run_id?: string };
+    expect(runBody.workflow_run_id).toBe("wfrun-3");
+
+    const timeoutMs = 5_000;
+    const deadline = Date.now() + timeoutMs;
+    let completed = false;
+    while (Date.now() < deadline) {
+      const statusRes = await h.fetch("/workflows/status", {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ workflow_run_id: "wfrun-3", cwd: repo }),
+      });
+      const statusBody = (await statusRes.json()) as { status?: string };
+      if (statusBody.status === "completed") {
+        completed = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (!completed) {
+      throw new Error(`workflow run did not complete within ${String(timeoutMs)} ms`);
+    }
+
+    const events = await listContinuityEvents(h);
+    const skeleton = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(skeleton.session_id).toBe(stamp);
+    expect(readSessionEventMeta(skeleton).trigger).toBe("run");
+  } finally {
+    h.stop();
+  }
+});
+
+test("refresh sweeper records continuity rows and note_superseded for session-handoff", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174999";
+  const { harness: h, repo } = await continuityHarness({
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    const notesDir = join(repo, "docs/notes");
+    mkdirSync(notesDir, { recursive: true });
+    const now = new Date();
+    const date = now.toISOString().slice(0, 10);
+    const period = now.getUTCHours() < 12 ? "am" : "pm";
+    const skeletonPath = join(notesDir, `maestro-continuation-${date}-${period}.skeleton.md`);
+    writeFileSync(skeletonPath, `<!-- penumbra:session ${stamp} -->\nold skeleton\n`);
+    const barePath = join(notesDir, `maestro-continuation-${date}-${period}.md`);
+    writeFileSync(barePath, "stale bare note\n");
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(barePath, future, future);
+
+    await runWorkflowTriggerEntry(
+      {
+        services: h.services,
+        workflowRegistry: h.services.workflowRegistry,
+      } as unknown as Parameters<typeof runWorkflowTriggerEntry>[0],
+      "session-handoff",
+      repo,
+      "penumbra",
+    );
+
+    const events = await listContinuityEvents(h);
+    const skeleton = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    const superseded = onlyContinuityEvent(events, "continuity.note_superseded");
+    expect(skeleton.session_id).toBeNull();
+    expect(readSessionEventMeta(skeleton).trigger).toBe("refresh");
+    expect(readSessionEventMeta(skeleton).session_stamp).toBe(stamp);
+    expect(superseded.session_id).toBeNull();
+    expect(readSessionEventMeta(superseded).trigger).toBe("refresh");
   } finally {
     h.stop();
   }
@@ -753,7 +966,9 @@ test("skeleton_generated reads the session stamp from a large skeleton body", as
     if (typeof event.meta !== "object" || event.meta === null) {
       throw new Error("expected skeleton meta object");
     }
-    expect((event.meta as { session_stamp?: unknown }).session_stamp).toBe(stamp);
+    const meta = event.meta as { session_stamp?: unknown; trigger?: unknown };
+    expect(meta.session_stamp).toBe(stamp);
+    expect(meta.trigger).toBe("hook");
   } finally {
     h.stop();
   }

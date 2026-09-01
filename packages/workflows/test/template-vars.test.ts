@@ -36,16 +36,17 @@ test("resolves {{session_id}} and {{session_stamp_value}} when session id is pre
   );
 });
 
-test("resolves absent {{session_id}} to empty and {{session_stamp_value}} to none", () => {
+test("resolves absent {{session_id}} to empty and {{session_stamp_value}} / {{session_stamp_line}} to empty", () => {
   expect(resolveTemplateVars("id={{session_id}};stamp={{session_stamp_value}}", ctx)).toBe(
-    "id=;stamp=none",
+    "id=;stamp=",
   );
+  expect(resolveTemplateVars("line={{session_stamp_line}}", ctx)).toBe("line=");
   expect(
     resolveTemplateVars("id={{session_id}};stamp={{session_stamp_value}}", {
       ...ctx,
       sessionId: null,
     }),
-  ).toBe("id=;stamp=none");
+  ).toBe("id=;stamp=");
 });
 
 test("resolves {{now_minus_24h}} from the injected clock as UTC ISO", () => {

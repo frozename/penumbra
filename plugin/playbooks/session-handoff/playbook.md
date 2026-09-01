@@ -66,7 +66,7 @@ run:
   kind: markdown-template
 ---
 
-<!-- penumbra:session {{session_stamp_value}} -->
+{{session_stamp_line}}
 
 # Maestro continuation prompt — {{date}} {{period}}
 

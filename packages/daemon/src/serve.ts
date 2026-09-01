@@ -325,6 +325,10 @@ import { ExtraWorkerSupervisor } from "./workers/supervisor.js";
 import { createT0RetentionWorker } from "./workers/t0-retention.js";
 import { createRollupWorker } from "./workers/t1-rollup.js";
 import { createT2PromotionWorker, type T2PromotionStatus } from "./workers/t2-promotion.js";
+import {
+  hydrateSessionHandoffTemplateCtx,
+  recordContinuitySessionEvents,
+} from "./workflows/session-stamp.js";
 
 type Services = CoreServices;
 const PROVIDER_REOFFER_SWEEP_INTERVAL_MS = 30_000;
@@ -434,7 +438,7 @@ function evaluateStartupLlmRoleFloors(opts: ServeOpts, dreamConfig: DreamConfig)
   logLlmRoleFloorViolations({ log: opts.services.log, evaluation });
 }
 
-async function runWorkflowTriggerEntry(
+export async function runWorkflowTriggerEntry(
   opts: ServeOpts,
   name: string,
   cwd: string,
@@ -453,6 +457,12 @@ async function runWorkflowTriggerEntry(
     cwd,
     repoRoot: cwd,
   };
+  const hydratedTemplateCtx = hydrateSessionHandoffTemplateCtx({
+    name,
+    spec: entry.spec,
+    templateCtx,
+    repoRoot: cwd,
+  });
   const services = opts.services;
   const registry = services.agentRegistry;
   const agentRegistry = registry
@@ -466,13 +476,15 @@ async function runWorkflowTriggerEntry(
     sources: entry.spec.recall,
     budgetTokens: entry.spec.recall_budget_tokens,
     agentRegistry,
-    templateCtx,
+    templateCtx: hydratedTemplateCtx.templateCtx,
   });
-  await executeWorkflow({
+  const result = await executeWorkflow({
     spec: entry.spec,
     bundle,
     fn: entry.fn,
     storageRoot: opts.services.storageRoot,
+    repoRoot: cwd,
+    templateCtx: hydratedTemplateCtx.templateCtx,
     captureCtx: {
       db: opts.services.db,
       project,
@@ -481,6 +493,16 @@ async function runWorkflowTriggerEntry(
       machineId: process.env.HOSTNAME ?? "unknown",
     },
     captureKind: "refresh",
+  });
+  recordContinuitySessionEvents({
+    services: opts.services,
+    sessionId: null,
+    transcriptPath: null,
+    cwd,
+    project,
+    specName: entry.spec.name,
+    artifacts: result.artifacts,
+    trigger: "refresh",
   });
 }
 
