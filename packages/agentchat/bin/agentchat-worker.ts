@@ -114,6 +114,7 @@ import {
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
+  silentFailureRetrySuppressionReason,
 } from "../src/worker/silent-failure-retry.js";
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
 import { ThoughtCapture } from "../src/worker/thought-capture.js";
@@ -791,17 +792,33 @@ async function maybeCaptureDispatchOutcome(
   // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
   // recovery handoff message; further captures on retry handoffs are skipped.
   if (!shouldRetryHandoffForSilentFailure(handoff, perf)) {
-    if (shouldRetryForSilentFailure(perf) && isNonMutatingTaskType(handoff.chain_task_type)) {
-      log.info(
-        {
-          handoff_id: handoff.handoff_id,
-          agent: handoff.to_agent,
-          task_type: handoff.chain_task_type,
-          reliability_status: perf.reliability_status ?? null,
-          reason: "workload_expects_no_changes",
-        },
-        "silent-failure retry suppressed for workload that expects no worktree changes",
-      );
+    if (shouldRetryForSilentFailure(perf)) {
+      const suppressionReason = silentFailureRetrySuppressionReason(handoff);
+      if (suppressionReason) {
+        log.info(
+          {
+            handoff_id: handoff.handoff_id,
+            agent: handoff.to_agent,
+            task_type: handoff.chain_task_type,
+            reliability_status: perf.reliability_status ?? null,
+            branch_base: handoff.branch_base ?? null,
+            chain_max_hops: handoff.chain_max_hops ?? null,
+            reason: suppressionReason,
+          },
+          "silent-failure retry suppressed by chain boundary",
+        );
+      } else if (isNonMutatingTaskType(handoff.chain_task_type)) {
+        log.info(
+          {
+            handoff_id: handoff.handoff_id,
+            agent: handoff.to_agent,
+            task_type: handoff.chain_task_type,
+            reliability_status: perf.reliability_status ?? null,
+            reason: "workload_expects_no_changes",
+          },
+          "silent-failure retry suppressed for workload that expects no worktree changes",
+        );
+      }
     }
     return;
   }
@@ -882,6 +899,8 @@ async function tryAutoRetrySilentFailure(
       task_type: failedHandoff.chain_task_type ?? undefined,
       ...branchFields,
       branch_name: failedHandoff.branch_name ?? null,
+      branch_base: failedHandoff.branch_base ?? null,
+      chain_max_hops: failedHandoff.chain_max_hops ?? null,
       message: failedHandoff.message,
       next_agent: nextAgent,
     });

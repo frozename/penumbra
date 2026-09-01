@@ -1,4 +1,8 @@
-import { NON_MUTATING_TASK_TYPES, slugifyBranchSegment } from "@penumbra/core";
+import {
+  ChainStartRequestSchema,
+  NON_MUTATING_TASK_TYPES,
+  slugifyBranchSegment,
+} from "@penumbra/core";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -158,6 +162,26 @@ describe("shouldRetryHandoffForSilentFailure", () => {
     expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(true);
   });
 
+  test("does not retry silent failures from handoffs with a branch_base", () => {
+    const handoff = {
+      dispatch_kind: "workflow",
+      chain_task_type: "implement_small",
+      branch_base: "feat/fix-round-one",
+      chain_max_hops: 2,
+    } as const;
+    expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
+  });
+
+  test("does not retry silent failures from single-hop chains", () => {
+    const handoff = {
+      dispatch_kind: null,
+      chain_task_type: "implement_small",
+      branch_base: null,
+      chain_max_hops: 1,
+    } as const;
+    expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
+  });
+
   test("does not retry a failed non-mutating handoff with a silent_failure note", () => {
     const handoff = { dispatch_kind: null, chain_task_type: "review_adversarial" };
     const perf = {
@@ -167,6 +191,19 @@ describe("shouldRetryHandoffForSilentFailure", () => {
     } as const;
     expect(shouldRetryHandoffForSilentFailure(handoff, perf)).toBe(false);
   });
+
+  test.each(["review_adversarial", "smoke_test"])(
+    "keeps non-mutating %s exempt when branch_base and max_hops would otherwise be eligible",
+    (chain_task_type) => {
+      const handoff = {
+        dispatch_kind: null,
+        chain_task_type,
+        branch_base: null,
+        chain_max_hops: 3,
+      };
+      expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
+    },
+  );
 });
 
 describe("buildSilentRetryPayload", () => {
@@ -202,6 +239,28 @@ describe("buildSilentRetryPayload", () => {
     expect(p.project_id).toBe("penumbra");
     expect(p.task_type).toBe("implement_small");
     expect(p.initial_agent).toBe("codex-acp-fast");
+  });
+
+  test("forwards chain max_hops and branch_base through the real chain-start schema", () => {
+    const p = buildSilentRetryPayload({
+      ...base,
+      branch_base: "feat/fix-round-one",
+      chain_max_hops: 3,
+    });
+    const parsed = ChainStartRequestSchema.parse(p);
+    expect(parsed.max_hops).toBe(3);
+    expect(parsed.branch_base).toBe("feat/fix-round-one");
+  });
+
+  test("omits max_hops and branch_base from the chain-start request when original values are absent", () => {
+    const p = buildSilentRetryPayload({
+      ...base,
+      branch_base: null,
+      chain_max_hops: null,
+    });
+    const parsed = ChainStartRequestSchema.parse(p);
+    expect(parsed.max_hops).toBeUndefined();
+    expect(parsed.branch_base).toBeUndefined();
   });
 
   test("forwards the original task_name and branch_type", () => {

@@ -43,6 +43,8 @@ export interface RetryHandoffContext {
     | null
     | undefined;
   chain_task_type?: string | null | undefined;
+  branch_base?: string | null | undefined;
+  chain_max_hops?: number | null | undefined;
 }
 
 export interface SilentRetryPayloadInput {
@@ -54,6 +56,8 @@ export interface SilentRetryPayloadInput {
   task_name?: string;
   branch_type?: string;
   branch_name?: string | null;
+  branch_base?: string | null;
+  chain_max_hops?: number | null;
   message: string;
   next_agent: string;
 }
@@ -66,6 +70,8 @@ export interface SilentRetryPayload {
   task_type: string | undefined;
   task_name?: string;
   branch_type?: string;
+  max_hops?: number;
+  branch_base?: string;
   use_worktree: true;
   trust_mode: "all";
 }
@@ -83,6 +89,10 @@ export interface RetryAgentCandidate {
  * canonical core bias-effect helper while staying easy to build in tests.
  */
 export type RoutingBiasLike = RoutingBiasEffectInput;
+
+export type SilentRetrySuppressionReason =
+  | "retry_suppressed_branch_base"
+  | "retry_suppressed_single_shot";
 
 export interface SelectRetryAgentInput {
   /** agent_rank candidates, already ordered best-first. */
@@ -166,7 +176,20 @@ export function shouldRetryHandoffForSilentFailure(
   // Non-mutating dispatches leave worktrees untouched by design; retrying their prompts on
   // role-routed seats can fabricate a replacement result (observed 2026-08-26).
   if (isNonMutatingTaskType(handoff.chain_task_type)) return false;
+  if (silentFailureRetrySuppressionReason(handoff)) return false;
   return shouldRetryForSilentFailure(perf);
+}
+
+export function silentFailureRetrySuppressionReason(
+  handoff: RetryHandoffContext,
+): SilentRetrySuppressionReason | null {
+  if (typeof handoff.branch_base === "string" && handoff.branch_base.length > 0) {
+    return "retry_suppressed_branch_base";
+  }
+  if (handoff.chain_max_hops === 1) {
+    return "retry_suppressed_single_shot";
+  }
+  return null;
 }
 
 export function isNonMutatingTaskType(taskType: string | null | undefined): boolean {
@@ -189,6 +212,12 @@ export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentR
     ...(input.task_name === undefined ? {} : { task_name: input.task_name }),
     ...(input.branch_type === undefined ? {} : { branch_type: input.branch_type }),
   };
+  const chainFields = {
+    ...(typeof input.chain_max_hops === "number" ? { max_hops: input.chain_max_hops } : {}),
+    ...(typeof input.branch_base === "string" && input.branch_base.length > 0
+      ? { branch_base: input.branch_base }
+      : {}),
+  };
   return {
     initial_agent: input.next_agent,
     message: `${SILENT_RETRY_PREFIX} retry_of=${input.failed_handoff_id} prior_agent=${input.failed_to_agent}\n\n${input.message}`,
@@ -196,6 +225,7 @@ export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentR
     project_id: input.project_id,
     task_type: input.task_type,
     ...branchFields,
+    ...chainFields,
     use_worktree: true,
     trust_mode: "all",
   };

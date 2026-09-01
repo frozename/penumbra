@@ -40,6 +40,7 @@ const warnCalls: LogCall[] = [];
 const infoCalls: LogCall[] = [];
 const errorCalls: LogCall[] = [];
 let worktreePath = process.cwd();
+const tempRoots: string[] = [];
 
 // HandoffRow's Zod preprocessors make the inferred TS type narrower than the
 // runtime schema accepts. ONE documented `as unknown as HandoffRow` cast in
@@ -113,6 +114,12 @@ const execMock = mock((argv: string[], _opts: { cwd: string }): Promise<ExecResu
   if (cmd.startsWith("git diff --name-only")) {
     return Promise.resolve({ stdout: diffOutput, stderr: "" });
   }
+  if (cmd.startsWith("bun test")) {
+    return Promise.resolve({
+      stdout: " 1 pass\n 0 fail\nRan 1 tests across 1 file. [1.00ms]\n",
+      stderr: "",
+    });
+  }
   if (cmd === "git rev-parse HEAD") {
     return Promise.resolve({ stdout: "branch-head\n", stderr: "" });
   }
@@ -161,6 +168,9 @@ const getWorktreeSpy = spyOn(WorktreeManager.prototype, "getWorktree").mockImple
 
 afterAll(() => {
   getWorktreeSpy.mockRestore();
+  for (const tmpRoot of tempRoots) {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 beforeEach(() => {
@@ -171,11 +181,42 @@ beforeEach(() => {
   warnCalls.length = 0;
   infoCalls.length = 0;
   errorCalls.length = 0;
-  worktreePath = process.cwd();
+  worktreePath = makeFixtureWorktree();
 });
 
 function makeReconciler(): ReturnType<typeof createMergeReconciler> {
   return createMergeReconciler(mockDeps);
+}
+
+function writePackageJson(
+  root: string,
+  packageName: string,
+  dependencies: Record<string, string> = {},
+): void {
+  fs.mkdirSync(path.join(root, "packages", packageName), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "packages", packageName, "package.json"),
+    JSON.stringify({
+      name: `@penumbra/${packageName}`,
+      dependencies,
+    }),
+  );
+}
+
+function makeFixtureWorktree(): string {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "merge-reconciler-typecheck-filter-"));
+  tempRoots.push(tmpRoot);
+  fs.writeFileSync(path.join(tmpRoot, "tsconfig.json"), JSON.stringify({ references: [] }));
+  writePackageJson(tmpRoot, "core");
+  writePackageJson(tmpRoot, "daemon", {
+    "@penumbra/agentchat": "workspace:*",
+    "@penumbra/core": "workspace:*",
+  });
+  writePackageJson(tmpRoot, "agentchat", { "@penumbra/core": "workspace:*" });
+  writePackageJson(tmpRoot, "mcp", { "@penumbra/core": "workspace:*" });
+  writePackageJson(tmpRoot, "workflows", { "@penumbra/core": "workspace:*" });
+  fs.mkdirSync(path.join(tmpRoot, "node_modules", "@penumbra", "core"), { recursive: true });
+  return tmpRoot;
 }
 
 test("clean post-merge typecheck passes", async () => {
