@@ -1,7 +1,7 @@
 import { ChainStartRequestSchema, SessionNoteDrafts, type ChainStartRequest } from "@penumbra/core";
 import type { RecallBundle, WorkflowCtx, WorkflowSpec } from "@penumbra/workflows";
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { open, readFile, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
@@ -181,8 +181,21 @@ function isInside(path: string, root: string): boolean {
 }
 
 function resolveAllowedTranscriptPath(path: string, ctx: WorkflowCtx): string | null {
-  const resolvedPath = resolve(path);
-  const allowedRoots = [resolve(homedir(), ".claude/projects"), resolve(ctx.storageRoot)];
+  let resolvedPath: string;
+  try {
+    resolvedPath = realpathSync(resolve(path));
+  } catch {
+    return null;
+  }
+  const allowedRoots = [resolve(homedir(), ".claude/projects"), resolve(ctx.storageRoot)].flatMap(
+    (root) => {
+      try {
+        return [realpathSync(root)];
+      } catch {
+        return [];
+      }
+    },
+  );
   return allowedRoots.some((root) => isInside(resolvedPath, root)) ? resolvedPath : null;
 }
 

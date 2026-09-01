@@ -9,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -347,6 +348,81 @@ test("outside transcript paths are ignored and reported while drafting from the 
     expect(result.warnings).toContain("transcript ignored: outside allowed roots");
     expect(prompt).toContain('<transcript_tail omitted="true" />');
     expect(prompt).not.toContain("<transcript_tail>\n");
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a symlink transcript inside an allowed root that targets outside is ignored", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-transcript-symlink-"));
+  const outsideRoot = mkdtempSync(join(tmpdir(), "session-handoff-draft-transcript-secret-"));
+  const db = freshDb();
+  try {
+    writeSkeleton(root);
+    const outsideBytes = "outside-secret-transcript-bytes";
+    const outsideTranscriptPath = join(outsideRoot, "outside.jsonl");
+    const symlinkPath = join(root, "linked-transcript.jsonl");
+    writeFileSync(outsideTranscriptPath, `${outsideBytes}\n`);
+    symlinkSync(outsideTranscriptPath, symlinkPath);
+    let prompt = "";
+
+    const result = (await fn(
+      makeCtx({
+        root,
+        db,
+        args: { transcript_path: symlinkPath },
+        chainStart: async (input) => {
+          prompt = String((input as { message?: unknown }).message ?? "");
+          return Response.json({
+            conversation_id: "conversation-symlink",
+            handoff_id: "handoff-symlink",
+          });
+        },
+      }),
+      recall(),
+    )) as DraftRunResult;
+
+    expect(result.draft_id).toBeDefined();
+    expect(result.warnings).toContain("transcript ignored: outside allowed roots");
+    expect(prompt).toContain('<transcript_tail omitted="true" />');
+    expect(prompt).not.toContain(outsideBytes);
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outsideRoot, { recursive: true, force: true });
+  }
+});
+
+test("a transcript file inside an allowed root is still read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-transcript-inside-"));
+  const db = freshDb();
+  try {
+    writeSkeleton(root);
+    const transcriptBytes = "inside-transcript-bytes";
+    const transcriptPath = join(root, "transcript.jsonl");
+    writeFileSync(transcriptPath, `${transcriptBytes}\n`);
+    let prompt = "";
+
+    const result = (await fn(
+      makeCtx({
+        root,
+        db,
+        args: { transcript_path: transcriptPath },
+        chainStart: async (input) => {
+          prompt = String((input as { message?: unknown }).message ?? "");
+          return Response.json({
+            conversation_id: "conversation-inside",
+            handoff_id: "handoff-inside",
+          });
+        },
+      }),
+      recall(),
+    )) as DraftRunResult;
+
+    expect(result.draft_id).toBeDefined();
+    expect(result.warnings).not.toContain("transcript ignored: outside allowed roots");
+    expect(prompt).toContain(`<transcript_tail>\n${transcriptBytes}\n`);
   } finally {
     db.close();
     rmSync(root, { recursive: true, force: true });
