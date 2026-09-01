@@ -353,6 +353,68 @@ test("budget trim drops other timestamp-less recalls before the continuation not
   }
 });
 
+test("session_first_moves survives budget exhaustion intact", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-protected-first-moves-"));
+  const db = new Database(":memory:");
+  try {
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    writeFileSync(join(dir, "tracked.txt"), "tracked\n");
+    Bun.spawnSync({ cmd: ["git", "init", "-q", "-b", "main"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "config", "user.email", "t@t"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "config", "user.name", "t"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "commit", "-q", "-m", "initial"], cwd: dir });
+    mkdirSync(join(dir, "docs/notes"), { recursive: true });
+    writeFileSync(
+      join(dir, "docs/notes/maestro-continuation-2026-05-05.md"),
+      makeContinuationNote(12_000),
+    );
+
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      repoRoot: dir,
+      project: "demo",
+      sources: [
+        { source: "latest_continuation_note", args: { max_bytes: 65_536 } },
+        { source: "session_first_moves", args: {} },
+      ],
+      budgetTokens: 400,
+    });
+
+    const firstMoves = bundle.byKey["session_first_moves"] as {
+      head_sha: string | null;
+      origin_main_sha: string | null;
+      daemon_healthy: boolean;
+      worker_pids: number[];
+      gate_deltas: { filtered: number | null; neardup: number | null };
+    } | null;
+    const note = bundle.byKey["latest_continuation_note"] as {
+      body: string;
+      truncated: boolean;
+    };
+
+    expect(firstMoves).not.toBeNull();
+    if (firstMoves === null) throw new Error("session_first_moves was dropped");
+    expect(firstMoves.head_sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(firstMoves.origin_main_sha).toBeNull();
+    expect(typeof firstMoves.daemon_healthy).toBe("boolean");
+    expect(Array.isArray(firstMoves.worker_pids)).toBe(true);
+    expect(firstMoves.gate_deltas).toEqual({ filtered: 0, neardup: 0 });
+    expect(note.body.startsWith("NOTE_START\n")).toBe(true);
+    expect(note.body).toContain("… [recall budget: body truncated to ");
+    expect(note.truncated).toBe(true);
+    expect(
+      bundle.warnings.some((w) => w.includes("protected session_first_moves kept intact")),
+    ).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
 test("a continuation note larger than the whole budget is head-truncated, never blanked", async () => {
   const dir = mkdtempSync(join(tmpdir(), "recall-truncated-note-"));
   const db = new Database(":memory:");

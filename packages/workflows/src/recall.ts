@@ -320,6 +320,11 @@ function maybeTruncateSizedItem(
   return replacement;
 }
 
+function protectedKeepIntactOverage(s: SizedItem, cur: number, budget: number): number {
+  const availableForItem = Math.max(0, budget - (cur - s.tokens));
+  return Math.max(0, s.tokens - availableForItem);
+}
+
 function applyArrayTrim(
   val: unknown[],
   toDrop: Set<unknown>,
@@ -359,6 +364,14 @@ function trimToBudget(
     if (replacement !== null) {
       replacements.set(s.ref, replacement);
       cur = cur - s.tokens + tokenSize(replacement);
+      continue;
+    }
+    if (protectedTrimRank(s.key) > 0) {
+      warnings.push(
+        `recall budget: protected ${s.key} kept intact (${String(
+          protectedKeepIntactOverage(s, cur, budget),
+        )} tokens over)`,
+      );
       continue;
     }
     toDrop.add(s.ref);
