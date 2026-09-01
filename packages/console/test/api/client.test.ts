@@ -79,6 +79,35 @@ const minimalHandoffRow = {
   parent_handoff_id: null,
 };
 
+const minimalSessionEventRow = {
+  id: 1,
+  session_id: "session-1234567890",
+  related_session_id: null,
+  project_id: "penumbra",
+  cwd: "/repo/penumbra",
+  transcript_path: null,
+  ref_path: "/notes/session-note.md",
+  kind: "session.start",
+  ts: "2026-09-01T10:00:00.000Z",
+  meta: null,
+};
+
+const minimalSessionDraftRow = {
+  draft_id: "draft-1",
+  session_id: "session-1234567890",
+  project_id: "penumbra",
+  period_key: "2026-09-01-am",
+  skeleton_path: "/notes/skeleton.md",
+  draft_path: "/notes/draft.md",
+  note_path: "/notes/note.md",
+  handoff_id: null,
+  status: "awaiting_approval",
+  composed_at: "2026-09-01T10:00:00.000Z",
+  reviewed_at: null,
+  composed_event_id: 1,
+  review_event_id: null,
+};
+
 describe("DaemonClient", () => {
   test("health() includes credentials: 'include' and Authorization header", async () => {
     handler = (): Response => jsonResponse({ status: "ok" });
@@ -252,5 +281,47 @@ describe("DaemonClient", () => {
     const result: UsageQuotaResponse = await client.getQuotaStatus();
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/usage/quota_status");
     expect((result as { arbitrary?: { shape?: number } }).arbitrary?.shape).toBe(1);
+  });
+
+  test("listSessionEvents forwards encoded filters and tolerates malformed rows", async () => {
+    handler = (): Response =>
+      jsonResponse({
+        events: [
+          minimalSessionEventRow,
+          { ...minimalSessionEventRow, id: 2, kind: "continuity.future_kind" },
+        ],
+      });
+    const client = makeClient();
+    const result = await client.listSessionEvents({
+      session_id: "session/one",
+      kind_prefix: "continuity.",
+      since: "2026-09-01T10:00:00.000Z",
+      limit: 20,
+    });
+
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/session-events");
+    expect(url.searchParams.get("session_id")).toBe("session/one");
+    expect(url.searchParams.get("kind_prefix")).toBe("continuity.");
+    expect(url.searchParams.get("since")).toBe("2026-09-01T10:00:00.000Z");
+    expect(url.searchParams.get("limit")).toBe("20");
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0]!.ok).toBe(true);
+    expect(result.events[1]!.ok).toBe(false);
+  });
+
+  test("listSessionNoteDrafts forwards status and limit filters", async () => {
+    handler = (): Response => jsonResponse({ drafts: [minimalSessionDraftRow] });
+    const client = makeClient();
+    const result = await client.listSessionNoteDrafts({
+      status: "awaiting_approval",
+      limit: 20,
+    });
+
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/session-notes/drafts");
+    expect(url.searchParams.get("status")).toBe("awaiting_approval");
+    expect(url.searchParams.get("limit")).toBe("20");
+    expect(result.drafts[0]!.draft_id).toBe("draft-1");
   });
 });

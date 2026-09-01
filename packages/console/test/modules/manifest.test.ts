@@ -30,3 +30,14 @@ describe("registrar module", () => {
     expect(registrar?.label).toBe("Plans");
   });
 });
+
+describe("sessions module", () => {
+  test("MODULES includes an available sessions entry", () => {
+    const sessions = MODULES.find((module) => module.id === "sessions");
+    expect(sessions).toBeDefined();
+    expect(sessions?.available).toBe(true);
+    expect(sessions?.path).toBe("/sessions");
+    expect(sessions?.label).toBe("Sessions");
+    expect(getModule("sessions")).toBeDefined();
+  });
+});

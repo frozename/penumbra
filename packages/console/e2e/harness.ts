@@ -73,6 +73,35 @@ export interface RegistrarEventRow {
   created_at: number;
 }
 
+export interface SessionEventRow {
+  id?: number;
+  session_id: string | null;
+  related_session_id: string | null;
+  project_id: string | null;
+  cwd: string | null;
+  transcript_path: string | null;
+  ref_path: string | null;
+  kind: string;
+  ts: string;
+  meta: unknown | null;
+}
+
+export interface SessionNoteDraftRow {
+  draft_id: string;
+  session_id: string | null;
+  project_id: string | null;
+  period_key: string;
+  skeleton_path: string;
+  draft_path: string;
+  note_path: string;
+  handoff_id: string | null;
+  status: "awaiting_approval" | "approved" | "edited" | "rejected";
+  composed_at: string;
+  reviewed_at: string | null;
+  composed_event_id: number | null;
+  review_event_id: number | null;
+}
+
 export interface E2EHarness {
   port: number;
   token: string;
@@ -92,6 +121,8 @@ export interface E2EHarness {
       created_at?: number;
     },
   ) => void;
+  setSessionEvents: (rows: SessionEventRow[]) => void;
+  setSessionNoteDrafts: (rows: SessionNoteDraftRow[]) => void;
   setQuotaStatus: (data: {
     dispatched_count: number;
     cap: number;
@@ -145,6 +176,8 @@ interface HarnessState {
   registrarPhases: RegistrarPhaseRow[];
   registrarEvents: RegistrarEventRow[];
   registrarSeq: number;
+  sessionEvents: SessionEventRow[];
+  sessionNoteDrafts: SessionNoteDraftRow[];
   quotaStatus: {
     dispatched_count: number;
     cap: number;
@@ -173,6 +206,8 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     registrarPhases: [],
     registrarEvents: [],
     registrarSeq: 0,
+    sessionEvents: [],
+    sessionNoteDrafts: [],
     quotaStatus: { dispatched_count: 0, cap: 6, subscription: { synth_total: 0 } },
     session: {
       id: "no-session",
@@ -197,6 +232,8 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     state.registrarPhases = [];
     state.registrarEvents = [];
     state.registrarSeq = 0;
+    state.sessionEvents = [];
+    state.sessionNoteDrafts = [];
     state.quotaStatus = {
       dispatched_count: 0,
       cap: 6,
@@ -342,6 +379,32 @@ export async function startE2EHarness(): Promise<E2EHarness> {
 
     if (method === "GET" && simplePath === "/registrar") {
       sendJson(response, { entries: state.registrarEntries });
+      return;
+    }
+
+    if (method === "GET" && simplePath === "/session-events") {
+      let events = state.sessionEvents.slice();
+      const sessionId = url.searchParams.get("session_id");
+      const kindPrefix = url.searchParams.get("kind_prefix");
+      const since = url.searchParams.get("since");
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+      if (sessionId) events = events.filter((event) => event.session_id === sessionId);
+      if (kindPrefix) events = events.filter((event) => event.kind.startsWith(kindPrefix));
+      if (since) events = events.filter((event) => Date.parse(event.ts) >= Date.parse(since));
+      events.sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+      sendJson(response, { events: limit && limit > 0 ? events.slice(0, limit) : events });
+      return;
+    }
+
+    if (method === "GET" && simplePath === "/session-notes/drafts") {
+      const status = url.searchParams.get("status");
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+      const drafts = status
+        ? state.sessionNoteDrafts.filter((draft) => draft.status === status)
+        : state.sessionNoteDrafts.slice();
+      sendJson(response, { drafts: limit && limit > 0 ? drafts.slice(0, limit) : drafts });
       return;
     }
 
@@ -633,6 +696,12 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         body: event.body,
         created_at: event.created_at ?? Date.now(),
       });
+    },
+    setSessionEvents(rows) {
+      state.sessionEvents = rows.map((row) => ({ ...row }));
+    },
+    setSessionNoteDrafts(rows) {
+      state.sessionNoteDrafts = rows.map((row) => ({ ...row }));
     },
     setQuotaStatus(data) {
       state.quotaStatus = {

@@ -15,11 +15,14 @@ test.beforeEach(() => {
   fixture.harness.reset();
 });
 
-test("rail click navigates between mission, plans, chains, and tasks", async ({ page }) => {
+test("rail click navigates between mission, plans, sessions, chains, and tasks", async ({
+  page,
+}) => {
   await page.goto("/mission");
 
   const mission = page.locator('.rail-btn[title="Mission control"]');
   const plans = page.locator('.rail-btn[title="Plans"]');
+  const sessions = page.locator('.rail-btn[title="Sessions"]');
   const chains = page.locator('.rail-btn[title="Chains"]');
   const tasks = page.locator('.rail-btn[title="Tasks"]');
 
@@ -39,6 +42,10 @@ test("rail click navigates between mission, plans, chains, and tasks", async ({ 
   await expect(page).toHaveURL(/\/registrar$/);
   await expect(plans).toHaveClass(/active/);
   await expect(mission).not.toHaveClass(/active/);
+
+  await sessions.click();
+  await expect(page).toHaveURL(/\/sessions$/);
+  await expect(sessions).toHaveClass(/active/);
 
   await mission.click();
   await expect(page).toHaveURL(/\/mission$/);

@@ -51,3 +51,13 @@ export function registrarList(): readonly ["registrar", "list"] {
 export function registrarDetail(registrarId: string): readonly ["registrar", "detail", string] {
   return ["registrar", "detail", registrarId] as const;
 }
+
+/** Session event timeline (Sessions module). */
+export function sessionEvents(): readonly ["sessions", "events"] {
+  return ["sessions", "events"] as const;
+}
+
+/** Pending session-note drafts (Sessions module). */
+export function sessionNoteDrafts(): readonly ["sessions", "note-drafts"] {
+  return ["sessions", "note-drafts"] as const;
+}

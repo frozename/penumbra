@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter, type RouteObject } from "react-router-do
 import { MODULES } from "./modules/manifest";
 import { MissionControl } from "./modules/mission";
 import { RegistrarDetail, RegistrarList } from "./modules/registrar";
+import { SessionsView } from "./modules/sessions";
 import { Shell } from "./shell/Shell";
 
 function DeferredViewStub({ view }: { view: string }): JSX.Element {
@@ -15,6 +16,9 @@ function NotFound(): JSX.Element {
 function moduleElement(m: (typeof MODULES)[number]): JSX.Element {
   if (m.id === "mission") {
     return <MissionControl />;
+  }
+  if (m.id === "sessions") {
+    return <SessionsView />;
   }
 
   return <DeferredViewStub view={m.label} />;

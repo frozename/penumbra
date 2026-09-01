@@ -5,6 +5,10 @@ import {
   RegistrarDetailSchema,
   RegistrarEventSchema,
   RegistrarListResponseSchema,
+  type SessionEvent,
+  SessionEventSchema,
+  SessionNoteDraftsListResponseSchema,
+  type SessionNoteDraftStatus,
   UsageQuotaResponseSchema,
   UsageRecentResponseSchema,
   UsageSubscriptionPressureResponseSchema,
@@ -34,6 +38,11 @@ const RegistrarEventsResponseSchema = z
     events: z.array(RegistrarEventSchema),
   })
   .loose();
+const SessionEventsEnvelopeSchema = z
+  .object({
+    events: z.array(z.unknown()),
+  })
+  .loose();
 
 export type HandoffsListResponse = z.infer<typeof HandoffsListResponseSchema>;
 export type ChainsListResponse = z.infer<typeof ChainsListResponseSchema>;
@@ -47,6 +56,13 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type RegistrarListResponse = z.infer<typeof RegistrarListResponseSchema>;
 export type RegistrarDetail = z.infer<typeof RegistrarDetailSchema>;
 export type RegistrarEventsResponse = z.infer<typeof RegistrarEventsResponseSchema>;
+export type SessionNoteDraftsListResponse = z.infer<typeof SessionNoteDraftsListResponseSchema>;
+export type SessionEventParseResult =
+  | { ok: true; event: SessionEvent }
+  | { ok: false; raw: unknown; reason: string };
+export interface SessionEventsListTolerantResponse {
+  events: SessionEventParseResult[];
+}
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
@@ -200,6 +216,31 @@ export class DaemonClient {
     });
   }
 
+  async listSessionEvents(query?: {
+    session_id?: string;
+    kind_prefix?: string;
+    since?: string;
+    limit?: number;
+  }): Promise<SessionEventsListTolerantResponse> {
+    const raw = await this.request({
+      path: "/session-events",
+      query,
+      schema: SessionEventsEnvelopeSchema,
+    });
+    return { events: raw.events.map(parseSessionEventRow) };
+  }
+
+  async listSessionNoteDrafts(query?: {
+    status?: SessionNoteDraftStatus;
+    limit?: number;
+  }): Promise<SessionNoteDraftsListResponse> {
+    return await this.request({
+      path: "/session-notes/drafts",
+      query,
+      schema: SessionNoteDraftsListResponseSchema,
+    });
+  }
+
   private buildHeaders(extra?: Record<string, string>): Record<string, string> {
     const cfg = this.deps.getConfig();
     const headers: Record<string, string> = {
@@ -259,4 +300,16 @@ export class DaemonClient {
     }
     return parsed.data;
   }
+}
+
+function parseSessionEventRow(raw: unknown): SessionEventParseResult {
+  const parsed = SessionEventSchema.safeParse(raw);
+  if (parsed.success) {
+    return { ok: true, event: parsed.data };
+  }
+  return {
+    ok: false,
+    raw,
+    reason: parsed.error.issues.map((issue) => issue.message).join("; "),
+  };
 }
