@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 42,
+  "schemaVersion": 43,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -416,6 +416,33 @@
       "task_profile_json",
       "ts"
     ],
+    "session_events": [
+      "cwd",
+      "id",
+      "kind",
+      "meta_json",
+      "project_id",
+      "ref_path",
+      "related_session_id",
+      "session_id",
+      "transcript_path",
+      "ts"
+    ],
+    "session_note_drafts": [
+      "composed_at",
+      "composed_event_id",
+      "draft_id",
+      "draft_path",
+      "handoff_id",
+      "note_path",
+      "period_key",
+      "project_id",
+      "review_event_id",
+      "reviewed_at",
+      "session_id",
+      "skeleton_path",
+      "status"
+    ],
     "subsystem_health": [
       "consecutive_failures",
       "first_non_primary_ts",
@@ -700,6 +727,12 @@
     "idx_routing_bias_scope_expiry",
     "idx_routing_decisions_handoff_id_ts",
     "idx_routing_decisions_ts",
+    "idx_session_events_kind_ts",
+    "idx_session_events_ref",
+    "idx_session_events_related",
+    "idx_session_events_session",
+    "idx_session_events_ts",
+    "idx_session_note_drafts_status_composed",
     "idx_t0_file_refs_event",
     "idx_t0_file_refs_path",
     "idx_t2_obs_type",

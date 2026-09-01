@@ -504,6 +504,14 @@ export {
   type SessionEventRow,
 } from "./services/session-event-log.js";
 export {
+  type ApproveSessionNoteDraftInput,
+  type ApproveSessionNoteDraftResult,
+  type RegisterSessionNoteDraftInput,
+  type SessionNoteDraftListInput,
+  type SessionNoteDraftRow,
+  SessionNoteDrafts,
+} from "./services/session-note-drafts.js";
+export {
   extractStumblesFromSession,
   type ExtractStumblesInput,
   type StumbleCandidate,

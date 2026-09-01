@@ -6,6 +6,10 @@ import type {
   RegistrarListResponse,
   SessionEventsListResponse,
   SessionEventsQuery,
+  SessionNoteApproveRequest,
+  SessionNoteApproveResponse,
+  SessionNoteDraftsListResponse,
+  SessionNoteDraftsQuery,
 } from "@penumbra/api-contract";
 import type {
   AgentRankOutput,
@@ -524,6 +528,20 @@ export class DaemonClient {
     if (req.limit !== undefined) qs.set("limit", String(req.limit));
     const q = qs.toString();
     return await this.get(q ? `/session-events?${q}` : "/session-events");
+  }
+
+  async sessionNoteDrafts(
+    req: SessionNoteDraftsQuery = {},
+  ): Promise<SessionNoteDraftsListResponse> {
+    const qs = new URLSearchParams();
+    if (req.status) qs.set("status", req.status);
+    if (req.limit !== undefined) qs.set("limit", String(req.limit));
+    const q = qs.toString();
+    return await this.get(q ? `/session-notes/drafts?${q}` : "/session-notes/drafts");
+  }
+
+  async sessionNoteApprove(req: SessionNoteApproveRequest): Promise<SessionNoteApproveResponse> {
+    return await this.post("/session-notes/approve", req);
   }
 
   async dispatchAudit(handoff_id: string): Promise<{ report: DispatchReliabilityReport }> {

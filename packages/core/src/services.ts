@@ -39,6 +39,7 @@ import { RegistrarWriter } from "./registrar/writer.js";
 import { type AaSnapshotStore, createAaSnapshotStore } from "./routing/aa-snapshot-store.js";
 import { DispatchEventLog } from "./services/dispatch-event-log.js";
 import { SessionEventLog } from "./services/session-event-log.js";
+import { SessionNoteDrafts } from "./services/session-note-drafts.js";
 import { type Settings, SettingsDefaults, type SettingsInput } from "./settings.js";
 import { InProcessSupervisor } from "./supervisor/in-process.js";
 import { TaskWriter } from "./tasks/writer.js";
@@ -244,6 +245,7 @@ export interface Services {
   permissionEvents: PermissionEventBus;
   dispatchEventLog: DispatchEventLog;
   sessionEventLog: SessionEventLog;
+  sessionNoteDrafts: SessionNoteDrafts;
   dispatchEvents: DispatchEventBus;
   projectRegistry?: ProjectRegistry;
   shellSessionPool?: ShellSessionPoolLike;
@@ -404,6 +406,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     permissionEvents,
     dispatchEventLog: new DispatchEventLog(opts.db, dispatchEvents),
     sessionEventLog: new SessionEventLog(opts.db),
+    sessionNoteDrafts: new SessionNoteDrafts(opts.db),
     dispatchEvents,
     projectRegistry: opts.projectRegistry,
     conversationStream,

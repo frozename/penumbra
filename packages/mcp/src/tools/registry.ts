@@ -197,6 +197,8 @@ import {
   sessionEventsRecentHandler,
   SessionEventsRecentInputShape,
 } from "./session-events-recent.js";
+import { sessionNoteApproveHandler, SessionNoteApproveInputShape } from "./session-note-approve.js";
+import { sessionNoteDraftsHandler, SessionNoteDraftsInputShape } from "./session-note-drafts.js";
 import { shellCloseHandler, ShellCloseInputShape } from "./shell-close.js";
 import { shellListHandler, ShellListInputShape } from "./shell-list.js";
 import { shellRunHandler, ShellRunInputShape } from "./shell-run.js";
@@ -1048,6 +1050,22 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: sessionEventsRecentHandler,
     readOnly: true,
+  },
+  session_note_drafts: {
+    descriptor: {
+      description: "List session note drafts awaiting operator approval or filtered by status.",
+      inputSchema: SessionNoteDraftsInputShape,
+    },
+    makeHandler: sessionNoteDraftsHandler,
+    readOnly: true,
+  },
+  session_note_approve: {
+    descriptor: {
+      description: "Approve a drafted session note and publish it to the bare note path.",
+      inputSchema: SessionNoteApproveInputShape,
+    },
+    makeHandler: sessionNoteApproveHandler,
+    readOnly: false,
   },
   dispatch_audit: {
     descriptor: {

@@ -8,7 +8,7 @@ export { GATES } from "./gates/index.js";
 export type { GateInput, GateName, GateResult, GateSeverity, GateVerifier } from "./gates/index.js";
 export { loadMarkdownPlaybook } from "./loaders/markdown.js";
 export { loadTsWorkflow } from "./loaders/ts.js";
-export { PRESERVE_NEXT_SESSION_PROMPT } from "./outputs/index.js";
+export { emitFileOutput, PRESERVE_NEXT_SESSION_PROMPT } from "./outputs/index.js";
 export { parsePlanMeta, parsePlanMetaFile } from "./plan-meta/parser.js";
 export type { ParseError, ParseResult } from "./plan-meta/parser.js";
 export { FileScope, RiskClass, TaskMetaSchema, TaskSize } from "./plan-meta/schema.js";

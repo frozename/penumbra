@@ -7,6 +7,7 @@ export * from "./events.js";
 export * from "./handoffs.js";
 export * from "./registrar.js";
 export * from "./session-events.js";
+export * from "./session-note-drafts.js";
 export { MissionSessionSchema } from "./session.js";
 export * from "./session.js";
 export * from "./tasks.js";

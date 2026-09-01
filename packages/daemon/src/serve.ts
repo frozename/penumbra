@@ -223,6 +223,10 @@ import {
 } from "./routes/routing-bias.js";
 import { sessionEndRoute } from "./routes/session-end.js";
 import { sessionEventsGetRoute, sessionEventsPostRoute } from "./routes/session-events.js";
+import {
+  sessionNotesApproveRoute,
+  sessionNotesDraftsRoute,
+} from "./routes/session-notes-approve.js";
 import { sessionCurrentRoute, sessionsTouchRoute } from "./routes/sessions.js";
 import { shellCloseRoute, shellListRoute, shellRunRoute } from "./routes/shell.js";
 import { taskDraftsPendingEscalationsRoute, taskDraftsPendingRoute } from "./routes/task-drafts.js";
@@ -903,6 +907,12 @@ const ROUTES: Route[] = [
   staticRoute("GET", "/dispatch/events", (req, ctx) => dispatchEventsGetRoute(req, ctx.services)),
   staticRoute("POST", "/session-events", (req, ctx) => sessionEventsPostRoute(req, ctx.services)),
   staticRoute("GET", "/session-events", (req, ctx) => sessionEventsGetRoute(req, ctx.services)),
+  staticRoute("POST", "/session-notes/approve", (req, ctx) =>
+    sessionNotesApproveRoute(req, ctx.services),
+  ),
+  staticRoute("GET", "/session-notes/drafts", (req, ctx) =>
+    sessionNotesDraftsRoute(req, ctx.services),
+  ),
   staticRoute("POST", "/dispatch/land", (req, ctx) => dispatchLandRoute(req, ctx.services)),
   staticRoute("POST", "/dispatch/refine", (req, ctx) => ctx.dispatchRefineHandler(req)),
   regexRoute("GET", /^\/dispatch\/land\/([^/]+)$/, (req, ctx, id) =>

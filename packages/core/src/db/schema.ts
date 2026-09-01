@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 
+// 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 43;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -406,6 +407,24 @@ const SCHEMA_DDL_BLOCK_01 = `
       CREATE INDEX IF NOT EXISTS idx_session_events_ref ON session_events(ref_path);
       CREATE INDEX IF NOT EXISTS idx_session_events_related ON session_events(related_session_id);
       CREATE INDEX IF NOT EXISTS idx_session_events_ts ON session_events(ts DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS session_note_drafts (
+        draft_id          TEXT PRIMARY KEY,
+        session_id        TEXT NULL,
+        project_id        TEXT NULL,
+        period_key        TEXT NOT NULL,
+        skeleton_path     TEXT NOT NULL,
+        draft_path        TEXT NOT NULL,
+        note_path         TEXT NOT NULL,
+        handoff_id        TEXT NULL,
+        status            TEXT NOT NULL CHECK (status IN ('awaiting_approval','approved','edited','rejected')),
+        composed_at       TEXT NOT NULL,
+        reviewed_at       TEXT NULL,
+        composed_event_id INTEGER NULL,
+        review_event_id   INTEGER NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_note_drafts_status_composed
+        ON session_note_drafts(status, composed_at);
 
       CREATE TABLE IF NOT EXISTS subsystem_health (
         subsystem TEXT PRIMARY KEY,
