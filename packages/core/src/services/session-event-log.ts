@@ -51,8 +51,8 @@ function escapeLikePrefix(prefix: string): string {
 export class SessionEventLog {
   constructor(private readonly db: Database) {}
 
-  record(event: SessionEventInput): void {
-    this.db.run(
+  record(event: SessionEventInput): number {
+    const result = this.db.run(
       `INSERT INTO session_events (
          session_id, related_session_id, project_id, cwd, transcript_path, ref_path, kind, ts, meta_json
        )
@@ -69,6 +69,7 @@ export class SessionEventLog {
         event.meta === undefined || event.meta === null ? null : JSON.stringify(event.meta),
       ],
     );
+    return Number(result.lastInsertRowid);
   }
 
   recordBatch(events: SessionEventInput[]): void {

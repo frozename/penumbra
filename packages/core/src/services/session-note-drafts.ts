@@ -111,6 +111,19 @@ export class SessionNoteDrafts {
       .all(limit);
   }
 
+  supersedeAwaitingForPeriod(period_key: string, except_draft_id: string): number {
+    const reviewedAt = new Date().toISOString();
+    return this.db
+      .prepare(
+        `UPDATE session_note_drafts
+         SET status = 'rejected', reviewed_at = ?
+         WHERE period_key = ?
+           AND status = 'awaiting_approval'
+           AND draft_id <> ?`,
+      )
+      .run(reviewedAt, period_key, except_draft_id).changes;
+  }
+
   approve(input: ApproveSessionNoteDraftInput): ApproveSessionNoteDraftResult {
     const status: Extract<SessionNoteDraftStatus, "approved" | "edited"> =
       input.body === undefined ? "approved" : "edited";

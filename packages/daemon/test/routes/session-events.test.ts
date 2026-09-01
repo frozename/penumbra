@@ -1,13 +1,22 @@
-import { SessionEventsListResponseSchema } from "@penumbra/api-contract";
+import {
+  SessionEventsListResponseSchema,
+  SessionNoteApproveResponseSchema,
+} from "@penumbra/api-contract";
 import {
   buildServices,
   loadSqliteVec,
   migrate,
   ProjectRegistry,
   type Services,
+  SessionNoteDrafts,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { buildRegistry } from "@penumbra/workflows";
+import {
+  buildRegistry,
+  type Registry,
+  type WorkflowFn,
+  type WorkflowSpec,
+} from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { execSync } from "node:child_process";
@@ -165,6 +174,37 @@ async function continuityHarness(
     rmSync(repo, { recursive: true, force: true });
   };
   return { harness, repo, root };
+}
+
+function spec(name: string): WorkflowSpec {
+  return {
+    name,
+    description: `${name} fixture`,
+    triggers: [{ kind: "lifecycle", event: "pre-compact" }],
+    recall: [],
+    output: [],
+    run: { kind: "ts-function" },
+  };
+}
+
+function registryFromEntries(
+  entries: {
+    spec: WorkflowSpec;
+    fn: WorkflowFn;
+  }[],
+): Registry {
+  return {
+    list: () => entries.map((entry) => entry.spec),
+    entries: () =>
+      entries.map((entry) => ({ ...entry, source: "ts" as const, path: entry.spec.name })),
+    get: (name) => entries.find((entry) => entry.spec.name === name)?.spec,
+    getEntry: (name): ReturnType<Registry["getEntry"]> => {
+      const entry = entries.find((candidate) => candidate.spec.name === name);
+      return entry ? { ...entry, source: "ts" as const, path: entry.spec.name } : undefined;
+    },
+    findByTrigger: () => entries.map((entry) => entry.spec),
+    errors: [],
+  };
 }
 
 async function triggerWorkflow(
@@ -511,14 +551,14 @@ test("boot pickup record failure is reported false so a later matched workflow c
   const sessionEventLog = h.services.sessionEventLog;
   const originalRecord = sessionEventLog.record.bind(sessionEventLog);
   let bootPickupAttempts = 0;
-  sessionEventLog.record = (event): void => {
+  sessionEventLog.record = (event): number => {
     if (event.kind === "continuity.boot_pickup") {
       bootPickupAttempts += 1;
       if (bootPickupAttempts === 1) {
         throw new Error("simulated record failure");
       }
     }
-    originalRecord(event);
+    return originalRecord(event);
   };
   try {
     mkdirSync(join(repo, "docs/notes"), { recursive: true });
@@ -837,6 +877,295 @@ test("a session-handoff run with a non-maestro skeleton basename records no cont
   }
 });
 
+test("matched trigger specs execute in name order", async () => {
+  const repo = seedRepo();
+  const executionOrder: string[] = [];
+  const handoff = spec("session-handoff");
+  const draft = spec("session-handoff-draft");
+  const h = startHarness({
+    projectRegistry: new ProjectRegistry(
+      new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+    ),
+    workflowRegistry: registryFromEntries([
+      {
+        spec: draft,
+        fn: (): Promise<Record<string, never>> => {
+          executionOrder.push("session-handoff-draft");
+          return Promise.resolve({});
+        },
+      },
+      {
+        spec: handoff,
+        fn: (): Promise<Record<string, never>> => {
+          executionOrder.push("session-handoff");
+          return Promise.resolve({});
+        },
+      },
+    ]),
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    expect(executionOrder).toEqual(["session-handoff", "session-handoff-draft"]);
+  } finally {
+    h.stop();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+function sessionHandoffDraftFn(capturedArgs?: Record<string, unknown>[]): WorkflowFn {
+  return async (ctx) => {
+    capturedArgs?.push(ctx.args);
+    const periodKey = "2026-05-01-am";
+    const skeletonPath = await ctx.fileWrite(
+      `./docs/notes/maestro-continuation-${periodKey}.skeleton.md`,
+      "<!-- penumbra:session s-continuity -->\nSkeleton\n",
+    );
+    const draftPath = await ctx.fileWrite(
+      `./docs/notes/maestro-continuation-${periodKey}.draft.md`,
+      [
+        "<!-- penumbra:session s-continuity -->",
+        "Skeleton",
+        "",
+        "## Narrative and traps learned",
+        "",
+        "A grounded narrative.",
+        "",
+        "## Open follow-ups (worst-first)",
+        "",
+        "- Review the draft.",
+      ].join("\n"),
+    );
+    const draftId = "draft-route-1";
+    new SessionNoteDrafts(ctx.db!()).registerDraft({
+      draft_id: draftId,
+      session_id: "s-continuity",
+      project_id: ctx.project,
+      period_key: periodKey,
+      skeleton_path: skeletonPath,
+      draft_path: draftPath,
+      note_path: draftPath.replace(/\.draft\.md$/, ".md"),
+      handoff_id: "handoff-route-1",
+      composed_at: "2026-05-01T00:00:02.000Z",
+      composed_event_id: null,
+    });
+    return {
+      draft_id: draftId,
+      handoff_id: "handoff-route-1",
+      draft_path: draftPath,
+      skeleton_path: skeletonPath,
+      period_key: periodKey,
+      sections: 2,
+    };
+  };
+}
+
+function draftRouteHarness(): {
+  harness: Harness;
+  repo: string;
+  capturedArgs: Record<string, unknown>[];
+} {
+  const repo = seedRepo();
+  const capturedArgs: Record<string, unknown>[] = [];
+  const workflow = spec("session-handoff-draft");
+  const harness = startHarness({
+    projectRegistry: new ProjectRegistry(
+      new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+    ),
+    workflowRegistry: registryFromEntries([
+      { spec: workflow, fn: sessionHandoffDraftFn(capturedArgs) },
+    ]),
+  });
+  const originalStop = harness.stop.bind(harness);
+  harness.stop = (): void => {
+    originalStop();
+    rmSync(repo, { recursive: true, force: true });
+  };
+  return { harness, repo, capturedArgs };
+}
+
+test("a session-handoff-draft run records continuity.draft_composed and stamps composed_event_id", async () => {
+  const { harness: h, repo, capturedArgs } = draftRouteHarness();
+  const sessionEventLog = h.services.sessionEventLog;
+  const originalRecord = sessionEventLog.record.bind(sessionEventLog);
+  sessionEventLog.record = (event): number => {
+    const insertedId = originalRecord(event);
+    if (event.kind !== "continuity.draft_composed") return insertedId;
+    originalRecord({
+      session_id: "s-interleaved",
+      related_session_id: null,
+      project_id: "penumbra",
+      cwd: repo,
+      transcript_path: null,
+      ref_path: null,
+      kind: "session.start",
+      ts: "2026-05-01T00:00:03.000Z",
+      meta: null,
+    });
+    return insertedId;
+  };
+  try {
+    const res = await h.fetch("/workflows/trigger", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        event: { kind: "lifecycle", event: "pre-compact" },
+        cwd: repo,
+        session_id: "s-continuity",
+        transcript_path: "/tmp/transcript-continuity.jsonl",
+        args: { operator_arg: "kept" },
+      }),
+    });
+    if (res.status !== 200) {
+      throw new Error(`unexpected status ${String(res.status)}: ${await res.text()}`);
+    }
+
+    expect(capturedArgs).toEqual([
+      {
+        operator_arg: "kept",
+        session_id: "s-continuity",
+        transcript_path: "/tmp/transcript-continuity.jsonl",
+        repo_root: realpathSync(repo),
+      },
+    ]);
+    const draft = h.services.sessionNoteDrafts.get("draft-route-1");
+    if (!draft || typeof draft.composed_event_id !== "number") {
+      throw new Error("expected stamped draft row");
+    }
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.draft_composed");
+    expect(event.id).toBe(draft.composed_event_id);
+    const interleaved = h.services.db
+      .query<
+        { id: number },
+        []
+      >("SELECT id FROM session_events WHERE session_id='s-interleaved' AND kind='session.start'")
+      .get();
+    expect(interleaved?.id).not.toBe(draft.composed_event_id);
+    expect(event.session_id).toBe("s-continuity");
+    expect(event.project_id).toBe("penumbra");
+    expect(event.cwd).toBe(repo);
+    expect(event.transcript_path).toBe("/tmp/transcript-continuity.jsonl");
+    expect(event.ref_path).toBe(draft.draft_path);
+    expect(event.meta).toEqual({
+      draft_id: "draft-route-1",
+      handoff_id: "handoff-route-1",
+      sections: 2,
+      skeleton_path: draft.skeleton_path,
+    });
+  } finally {
+    sessionEventLog.record = originalRecord;
+    h.stop();
+  }
+});
+
+test("oversized session-handoff-draft runResult is ignored and warned without draft telemetry", async () => {
+  const repo = seedRepo();
+  const periodKey = "2026-05-01-am";
+  const draftId = "draft-route-huge-result";
+  const warnCalls: unknown[] = [];
+  const workflow = spec("session-handoff-draft");
+  const h = startHarness({
+    projectRegistry: new ProjectRegistry(
+      new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+    ),
+    workflowRegistry: registryFromEntries([
+      {
+        spec: workflow,
+        fn: async (ctx): Promise<Record<string, unknown>> => {
+          const skeletonPath = await ctx.fileWrite(
+            `./docs/notes/maestro-continuation-${periodKey}.skeleton.md`,
+            "Skeleton\n",
+          );
+          const draftPath = await ctx.fileWrite(
+            `./docs/notes/maestro-continuation-${periodKey}.draft.md`,
+            "Skeleton\n\n## Narrative and traps learned\n\nBody\n\n## Open follow-ups (worst-first)\n\n- Item\n",
+          );
+          new SessionNoteDrafts(ctx.db!()).registerDraft({
+            draft_id: draftId,
+            session_id: "s-continuity",
+            project_id: ctx.project,
+            period_key: periodKey,
+            skeleton_path: skeletonPath,
+            draft_path: draftPath,
+            note_path: draftPath.replace(/\.draft\.md$/, ".md"),
+            handoff_id: "handoff-route-huge",
+            composed_at: "2026-05-01T00:00:02.000Z",
+            composed_event_id: null,
+          });
+          return {
+            draft_id: draftId,
+            handoff_id: "handoff-route-huge",
+            draft_path: draftPath,
+            skeleton_path: skeletonPath,
+            period_key: periodKey,
+            sections: 2,
+            blob: "x".repeat(70 * 1024),
+          };
+        },
+      },
+    ]),
+  });
+  const originalWarn = h.services.log.warn.bind(h.services.log);
+  h.services.log.warn = (obj: unknown, msg?: string): void => {
+    warnCalls.push({ obj, msg });
+  };
+  const originalStop = h.stop.bind(h);
+  h.stop = (): void => {
+    originalStop();
+    rmSync(repo, { recursive: true, force: true });
+  };
+  try {
+    await triggerWorkflow(h, repo);
+
+    expect(
+      h.services.db
+        .query<
+          { count: number },
+          []
+        >("SELECT COUNT(*) AS count FROM session_events WHERE kind='continuity.draft_composed'")
+        .get()?.count,
+    ).toBe(0);
+    expect(h.services.sessionNoteDrafts.get(draftId)?.composed_event_id).toBeNull();
+    expect(
+      warnCalls.some(
+        (call) =>
+          typeof (call as { msg?: unknown }).msg === "string" &&
+          (call as { msg: string }).msg.includes("session-handoff-draft run result ignored"),
+      ),
+    ).toBe(true);
+  } finally {
+    h.services.log.warn = originalWarn;
+    h.stop();
+  }
+});
+
+test("approve route pairs draft_composed by composed_event_id after a draft workflow run", async () => {
+  const { harness: h, repo } = draftRouteHarness();
+  try {
+    await triggerWorkflow(h, repo);
+
+    const res = await h.fetch("/session-notes/approve", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ draft_id: "draft-route-1", approve: true }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = SessionNoteApproveResponseSchema.parse(await res.json());
+    expect(body.draft.status).toBe("approved");
+    expect(body.event?.kind).toBe("continuity.draft_reviewed");
+    const meta = body.event?.meta;
+    if (typeof meta !== "object" || meta === null) {
+      throw new Error("expected draft reviewed meta object");
+    }
+    expect((meta as { latency_ms?: unknown }).latency_ms).toEqual(expect.any(Number));
+    expect((meta as { latency_ms: number }).latency_ms >= 0).toBe(true);
+  } finally {
+    h.stop();
+  }
+});
+
 test("continuity record failure does not block the trigger response and warns once", async () => {
   const { harness: h, repo } = await continuityHarness({
     outputPath: "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md",
@@ -846,11 +1175,11 @@ test("continuity record failure does not block the trigger response and warns on
   const originalRecord = sessionEventLog.record.bind(sessionEventLog);
   const warnCalls: unknown[] = [];
   const originalWarn = h.services.log.warn.bind(h.services.log);
-  sessionEventLog.record = (event): void => {
+  sessionEventLog.record = (event): number => {
     if (event.kind === "continuity.skeleton_generated") {
       throw new Error("simulated continuity record failure");
     }
-    originalRecord(event);
+    return originalRecord(event);
   };
   h.services.log.warn = (obj: unknown, msg?: string): void => {
     warnCalls.push({ obj, msg });

@@ -136,4 +136,23 @@ describe("SessionNoteDrafts", () => {
       drafts.list({ status: "awaiting_approval", limit: 1 }).map((draft) => draft.draft_id),
     ).toEqual(["new"]);
   });
+
+  test("supersedeAwaitingForPeriod rejects older awaiting drafts for the same period only", () => {
+    drafts.registerDraft(draftInput({ draft_id: "old", composed_at: "2026-08-31T20:00:00.000Z" }));
+    drafts.registerDraft(draftInput({ draft_id: "new", composed_at: "2026-08-31T20:01:00.000Z" }));
+    drafts.registerDraft(
+      draftInput({
+        draft_id: "other-period",
+        period_key: "2026-09-01-am",
+        composed_at: "2026-09-01T09:00:00.000Z",
+      }),
+    );
+
+    expect(drafts.supersedeAwaitingForPeriod("2026-08-31-pm", "new")).toBe(1);
+
+    expect(drafts.get("old")?.status).toBe("rejected");
+    expect(typeof drafts.get("old")?.reviewed_at).toBe("string");
+    expect(drafts.get("new")?.status).toBe("awaiting_approval");
+    expect(drafts.get("other-period")?.status).toBe("awaiting_approval");
+  });
 });

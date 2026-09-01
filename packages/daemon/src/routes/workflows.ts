@@ -3,10 +3,12 @@ import type {
   Registry,
   TemplateVarContext,
   Trigger,
+  WorkflowCtx,
   WorkflowSpec,
 } from "@penumbra/workflows";
 
 import {
+  type ChainStartRequest,
   extractStumblesFromSession,
   type ExtractStumblesInput,
   resolveProjectScope,
@@ -34,6 +36,7 @@ const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
 const EVENT_TIME_WINDOW_MS_DEFAULT = 86_400_000;
 const SKELETON_STAMP_READ_LIMIT_BYTES = 4096;
+const SESSION_HANDOFF_DRAFT_RESULT_MAX_BYTES = 64 * 1024;
 
 export const MAX_DRAFTS_PER_SESSION = 20;
 
@@ -571,6 +574,43 @@ type WorkflowExecOpts = {
   observationCtx?: { sessionId?: string | null; projectId?: string | null };
 };
 
+type DaemonWorkflowCtx = WorkflowCtx & {
+  chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
+};
+
+function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
+  const chainStart = (input: ChainStartRequest): Promise<Response> | Response =>
+    chainStartFromInput(input, opts.services, { applyMaestroBudgetGate: true });
+  const base = buildWorkflowCtx({
+    services: opts.services,
+    cwd: opts.cwd,
+    storageRoot: opts.services.storageRoot,
+    project: opts.project,
+    agentchatConfig: asAgentChatConfigLike(opts.services.agentchatConfig),
+    args: opts.args,
+    workflowRunId: opts.workflowRunId,
+    chainStart,
+    chainCancel: async (conversationId) => {
+      const response = conversationsCancelRoute(
+        new Request(`http://localhost/conversations/${conversationId}/cancel`, {
+          method: "POST",
+        }),
+        conversationId,
+        opts.services,
+      );
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`conversation cancel failed (${String(response.status)}): ${body}`);
+      }
+    },
+  });
+  return {
+    ...base,
+    db: () => opts.services.db,
+    chainStart,
+  };
+}
+
 async function composeWorkflowBundle(
   opts: Pick<
     WorkflowExecOpts,
@@ -611,33 +651,7 @@ function startWorkflowExecution(
     spec: entry.spec,
     bundle,
     fn: entry.fn,
-    ctx:
-      entry.source === "ts"
-        ? buildWorkflowCtx({
-            services,
-            cwd,
-            storageRoot: services.storageRoot,
-            project,
-            agentchatConfig: asAgentChatConfigLike(services.agentchatConfig),
-            args,
-            workflowRunId,
-            chainStart: (input) =>
-              chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-            chainCancel: async (conversationId) => {
-              const response = conversationsCancelRoute(
-                new Request(`http://localhost/conversations/${conversationId}/cancel`, {
-                  method: "POST",
-                }),
-                conversationId,
-                services,
-              );
-              if (!response.ok) {
-                const body = await response.text();
-                throw new Error(`conversation cancel failed (${String(response.status)}): ${body}`);
-              }
-            },
-          })
-        : undefined,
+    ctx: entry.source === "ts" ? buildDaemonTsWorkflowCtx(opts) : undefined,
     storageRoot: services.storageRoot,
     captureCtx: {
       db: services.db,
@@ -1086,6 +1100,7 @@ function recordContinuitySessionEvents(opts: {
   project: string;
   specName: string;
   artifacts: string[];
+  runResult?: unknown;
 }): void {
   if (opts.specName !== "session-handoff") return;
   const skeletonArtifact = opts.artifacts.find(
@@ -1136,6 +1151,119 @@ function recordContinuitySessionEvents(opts: {
     opts.services.log.warn(
       { err, kind: "continuity.skeleton_generated" },
       "continuity session event ingest failed; continuing workflow hook",
+    );
+  }
+}
+
+type SessionHandoffDraftResult = {
+  draft_id: string;
+  handoff_id: string;
+  draft_path: string;
+  skeleton_path: string;
+  sections: number;
+};
+
+function parseSessionHandoffDraftResult(runResult: unknown): SessionHandoffDraftResult | null {
+  if (typeof runResult !== "object" || runResult === null) return null;
+  const record = runResult as Record<string, unknown>;
+  const draftId = record.draft_id;
+  const handoffId = record.handoff_id;
+  const draftPath = record.draft_path;
+  const skeletonPath = record.skeleton_path;
+  const sections = record.sections;
+  if (
+    typeof draftId !== "string" ||
+    typeof handoffId !== "string" ||
+    typeof draftPath !== "string" ||
+    typeof skeletonPath !== "string" ||
+    typeof sections !== "number" ||
+    !Number.isSafeInteger(sections) ||
+    sections <= 0
+  ) {
+    return null;
+  }
+  return {
+    draft_id: draftId,
+    handoff_id: handoffId,
+    draft_path: resolve(draftPath),
+    skeleton_path: resolve(skeletonPath),
+    sections,
+  };
+}
+
+function runResultTooLarge(runResult: unknown): boolean {
+  try {
+    return (
+      Buffer.byteLength(JSON.stringify(runResult), "utf8") > SESSION_HANDOFF_DRAFT_RESULT_MAX_BYTES
+    );
+  } catch {
+    return true;
+  }
+}
+
+function draftWasPublished(draft: SessionHandoffDraftResult, artifacts: string[]): boolean {
+  const tmpPath = `${draft.draft_path}.tmp-${draft.draft_id}`;
+  return artifacts.some((artifact) => {
+    const resolved = resolve(artifact);
+    return resolved === draft.draft_path || resolved === tmpPath;
+  });
+}
+
+function stampDraftComposedEventId(services: Services, draftId: string, eventId: number): void {
+  services.db
+    .prepare(
+      `UPDATE session_note_drafts
+       SET composed_event_id = ?
+       WHERE draft_id = ?`,
+    )
+    .run(eventId, draftId);
+}
+
+function recordDraftComposedSessionEvent(opts: {
+  services: Services;
+  body: WorkflowTriggerBody;
+  cwd: string;
+  project: string;
+  specName: string;
+  artifacts: string[];
+  runResult?: unknown;
+}): void {
+  if (opts.specName !== "session-handoff-draft") return;
+  if (runResultTooLarge(opts.runResult)) {
+    opts.services.log.warn(
+      {
+        kind: "continuity.draft_composed",
+        max_bytes: SESSION_HANDOFF_DRAFT_RESULT_MAX_BYTES,
+      },
+      "session-handoff-draft run result ignored because it exceeds the parse size guard",
+    );
+    return;
+  }
+  const draft = parseSessionHandoffDraftResult(opts.runResult);
+  if (!draft) return;
+  if (!draftWasPublished(draft, opts.artifacts)) return;
+  try {
+    const eventId = opts.services.sessionEventLog.record({
+      session_id: opts.body.session_id ?? null,
+      related_session_id: null,
+      project_id: opts.project !== "unknown" ? opts.project : null,
+      cwd: opts.cwd,
+      transcript_path: opts.body.transcript_path ?? null,
+      ref_path: draft.draft_path,
+      kind: "continuity.draft_composed",
+      ts: opts.services.clock().toISOString(),
+      meta: {
+        draft_id: draft.draft_id,
+        handoff_id: draft.handoff_id,
+        sections: draft.sections,
+        skeleton_path: draft.skeleton_path,
+      },
+    });
+    stampDraftComposedEventId(opts.services, draft.draft_id, eventId);
+  } catch (err) {
+    opts.services.log.warn(
+      { err, kind: "continuity.draft_composed" },
+      "continuity draft event ingest failed; continuing workflow hook",
     );
   }
 }
@@ -1192,6 +1320,7 @@ async function executeMatchedTriggerSpec(opts: {
     ...(typeof body.transcript_path === "string" && body.transcript_path.length > 0
       ? { transcript_path: body.transcript_path }
       : {}),
+    repo_root: repoRoot,
   };
   const start = Date.now();
   const sessionStart = resolveSessionStart(services.db, sessionIdFromBody, start);
@@ -1255,6 +1384,16 @@ async function executeMatchedTriggerSpec(opts: {
       project,
       specName: spec.name,
       artifacts: result.artifacts,
+      runResult: result.runResult,
+    });
+    recordDraftComposedSessionEvent({
+      services,
+      body,
+      cwd,
+      project,
+      specName: spec.name,
+      artifacts: result.artifacts,
+      runResult: result.runResult,
     });
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
   } finally {
@@ -1290,7 +1429,8 @@ async function runAllMatchedTriggerSpecs(opts: {
   additionalContextParts: string[];
   bootPickupRecorded: { value: boolean };
 }): Promise<Response | undefined> {
-  for (const spec of opts.matched) {
+  // session-handoff must publish the skeleton before session-handoff-draft reads it.
+  for (const spec of [...opts.matched].sort((a, b) => a.name.localeCompare(b.name))) {
     const entry = opts.reg.getEntry(spec.name);
     if (!entry) continue;
     const earlyResponse = await executeMatchedTriggerSpec({

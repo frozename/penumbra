@@ -41,10 +41,11 @@ describe("SessionEventLog", () => {
 
   test("record() -> listBySession() round-trips a dotted kind with json meta", () => {
     const log = new SessionEventLog(db);
-    log.record(sampleEvent);
+    const insertedId = log.record(sampleEvent);
 
     const rows = log.listBySession("s-1");
     expect(rows).toHaveLength(1);
+    expect(insertedId).toBe(rows[0]!.id);
     expect(rows[0]!.session_id).toBe("s-1");
     expect(rows[0]!.related_session_id).toBe("s-0");
     expect(rows[0]!.kind).toBe("continuity.boot_pickup");
