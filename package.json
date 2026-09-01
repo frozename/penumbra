@@ -16,9 +16,9 @@
     "lint:no-raw-env": "bun scripts/lint/no-raw-env.ts",
     "lint:no-sync-exec": "bun scripts/lint/no-sync-exec.ts",
     "typecheck": "bun scripts/check-dist-freshness.ts && tsc --build",
-    "lint": "bun run lint:no-raw-env && bun run lint:no-sync-exec && eslint .",
+    "lint": "bun run lint:no-raw-env && bun run lint:no-sync-exec && NODE_OPTIONS=--max-old-space-size=8192 eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:strict": "eslint packages/config packages/api-contract packages/agy-acp-shim packages/agentchat packages/e2e packages/workflows packages/cli packages/console packages/core packages/mcp packages/daemon packages/integrations/sirius-middleware scripts --max-warnings=0",
+    "lint:strict": "NODE_OPTIONS=--max-old-space-size=8192 eslint packages/config packages/api-contract packages/agy-acp-shim packages/agentchat packages/e2e packages/workflows packages/cli packages/console packages/core packages/mcp packages/daemon packages/integrations/sirius-middleware scripts --max-warnings=0",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "prepare": "husky"
