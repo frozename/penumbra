@@ -191,6 +191,33 @@ function parseCheck(result) {
   return { passed: false, output: text.slice(-4000) }
 }
 
+function hopFields(result) {
+  if (!result) {
+    return {
+      root_handoff_id: null,
+      latest_handoff_id: null,
+      hop_count: 0,
+      extra_hops: 0,
+      retry_prompt_count: 0,
+      hops_incomplete: false,
+      branch_base: null,
+      parent_handoff_id: null,
+      hops: [],
+    }
+  }
+  return {
+    root_handoff_id: result.root_handoff_id || null,
+    latest_handoff_id: result.latest_handoff_id || null,
+    hop_count: result.hop_count || 0,
+    extra_hops: result.extra_hops || 0,
+    retry_prompt_count: result.retry_prompt_count || 0,
+    hops_incomplete: result.hops_incomplete === true,
+    branch_base: result.branch_base || null,
+    parent_handoff_id: result.parent_handoff_id || null,
+    hops: Array.isArray(result.hops) ? result.hops : [],
+  }
+}
+
 function rubricPrompt(branch, handoffId) {
   const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
   const messagePreview = `${String(task.message || '').slice(0, 400)}…`
@@ -338,7 +365,7 @@ for (let i = 0; i < maxRounds; i++) {
   )
   const r = ((fan && fan.results) || [])[0]
   if (!r || !r.ok || !r.branch) {
-    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, result: r || null })
+    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, result: r || null, ...hopFields(r) })
     log(`fix-until-green round ${i + 1}: dispatch failed; stopping.`)
     break
   }
@@ -346,6 +373,9 @@ for (let i = 0; i < maxRounds; i++) {
   const verdict = parseCheck(r && Object.prototype.hasOwnProperty.call(r, 'check_line') ? r : r.response)
   prevBranch = r.branch
   prevOutput = verdict.output
+  if (r.extra_hops > 0 || r.hops_incomplete === true) {
+    log(`WARNING: fix-until-green round ${i + 1}: ignored ${r.extra_hops || 0} extra hop(s) for branch selection; retry_prompt_count=${r.retry_prompt_count || 0} hops_incomplete=${r.hops_incomplete === true}; using root_handoff_id=${r.root_handoff_id} branch=${r.branch}`)
+  }
   log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
   if (verdict.passed) {
     if (rubric.length > 0) {
@@ -365,6 +395,7 @@ for (let i = 0; i < maxRounds; i++) {
         agent: agentForRound,
         branch: r.branch,
         handoff_id: r.handoff_id,
+        ...hopFields(r),
         passed: rubricPassed,
         check_passed: true,
         rubric_grade: grade,
@@ -375,11 +406,11 @@ for (let i = 0; i < maxRounds; i++) {
       }
       prevOutput = failedOutput
     } else {
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, passed: true })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true })
       return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check }
     }
   } else {
-    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, passed: false })
+    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: false })
   }
 }
 
