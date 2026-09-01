@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
 
 const DEFAULT_MAX_CANDIDATES = 10;
 const MIN_TRANSCRIPT_CHARS = 200;
 const FALLBACK_T2_PROMOTION_MIN_EVENTS = 5;
 const PRESERVE_NEXT_SESSION_PROMPT = "<!-- penumbra:preserve-next-session-prompt -->";
+const APPROVED_NOTE_READ_CAP_BYTES = 256 * 1024;
 
 type Candidate = {
   action: "create" | "update";
@@ -20,6 +21,16 @@ type Candidate = {
   backlinks?: string[];
   durability?: string | null;
   is_episodic?: boolean | null;
+  preserve_body_bytes?: boolean;
+};
+
+type ApprovedSessionReview = {
+  ts: string;
+  refPath: string;
+};
+
+type RecallWarnings = {
+  warnings?: string[];
 };
 
 type Args = {
@@ -126,6 +137,10 @@ function extractInputText(input: unknown): string | null {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function warn(recall: RecallWarnings, message: string): void {
+  recall.warnings?.push(message);
 }
 
 function scrubTranscriptMarkup(content: string): string {
@@ -239,15 +254,16 @@ function renderCandidate(candidate: Candidate, index: number): string {
       ? candidate.update_existing_slug
       : candidate.slug;
   const backlinks = candidate.backlinks?.length ? candidate.backlinks.join(", ") : "none";
-  return [
+  const header = [
     `${index}. [${candidate.action}] ${candidate.title}`,
     `   - slug: ${slug}`,
     `   - hook: ${candidate.hook ?? candidate.title}`,
     `   - why: ${candidate.why}`,
     `   - backlinks: ${backlinks}`,
     "   - body:",
-    ...candidate.body.split(/\r?\n/).map((line) => `     ${line}`),
   ].join("\n");
+  if (candidate.preserve_body_bytes) return `${header}\n${candidate.body}`;
+  return [header, ...candidate.body.split(/\r?\n/).map((line) => `     ${line}`)].join("\n");
 }
 
 function renderCandidates(candidates: Candidate[]): string {
@@ -255,7 +271,112 @@ function renderCandidates(candidates: Candidate[]): string {
   return ["## Session memory candidates", "", ...candidates.map(renderCandidate)].join("\n\n");
 }
 
-export const fn: WorkflowFn<Args> = async (ctx) => {
+function findApprovedSessionReview(
+  db: Database,
+  sessionId: string,
+  recall: RecallWarnings,
+): ApprovedSessionReview | null {
+  try {
+    const rows = db
+      .query<{ ts: string; ref_path: string | null; meta_json: string | null }, [string]>(
+        `SELECT ts, ref_path, meta_json
+           FROM session_events
+          WHERE session_id = ?
+            AND kind = 'continuity.draft_reviewed'
+          ORDER BY ts DESC, id DESC`,
+      )
+      .all(sessionId);
+    for (const row of rows) {
+      if (!row.ref_path) continue;
+      let meta: unknown;
+      try {
+        meta = row.meta_json ? JSON.parse(row.meta_json) : null;
+      } catch {
+        continue;
+      }
+      if (!meta || typeof meta !== "object") continue;
+      const outcome = (meta as Record<string, unknown>).outcome;
+      if (outcome === "approved" || outcome === "edited") {
+        return { ts: row.ts, refPath: row.ref_path };
+      }
+    }
+  } catch (error) {
+    warn(
+      recall,
+      `session-memory-sweep: approved session note lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return null;
+}
+
+function readNotePrefix(path: string, recall: RecallWarnings): string | null {
+  const size = statSync(path).size;
+  if (size > APPROVED_NOTE_READ_CAP_BYTES) {
+    warn(
+      recall,
+      `session-memory-sweep: approved note quote skipped: ${path} exceeds ${APPROVED_NOTE_READ_CAP_BYTES} bytes`,
+    );
+    return null;
+  }
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(APPROVED_NOTE_READ_CAP_BYTES);
+    const bytesRead = readSync(fd, buffer, 0, APPROVED_NOTE_READ_CAP_BYTES, 0);
+    return buffer.toString("utf8", 0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function extractNarrativeSection(note: string): string | null {
+  const heading = /^## Narrative and traps learned[^\r\n]*(?:\r?\n|$)/m.exec(note);
+  if (!heading) return null;
+  const sectionStart = heading.index;
+  const contentStart = heading.index + heading[0].length;
+  const rest = note.slice(contentStart);
+  const nextHeading = /^## /m.exec(rest);
+  const sectionEnd = nextHeading ? contentStart + nextHeading.index : note.length;
+  const content = note.slice(contentStart, sectionEnd);
+  if (!content.trim()) return null;
+  return note.slice(sectionStart, sectionEnd);
+}
+
+function buildApprovedNoteCandidate(
+  review: ApprovedSessionReview | null,
+  recall: RecallWarnings,
+): Candidate | null {
+  if (!review) return null;
+  try {
+    const note = readNotePrefix(review.refPath, recall);
+    if (!note) return null;
+    const narrative = extractNarrativeSection(note);
+    if (!narrative) return null;
+    const sourceName = basename(review.refPath);
+    const slugName = sourceName
+      .replace(/\.[^.]+$/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return {
+      action: "create",
+      slug: `approved-session-note-${slugName || "narrative"}`,
+      title: `Approved session note — ${sourceName}`,
+      body: `Source: ${review.refPath} (approved ${review.ts})\n\n${narrative}`,
+      hook: "When close-time memory extraction runs after note approval",
+      why: "Quotes the operator-approved session note narrative verbatim for t2 review.",
+      backlinks: [review.refPath],
+      preserve_body_bytes: true,
+    };
+  } catch (error) {
+    warn(
+      recall,
+      `session-memory-sweep: approved session note unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+export const fn: WorkflowFn<Args> = async (ctx, recall) => {
   if (process.env.PENUMBRA_SESSION_SWEEP_ENABLED === "0") return PRESERVE_NEXT_SESSION_PROMPT;
 
   const { db, shouldClose } = resolveDb(ctx);
@@ -267,10 +388,12 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
   );
 
   let transcript: { sessionId: string; eventCount: number; transcript: string } | null;
+  let approvedReview: ApprovedSessionReview | null = null;
   try {
     transcript = sessionId
       ? readSessionTranscript(db, sessionId)
       : findActiveTranscriptForCwd(db, projectId);
+    if (sessionId) approvedReview = findApprovedSessionReview(db, sessionId, recall);
   } finally {
     if (shouldClose) db.close();
   }
@@ -291,8 +414,12 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
     project_id: projectId,
     max_candidates: maxCandidates,
   });
-  if (result.candidates.length === 0) return renderCandidates([]);
-  return renderCandidates(result.candidates.slice(0, maxCandidates));
+  const approvedCandidate = buildApprovedNoteCandidate(approvedReview, recall);
+  const candidates = [
+    ...(approvedCandidate ? [approvedCandidate] : []),
+    ...result.candidates.slice(0, maxCandidates),
+  ];
+  return renderCandidates(candidates);
 };
 
 export default spec;

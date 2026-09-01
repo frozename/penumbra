@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -9,6 +9,8 @@ import {
   type WorkflowCtx,
 } from "../../../packages/workflows/src/index.js";
 import { fn } from "./workflow.js";
+
+const APPROVED_NOTE_READ_CAP_BYTES = 256 * 1024;
 
 type Candidate = {
   action: "create" | "update";
@@ -37,6 +39,15 @@ function freshDb(): Database {
     CREATE TABLE t2_memories (
       memory_id TEXT PRIMARY KEY,
       title TEXT
+    );
+
+    CREATE TABLE session_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      ref_path TEXT,
+      meta_json TEXT
     );
   `);
   return db;
@@ -79,6 +90,63 @@ function makeCtx(db: Database, args: Record<string, unknown> = {}): WorkflowCtx 
     awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
     fileWrite: async () => "/tmp/out",
   } as WorkflowCtx;
+}
+
+function ordinaryCandidate(): Candidate {
+  return {
+    action: "create",
+    slug: "ordinary-session-candidate",
+    title: "Ordinary session candidate",
+    body: "The extractor still contributes its ordinary derived candidate.",
+    hook: "When ordinary extraction runs",
+    why: "The approved note quote must not suppress the existing extraction output.",
+    backlinks: ["ordinary"],
+  };
+}
+
+function seedTranscript(db: Database): void {
+  insertEvent(db, {
+    id: "e1",
+    sessionId: "session-1",
+    eventType: "agent-prompt",
+    summary:
+      "Close-time session memory extraction should have enough transcript material to pass the sweep threshold. ".repeat(
+        2,
+      ),
+  });
+  insertEvent(db, {
+    id: "e2",
+    sessionId: "session-1",
+    eventType: "agent-response",
+    summary:
+      "The workflow should render approval-only memory candidates after extracting session facts.",
+  });
+  insertEvent(db, {
+    id: "e3",
+    sessionId: "session-1",
+    eventType: "agent-response",
+    summary: "Approved session notes should be quoted verbatim when they exist for this session.",
+  });
+}
+
+function insertDraftReviewedEvent(
+  db: Database,
+  row: {
+    sessionId: string;
+    refPath: string;
+    ts?: string;
+    outcome?: "approved" | "edited" | "rejected";
+  },
+): void {
+  db.prepare(
+    `INSERT INTO session_events (session_id, kind, ts, ref_path, meta_json)
+     VALUES (?, 'continuity.draft_reviewed', ?, ?, ?)`,
+  ).run(
+    row.sessionId,
+    row.ts ?? "2026-08-31T21:30:00.000Z",
+    row.refPath,
+    JSON.stringify({ outcome: row.outcome ?? "approved", draft_id: "draft-1" }),
+  );
 }
 
 function withEnv<T>(name: string, value: string | undefined, run: () => Promise<T>): Promise<T> {
@@ -194,6 +262,166 @@ test("renders no-candidates marker when extraction returns no candidates", async
   expect(result).toBe("no new candidates");
   const t2Rows = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM t2_memories").get();
   expect(t2Rows?.count).toBe(0);
+});
+
+test("a t2 candidate offered after an approval quotes the approved note's narrative section verbatim, rather than re-deriving it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-memory-sweep-note-"));
+  try {
+    const db = freshDb();
+    seedTranscript(db);
+    const notePath = join(root, "maestro-continuation-2026-08-31-pm.md");
+    const narrativeSection = [
+      "## Narrative and traps learned",
+      "",
+      "Distinctive approved narrative {alpha: 1, beta: [two]} stays byte-for-byte.",
+      "Second line keeps punctuation: commas, semicolons; and braces {}.",
+      "  Indented trap line keeps leading spaces.",
+      "",
+    ].join("\n");
+    writeFileSync(
+      notePath,
+      [
+        "<!-- penumbra:session session-1 -->",
+        "",
+        "## Live state",
+        "",
+        "Active.",
+        "",
+        narrativeSection,
+        "## Open follow-ups (worst-first)",
+        "",
+        "- Follow up.",
+      ].join("\n"),
+    );
+    insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
+    const recall = { byKey: {}, warnings: [] };
+
+    const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+      fn(
+        makeCtx(db, {
+          extractSessionCandidates: async () => ({ candidates: [ordinaryCandidate()] }),
+        }),
+        recall,
+      ),
+    );
+
+    expect(result).toContain(`Source: ${notePath} (approved 2026-08-31T21:30:00.000Z)`);
+    expect(result).toContain(narrativeSection);
+    expect(result).toContain("Ordinary session candidate");
+    expect(result).toContain("The extractor still contributes its ordinary derived candidate.");
+    expect(String(result).indexOf("Approved session note")).toBeLessThan(
+      String(result).indexOf("Ordinary session candidate"),
+    );
+    expect(recall.warnings).toEqual([]);
+    const t2Rows = db
+      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM t2_memories")
+      .get();
+    expect(t2Rows?.count).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an approved note larger than the read cap is not quoted and warns", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-memory-sweep-large-note-"));
+  try {
+    const db = freshDb();
+    seedTranscript(db);
+    const notePath = join(root, "maestro-continuation-large.md");
+    const prefix = ["<!-- penumbra:session session-1 -->", "", "## Live state", ""].join("\n");
+    const heading = "## Narrative and traps learned\n";
+    const prefixBytes = Buffer.byteLength(prefix, "utf8");
+    const headingBytes = Buffer.byteLength(heading, "utf8");
+    const bytesBeforeHeading = APPROVED_NOTE_READ_CAP_BYTES - headingBytes - 64;
+    const liveStatePadding = "x".repeat(bytesBeforeHeading - prefixBytes);
+    writeFileSync(
+      notePath,
+      [
+        prefix,
+        liveStatePadding,
+        heading,
+        "This approved narrative begins before the cap.",
+        "This line and the next content continue beyond the read cap. ".repeat(4096),
+        "",
+        "## Open follow-ups (worst-first)",
+        "",
+        "- Follow up.",
+      ].join("\n"),
+    );
+    insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
+    const recall = { byKey: {}, warnings: [] };
+
+    const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+      fn(
+        makeCtx(db, {
+          extractSessionCandidates: async () => ({ candidates: [ordinaryCandidate()] }),
+        }),
+        recall,
+      ),
+    );
+
+    expect(result).toContain("Ordinary session candidate");
+    expect(result).toContain("The extractor still contributes its ordinary derived candidate.");
+    expect(result).not.toContain("Approved session note");
+    expect(recall.warnings).toEqual([
+      `session-memory-sweep: approved note quote skipped: ${notePath} exceeds ${APPROVED_NOTE_READ_CAP_BYTES} bytes`,
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("without an approval the candidates are unchanged", async () => {
+  const db = freshDb();
+  seedTranscript(db);
+
+  const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+    fn(
+      makeCtx(db, {
+        extractSessionCandidates: async () => ({ candidates: [ordinaryCandidate()] }),
+      }),
+      { byKey: {}, warnings: [] },
+    ),
+  );
+
+  expect(result).toBe(
+    [
+      "## Session memory candidates",
+      "",
+      "",
+      "",
+      "0. [create] Ordinary session candidate",
+      "   - slug: ordinary-session-candidate",
+      "   - hook: When ordinary extraction runs",
+      "   - why: The approved note quote must not suppress the existing extraction output.",
+      "   - backlinks: ordinary",
+      "   - body:",
+      "     The extractor still contributes its ordinary derived candidate.",
+    ].join("\n"),
+  );
+});
+
+test("an approved row whose note file is missing fails open with a warning", async () => {
+  const db = freshDb();
+  seedTranscript(db);
+  const missingNotePath = join(tmpdir(), "missing-approved-session-note.md");
+  insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: missingNotePath });
+  const recall = { byKey: {}, warnings: [] };
+
+  const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+    fn(
+      makeCtx(db, {
+        extractSessionCandidates: async () => ({ candidates: [ordinaryCandidate()] }),
+      }),
+      recall,
+    ),
+  );
+
+  expect(result).toContain("Ordinary session candidate");
+  expect(result).not.toContain("Approved session note");
+  expect(recall.warnings).toEqual([
+    expect.stringContaining("session-memory-sweep: approved session note unavailable"),
+  ]);
 });
 
 test("returns preserve marker for an empty db", async () => {
