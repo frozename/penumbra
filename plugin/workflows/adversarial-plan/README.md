@@ -60,7 +60,10 @@ mcp__penumbra__workflow_run({
 
 ```ts
 {
-  ok: true,
+  ok: boolean,
+  outcome: 'success' | 'success_partial' | 'failed',
+  failed_personas: string[],
+  completed_personas: string[],
   out_dir: string,
   personas: Array<{
     name: string;
@@ -71,6 +74,9 @@ mcp__penumbra__workflow_run({
   synthesizer_status: 'completed' | 'failed' | 'timeout' | null,
 }
 ```
+
+Runs with at least one completed persona and at least one failed persona return
+`outcome: 'success_partial'`; `ok` is true only when synthesis completes.
 
 ## Cost Note
 

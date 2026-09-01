@@ -476,7 +476,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const failedPersonas = personaResults
     .filter((result) => result.status !== "completed")
     .map((result) => result.persona);
-  const outcome = failedPersonas.length === 0 ? "success" : "failed";
+  const outcome = failedPersonas.length === 0 ? "success" : "success_partial";
 
   if (completedResults.length === 0) {
     return {
@@ -581,7 +581,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
 
   return {
-    ok: outcome !== "failed" && synthStatus === "completed",
+    ok: synthStatus === "completed",
     outcome,
     failed_personas: failedPersonas,
     completed_personas: personaResults

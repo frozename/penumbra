@@ -392,12 +392,16 @@ test("one persona fails: synth still runs with surviving persona only", async ()
   try {
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
+      outcome: string;
+      failed_personas: string[];
       out_dir: string;
       synthesis_path: string | null;
       personas: { name: string; status: string; conversation_id: string | null }[];
       synthesizer_status: string | null;
     };
     expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("success_partial");
+    expect(result.failed_personas).toEqual(["simplifier"]);
     expect(result.personas).toEqual([
       { name: "architect", status: "completed", conversation_id: "claude-conv" },
       { name: "simplifier", status: "failed", conversation_id: "codex-conv" },

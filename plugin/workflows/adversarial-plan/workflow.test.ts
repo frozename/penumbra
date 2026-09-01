@@ -96,4 +96,77 @@ describe("adversarial-plan workflow", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("reports failure when personas complete but synthesizer times out", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-plan-workflow-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = {
+        config: {
+          workloads: {
+            plan_refine: {
+              eligible_agents: ["planner"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            planner: {
+              bias: "Find planning gaps",
+              system_prompt: "Plan the work.",
+              preferred_agent: "planner-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          topic: "Fix the workflow status",
+          timeout_ms: 1000,
+          out_dir: "plan-out",
+        },
+        dispatch: async (input: { agent: string }) => {
+          dispatchCount += 1;
+          return {
+            conversation_id:
+              input.agent === "synth" ? "synth-conversation" : `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        awaitChain: async (conversationId: string) =>
+          conversationId === "synth-conversation"
+            ? {
+                status: "timeout" as const,
+                response_text: null,
+              }
+            : {
+                status: "completed" as const,
+                final_agent: "planner-agent",
+                response_text: "Phase 1: write a failing test. Phase 2: implement the fix.",
+              },
+        fileWrite: async (path: string) => path,
+      } satisfies Partial<WorkflowCtx>;
+      const recall = {
+        byKey: {},
+        warnings: [],
+        estimatedTokens: 0,
+      } satisfies RecallBundle;
+
+      const result = (await fn(ctx as WorkflowCtx, recall)) as {
+        ok: boolean;
+        outcome: string;
+        synthesizer_status: string | null;
+        synth_failed?: boolean;
+        failed_personas: string[];
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.outcome).toBe("success");
+      expect(result.failed_personas).toEqual([]);
+      expect(result.synthesizer_status).toBe("timeout");
+      expect(result.synth_failed).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
