@@ -1,3 +1,4 @@
+import "../setup";
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import { Titlebar } from "@src/shell/Titlebar";

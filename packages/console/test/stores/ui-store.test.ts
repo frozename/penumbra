@@ -1,3 +1,4 @@
+import "../setup";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { MODULES } from "@src/modules/manifest.js";

@@ -138,6 +138,7 @@ export interface E2EHarness {
     budget: { current: number; max_concurrent: number; soft_warn_pct: number };
   }) => void;
   pushEvent: (event: { event: string; data: unknown }) => void;
+  waitForSseClient: (opts?: { timeoutMs?: number }) => Promise<void>;
   simulateReconnect: () => void;
   injectError: (path: string, status: number) => void;
   clearErrors: () => void;
@@ -147,6 +148,12 @@ interface Call {
   method: string;
   path: string;
   body?: unknown;
+}
+
+interface SseWaiter {
+  resolve: () => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 interface HarnessRow extends PendingHandoffRow {
@@ -223,6 +230,16 @@ export async function startE2EHarness(): Promise<E2EHarness> {
   };
 
   const sseClients = new Set<ServerResponse<IncomingMessage>>();
+  const sseWaiters = new Set<SseWaiter>();
+
+  function resolveSseWaiters(): void {
+    if (sseClients.size === 0) return;
+    for (const waiter of Array.from(sseWaiters)) {
+      clearTimeout(waiter.timer);
+      sseWaiters.delete(waiter);
+      waiter.resolve();
+    }
+  }
 
   function resetState(): void {
     state.pending = [];
@@ -524,7 +541,7 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       }
     }
 
-    if (method === "GET" && simplePath === "/dispatch-events/stream") {
+    if (method === "GET" && simplePath === "/dispatch/events/stream") {
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -533,6 +550,7 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       });
       response.write(": keepalive\n\n");
       sseClients.add(response);
+      resolveSseWaiters();
       request.on("close", () => {
         sseClients.delete(response);
       });
@@ -669,6 +687,11 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+      for (const waiter of Array.from(sseWaiters)) {
+        clearTimeout(waiter.timer);
+        sseWaiters.delete(waiter);
+        waiter.reject(new Error("harness stopped before SSE client connected"));
+      }
     },
     addChain(row) {
       state.chains.push({ ...row });
@@ -724,6 +747,9 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       };
     },
     pushEvent(event) {
+      if (sseClients.size === 0) {
+        throw new Error("no SSE clients connected; await waitForSseClient before pushEvent");
+      }
       const line = `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
       for (const client of Array.from(sseClients)) {
         try {
@@ -732,6 +758,23 @@ export async function startE2EHarness(): Promise<E2EHarness> {
           sseClients.delete(client);
         }
       }
+    },
+    waitForSseClient(opts) {
+      const timeoutMs = opts?.timeoutMs ?? 5_000;
+      if (sseClients.size > 0) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        let waiter!: SseWaiter;
+        waiter = {
+          resolve,
+          reject,
+          timer: setTimeout(() => {
+            sseWaiters.delete(waiter);
+            reject(new Error(`timed out waiting ${timeoutMs}ms for SSE client`));
+          }, timeoutMs),
+        };
+        sseWaiters.add(waiter);
+        resolveSseWaiters();
+      });
     },
     simulateReconnect() {
       for (const client of Array.from(sseClients)) {

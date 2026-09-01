@@ -1,3 +1,4 @@
+import "../../setup";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react/pure";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

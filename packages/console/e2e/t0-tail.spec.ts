@@ -18,6 +18,7 @@ test.beforeEach(() => {
 test("t0 tail filter narrows the visible rows", async ({ page }) => {
   await page.goto("/mission");
   await expect(page.locator(".card-head h3", { hasText: "t0 events" })).toBeVisible();
+  await fixture.harness.waitForSseClient({ timeoutMs: 5_000 });
 
   for (let i = 0; i < 3; i++) {
     fixture.harness.pushEvent({
@@ -42,13 +43,12 @@ test("t0 tail filter narrows the visible rows", async ({ page }) => {
   await expect(page.locator(".t0-row")).toHaveCount(5);
 });
 
-test("pause stops new events from appearing; resume keeps the paused snapshot", async ({
-  page,
-}) => {
+test("pause stops new events from appearing; resume surfaces buffered events", async ({ page }) => {
   await page.goto("/mission");
   await expect(page.locator(".card-head h3", { hasText: "t0 events" })).toBeVisible({
     timeout: 10_000,
   });
+  await fixture.harness.waitForSseClient({ timeoutMs: 5_000 });
 
   for (let i = 0; i < 3; i++) {
     fixture.harness.pushEvent({
@@ -77,7 +77,7 @@ test("pause stops new events from appearing; resume keeps the paused snapshot", 
     data: { ts: new Date().toISOString(), event: "agent-prompt", last: true },
   });
 
-  await expect(page.locator(".t0-row")).toHaveCount(4, { timeout: 5_000 });
+  await expect(page.locator(".t0-row")).toHaveCount(6, { timeout: 5_000 });
 });
 
 test("reconnect synthetic shows the banner and clears the visible list", async ({ page }) => {
@@ -85,6 +85,7 @@ test("reconnect synthetic shows the banner and clears the visible list", async (
   await expect(page.locator(".card-head h3", { hasText: "t0 events" })).toBeVisible({
     timeout: 10_000,
   });
+  await fixture.harness.waitForSseClient({ timeoutMs: 5_000 });
 
   for (let i = 0; i < 3; i++) {
     fixture.harness.pushEvent({

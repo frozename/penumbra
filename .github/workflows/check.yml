@@ -25,12 +25,15 @@ jobs:
         run: bun install --frozen-lockfile
       - name: typecheck
         run: bun run typecheck
+      - name: "console (blocking: unit + build)"
+        run: |
+          bun scripts/bun-test-gate.ts packages/console --path-ignore-patterns='**/e2e/**' --path-ignore-patterns='**/visual/**' --path-ignore-patterns='**/dist/**'
+          bun run --cwd packages/console build
       - name: test (advisory — pending Linux-runner test-tail fixes; install + typecheck still block)
         # TEMPORARILY advisory (continue-on-error below). The crash is fixed and
-        # every shard now summarizes, but 4 shards (console/core/integrations/
-        # workflows) carry CI/Linux-specific failures that pass on macOS: console
-        # render tests needing a DOM env when sharded from root, plugin/workflows
-        # zod resolution, integrations `observe` HTTP expectations, and
+        # every shard now summarizes, but core/integrations/workflows carry
+        # CI/Linux-specific failures that pass on macOS: plugin/workflows zod
+        # resolution, integrations `observe` HTTP expectations, and
         # project-registry tests assuming local sibling repos. These are not
         # locally reproducible (macOS passes), so they are tracked as a follow-up;
         # flip continue-on-error back off once the Linux tail is green. install and

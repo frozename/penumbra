@@ -2,8 +2,8 @@ import { buildRequestUrl } from "../lib/url.js";
 import { useDaemonStore } from "../stores/daemon-store.js";
 import { createSseSource, type EventSourceLike, type ShimOpts } from "./event-source-shim.js";
 
-const TOPIC_PATHS = {
-  "dispatch-events": "/dispatch-events/stream",
+export const TOPIC_PATHS = {
+  "dispatch-events": "/dispatch/events/stream",
 } as const;
 
 export type StreamTopic = keyof typeof TOPIC_PATHS;
@@ -340,10 +340,15 @@ function makeClearTimeoutImpl(deps: StreamBrokerDeps): ClearTimeoutLike {
   };
 }
 
+function createDefaultSseSource(opts: ShimOpts): EventSourceLike {
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  return createSseSource({ ...opts, fetchImpl });
+}
+
 export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
   const ctx: BrokerCtx = {
     entries: new Map(),
-    factory: deps.sourceFactory ?? createSseSource,
+    factory: deps.sourceFactory ?? createDefaultSseSource,
     setTimeoutImpl: makeSetTimeoutImpl(deps),
     clearTimeoutImpl: makeClearTimeoutImpl(deps),
     getConfig: deps.getConfig,
@@ -377,7 +382,7 @@ let mutableScheduler: {
     globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>);
   },
 };
-let mutableSourceFactory: (opts: ShimOpts) => EventSourceLike = createSseSource;
+let mutableSourceFactory: (opts: ShimOpts) => EventSourceLike = createDefaultSseSource;
 
 const defaultBroker = createStreamBroker({
   getConfig: (): { baseUrl: string; token: string } => {
@@ -411,7 +416,7 @@ export function __setSchedulers(
 export function __setSourceFactory(
   factoryOrNull: ((opts: ShimOpts) => EventSourceLike) | null,
 ): void {
-  mutableSourceFactory = factoryOrNull ?? createSseSource;
+  mutableSourceFactory = factoryOrNull ?? createDefaultSseSource;
 }
 
 export function __resetBrokerForTests(): void {
@@ -422,5 +427,5 @@ export function __resetBrokerForTests(): void {
       globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>);
     },
   };
-  mutableSourceFactory = createSseSource;
+  mutableSourceFactory = createDefaultSseSource;
 }

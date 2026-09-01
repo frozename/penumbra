@@ -1,3 +1,4 @@
+import "../setup";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { DaemonClient } from "@src/api/client";

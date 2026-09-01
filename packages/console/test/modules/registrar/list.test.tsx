@@ -1,3 +1,4 @@
+import "../../setup";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -47,7 +48,10 @@ interface DetailOverrides {
   totalPhases?: number;
 }
 
-function makeDetail(registrarId: string, overrides: DetailOverrides = {}): {
+function makeDetail(
+  registrarId: string,
+  overrides: DetailOverrides = {},
+): {
   entry: Record<string, unknown>;
   phases: Record<string, unknown>[];
   events: Record<string, unknown>[];

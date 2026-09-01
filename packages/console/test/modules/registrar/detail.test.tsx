@@ -1,3 +1,4 @@
+import "../../setup";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -94,7 +95,11 @@ afterEach(() => {
 describe("PhaseTimeline", () => {
   test("renders phases in phase_no order with statuses", () => {
     const view = render(
-      <PhaseTimeline phases={[makePhase(3, "blocked"), makePhase(1, "complete"), makePhase(2, "active")] as never} />,
+      <PhaseTimeline
+        phases={
+          [makePhase(3, "blocked"), makePhase(1, "complete"), makePhase(2, "active")] as never
+        }
+      />,
     );
 
     const items = view.getAllByTestId("phase-item");

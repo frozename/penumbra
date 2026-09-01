@@ -172,14 +172,62 @@ describe("e2e harness", () => {
     expect(result.stderr).toBe("");
   });
 
-  test("pushEvent is callable without throwing", async () => {
+  test("pushEvent throws before an SSE client is connected", async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';
       const h = await startE2EHarness();
       try {
+        let threw = false;
+        try {
+          h.pushEvent({ event: 'test', data: { kind: 'agent-prompt', ts: new Date().toISOString() } });
+        } catch (err) {
+          threw = String(err?.message ?? err).includes('no SSE clients connected');
+        }
+        if (!threw) throw new Error('pushEvent did not fail closed');
+      } finally {
+        await h.stop();
+      }
+    `;
+    const result = await runScript(script);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  test("waitForSseClient resolves once the dispatch events stream is connected", async () => {
+    const script = `
+      import { startE2EHarness } from './e2e/harness';
+      const h = await startE2EHarness();
+      const auth = { Authorization: 'Bearer ' + h.token };
+      try {
+        const response = await Bun.fetch(h.baseUrl + '/dispatch/events/stream', { headers: auth });
+        if (response.status !== 200) throw new Error('status=' + response.status);
+        await h.waitForSseClient({ timeoutMs: 1000 });
         h.pushEvent({ event: 'test', data: { kind: 'agent-prompt', ts: new Date().toISOString() } });
-        h.pushEvent({ event: 'test', data: { kind: 'agent-response', ts: new Date().toISOString() } });
-        if (typeof h.pushEvent !== 'function') throw new Error('pushEvent not a function');
+        await response.body?.cancel();
+      } finally {
+        await h.stop();
+      }
+    `;
+    const result = await runScript(script);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  test("dispatch events SSE route matches the daemon path", async () => {
+    const script = `
+      import { startE2EHarness } from './e2e/harness';
+      const h = await startE2EHarness();
+      const auth = { Authorization: 'Bearer ' + h.token };
+      try {
+        const current = await Bun.fetch(h.baseUrl + '/dispatch/events/stream', { headers: auth });
+        if (current.status !== 200) throw new Error('current status=' + current.status);
+        const contentType = current.headers.get('content-type') ?? '';
+        if (!contentType.includes('text/event-stream')) throw new Error('content-type=' + contentType);
+        await current.body?.cancel();
+
+        const legacy = await Bun.fetch(h.baseUrl + '/dispatch-events/stream', { headers: auth });
+        if (legacy.status !== 404) throw new Error('legacy status=' + legacy.status);
+        await legacy.body?.cancel();
       } finally {
         await h.stop();
       }
@@ -195,7 +243,7 @@ describe("e2e harness", () => {
       const h = await startE2EHarness();
       const auth = { Authorization: 'Bearer ' + h.token };
       try {
-        const response = await Bun.fetch(h.baseUrl + '/dispatch-events/stream', { headers: auth });
+        const response = await Bun.fetch(h.baseUrl + '/dispatch/events/stream', { headers: auth });
         if (response.status !== 200) throw new Error('status=' + response.status);
 
         const reader = response.body?.getReader();

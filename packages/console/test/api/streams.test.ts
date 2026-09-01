@@ -9,6 +9,7 @@ import {
   type StreamBrokerDeps,
   type StreamMessage,
   subscribe,
+  TOPIC_PATHS,
 } from "@src/api/streams.js";
 import { useDaemonStore } from "@src/stores/daemon-store.js";
 
@@ -139,6 +140,27 @@ afterEach(() => {
 });
 
 describe("streams broker", () => {
+  test("dispatch-events topic follows the daemon SSE route", () => {
+    // Keep aligned with packages/daemon/src/serve.ts staticRoute("GET", "/dispatch/events/stream", ...).
+    expect(TOPIC_PATHS["dispatch-events"]).toBe("/dispatch/events/stream");
+  });
+
+  test("default SSE source calls browser fetch with the correct receiver", async () => {
+    let called = false;
+    globalThis.fetch = function boundFetchOnly(this: unknown) {
+      if (this !== globalThis) throw new Error("unbound_fetch");
+      called = true;
+      const { response } = createMockSseResponse();
+      return Promise.resolve(response);
+    } as unknown as typeof fetch;
+
+    const sub = subscribe("dispatch-events", noop());
+    await flushMicrotasks();
+
+    expect(called).toBe(true);
+    sub.unsubscribe();
+  });
+
   test("two subscribers to same topic+params share one fetch", async () => {
     const sub1 = subscribe("dispatch-events", noop());
     const sub2 = subscribe("dispatch-events", noop());
@@ -407,7 +429,7 @@ describe("streams broker", () => {
     const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
-    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/dispatch-events/stream");
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/dispatch/events/stream");
     expect(sessions[0]!.init?.credentials).toBe("include");
     const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
     expect(headers["Authorization"]).toBe("Bearer tok-test");
@@ -440,7 +462,7 @@ describe("streams broker", () => {
     const sub = subscribe("dispatch-events", noop());
     await flushMicrotasks();
 
-    expect(sessions[0]!.url).toBe("/api/dispatch-events/stream");
+    expect(sessions[0]!.url).toBe("/api/dispatch/events/stream");
     sub.unsubscribe();
   });
 
