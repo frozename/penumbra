@@ -1,3 +1,5 @@
+import type { TextContentEnvelope } from "@novaproto/mcp-shared";
+
 import { ProjectRegistry } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, it, mock } from "bun:test";
@@ -138,7 +140,10 @@ const TOOL_NAMES = [
   "routing_bias_list",
   "routing_bias_set",
   "routing_bias_clear",
+  "session_events",
   "session_end",
+  "session_note_drafts",
+  "session_note_approve",
   "shell_close",
   "shell_list",
   "shell_run",
@@ -231,6 +236,8 @@ const READ_ONLY_TOOL_NAMES = [
   "workflow_status",
   "workflow_wait",
   "workflow_suggest",
+  "session_events",
+  "session_note_drafts",
   "worktree_inspect",
   "worktree_list",
 ] as const;
@@ -277,6 +284,7 @@ const MUTATING_TOOL_NAMES = [
   "reconciler_sweep_orphan_prs",
   "routing_bias_set",
   "routing_bias_clear",
+  "session_note_approve",
   "fs_write",
   "fs_edit",
   "fs_exec",
@@ -382,6 +390,23 @@ function registryDaemonPayload(): Record<string, unknown> {
     permissions: [],
     permission_id: TEST_ID,
     plans: [],
+    drafts: [
+      {
+        draft_id: TEST_ID,
+        session_id: TEST_ID,
+        project_id: TEST_ID,
+        period_key: "2026-01-01",
+        skeleton_path: "/tmp/penumbra-registry-envelope-test.skeleton.md",
+        draft_path: "/tmp/penumbra-registry-envelope-test.draft.md",
+        note_path: "/tmp/penumbra-registry-envelope-test.note.md",
+        handoff_id: TEST_ID,
+        status: "awaiting_approval",
+        composed_at: "2026-01-01T00:00:00.000Z",
+        reviewed_at: null,
+        composed_event_id: 1,
+        review_event_id: null,
+      },
+    ],
     reliability: {
       status: "complete",
       trustworthy: true,
@@ -389,6 +414,33 @@ function registryDaemonPayload(): Record<string, unknown> {
       summary: "ok",
     },
     responses: [{ agent: "codex-acp-fast", text: "ok", ts: "2026-01-01T00:00:00.000Z" }],
+    draft: {
+      draft_id: TEST_ID,
+      session_id: TEST_ID,
+      project_id: TEST_ID,
+      period_key: "2026-01-01",
+      skeleton_path: "/tmp/penumbra-registry-envelope-test.skeleton.md",
+      draft_path: "/tmp/penumbra-registry-envelope-test.draft.md",
+      note_path: "/tmp/penumbra-registry-envelope-test.note.md",
+      handoff_id: TEST_ID,
+      status: "approved",
+      composed_at: "2026-01-01T00:00:00.000Z",
+      reviewed_at: "2026-01-01T00:00:00.000Z",
+      composed_event_id: 1,
+      review_event_id: 2,
+    },
+    event: {
+      id: 3,
+      session_id: TEST_ID,
+      related_session_id: null,
+      project_id: TEST_ID,
+      cwd: null,
+      transcript_path: null,
+      ref_path: null,
+      kind: "continuity.draft_reviewed",
+      ts: "2026-01-01T00:00:00.000Z",
+      meta: null,
+    },
     session: {
       task_id: TEST_ID,
       chain_handoff_id: TEST_ID,
@@ -567,6 +619,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   );
 }
 
+async function expectRejectsWithMessage(promise: Promise<unknown>, needle: string): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    expect(message).toContain(needle);
+    return;
+  }
+  throw new Error("expected promise to reject but it resolved");
+}
+
 describe("TOOL_REGISTRY", () => {
   it("module loads", () => {
     expect(importError).toBeNull();
@@ -690,6 +753,64 @@ describe("TOOL_REGISTRY", () => {
     }
 
     expect(missingContent).toEqual([]);
+  });
+
+  it("session_note_drafts returns an isError envelope for malformed daemon bodies", async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = fakeDaemon({
+      sessionNoteDrafts: () => Promise.resolve({ drafts: undefined as never }),
+    });
+    const entry = TOOL_REGISTRY["session_note_drafts"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+    const out = (await handler({})) as TextContentEnvelope & { isError?: boolean };
+
+    expect(out.isError).toBe(true);
+    expect(out.content[0]?.text).toContain("session_note_drafts");
+  });
+
+  it("session_note_drafts propagates daemon transport errors", async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = fakeDaemon({
+      sessionNoteDrafts: () => Promise.reject(new Error("daemon offline")),
+    });
+    const entry = TOOL_REGISTRY["session_note_drafts"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+
+    await expectRejectsWithMessage(handler({}), "daemon offline");
+  });
+
+  it("session_note_approve returns an isError envelope for malformed daemon bodies", async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = fakeDaemon({
+      sessionNoteApprove: () => Promise.resolve({ draft: undefined as never, event: null }),
+    });
+    const entry = TOOL_REGISTRY["session_note_approve"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+    const out = (await handler({ draft_id: TEST_ID, approve: true })) as TextContentEnvelope & {
+      isError?: boolean;
+    };
+
+    expect(out.isError).toBe(true);
+    expect(out.content[0]?.text).toContain("session_note_approve");
+  });
+
+  it("session_note_approve propagates daemon transport errors", async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = fakeDaemon({
+      sessionNoteApprove: () => Promise.reject(new Error("daemon offline")),
+    });
+    const entry = TOOL_REGISTRY["session_note_approve"];
+    expect(entry).toBeDefined();
+    const handler = entry!.makeHandler(daemon);
+
+    await expectRejectsWithMessage(handler({ draft_id: TEST_ID, approve: true }), "daemon offline");
   });
 
   it("wraps handoff_get results with acting_on for handoff_id inputs", async () => {
