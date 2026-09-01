@@ -11,7 +11,18 @@ import { buildRegistry } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -113,6 +124,93 @@ async function bootPickupHarness(
     rmSync(repo, { recursive: true, force: true });
   };
   return { harness, repo };
+}
+
+type ContinuityPlaybookOpts = {
+  name?: string;
+  trigger?: string;
+  output?: string;
+  outputPath?: string;
+  body: string;
+};
+
+type SessionEventRows = ReturnType<typeof SessionEventsListResponseSchema.parse>["events"];
+
+async function continuityHarness(
+  opts: ContinuityPlaybookOpts,
+): Promise<{ harness: Harness; repo: string; root: string }> {
+  const root = mkdtempSync(join(tmpdir(), "continuity-playbooks-"));
+  const name = opts.name ?? "session-handoff";
+  const playbookDir = join(root, `playbooks/${name}`);
+  mkdirSync(playbookDir, { recursive: true });
+  writeFileSync(
+    join(playbookDir, "playbook.md"),
+    `---\nname: ${name}\ndescription: continuity fixture\ntriggers:\n${opts.trigger ?? "  - kind: lifecycle\n    event: pre-compact"}\nrecall: []\noutput:\n${opts.output ?? `  - kind: file\n    path: ${opts.outputPath ?? "docs/notes/maestro-continuation-{{date}}-{{period}}.skeleton.md"}\n    mode: overwrite`}\nrun:\n  kind: markdown-template\n---\n${opts.body}`,
+  );
+  mkdirSync(join(root, "workflows"), { recursive: true });
+  const repo = seedRepo();
+  const harness = startHarness({
+    projectRegistry: new ProjectRegistry(
+      new Map([["penumbra", { project_id: "penumbra", root_path: repo }]]),
+    ),
+    workflowRegistry: await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    }),
+  });
+  const originalStop = harness.stop.bind(harness);
+  harness.stop = (): void => {
+    originalStop();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  };
+  return { harness, repo, root };
+}
+
+async function triggerWorkflow(
+  h: Harness,
+  repo: string,
+  event: Record<string, unknown> = { kind: "lifecycle", event: "pre-compact" },
+): Promise<void> {
+  const res = await h.fetch("/workflows/trigger", {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      event,
+      cwd: repo,
+      session_id: "s-continuity",
+      transcript_path: "/tmp/transcript-continuity.jsonl",
+    }),
+  });
+  if (res.status !== 200) {
+    throw new Error(`unexpected status ${String(res.status)}: ${await res.text()}`);
+  }
+}
+
+async function listContinuityEvents(h: Harness): Promise<SessionEventRows> {
+  const get = await h.fetch("/session-events?kind_prefix=continuity.");
+  if (get.status !== 200) {
+    throw new Error(`unexpected status ${String(get.status)}: ${await get.text()}`);
+  }
+  const body: unknown = await get.json();
+  return SessionEventsListResponseSchema.parse(body).events;
+}
+
+function onlyContinuityEvent(
+  events: Awaited<ReturnType<typeof listContinuityEvents>>,
+  kind: string,
+): SessionEventRows[number] {
+  const filtered = events.filter((event) => event.kind === kind);
+  expect(filtered).toHaveLength(1);
+  return filtered[0]!;
+}
+
+function findSkeletonPath(repo: string): string {
+  const dir = join(repo, "docs/notes");
+  const entries = existsSync(dir) ? readdirSync(dir) : [];
+  const skeleton = entries.find((entry) => entry.endsWith(".skeleton.md"));
+  if (!skeleton) throw new Error("expected skeleton output");
+  return join(realpathSync(repo), "docs/notes", skeleton);
 }
 
 test("POST /session-events with an unknown kind returns 400", async () => {
@@ -473,6 +571,272 @@ test("related_session_id is null, not an error, when the note carries no stamp",
       .get();
     expect(row).toEqual({ related_session_id: null, ref_path: realpathSync(notePath) });
   } finally {
+    h.stop();
+  }
+});
+
+test("a session-handoff run records continuity.skeleton_generated with ref_path and the session stamp in meta", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174222";
+  const { harness: h, repo } = await continuityHarness({
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const skeletonPath = findSkeletonPath(repo);
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(event.session_id).toBe("s-continuity");
+    expect(event.project_id).toBe("penumbra");
+    expect(event.cwd).toBe(repo);
+    expect(event.transcript_path).toBe("/tmp/transcript-continuity.jsonl");
+    expect(event.ref_path).toBe(skeletonPath);
+    if (typeof event.meta !== "object" || event.meta === null) {
+      throw new Error("expected skeleton meta object");
+    }
+    const meta = event.meta as {
+      session_stamp?: unknown;
+      byte_size?: unknown;
+      period_key?: unknown;
+    };
+    expect(meta.session_stamp).toBe(stamp);
+    expect(typeof meta.byte_size).toBe("number");
+    expect((meta.byte_size as number) > 0).toBe(true);
+    expect(typeof meta.period_key).toBe("string");
+  } finally {
+    h.stop();
+  }
+});
+
+test("a session-handoff skeleton ref_path resolves back to the source session", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174333";
+  const { harness: h, repo } = await continuityHarness({
+    outputPath: "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md",
+    body: `<!-- penumbra:session ${stamp} -->\nSkeleton body\n`,
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const skeletonPath = join(
+      realpathSync(repo),
+      "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md",
+    );
+    expect(h.services.sessionEventLog.resolveSourceSessionForNote(skeletonPath)).toBe(
+      "s-continuity",
+    );
+  } finally {
+    h.stop();
+  }
+});
+
+test("a symlinked notes directory records the logical skeleton ref_path", async () => {
+  const outputPath = "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md";
+  const { harness: h, repo } = await continuityHarness({
+    outputPath,
+    body: "Skeleton body\n",
+  });
+  try {
+    const physicalNotesDir = join(repo, "docs/notes-target");
+    rmSync(join(repo, "docs"), { recursive: true, force: true });
+    mkdirSync(physicalNotesDir, { recursive: true });
+    symlinkSync(physicalNotesDir, join(repo, "docs/notes"), "dir");
+    const logicalBarePath = join(
+      realpathSync(repo),
+      "docs/notes/maestro-continuation-2026-05-01-am.md",
+    );
+    writeFileSync(logicalBarePath, "operator note bytes\n");
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(logicalBarePath, future, future);
+
+    await triggerWorkflow(h, repo);
+
+    const logicalSkeletonPath = join(realpathSync(repo), outputPath);
+    const physicalSkeletonPath = realpathSync(logicalSkeletonPath);
+    expect(physicalSkeletonPath).not.toBe(logicalSkeletonPath);
+    const physicalBarePath = realpathSync(logicalBarePath);
+    expect(physicalBarePath).not.toBe(logicalBarePath);
+    const events = await listContinuityEvents(h);
+    const skeletonEvent = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    expect(skeletonEvent.ref_path).toBe(logicalSkeletonPath);
+    expect(skeletonEvent.ref_path).not.toBe(physicalSkeletonPath);
+    const supersededEvent = onlyContinuityEvent(events, "continuity.note_superseded");
+    expect(supersededEvent.ref_path).toBe(logicalBarePath);
+    expect(supersededEvent.ref_path).not.toBe(physicalBarePath);
+    if (typeof supersededEvent.meta !== "object" || supersededEvent.meta === null) {
+      throw new Error("expected note superseded meta object");
+    }
+    expect((supersededEvent.meta as { skeleton_path?: unknown }).skeleton_path).toBe(
+      logicalSkeletonPath,
+    );
+  } finally {
+    h.stop();
+  }
+});
+
+test("skeleton_generated reads the session stamp from a large skeleton body", async () => {
+  const stamp = "123e4567-e89b-12d3-a456-426614174444";
+  const { harness: h, repo } = await continuityHarness({
+    body: `<!-- penumbra:session ${stamp} -->\n${"x".repeat(70 * 1024)}\n`,
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    if (typeof event.meta !== "object" || event.meta === null) {
+      throw new Error("expected skeleton meta object");
+    }
+    expect((event.meta as { session_stamp?: unknown }).session_stamp).toBe(stamp);
+  } finally {
+    h.stop();
+  }
+});
+
+test("skeleton_generated records session_stamp null when the skeleton has no stamp", async () => {
+  const { harness: h, repo } = await continuityHarness({
+    body: "Skeleton body without stamp\n",
+  });
+  const warnCalls: unknown[] = [];
+  const originalWarn = h.services.log.warn.bind(h.services.log);
+  h.services.log.warn = (obj: unknown, msg?: string): void => {
+    warnCalls.push({ obj, msg });
+  };
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.skeleton_generated");
+    if (typeof event.meta !== "object" || event.meta === null) {
+      throw new Error("expected skeleton meta object");
+    }
+    expect((event.meta as { session_stamp?: unknown }).session_stamp).toBeNull();
+    expect(warnCalls).toHaveLength(0);
+  } finally {
+    h.services.log.warn = originalWarn;
+    h.stop();
+  }
+});
+
+test("when a bare-named note newer than the skeleton exists, continuity.note_superseded is recorded and nothing is blocked", async () => {
+  const outputPath = "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md";
+  const { harness: h, repo } = await continuityHarness({
+    outputPath,
+    body: "Skeleton body\n",
+  });
+  try {
+    const barePath = join(repo, "docs/notes/maestro-continuation-2026-05-01-am.md");
+    mkdirSync(join(repo, "docs/notes"), { recursive: true });
+    writeFileSync(barePath, "operator note bytes\n");
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(barePath, future, future);
+
+    await triggerWorkflow(h, repo);
+
+    expect(readFileSync(barePath, "utf8")).toBe("operator note bytes\n");
+    const logicalBarePath = join(
+      realpathSync(repo),
+      "docs/notes/maestro-continuation-2026-05-01-am.md",
+    );
+    const logicalSkeletonPath = join(realpathSync(repo), outputPath);
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.note_superseded");
+    expect(event.ref_path).toBe(logicalBarePath);
+    if (typeof event.meta !== "object" || event.meta === null) {
+      throw new Error("expected note superseded meta object");
+    }
+    const meta = event.meta as {
+      skeleton_path?: unknown;
+      note_mtime?: unknown;
+      skeleton_mtime?: unknown;
+    };
+    expect(meta.skeleton_path).toBe(logicalSkeletonPath);
+    expect(typeof meta.note_mtime).toBe("string");
+    expect(typeof meta.skeleton_mtime).toBe("string");
+  } finally {
+    h.stop();
+  }
+});
+
+test("an older bare-named sibling records no note_superseded row", async () => {
+  const outputPath = "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md";
+  const { harness: h, repo } = await continuityHarness({
+    outputPath,
+    body: "Skeleton body\n",
+  });
+  try {
+    const barePath = join(repo, "docs/notes/maestro-continuation-2026-05-01-am.md");
+    mkdirSync(join(repo, "docs/notes"), { recursive: true });
+    writeFileSync(barePath, "older operator note\n");
+    const past = new Date("2020-01-01T00:00:00.000Z");
+    utimesSync(barePath, past, past);
+
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    expect(events.filter((event) => event.kind === "continuity.note_superseded")).toHaveLength(0);
+  } finally {
+    h.stop();
+  }
+});
+
+test("a non-session-handoff workflow run records no continuity rows", async () => {
+  const { harness: h, repo } = await continuityHarness({
+    name: "session-reminder-fixture",
+    outputPath: "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md",
+    body: "Reminder body\n",
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    expect(events).toHaveLength(0);
+  } finally {
+    h.stop();
+  }
+});
+
+test("a session-handoff run with a non-maestro skeleton basename records no continuity rows", async () => {
+  const { harness: h, repo } = await continuityHarness({
+    outputPath: "docs/notes/session-handoff.skeleton.md",
+    body: "Skeleton body\n",
+  });
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    expect(events).toHaveLength(0);
+  } finally {
+    h.stop();
+  }
+});
+
+test("continuity record failure does not block the trigger response and warns once", async () => {
+  const { harness: h, repo } = await continuityHarness({
+    outputPath: "docs/notes/maestro-continuation-2026-05-01-am.skeleton.md",
+    body: "Skeleton body\n",
+  });
+  const sessionEventLog = h.services.sessionEventLog;
+  const originalRecord = sessionEventLog.record.bind(sessionEventLog);
+  const warnCalls: unknown[] = [];
+  const originalWarn = h.services.log.warn.bind(h.services.log);
+  sessionEventLog.record = (event): void => {
+    if (event.kind === "continuity.skeleton_generated") {
+      throw new Error("simulated continuity record failure");
+    }
+    originalRecord(event);
+  };
+  h.services.log.warn = (obj: unknown, msg?: string): void => {
+    warnCalls.push({ obj, msg });
+  };
+  try {
+    await triggerWorkflow(h, repo);
+
+    const events = await listContinuityEvents(h);
+    expect(events.filter((event) => event.kind.startsWith("continuity."))).toHaveLength(0);
+    expect(warnCalls).toHaveLength(1);
+  } finally {
+    sessionEventLog.record = originalRecord;
+    h.services.log.warn = originalWarn;
     h.stop();
   }
 });

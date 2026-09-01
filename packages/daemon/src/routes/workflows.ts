@@ -22,6 +22,8 @@ import {
   evaluateTriggerEvent,
   executeWorkflow,
 } from "@penumbra/workflows";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { basename, resolve } from "node:path";
 
 import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
@@ -31,6 +33,7 @@ const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
 const EVENT_TIME_WINDOW_MS_DEFAULT = 86_400_000;
+const SKELETON_STAMP_READ_LIMIT_BYTES = 4096;
 
 export const MAX_DRAFTS_PER_SESSION = 20;
 
@@ -1037,6 +1040,103 @@ function recordBootPickupSessionEvent(opts: {
   return true;
 }
 
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err;
+}
+
+function sessionStampFromSkeletonBody(body: string): string | null {
+  const firstLine = body.split(/\r?\n/, 1)[0] ?? "";
+  const match = SESSION_STAMP_RE.exec(firstLine);
+  return match?.[1] ?? null;
+}
+
+function periodKeyFromSkeletonPath(path: string): string | null {
+  const match = /^maestro-continuation-(.+)\.skeleton\.md$/.exec(basename(path));
+  return match?.[1] ?? null;
+}
+
+function readSkeletonStampPrefix(path: string): string {
+  const buffer = Buffer.alloc(SKELETON_STAMP_READ_LIMIT_BYTES);
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function statIfExists(path: string): ReturnType<typeof statSync> | null {
+  try {
+    return statSync(path);
+  } catch (err) {
+    if (isErrnoException(err) && err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function recordContinuitySessionEvents(opts: {
+  services: Services;
+  body: WorkflowTriggerBody;
+  cwd: string;
+  project: string;
+  specName: string;
+  artifacts: string[];
+}): void {
+  if (opts.specName !== "session-handoff") return;
+  const skeletonArtifact = opts.artifacts.find(
+    (artifact) => periodKeyFromSkeletonPath(artifact) !== null,
+  );
+  if (!skeletonArtifact) return;
+  const skeletonPath = resolve(skeletonArtifact);
+  const periodKey = periodKeyFromSkeletonPath(skeletonPath);
+  if (periodKey === null) return;
+  try {
+    const skeletonStampPrefix = readSkeletonStampPrefix(skeletonPath);
+    const skeletonStat = statSync(skeletonPath);
+    opts.services.sessionEventLog.record({
+      session_id: opts.body.session_id ?? null,
+      related_session_id: null,
+      project_id: opts.project !== "unknown" ? opts.project : null,
+      cwd: opts.cwd,
+      transcript_path: opts.body.transcript_path ?? null,
+      ref_path: skeletonPath,
+      kind: "continuity.skeleton_generated",
+      ts: opts.services.clock().toISOString(),
+      meta: {
+        session_stamp: sessionStampFromSkeletonBody(skeletonStampPrefix),
+        byte_size: skeletonStat.size,
+        period_key: periodKey,
+      },
+    });
+
+    const barePath = skeletonPath.replace(/\.skeleton\.md$/, ".md");
+    const bareStat = statIfExists(barePath);
+    if (!bareStat || bareStat.mtime.getTime() <= skeletonStat.mtime.getTime()) return;
+    opts.services.sessionEventLog.record({
+      session_id: opts.body.session_id ?? null,
+      related_session_id: null,
+      project_id: opts.project !== "unknown" ? opts.project : null,
+      cwd: opts.cwd,
+      transcript_path: opts.body.transcript_path ?? null,
+      ref_path: barePath,
+      kind: "continuity.note_superseded",
+      ts: opts.services.clock().toISOString(),
+      meta: {
+        skeleton_path: skeletonPath,
+        note_mtime: bareStat.mtime.toISOString(),
+        skeleton_mtime: skeletonStat.mtime.toISOString(),
+      },
+    });
+  } catch (err) {
+    opts.services.log.warn(
+      { err, kind: "continuity.skeleton_generated" },
+      "continuity session event ingest failed; continuing workflow hook",
+    );
+  }
+}
+
 function filterMatchedByLifecycle(
   matched: WorkflowSpec[],
   lifecycleEvent: string | undefined,
@@ -1144,6 +1244,14 @@ async function executeMatchedTriggerSpec(opts: {
       });
     }
     const result = await startWorkflowExecution(execOpts, bundle);
+    recordContinuitySessionEvents({
+      services,
+      body,
+      cwd,
+      project,
+      specName: spec.name,
+      artifacts: result.artifacts,
+    });
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
   } finally {
     if (workflowRunId) workflowRuns?.unregister(workflowRunId);
