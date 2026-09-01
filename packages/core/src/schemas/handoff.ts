@@ -84,8 +84,9 @@ export const CreateHandoffRequestSchema = z.object({
     z.boolean().optional(),
   ),
   chain_task_type: AgentTaskTypeSchema.nullable().optional(),
-  parent_handoff_id: z.string().min(1).optional(),
-  branch_base: z.string().min(1).optional(),
+  chain_max_hops: z.number().int().positive().nullable().optional(),
+  parent_handoff_id: z.string().min(1).nullable().optional(),
+  branch_base: z.string().min(1).nullable().optional(),
   branch_name: z.string().min(1).optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;

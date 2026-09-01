@@ -213,6 +213,9 @@ export class PenumbraClient {
     triggered_by_event_id: string;
     use_worktree?: boolean | number | null;
     chain_task_type?: string | null;
+    parent_handoff_id?: string | null;
+    branch_base?: string | null;
+    chain_max_hops?: number | null;
   }): Promise<{
     handoff_id: string;
     status: string;

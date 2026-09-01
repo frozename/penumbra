@@ -24,7 +24,7 @@ import { json } from "./_helpers.js";
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
-import { getNearestAgents } from "./chains.js";
+import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
 import { resolveSingleRoute, RoutingBiasExhaustedError } from "./role-routing.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
@@ -349,6 +349,12 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
     );
   }
 
+  const parentResponse = validateParentHandoff(parsed.data, services);
+  if (parentResponse) return parentResponse;
+
+  const depthResponse = enforceRecursionDepthGuard(parsed.data, services);
+  if (depthResponse) return depthResponse;
+
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
   let route: ReturnType<typeof resolveSingleRoute> | null = null;
@@ -465,6 +471,9 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       use_worktree: parsed.data.use_worktree ?? undefined,
       isolated_install: parsed.data.isolated_install ?? undefined,
       chain_task_type: routingTaskType,
+      parent_handoff_id: parsed.data.parent_handoff_id ?? null,
+      branch_base: parsed.data.branch_base ?? null,
+      chain_max_hops: parsed.data.chain_max_hops ?? null,
     });
   })();
 
@@ -479,6 +488,40 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
         }
       : {}),
   });
+}
+
+function validateParentHandoff(
+  input: {
+    parent_handoff_id?: string | null;
+    conversation_id: string;
+  },
+  services: Services,
+): Response | null {
+  if (!input.parent_handoff_id) return null;
+  const parent = services.handoffReader.get(input.parent_handoff_id);
+  if (!parent) {
+    return json(
+      {
+        error: {
+          code: "parent_not_found",
+          message: `parent handoff ${input.parent_handoff_id} was not found`,
+        },
+      },
+      404,
+    );
+  }
+  if (parent.conversation_id !== input.conversation_id) {
+    return json(
+      {
+        error: {
+          code: "parent_conversation_mismatch",
+          message: "parent handoff belongs to a different conversation",
+        },
+      },
+      409,
+    );
+  }
+  return null;
 }
 
 async function safeJson(req: Request): Promise<unknown> {

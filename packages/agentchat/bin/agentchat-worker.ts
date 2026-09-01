@@ -76,6 +76,7 @@ import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
 import { postToDiscord } from "../src/worker/discord-notifier.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
+import { buildDispatchHandoffInput } from "../src/worker/dispatch-handoff-input.js";
 import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { startEventSource } from "../src/worker/event-source.js";
@@ -1462,12 +1463,13 @@ async function setUpDispatchWorktree(
     handoff.to_agent,
     handoff.dispatch_kind ?? null,
   );
-  const dispatchedHandoff: HandoffRow = result.worktreePromptRewrite
-    ? {
-        ...handoff,
-        message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite),
-      }
-    : handoff;
+  const dispatchedHandoff: HandoffRow = {
+    ...handoff,
+    branch_name: result.handle?.branchName ?? handoff.branch_name,
+    ...(result.worktreePromptRewrite
+      ? { message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite) }
+      : {}),
+  };
   const executor = buildDispatchExecutor(
     handoff,
     agentOptions,
@@ -1561,7 +1563,7 @@ async function runDispatch(
 
   try {
     return await dispatchHandoff({
-      handoff: dispatchedHandoff,
+      handoff: buildDispatchHandoffInput(handoff, dispatchedHandoff),
       config: setup.overrideConfig,
       conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
       transcript: transcriptForBuild,

@@ -389,6 +389,71 @@ test("continuation role mention forwards the existing chain task type", async ()
   });
 });
 
+test("mention at hop cap returns max_hops without creating another handoff", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "go @executor",
+    prompt_event_id: "p",
+    response_event_id: "r1",
+    next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+    mentions: [],
+  });
+  const createHandoff = mock();
+  const approve = mock();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 4,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve,
+    runChatTurn,
+  });
+
+  expect(createHandoff).not.toHaveBeenCalled();
+  expect(approve).not.toHaveBeenCalled();
+  expect(res.terminatedReason).toBe("max_hops");
+  expect(res.next).toBeNull();
+  expect(res.cappedHandoffId).toBeUndefined();
+});
+
+test("mention below hop cap passes parent id, branch base, and chain max hops", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "go @executor",
+    prompt_event_id: "p",
+    response_event_id: "r1",
+    next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+    mentions: [],
+  });
+  const createHandoff = mock().mockResolvedValue({ handoff_id: "h-next", status: "pending" });
+
+  await dispatchHandoff({
+    handoff: { ...baseHandoff, branch_base: "feat/round-one" },
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 3,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve: mock(),
+    runChatTurn,
+  });
+
+  expect(createHandoff.mock.calls[0]![0]).toMatchObject({
+    parent_handoff_id: "h0",
+    branch_base: "feat/round-one",
+    chain_max_hops: 5,
+  });
+});
+
 test("mention with trustMode=config + edge in auto_approve_to → approves", async () => {
   const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ping @executor",
@@ -457,38 +522,6 @@ test("mention with trustMode=config + edge NOT in auto_approve_to → leaves pen
   expect(res.terminatedReason).toBe("untrusted");
   expect(res.next).toBeNull();
   expect(res.cappedHandoffId).toBe("h-untrusted");
-});
-
-test("hopsSoFar+1 >= maxHops → creates handoff but does not approve, returns max_hops", async () => {
-  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
-    text: "go @executor",
-    prompt_event_id: "p",
-    response_event_id: "r1",
-    next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
-    mentions: [],
-  });
-  const createHandoff = mock().mockResolvedValue({ handoff_id: "h-cap", status: "pending" });
-  const approve = mock();
-
-  const res = await dispatchHandoff({
-    handoff: baseHandoff,
-    config: cfg,
-    conversation: mockConv,
-    transcript: [],
-    transcriptBudget: 1000,
-    hopsSoFar: 4,
-    maxHops: 5,
-    trustMode: "all",
-    observe: observeStub,
-    createHandoff,
-    approve,
-    runChatTurn,
-  });
-
-  expect(createHandoff).toHaveBeenCalled();
-  expect(approve).not.toHaveBeenCalled();
-  expect(res.terminatedReason).toBe("max_hops");
-  expect(res.cappedHandoffId).toBe("h-cap");
 });
 
 test("runChatTurn error retries and eventually succeeds (no markFailed)", async () => {

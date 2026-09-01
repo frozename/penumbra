@@ -988,8 +988,8 @@ function enforceSubscriptionPressureGate(
   return fallbackAgent !== undefined ? { fallbackAgent } : {};
 }
 
-function enforceRecursionDepthGuard(
-  input: ChainStartRequestWithLongLived,
+export function enforceRecursionDepthGuard(
+  input: { parent_handoff_id?: string | null },
   services: Services,
 ): Response | null {
   if (!input.parent_handoff_id) return null;

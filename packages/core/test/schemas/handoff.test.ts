@@ -70,6 +70,28 @@ test("CreateHandoffRequestSchema requires from/to/message/conversation_id/trigge
   ).toBe(false);
 });
 
+test("CreateHandoffRequestSchema accepts optional chain_max_hops", () => {
+  const withCap = CreateHandoffRequestSchema.safeParse({
+    from: "claude",
+    to: "gemini",
+    message: "go",
+    conversation_id: "c",
+    triggered_by_event_id: "e",
+    chain_max_hops: 4,
+  });
+  expect(withCap.success).toBe(true);
+  expect(withCap.data?.chain_max_hops).toBe(4);
+  expect(
+    CreateHandoffRequestSchema.safeParse({
+      from: "claude",
+      to: "gemini",
+      message: "go",
+      conversation_id: "c",
+      triggered_by_event_id: "e",
+    }).success,
+  ).toBe(true);
+});
+
 test("ApproveHandoffRequestSchema accepts plain, redirect, reject", () => {
   expect(ApproveHandoffRequestSchema.safeParse({}).success).toBe(true);
   expect(ApproveHandoffRequestSchema.safeParse({ redirect_to: "codex" }).success).toBe(true);

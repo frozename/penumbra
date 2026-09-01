@@ -8,6 +8,7 @@ import {
   migrate,
   ProjectRegistry,
   type Services,
+  type T0Event,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
@@ -77,6 +78,9 @@ interface DoneBody {
 interface ProjectErrorBody {
   error: { code: string; project_id?: string };
 }
+interface ErrorCodeBody {
+  error: { code: string; depth?: number; cap?: number };
+}
 interface GetBody {
   handoff: HandoffSummary;
 }
@@ -117,6 +121,7 @@ function makeServices(db: Database): Services {
   const writer = new HandoffWriter({ db });
   const reader = new HandoffReader({ db });
   let n = 0;
+  const t0Events: T0Event[] = [];
   return {
     db,
     handoffWriter: writer,
@@ -125,10 +130,31 @@ function makeServices(db: Database): Services {
     machineId: { get: (): string => "machine-test" },
     uuid: (): string => `evt-${String(++n)}`,
     clock: (): Date => new Date("2026-04-25T20:00:00.000Z"),
-    t0Writer: { write: noopLog },
+    t0Writer: {
+      write: (event: T0Event): string => {
+        t0Events.push(event);
+        return event.event_id;
+      },
+    },
     redactor: { redact: (s: unknown): unknown => s },
     log: { info: noopLog, warn: noopLog },
+    __testT0Events: t0Events,
   } as unknown as Services;
+}
+
+function countHandoffRows(db: Database, message: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM handoffs WHERE message=?")
+      .get(message)?.n ?? 0
+  );
+}
+
+function countAgentHandoffEvents(services: Services, summary: string): number {
+  const events = (services as Services & { __testT0Events?: T0Event[] }).__testT0Events ?? [];
+  return events.filter(
+    (event) => event.event_type === "agent-handoff" && event.payload_summary === summary,
+  ).length;
 }
 
 // AgentConfig has dozens of required fields, but reconcileLongLivedAgents only
@@ -243,6 +269,257 @@ test("POST /handoffs persists isolated_install", async () => {
     >("SELECT use_worktree, isolated_install FROM handoffs WHERE handoff_id=?")
     .get(body.handoff_id);
   expect(row).toEqual({ use_worktree: 1, isolated_install: 1 });
+});
+
+test("POST /handoffs persists parent, branch base, and chain max hops", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-parent",
+    ts: "2026-09-01T11:59:00.000Z",
+    project_id: null,
+    conversation_id: "conv-chain",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "parent",
+    triggered_by_event_id: "evt-parent",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+  });
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "continue",
+        conversation_id: "conv-chain",
+        project_id: null,
+        triggered_by_event_id: "evt-source-chain",
+        parent_handoff_id: "h-parent",
+        branch_base: "feat/round-one",
+        chain_max_hops: 3,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+
+  const row = db
+    .query<
+      {
+        parent_handoff_id: string | null;
+        branch_base: string | null;
+        chain_max_hops: number | null;
+      },
+      [string]
+    >("SELECT parent_handoff_id, branch_base, chain_max_hops FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row).toEqual({
+    parent_handoff_id: "h-parent",
+    branch_base: "feat/round-one",
+    chain_max_hops: 3,
+  });
+});
+
+test("POST /handoffs rejects an unknown parent before writing t0 or handoff rows", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "unknown parent child",
+        conversation_id: "conv-chain",
+        project_id: null,
+        triggered_by_event_id: "evt-unknown-parent",
+        parent_handoff_id: "h-missing-parent",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(404);
+  const body = await readJsonAs<ErrorCodeBody>(res);
+  expect(body.error.code).toBe("parent_not_found");
+  expect(countAgentHandoffEvents(services, "unknown parent child")).toBe(0);
+  expect(countHandoffRows(db, "unknown parent child")).toBe(0);
+});
+
+test("POST /handoffs rejects parent from another conversation before writing t0 or handoff rows", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-other-conv-parent",
+    ts: "2026-09-01T11:59:00.000Z",
+    project_id: null,
+    conversation_id: "conv-parent",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "parent",
+    triggered_by_event_id: "evt-parent-other-conv",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+  });
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "wrong conversation child",
+        conversation_id: "conv-child",
+        project_id: null,
+        triggered_by_event_id: "evt-wrong-conv-parent",
+        parent_handoff_id: "h-other-conv-parent",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(409);
+  const body = await readJsonAs<ErrorCodeBody>(res);
+  expect(body.error.code).toBe("parent_conversation_mismatch");
+  expect(countAgentHandoffEvents(services, "wrong conversation child")).toBe(0);
+  expect(countHandoffRows(db, "wrong conversation child")).toBe(0);
+});
+
+test("POST /handoffs leaves parent, branch base, and chain max hops null when omitted", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "continue",
+        conversation_id: "conv-chain-null",
+        project_id: null,
+        triggered_by_event_id: "evt-source-chain-null",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+
+  const row = db
+    .query<
+      {
+        parent_handoff_id: string | null;
+        branch_base: string | null;
+        chain_max_hops: number | null;
+      },
+      [string]
+    >("SELECT parent_handoff_id, branch_base, chain_max_hops FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row).toEqual({ parent_handoff_id: null, branch_base: null, chain_max_hops: null });
+});
+
+test("POST /handoffs rejects a parent handoff at the recursion depth cap", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-root",
+    ts: "2026-09-01T12:00:00.000Z",
+    project_id: null,
+    conversation_id: "conv-depth",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "root",
+    triggered_by_event_id: "evt-root",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+  });
+  services.handoffWriter.createApproved({
+    handoff_id: "h-child",
+    ts: "2026-09-01T12:01:00.000Z",
+    project_id: null,
+    conversation_id: "conv-depth",
+    from: "planner",
+    to: "executor",
+    to_role: null,
+    message: "child",
+    triggered_by_event_id: "evt-child",
+    resolved_by: "auto",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: "h-root",
+  });
+
+  const previousCap = process.env.PENUMBRA_RECURSION_DEPTH_CAP;
+  process.env.PENUMBRA_RECURSION_DEPTH_CAP = "2";
+  try {
+    const res = await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "executor",
+          to: "reviewer",
+          message: "too deep",
+          conversation_id: "conv-depth",
+          project_id: null,
+          triggered_by_event_id: "evt-too-deep",
+          parent_handoff_id: "h-child",
+        }),
+      }),
+      services,
+    );
+    expect(res.status).toBe(409);
+    const body = await readJsonAs<ErrorCodeBody>(res);
+    expect(body.error.code).toBe("recursion_depth_exceeded");
+    expect(body.error.depth).toBe(2);
+    expect(body.error.cap).toBe(2);
+    expect(countAgentHandoffEvents(services, "too deep")).toBe(0);
+    expect(countHandoffRows(db, "too deep")).toBe(0);
+  } finally {
+    if (previousCap === undefined) {
+      delete process.env.PENUMBRA_RECURSION_DEPTH_CAP;
+    } else {
+      process.env.PENUMBRA_RECURSION_DEPTH_CAP = previousCap;
+    }
+  }
+
+  expect(countHandoffRows(db, "too deep")).toBe(0);
 });
 
 test("POST /handoffs routes role targets through the ledger", async () => {

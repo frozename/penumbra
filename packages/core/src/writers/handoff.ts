@@ -85,13 +85,15 @@ export class HandoffWriter {
           string | null,
           string | null,
           string | null,
+          number | null,
+          string | null,
           string,
         ]
       >(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
-          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, isolated_install, parent_handoff_id, chain_task_type, branch_name, root_handoff_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, isolated_install, parent_handoff_id, chain_task_type, branch_base, chain_max_hops, branch_name, root_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id,
@@ -107,6 +109,8 @@ export class HandoffWriter {
         params.isolated_install === true ? 1 : params.isolated_install === false ? 0 : null,
         params.parent_handoff_id ?? null,
         params.chain_task_type ?? null,
+        params.branch_base ?? null,
+        params.chain_max_hops ?? null,
         params.branch_name ?? null,
         root_handoff_id,
       );

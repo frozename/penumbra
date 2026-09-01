@@ -18,6 +18,9 @@ interface CreateHandoffBody {
   triggered_by_event_id: string;
   use_worktree?: boolean | number | null;
   chain_task_type?: string | null;
+  parent_handoff_id?: string | null;
+  branch_base?: string | null;
+  chain_max_hops?: number | null;
 }
 
 interface CreateHandoffResult {
@@ -49,6 +52,7 @@ export interface DispatchHandoffOpts {
     project_id?: string | null;
     use_worktree?: boolean | number | null;
     chain_task_type?: string | null;
+    branch_base?: string | null;
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
     long_lived_tick_id?: string | null;
@@ -267,6 +271,11 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
   const nextHop = resolveNextHop(turn);
   if (!nextHop) return terminalResult("no_mention", turn, targetAgent);
 
+  // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
+  if (opts.hopsSoFar + 1 >= opts.maxHops) {
+    return terminalResult("max_hops", turn, targetAgent);
+  }
+
   let created: CreateHandoffResult;
   try {
     created = await opts.createHandoff({
@@ -279,6 +288,9 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
       triggered_by_event_id: turn.response_event_id,
       use_worktree: opts.handoff.use_worktree,
       chain_task_type: opts.handoff.chain_task_type,
+      parent_handoff_id: opts.handoff.handoff_id,
+      branch_base: opts.handoff.branch_base ?? null,
+      chain_max_hops: opts.maxHops,
     });
   } catch (err) {
     if (err instanceof PenumbraHttpError && isTerminalHttpStatus(err.status)) {
@@ -299,11 +311,6 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     throw err;
   }
   const routedNextTo = created.routed_agent ?? nextHop.nextTo;
-
-  // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
-  if (opts.hopsSoFar + 1 >= opts.maxHops) {
-    return terminalResult("max_hops", turn, targetAgent, created.handoff_id);
-  }
 
   if (opts.trustMode === "config" && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
     return terminalResult("untrusted", turn, targetAgent, created.handoff_id);
