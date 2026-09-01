@@ -1,6 +1,128 @@
 import { expect, test } from "bun:test";
 
+import { loadMarkdownPlaybook } from "../src/loaders/markdown.js";
 import { renderTemplate } from "../src/template.js";
+
+type TestScope = Record<string, unknown>;
+
+function lookupHistorical(scope: TestScope, path: string): unknown {
+  if (path === ".") return scope["."];
+  const parts = path.split(".");
+  let cur: unknown = scope;
+  for (const p of parts) {
+    if (cur === null || cur === undefined) return undefined;
+    if (typeof cur !== "object") return undefined;
+    cur = (cur as TestScope)[p];
+  }
+  return cur;
+}
+
+function renderHistorical(template: string, scope: TestScope, warnings: string[]): string {
+  let out = template.replaceAll(
+    /\{\{#each\s+([a-zA-Z0-9_.]+)\}\}([\s\S]*?)\{\{\/each\}\}/g,
+    (_m: string, path: string, inner: string) => {
+      const arr = lookupHistorical(scope, path);
+      if (!Array.isArray(arr)) {
+        warnings.push(`template: {{#each ${path}}} expected array`);
+        return "";
+      }
+      return arr
+        .map((item: unknown) => {
+          const child =
+            typeof item === "object" && item !== null
+              ? { ...scope, ...(item as TestScope), ".": item }
+              : { ...scope, ".": item };
+          return renderHistorical(inner, child, warnings);
+        })
+        .join("");
+    },
+  );
+
+  out = out.replaceAll(
+    /\{\{#if\s+([a-zA-Z0-9_.]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    (_m: string, path: string, inner: string) => {
+      const v = lookupHistorical(scope, path);
+      const truthy = Array.isArray(v) ? v.length > 0 : Boolean(v);
+      return truthy ? renderHistorical(inner, scope, warnings) : "";
+    },
+  );
+
+  out = out.replaceAll(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (_m: string, path: string) => {
+    const v = lookupHistorical(scope, path);
+    if (v === undefined || v === null) {
+      warnings.push(`template: {{${path}}} missing`);
+      return "";
+    }
+    return typeof v === "string" ? v : JSON.stringify(v);
+  });
+
+  return out;
+}
+
+function braceFreeFixtureScope(): TestScope {
+  return {
+    date: "2026-09-01",
+    period: "pm",
+    project: "penumbra",
+    repo_root: "/repo/penumbra",
+    session_stamp_value: "2026-09-01T12:00:00Z",
+    recall: {
+      dispatch_events: [{ handoff_id: "h1", kind: "dispatch.end" }],
+      dispatch_summaries: [
+        {
+          agent: "codex-acp-fast",
+          duration_seconds: 12,
+          failed_event_kinds: "",
+          handoff_id: "h1",
+          outcome: "complete",
+        },
+      ],
+      file: { contents: { body: "Pending handoff draft body" } },
+      git: {
+        diff: "diff --git a/file b/file",
+        log: "abc1234 subject line",
+        show: [{ body: "Commit body text", sha: "abc1234", subject: "Subject line" }],
+      },
+      handoff_list_pending: [{ handoff_id: "h2", message: "Pending message", status: "pending" }],
+      latest_continuation_note: { body: "Newest continuation note body" },
+      memory_search: [{ id: "mem1", snippet: "Recent memory snippet", title: "Recent memory" }],
+      registrar_status: [
+        {
+          last_event_id: "evt1",
+          phases: "phase-a",
+          registrar_id: "reg1",
+          rollup: { open_blockers: 0, open_follow_ups: 1 },
+          slug: "alpha",
+          status: "active",
+        },
+      ],
+      routing_bias_list: [
+        {
+          expires_at: "2026-09-01T13:00:00Z",
+          mode: "prefer",
+          reason: "fixture",
+          scope: "agent",
+          value: "codex-acp-fast",
+        },
+      ],
+      session_first_moves: {
+        daemon_healthy: true,
+        daemon_pid: 123,
+        gate_deltas: "none",
+        git_status_dirty_count: 0,
+        head_sha: "abc1234",
+        open_lanes: 0,
+        origin_main_sha: "def5678",
+        pending_handoffs: 1,
+        pending_task_drafts: 2,
+        pin_share: "0.10",
+        unpushed: 0,
+        worker_count: 2,
+        worker_pids: "1234,5678",
+      },
+    },
+  };
+}
 
 test("substitutes simple {{path}}", () => {
   expect(renderTemplate("hello {{name}}", { name: "world" })).toBe("hello world");
@@ -36,6 +158,80 @@ test("leaves missing vars as empty string and pushes to warnings", () => {
   expect(warnings.length).toBe(1);
 });
 
+test("warns with the missing template token and renders it empty", () => {
+  const warnings: string[] = [];
+  expect(renderTemplate("before {{missing}} after", {}, { warnings })).toBe("before  after");
+  expect(warnings).toEqual(["template: {{missing}} missing"]);
+});
+
 test("escapes nothing — output is plain text", () => {
   expect(renderTemplate("{{x}}", { x: "<html>" })).toBe("<html>");
+});
+
+test("preserves braces inside a substituted string value without warnings", () => {
+  const warnings: string[] = [];
+  const output = renderTemplate(
+    "{{#if enabled}}{{body}}{{/if}}",
+    {
+      body: "TemplateVarContext.sessionId, {{session_id}}, and {{now_minus_24h}};",
+      enabled: true,
+    },
+    { warnings },
+  );
+
+  expect(output).toBe("TemplateVarContext.sessionId, {{session_id}}, and {{now_minus_24h}};");
+  expect(warnings).toEqual([]);
+});
+
+test("preserves block-looking text inside a substituted value without executing it", () => {
+  const warnings: string[] = [];
+  const output = renderTemplate(
+    "{{#if enabled}}{{body}}{{/if}}",
+    {
+      body: "{{#each items}}item {{name}}{{/each}}",
+      enabled: true,
+      items: [{ name: "executed" }],
+    },
+    { warnings },
+  );
+
+  expect(output).toBe("{{#each items}}item {{name}}{{/each}}");
+  expect(warnings).toEqual([]);
+});
+
+test("preserves braces in values substituted inside {{#each}} blocks", () => {
+  const warnings: string[] = [];
+  const output = renderTemplate(
+    "{{#each items}}- {{body}}\n{{/each}}",
+    {
+      items: [{ body: "literal {{session_id}}" }, { body: "literal {{now_minus_24h}}" }],
+    },
+    { warnings },
+  );
+
+  expect(output).toBe("- literal {{session_id}}\n- literal {{now_minus_24h}}\n");
+  expect(warnings).toEqual([]);
+});
+
+test("matches historical output for real brace-free session playbooks", () => {
+  const scope = braceFreeFixtureScope();
+  const playbooks = [
+    "plugin/playbooks/session-handoff/playbook.md",
+    "plugin/playbooks/maestro-context-prime/playbook.md",
+  ];
+
+  for (const path of playbooks) {
+    const spec = loadMarkdownPlaybook(path);
+    if (spec.run.kind !== "markdown-template") {
+      throw new Error(`${path} is not a markdown template`);
+    }
+
+    const historicalWarnings: string[] = [];
+    const warnings: string[] = [];
+    const historical = renderHistorical(spec.run.template, scope, historicalWarnings);
+    const rendered = renderTemplate(spec.run.template, scope, { warnings });
+
+    expect(rendered).toBe(historical);
+    expect(warnings).toEqual(historicalWarnings);
+  }
 });
