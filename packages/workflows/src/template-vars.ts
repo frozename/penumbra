@@ -67,6 +67,8 @@ export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string 
           return ctx.project;
         case "session_start":
           return ctx.sessionStart;
+        case "now_minus_24h":
+          return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
         case "cwd":
           return ctx.cwd ?? "";
         case "repo_root":

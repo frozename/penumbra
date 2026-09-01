@@ -59,6 +59,12 @@ function insertMemory(
   );
 }
 
+function makeContinuationNote(charCount: number, lastLine = "LAST_LINE_SENTINEL"): string {
+  const first = "NOTE_START\n";
+  const last = `\n${lastLine}\n`;
+  return first + "n".repeat(Math.max(0, charCount - first.length - last.length)) + last;
+}
+
 test("composes bundle from multiple sources, partial failures captured as warnings", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -248,6 +254,139 @@ test("budget trim preserves string sources before memory items", async () => {
   expect(bundle.warnings.some((w) => w.includes("budget exceeded"))).toBe(true);
 });
 
+test("tight budget drops small body-bearing array entries instead of inflating them with marker stubs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-small-git-show-"));
+  const db = new Database(":memory:");
+  try {
+    for (const args of [
+      ["init", "-q", "-b", "main"],
+      ["config", "user.email", "t@t"],
+      ["config", "user.name", "t"],
+    ]) {
+      Bun.spawnSync({ cmd: ["git", ...args], cwd: dir });
+    }
+
+    for (let i = 0; i < 10; i += 1) {
+      writeFileSync(join(dir, "tracked.txt"), `tracked ${String(i)}\n`);
+      writeFileSync(join(dir, "commit-message.txt"), `subject ${String(i)}\n\nbody ${String(i)}\n`);
+      Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir });
+      Bun.spawnSync({ cmd: ["git", "commit", "-q", "-F", "commit-message.txt"], cwd: dir });
+    }
+
+    const budgetTokens = 235;
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      project: "demo",
+      sources: [{ source: "git.show", args: { range: "HEAD", max_commits: 10 } }],
+      budgetTokens,
+    });
+
+    const commits = bundle.byKey["git.show"] as { body: string }[];
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(budgetTokens);
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits.length).toBeLessThan(10);
+    expect(commits.every((commit) => !commit.body.includes("recall budget: body truncated"))).toBe(
+      true,
+    );
+    expect(bundle.warnings.some((w) => w.includes("recall budget exceeded"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+test("budget trim drops other timestamp-less recalls before the continuation note", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-protected-note-"));
+  const db = new Database(":memory:");
+  try {
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    writeFileSync(join(dir, "tracked.txt"), "tracked\n");
+    writeFileSync(join(dir, "commit-message.txt"), "subject\n\n" + "g".repeat(6_000));
+    Bun.spawnSync({ cmd: ["git", "init", "-q", "-b", "main"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "config", "user.email", "t@t"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "config", "user.name", "t"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "add", "tracked.txt"], cwd: dir });
+    Bun.spawnSync({ cmd: ["git", "commit", "-q", "-F", "commit-message.txt"], cwd: dir });
+    mkdirSync(join(dir, "docs/notes"), { recursive: true });
+    writeFileSync(
+      join(dir, "docs/notes/maestro-continuation-2026-05-05.md"),
+      makeContinuationNote(11_500),
+    );
+    writeFileSync(join(dir, "pending-handoff.md"), "PENDING_START\n" + "p".repeat(30_000));
+
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      repoRoot: dir,
+      storageRoot: dir,
+      project: "demo",
+      sources: [
+        { source: "git.log", args: { range: "HEAD", format: "%B" } },
+        { source: "latest_continuation_note", args: { max_bytes: 65_536 } },
+        { source: "session_first_moves", args: {} },
+        {
+          source: "file.contents",
+          args: {
+            path: "penumbra-storage:pending-handoff.md",
+            max_bytes: 65_536,
+            allowed_roots: ["penumbra-storage:"],
+          },
+        },
+      ],
+      budgetTokens: 4_000,
+    });
+
+    const note = bundle.byKey["latest_continuation_note"] as { body: string };
+    const draft = bundle.byKey["file.contents"] as { body: string; truncated?: boolean } | null;
+    expect(note.body).toContain("NOTE_START");
+    expect(note.body.endsWith("LAST_LINE_SENTINEL\n")).toBe(true);
+    expect(draft === null || draft.body === "" || draft.truncated === true).toBe(true);
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(4_000);
+    expect(bundle.warnings.some((w) => w.includes("recall budget exceeded"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+test("a continuation note larger than the whole budget is head-truncated, never blanked", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-truncated-note-"));
+  const db = new Database(":memory:");
+  try {
+    mkdirSync(join(dir, "docs/notes"), { recursive: true });
+    writeFileSync(
+      join(dir, "docs/notes/maestro-continuation-2026-05-05.md"),
+      makeContinuationNote(11_500),
+    );
+
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      repoRoot: dir,
+      project: "demo",
+      sources: [{ source: "latest_continuation_note", args: { max_bytes: 65_536 } }],
+      budgetTokens: 500,
+    });
+
+    const note = bundle.byKey["latest_continuation_note"] as {
+      body: string;
+      truncated: boolean;
+    };
+    expect(note.body.startsWith("NOTE_START\n")).toBe(true);
+    expect(note.body).toContain("… [recall budget: body truncated to ");
+    expect(note.truncated).toBe(true);
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(500);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
 test("composes file.contents source output", async () => {
   const dir = mkdtempSync(join(tmpdir(), "recall-file-contents-"));
   const file = join(dir, "README.md");
@@ -306,7 +445,8 @@ test("object-valued recall payloads are trimmed before rendering a session remin
 
     expect(bundle.estimatedTokens).toBeLessThanOrEqual(100);
     expect(bundle.warnings.some((w) => w.includes("recall budget exceeded"))).toBe(true);
-    expect(result.sessionReminder ?? "").not.toContain("NOTE_START");
+    expect(result.sessionReminder ?? "").toContain("NOTE_START");
+    expect(result.sessionReminder ?? "").toContain("… [recall budget: body truncated to ");
     expect(Buffer.byteLength(result.sessionReminder ?? "", "utf8")).toBeLessThanOrEqual(400);
   } finally {
     rmSync(dir, { recursive: true, force: true });

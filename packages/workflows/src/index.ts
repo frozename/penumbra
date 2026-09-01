@@ -18,7 +18,7 @@ export type { ValidateOpts, ValidationError } from "./plan-meta/validator.js";
 export { computeStateMetrics } from "./poller.js";
 export { runMemorySearchSource } from "./recall-sources/memory.js";
 export type { MemoryHit, MemorySearchOutput } from "./recall-sources/memory.js";
-export { composeRecall } from "./recall.js";
+export { composeRecall, TOKEN_PER_CHAR } from "./recall.js";
 export type { ComposeRecallOpts, RecallBundle } from "./recall.js";
 export { buildRegistry } from "./registry.js";
 export type { BuildRegistryOpts, Registry, RegistryEntry, RegistryError } from "./registry.js";

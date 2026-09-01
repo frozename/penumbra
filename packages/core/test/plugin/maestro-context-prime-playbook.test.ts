@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 const PLAYBOOK_PATH = resolve(
   import.meta.dir,
@@ -34,4 +35,33 @@ test("maestro-context-prime playbook does NOT tell maestro to invoke fan-out/fix
   ];
   const hitsAny = notResolvableMarkers.some((re) => re.test(content));
   expect(hitsAny).toBe(true);
+});
+
+test("maestro-context-prime recall budget covers protected payload byte caps", () => {
+  const content = readFileSync(PLAYBOOK_PATH, "utf8");
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  expect(match).not.toBeNull();
+  const frontmatter = parseYaml(match?.[1] ?? "") as {
+    recall_budget_tokens?: number;
+    recall?: { source?: string; args?: { max_bytes?: number } }[];
+  };
+  const latestContinuation = frontmatter.recall?.find(
+    (source) => source.source === "latest_continuation_note",
+  );
+  const pendingDraft = frontmatter.recall?.find((source) => source.source === "file.contents");
+  const recallSource = readFileSync(
+    resolve(import.meta.dir, "../../../workflows/src/recall.ts"),
+    "utf8",
+  );
+
+  // Keep this tripwire aligned with recall.ts TOKEN_PER_CHAR so payload caps cannot outgrow budget.
+  expect(recallSource).toContain("TOKEN_PER_CHAR = 0.25");
+  const tokenPerChar = 0.25;
+  const requiredBudget =
+    Math.ceil(
+      ((latestContinuation?.args?.max_bytes ?? 0) + (pendingDraft?.args?.max_bytes ?? 0)) *
+        tokenPerChar,
+    ) + 1_500;
+
+  expect(frontmatter.recall_budget_tokens ?? 0).toBeGreaterThanOrEqual(requiredBudget);
 });

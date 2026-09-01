@@ -7,7 +7,7 @@ triggers:
 recall:
   - source: memory_search
     args:
-      dateStart: "{{session_start}}"
+      dateStart: "{{now_minus_24h}}"
       project: "{{project}}"
       limit: 5
       origin: ["maestro", "unknown"]
@@ -17,20 +17,22 @@ recall:
       format: "%h %s"
   - source: dispatch_events
     args:
-      since: "{{session_start}}"
+      since: "{{now_minus_24h}}"
       limit: 3
   - source: handoff_list_pending
   - source: latest_continuation_note
     args:
-      max_bytes: 65536
+      max_bytes: 32768
   - source: session_first_moves
     args: {}
   - source: file.contents
     args:
       path: ~/.penumbra/pending-handoff.md
       allowed_roots: ["~/.penumbra"]
-      max_bytes: 65536
-recall_budget_tokens: 2000
+      max_bytes: 8192
+# Budget math: note ~11k chars x 0.25 ~= 2.8k tokens; the note and first-moves
+# are the payload, while the pending-handoff draft is only a fallback.
+recall_budget_tokens: 12000
 output:
   - kind: session-reminder
 run:

@@ -15,7 +15,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildRegistry, composeRecall, evaluateTriggerEvent, executeWorkflow } from "@src/index.js";
+import {
+  buildRegistry,
+  composeRecall,
+  evaluateTriggerEvent,
+  executeWorkflow,
+  type TemplateVarContext,
+} from "@src/index.js";
 import { emitNextSessionPromptOutput, PRESERVE_NEXT_SESSION_PROMPT } from "@src/outputs/index.js";
 
 try {
@@ -156,19 +162,38 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     writeFileSync(preservedMorningNote, "operator morning note\n");
     writeFileSync(preservedPmNote, "operator pm note\n");
     writeFileSync(preservedEveningNote, "operator evening note\n");
+    const fixedNow = new Date("2026-08-31T18:00:00Z");
+    const expectedSkeleton = `maestro-continuation-${fixedNow.toISOString().slice(0, 10)}-pm.skeleton.md`;
+    const templateCtx: TemplateVarContext = {
+      now: (): Date => fixedNow,
+      project: "penumbra",
+      sessionStart: "2026-08-31T17:00:00.000Z",
+      tz: "UTC",
+      cwd: repo,
+      repoRoot: root,
+    };
+    const captureCtx = {
+      db,
+      project: "penumbra",
+      sessionId: "s1",
+      userId: "u",
+      machineId: "m",
+      now: (): Date => fixedNow,
+    };
 
     const result = await executeWorkflow({
       spec,
       bundle,
       storageRoot: root,
       repoRoot: root,
-      captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
+      templateCtx,
+      captureCtx,
     });
 
     expect(result.outcome).toBe("success");
     const emittedNotes = readdirSync(notesDir).filter((name) => name.endsWith(".skeleton.md"));
     expect(emittedNotes).toHaveLength(1);
-    expect(emittedNotes[0]).toBe("maestro-continuation-2026-08-31-pm.skeleton.md");
+    expect(emittedNotes[0]).toBe(expectedSkeleton);
     const body = readFileSync(join(notesDir, emittedNotes[0]!), "utf8");
     expect(body).toContain("Maestro continuation prompt");
     expect(body).toContain("second commit");
@@ -207,7 +232,8 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       bundle: secondBundle,
       storageRoot: root,
       repoRoot: root,
-      captureCtx: { db, project: "penumbra", sessionId: "s1", userId: "u", machineId: "m" },
+      templateCtx,
+      captureCtx,
     });
 
     expect(secondResult.outcome).toBe("success");

@@ -26,6 +26,12 @@ test("resolves {{project}} and {{session_start}}", () => {
   );
 });
 
+test("resolves {{now_minus_24h}} from the injected clock as UTC ISO", () => {
+  expect(resolveTemplateVars("since={{now_minus_24h}}", ctx)).toBe(
+    "since=2026-05-03T15:00:00.000Z",
+  );
+});
+
 test("resolves {{cwd}} and {{repo_root}}", () => {
   const ctxWithRepo = { ...ctx, cwd: "/repo/worktree", repoRoot: "/repo/root" };
   expect(resolveTemplateVars("c={{cwd}};r={{repo_root}}", ctxWithRepo)).toBe(

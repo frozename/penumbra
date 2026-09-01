@@ -38,7 +38,7 @@ export type ComposeRecallOpts = {
 };
 
 const DEFAULT_BUDGET = 8000;
-const TOKEN_PER_CHAR = 0.25;
+export const TOKEN_PER_CHAR = 0.25;
 
 function estTokens(s: string): number {
   return Math.ceil(s.length * TOKEN_PER_CHAR);
@@ -215,9 +215,50 @@ function tokenSize(value: unknown): number {
   }
 }
 
-function trimObjectRecall(value: Record<string, unknown>): Record<string, unknown> | null {
+function buildTruncationMarker(retainedChars: number, originalChars: number): string {
+  return `\n… [recall budget: body truncated to ${String(retainedChars)} of ${String(originalChars)} chars]`;
+}
+
+function headAtLineBoundary(body: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  const prefix = body.slice(0, maxChars);
+  const lastNewline = prefix.lastIndexOf("\n");
+  if (lastNewline > 0) return prefix.slice(0, lastNewline);
+  return prefix;
+}
+
+function truncateObjectRecall(
+  value: Record<string, unknown>,
+  budgetTokens: number,
+): Record<string, unknown> | null {
   if (typeof value.body !== "string") return null;
-  return { ...value, body: "", truncated: true };
+  const originalBody = value.body;
+  const markerOnly = {
+    ...value,
+    body: buildTruncationMarker(0, originalBody.length),
+    truncated: true,
+  };
+  if (budgetTokens <= 0) return markerOnly;
+
+  let lo = 0;
+  let hi = originalBody.length;
+  let best = markerOnly;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const head = headAtLineBoundary(originalBody, mid);
+    const candidate = {
+      ...value,
+      body: `${head}${buildTruncationMarker(head.length, originalBody.length)}`,
+      truncated: true,
+    };
+    if (tokenSize(candidate) <= budgetTokens) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
 }
 
 function computeSizes(byKey: Record<string, unknown>): { total: number; sized: SizedItem[] } {
@@ -245,6 +286,62 @@ function computeSizes(byKey: Record<string, unknown>): { total: number; sized: S
   return { total, sized };
 }
 
+function protectedTrimRank(key: string): number {
+  if (key === "session_first_moves") return 1;
+  if (key === "latest_continuation_note") return 2;
+  return 0;
+}
+
+function compareSizedItems(a: SizedItem, b: SizedItem): number {
+  const aProtectedRank = protectedTrimRank(a.key);
+  const bProtectedRank = protectedTrimRank(b.key);
+  if (aProtectedRank !== bProtectedRank) {
+    if (aProtectedRank === 0) return -1;
+    if (bProtectedRank === 0) return 1;
+    return aProtectedRank - bProtectedRank;
+  }
+  const aHasTs = a.ts.length > 0;
+  const bHasTs = b.ts.length > 0;
+  if (aHasTs !== bHasTs) return aHasTs ? -1 : 1;
+  if (!aHasTs && !bHasTs) return b.tokens - a.tokens;
+  return a.ts.localeCompare(b.ts);
+}
+
+function maybeTruncateSizedItem(
+  s: SizedItem,
+  cur: number,
+  budget: number,
+): Record<string, unknown> | null {
+  if (typeof s.ref !== "object" || s.ref === null) return null;
+  const remainingTokens = Math.max(0, budget - (cur - s.tokens));
+  const replacement = truncateObjectRecall(s.ref as Record<string, unknown>, remainingTokens);
+  if (replacement === null) return null;
+  if (tokenSize(replacement) >= s.tokens) return null;
+  return replacement;
+}
+
+function applyArrayTrim(
+  val: unknown[],
+  toDrop: Set<unknown>,
+  replacements: Map<unknown, unknown>,
+): unknown[] {
+  return val
+    .filter((v) => !toDrop.has(v))
+    .map((v) => (replacements.has(v) ? replacements.get(v) : v));
+}
+
+function applyScalarTrim(
+  val: unknown,
+  toDrop: Set<unknown>,
+  replacements: Map<unknown, unknown>,
+): { changed: boolean; value: unknown } {
+  if (typeof val === "string" && toDrop.has(val)) return { changed: true, value: "" };
+  if (typeof val !== "object" || val === null) return { changed: false, value: val };
+  if (replacements.has(val)) return { changed: true, value: replacements.get(val) };
+  if (toDrop.has(val)) return { changed: true, value: null };
+  return { changed: false, value: val };
+}
+
 function trimToBudget(
   byKey: Record<string, unknown>,
   sized: SizedItem[],
@@ -252,31 +349,33 @@ function trimToBudget(
   budget: number,
   warnings: string[],
 ): number {
-  sized.sort((a, b) => {
-    const aHasTs = a.ts.length > 0;
-    const bHasTs = b.ts.length > 0;
-    if (aHasTs !== bHasTs) return aHasTs ? -1 : 1;
-    if (!aHasTs && !bHasTs) return b.tokens - a.tokens;
-    return a.ts.localeCompare(b.ts);
-  });
+  sized.sort(compareSizedItems);
   const toDrop = new Set<unknown>();
+  const replacements = new Map<unknown, unknown>();
   let cur = total;
   for (const s of sized) {
     if (cur <= budget) break;
+    const replacement = maybeTruncateSizedItem(s, cur, budget);
+    if (replacement !== null) {
+      replacements.set(s.ref, replacement);
+      cur = cur - s.tokens + tokenSize(replacement);
+      continue;
+    }
     toDrop.add(s.ref);
     cur -= s.tokens;
   }
   for (const [key, val] of Object.entries(byKey)) {
     if (Array.isArray(val)) {
-      byKey[key] = (val as unknown[]).filter((v) => !toDrop.has(v));
-    } else if (typeof val === "string" && toDrop.has(val)) {
-      byKey[key] = "";
-    } else if (typeof val === "object" && val !== null && toDrop.has(val)) {
-      byKey[key] = trimObjectRecall(val as Record<string, unknown>);
+      byKey[key] = applyArrayTrim(val, toDrop, replacements);
+      continue;
     }
+    const next = applyScalarTrim(val, toDrop, replacements);
+    if (next.changed) byKey[key] = next.value;
   }
   warnings.push(
-    `recall budget exceeded: trimmed ${String(toDrop.size)} items (target ${String(budget)} tokens)`,
+    `recall budget exceeded: trimmed ${String(
+      toDrop.size + replacements.size,
+    )} items (target ${String(budget)} tokens)`,
   );
   return cur;
 }

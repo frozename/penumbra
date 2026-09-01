@@ -33,13 +33,27 @@ function seedRepo(): string {
   return repo;
 }
 
-async function renderPrime(repo: string): Promise<string> {
+function makeContinuationNote(charCount: number, lastLine = "LAST_LINE_SENTINEL"): string {
+  const first = "NOTE_START\n";
+  const last = `\n${lastLine}\n`;
+  return first + "n".repeat(Math.max(0, charCount - first.length - last.length)) + last;
+}
+
+async function renderPrime(
+  repo: string,
+  opts: {
+    now?: Date;
+    sessionStart?: string;
+    setupStorageRoot?: (root: string) => void;
+  } = {},
+): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), "mcp-int-"));
   const playbookSrc = join(
     import.meta.dir,
     "../../../../plugin/playbooks/maestro-context-prime/playbook.md",
   );
   try {
+    opts.setupStorageRoot?.(root);
     const pbDir = join(root, "playbooks/maestro-context-prime");
     mkdirSync(pbDir, { recursive: true });
     writeFileSync(join(pbDir, "playbook.md"), readFileSync(playbookSrc, "utf8"));
@@ -56,9 +70,9 @@ async function renderPrime(repo: string): Promise<string> {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
     const templateCtx: TemplateVarContext = {
-      now: () => new Date("2026-05-05T08:00:00Z"),
+      now: () => opts.now ?? new Date("2026-05-05T08:00:00Z"),
       project: "penumbra",
-      sessionStart: "2026-05-05T07:00:00Z",
+      sessionStart: opts.sessionStart ?? "2026-05-05T07:00:00Z",
       tz: "UTC",
       repoRoot: repo,
     };
@@ -121,6 +135,33 @@ test("the three hardcoded First-moves shell lines are absent and collector-deriv
     expect(body).not.toContain("Carry forward whatever was queued");
     expect(body).toContain("git_status_dirty_count: 1");
     expect(body).toContain("head_sha:");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("real playbook budget keeps the continuation note and first-moves payload", async () => {
+  const repo = seedRepo();
+  try {
+    mkdirSync(join(repo, "docs/notes"), { recursive: true });
+    writeFileSync(
+      join(repo, "docs/notes/maestro-continuation-2026-05-05.md"),
+      makeContinuationNote(12_000),
+    );
+
+    const body = await renderPrime(repo, {
+      now: new Date("2026-05-05T08:00:00Z"),
+      sessionStart: "2026-05-05T07:00:00Z",
+      setupStorageRoot: (root) => {
+        writeFileSync(join(root, "pending-handoff.md"), "PENDING_START\n" + "p".repeat(33_000));
+      },
+    });
+
+    expect(body).toContain("NOTE_START");
+    expect(body).toContain("LAST_LINE_SENTINEL");
+    expect(body).toContain("git_status_dirty_count:");
+    expect(body).toContain("head_sha:");
+    expect(body).toContain("pending_handoffs:");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
