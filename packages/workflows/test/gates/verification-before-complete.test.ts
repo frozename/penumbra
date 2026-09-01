@@ -23,3 +23,12 @@ test("passes on empty / non-completion text (gate is opt-in)", () => {
     true,
   );
 });
+
+test("fails JSON-ish machine facts that contain a complete status without evidence", () => {
+  const r = verifyVerificationBeforeComplete({
+    text: '{"slug":"session-handoff","phases":[{"title":"Live state","status":"complete"}]}',
+  });
+
+  expect(r.passed).toBe(false);
+  expect(r.evidence).toContain("missing run-and-saw evidence");
+});

@@ -56,8 +56,7 @@ recall:
       limit: 100
   - source: handoff_list_pending
 recall_budget_tokens: 8000
-process_gates:
-  - verification-before-complete
+# No process_gates: this skeleton is machine-rendered facts; drafted narrative gates run in Phase 4.
 output:
   - kind: file
     path: docs/notes/maestro-continuation-{{date}}-{{period}}.skeleton.md

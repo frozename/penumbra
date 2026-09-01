@@ -176,6 +176,19 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       home_project: "penumbra",
       phases: ["Stamp", "Live state"],
     });
+    new RegistrarWriter(db, () => 101).appendEvent(registrar.registrar_id, {
+      actor: "maestro",
+      body: "machine fact phase projection",
+      phase_no: 1,
+      kind: "phase_transition",
+      from_status: "active",
+      state: "complete",
+    });
+    writeFileSync(join(repo, "live.txt"), "live regression\n");
+    execSync(
+      'git add live.txt && git commit -q -m "machine-rendered facts" -m "The previous workflow landed and fixed the skeleton sink."',
+      { cwd: repo, shell: "/bin/bash" },
+    );
 
     const spec = matched[0]!;
     const bundle = await composeRecall({
@@ -225,6 +238,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     });
 
     expect(result.outcome).toBe("success");
+    expect(result.gateEvidence).toBeUndefined();
     const emittedNotes = readdirSync(notesDir).filter((name) => name.endsWith(".skeleton.md"));
     expect(emittedNotes).toHaveLength(1);
     expect(emittedNotes[0]).toBe(expectedSkeleton);
@@ -234,6 +248,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     );
     expect(body).toContain("Maestro continuation prompt");
     expect(body).toContain("second commit");
+    expect(body).toContain("The previous workflow landed and fixed the skeleton sink.");
     expect(body).toContain("h-pending-1");
     expect(body).toContain("## Live state");
     const tableRows = normalizedTableRows(body);
@@ -245,6 +260,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(body).toContain("active outage");
     expect(body).toContain("session-handoff-telemetry");
     expect(body).toContain(registrar.registrar_id);
+    expect(body).toContain('"status":"complete"');
     expect(body).not.toContain("{{");
     expect(body).not.toContain("undefined");
     expect(readFileSync(preservedMorningNote, "utf8")).toBe("operator morning note\n");
