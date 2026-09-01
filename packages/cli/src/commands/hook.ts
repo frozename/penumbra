@@ -340,6 +340,54 @@ function isLifecycleTerminator(lifecycleEvent: LifecycleEvent): boolean {
   );
 }
 
+function isNonBlankEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function isLongLivedAgentEnv(env: NodeJS.ProcessEnv): boolean {
+  return (
+    isNonBlankEnvValue(env.PENUMBRA_LONG_LIVED_TICK_ID) ||
+    isNonBlankEnvValue(env.PENUMBRA_LONG_LIVED_AGENT_ID)
+  );
+}
+
+export function isSdkEntrypointEnv(env: NodeJS.ProcessEnv): boolean {
+  return env.CLAUDE_CODE_ENTRYPOINT?.trim().toLowerCase().startsWith("sdk") ?? false;
+}
+
+export function shouldSkipLifecycleForwarding(env: NodeJS.ProcessEnv): boolean {
+  return isLongLivedAgentEnv(env) || isSdkEntrypointEnv(env);
+}
+
+async function runLifecycleHook(opts: {
+  hookOpts: RunHookOpts;
+  lifecycleEvent: LifecycleEvent | null;
+  ev: ClaudeCodeHookEvent | null;
+  sessionId: string | null;
+  projectIdForTouch: string | null;
+  cwdForResolve: string;
+  skipLifecycleForwarding: boolean;
+}): Promise<boolean> {
+  if (!opts.lifecycleEvent) return false;
+
+  // SDK-driven sessions (penumbra long-lived ticks run through claude-agent-acp)
+  // and long-lived markers both mean this is not an interactive maestro session:
+  // no prime, no continuity rows, no draft dispatch, no memory sweep. touchSession
+  // and the /observations post stay. CLAUDE_CODE_ENTRYPOINT is undocumented; match
+  // the sdk* prefix intentionally (registrar ev260 / ev282).
+  if (!opts.skipLifecycleForwarding) {
+    await dispatchLifecycle(
+      opts.hookOpts,
+      opts.lifecycleEvent,
+      opts.ev,
+      opts.sessionId,
+      opts.projectIdForTouch,
+      opts.cwdForResolve,
+    );
+  }
+  return isLifecycleTerminator(opts.lifecycleEvent);
+}
+
 export async function runHook(opts: RunHookOpts): Promise<number> {
   const portPath = join(opts.storageRoot, "port");
   const tokenPath = join(opts.storageRoot, "token");
@@ -363,10 +411,17 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   }
 
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
-  if (lifecycleEvent) {
-    await dispatchLifecycle(opts, lifecycleEvent, ev, sessionId, projectIdForTouch, cwdForResolve);
-    if (isLifecycleTerminator(lifecycleEvent)) return 0;
-  }
+  const skipLifecycleForwarding = shouldSkipLifecycleForwarding(process.env);
+  const lifecycleTerminated = await runLifecycleHook({
+    hookOpts: opts,
+    lifecycleEvent,
+    ev,
+    sessionId,
+    projectIdForTouch,
+    cwdForResolve,
+    skipLifecycleForwarding,
+  });
+  if (lifecycleTerminated) return 0;
 
   const event = mapClaudeCodeEvent(parsed, { project: opts.project, sessionId: opts.sessionId });
   if (!event) return 0;
