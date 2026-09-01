@@ -41,6 +41,14 @@ recall:
   - source: git.diff
     args:
       range: "main...HEAD"
+  - source: session_first_moves
+  - source: routing_bias_list
+    args:
+      limit: 50
+  - source: registrar_status
+    args:
+      status: active
+      limit: 5
   - source: dispatch_events
     args:
       since: "{{session_start}}"
@@ -59,6 +67,8 @@ run:
   kind: markdown-template
 ---
 
+<!-- penumbra:session {{session_stamp_value}} -->
+
 # Maestro continuation prompt — {{date}} {{period}}
 
 > Paste this whole block into the next session as the kickoff message.
@@ -68,6 +78,38 @@ run:
 You are taking over as maestro in `{{repo_root}}`.
 
 If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain state; do not query sqlite directly except for forensics. Keep commits and repo-facing text neutral, with no AI/tool attribution. Delegate coding work via `chain_start`; hand-code only when the worker/daemon won't boot.
+
+## Live state
+
+| HEAD                                    | Origin main                                    | Unpushed                                | Dirty count                                           |
+| --------------------------------------- | ---------------------------------------------- | --------------------------------------- | ----------------------------------------------------- |
+| {{recall.session_first_moves.head_sha}} | {{recall.session_first_moves.origin_main_sha}} | {{recall.session_first_moves.unpushed}} | {{recall.session_first_moves.git_status_dirty_count}} |
+
+| Daemon PID                                | Daemon healthy                                | Worker PIDs                                | Pending handoffs                                |
+| ----------------------------------------- | --------------------------------------------- | ------------------------------------------ | ----------------------------------------------- |
+| {{recall.session_first_moves.daemon_pid}} | {{recall.session_first_moves.daemon_healthy}} | {{recall.session_first_moves.worker_pids}} | {{recall.session_first_moves.pending_handoffs}} |
+
+| Pending task drafts                                | Open lanes                                | Gate deltas                                | Pin share                                |
+| -------------------------------------------------- | ----------------------------------------- | ------------------------------------------ | ---------------------------------------- |
+| {{recall.session_first_moves.pending_task_drafts}} | {{recall.session_first_moves.open_lanes}} | {{recall.session_first_moves.gate_deltas}} | {{recall.session_first_moves.pin_share}} |
+
+### Active biases
+
+{{#if recall.routing_bias_list}}
+{{#each recall.routing_bias_list}}
+
+- {{mode}} {{scope}}:{{value}} expires {{expires_at}} reason {{reason}}
+  {{/each}}
+  {{/if}}
+
+### Registrar
+
+{{#if recall.registrar_status}}
+{{#each recall.registrar_status}}
+
+- `{{slug}}` (`{{registrar_id}}`) {{status}} phases {{phases}} blockers {{rollup.open_blockers}} follow-ups {{rollup.open_follow_ups}} last_event {{last_event_id}}
+  {{/each}}
+  {{/if}}
 
 ## Recall summary
 

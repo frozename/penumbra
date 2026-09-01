@@ -139,6 +139,39 @@ test("composeRecall resolves a session_events source into byKey", async () => {
   expect(bundle.warnings).toEqual([]);
 });
 
+test("composeRecall resolves routing_bias_list and registrar_status into byKey", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.run(
+    `INSERT INTO routing_bias (bias_id, scope, value, mode, weight, reason, created_at, expires_at)
+     VALUES ('b-1', 'agent', 'codex-fast', 'exclude', NULL, 'route around outage', '2026-05-04T10:00:00.000Z', '2099-05-04T18:00:00.000Z')`,
+  );
+  db.run(
+    `INSERT INTO registrar_entries
+       (registrar_id, slug, title, home_project, source_doc_path, status, created_at, updated_at)
+     VALUES ('r-1', 'session-handoff-telemetry', 'Session handoff telemetry', 'penumbra', NULL, 'active', 100, 100)`,
+  );
+
+  const bundle = await composeRecall({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    cwd: process.cwd(),
+    project: "demo",
+    sources: [{ source: "routing_bias_list" }, { source: "registrar_status" }],
+    budgetTokens: 8000,
+  });
+
+  expect(bundle.byKey["routing_bias_list"]).toEqual([
+    expect.objectContaining({ bias_id: "b-1", value: "codex-fast" }),
+  ]);
+  expect(bundle.byKey["registrar_status"]).toEqual([
+    expect.objectContaining({ registrar_id: "r-1", slug: "session-handoff-telemetry" }),
+  ]);
+  expect(bundle.warnings).toEqual([]);
+});
+
 test("session_events recall source clamps absurd limits to 500 rows", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

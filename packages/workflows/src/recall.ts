@@ -14,6 +14,8 @@ import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
 import { runLatestContinuationNoteSource } from "./recall-sources/latest-continuation-note.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
+import { runRegistrarStatusSource } from "./recall-sources/registrar-status.js";
+import { runRoutingBiasListSource } from "./recall-sources/routing-bias-list.js";
 import { runSessionEventsSource, type SessionEvent } from "./recall-sources/session-events.js";
 import { runSessionFirstMovesSource } from "./recall-sources/session-first-moves.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
@@ -158,7 +160,27 @@ async function runOneSource(
     }
     case "session_first_moves": {
       const out = await runSessionFirstMovesSource({ db, cwd, project, args });
-      mergeBucket(byKey, "session_first_moves", out.result);
+      mergeBucket(byKey, "session_first_moves", {
+        ...out.result,
+        unpushed:
+          out.result.head_sha &&
+          out.result.origin_main_sha &&
+          out.result.head_sha === out.result.origin_main_sha
+            ? 0
+            : "differs - run git rev-list --count origin/main..main",
+      });
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "routing_bias_list": {
+      const out = runRoutingBiasListSource({ db, args });
+      mergeBucket(byKey, "routing_bias_list", out.rows);
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "registrar_status": {
+      const out = runRegistrarStatusSource({ db, args });
+      mergeBucket(byKey, "registrar_status", out.rows);
       warnings.push(...out.warnings);
       return;
     }

@@ -715,6 +715,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     tz: process.env.TZ ?? "UTC",
     args,
     repoRoot,
+    sessionId: prepared.body.session_id ?? null,
   };
   const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
   const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
@@ -1201,6 +1202,7 @@ async function executeMatchedTriggerSpec(opts: {
     repoRoot,
     filePath: filePathFromBody ?? undefined,
     args,
+    sessionId: sessionIdFromBody,
   };
   const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
   const workflowRuns = services.workflowRuns;

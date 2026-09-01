@@ -432,6 +432,10 @@ test("a session-start trigger resolving a note records continuity.boot_pickup wi
     if (res.status !== 200) {
       throw new Error(`unexpected status ${String(res.status)}: ${await res.text()}`);
     }
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.boot_pickup");
+    expect(event.related_session_id).toBe(related);
+    expect(event.ref_path).toBe(realpathSync(notePath));
     const row = h.services.db
       .query<
         {
@@ -483,6 +487,10 @@ test("a title-first continuation note can still link related_session_id from the
     if (res.status !== 200) {
       throw new Error(`unexpected status ${String(res.status)}: ${await res.text()}`);
     }
+    const events = await listContinuityEvents(h);
+    const event = onlyContinuityEvent(events, "continuity.boot_pickup");
+    expect(event.related_session_id).toBe(related);
+    expect(event.ref_path).toBe(realpathSync(notePath));
     const row = h.services.db
       .query<
         { related_session_id: string | null; ref_path: string | null },

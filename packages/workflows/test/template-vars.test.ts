@@ -26,6 +26,28 @@ test("resolves {{project}} and {{session_start}}", () => {
   );
 });
 
+test("resolves {{session_id}} and {{session_stamp_value}} when session id is present", () => {
+  const withSession: TemplateVarContext = {
+    ...ctx,
+    sessionId: "123e4567-e89b-12d3-a456-426614174000",
+  };
+  expect(resolveTemplateVars("id={{session_id}};stamp={{session_stamp_value}}", withSession)).toBe(
+    "id=123e4567-e89b-12d3-a456-426614174000;stamp=123e4567-e89b-12d3-a456-426614174000",
+  );
+});
+
+test("resolves absent {{session_id}} to empty and {{session_stamp_value}} to none", () => {
+  expect(resolveTemplateVars("id={{session_id}};stamp={{session_stamp_value}}", ctx)).toBe(
+    "id=;stamp=none",
+  );
+  expect(
+    resolveTemplateVars("id={{session_id}};stamp={{session_stamp_value}}", {
+      ...ctx,
+      sessionId: null,
+    }),
+  ).toBe("id=;stamp=none");
+});
+
 test("resolves {{now_minus_24h}} from the injected clock as UTC ISO", () => {
   expect(resolveTemplateVars("since={{now_minus_24h}}", ctx)).toBe(
     "since=2026-05-03T15:00:00.000Z",

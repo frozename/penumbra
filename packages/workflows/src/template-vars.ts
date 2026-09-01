@@ -6,6 +6,7 @@ export type TemplateVarContext = {
   cwd?: string;
   repoRoot?: string;
   filePath?: string;
+  sessionId?: string | null;
   args?: Record<string, unknown>;
 };
 
@@ -67,6 +68,10 @@ export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string 
           return ctx.project;
         case "session_start":
           return ctx.sessionStart;
+        case "session_id":
+          return ctx.sessionId ?? "";
+        case "session_stamp_value":
+          return ctx.sessionId ?? "none";
         case "now_minus_24h":
           return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
         case "cwd":

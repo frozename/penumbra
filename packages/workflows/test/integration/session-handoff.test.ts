@@ -1,4 +1,4 @@
-import { loadSqliteVec, migrate } from "@penumbra/core";
+import { loadSqliteVec, migrate, RegistrarWriter } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -143,6 +143,26 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       VALUES
         ('h-pending-1', '2026-05-04T10:05:00Z', 'c1', 'maestro', 'worker', 'session-handoff seed message', 'pending');
     `);
+    db.run(
+      `INSERT INTO routing_bias (bias_id, scope, value, mode, weight, reason, created_at, expires_at)
+       VALUES ('bias-live', 'agent', 'codex-fast', 'exclude', NULL, 'active outage', '2026-05-04T10:00:00.000Z', '2026-09-01T18:00:00.000Z')`,
+    );
+    db.run(`
+      INSERT INTO lane_ledger (lane_id, gate_status, ts_opened, task_class, implementer_handoff)
+      VALUES ('lane-open', 'open', '2026-05-04T10:00:00.000Z', 'implement_small', 'h-pending-1')
+    `);
+    db.run(`
+      INSERT INTO t1_rollups (
+        rollup_id, project_id, user_id, session_id, started_at, n_events, source_event_ids, promotion_filtered_at
+      )
+      VALUES ('rollup-filtered', 'penumbra', 'u', 's1', '2026-05-04T10:00:00Z', 1, '[]', '2026-05-04T10:10:00Z')
+    `);
+    const registrar = new RegistrarWriter(db, () => 100).createEntry({
+      title: "Session handoff telemetry",
+      slug: "session-handoff-telemetry",
+      home_project: "penumbra",
+      phases: ["Stamp", "Live state"],
+    });
 
     const spec = matched[0]!;
     const bundle = await composeRecall({
@@ -171,6 +191,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       tz: "UTC",
       cwd: repo,
       repoRoot: root,
+      sessionId: "123e4567-e89b-12d3-a456-426614174000",
     };
     const captureCtx = {
       db,
@@ -195,9 +216,23 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(emittedNotes).toHaveLength(1);
     expect(emittedNotes[0]).toBe(expectedSkeleton);
     const body = readFileSync(join(notesDir, emittedNotes[0]!), "utf8");
+    expect(body.split("\n")[0]).toBe(
+      "<!-- penumbra:session 123e4567-e89b-12d3-a456-426614174000 -->",
+    );
     expect(body).toContain("Maestro continuation prompt");
     expect(body).toContain("second commit");
     expect(body).toContain("h-pending-1");
+    expect(body).toContain("## Live state");
+    expect(body).toContain("| HEAD | Origin main | Unpushed | Dirty count |");
+    expect(body).toContain("| Daemon PID | Daemon healthy | Worker PIDs | Pending handoffs |");
+    expect(body).toContain("| Open lanes | Gate deltas | Pin share |");
+    expect(body).toContain("codex-fast");
+    expect(body).toContain("exclude agent:codex-fast");
+    expect(body).toContain("active outage");
+    expect(body).toContain("session-handoff-telemetry");
+    expect(body).toContain(registrar.registrar_id);
+    expect(body).not.toContain("{{");
+    expect(body).not.toContain("undefined");
     expect(readFileSync(preservedMorningNote, "utf8")).toBe("operator morning note\n");
     expect(readFileSync(preservedPmNote, "utf8")).toBe("operator pm note\n");
     expect(readFileSync(preservedEveningNote, "utf8")).toBe("operator evening note\n");
@@ -241,6 +276,66 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(refreshedBody).toContain("second-run-marker");
     expect(refreshedBody).not.toBe("stale skeleton\n");
     expect(readFileSync(preservedPmNote, "utf8")).toBe("operator pm note\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("session-handoff skeleton first line uses none stamp without a session id", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sh-none-stamp-"));
+  const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
+  const playbookSrc = join(import.meta.dir, "../../../../plugin/playbooks/session-handoff");
+  try {
+    const pbDir = join(root, "playbooks/session-handoff");
+    mkdirSync(pbDir, { recursive: true });
+    writeFileSync(
+      join(pbDir, "playbook.md"),
+      readFileSync(join(playbookSrc, "playbook.md"), "utf8"),
+    );
+    mkdirSync(join(root, "workflows"), { recursive: true });
+
+    const reg = await buildRegistry({
+      playbooksDir: join(root, "playbooks"),
+      workflowsDir: join(root, "workflows"),
+    });
+    const spec = evaluateTriggerEvent(reg, { kind: "lifecycle", event: "pre-compact" })[0]!;
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+
+    const fixedNow = new Date("2026-08-31T18:00:00Z");
+    const templateCtx: TemplateVarContext = {
+      now: (): Date => fixedNow,
+      project: "penumbra",
+      sessionStart: "2026-08-31T17:00:00.000Z",
+      tz: "UTC",
+      cwd: repo,
+      repoRoot: root,
+    };
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repo,
+      project: "penumbra",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens,
+    });
+
+    await executeWorkflow({
+      spec,
+      bundle,
+      storageRoot: root,
+      repoRoot: root,
+      templateCtx,
+      captureCtx: { db, project: "penumbra", sessionId: null, userId: "u", machineId: "m" },
+    });
+
+    const notesDir = join(root, "docs/notes");
+    const emitted = readdirSync(notesDir).find((name) => name.endsWith(".skeleton.md"));
+    if (!emitted) throw new Error("expected emitted skeleton");
+    const body = readFileSync(join(notesDir, emitted), "utf8");
+    expect(body.split("\n")[0]).toBe("<!-- penumbra:session none -->");
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
