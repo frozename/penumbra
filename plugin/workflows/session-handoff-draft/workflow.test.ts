@@ -258,6 +258,110 @@ test("malformed fleet output fails closed without a draft file or row", async ()
   }
 });
 
+test("a fleet response with a glued preamble before the narrative heading is accepted", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-glued-preamble-"));
+  const db = freshDb();
+  try {
+    const skeletonPath = writeSkeleton(root);
+    const result = (await fn(
+      makeCtx({
+        root,
+        db,
+        awaitChain: async () => ({
+          status: "completed",
+          final_agent: "executor",
+          response_text: `I'm applying the required format.## Narrative and traps learned
+
+The skeleton says the branch is mid-flight.
+
+## Open follow-ups (worst-first)
+
+- Re-run the final gate.`,
+        }),
+      }),
+      recall(),
+    )) as DraftRunResult;
+
+    expect(result.sections).toBe(2);
+    const draftBody = readFileSync(result.draft_path!, "utf8");
+    expect(draftBody).toContain("Facts\n\n## Narrative and traps learned");
+    expect(draftBody).not.toContain("I'm applying the required format.");
+    expect(new SessionNoteDrafts(db).list()).toHaveLength(1);
+    expect(existsSync(skeletonPath.replace(/\.skeleton\.md$/, ".draft.md"))).toBe(true);
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a fleet response with a standalone preamble before the narrative heading is accepted", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-standalone-preamble-"));
+  const db = freshDb();
+  try {
+    writeSkeleton(root);
+    const result = (await fn(
+      makeCtx({
+        root,
+        db,
+        awaitChain: async () => ({
+          status: "completed",
+          final_agent: "executor",
+          response_text: `A short preamble.
+
+## Narrative and traps learned
+
+The skeleton says the branch is mid-flight.
+
+## Open follow-ups (worst-first)
+
+- Re-run the final gate.`,
+        }),
+      }),
+      recall(),
+    )) as DraftRunResult;
+
+    expect(result.sections).toBe(2);
+    const draftBody = readFileSync(result.draft_path!, "utf8");
+    expect(draftBody).toContain("Facts\n\n## Narrative and traps learned");
+    expect(draftBody).not.toContain("A short preamble.");
+    expect(new SessionNoteDrafts(db).list()).toHaveLength(1);
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a narrative heading mention without a follow-ups heading at line start is rejected", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-heading-mention-"));
+  const db = freshDb();
+  try {
+    const skeletonPath = writeSkeleton(root);
+    const result = (await fn(
+      makeCtx({
+        root,
+        db,
+        awaitChain: async () => ({
+          status: "completed",
+          final_agent: "executor",
+          response_text:
+            "The phrase ## Narrative and traps learned appears here, but there is no valid follow-up heading.",
+        }),
+      }),
+      recall(),
+    )) as DraftRunResult;
+
+    expect(result).toMatchObject({
+      skipped: true,
+      reason: "malformed response",
+    });
+    expect(existsSync(skeletonPath.replace(/\.skeleton\.md$/, ".draft.md"))).toBe(false);
+    expect(new SessionNoteDrafts(db).list()).toHaveLength(0);
+  } finally {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a fleet response with any extra markdown heading is rejected", async () => {
   const root = mkdtempSync(join(tmpdir(), "session-handoff-draft-extra-heading-"));
   const db = freshDb();

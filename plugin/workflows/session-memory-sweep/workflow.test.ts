@@ -424,6 +424,68 @@ test("an approved row whose note file is missing fails open with a warning", asy
   ]);
 });
 
+test("when extraction fails after approval, renders the approved note candidate and warns", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-memory-sweep-extract-fail-approved-"));
+  try {
+    const db = freshDb();
+    seedTranscript(db);
+    const notePath = join(root, "maestro-continuation-2026-08-31-pm.md");
+    const narrativeSection = [
+      "## Narrative and traps learned",
+      "",
+      "The operator approved this exact narrative before the judge failed.",
+      "",
+    ].join("\n");
+    writeFileSync(
+      notePath,
+      [narrativeSection, "## Open follow-ups (worst-first)", "", "- Follow up."].join("\n"),
+    );
+    insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
+    const recall = { byKey: {}, warnings: [] };
+
+    const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+      fn(
+        makeCtx(db, {
+          extractSessionCandidates: async () => {
+            throw new Error("judge_failed 502 exceeds the available context size");
+          },
+        }),
+        recall,
+      ),
+    );
+
+    expect(result).toContain("Approved session note");
+    expect(result).toContain(`Source: ${notePath} (approved 2026-08-31T21:30:00.000Z)`);
+    expect(result).toContain(narrativeSection);
+    expect(result).not.toContain("Ordinary session candidate");
+    expect(recall.warnings).toEqual([
+      expect.stringContaining(
+        "session-memory-sweep: session extract failed: judge_failed 502 exceeds the available context size",
+      ),
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("when extraction fails without approval, the extraction error still propagates", async () => {
+  const db = freshDb();
+  seedTranscript(db);
+
+  await expect(
+    withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
+      fn(
+        makeCtx(db, {
+          extractSessionCandidates: async () => {
+            throw new Error("judge_failed 502 exceeds the available context size");
+          },
+        }),
+        { byKey: {}, warnings: [] },
+      ),
+    ),
+  ).rejects.toThrow("judge_failed 502 exceeds the available context size");
+});
+
 test("returns preserve marker for an empty db", async () => {
   const db = freshDb();
   const result = await fn(

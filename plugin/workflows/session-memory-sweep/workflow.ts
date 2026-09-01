@@ -408,16 +408,27 @@ export const fn: WorkflowFn<Args> = async (ctx, recall) => {
 
   const extract =
     ctx.args.extractSessionCandidates ?? ((body) => fetchCandidates(ctx.storageRoot, body));
-  const result = await extract({
-    session_id: transcript.sessionId,
-    ...(ctx.args.transcript_path ? { transcript_path: ctx.args.transcript_path } : {}),
-    project_id: projectId,
-    max_candidates: maxCandidates,
-  });
   const approvedCandidate = buildApprovedNoteCandidate(approvedReview, recall);
+  let sessionCandidates: Candidate[];
+  try {
+    const result = await extract({
+      session_id: transcript.sessionId,
+      ...(ctx.args.transcript_path ? { transcript_path: ctx.args.transcript_path } : {}),
+      project_id: projectId,
+      max_candidates: maxCandidates,
+    });
+    sessionCandidates = result.candidates;
+  } catch (error) {
+    if (!approvedCandidate) throw error;
+    warn(
+      recall,
+      `session-memory-sweep: session extract failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    sessionCandidates = [];
+  }
   const candidates = [
     ...(approvedCandidate ? [approvedCandidate] : []),
-    ...result.candidates.slice(0, maxCandidates),
+    ...sessionCandidates.slice(0, maxCandidates),
   ];
   return renderCandidates(candidates);
 };
