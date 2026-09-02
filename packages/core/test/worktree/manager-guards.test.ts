@@ -111,3 +111,43 @@ test("local cache fallback copies a source under the byte bound", () => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test("local cache fallback counts only copied bytes at the byte bound", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-exact-"));
+  const mainCachePath = path.join(fixtureRoot, "main-cache");
+  const worktreeCachePath = path.join(fixtureRoot, "worktree-cache");
+
+  try {
+    fs.mkdirSync(mainCachePath);
+    fs.writeFileSync(path.join(mainCachePath, "seed.bin"), "seed");
+
+    copyLocalCacheFallback(mainCachePath, worktreeCachePath, 4);
+
+    expect(fs.readFileSync(path.join(worktreeCachePath, "seed.bin"), "utf8")).toBe("seed");
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("local cache fallback rejects copied bytes over the byte bound", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-wt-cache-over-"));
+  const mainCachePath = path.join(fixtureRoot, "main-cache");
+  const worktreeCachePath = path.join(fixtureRoot, "worktree-cache");
+
+  try {
+    fs.mkdirSync(mainCachePath);
+    fs.writeFileSync(path.join(mainCachePath, "seed.bin"), "seeds");
+
+    let message: string | undefined;
+    try {
+      copyLocalCacheFallback(mainCachePath, worktreeCachePath, 4);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(fs.existsSync(worktreeCachePath)).toBe(false);
+    expect(message).toMatch(new RegExp(`${escapeRegExp(mainCachePath)}.*\\d+.*4`));
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});

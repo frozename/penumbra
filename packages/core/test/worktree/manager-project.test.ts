@@ -84,6 +84,14 @@ describe("WorktreeManager — project parameterization", () => {
     return `wt-test-${String(Date.now())}-${String(++counter)}`;
   }
 
+  function createUnreadyOrphan(orphanId: string): string {
+    const orphanPath = path.join(homeRoot, orphanId);
+    fs.mkdirSync(path.join(orphanPath, ".test-storage"), { recursive: true });
+    fs.writeFileSync(path.join(orphanPath, ".git"), "gitdir: /tmp/unready-orphan.git\n");
+    fs.writeFileSync(path.join(orphanPath, ".test-storage", "worktree-mode"), "isolated_install\n");
+    return orphanPath;
+  }
+
   it("creates and tears down under home base when no project_id provided", async () => {
     const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
     const id = nextHandoff();
@@ -344,19 +352,33 @@ describe("WorktreeManager — project parameterization", () => {
   });
 
   it("discovers stale unready uuid-named git worktrees for cleanup", async () => {
+    const startedAt = Date.now();
     const orphanId = "44444444-4444-4444-8444-444444444444";
-    const orphanPath = path.join(homeRoot, orphanId);
-    fs.mkdirSync(path.join(orphanPath, ".test-storage"), { recursive: true });
-    fs.writeFileSync(path.join(orphanPath, ".git"), "gitdir: /tmp/unready-orphan.git\n");
-    fs.writeFileSync(path.join(orphanPath, ".test-storage", "worktree-mode"), "isolated_install\n");
-    const stale = new Date(Date.now() - 16 * 60_000);
-    fs.utimesSync(orphanPath, stale, stale);
+    const orphanPath = createUnreadyOrphan(orphanId);
 
-    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      now: (): number => startedAt + 16 * 60_000,
+    });
 
     await expectResolvesEqual(manager.discoverOrphanWorktrees(), [
       { path: orphanPath, handoffId: orphanId },
     ]);
+  });
+
+  it("does not discover fresh unready uuid-named git worktrees before grace expires", async () => {
+    const startedAt = Date.now();
+    const orphanId = "55555555-5555-4555-8555-555555555555";
+    createUnreadyOrphan(orphanId);
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      now: (): number => startedAt,
+    });
+
+    await expectResolvesEqual(manager.discoverOrphanWorktrees(), []);
   });
 
   it("discovers default-project worktrees under <repo_root>-worktrees", async () => {

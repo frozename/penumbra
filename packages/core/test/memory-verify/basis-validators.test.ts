@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { buildServices, loadSqliteVec, migrate } from "@src/index.js";
 import { validateBasis } from "@src/memory-verify/basis.js";
 import { TestEmbedder } from "@src/testing/index.js";
 
-function freshServices(): {
+function freshServices(opts: { mainRepoDir?: string } = {}): {
   db: Database;
   root: string;
   reviewsDir: string;
@@ -28,7 +29,7 @@ function freshServices(): {
     reviewsDir,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    mainRepoDir: process.cwd(),
+    mainRepoDir: opts.mainRepoDir ?? process.cwd(),
     worktreeRootDir: join(root, "worktrees"),
   });
   return {
@@ -38,6 +39,29 @@ function freshServices(): {
     services,
     stop: (): void => {
       rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createGitRepoWithCommit(): { repoDir: string; commit: string; stop: () => void } {
+  const repoDir = mkdtempSync(join(tmpdir(), "memory-basis-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: repoDir,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: repoDir, stdio: "ignore" });
+  writeFileSync(join(repoDir, "README.md"), "# test\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "ignore" });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" })
+    .trim()
+    .slice(0, 7);
+  return {
+    repoDir,
+    commit,
+    stop: (): void => {
+      rmSync(repoDir, { recursive: true, force: true });
     },
   };
 }
@@ -75,17 +99,36 @@ test("validateBasis accepts lane_close bases when the lane is closed and reviewe
 });
 
 test("validateBasis accepts dispatch_land bases when the commit exists", async () => {
-  const ctx = freshServices();
+  const repo = createGitRepoWithCommit();
+  const ctx = freshServices({ mainRepoDir: repo.repoDir });
   try {
     seedHandoff(ctx.db, "h-review", "h-impl", "h-review", "review_adversarial");
     const result = await validateBasis(ctx.services, {
       kind: "dispatch_land",
-      merge_commit: "f128dd9",
+      merge_commit: repo.commit,
       reviewer_handoff: "h-review",
     });
     expect(result).toEqual({ ok: true });
   } finally {
     ctx.stop();
+    repo.stop();
+  }
+});
+
+test("validateBasis rejects dispatch_land bases when the commit is missing", async () => {
+  const repo = createGitRepoWithCommit();
+  const ctx = freshServices({ mainRepoDir: repo.repoDir });
+  try {
+    seedHandoff(ctx.db, "h-review", "h-impl", "h-review", "review_adversarial");
+    const result = await validateBasis(ctx.services, {
+      kind: "dispatch_land",
+      merge_commit: "deadbee",
+      reviewer_handoff: "h-review",
+    });
+    expect(result).toEqual({ ok: false, status: 404, reason: "merge commit not found" });
+  } finally {
+    ctx.stop();
+    repo.stop();
   }
 });
 

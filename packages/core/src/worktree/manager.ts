@@ -90,6 +90,7 @@ interface WorktreeManagerOpts {
   onBranchNameDrift?: BranchNameDriftHandler;
   runner?: WorktreeCommandRunner;
   mainBranch?: string;
+  now?: () => number;
 }
 
 function defaultRunner(
@@ -227,6 +228,7 @@ export class WorktreeManager {
   private onBranchNameDrift?: BranchNameDriftHandler;
   private runner: WorktreeCommandRunner;
   private mainBranch: string;
+  private now: () => number;
 
   constructor(opts?: WorktreeManagerOpts) {
     this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
@@ -236,6 +238,7 @@ export class WorktreeManager {
     this.onBranchNameDrift = opts?.onBranchNameDrift;
     this.runner = opts?.runner ?? defaultRunner;
     this.mainBranch = opts?.mainBranch ?? process.env["PENUMBRA_MAIN_BRANCH"] ?? "main";
+    this.now = opts?.now ?? ((): number => Date.now());
     this.rootDir =
       opts?.rootDir ??
       process.env["PENUMBRA_WORKTREE_ROOT"] ??
@@ -666,7 +669,7 @@ export class WorktreeManager {
     if (await isWorktreeReady(wtPath, worktreeMode, handoffId)) {
       return { path: wtPath, handoffId };
     }
-    if (await isUnreadyWorktreePastGrace(wtPath)) {
+    if (await isUnreadyWorktreePastGrace(wtPath, this.now)) {
       return { path: wtPath, handoffId };
     }
     return null;
@@ -935,12 +938,9 @@ const DEFAULT_LOCAL_CACHE_COPY_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 function recursiveLstatSize(rootPath: string): number {
   const stat = fs.lstatSync(rootPath);
   if (!stat.isDirectory()) return stat.size;
-  return (
-    stat.size +
-    fs
-      .readdirSync(rootPath)
-      .reduce((total, name) => total + recursiveLstatSize(path.join(rootPath, name)), 0)
-  );
+  return fs
+    .readdirSync(rootPath)
+    .reduce((total, name) => total + recursiveLstatSize(path.join(rootPath, name)), 0);
 }
 
 export function copyLocalCacheFallback(
@@ -1305,10 +1305,10 @@ function effectiveCreationTime(stat: fs.Stats): number {
   return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
 }
 
-async function isUnreadyWorktreePastGrace(wtRoot: string): Promise<boolean> {
+async function isUnreadyWorktreePastGrace(wtRoot: string, now: () => number): Promise<boolean> {
   try {
     const stat = await fs.promises.stat(wtRoot);
-    return Date.now() - effectiveCreationTime(stat) > unreadyWorktreeGraceMs();
+    return now() - effectiveCreationTime(stat) > unreadyWorktreeGraceMs();
   } catch {
     return false;
   }
