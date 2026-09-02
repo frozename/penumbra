@@ -8,6 +8,7 @@ interface ObservedHit {
 }
 
 interface ObservedPayload {
+  agent?: string;
   handoff_id?: string;
   tool_call_id?: string;
   text?: string;
@@ -508,6 +509,7 @@ test("maestro redactor — rewrites agent-response on soft rule", async () => {
   expect(hit!.payload_json?.hits?.[0]?.rule_id).toBe("soft_banana");
   const resp = f.calls.find((c) => c.event_type === "agent-response");
   expect(resp).toBeDefined();
+  expect(resp!.payload_json?.agent).toBe(baseOpts.agentName);
   expect(resp!.payload_json?.text).toBe("I like [REDACTED:banana]");
 });
 

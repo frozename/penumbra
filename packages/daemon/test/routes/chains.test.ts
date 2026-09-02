@@ -3288,7 +3288,7 @@ test("GET /chains/responses returns empty scoped responses for unstamped sibling
   expect(body.responses).toEqual([]);
 });
 
-test("GET /chains/responses returns agent name from user_id for production agent-response rows", async () => {
+test("GET /chains/responses falls back to user_id for production agent-response rows", async () => {
   const services = tempServices();
   writeAgentResponse(services, {
     event_id: "ev1",
@@ -3310,6 +3310,34 @@ test("GET /chains/responses returns agent name from user_id for production agent
     {
       agent: "planner",
       text: "hello from planner",
+      ts: "2026-04-26T12:00:00Z",
+      handoff_id: null,
+    },
+  ]);
+});
+
+test("GET /chains/responses prefers source_detail seat name over normalized machine user_id", async () => {
+  const services = tempServices();
+  writeAgentResponse(services, {
+    event_id: "ev1",
+    ts: "2026-04-26T12:00:00Z",
+    source_detail: "openai-codex-deep-acp",
+    source: "agentchat",
+    user_id: "473ff22b-fa37-4707-b75c-9ecac18142aa",
+    session_id: "c1",
+    payload_json: { response: "hello from codex" },
+  });
+
+  const res = chainsResponsesRoute(
+    new Request("http://x/chains/responses?conversation_id=c1"),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.responses).toEqual([
+    {
+      agent: "openai-codex-deep-acp",
+      text: "hello from codex",
       ts: "2026-04-26T12:00:00Z",
       handoff_id: null,
     },

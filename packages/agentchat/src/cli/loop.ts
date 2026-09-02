@@ -317,6 +317,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     lane: "cli-subscription" as const,
     session_id: input.conversation.id,
     project_id: input.conversation.project_id,
+    source_detail: cfg.name,
     user_id: cfg.name,
     machine_id: "local",
     triggered_by_event_id: promptEvent.event_id,
@@ -326,8 +327,8 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 
   const dispatchError = outcome.dispatchError;
   const responsePayload = dispatchError
-    ? { handoff_id: input.handoff_id ?? null, error: dispatchError.message }
-    : { handoff_id: input.handoff_id ?? null, response: finalText };
+    ? { handoff_id: input.handoff_id ?? null, agent: cfg.name, error: dispatchError.message }
+    : { handoff_id: input.handoff_id ?? null, agent: cfg.name, response: finalText };
   const responseSummary = dispatchError
     ? `error: ${dispatchError.message}`.slice(0, 240)
     : finalText.slice(0, 240);

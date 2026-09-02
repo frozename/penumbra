@@ -15,9 +15,11 @@ interface ObservedEvent {
   provider?: string | null;
   model?: string | null;
   session_id?: string;
+  source_detail?: string;
   cost_usd?: number | null;
   triggered_by_event_id?: string;
   payload_json?: {
+    agent?: string;
     prompt?: string;
     response?: string;
     error?: string;
@@ -145,6 +147,8 @@ test("runChatTurn dispatches the planner, observes prompt/response, and returns 
   expect(observed[0]!.event_type).toBe("agent-prompt");
   expect(observed[0]!.payload_json?.prompt).toBe("hello world");
   expect(observed[1]!.event_type).toBe("agent-response");
+  expect(observed[1]!.source_detail).toBe("echo");
+  expect(observed[1]!.payload_json?.agent).toBe("echo");
   expect(observed[1]!.payload_json?.response).toBe("echo: hello world");
   expect(observed[1]!.triggered_by_event_id).toBe("e-1");
 });
@@ -253,6 +257,7 @@ test("runChatTurn captures an adapter throw as an agent-response error event and
   expect(observed.length).toBe(2);
   expect(observed[0]!.event_type).toBe("agent-prompt");
   expect(observed[1]!.event_type).toBe("agent-response");
+  expect(observed[1]!.payload_json?.agent).toBe("echo");
   expect(observed[1]!.payload_json?.error).toMatch(/adapter blew up/);
   expect(observed[1]!.triggered_by_event_id).toBe("e-1");
   expect(result.response_event_id).toBe("e-2");

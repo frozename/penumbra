@@ -295,7 +295,10 @@ export class CapturePort {
     }
 
     const event = this.buildBaseEvent(baseEventType, buf.startedAt);
-    event.payload_json = { handoff_id: this.opts.handoffId, text: buf.text };
+    event.payload_json =
+      baseEventType === "agent-response"
+        ? { handoff_id: this.opts.handoffId, agent: this.opts.agentName, text: buf.text }
+        : { handoff_id: this.opts.handoffId, text: buf.text };
     event.payload_summary = buf.text.slice(0, 240);
     this.dispatch(event);
   }
@@ -312,7 +315,11 @@ export class CapturePort {
       this.dispatchResponseRedactionNote(buf.startedAt, result.hits, "hit");
     }
     const event = this.buildBaseEvent("agent-response", buf.startedAt);
-    event.payload_json = { handoff_id: this.opts.handoffId, text: result.content };
+    event.payload_json = {
+      handoff_id: this.opts.handoffId,
+      agent: this.opts.agentName,
+      text: result.content,
+    };
     event.payload_summary = result.content.slice(0, 240);
     this.dispatch(event);
   }

@@ -38,9 +38,11 @@ export class ChainReader {
     which: "final" | "all" = "final",
     opts: { handoff_id?: string; project_id?: string | null } = {},
   ): AgentResponseEvent[] {
+    const textSortSql =
+      "CASE WHEN json_valid(payload_json) THEN (json_extract(payload_json, '$.text') IS NOT NULL AND json_extract(payload_json, '$.response') IS NULL) ELSE 0 END";
     const orderSql =
       which === "final"
-        ? "ORDER BY (json_extract(payload_json, '$.text') IS NOT NULL AND json_extract(payload_json, '$.response') IS NULL) ASC, ts DESC, ingest_ts DESC, event_id DESC"
+        ? `ORDER BY (${textSortSql}) ASC, ts DESC, ingest_ts DESC, event_id DESC`
         : "ORDER BY ts ASC, ingest_ts ASC, event_id ASC";
     const limitSql = which === "final" ? "LIMIT 1" : "";
     type ResponseRow = {
@@ -91,9 +93,9 @@ export class ChainReader {
       return {
         ts: row.ts,
         agent:
-          row.user_id && row.user_id !== "local-user"
-            ? row.user_id
-            : (row.source_detail ?? row.source),
+          payload.agent ||
+          row.source_detail ||
+          (row.user_id && row.user_id !== "local-user" ? row.user_id : row.source),
         text: payload.text,
         handoff_id: payload.handoff_id,
         kind: payload.kind,
@@ -364,6 +366,7 @@ function parseAgentResponsePayload(payload_json: string): {
   text: string;
   error?: string;
   handoff_id: string | null;
+  agent: string | null;
   kind: "turn" | "segment" | "other";
 } {
   try {
@@ -372,16 +375,24 @@ function parseAgentResponsePayload(payload_json: string): {
       error?: unknown;
       text?: unknown;
       handoff_id?: unknown;
+      agent?: unknown;
     };
     const handoff_id = typeof payload.handoff_id === "string" ? payload.handoff_id : null;
+    const agent = typeof payload.agent === "string" && payload.agent !== "" ? payload.agent : null;
     if (typeof payload.response === "string")
-      return { text: payload.response, handoff_id, kind: "turn" };
+      return { text: payload.response, handoff_id, agent, kind: "turn" };
     if (typeof payload.text === "string")
-      return { text: payload.text, handoff_id, kind: "segment" };
+      return { text: payload.text, handoff_id, agent, kind: "segment" };
     if (typeof payload.error === "string")
-      return { text: "", error: payload.error, handoff_id, kind: "other" };
-    return { text: "", handoff_id, kind: "other" };
+      return { text: "", error: payload.error, handoff_id, agent, kind: "other" };
+    return { text: "", handoff_id, agent, kind: "other" };
   } catch {
-    return { text: "", error: "malformed payload_json", handoff_id: null, kind: "other" };
+    return {
+      text: "",
+      error: "malformed payload_json",
+      handoff_id: null,
+      agent: null,
+      kind: "other",
+    };
   }
 }

@@ -399,6 +399,45 @@ test("getResponses returns each response handoff_id and scopes by handoff_id", (
   ]);
 });
 
+test("getResponses reports stamped seat name before normalized user id", () => {
+  insertEvent({
+    event_id: "ev-seat-detail",
+    ts: isoAt(1),
+    session_id: "c-seat-detail",
+    event_type: "agent-response",
+    source_detail: "openai-codex-deep-acp",
+    user_id: "473ff22b-fa37-4707-b75c-9ecac18142aa",
+    payload_json: JSON.stringify({ text: "PROBE", handoff_id: "h-seat" }),
+  });
+  expect(reader.getResponses("c-seat-detail", "final")[0]?.agent).toBe("openai-codex-deep-acp");
+
+  insertEvent({
+    event_id: "ev-seat-payload",
+    ts: isoAt(1),
+    session_id: "c-seat-payload",
+    event_type: "agent-response",
+    source_detail: null,
+    user_id: "473ff22b-fa37-4707-b75c-9ecac18142aa",
+    payload_json: JSON.stringify({
+      response: "x",
+      handoff_id: "h-seat-2",
+      agent: "openai-codex-deep-acp",
+    }),
+  });
+  expect(reader.getResponses("c-seat-payload", "final")[0]?.agent).toBe("openai-codex-deep-acp");
+
+  insertEvent({
+    event_id: "ev-seat-empty",
+    ts: isoAt(1),
+    session_id: "c-seat-empty",
+    event_type: "agent-response",
+    source_detail: "",
+    user_id: "planner",
+    payload_json: JSON.stringify({ response: "x" }),
+  });
+  expect(reader.getResponses("c-seat-empty", "final")[0]?.agent).toBe("planner");
+});
+
 test("getResponses all collapses segment rows into the turn row; final keeps it", () => {
   insertEvent({
     event_id: "ev-hop-seg-a",
