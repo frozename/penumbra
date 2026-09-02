@@ -148,6 +148,38 @@ test("GET /task-drafts/pending returns 400 on invalid latest_event_type", async 
   expect(body.error.code).toBe("validation_error");
 });
 
+test("POST /observations ignores client-supplied ingest_ts and uses server clock", async () => {
+  const db = freshDb();
+  const services = observationServices(db);
+  const clientIngestTs = "2026-01-01T00:00:00.000Z";
+  const res = await observationsRoute(
+    new Request("http://localhost/observations", {
+      method: "POST",
+      body: JSON.stringify({
+        event_id: "evt-client-ingest",
+        ts: "2026-08-18T12:00:00.000Z",
+        ingest_ts: clientIngestTs,
+        source: "mcp",
+        user_id: "mcp-client",
+        machine_id: "mcp-client",
+        event_type: "agent-thought",
+        lane: "unknown",
+        payload_json: { thought: "test" },
+      }),
+    }),
+    services as never,
+  );
+  expect(res.status).toBe(200);
+  const row = db
+    .query<
+      { ingest_ts: string },
+      []
+    >(`SELECT ingest_ts FROM t0_events WHERE event_id = 'evt-client-ingest'`)
+    .get();
+  expect(row?.ingest_ts).toBe(services.clock().toISOString());
+  expect(row?.ingest_ts).not.toBe(clientIngestTs);
+});
+
 test("GET /task-drafts/pending returns 400 when project_id is missing or empty", () => {
   const db = freshDb();
   const services = { db, taskDraftReader: new TaskDraftReader({ db }) };

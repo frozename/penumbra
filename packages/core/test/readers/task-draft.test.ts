@@ -329,6 +329,46 @@ describe("TaskDraftReader.listPending", () => {
     expect(reader.listPending({ latest_event_type: "task_draft", project_id: "p1" })).toEqual([]);
   });
 
+  test("a promotion ingested after a future-stamped draft hides the draft", () => {
+    const draftId = "d5e417ec-0000-4000-8000-000000000001";
+    insertDraft(db, {
+      event_id: "draft-future-ts",
+      ts: "2026-09-01T16:52:00.000Z",
+      ingest_ts: "2026-09-01T16:42:53.041Z",
+      project_id: "penumbra",
+      event_type: "task_draft",
+      draft_id: draftId,
+      payload: {
+        draft_id: draftId,
+        prompt: "future-stamped draft",
+        affects_projects: ["penumbra"],
+        evidence: {},
+        auto_ok: true,
+        filed_by_agent: "task-refiner-primary",
+        filed_via: "skill_inline",
+        parent_draft_id: null,
+      },
+    });
+
+    expect(
+      reader.listPending({ latest_event_type: "task_draft", project_id: "penumbra" }),
+    ).toHaveLength(1);
+
+    insertDraft(db, {
+      event_id: "promotion-ingested-later",
+      ts: "2026-09-01T16:45:00.013Z",
+      ingest_ts: "2026-09-01T16:45:52.490Z",
+      project_id: "penumbra",
+      event_type: "task_draft_promoted",
+      draft_id: draftId,
+      payload: { draft_id: draftId, task_ids: ["task_x"] },
+    });
+
+    expect(
+      reader.listPending({ latest_event_type: "task_draft", project_id: "penumbra" }),
+    ).toHaveLength(0);
+  });
+
   test("applies project_id filter and limit and orders FIFO", () => {
     insertDraft(db, {
       event_id: "a",
@@ -1012,7 +1052,7 @@ describe("TaskDraftReader.listPendingEscalations", () => {
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
             PARTITION BY json_extract(payload_json, '$.draft_id')
-            ORDER BY ts DESC, ingest_ts DESC
+            ORDER BY ingest_ts DESC, ts DESC, event_id DESC
           ) AS rn
         FROM t0_events
         WHERE event_type IN (

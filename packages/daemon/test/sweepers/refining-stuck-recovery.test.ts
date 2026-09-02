@@ -188,6 +188,91 @@ test("exhausted stuck refining draft is marked stale", () => {
   });
 });
 
+test("recovery count uses the most recently ingested draft row", () => {
+  const db = setupDb();
+  const reader = new TaskDraftReader({ db });
+  const writer = new T0Writer(db);
+  const nowMs = Date.parse("2026-09-01T17:30:00.000Z");
+  let counter = 0;
+  const sweeper = createRefiningStuckRecoverySweeper({
+    db,
+    reader,
+    t0Writer: writer,
+    now: () => nowMs,
+    uuid: () => `event-${String(++counter)}`,
+    machineId: { get: () => "machine-1" },
+    log: { info: noop },
+  });
+
+  const draftId = "66666666-6666-4666-8666-666666666666";
+  insertEvent(db, {
+    event_id: "future-stamped-draft",
+    ts: "2026-09-01T16:52:00.000Z",
+    ingest_ts: "2026-09-01T16:42:53.041Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    payload: {
+      draft_id: draftId,
+      prompt: "repair me",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "agent",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  insertEvent(db, {
+    event_id: "recovery-draft",
+    ts: "2026-09-01T16:45:00.013Z",
+    ingest_ts: "2026-09-01T16:45:52.490Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    payload: {
+      draft_id: draftId,
+      prompt: "repair me",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: true,
+      filed_by_agent: "agent",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+      recovery_count: 2,
+      recovered_from: "refining_stuck",
+    },
+  });
+  insertEvent(db, {
+    event_id: "refining",
+    ts: "2026-09-01T16:46:00.000Z",
+    ingest_ts: "2026-09-01T16:46:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft_refining",
+    payload: { draft_id: draftId },
+  });
+
+  sweeper.tick();
+
+  const stale = db
+    .query<
+      { payload_json: string },
+      [string]
+    >(`SELECT payload_json FROM t0_events WHERE json_extract(payload_json, '$.draft_id') = ? AND event_type = 'task_draft_stale' ORDER BY ts DESC, ingest_ts DESC LIMIT 1`)
+    .get(draftId);
+  expect(JSON.parse(stale?.payload_json ?? "{}")).toMatchObject({
+    draft_id: draftId,
+    stale_reason: "refining_stuck_exhausted",
+    details: "recovery_count=2",
+  });
+
+  const recovered = db
+    .query<
+      { n: number },
+      [string]
+    >(`SELECT COUNT(*) AS n FROM t0_events WHERE json_extract(payload_json, '$.draft_id') = ? AND event_type = 'task_draft' AND json_extract(payload_json, '$.recovery_count') = 1`)
+    .get(draftId);
+  expect(recovered?.n).toBe(0);
+});
+
 test("poison-pill row does not block recovery of other stuck drafts", () => {
   const db = setupDb();
   const reader = new TaskDraftReader({ db });

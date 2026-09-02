@@ -552,6 +552,85 @@ test("POST /tasks with refiner-origin draft emits task_draft_promoted t0 event",
   }
 });
 
+test("POST /tasks with body draft origin and fleet-worker header promotes once and emits daemon-sourced row", async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: partialAs<GhTaskSyncService>({
+      enqueueTaskGhCreate: noop,
+      enqueueSyncLinkedTask: noop,
+      pushStatusNow: () =>
+        Promise.resolve({
+          task_id: "task-1",
+          repo: "frozename/penumbra",
+          issue_number: 60,
+          gh_state: "OPEN",
+          action: "pushed",
+          direction: "push",
+          last_sync_ts: "2026-04-23T12:00:00.000Z",
+        }),
+    }),
+  });
+  const draftId = "d5e417ec-0000-4000-8000-000000000002";
+  insertTaskDraftEvent(daemon.services.db, {
+    event_id: "draft-created",
+    ts: "2026-04-23T11:59:00.000Z",
+    ingest_ts: "2026-04-23T11:59:01.000Z",
+    project_id: "p1",
+    event_type: "task_draft",
+    draft_id: draftId,
+    payload: {
+      draft_id: draftId,
+      prompt: "draft prompt",
+      affects_projects: ["p1"],
+      evidence: {},
+      auto_ok: false,
+      filed_by_agent: "task-refiner-primary",
+      filed_via: "skill_inline",
+      parent_draft_id: null,
+    },
+  });
+  try {
+    const first = await postJson(
+      daemon,
+      "/tasks",
+      {
+        prompt: "refiner task file",
+        project_id: "p1",
+        created_by_kind: "human",
+        created_by_id: "cli",
+        origin: `draft:${draftId}`,
+      },
+      { "x-penumbra-origin": "fleet-worker" },
+    );
+    expect(first.status).toBe(201);
+
+    const daemonPromotedRows = daemon.services.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type = 'task_draft_promoted' AND source = 'daemon'`)
+      .get();
+    expect(daemonPromotedRows?.count).toBeGreaterThanOrEqual(1);
+
+    const second = await postJson(
+      daemon,
+      "/tasks",
+      {
+        prompt: "refiner task file duplicate",
+        project_id: "p1",
+        created_by_kind: "human",
+        created_by_id: "cli",
+        origin: `draft:${draftId}`,
+      },
+      { "x-penumbra-origin": "fleet-worker" },
+    );
+    expect(second.status).toBe(409);
+    const secondBody = (await second.json()) as { error: string };
+    expect(secondBody.error).toBe("draft already promoted");
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("POST /tasks with refiner-origin draft rejects missing drafts and already promoted drafts", async () => {
   const daemon = startTestDaemon({
     ghTaskSyncService: partialAs<GhTaskSyncService>({

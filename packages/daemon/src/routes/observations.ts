@@ -55,7 +55,7 @@ export async function observationsRoute(req: Request, services: Services): Promi
     uuid: services.uuid,
     redactor: services.redactor,
   };
-  const event = normalize(rewritten.data, ctx);
+  const event = normalize({ ...rewritten.data, ingest_ts: undefined }, ctx);
   try {
     const eventId = services.t0Writer.write(event);
     return json({ event_id: eventId });

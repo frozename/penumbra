@@ -402,7 +402,10 @@ export async function tasksFileRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   const originHeader = req.headers.get("x-penumbra-origin");
-  const input = originHeader ? { ...parsed.data, origin: originHeader } : parsed.data;
+  const bodyOrigin = parsed.data.origin;
+  const origin =
+    bodyOrigin && DRAFT_ORIGIN_RE.test(bodyOrigin) ? bodyOrigin : (originHeader ?? bodyOrigin);
+  const input = origin !== undefined ? { ...parsed.data, origin } : parsed.data;
   const resolved = resolveFileTaskInput(input, input.origin, services);
   if ("error" in resolved) return resolved.error;
   const { inputWithDefaults, draftId, originalInput } = resolved;

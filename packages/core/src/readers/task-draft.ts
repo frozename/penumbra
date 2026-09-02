@@ -229,7 +229,7 @@ export class TaskDraftReader {
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
             PARTITION BY json_extract(payload_json, '$.draft_id')
-            ORDER BY ts DESC, ingest_ts DESC
+            ORDER BY ingest_ts DESC, ts DESC, event_id DESC
           ) AS rn
         FROM t0_events
         WHERE event_type IN (
@@ -266,7 +266,7 @@ export class TaskDraftReader {
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
             PARTITION BY json_extract(payload_json, '$.draft_id')
-            ORDER BY ts DESC, ingest_ts DESC
+            ORDER BY ingest_ts DESC, ts DESC, event_id DESC
           ) AS rn
         FROM t0_events
         WHERE event_type IN (
@@ -327,7 +327,7 @@ export class TaskDraftReader {
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
             PARTITION BY json_extract(payload_json, '$.draft_id')
-            ORDER BY ts DESC, ingest_ts DESC
+            ORDER BY ingest_ts DESC, ts DESC, event_id DESC
           ) AS rn
         FROM t0_events
         WHERE event_type IN (

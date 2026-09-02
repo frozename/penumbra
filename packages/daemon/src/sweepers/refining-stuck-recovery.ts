@@ -242,7 +242,7 @@ function getCurrentRecoveryCount(db: Database, draftId: string): number {
        FROM t0_events
        WHERE json_extract(payload_json, '$.draft_id') = ?
          AND event_type = 'task_draft'
-       ORDER BY ts DESC, ingest_ts DESC, event_id DESC
+       ORDER BY ingest_ts DESC, ts DESC, event_id DESC
        LIMIT 1`,
     )
     .get(draftId);
