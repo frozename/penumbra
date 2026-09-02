@@ -53,6 +53,7 @@ recall:
     args:
       since: "{{session_start}}"
       outcomes_only: true
+      # limit caps the number of handoffs (by creation time), not raw events
       limit: 100
   - source: handoff_list_pending
 recall_budget_tokens: 8000

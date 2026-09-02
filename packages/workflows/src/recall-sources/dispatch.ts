@@ -178,30 +178,108 @@ function buildSummaries(db: Database, rows: DispatchEvent[]): DispatchSummary[] 
   return summaries;
 }
 
+const EVENT_ROWS_PER_HANDOFF = 200;
+
+function runOutcomesOnly(db: Database, args: DispatchEventsArgs): DispatchSourceOutput {
+  const limit = args.limit ?? 1000;
+  const handoffConditions: string[] = [];
+  const handoffParams: unknown[] = [];
+  if (args.since) {
+    handoffConditions.push("ts >= ?");
+    handoffParams.push(args.since);
+  }
+  if (args.until) {
+    handoffConditions.push("ts <= ?");
+    handoffParams.push(args.until);
+  }
+  if (args.handoff_id) {
+    handoffConditions.push("handoff_id = ?");
+    handoffParams.push(args.handoff_id);
+  }
+  const handoffSql = `
+    SELECT handoff_id
+    FROM handoffs
+    ${handoffConditions.length ? "WHERE " + handoffConditions.join(" AND ") : ""}
+    ORDER BY ts DESC
+    LIMIT ?
+  `;
+  handoffParams.push(limit);
+  try {
+    const handoffRows = db.query(handoffSql).all(...(handoffParams as never[])) as {
+      handoff_id: string;
+      to_agent: string;
+      status: string;
+      resolution_reason: string | null;
+    }[];
+    if (handoffRows.length === 0) {
+      return { events: [], summaries: [], warnings: [] };
+    }
+    const handoffIds = handoffRows.map((r) => r.handoff_id);
+    const eventConditions: string[] = [`handoff_id IN (${handoffIds.map(() => "?").join(", ")})`];
+    const eventParams: unknown[] = [...handoffIds];
+    if (!args.include_heartbeats) {
+      eventConditions.push(`kind NOT IN (${HEARTBEAT_KINDS.map(() => "?").join(", ")})`);
+      eventParams.push(...HEARTBEAT_KINDS);
+    }
+    const eventSql = `
+      SELECT id, handoff_id, worker_id, source, kind, ts, meta_json
+      FROM (
+        SELECT
+          id,
+          handoff_id,
+          worker_id,
+          source,
+          kind,
+          ts,
+          meta_json,
+          ROW_NUMBER() OVER (
+            PARTITION BY handoff_id
+            ORDER BY
+              CASE
+                WHEN kind IN ('dispatch.end', 'dispatch.failed') OR lower(kind) LIKE '%cancel%' THEN 0
+                ELSE 1
+              END ASC,
+              ts DESC,
+              id DESC
+          ) AS rn
+        FROM dispatch_events
+        WHERE ${eventConditions.join(" AND ")}
+      )
+      WHERE rn <= ?
+      ORDER BY ts ASC, id ASC
+    `;
+    eventParams.push(EVENT_ROWS_PER_HANDOFF);
+    const eventRows = db.query(eventSql).all(...(eventParams as never[])) as DispatchEvent[];
+    const summaries = buildSummaries(db, eventRows);
+    return { events: [], summaries, warnings: [] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { events: [], warnings: [`dispatch_events: ${msg}`] };
+  }
+}
+
 export function runDispatchEventsSource(input: {
   db: Database;
   args: DispatchEventsArgs;
 }): DispatchSourceOutput {
   const { db, args } = input;
-  const { conditions, params } = buildEventConditions(args);
   const outcomesOnly = args.outcomes_only === true;
-  const limit = args.limit ?? (outcomesOnly ? 1000 : 200);
-  const orderBy = outcomesOnly ? "DESC" : "ASC";
+  if (outcomesOnly) {
+    return runOutcomesOnly(db, args);
+  }
+  const { conditions, params } = buildEventConditions(args);
+  const limit = args.limit ?? 200;
   const sql = `
     SELECT id, handoff_id, worker_id, source, kind, ts, meta_json
     FROM dispatch_events
     ${conditions.length ? "WHERE " + conditions.join(" AND ") : ""}
-    ORDER BY ts ${orderBy}
+    ORDER BY ts ASC
     LIMIT ?
   `;
   params.push(limit);
   try {
     const rows = db.query(sql).all(...(params as never[])) as DispatchEvent[];
-    if (!outcomesOnly) {
-      return { events: rows, warnings: [] };
-    }
-    const summaries = buildSummaries(db, rows);
-    return { events: [], summaries, warnings: [] };
+    return { events: rows, warnings: [] };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { events: [], warnings: [`dispatch_events: ${msg}`] };
