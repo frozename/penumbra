@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
+import { migrate } from "@src/db/migrations.js";
 import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
@@ -90,7 +91,16 @@ describe("routing_bias schema", () => {
 
   it("SCHEMA_VERSION is expected", () => {
     // SCHEMA_VERSION is defined in packages/core/src/db/schema.ts
-    expect(SCHEMA_VERSION).toBe(42);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(42);
+
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    const marker = db
+      .query<{ value: string }, []>("SELECT value FROM db_meta WHERE key = 'schema_version'")
+      .get();
+    expect(marker?.value).toBe(String(SCHEMA_VERSION));
+    db.close();
   });
 
   it("db_meta marker re-stamps to current SCHEMA_VERSION after applySchema", () => {

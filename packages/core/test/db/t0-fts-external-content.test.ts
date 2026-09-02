@@ -55,12 +55,20 @@ function queryHits(db: Database, match: string): FtsHit[] {
 }
 
 function shadowContentBytes(db: Database): number {
+  const contentTable = db
+    .query<
+      { name: string },
+      []
+    >(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 't0_fts_content'`)
+    .get();
+  if (!contentTable) return 0;
+
   return (
     db
       .query<
         { bytes: number },
         []
-      >(`SELECT coalesce(sum(pgsize), 0) AS bytes FROM dbstat WHERE name = 't0_fts_content'`)
+      >(`SELECT coalesce(sum(length(c0)), 0) AS bytes FROM t0_fts_content`)
       .get()?.bytes ?? 0
   );
 }
