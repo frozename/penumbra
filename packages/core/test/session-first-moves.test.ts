@@ -40,8 +40,8 @@ test("collectSessionFirstMoves reads gate deltas and pin share from the injected
     db.run(`
       INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, routing_resolution_reason, dispatch_kind)
       VALUES
-        ('h-role', datetime('now','-1 hour'), 'c1', 'maestro', 'worker', 'role routed', 'pending', 'role_route', 'workflow'),
-        ('h-pinned', datetime('now','-2 hours'), 'c2', 'maestro', 'worker', 'pinned', 'dispatched', NULL, 'mcp')
+        ('h-role', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour'), 'c1', 'maestro', 'worker', 'role routed', 'pending', 'role_route', 'workflow'),
+        ('h-pinned', strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 hours'), 'c2', 'maestro', 'worker', 'pinned', 'dispatched', NULL, 'mcp')
     `);
     db.run(`
       INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, session_id, event_type, lane, payload_json)
@@ -107,6 +107,28 @@ test("collectSessionFirstMoves preserves unknown worker count and null pin-share
       steerable_role_7d: null,
       steerable_pinned_7d: null,
     });
+  } finally {
+    db.close();
+  }
+});
+
+test("pin_share windows compare ISO timestamps, not datetime() text", () => {
+  const db = freshDb();
+  try {
+    db.run(`
+      INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, routing_resolution_reason, dispatch_kind)
+      VALUES
+        ('h-24h-outside', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day','-1 minute'), 'c1', 'maestro', 'worker', '24h outside', 'pending', 'role_route', 'workflow'),
+        ('h-24h-inside', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day','+1 minute'), 'c2', 'maestro', 'worker', '24h inside', 'pending', 'role_route', 'workflow'),
+        ('h-7d-outside', strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days','-1 minute'), 'c3', 'maestro', 'worker', '7d outside', 'pending', 'role_route', 'workflow'),
+        ('h-7d-inside', strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days','+1 minute'), 'c4', 'maestro', 'worker', '7d inside', 'pending', 'role_route', 'workflow')
+    `);
+
+    const result = collectSessionFirstMoves({ db });
+
+    // During the first minute after midnight UTC, the buggy datetime() comparison can coincidentally pass.
+    expect(result.pin_share?.role_24h).toBe(1);
+    expect(result.pin_share?.role_7d).toBe(3);
   } finally {
     db.close();
   }

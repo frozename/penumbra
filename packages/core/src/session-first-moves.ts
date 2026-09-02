@@ -65,12 +65,13 @@ function readGateDeltas(db: Database): GateDeltas {
 
 function readPinShare(db: Database): PinShare | null {
   try {
+    // handoffs.ts is stored as ISO text; datetime() uses a space separator that sorts before stored 'T'.
     return (
       db
         .query<
           PinShare,
           []
-        >(`SELECT SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_24h, SUM(CASE WHEN ts >= datetime('now','-1 day') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_24h, SUM(CASE WHEN routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_7d, SUM(CASE WHEN routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS steerable_role_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS steerable_pinned_7d FROM handoffs WHERE ts >= datetime('now','-7 days')`)
+        >(`SELECT SUM(CASE WHEN ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_24h, SUM(CASE WHEN ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_24h, SUM(CASE WHEN routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS role_7d, SUM(CASE WHEN routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS pinned_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason='role_route' THEN 1 ELSE 0 END) AS steerable_role_7d, SUM(CASE WHEN COALESCE(dispatch_kind,'mcp') IN ('mcp','workflow') AND routing_resolution_reason IS NULL THEN 1 ELSE 0 END) AS steerable_pinned_7d FROM handoffs WHERE ts >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')`)
         .get() ?? null
     );
   } catch {

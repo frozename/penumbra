@@ -46,7 +46,7 @@ test("returns git_status_dirty_count, head_sha, daemon/worker pids, gate_deltas,
     `);
     db.run(`
       INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, routing_resolution_reason, dispatch_kind)
-      VALUES ('h-role', datetime('now','-1 hour'), 'c1', 'maestro', 'worker', 'role routed', 'pending', 'role_route', 'workflow')
+      VALUES ('h-role', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour'), 'c1', 'maestro', 'worker', 'role routed', 'pending', 'role_route', 'workflow')
     `);
 
     const out = await runSessionFirstMovesSource({
