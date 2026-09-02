@@ -8,6 +8,26 @@ afterEach(async () => {
   if (harness) await harness.stop();
 });
 
+type DispatchEventRow = { kind: string; meta_json: string };
+
+function expectRecoveryRequeueThenReoffer(
+  events: DispatchEventRow[],
+  expected: { attempt: number; from_worker_id: string; handoff_id: string; max_attempts: number },
+): void {
+  const requeuedIndex = events.findIndex((event) => event.kind === "worker.recovery.requeued");
+  expect(requeuedIndex).toBeGreaterThanOrEqual(0);
+  expect(JSON.parse(events[requeuedIndex]!.meta_json)).toEqual(expected);
+
+  const reoffer = events.slice(requeuedIndex + 1).find((event) => event.kind === "claim.reoffer");
+  expect(reoffer).toBeDefined();
+  expect(JSON.parse(reoffer!.meta_json)).toEqual({
+    attempt: expected.attempt,
+    cause: "orphan_requeue",
+    from_worker_id: expected.from_worker_id,
+    max_attempts: expected.max_attempts,
+  });
+}
+
 function insertHandoff(
   harness: InProcessDaemonHarness,
   id: string,
@@ -74,17 +94,15 @@ test("Orphan recovery requeues workers under max attempts", async () => {
 
   const events1 = harness.services.db
     .query<
-      { kind: string; meta_json: string },
+      DispatchEventRow,
       [string]
     >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("h-1");
-  const lastEvent1 = events1[events1.length - 1]!;
-  expect(lastEvent1.kind).toBe("worker.recovery.requeued");
-  expect(JSON.parse(lastEvent1.meta_json)).toMatchObject({
+  expectRecoveryRequeueThenReoffer(events1, {
     attempt: 1,
-    max_attempts: 3,
     from_worker_id: "dead-worker-A",
     handoff_id: "h-1",
+    max_attempts: 3,
   });
 });
 
@@ -118,17 +136,15 @@ test("Orphan recovery requeues workers after dispatch.start when the worker is s
 
   const events = harness.services.db
     .query<
-      { kind: string; meta_json: string },
+      DispatchEventRow,
       [string]
     >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("h-started");
-  const lastEvent = events[events.length - 1]!;
-  expect(lastEvent.kind).toBe("worker.recovery.requeued");
-  expect(JSON.parse(lastEvent.meta_json)).toMatchObject({
+  expectRecoveryRequeueThenReoffer(events, {
     attempt: 1,
-    max_attempts: 3,
     from_worker_id: "dead-worker-started",
     handoff_id: "h-started",
+    max_attempts: 3,
   });
 });
 

@@ -195,7 +195,7 @@ test("task review writes scaffold to a private mkdtemp dir, not a predictable sh
       [
         "#!/bin/sh",
         'parent=$(dirname "$1")',
-        `mode=$(stat -f '%Lp' "$parent" 2>/dev/null || stat -c '%a' "$parent")`,
+        `mode=$(stat -c '%a' "$parent" 2>/dev/null || stat -f '%Lp' "$parent")`,
         `printf '%s\\n%s\\n' "$1" "$mode" > ${capturePath}`,
         "",
       ].join("\n"),

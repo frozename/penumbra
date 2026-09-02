@@ -1,7 +1,7 @@
 import type { Mock } from "bun:test";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import Fastify from "fastify";
 import { PassThrough, Readable } from "node:stream";
 
@@ -34,6 +34,20 @@ interface WarnMsg {
 }
 
 type FetchLike = (url: string | URL | Request, init?: RequestInit) => Promise<Response> | Response;
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+afterAll(() => {
+  try {
+    expect(globalThis.fetch).toBe(originalFetch);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function noop(): void {
   return undefined;
