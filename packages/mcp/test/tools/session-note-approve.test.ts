@@ -85,8 +85,13 @@ test("sessionNoteApproveHandler forwards approve:true verbatim", async () => {
   });
   const handler = sessionNoteApproveHandler(daemon);
 
-  await handler({ draft_id: "draft-1", approve: true, body: "edited\n" });
+  await handler({ draft_id: "draft-1", approve: true, body: "edited\n", overwrite: true });
 
-  expect(received).toEqual({ draft_id: "draft-1", approve: true, body: "edited\n" });
+  expect(received).toEqual({
+    draft_id: "draft-1",
+    approve: true,
+    body: "edited\n",
+    overwrite: true,
+  });
   expect(SessionNoteApproveInputSchema.parse(received)).toEqual(received);
 });

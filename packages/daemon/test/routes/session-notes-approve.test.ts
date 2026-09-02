@@ -180,6 +180,66 @@ test("POST /session-notes/approve writes the draft body and records approved con
   }
 });
 
+test("POST /session-notes/approve refuses to overwrite an existing note without overwrite:true", async () => {
+  const h = startHarness();
+  const seeded = seedDraft(h, { draftBody: "draft body\n" });
+  try {
+    writeFileSync(seeded.note_path, "operator hand note\n");
+
+    const res = await h.fetch("/session-notes/approve", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ draft_id: seeded.draft.draft_id, approve: true }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      error: "note_exists",
+      note_path: seeded.note_path,
+    });
+    expect(typeof body.note_mtime).toBe("string");
+    expect(readFileSync(seeded.note_path, "utf8")).toBe("operator hand note\n");
+    expect(h.drafts.get(seeded.draft.draft_id)?.status).toBe("awaiting_approval");
+    expect(
+      (await listContinuityEvents(h)).some((event) => event.kind === "continuity.draft_reviewed"),
+    ).toBe(false);
+  } finally {
+    rmSync(seeded.dir, { recursive: true, force: true });
+    h.stop();
+  }
+});
+
+test("POST /session-notes/approve with overwrite:true replaces an existing note", async () => {
+  const h = startHarness();
+  const seeded = seedDraft(h, { draftBody: "approved replacement\n" });
+  try {
+    writeFileSync(seeded.note_path, "operator hand note\n");
+
+    const res = await h.fetch("/session-notes/approve", {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        draft_id: seeded.draft.draft_id,
+        approve: true,
+        overwrite: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = SessionNoteApproveResponseSchema.parse(await res.json());
+    expect(readFileSync(seeded.note_path, "utf8")).toBe(seeded.draftBody);
+    expect(body.draft.status).toBe("approved");
+    expect(h.drafts.get(seeded.draft.draft_id)?.status).toBe("approved");
+    expect(
+      (await listContinuityEvents(h)).some((event) => event.kind === "continuity.draft_reviewed"),
+    ).toBe(true);
+  } finally {
+    rmSync(seeded.dir, { recursive: true, force: true });
+    h.stop();
+  }
+});
+
 test("POST /session-notes/approve reverts the draft when note writing fails so retry can succeed", async () => {
   const h = startHarness();
   const blockedParent = join(mkdtempSync(join(tmpdir(), "session-note-blocked-")), "parent-file");

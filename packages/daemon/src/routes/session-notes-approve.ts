@@ -8,7 +8,7 @@ import {
   SessionNoteDraftsQuerySchema,
 } from "@penumbra/api-contract";
 import { emitFileOutput } from "@penumbra/workflows";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 import { getPrincipal } from "../auth.js";
 import { json } from "./_helpers.js";
@@ -17,6 +17,9 @@ type HydratedSessionEvent = Omit<SessionEventRow, "meta_json"> & { meta: unknown
 
 type ApprovePayload =
   | { ok: true; data: SessionNoteApproveRequest }
+  | { ok: false; response: Response };
+type ApprovalPreflight =
+  | { ok: true; body: string; draftBody: string; outcome: "approved" | "edited" }
   | { ok: false; response: Response };
 
 function hydrateEvent(row: SessionEventRow): HydratedSessionEvent {
@@ -132,6 +135,45 @@ async function readDraftBody(
   }
 }
 
+async function existingNoteConflictResponse(draft: SessionNoteDraftRow): Promise<Response | null> {
+  try {
+    const noteStat = await stat(draft.note_path);
+    return json(
+      {
+        error: "note_exists",
+        note_path: draft.note_path,
+        note_mtime: noteStat.mtime.toISOString(),
+      },
+      409,
+    );
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    return json(
+      { error: "note_stat_failed", message: err instanceof Error ? err.message : String(err) },
+      500,
+    );
+  }
+}
+
+async function prepareApprovalPreflight(
+  req: SessionNoteApproveRequest,
+  draft: SessionNoteDraftRow,
+): Promise<ApprovalPreflight> {
+  const draftBodyResult = await readDraftBody(draft);
+  if (!draftBodyResult.ok) return draftBodyResult;
+  if (req.overwrite !== true) {
+    const conflict = await existingNoteConflictResponse(draft);
+    if (conflict) return { ok: false, response: conflict };
+  }
+  return {
+    ok: true,
+    body: req.body ?? draftBodyResult.body,
+    draftBody: draftBodyResult.body,
+    outcome: req.body === undefined ? "approved" : "edited",
+  };
+}
+
 function recordReviewedEvent(input: {
   services: Services;
   draft: SessionNoteDraftRow;
@@ -203,13 +245,12 @@ export async function sessionNotesApproveRoute(
   const draft = services.sessionNoteDrafts.get(parsed.data.draft_id);
   if (!draft) return json({ error: "not_found" }, 404);
 
-  const draftBodyResult = await readDraftBody(draft);
-  if (!draftBodyResult.ok) return draftBodyResult.response;
+  const preflight = await prepareApprovalPreflight(parsed.data, draft);
+  if (!preflight.ok) return preflight.response;
 
   const reviewedAt = services.clock().toISOString();
   const composed = findPairedComposedEvent(services, draft);
-  const body = parsed.data.body ?? draftBodyResult.body;
-  const outcome = parsed.data.body === undefined ? "approved" : "edited";
+
   const approved = services.sessionNoteDrafts.approve({
     draft_id: parsed.data.draft_id,
     body: parsed.data.body,
@@ -223,7 +264,7 @@ export async function sessionNotesApproveRoute(
 
   const write = await emitFileOutput({
     path: approved.draft.note_path,
-    body,
+    body: preflight.body,
     mode: "overwrite",
   });
   if (write.warnings.length > 0) {
@@ -240,9 +281,9 @@ export async function sessionNotesApproveRoute(
       draft: approved.draft,
       composed,
       reviewedAt,
-      outcome,
-      body,
-      draftBody: draftBodyResult.body,
+      outcome: preflight.outcome,
+      body: preflight.body,
+      draftBody: preflight.draftBody,
     });
     const stamped =
       event?.id === undefined

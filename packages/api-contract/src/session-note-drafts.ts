@@ -45,6 +45,7 @@ export const SessionNoteApproveRequestSchema = z
     draft_id: z.string().min(1),
     approve: z.literal(true),
     body: z.string().optional(),
+    overwrite: z.boolean().optional(),
   })
   .strict();
 export type SessionNoteApproveRequest = z.infer<typeof SessionNoteApproveRequestSchema>;
