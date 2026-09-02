@@ -1940,9 +1940,8 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
     host: "127.0.0.1",
     reason: "code_identifier",
   });
-  expect(typeof (unsearchableEvents[0]?.meta as { latency_ms?: unknown })?.latency_ms).toBe(
-    "number",
-  );
+  const unsearchableMeta = unsearchableEvents[0]?.meta as { latency_ms?: unknown } | undefined;
+  expect(typeof unsearchableMeta?.latency_ms).toBe("number");
 
   const rewriteFailedEvents = events.filter(
     (entry) => entry.kind === "dream_p4_query_rewrite_failed",

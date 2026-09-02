@@ -267,6 +267,57 @@ export function readSubsystemHealth(db: Database, subsystem: string): SubsystemH
   );
 }
 
+function hasRewriteFailureAlert(input: {
+  rewrite: SubsystemHealthRow | null;
+  rewriteFailures: number;
+  rewriteFailuresRecent: number | undefined;
+  rewriteFailureRate: number;
+  rewriteFailureRateAlertThreshold: number;
+  rewriteConsecutiveFailuresAlertThreshold: number;
+}): boolean {
+  const rewriteVolumeFailure =
+    input.rewriteFailures > 0 &&
+    input.rewriteFailureRate >= input.rewriteFailureRateAlertThreshold &&
+    (input.rewriteFailuresRecent === undefined || input.rewriteFailuresRecent > 0);
+  const rewriteConsecutiveFailure =
+    (input.rewrite?.consecutive_failures ?? 0) >= input.rewriteConsecutiveFailuresAlertThreshold;
+
+  return rewriteVolumeFailure || rewriteConsecutiveFailure;
+}
+
+function hasRewriteUnsearchableAlert(input: {
+  rewriteRejected: number;
+  rewriteRejectedRecent: number;
+  rewriteUnsearchableRate: number;
+  rewriteUnsearchableRateAlertThreshold: number;
+}): boolean {
+  return (
+    input.rewriteRejected > 0 &&
+    input.rewriteRejectedRecent > 0 &&
+    input.rewriteUnsearchableRate >= input.rewriteUnsearchableRateAlertThreshold
+  );
+}
+
+function hasPermanentFallbackAlert(input: {
+  rewrite: SubsystemHealthRow | null;
+  now: Date;
+  permanentFallbackAfterMs: number;
+}): boolean {
+  if (
+    input.rewrite?.tier !== undefined &&
+    input.rewrite.tier !== PRIMARY_TIER &&
+    input.rewrite.first_non_primary_ts !== null
+  ) {
+    const firstNonPrimaryMs = Date.parse(input.rewrite.first_non_primary_ts);
+    return (
+      Number.isFinite(firstNonPrimaryMs) &&
+      input.now.getTime() - firstNonPrimaryMs >= input.permanentFallbackAfterMs
+    );
+  }
+
+  return false;
+}
+
 export function computeSubsystemAlerts(
   db: Database,
   opts: ComputeSubsystemAlertsOptions = {},
@@ -294,37 +345,32 @@ export function computeSubsystemAlerts(
     QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
   const rewrite = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
 
-  const rewriteVolumeFailure =
-    rewriteFailures > 0 &&
-    rewriteFailureRate >= rewriteFailureRateAlertThreshold &&
-    (rewriteFailuresRecent === undefined || rewriteFailuresRecent > 0);
-  const rewriteConsecutiveFailure =
-    (rewrite?.consecutive_failures ?? 0) >= rewriteConsecutiveFailuresAlertThreshold;
-
-  if (rewriteVolumeFailure || rewriteConsecutiveFailure) {
+  if (
+    hasRewriteFailureAlert({
+      rewrite,
+      rewriteFailures,
+      rewriteFailuresRecent,
+      rewriteFailureRate,
+      rewriteFailureRateAlertThreshold,
+      rewriteConsecutiveFailuresAlertThreshold,
+    })
+  ) {
     alerts.push("dream.health.rewrite_failing");
   }
 
   if (
-    rewriteRejected > 0 &&
-    rewriteRejectedRecent > 0 &&
-    rewriteUnsearchableRate >= rewriteUnsearchableRateAlertThreshold
+    hasRewriteUnsearchableAlert({
+      rewriteRejected,
+      rewriteRejectedRecent,
+      rewriteUnsearchableRate,
+      rewriteUnsearchableRateAlertThreshold,
+    })
   ) {
     alerts.push("dream.health.rewrite_unsearchable");
   }
 
-  if (
-    rewrite?.tier !== undefined &&
-    rewrite.tier !== PRIMARY_TIER &&
-    rewrite.first_non_primary_ts !== null
-  ) {
-    const firstNonPrimaryMs = Date.parse(rewrite.first_non_primary_ts);
-    if (
-      Number.isFinite(firstNonPrimaryMs) &&
-      now.getTime() - firstNonPrimaryMs >= permanentFallbackAfterMs
-    ) {
-      alerts.push("dream.health.rewrite_permanent_fallback");
-    }
+  if (hasPermanentFallbackAlert({ rewrite, now, permanentFallbackAfterMs })) {
+    alerts.push("dream.health.rewrite_permanent_fallback");
   }
 
   if (opts.requiredLlmRoleFloors) {
