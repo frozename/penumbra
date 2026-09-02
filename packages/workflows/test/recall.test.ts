@@ -2,6 +2,7 @@ import { loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,6 +64,21 @@ function makeContinuationNote(charCount: number, lastLine = "LAST_LINE_SENTINEL"
   const first = "NOTE_START\n";
   const last = `\n${lastLine}\n`;
   return first + "n".repeat(Math.max(0, charCount - first.length - last.length)) + last;
+}
+
+function initRepoWithSubjects(subjects: readonly string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "recall-git-log-"));
+  execSync("git init -q -b main", { cwd: dir });
+  execSync("git config user.email t@t", { cwd: dir });
+  execSync("git config user.name t", { cwd: dir });
+
+  for (const [index, subject] of subjects.entries()) {
+    writeFileSync(join(dir, "tracked.txt"), `tracked ${String(index)}\n`);
+    execSync("git add tracked.txt", { cwd: dir });
+    execSync(`git commit -q -m ${JSON.stringify(subject)}`, { cwd: dir });
+  }
+
+  return dir;
 }
 
 test("composes bundle from multiple sources, partial failures captured as warnings", async () => {
@@ -254,37 +270,50 @@ test("budget trim drops oldest items first", async () => {
 });
 
 test("budget trim preserves string sources before memory items", async () => {
+  const dir = initRepoWithSubjects([
+    "recall fixture first",
+    "recall fixture second",
+    "recall fixture third",
+  ]);
   const db = new Database(":memory:");
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
+  try {
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
 
-  for (let i = 0; i < 60; i++) {
-    const idx = String(i);
-    const day = String((i % 9) + 1);
-    insertMemory(db, {
-      memory_id: `m${idx}`,
-      project_id: "demo",
-      title: `Memory ${idx}`,
-      body: `Memory ${idx} body text`,
-      created_at: `2026-05-0${day}T10:00:00Z`,
+    for (let i = 0; i < 60; i++) {
+      const idx = String(i);
+      const day = String((i % 9) + 1);
+      insertMemory(db, {
+        memory_id: `m${idx}`,
+        project_id: "demo",
+        title: `Memory ${idx}`,
+        body: `Memory ${idx} body text`,
+        created_at: `2026-05-0${day}T10:00:00Z`,
+      });
+    }
+
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      project: "demo",
+      sources: [
+        { source: "git.log", args: { range: "HEAD~2..HEAD", format: "%s" } },
+        {
+          source: "memory_search",
+          args: { project: "demo", limit: 60, dateStart: "2026-05-01" },
+        },
+      ],
+      budgetTokens: 400,
     });
+
+    expect(typeof bundle.byKey["git.log"]).toBe("string");
+    expect(bundle.byKey["git.log"] as string).toContain("recall fixture third");
+    expect(bundle.warnings.some((w) => w.includes("budget exceeded"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
   }
-
-  const bundle = await composeRecall({
-    db,
-    embedder: new TestEmbedder({ dim: 384 }),
-    cwd: process.cwd(),
-    project: "demo",
-    sources: [
-      { source: "git.log", args: { range: "HEAD~2..HEAD", format: "%s" } },
-      { source: "memory_search", args: { project: "demo", limit: 60, dateStart: "2026-05-01" } },
-    ],
-    budgetTokens: 400,
-  });
-
-  expect(typeof bundle.byKey["git.log"]).toBe("string");
-  expect((bundle.byKey["git.log"] as string).length).toBeGreaterThan(0);
-  expect(bundle.warnings.some((w) => w.includes("budget exceeded"))).toBe(true);
 });
 
 test("tight budget drops small body-bearing array entries instead of inflating them with marker stubs", async () => {

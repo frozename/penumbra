@@ -49,7 +49,7 @@ test("reads near-duplicate promotion gate counts from dream_actions payload sour
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(0);
     const output: unknown = JSON.parse(new TextDecoder().decode(result.stdout));
     if (typeof output !== "object" || output === null) throw new Error("invalid script output");
     expect((output as { gate_deltas?: unknown }).gate_deltas).toEqual({

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 type RuleCounts = { errors: number; warnings: number };
 type BaselineFile = {
@@ -21,20 +21,27 @@ describe("lint baseline capture", () => {
     try {
       const res = spawnSync("bun", ["run", "scripts/tooling/lint-baseline.ts"], {
         encoding: "utf8",
-        env: { ...process.env, LINT_BASELINE_OUT: out },
+        env: { ...process.env, LINT_BASELINE_OUT: out, LINT_BASELINE_TARGETS: "scripts/tooling" },
       });
       // Assert the run itself succeeded so a spawn failure (bun off PATH) or a
       // script error (eslint produced no JSON) surfaces directly instead of as a
       // bare existsSync===false a step later.
       expect(res.error).toBeUndefined();
-      expect(res.status).toBe(0);
+      expect(res.status, res.stderr).toBe(0);
       expect(existsSync(out)).toBe(true);
       const data = JSON.parse(readFileSync(out, "utf8")) as BaselineFile;
       expect(typeof data.totals.errors).toBe("number");
       expect(typeof data.totals.warnings).toBe("number");
       expect(typeof data.byRule).toBe("object");
+      expect(
+        Object.keys(data.byFile).every((filePath) =>
+          relative("scripts/tooling", filePath)
+            .split(sep)
+            .every((part) => part !== ".."),
+        ),
+      ).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 60_000);
 });

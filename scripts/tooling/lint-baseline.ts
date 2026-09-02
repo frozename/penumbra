@@ -46,7 +46,12 @@ function bumpCount(bucket: Record<string, RuleCounts>, key: string, severity: nu
   bucket[key] = current;
 }
 
-const eslint = spawnSync(ESLINT_BIN, [".", "--format", "json"], {
+function lintTargets(): string[] {
+  const raw = process.env.LINT_BASELINE_TARGETS?.trim();
+  return raw === undefined || raw.length === 0 ? ["."] : raw.split(/\s+/);
+}
+
+const eslint = spawnSync(ESLINT_BIN, [...lintTargets(), "--format", "json"], {
   encoding: "utf8",
   maxBuffer: MAX_BUFFER_BYTES,
 });
