@@ -61,11 +61,12 @@ jobs:
             --path-ignore-patterns='**/dist/**'
             --path-ignore-patterns='**/scripts/bench*.test.ts'
           )
+          # grep -c (not grep -q): under pipefail, grep -q exiting early SIGPIPEs the upstream grep on listings over ~8 KiB and the shard is silently skipped.
           has_tests() {
             find "$1" -name '*.test.ts' \
               -not -path '*/node_modules/*' -not -path '*/dist/*' \
               -not -path '*/e2e/*' -not -path '*/visual/*' 2>/dev/null \
-              | grep -vE '/bench[^/]*\.test\.ts$' | grep -q .
+              | grep -vE '/bench[^/]*\.test\.ts$' | grep -c . >/dev/null
           }
           failed=()
           for pkg in packages/*/; do
