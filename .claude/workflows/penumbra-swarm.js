@@ -75,7 +75,7 @@ if (typeof input === 'object' && input) {
   validateSpec({
     workflowName: 'penumbra-swarm',
     input: opts,
-    topLevelAllowedKeys: ['goal', 'maxTasks', 'defaults', 'agentType', 'plannerModel', 'dispatcherModel'],
+    topLevelAllowedKeys: ['goal', 'maxTasks', 'defaults', 'agentType', 'plannerModel', 'dispatcherModel', 'project_id', 'caller_cwd', 'repo'],
     defaults: opts.defaults,
     defaultsAllowedKeys: [
       'initial_agent',
@@ -88,6 +88,8 @@ if (typeof input === 'object' && input) {
       'task_name',
       'branch_type',
       'branch_base',
+      'project_id',
+      'caller_cwd',
     ],
   })
 }
@@ -100,6 +102,9 @@ if (!goal || !String(goal).trim()) {
 
 const maxTasks = opts.maxTasks || 8
 const defaults = opts.defaults || {}
+const fanoutDefaults = { ...defaults }
+if (opts.project_id !== undefined) fanoutDefaults.project_id = opts.project_id
+if (opts.caller_cwd !== undefined) fanoutDefaults.caller_cwd = opts.caller_cwd
 const agentType = opts.agentType
 // Planner does real reasoning → default to the session model (override via args.plannerModel).
 // Dispatch proxies are pure glue → cheap by default, forwarded to penumbra-fanout.
@@ -194,7 +199,7 @@ const dispatchTasks = tasks.map((t) => {
 })
 const fan = await workflow(
   'penumbra-fanout',
-  { tasks: dispatchTasks, defaults, dispatcherModel, ...(agentType ? { agentType } : {}) },
+  { tasks: dispatchTasks, defaults: fanoutDefaults, dispatcherModel, ...(opts.repo !== undefined ? { repo: opts.repo } : {}), ...(agentType ? { agentType } : {}) },
 )
 
 return {

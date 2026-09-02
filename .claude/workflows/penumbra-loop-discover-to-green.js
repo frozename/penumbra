@@ -66,6 +66,9 @@ const fixAgent = a.fixAgent || "executor";
 const maxFixRounds = Math.max(1, Math.min(5, a.maxFixRounds || 3));
 const dryRunPlan = !!a.dryRunPlan;
 const dispatcherModel = a.dispatcherModel || "sonnet";
+const fanoutDefaults = {};
+if (a.project_id !== undefined) fanoutDefaults.project_id = a.project_id;
+if (a.caller_cwd !== undefined) fanoutDefaults.caller_cwd = a.caller_cwd;
 const finderModel = a.finderModel || "sonnet";
 const plannerModel = a.plannerModel || "sonnet";
 const graderModel = a.graderModel;
@@ -387,7 +390,7 @@ for (let i = 0; i < maxFixRounds; i++) {
 
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], dispatcherModel },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(a.repo !== undefined ? { repo: a.repo } : {}) },
   );
   const r = ((fan && fan.results) || [])[0];
   if (!r || !r.ok || !r.branch) {

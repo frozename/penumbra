@@ -104,7 +104,14 @@ for (const t of tasks) {
   }
 }
 
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".")
+// Workflow script sandboxes have no process object, so repo scope must come
+// from the parsed args.repo value rather than process.env or process.cwd().
+const REPO = typeof a.repo === 'string' ? a.repo.trim() : ''
+if (!REPO || !REPO.startsWith('/')) {
+  throw new Error(
+    'penumbra-fleet-verify: args.repo must be a non-empty ABSOLUTE path - it is passed as chain_start caller_cwd so the MCP layer can resolve project scope. The daemon rejects scope-less dispatches with HTTP 400 project_id_required when PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID is set.',
+  )
+}
 
 const DISPATCH_SCHEMA = {
   type: 'object',

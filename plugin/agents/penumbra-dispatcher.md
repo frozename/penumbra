@@ -22,19 +22,27 @@ Your task message contains a fenced ```dispatch block of JSON:
       "max_hops":      8,
       "timeout_ms":    1800000,
       "branch_base":   "<optional git ref / prior agent branch to base the worktree on>",
-      "response_mode": "full" | "first_line" | "none"
+      "response_mode": "full" | "first_line" | "none",
+      "project_id":    "<project scope id — one of project_id / caller_cwd is required>",
+      "caller_cwd":    "<ABSOLUTE path the MCP layer resolves project scope from when project_id is absent>"
     }
 
 The actual work instruction may be omitted from the JSON block and provided in a
 `## Task message` section. Pass that task message verbatim as the `chain_start`
 `message` argument and do not restate it elsewhere.
 
+One of `project_id` / `caller_cwd` is required: the daemon rejects scope-less
+dispatches with HTTP 400 `project_id_required`, and `caller_cwd` must be an
+ABSOLUTE path (the MCP layer resolves project scope from it). `project_id`
+wins when both are present. Pass both verbatim when the spec includes them.
+
 ## Protocol
 
 1. Pass `initial_agent` verbatim to `chain_start`. Role names ("executor", "reviewer", "planner") are the default — the daemon's model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin: use it verbatim. Legacy `"AUTO"` means `"executor"`. Never call `agent_recommend` to pre-pick a seat — it is forensic/informational only.
 2. Call `mcp__penumbra__chain_start` with `initial_agent`, `message`, `task_class`,
-   `task_type`, `trust_mode`, `use_worktree`, `max_hops`, and `branch_base` if the
-   spec includes it. Capture whatever `conversation_id` and `handoff_id` the result returns.
+   `task_type`, `trust_mode`, `use_worktree`, `max_hops`, `project_id`, `caller_cwd`,
+   and `branch_base` if the spec includes it. Capture whatever `conversation_id` and
+   `handoff_id` the result returns.
 3. Wait for terminal with SHORT polls so you never stall. First compute a FINITE
    iteration budget `N = min(25, ceil((spec.timeout_ms || 1800000) / 240000))` — this is
    always a finite number even when the spec omits `timeout_ms`, so you NEVER loop

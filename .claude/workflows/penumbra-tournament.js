@@ -27,6 +27,9 @@ if (!task || !task.message || !agents.length) {
   return { ok: false, error: 'missing_task_or_agents' }
 }
 const defaults = input.defaults || {}
+const fanoutDefaults = { ...defaults }
+if (input.project_id !== undefined) fanoutDefaults.project_id = input.project_id
+if (input.caller_cwd !== undefined) fanoutDefaults.caller_cwd = input.caller_cwd
 const dispatcherModel = input.dispatcherModel || 'sonnet'
 const judgeModel = input.judgeModel // default: session model (judging is real reasoning)
 
@@ -69,7 +72,7 @@ const tasks = agents.map((a) => ({
 }))
 const fan = await workflow(
   'penumbra-fanout',
-  { tasks, defaults, dispatcherModel },
+  { tasks, defaults: fanoutDefaults, dispatcherModel, ...(input.repo !== undefined ? { repo: input.repo } : {}) },
 )
 const candidates = ((fan && fan.results) || []).filter((r) => r && r.ok && r.branch && r.handoff_id)
 if (!candidates.length) {

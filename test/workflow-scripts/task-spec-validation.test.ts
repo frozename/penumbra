@@ -7,7 +7,7 @@ const WORKFLOWS = [
   {
     path: ".claude/workflows/penumbra-fanout.js",
     name: "penumbra-fanout",
-    topLevelAllowedKeys: ["tasks", "defaults", "agentType", "dispatcherModel"],
+    topLevelAllowedKeys: ["tasks", "defaults", "agentType", "dispatcherModel", "repo"],
     defaultsAllowedKeys: [
       "initial_agent",
       "task_class",
@@ -19,6 +19,9 @@ const WORKFLOWS = [
       "task_name",
       "branch_type",
       "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
     ],
     taskAllowedKeys: [
       "label",
@@ -35,6 +38,9 @@ const WORKFLOWS = [
       "timeout_ms",
       "message",
       "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
     ],
     taskRequiredKeys: ["message"],
     validInput: { tasks: [{ message: "do the work" }] },
@@ -68,6 +74,9 @@ const WORKFLOWS = [
       "agentType",
       "plannerModel",
       "dispatcherModel",
+      "project_id",
+      "caller_cwd",
+      "repo",
     ],
     defaultsAllowedKeys: [
       "initial_agent",
@@ -80,6 +89,8 @@ const WORKFLOWS = [
       "task_name",
       "branch_type",
       "branch_base",
+      "project_id",
+      "caller_cwd",
     ],
     taskAllowedKeys: [
       "label",
@@ -110,6 +121,9 @@ const WORKFLOWS = [
       "defaults",
       "dispatcherModel",
       "graderModel",
+      "project_id",
+      "caller_cwd",
+      "repo",
     ],
     defaultsAllowedKeys: [
       "initial_agent",
@@ -122,6 +136,9 @@ const WORKFLOWS = [
       "task_name",
       "branch_type",
       "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
     ],
     taskAllowedKeys: [
       "message",
@@ -132,6 +149,7 @@ const WORKFLOWS = [
       "branch_type",
       "task_class",
       "task_type",
+      "response_mode",
     ],
     taskRequiredKeys: ["message"],
     validInput: { task: { message: "do the work" }, check: "bun test" },
@@ -383,6 +401,28 @@ describe("workflow task-spec validation block", () => {
       );
     });
   }
+
+  test("penumbra-fanout rejects a scope-less dispatch before any agent call", async () => {
+    const result = await runWorkflow(".claude/workflows/penumbra-fanout.js", {
+      tasks: [{ message: "do the work" }],
+    });
+
+    expect(result.error).toBeDefined();
+    expect(String(result.error)).toMatch(/no project scope resolved/);
+    expect(result.agentCalls).toBe(0);
+  });
+
+  test("penumbra-fanout proceeds once project scope resolves", async () => {
+    const scopedInputs = [
+      { tasks: [{ message: "do the work" }], repo: "/tmp/penumbra-scope-pin" },
+      { tasks: [{ message: "do the work" }], defaults: { project_id: "penumbra" } },
+    ];
+
+    for (const scopedInput of scopedInputs) {
+      const result = await runWorkflow(".claude/workflows/penumbra-fanout.js", scopedInput);
+      expect(result.error).toBeUndefined();
+    }
+  });
 
   test("checker parses workflow metadata without invoking constructed functions", () => {
     const source = readFileSync(resolve("scripts/check-workflow-scripts.ts"), "utf8");

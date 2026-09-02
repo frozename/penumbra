@@ -235,6 +235,7 @@ Invoke from the orchestrator (maestro) with a structured `args` object:
 
 ```
 Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
+  repo: '/absolute/path/to/repo',  // project scope (absolute path) — or defaults.project_id
   defaults: { task_class: 'STANDARD', trust_mode: 'all', timeout_ms: 1800000 },
   tasks: [
   { initial_agent: 'executor',       task_type: 'implement_small',    message: '...' },  // default: role-routed — the model task router picks the seat
@@ -242,6 +243,8 @@ Workflow({ scriptPath: '.claude/workflows/penumbra-fanout.js', args: {
   ],
 }})
 ```
+
+Fan-out resolves the project scope before dispatch and throws when none resolves: pass `repo` or `caller_cwd` (an absolute path, top-level or in `defaults`) or a `project_id` (`defaults` or per-task). The daemon rejects scope-less dispatches with HTTP 400 `project_id_required`.
 
 Boundaries baked into the design (do not loosen without intent):
 
@@ -254,13 +257,13 @@ Boundaries baked into the design (do not loosen without intent):
 
 | Workflow                          | Shape                                                                                                                                 | Key args                                                                                       |
 | :-------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------- |
-| `penumbra-fanout`                 | N independent tasks → fleet; collect results + handoff `branch_name` branches                                                         | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }]`                     |
+| `penumbra-fanout`                 | N independent tasks → fleet; collect results + handoff `branch_name` branches                                                         | `tasks: [{ initial_agent, task_class, task_type, message, branch_base? }], repo or project_id` |
 | `penumbra-swarm`                  | goal → planner decomposes into independent tasks → `workflow('penumbra-fanout')`                                                      | `goal` string, or `{ goal, maxTasks?, plannerModel? }`                                         |
 | `penumbra-tournament`             | same task → K agents in parallel → judge inspects each worktree (`worktree_inspect`) → winner                                         | `{ task: { message }, agents: [...], judgeModel? }`                                            |
 | `penumbra-fix-until-green`        | dispatch → worker runs `check` → on FAIL re-dispatch on the prior branch (`branch_base`) with the failure log → until green or capped | `{ task: { message }, check, maxRounds?, escalateTo? }`                                        |
 | `penumbra-review-sweep`           | wraps penumbra's native `adversarial-review` across N targets (`workflow_run`, keeps its routing/gates/capture)                       | `{ targets: [{ target_ref, base_ref?, focus? }] }`                                             |
 | `penumbra-research`               | memory-augmented research: prime with t2 `memory_search` → sourced web fan-out → cited report → persist to t2 `memory_observe`        | `question` string, or `{ question, angles?, persist? }` (needs WebSearch/WebFetch allowlisted) |
-| `penumbra-fleet-verify`           | N independent tasks → fleet in parallel → verify each branch against a generic schema → structured evidence (lands nothing)           | `tasks: [...]`                                                                                 |
+| `penumbra-fleet-verify`           | N independent tasks → fleet in parallel → verify each branch against a generic schema → structured evidence (lands nothing)           | `tasks: [...], repo (absolute)`                                                                |
 | `penumbra-loop-discover-to-green` | discover next defect → plan TDD fix → implement + fix-until-green on the fleet → adversarial review → typed land recommendation       | `{ scope, exclude?, seedCandidates?, maxFixRounds? }`                                          |
 | `penumbra-token-opt-batch`        | batch token-opt envelope migrations: parallel dispatch+verify across N tools → sequential in-workflow land                            | tool list                                                                                      |
 | `penumbra-token-opt-migrate`      | single token-opt envelope migration: dispatch → wait → verify worktree against schema → structured evidence (lands nothing)           | one tool                                                                                       |

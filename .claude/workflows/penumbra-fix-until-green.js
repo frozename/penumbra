@@ -77,6 +77,9 @@ validateSpec({
     'defaults',
     'dispatcherModel',
     'graderModel',
+    'project_id',
+    'caller_cwd',
+    'repo',
   ],
   requiredTopLevelKeys: ['task', 'check'],
   defaults: input.defaults,
@@ -92,6 +95,8 @@ validateSpec({
     'branch_type',
     'branch_base',
     'response_mode',
+    'project_id',
+    'caller_cwd',
   ],
   tasks: input.task ? [input.task] : [],
   requireTasks: true,
@@ -117,6 +122,9 @@ if (!task || !task.message || !check) {
   return { ok: false, error: 'missing_task_or_check' }
 }
 const defaults = input.defaults || {}
+const fanoutDefaults = { ...defaults }
+if (input.project_id !== undefined) fanoutDefaults.project_id = input.project_id
+if (input.caller_cwd !== undefined) fanoutDefaults.caller_cwd = input.caller_cwd
 const dispatcherModel = input.dispatcherModel || 'sonnet'
 const graderModel = input.graderModel
 const baseAgent = input.agent || defaults.initial_agent || 'executor' // role-routed default; args.agent and escalateTo are deliberate pins
@@ -401,7 +409,7 @@ for (let i = 0; i < maxRounds; i++) {
 
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], defaults, dispatcherModel },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(input.repo !== undefined ? { repo: input.repo } : {}) },
   )
   const r = ((fan && fan.results) || [])[0]
   if (!r || !r.ok || !r.branch) {
