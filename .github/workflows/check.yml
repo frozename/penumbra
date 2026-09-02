@@ -29,23 +29,21 @@ jobs:
         run: |
           bun scripts/bun-test-gate.ts packages/console --path-ignore-patterns='**/e2e/**' --path-ignore-patterns='**/visual/**' --path-ignore-patterns='**/dist/**'
           bun run --cwd packages/console build
-      - name: test (advisory — pending Linux-runner test-tail fixes; install + typecheck still block)
-        # TEMPORARILY advisory (continue-on-error below). The crash is fixed and
-        # every shard now summarizes, but core/integrations/workflows carry
-        # CI/Linux-specific failures that pass on macOS: plugin/workflows zod
-        # resolution, integrations `observe` HTTP expectations, and
-        # project-registry tests assuming local sibling repos. These are not
-        # locally reproducible (macOS passes), so they are tracked as a follow-up;
-        # flip continue-on-error back off once the Linux tail is green. install and
-        # typecheck remain hard gates.
+      - name: "test (blocking: sharded per package)"
+        # Blocking: every shard runs green on the Linux runner since the
+        # test-tail fixes of 2026-09-02 (hermetic git fixtures for the depth-1
+        # checkout, no dbstat, platform-independent size/time/stat/readdir
+        # assumptions, root workspace devDependencies for imports outside
+        # packages/). A red shard fails the run. install, typecheck and
+        # lint:strict remain hard gates alongside this step.
         #
         # Sharded: each package's tests run in their OWN bun process, plus a final
-        # shard for non-package tests (root test/, scripts/). A single monolithic
-        # `bun test` accumulated native resources across ~95 in-process daemon boots
-        # (embedder + sqlite-vec) and crashed mid-run on Linux before a summary;
-        # per-package processes bound that and isolate any single crash. Each shard
-        # goes through the gate, which gates on reported pass/fail (tolerating the
-        # known post-summary NAPI-teardown panic, exit 133, only when 0 failures).
+        # shard for non-package tests (root test/, scripts/). Per-package processes
+        # isolate any single crash and keep the per-run logs readable. Each shard
+        # goes through scripts/bun-test-gate.ts, which streams the child's output
+        # (spawnSync's 1 MiB pipe buffer used to kill the daemon and core shards
+        # before their summary) and gates on reported pass/fail, tolerating the
+        # known post-summary NAPI-teardown panic (exit 133) only when 0 failures.
         #
         # path-ignore-patterns excludes files `bun test` would otherwise glob but
         # that are not bun unit/integration tests: Playwright specs under e2e/ and
@@ -87,7 +85,6 @@ jobs:
             exit 1
           fi
           echo "all test shards passed"
-        continue-on-error: true
       - name: lint (advisory - whole-repo burn-down tracker, see strict-lint ratchet)
         # eslint over this many packages exceeds node's default ~2 GB heap and
         # dies with SIGABRT (exit 134) before reporting any findings.
