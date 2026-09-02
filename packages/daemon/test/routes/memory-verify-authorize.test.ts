@@ -2,7 +2,8 @@ import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +17,7 @@ try {
   // already loaded in this process
 }
 
-function setup(): {
+function setup(opts: { mainRepoDir?: string } = {}): {
   db: Database;
   root: string;
   reviewsDir: string;
@@ -36,7 +37,7 @@ function setup(): {
     reviewsDir,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    mainRepoDir: process.cwd(),
+    mainRepoDir: opts.mainRepoDir ?? process.cwd(),
     worktreeRootDir: join(root, "worktrees"),
   });
   return {
@@ -46,6 +47,29 @@ function setup(): {
     services,
     stop: (): void => {
       rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createGitRepoWithCommit(): { repoDir: string; commit: string; stop: () => void } {
+  const repoDir = mkdtempSync(join(tmpdir(), "memory-verify-auth-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: repoDir,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: repoDir, stdio: "ignore" });
+  writeFileSync(join(repoDir, "README.md"), "# test\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "ignore" });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" })
+    .trim()
+    .slice(0, 7);
+  return {
+    repoDir,
+    commit,
+    stop: (): void => {
+      rmSync(repoDir, { recursive: true, force: true });
     },
   };
 }
@@ -228,7 +252,8 @@ test("authorize route rejects adversarial_review traversal", async () => {
 });
 
 test("authorize route returns zero writes for dispatch_land basis without recalled memories", async () => {
-  const ctx = setup();
+  const repo = createGitRepoWithCommit();
+  const ctx = setup({ mainRepoDir: repo.repoDir });
   try {
     seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
     seedLaneClose(ctx.db, "L1", ["m1"], "h-review");
@@ -243,7 +268,7 @@ test("authorize route returns zero writes for dispatch_land basis without recall
           authorized_by_handoff: "h-auth",
           basis: {
             kind: "dispatch_land",
-            merge_commit: "f128dd9",
+            merge_commit: repo.commit,
             reviewer_handoff: "h-review",
           },
         }),
@@ -262,11 +287,13 @@ test("authorize route returns zero writes for dispatch_land basis without recall
     expect(body.reason).toBeUndefined();
   } finally {
     ctx.stop();
+    repo.stop();
   }
 });
 
 test("authorize route writes one row per lane_ledger recalled memory for dispatch_land basis", async () => {
-  const ctx = setup();
+  const repo = createGitRepoWithCommit();
+  const ctx = setup({ mainRepoDir: repo.repoDir });
   try {
     seedMemory(ctx.db, "m1", "2026-05-17T11:00:00.000Z");
     seedMemory(ctx.db, "m2", "2026-05-17T11:05:00.000Z");
@@ -282,7 +309,7 @@ test("authorize route writes one row per lane_ledger recalled memory for dispatc
           authorized_by_handoff: "h-impl",
           basis: {
             kind: "dispatch_land",
-            merge_commit: "f128dd9",
+            merge_commit: repo.commit,
             reviewer_handoff: "h-review",
           },
         }),
@@ -310,5 +337,6 @@ test("authorize route writes one row per lane_ledger recalled memory for dispatc
     expect(verifiedRows?.c).toBe(2);
   } finally {
     ctx.stop();
+    repo.stop();
   }
 });
