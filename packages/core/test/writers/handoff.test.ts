@@ -880,6 +880,52 @@ test("markCompleted() refuses cancel-requested dispatched handoffs", () => {
   expect(row?.resolved_at).toBe("t");
 });
 
+test("requestCancellation does not stamp terminal handoffs", () => {
+  writer.create({
+    handoff_id: "h-cancel-expired",
+    ts: "t",
+    from: "a",
+    to: "b",
+    to_role: null,
+    message: "m",
+    conversation_id: "c-terminal-cancel",
+    project_id: null,
+    triggered_by_event_id: "e-expired",
+  });
+  writer.approve("h-cancel-expired", { resolved_by: "u", resolved_at: "t" });
+  writer.claimDispatch("h-cancel-expired", "worker-1");
+  writer.expireDispatchedIdle("h-cancel-expired", {
+    ts: "expired-ts",
+    reason: "expired by sweeper after 1800000ms in dispatched",
+    activitySinceIso: "recent-event-cutoff",
+  });
+  writer.create({
+    handoff_id: "h-cancel-dispatched",
+    ts: "t",
+    from: "a",
+    to: "b",
+    to_role: null,
+    message: "m",
+    conversation_id: "c-terminal-cancel",
+    project_id: null,
+    triggered_by_event_id: "e-dispatched",
+  });
+  writer.approve("h-cancel-dispatched", { resolved_by: "u", resolved_at: "t" });
+  writer.claimDispatch("h-cancel-dispatched", "worker-2");
+
+  expect(writer.requestCancellation("c-terminal-cancel", "cancel-ts")).toBe(true);
+  const rows = db
+    .query<
+      { handoff_id: string; cancel_requested_at: string | null },
+      []
+    >("SELECT handoff_id, cancel_requested_at FROM handoffs ORDER BY handoff_id")
+    .all();
+  expect(rows).toEqual([
+    { handoff_id: "h-cancel-dispatched", cancel_requested_at: "cancel-ts" },
+    { handoff_id: "h-cancel-expired", cancel_requested_at: null },
+  ]);
+});
+
 test("markCompleted() enforces expected_worker_id when provided", () => {
   writer.create({
     handoff_id: "h-cas-complete",

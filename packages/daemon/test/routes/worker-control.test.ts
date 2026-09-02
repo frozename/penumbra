@@ -162,3 +162,52 @@ test("GET /worker/control performs durable sync and live broadcast", async () =>
   expect(events[0]).toEqual({ type: "cancel", conversation_id: "c1", handoff_id: "e-1" });
   expect(events[1]).toEqual({ type: "cancel", conversation_id: "c2", handoff_id: "e-2" });
 });
+
+test("GET /worker/control does not flush sweeper-expired cancellations", async () => {
+  const services = tempServices();
+
+  await handoffsCreateRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m",
+        conversation_id: "c-expired",
+        triggered_by_event_id: "e-expired",
+      }),
+    }),
+    services,
+  );
+  services.handoffWriter.approve("e-1", { resolved_by: "u", resolved_at: "approved-ts" });
+  services.handoffWriter.claimDispatch("e-1", "worker-1");
+  conversationsCancelRoute(new Request("http://x"), "c-expired", services);
+  services.handoffWriter.expireDispatchedIdle("e-1", {
+    ts: "expired-ts",
+    reason: "expired by sweeper after 1800000ms in dispatched",
+    activitySinceIso: "recent-event-cutoff",
+  });
+
+  await handoffsCreateRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m",
+        conversation_id: "c-dispatched",
+        triggered_by_event_id: "e-dispatched",
+      }),
+    }),
+    services,
+  );
+  services.handoffWriter.approve("e-2", { resolved_by: "u", resolved_at: "approved-ts" });
+  services.handoffWriter.claimDispatch("e-2", "worker-2");
+  conversationsCancelRoute(new Request("http://x"), "c-dispatched", services);
+
+  const res = workerControlRoute(new Request("http://x"), services);
+  expect(res.status).toBe(200);
+
+  const events = await readSseEvents(res.body!, 2, 100);
+  expect(events).toEqual([{ type: "cancel", conversation_id: "c-dispatched", handoff_id: "e-2" }]);
+});

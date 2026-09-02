@@ -2,6 +2,16 @@ import type { Database } from "bun:sqlite";
 
 import type { HandoffRow, HandoffStatus } from "../schemas/handoff.js";
 
+const ACTIVE_CANCELLATION_STATUSES = [
+  "pending",
+  "approved",
+  "redirected",
+  "dispatched",
+] as const satisfies readonly HandoffStatus[];
+const ACTIVE_CANCELLATION_STATUS_PLACEHOLDERS = ACTIVE_CANCELLATION_STATUSES.map(() => "?").join(
+  ",",
+);
+
 export interface HandoffReaderOpts {
   db: Database;
 }
@@ -202,12 +212,12 @@ export class HandoffReader {
   /** Lists active handoffs (non-terminal) that have a cancel request. */
   listActiveCancellations(): { conversation_id: string; handoff_id: string }[] {
     return this.db
-      .query<{ conversation_id: string; handoff_id: string }, []>(
+      .query<{ conversation_id: string; handoff_id: string }, HandoffStatus[]>(
         `SELECT conversation_id, handoff_id FROM handoffs 
          WHERE cancel_requested_at IS NOT NULL 
-         AND status NOT IN ('completed', 'rejected', 'failed')`,
+         AND status IN (${ACTIVE_CANCELLATION_STATUS_PLACEHOLDERS})`,
       )
-      .all();
+      .all(...ACTIVE_CANCELLATION_STATUSES);
   }
 
   /**

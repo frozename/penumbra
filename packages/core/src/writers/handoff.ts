@@ -2,9 +2,18 @@ import type { Database } from "bun:sqlite";
 
 import type { HandoffEventBus } from "../events/handoff-events.js";
 import type { HandoffTransitionBus, LeftDispatchedEvent } from "../events/handoff-transitions.js";
-import type { CreateHandoffRequest, HandoffRow } from "../schemas/handoff.js";
+import type { CreateHandoffRequest, HandoffRow, HandoffStatus } from "../schemas/handoff.js";
 type SqlParam = string | number | null;
 type DispatchedExitStatus = "approved" | "completed" | "failed" | "expired";
+const CANCELLABLE_HANDOFF_STATUSES = [
+  "pending",
+  "approved",
+  "redirected",
+  "dispatched",
+] as const satisfies readonly HandoffStatus[];
+const CANCELLABLE_HANDOFF_STATUS_PLACEHOLDERS = CANCELLABLE_HANDOFF_STATUSES.map(() => "?").join(
+  ",",
+);
 export interface HandoffWriterOpts {
   db: Database;
   events?: HandoffEventBus;
@@ -473,9 +482,9 @@ export class HandoffWriter {
     const changes = this.db
       .query<
         unknown,
-        [string, string]
-      >(`UPDATE handoffs SET cancel_requested_at=? WHERE conversation_id=? AND cancel_requested_at IS NULL`)
-      .run(ts, conversation_id);
+        SqlParam[]
+      >(`UPDATE handoffs SET cancel_requested_at=? WHERE conversation_id=? AND cancel_requested_at IS NULL AND status IN (${CANCELLABLE_HANDOFF_STATUS_PLACEHOLDERS})`)
+      .run(ts, conversation_id, ...CANCELLABLE_HANDOFF_STATUSES);
     return changes.changes > 0;
   }
 }

@@ -56,6 +56,40 @@ function insertHandoffRow(opts: {
   );
 }
 
+test("listActiveCancellations excludes sweeper-expired handoffs", () => {
+  insertHandoffRow({
+    handoff_id: "h-expired-cancel",
+    ts: isoAt(0),
+    conversation_id: "conv-expired-cancel",
+    root_handoff_id: "h-expired-cancel",
+    status: "dispatched",
+  });
+  insertHandoffRow({
+    handoff_id: "h-dispatched-cancel",
+    ts: isoAt(1),
+    conversation_id: "conv-dispatched-cancel",
+    root_handoff_id: "h-dispatched-cancel",
+    status: "dispatched",
+  });
+  db.run(
+    `UPDATE handoffs
+        SET status='expired',
+            cancel_requested_at=?,
+            resolved_at=?,
+            resolution_reason=?
+      WHERE handoff_id=?`,
+    [isoAt(2), isoAt(3), "expired by sweeper after 1800000ms in dispatched", "h-expired-cancel"],
+  );
+  db.run(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?`, [
+    isoAt(4),
+    "h-dispatched-cancel",
+  ]);
+
+  expect(reader.listActiveCancellations()).toEqual([
+    { conversation_id: "conv-dispatched-cancel", handoff_id: "h-dispatched-cancel" },
+  ]);
+});
+
 function markDispatched(handoff_id: string): void {
   db.run(`UPDATE handoffs SET status='dispatched' WHERE handoff_id=?`, [handoff_id]);
 }

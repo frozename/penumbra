@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { HandoffStatus } from "@penumbra/core";
+
 import type { DaemonClient } from "../daemon-client.js";
 
 import { DaemonHttpError } from "../daemon-client.js";
@@ -9,7 +11,12 @@ export const ChainCancelInputShape = {
   handoff_id: z.string().min(1).describe("The handoff ID to cancel."),
 };
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "rejected"]);
+const TERMINAL_STATUSES = new Set<string>([
+  "completed",
+  "failed",
+  "rejected",
+  "expired",
+] satisfies HandoffStatus[]);
 
 interface NotFoundBody {
   error: { code: string; message: string };
@@ -31,7 +38,18 @@ export function chainCancelHandler(daemon: DaemonClient): ToolHandler<{ handoff_
         };
       }
 
-      await daemon.cancelConversation(handoff.conversation_id);
+      const cancelResult = await daemon.cancelConversation(handoff.conversation_id);
+      if (!cancelResult.changed) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ status: "no_change", current_status }, null, 2),
+            },
+          ],
+        };
+      }
+
       return {
         content: [
           {

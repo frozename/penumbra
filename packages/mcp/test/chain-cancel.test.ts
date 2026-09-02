@@ -188,6 +188,65 @@ test("chain.cancel on a completed handoff returns already_terminal", async () =>
   }
 });
 
+test("chain.cancel on an expired handoff returns already_terminal", async () => {
+  let cancelCalled = false;
+  const daemon = fakeDaemon({
+    getHandoff: (handoff_id: string) =>
+      Promise.resolve({
+        handoff: {
+          handoff_id,
+          status: "expired",
+          conversation_id: "conv-expired",
+        },
+      }),
+    cancelConversation: () => {
+      cancelCalled = true;
+      return Promise.resolve({ ok: true, changed: false });
+    },
+  });
+  let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
+  try {
+    client = await connectInMemory(daemon);
+    const out = await client.callTool({
+      name: "chain_cancel",
+      arguments: { handoff_id: "h-expired" },
+    });
+    const parsed = firstJson(out);
+
+    expect(parsed).toEqual({ status: "already_terminal", current_status: "expired" });
+    expect(cancelCalled).toBe(false);
+  } finally {
+    await client?.close();
+  }
+});
+
+test("chain.cancel returns no_change when daemon does not stamp cancellation", async () => {
+  const daemon = fakeDaemon({
+    getHandoff: (handoff_id: string) =>
+      Promise.resolve({
+        handoff: {
+          handoff_id,
+          status: "dispatched",
+          conversation_id: "conv-no-change",
+        },
+      }),
+    cancelConversation: () => Promise.resolve({ ok: true, changed: false }),
+  });
+  let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
+  try {
+    client = await connectInMemory(daemon);
+    const out = await client.callTool({
+      name: "chain_cancel",
+      arguments: { handoff_id: "h-no-change" },
+    });
+    const parsed = firstJson(out);
+
+    expect(parsed).toEqual({ status: "no_change", current_status: "dispatched" });
+  } finally {
+    await client?.close();
+  }
+});
+
 test("chain.cancel on an unknown handoff returns the 404 envelope", async () => {
   const services = tempServices();
   const srv = startDaemon(services);
