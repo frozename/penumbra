@@ -40,3 +40,5 @@ docs/quality/
 
 # Stray local agent/editor config symlinks
 .antigravitycli/
+# Root-level macOS cache artifact from fleet worktrees
+/Library/

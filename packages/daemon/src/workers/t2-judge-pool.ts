@@ -50,6 +50,108 @@ interface JudgeFetchInit extends RequestInit {
   tls?: { ca: string };
 }
 
+export class JudgeError extends Error {
+  override readonly name = "JudgeError";
+  readonly isContextOverflow: boolean;
+  readonly nPromptTokens?: number;
+  readonly nCtx?: number;
+  constructor(
+    message: string,
+    opts: { isContextOverflow: boolean; nPromptTokens?: number; nCtx?: number },
+  ) {
+    super(message);
+    this.isContextOverflow = opts.isContextOverflow;
+    this.nPromptTokens = opts.nPromptTokens;
+    this.nCtx = opts.nCtx;
+  }
+}
+
+function parseTokenNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function parseOverflowMetricsFromText(body: string): { nPromptTokens?: number; nCtx?: number } {
+  const tokenMatch = /n_prompt_tokens["']?\s*[:=]\s*(\d+)/i.exec(body);
+  const ctxMatch = /n_ctx["']?\s*[:=]\s*(\d+)/i.exec(body);
+  if (tokenMatch && ctxMatch) {
+    const nPromptTokens = parseInt(tokenMatch[1] ?? "", 10);
+    const nCtx = parseInt(ctxMatch[1] ?? "", 10);
+    if (Number.isFinite(nPromptTokens) && Number.isFinite(nCtx) && nCtx > 0) {
+      return { nPromptTokens, nCtx };
+    }
+  }
+  const tokensExceedsMatch = /\((\d+)\s*tokens?\)[^]*exceeds[^]*\((\d+)\s*tokens?\)/i.exec(body);
+  if (tokensExceedsMatch) {
+    const nPromptTokens = parseInt(tokensExceedsMatch[1] ?? "", 10);
+    const nCtx = parseInt(tokensExceedsMatch[2] ?? "", 10);
+    if (Number.isFinite(nPromptTokens) && Number.isFinite(nCtx) && nCtx > 0) {
+      return { nPromptTokens, nCtx };
+    }
+  }
+  return {};
+}
+
+export function classifyJudgeHttpError(
+  status: number,
+  bodyText: string,
+): {
+  isOverflow: boolean;
+  nPromptTokens?: number;
+  nCtx?: number;
+} {
+  try {
+    const parsed = JSON.parse(bodyText) as {
+      error?: { type?: unknown; code?: unknown; n_prompt_tokens?: unknown; n_ctx?: unknown };
+    };
+    const err = parsed.error;
+    if (!err || typeof err !== "object") return { isOverflow: false };
+    const isOverflow =
+      err.type === "exceed_context_size_error" || err.code === "exceed_context_size_error";
+    if (!isOverflow) return { isOverflow: false };
+    let nPromptTokens = parseTokenNumber(err.n_prompt_tokens);
+    let nCtx = parseTokenNumber(err.n_ctx);
+    if (
+      nCtx !== undefined &&
+      (nCtx < 1000 || (nPromptTokens !== undefined && nPromptTokens <= nCtx))
+    ) {
+      nPromptTokens = undefined;
+      nCtx = undefined;
+    }
+    return { isOverflow: true, nPromptTokens, nCtx };
+  } catch {
+    if (status >= 400 && status < 500) {
+      const phraseMatch = /exceed_context_size_error|exceeds the available context size/i.test(
+        bodyText,
+      );
+      if (phraseMatch) {
+        const metrics = parseOverflowMetricsFromText(bodyText);
+        return { isOverflow: true, ...metrics };
+      }
+    }
+    return { isOverflow: false };
+  }
+}
+
+export function isContextOverflow(err: unknown): boolean {
+  if (typeof err === "string") {
+    return /exceed_context_size_error|exceeds the available context size/i.test(err);
+  }
+  if (err instanceof JudgeError) {
+    return err.isContextOverflow;
+  }
+  if (err instanceof Error) {
+    const typed = err as { isContextOverflow?: unknown };
+    if (typeof typed.isContextOverflow === "boolean") return typed.isContextOverflow;
+    return /exceed_context_size_error|exceeds the available context size/i.test(err.message);
+  }
+  return false;
+}
+
 export function getJudgeTimeoutMs(): number {
   let envTimeout = parseInt(process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS ?? "", 10);
   if (isNaN(envTimeout) || envTimeout <= 0) {
@@ -113,9 +215,6 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
-    // Agentchat convention: options.baseUrl is the full OpenAI-compat base
-    // path (typically ending in "/v1"). Append /chat/completions to that.
-    // Tolerate baseUrls without /v1 by adding it when missing.
     const url = buildJudgeUrl(judge.baseUrl);
     const init: JudgeFetchInit = {
       method: "POST",
@@ -141,7 +240,14 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       throw err;
     }
     if (!res.ok) {
-      throw new Error(`judge ${judge.name} returned ${String(res.status)}: ${await res.text()}`);
+      const bodyText = await res.text();
+      const classified = classifyJudgeHttpError(res.status, bodyText);
+      const message = `judge ${judge.name} returned ${String(res.status)}: ${bodyText}`;
+      throw new JudgeError(message, {
+        isContextOverflow: classified.isOverflow,
+        nPromptTokens: classified.nPromptTokens,
+        nCtx: classified.nCtx,
+      });
     }
     const json = (await res.json()) as JudgeResponse;
     const content = json.choices?.[0]?.message?.content;
@@ -149,26 +255,42 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     return opts.parseResponse(content);
   }
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing retry and health policy while changing only cursor advancement.
   async function tryEachJudge(prompt: string): Promise<T2MemoryExtraction[]> {
     let lastError: unknown;
-    const startIdx = nextIndex;
+    const attempted = new Set<number>();
+    let result: T2MemoryExtraction[] | undefined;
     for (let attempts = 0; attempts < judges.length; attempts++) {
-      const idx = (startIdx + attempts) % judges.length;
+      let idx: number | undefined;
+      if (attempts === 0) {
+        // Advance the shared cursor exactly once per invocation; retries use attempted only.
+        idx = nextIndex;
+        nextIndex = (nextIndex + 1) % judges.length;
+      } else {
+        for (let i = 0; i < judges.length; i++) {
+          if (!attempted.has(i)) {
+            idx = i;
+            break;
+          }
+        }
+      }
+      if (idx === undefined) break;
+      attempted.add(idx);
       const judge = judges[idx];
       if (!judge || judge.unhealthy) continue;
       try {
-        const result = await invokeJudge(judge, prompt);
-        nextIndex = (idx + 1) % judges.length;
-        return result;
+        result = await invokeJudge(judge, prompt);
+        break;
       } catch (err) {
         lastError = err;
-        markFailure(judge);
+        if (!isContextOverflow(err)) markFailure(judge);
         opts.log.warn(
           { judge: judge.name, err: err instanceof Error ? err.message : String(err) },
           "t2 promotion: judge failed",
         );
       }
     }
+    if (result !== undefined) return result;
     if (judges.every((judge) => judge.unhealthy)) {
       throw new Error("all judges unhealthy this tick");
     }
@@ -179,9 +301,6 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     async invoke(transcript: string): Promise<T2MemoryExtraction[]> {
       if (judges.length === 0) throw new Error("all judges unhealthy this tick");
       const prompt = opts.promptBuilder(transcript);
-      // Snapshot the starting index for this invoke so failures don't disrupt
-      // round-robin traversal of the remaining judges. nextIndex is advanced
-      // ONLY on the success path, immediately before returning.
       return await tryEachJudge(prompt);
     },
     resetTickHealth(): void {

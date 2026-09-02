@@ -22,13 +22,19 @@ const fixturesDir = join(import.meta.dir, "../fixtures/claude");
 let previousJudgeUrl: string | undefined;
 let previousConfigDir: string | undefined;
 let previousFetch: typeof globalThis.fetch;
+let previousMaxChars: string | undefined;
+let previousMaxChunks: string | undefined;
 
 beforeEach(() => {
   previousJudgeUrl = process.env.PENUMBRA_JUDGE_BASE_URL;
   previousConfigDir = process.env.PENUMBRA_CONFIG_DIR;
   previousFetch = globalThis.fetch;
+  previousMaxChars = process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK;
+  previousMaxChunks = process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS;
   process.env.PENUMBRA_JUDGE_BASE_URL = "http://judge.local";
   delete process.env.PENUMBRA_CONFIG_DIR;
+  delete process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK;
+  delete process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS;
 });
 
 afterEach(() => {
@@ -36,6 +42,11 @@ afterEach(() => {
   else process.env.PENUMBRA_JUDGE_BASE_URL = previousJudgeUrl;
   if (previousConfigDir === undefined) delete process.env.PENUMBRA_CONFIG_DIR;
   else process.env.PENUMBRA_CONFIG_DIR = previousConfigDir;
+  if (previousMaxChars === undefined)
+    delete process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK;
+  else process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK = previousMaxChars;
+  if (previousMaxChunks === undefined) delete process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS;
+  else process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS = previousMaxChunks;
   globalThis.fetch = previousFetch;
 });
 
@@ -628,6 +639,7 @@ describe("POST /memory/session-extract", () => {
   test("returns zero candidates for transcript_path with no durable assistant prose", async () => {
     const daemon = makeDaemon();
     handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
     const toolTranscript =
       "Implementation artifact summary for tool-heavy execution that should not produce durable memory. ".repeat(
         8,
@@ -683,5 +695,384 @@ describe("POST /memory/session-extract", () => {
     const payload = (await res.json()) as { candidates: { title: string }[] };
     expect(payload.candidates).toEqual([]);
     expect(judgeCalled).toBe(false);
+  });
+
+  test("chunks a long transcript to fit the judge context instead of 502", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    delete process.env.PENUMBRA_JUDGE_BASE_URL;
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatJudgeConfig(
+      daemon.root,
+      "http://route-judge/v1",
+    );
+
+    const sentinels = Array.from({ length: 8 }, (_, i) => `SENTINEL_${String(i)}`);
+    for (let i = 0; i < 8; i++) {
+      const sentinel = sentinels[i]!;
+      const body = `${sentinel} ${"x".repeat(6000 - sentinel.length - 1)}`;
+      daemon.db.run(
+        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+         VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-chunk', 'agent-response', 'local', '{}', ?)`,
+        [
+          `e-chunk-${String(i)}`,
+          `2026-06-11T10:${String(5 + i).padStart(2, "0")}:00.000Z`,
+          `2026-06-11T10:${String(5 + i).padStart(2, "0")}:00.000Z`,
+          body,
+        ],
+      );
+    }
+
+    let judgeCalls = 0;
+    let overflowResponses = 0;
+    globalThis.fetch = async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      judgeCalls++;
+      let bodyText = "";
+      if (typeof init?.body === "string") {
+        bodyText = init.body;
+      } else if (_input instanceof Request && !_input.bodyUsed) {
+        try {
+          bodyText = await _input.text();
+        } catch {
+          bodyText = "";
+        }
+      }
+      const parsed = JSON.parse(bodyText) as { messages?: { content?: string }[] };
+      const content = parsed.messages?.[0]?.content ?? "";
+      if (content.length > 30_000) {
+        overflowResponses++;
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 400,
+              message:
+                "request (13857 tokens) exceeds the available context size (8192 tokens), try increasing it",
+              type: "exceed_context_size_error",
+              n_prompt_tokens: 13857,
+              n_ctx: 8192,
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+      const found = sentinels.find((s) => content.includes(s));
+      if (!found) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const memoryBody = `Durable fact about ${found} that is long enough to pass the body length filter for sure without any issues at all. ${found}.`;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: `Memory for ${found}`,
+                      body: memoryBody,
+                      kind: "decision",
+                      why: `This sentinel ${found} marks a distinct chunk of the session transcript worth preserving.`,
+                      source_quote: found,
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-chunk",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(judgeCalls).toBeGreaterThan(1);
+    expect(overflowResponses).toBe(0);
+    const payload = (await res.json()) as {
+      candidates: { title: string; body: string }[];
+      truncated: boolean;
+      chunks_judged: number;
+    };
+    expect(payload.candidates.length).toBeGreaterThanOrEqual(2);
+    expect(payload.chunks_judged).toBeGreaterThan(1);
+  });
+
+  test("overflow does not poison the single-judge pool", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    delete process.env.PENUMBRA_JUDGE_BASE_URL;
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatJudgeConfig(
+      daemon.root,
+      "http://route-judge/v1",
+    );
+    process.env.PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK = "8000";
+
+    const sentinels = Array.from({ length: 10 }, (_, i) => `SENTB_${String(i)}`);
+    const eventChars = 1000;
+    for (let i = 0; i < 100; i++) {
+      const sentinel = sentinels[i % 10]!;
+      const body = `${sentinel} ${"y".repeat(eventChars - sentinel.length - 1)}`;
+      daemon.db.run(
+        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+         VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-overflow', 'agent-response', 'local', '{}', ?)`,
+        [
+          `e-ov-${String(i)}`,
+          `2026-06-11T11:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`,
+          `2026-06-11T11:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`,
+          body,
+        ],
+      );
+    }
+
+    const seenErrors: string[] = [];
+    const originalWarn = daemon.services.log.warn;
+    daemon.services.log.warn = (...args: unknown[]): void => {
+      const record = args[0];
+      if (record && typeof record === "object" && "err" in record) {
+        const err = record.err;
+        seenErrors.push(err instanceof Error ? err.message : String(err));
+      }
+      originalWarn.apply(daemon.services.log, args);
+    };
+    globalThis.fetch = async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      let bodyText = "";
+      if (typeof init?.body === "string") {
+        bodyText = init.body;
+      } else if (_input instanceof Request && !_input.bodyUsed) {
+        try {
+          bodyText = await _input.text();
+        } catch {
+          bodyText = "";
+        }
+      }
+      const parsed = JSON.parse(bodyText) as { messages?: { content?: string }[] };
+      const content = parsed.messages?.[0]?.content ?? "";
+      if (content.length > 8_000) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 400,
+              message:
+                "request (13857 tokens) exceeds the available context size (8192 tokens), try increasing it",
+              type: "exceed_context_size_error",
+              n_prompt_tokens: 13857,
+              n_ctx: 8192,
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+      const found = sentinels.find((s) => content.includes(s));
+      if (!found) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      const memoryBody = `Durable fact about ${found} that is long enough to pass the body length filter for sure without any issues at all. ${found}.`;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [
+                    {
+                      title: `Overflow memory for ${found}`,
+                      body: memoryBody,
+                      kind: "decision",
+                      why: `This sentinel ${found} marks a chunk that survived overflow splitting.`,
+                      source_quote: found,
+                      depth: 2,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    try {
+      const res = await daemon.fetch("http://x/memory/session-extract", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          session_id: "session-extract-overflow",
+          project_id: "proj",
+        }),
+      });
+
+      const payload = (await res.json()) as {
+        candidates: { title: string; body: string }[];
+      };
+      const coveredSentinels = sentinels.filter((s) =>
+        payload.candidates.some((c) => c.body.includes(s)),
+      );
+      expect(coveredSentinels.length).toBeGreaterThan(0);
+      for (const err of seenErrors) {
+        expect(err).not.toContain("all judges unhealthy");
+      }
+    } finally {
+      daemon.services.log.warn = originalWarn;
+    }
+  });
+
+  test("returns 502 judge_failed when the judge is offline (regression guard)", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    delete process.env.PENUMBRA_JUDGE_BASE_URL;
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatJudgeConfig(
+      daemon.root,
+      "http://route-judge/v1",
+    );
+
+    const longBody = "z".repeat(50_000);
+    daemon.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+       VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-offline', 'agent-response', 'local', '{}', ?)`,
+      ["e-offline-1", "2026-06-11T12:00:00.000Z", "2026-06-11T12:00:00.000Z", longBody],
+    );
+
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(
+        new Response("backend offline", {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+      );
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-offline",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("judge_failed");
+  });
+
+  test("default judge: JSON 400 invalid_request with overflow-like message is judge_failed, not context_overflow", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+    seedT0(daemon.db, "session-extract-invalid-request");
+
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              type: "invalid_request",
+              message: "the request exceeds the available context size for this model",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-invalid-request",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { error: { code: string; message: string } };
+    expect(payload.error.code).toBe("judge_failed");
+  });
+
+  test("returns 502 context_overflow when every chunk overflows and cannot be split further", async () => {
+    const daemon = makeDaemon();
+    handles.push({ db: daemon.db, root: daemon.root });
+    process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
+
+    const longBody = "z".repeat(50_000);
+    daemon.db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+       VALUES (?, ?, ?, 'mcp', 'u1', 'm1', 'session-extract-all-overflow', 'agent-response', 'local', '{}', ?)`,
+      ["e-all-overflow-1", "2026-06-11T13:00:00.000Z", "2026-06-11T13:00:00.000Z", longBody],
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    globalThis.fetch = (): Promise<Response> => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          inFlight--;
+          resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: 400,
+                  message: "request exceeds the available context size",
+                  type: "exceed_context_size_error",
+                  n_prompt_tokens: 100_000,
+                  n_ctx: 8192,
+                },
+              }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }, 10);
+      });
+    };
+
+    const res = await daemon.fetch("http://x/memory/session-extract", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: "session-extract-all-overflow",
+        project_id: "proj",
+      }),
+    });
+
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe("context_overflow");
+    expect(maxInFlight).toBeLessThanOrEqual(1);
   });
 });

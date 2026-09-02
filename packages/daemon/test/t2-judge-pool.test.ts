@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import {
   createJudgePool,
+  isContextOverflow,
   type JudgeEntry,
   type JudgePool,
   type JudgePoolOpts,
@@ -139,7 +140,7 @@ test("judge that fails twice in a tick is skipped for the rest of that tick", as
   await pool.invoke("3");
   await pool.invoke("4");
 
-  expect(seen).toEqual(["a", "b", "a", "b", "b", "b"]);
+  expect(seen).toEqual(["a", "b", "b", "a", "b", "b"]);
 });
 
 test("resetTickHealth re-enables a previously unhealthy judge", async () => {
@@ -163,12 +164,16 @@ test("resetTickHealth re-enables a previously unhealthy judge", async () => {
   await pool.invoke("2");
   seen.length = 0;
   await pool.invoke("3");
+  expect(seen).toEqual(["a", "b"]);
+
+  seen.length = 0;
+  await pool.invoke("4");
   expect(seen).toEqual(["b"]);
 
   pool.resetTickHealth();
   aShouldFail = false;
   seen.length = 0;
-  await pool.invoke("4");
+  await pool.invoke("5");
   expect(seen[0]).toBe("a");
 });
 
@@ -515,4 +520,227 @@ test("programmatic override beats env variable", async () => {
       delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
     }
   }
+});
+
+test("overflow does not poison the single-judge pool", async () => {
+  let call = 0;
+  const fetchCalls: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("solo", "http://solo")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      call++;
+      readRequestBody(init);
+      fetchCalls.push(`call-${String(call)}`);
+      if (call <= 2) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  "request (13857 tokens) exceeds the available context size (8192 tokens), try increasing it",
+                type: "exceed_context_size_error",
+                n_prompt_tokens: 13857,
+                n_ctx: 8192,
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await expectInvokeToThrow(pool, "1", /exceed_context_size_error/);
+  await expectInvokeToThrow(pool, "2", /exceed_context_size_error/);
+  const result = await pool.invoke("3");
+  expect(result).toEqual([]);
+  expect(fetchCalls).toHaveLength(3);
+});
+
+test("sequential invocations after a failed retry start on the next seat, not the seat that just failed", async () => {
+  const seen: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((url, init): Promise<Response> => {
+      readRequestBody(init);
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
+      seen.push(which);
+      if (which === "a") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  "request (13857 tokens) exceeds the available context size (8192 tokens), try increasing it",
+                type: "exceed_context_size_error",
+                n_prompt_tokens: 13857,
+                n_ctx: 8192,
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await pool.invoke("1");
+  await pool.invoke("2");
+  await pool.invoke("3");
+  await pool.invoke("4");
+
+  expect(seen).toEqual(["a", "b", "b", "a", "b", "b"]);
+});
+
+test("isContextOverflow matches exceed_context_size_error and available context size", () => {
+  expect(isContextOverflow("exceed_context_size_error")).toBe(true);
+  expect(isContextOverflow("exceeds the available context size")).toBe(true);
+  expect(isContextOverflow("judge returned 500: backend offline")).toBe(false);
+});
+
+test("non-overflow 400 with overflow-like message text is marked as failure, not exempted", async () => {
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      readRequestBody(init);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              type: "invalid_request",
+              message: "the request exceeds the available context size for this model",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) satisfies FetchMock,
+    unhealthyAfter: 3,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await expectInvokeToThrow(pool, "1", "judge a returned 400");
+  await expectInvokeToThrow(pool, "2", "judge a returned 400");
+  await expectInvokeToThrow(pool, "3", "all judges unhealthy this tick");
+});
+
+test("plain-text overflow 400 does not poison the pool (text fallback classification)", async () => {
+  let call = 0;
+  const fetchCalls: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("solo", "http://solo")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      call++;
+      readRequestBody(init);
+      fetchCalls.push(`call-${String(call)}`);
+      if (call <= 2) {
+        return Promise.resolve(
+          new Response("request (13857 tokens) exceeds the available context size (8192 tokens)", {
+            status: 400,
+            headers: { "content-type": "text/plain" },
+          }),
+        );
+      }
+      return Promise.resolve(okJudgeResponse());
+    }) satisfies FetchMock,
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await expectInvokeToThrow(pool, "1", "exceeds the available context size");
+  await expectInvokeToThrow(pool, "2", "exceeds the available context size");
+  const result = await pool.invoke("3");
+  expect(result).toEqual([]);
+  expect(fetchCalls).toHaveLength(3);
+});
+
+test("concurrent invokes: failed judge retries to healthy judge via local attempted set", async () => {
+  const seen: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((url, init): Promise<Response> => {
+      readRequestBody(init);
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
+      seen.push(which);
+      if (which === "a") return Promise.reject(new Error("a-fail"));
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(okJudgeResponse());
+        }, 50);
+      });
+    }) satisfies FetchMock,
+    unhealthyAfter: 1,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  const results = await Promise.all([pool.invoke("first"), pool.invoke("second")]);
+
+  expect(results).toEqual([[], []]);
+  expect(seen.filter((s) => s === "b").length).toBeGreaterThanOrEqual(2);
+});
+
+test("5xx with overflow phrase in body still counts toward health (not exempt)", async () => {
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((_url, init): Promise<Response> => {
+      readRequestBody(init);
+      return Promise.resolve(
+        new Response("request exceeds the available context size (8192 tokens)", {
+          status: 503,
+          headers: { "content-type": "text/plain" },
+        }),
+      );
+    }) satisfies FetchMock,
+    unhealthyAfter: 3,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await expectInvokeToThrow(pool, "1", "judge a returned 503");
+  await expectInvokeToThrow(pool, "2", "judge a returned 503");
+  await expectInvokeToThrow(pool, "3", "all judges unhealthy this tick");
+});
+
+test("concurrent invokes reserve distinct judges (reserve-then-invoke)", async () => {
+  const seen: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: ((url, init): Promise<Response> => {
+      readRequestBody(init);
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
+      seen.push(which);
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(okJudgeResponse());
+        }, 50);
+      });
+    }) satisfies FetchMock,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await Promise.all([pool.invoke("first"), pool.invoke("second")]);
+
+  expect(seen.length).toBe(2);
+  expect(seen[0]).not.toBe(seen[1]);
 });

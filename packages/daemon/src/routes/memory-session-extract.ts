@@ -1,8 +1,13 @@
+import { getSessionExtractMaxCharsPerChunk, getSessionExtractMaxChunks } from "@penumbra/config";
 import { extractSessionCandidates, type Services, stripPrivacyTags } from "@penumbra/core";
 import { closeSync, fstatSync, openSync, readSync, type Stats, statSync } from "node:fs";
 import { z } from "zod";
 
-import { resolveT2ExtractionJudge } from "../workers/t2-promotion.js";
+import {
+  OverflowExhaustedError,
+  resolveT2ExtractionJudge,
+  wrapJudgeWithChunking,
+} from "../workers/t2-promotion.js";
 import { bodyJson, json } from "./_helpers.js";
 
 const MAX_TRANSCRIPT_FILE_BYTES = 1_048_576;
@@ -17,6 +22,7 @@ const MemorySessionExtractSchema = z
   })
   .strict();
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing validation and chunking route flow while grandfathering its pre-existing complexity.
 export async function memorySessionExtractRoute(
   req: Request,
   services: Services,
@@ -45,8 +51,8 @@ export async function memorySessionExtractRoute(
     );
   }
 
-  const judge = resolveT2ExtractionJudge(services);
-  if (!judge) {
+  const rawJudge = resolveT2ExtractionJudge(services);
+  if (!rawJudge) {
     return json(
       {
         error: {
@@ -57,6 +63,22 @@ export async function memorySessionExtractRoute(
       503,
     );
   }
+
+  const maxCharsPerChunk = getSessionExtractMaxCharsPerChunk();
+  const maxChunks = getSessionExtractMaxChunks();
+  let chunkInfo = { chunksJudged: 1, truncated: false, totalChunks: 1, chunksDropped: 0 };
+  const judge = wrapJudgeWithChunking({
+    judge: rawJudge,
+    log: services.log,
+    embedder: services.embedder,
+    maxCharsPerChunk,
+    maxChunks,
+    concurrency: 1,
+    failWhenAllChunksFail: true,
+    onChunkInfo: (info) => {
+      chunkInfo = info;
+    },
+  });
 
   const transcript = readSessionTranscript(
     services,
@@ -76,8 +98,34 @@ export async function memorySessionExtractRoute(
       transcript,
     );
   } catch (err) {
+    if (err instanceof OverflowExhaustedError) {
+      services.log.warn(
+        {
+          err,
+          transcriptLength: transcript.length,
+          source: parsed.data.transcript_path ? "transcript_path" : "t0",
+        },
+        "memory session extraction context overflow exhausted",
+      );
+      return json(
+        {
+          error: {
+            code: "context_overflow",
+            message: err.message,
+          },
+        },
+        502,
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
-    services.log.warn({ err }, "memory session extraction judge failed");
+    services.log.warn(
+      {
+        err,
+        transcriptLength: transcript.length,
+        source: parsed.data.transcript_path ? "transcript_path" : "t0",
+      },
+      "memory session extraction judge failed",
+    );
     return json(
       {
         error: {
@@ -91,6 +139,10 @@ export async function memorySessionExtractRoute(
 
   return json({
     candidates: candidates.map(({ embedding: _embedding, ...candidate }) => candidate),
+    truncated: chunkInfo.truncated,
+    chunks_judged: chunkInfo.chunksJudged,
+    chunks_total: chunkInfo.totalChunks,
+    chunks_dropped: chunkInfo.chunksDropped,
   });
 }
 

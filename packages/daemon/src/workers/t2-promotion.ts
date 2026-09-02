@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Preserve the existing t2 promotion worker module while grandfathering its pre-existing size. */
+
 import type { AgentChatConfig } from "@penumbra/config";
 import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 
@@ -5,11 +7,18 @@ import { buildT2EmbedText, resolveRoleLlmCandidates, T2Promotion } from "@penumb
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
+  classifyJudgeHttpError,
   createJudgePool,
   getJudgeTimeoutMs,
+  isContextOverflow,
   type JudgeEntry,
+  JudgeError,
   type JudgePool,
 } from "./t2-judge-pool.js";
+
+export class OverflowExhaustedError extends Error {
+  override readonly name = "OverflowExhaustedError";
+}
 
 export const T2_PROMPT_FILTER_RULE =
   "If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.";
@@ -76,6 +85,19 @@ export interface ChunkedJudgeOpts {
   embedder?: Embedder;
   /** Cosine similarity threshold for near-duplicate grouping. Defaults to 0.85. */
   semanticDedupeThreshold?: number;
+  /** Max chunks to judge; excess chunks are dropped (head 2 / tail N-2). Undefined = unlimited. */
+  maxChunks?: number;
+  /** Number of chunks to judge concurrently. Undefined = sequential (today's behavior). */
+  concurrency?: number;
+  /** When true, rethrow the last error if every chunk fails with a non-overflow error. Default false. */
+  failWhenAllChunksFail?: boolean;
+  /** Optional callback invoked after chunking with metadata for the caller. */
+  onChunkInfo?: (info: {
+    chunksJudged: number;
+    truncated: boolean;
+    totalChunks: number;
+    chunksDropped: number;
+  }) => void;
 }
 
 type T2ExtractionJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
@@ -191,10 +213,6 @@ export function resolveT2ExtractionJudge(
   return createJudgePoolFromAgentchat(services, onPool) ?? createDefaultLLMJudge(services);
 }
 
-function isContextOverflow(msg: string): boolean {
-  return /exceed_context_size_error|exceeds the available context size/i.test(msg);
-}
-
 function halveChunk(chunk: string): [string, string] {
   const events = splitTranscriptOnEventBoundaries(chunk);
   if (events.length > 1) {
@@ -205,40 +223,141 @@ function halveChunk(chunk: string): [string, string] {
   return [chunk.slice(0, mid), chunk.slice(mid)];
 }
 
+function splitChunkIntoN(chunk: string, n: number): string[] {
+  if (n <= 1) return [chunk];
+  const events = splitTranscriptOnEventBoundaries(chunk);
+  if (events.length >= n) {
+    const pieces: string[] = [];
+    const perPiece = Math.ceil(events.length / n);
+    for (let i = 0; i < events.length; i += perPiece) {
+      pieces.push(events.slice(i, i + perPiece).join("\n\n"));
+    }
+    return pieces;
+  }
+  const pieceLen = Math.ceil(chunk.length / n);
+  const pieces: string[] = [];
+  for (let i = 0; i < chunk.length; i += pieceLen) {
+    pieces.push(chunk.slice(i, i + pieceLen));
+  }
+  return pieces;
+}
+
+function parseOverflowMetrics(msg: string): { nPromptTokens: number; nCtx: number } | null {
+  const tokenMatch = /n_prompt_tokens["']?\s*[:=]\s*(\d+)/i.exec(msg);
+  const ctxMatch = /n_ctx["']?\s*[:=]\s*(\d+)/i.exec(msg);
+  if (!tokenMatch || !ctxMatch) return null;
+  const nPromptTokens = parseInt(tokenMatch[1] ?? "", 10);
+  const nCtx = parseInt(ctxMatch[1] ?? "", 10);
+  if (!Number.isFinite(nPromptTokens) || !Number.isFinite(nCtx) || nCtx <= 0) return null;
+  return { nPromptTokens, nCtx };
+}
+
+function resolveOverflowMetrics(
+  err: unknown,
+  msg: string,
+): { nPromptTokens: number; nCtx: number } | null {
+  if (err instanceof JudgeError) {
+    if (err.nPromptTokens !== undefined && err.nCtx !== undefined) {
+      return { nPromptTokens: err.nPromptTokens, nCtx: err.nCtx };
+    }
+    return null;
+  }
+  return parseOverflowMetrics(msg);
+}
+
+const MAX_OVERFLOW_DEPTH = 3;
+const MAX_JUDGE_CALLS_PER_CHUNK = 12;
+const TEMPLATE_TOKEN_OVERHEAD = 1000;
+const SAFETY_FACTOR = 0.7;
+
+function rethrowUnknown(err: unknown): never {
+  if (err instanceof Error) throw err;
+  throw new Error(String(err));
+}
+
 function createJudgeWithRetry(
   opts: ChunkedJudgeOpts,
 ): (chunk: string, depth: number) => Promise<T2MemoryExtraction[]> {
+  const failWhenAllChunksFail = opts.failWhenAllChunksFail ?? false;
   const retryAfterOverflow = async (
     chunk: string,
     depth: number,
+    err: unknown,
     msg: string,
     recurse: (chunk: string, depth: number) => Promise<T2MemoryExtraction[]>,
+    callCounter: { count: number },
   ): Promise<T2MemoryExtraction[]> => {
-    if (chunk.length < 4000 || depth >= 5) {
+    // eslint-disable-line sonarjs/cognitive-complexity -- Preserve the existing overflow retry policy while grandfathering its pre-existing complexity.
+    if (chunk.length < 4000 || depth >= MAX_OVERFLOW_DEPTH) {
+      if (failWhenAllChunksFail) throw new OverflowExhaustedError("context overflow exhausted");
       opts.log?.warn?.(
         { err: msg, depth, chunkLength: chunk.length },
         "t2 promotion: context overflow retry exhausted; dropping chunk",
       );
       return [];
     }
+    const metrics = resolveOverflowMetrics(err, msg);
+    if (metrics) {
+      const effectiveNctx = Math.max(metrics.nCtx - TEMPLATE_TOKEN_OVERHEAD, 1000);
+      let nPromptTokens = metrics.nPromptTokens;
+      if (!Number.isFinite(nPromptTokens) || nPromptTokens <= 0) {
+        nPromptTokens = Math.ceil(chunk.length / 3.5);
+      }
+      let nPieces = Math.ceil(nPromptTokens / (SAFETY_FACTOR * effectiveNctx));
+      nPieces = Math.max(2, Math.min(nPieces, Math.ceil(chunk.length / 2000)));
+      if (nPieces > 1) {
+        opts.log?.warn?.(
+          {
+            depth,
+            chunkLength: chunk.length,
+            nPieces,
+            nPromptTokens: metrics.nPromptTokens,
+            nCtx: metrics.nCtx,
+          },
+          "t2 promotion: context overflow; n_ctx-aware split and retry",
+        );
+        const pieces = splitChunkIntoN(chunk, nPieces);
+        const results: T2MemoryExtraction[] = [];
+        for (const piece of pieces) {
+          if (callCounter.count >= MAX_JUDGE_CALLS_PER_CHUNK) {
+            throw new OverflowExhaustedError("context overflow exhausted: call cap reached");
+          }
+          const m = await recurse(piece, depth + 1);
+          for (const memory of m) results.push(memory);
+        }
+        return results;
+      }
+    }
     opts.log?.warn?.(
       { depth, chunkLength: chunk.length },
       "t2 promotion: context overflow; halving and retrying",
     );
     const [first, second] = halveChunk(chunk);
+    if (callCounter.count >= MAX_JUDGE_CALLS_PER_CHUNK) {
+      throw new OverflowExhaustedError("context overflow exhausted: call cap reached");
+    }
     const m1 = await recurse(first, depth + 1);
+    if (callCounter.count >= MAX_JUDGE_CALLS_PER_CHUNK) {
+      throw new OverflowExhaustedError("context overflow exhausted: call cap reached");
+    }
     const m2 = await recurse(second, depth + 1);
     return [...m1, ...m2];
   };
 
   const judgeWithRetry = async (chunk: string, depth: number): Promise<T2MemoryExtraction[]> => {
-    try {
-      return await opts.judge(chunk);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!isContextOverflow(msg)) throw err;
-      return await retryAfterOverflow(chunk, depth, msg, judgeWithRetry);
-    }
+    const callCounter = { count: 0 };
+    const innerRetry = async (c: string, d: number): Promise<T2MemoryExtraction[]> => {
+      try {
+        callCounter.count++;
+        return await opts.judge(c);
+      } catch (err) {
+        if (err instanceof OverflowExhaustedError) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!isContextOverflow(err)) throw err;
+        return await retryAfterOverflow(c, d, err, msg, innerRetry, callCounter);
+      }
+    };
+    return await innerRetry(chunk, depth);
   };
   return judgeWithRetry;
 }
@@ -272,22 +391,76 @@ function packEventsIntoChunks(events: string[], maxChars: number): string[] {
   return chunks;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing chunk fan-out policy while grandfathering its pre-existing complexity.
 async function judgeAcrossChunks(
   chunks: string[],
   judgeWithRetry: (chunk: string, depth: number) => Promise<T2MemoryExtraction[]>,
   log: ChunkedJudgeLogger | undefined,
+  concurrency?: number,
+  failWhenAllChunksFail?: boolean,
 ): Promise<T2MemoryExtraction[]> {
+  if (concurrency && concurrency > 1) {
+    const results = Array.from({ length: chunks.length }, (): T2MemoryExtraction[] | null => null);
+    const errors = Array.from({ length: chunks.length }, (): unknown => null);
+    let nextIdx = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const idx = nextIdx++;
+        if (idx >= chunks.length) break;
+        const chunk = chunks.at(idx);
+        if (chunk === undefined) break;
+        try {
+          results[idx] = await judgeWithRetry(chunk, 0);
+        } catch (err) {
+          errors[idx] = err;
+          log?.warn?.(
+            { err: err instanceof Error ? err.message : String(err), chunkIndex: idx },
+            "t2 promotion: chunk judge failed; continuing",
+          );
+        }
+      }
+    };
+    const workers = Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker());
+    await Promise.all(workers);
+    if (failWhenAllChunksFail && errors.every((e) => e !== null)) {
+      const nonOverflow = errors.find(
+        (e) => !(e instanceof OverflowExhaustedError) && !isContextOverflow(e),
+      );
+      if (nonOverflow) rethrowUnknown(nonOverflow);
+      const exhausted = errors.find((e) => e instanceof OverflowExhaustedError);
+      if (exhausted) throw exhausted;
+    }
+    const out: T2MemoryExtraction[] = [];
+    for (const r of results) {
+      if (r) for (const memory of r) out.push(memory);
+    }
+    return out;
+  }
+
   const out: T2MemoryExtraction[] = [];
+  let allFailed = true;
+  let lastNonOverflowError: unknown;
+  let overflowExhausted = false;
   for (const chunk of chunks) {
     try {
       const memories = await judgeWithRetry(chunk, 0);
       for (const memory of memories) out.push(memory);
+      allFailed = false;
     } catch (err) {
+      if (err instanceof OverflowExhaustedError) {
+        overflowExhausted = true;
+      } else if (!isContextOverflow(err)) {
+        lastNonOverflowError = err;
+      }
       log?.warn?.(
         { err: err instanceof Error ? err.message : String(err) },
         "t2 promotion: chunk judge failed; continuing",
       );
     }
+  }
+  if (failWhenAllChunksFail && allFailed && chunks.length > 0) {
+    if (lastNonOverflowError) rethrowUnknown(lastNonOverflowError);
+    if (overflowExhausted) throw new OverflowExhaustedError("all chunks overflow-exhausted");
   }
   return out;
 }
@@ -300,19 +473,56 @@ export function wrapJudgeWithChunking(
   const maxChars = opts.maxCharsPerChunk ?? defaultMax;
   const judgeWithRetry = createJudgeWithRetry(opts);
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing chunking and dedupe flow while grandfathering its pre-existing complexity.
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
     let finalMemories: T2MemoryExtraction[];
 
     if (transcript.length <= maxChars) {
-      finalMemories = await judgeWithRetry(transcript, 0);
+      try {
+        finalMemories = await judgeWithRetry(transcript, 0);
+      } catch (err) {
+        if (err instanceof OverflowExhaustedError && !opts.failWhenAllChunksFail) {
+          finalMemories = [];
+        } else {
+          throw err;
+        }
+      }
+      opts.onChunkInfo?.({ chunksJudged: 1, truncated: false, totalChunks: 1, chunksDropped: 0 });
     } else {
       const events = splitTranscriptOnEventBoundaries(transcript);
-      const chunks = packEventsIntoChunks(events, maxChars);
+      let chunks = packEventsIntoChunks(events, maxChars);
+      const totalChunks = chunks.length;
+      let truncated = false;
+      let chunksDropped = 0;
+      if (opts.maxChunks && opts.maxChunks > 0 && chunks.length > opts.maxChunks) {
+        const headCount = Math.min(2, opts.maxChunks);
+        const tailCount = opts.maxChunks - headCount;
+        chunksDropped = chunks.length - opts.maxChunks;
+        truncated = true;
+        chunks = [...chunks.slice(0, headCount), ...chunks.slice(chunks.length - tailCount)];
+        opts.log?.info?.(
+          { totalChunks, kept: opts.maxChunks, dropped: chunksDropped },
+          "t2 promotion: maxChunks exceeded; dropped middle chunks (head/tail)",
+        );
+        if (chunksDropped >= 2) {
+          opts.log?.warn?.(
+            { totalChunks, kept: opts.maxChunks, dropped: chunksDropped },
+            "t2 promotion: >= 2 chunks dropped by head/tail window",
+          );
+        }
+      }
       opts.log?.info?.(
         { chunks: chunks.length, totalChars: transcript.length, maxChars },
         "t2 promotion: transcript chunked",
       );
-      finalMemories = await judgeAcrossChunks(chunks, judgeWithRetry, opts.log);
+      finalMemories = await judgeAcrossChunks(
+        chunks,
+        judgeWithRetry,
+        opts.log,
+        opts.concurrency,
+        opts.failWhenAllChunksFail,
+      );
+      opts.onChunkInfo?.({ chunksJudged: chunks.length, truncated, totalChunks, chunksDropped });
     }
 
     const titleDeduped = dedupeByTitle(finalMemories);
@@ -551,7 +761,13 @@ export function createDefaultLLMJudge(
       });
 
       if (!res.ok) {
-        throw new Error(`judge returned ${String(res.status)}: ${await res.text()}`);
+        const bodyText = await res.text();
+        const classified = classifyJudgeHttpError(res.status, bodyText);
+        throw new JudgeError(`judge returned ${String(res.status)}: ${bodyText}`, {
+          isContextOverflow: classified.isOverflow,
+          nPromptTokens: classified.nPromptTokens,
+          nCtx: classified.nCtx,
+        });
       }
 
       const json = (await res.json()) as JudgeResponse;

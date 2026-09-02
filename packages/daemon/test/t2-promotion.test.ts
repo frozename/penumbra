@@ -5,10 +5,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createJudgePool, type JudgeEntry } from "../src/workers/t2-judge-pool.js";
 import {
   createDefaultLLMJudge,
   createT2PromotionWorker,
   extractT2JudgeRequestExtras,
+  parseJudgeResponse,
   resolveT2ExtractionJudge,
   stripJsonFence,
   wrapJudgeWithChunking,
@@ -1174,4 +1176,372 @@ test("createDefaultLLMJudge enforces PENUMBRA_T2_JUDGE_TIMEOUT_MS", async () => 
     if (prevTimeout === undefined) delete process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS;
     else process.env.PENUMBRA_T2_JUDGE_TIMEOUT_MS = prevTimeout;
   }
+});
+
+test("wrapJudgeWithChunking n_ctx-aware split uses ceil(n_prompt_tokens / (0.7 * effective_n_ctx)) pieces", async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100000,
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
+      seen.push(transcript);
+      if (transcript.length > 5000) {
+        throw new Error(
+          "request (10000 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:10000 n_ctx:8192",
+        );
+      }
+      return Promise.resolve([
+        {
+          title: "Found " + transcript.substring(0, 10).trim(),
+          body: transcript.substring(0, 80).trim() || "body",
+          kind: "fact",
+        },
+      ]);
+    },
+  });
+
+  const events = Array.from(
+    { length: 20 },
+    (_, i) => `${i % 2 === 0 ? "User" : "Assistant"}: ${"a".repeat(400)}`,
+  );
+  const transcript = events.join("\n\n");
+
+  await judge(transcript);
+
+  expect(seen.length).toBe(3);
+  expect(seen[0]).toBe(transcript);
+  const splitPieces = seen.slice(1);
+  expect(splitPieces.length).toBe(2);
+  for (const piece of splitPieces) {
+    expect(piece.length).toBeLessThanOrEqual(5000);
+  }
+});
+
+test("wrapJudgeWithChunking falls back to halving when n_prompt_tokens/n_ctx absent", async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100000,
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
+      seen.push(transcript);
+      if (transcript.length > 5000) {
+        throw new Error("exceeds the available context size");
+      }
+      return Promise.resolve([
+        {
+          title: "Found " + transcript.substring(0, 10).trim(),
+          body: transcript.substring(0, 80).trim() || "body",
+          kind: "fact",
+        },
+      ]);
+    },
+  });
+
+  const events = Array.from(
+    { length: 4 },
+    (_, i) => `${i % 2 === 0 ? "User" : "Assistant"}: ${"a".repeat(2000)}`,
+  );
+  const transcript = events.join("\n\n");
+
+  await judge(transcript);
+
+  expect(seen.length).toBe(3);
+  expect(seen[0]).toBe(transcript);
+  expect(seen[1]).toBe(events.slice(0, 2).join("\n\n"));
+  expect(seen[2]).toBe(events.slice(2).join("\n\n"));
+});
+
+test("wrapJudgeWithChunking maxChunks drops middle chunks (head/tail) and logs dropped count", async () => {
+  const seen: string[] = [];
+  const logCalls: { dropped?: number }[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100,
+    maxChunks: 4,
+    log: {
+      info: (...args: unknown[]): void => {
+        const record = args[0];
+        if (record && typeof record === "object" && "dropped" in record) {
+          logCalls.push({ dropped: (record as { dropped: number }).dropped });
+        }
+      },
+      warn: () => undefined,
+    },
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => {
+      seen.push(transcript);
+      return Promise.resolve([
+        {
+          title: `t-${transcript.substring(0, 5)}`,
+          body: "body that is long enough to pass the filter for sure without any issues here",
+          kind: "fact",
+        },
+      ]);
+    },
+  });
+
+  const events = Array.from({ length: 20 }, (_, i) => `User: ${"x".repeat(90)}s${String(i)}`);
+  const transcript = events.join("\n\n");
+
+  await judge(transcript);
+
+  expect(seen.length).toBe(4);
+  expect(logCalls.length).toBeGreaterThanOrEqual(1);
+  expect(logCalls[0]?.dropped).toBeGreaterThan(0);
+});
+
+test("wrapJudgeWithChunking concurrency preserves output order by chunk index", async () => {
+  let call = 0;
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    concurrency: 2,
+    judge: (): Promise<T2MemoryExtraction[]> => {
+      call++;
+      return Promise.resolve(
+        call === 1
+          ? [
+              {
+                title: "A",
+                body: "body-a that is long enough to pass the filter for sure",
+                kind: "fact",
+              },
+            ]
+          : call === 2
+            ? [
+                {
+                  title: "B",
+                  body: "body-b that is long enough to pass the filter for sure",
+                  kind: "fact",
+                },
+              ]
+            : [
+                {
+                  title: "C",
+                  body: "body-c that is long enough to pass the filter for sure",
+                  kind: "fact",
+                },
+              ],
+      );
+    },
+  });
+
+  const transcript = [
+    "User: aaa",
+    "Assistant: bbb",
+    "User: ccc",
+    "Assistant: ddd",
+    "User: eee",
+    "Assistant: fff",
+  ].join("\n\n");
+  const out = await judge(transcript);
+
+  expect(out.length).toBe(3);
+  expect(out.map((m) => m.title)).toEqual(["A", "B", "C"]);
+});
+
+test("wrapJudgeWithChunking failWhenAllChunksFail rethrows when set and all chunks fail with non-overflow", async () => {
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    failWhenAllChunksFail: true,
+    judge: (): Promise<T2MemoryExtraction[]> => {
+      throw new Error("backend offline");
+    },
+  });
+
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
+  let caught: unknown;
+  try {
+    await judge(transcript);
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toContain("backend offline");
+});
+
+test("wrapJudgeWithChunking failWhenAllChunksFail=false swallows non-overflow errors (default)", async () => {
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    judge: (): Promise<T2MemoryExtraction[]> => {
+      throw new Error("backend offline");
+    },
+  });
+
+  const transcript = ["User: aaa", "Assistant: bbb", "User: ccc", "Assistant: ddd"].join("\n\n");
+  const out = await judge(transcript);
+  expect(out).toEqual([]);
+});
+
+test("a later rollup in the same tick is still judged after two overflows (pool not poisoned)", async () => {
+  let call = 0;
+  const makeJudgeEntry = (name: string, baseUrl: string): JudgeEntry => ({
+    name,
+    baseUrl,
+    apiKey: "",
+    model: "test-model",
+  });
+  const pool = createJudgePool({
+    judges: [makeJudgeEntry("solo", "http://solo")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: (_url, init): Promise<Response> => {
+      call++;
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        messages?: { content?: string }[];
+      };
+      const content = body.messages?.[0]?.content ?? "";
+      if (content.length > 5000) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
+                type: "exceed_context_size_error",
+                n_prompt_tokens: 13857,
+                n_ctx: 8192,
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
+          status: 200,
+        }),
+      );
+    },
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100000,
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => pool.invoke(transcript),
+  });
+
+  const largeTranscript = "User: " + "a".repeat(10000);
+  const r1 = await judge(largeTranscript);
+  expect(r1).toEqual([]);
+  const r2 = await judge(largeTranscript);
+  expect(r2).toEqual([]);
+  const r3 = await judge(largeTranscript);
+  expect(r3).toEqual([]);
+});
+
+test("wrapJudgeWithChunking caps total judge calls on hostile overflow metrics", async () => {
+  let callCount = 0;
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100000,
+    failWhenAllChunksFail: true,
+    judge: (): Promise<T2MemoryExtraction[]> => {
+      callCount++;
+      throw new Error(
+        JSON.stringify({
+          error: {
+            type: "exceed_context_size_error",
+            message: "context overflow",
+            n_prompt_tokens: 1_000_000_000,
+            n_ctx: 1,
+          },
+        }),
+      );
+    },
+  });
+
+  const transcript = "User: " + "a".repeat(10000);
+  let caught: unknown;
+  try {
+    await judge(transcript);
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(callCount).toBeLessThanOrEqual(12);
+});
+
+test("pool not poisoned: a tiny transcript after overflows yields a real memory candidate", async () => {
+  let call = 0;
+  const makeJudgeEntry = (name: string, baseUrl: string): JudgeEntry => ({
+    name,
+    baseUrl,
+    apiKey: "",
+    model: "test-model",
+  });
+  const pool = createJudgePool({
+    judges: [makeJudgeEntry("solo", "http://solo")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: (_url, init): Promise<Response> => {
+      call++;
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        messages?: { content?: string }[];
+      };
+      const content = body.messages?.[0]?.content ?? "";
+      if (content.length > 5000) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
+                type: "exceed_context_size_error",
+                n_prompt_tokens: 13857,
+                n_ctx: 8192,
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      if (content === "User: small") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      memories: [
+                        {
+                          title: "Tiny Candidate",
+                          body: "A durable fact from a tiny transcript that proves the pool is still healthy after overflows.",
+                          kind: "decision",
+                          why: "Positive control for pool health after overflow exhaustion.",
+                          depth: 2,
+                        },
+                      ],
+                    }),
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
+          status: 200,
+        }),
+      );
+    },
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: parseJudgeResponse,
+  });
+
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100000,
+    judge: (transcript: string): Promise<T2MemoryExtraction[]> => pool.invoke(transcript),
+  });
+
+  const largeTranscript = "User: " + "a".repeat(10000);
+  const r1 = await judge(largeTranscript);
+  expect(r1).toEqual([]);
+  const r2 = await judge(largeTranscript);
+  expect(r2).toEqual([]);
+  const r3 = await judge(largeTranscript);
+  expect(r3).toEqual([]);
+  const r4 = await judge("User: small");
+  expect(r4.length).toBeGreaterThanOrEqual(1);
+  expect(r4.some((m) => m.title === "Tiny Candidate")).toBe(true);
 });

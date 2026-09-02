@@ -1153,6 +1153,18 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "HTTP request timeout in milliseconds for the t2 judge pool (workers/t2-judge-pool.ts).",
   },
+  PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK: {
+    schema: PosInt,
+    default: 20_000,
+    description:
+      "Max characters per transcript chunk for POST /memory/session-extract judging (routes/memory-session-extract.ts). Sized for 8192-token judges at ~3 chars/token minus the 3332-char template and output headroom.",
+  },
+  PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS: {
+    schema: PosInt,
+    default: 8,
+    description:
+      "Max chunks judged per POST /memory/session-extract call; applied as head 2 / tail (N-2) after packing (routes/memory-session-extract.ts).",
+  },
 
   // ── notification sweeper ────────────────────────────────────────────
   PENUMBRA_PENDING_ACTION_TTL_MS: {
@@ -1295,4 +1307,12 @@ export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env):
  */
 export function getMcpResponseBudgetTokens(env: NodeJS.ProcessEnv = process.env): number | null {
   return (parseEnv(env).PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS as number | undefined) ?? null;
+}
+
+export function getSessionExtractMaxCharsPerChunk(env: NodeJS.ProcessEnv = process.env): number {
+  return parseEnv(env).PENUMBRA_SESSION_EXTRACT_MAX_CHARS_PER_CHUNK as number;
+}
+
+export function getSessionExtractMaxChunks(env: NodeJS.ProcessEnv = process.env): number {
+  return parseEnv(env).PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS as number;
 }

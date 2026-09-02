@@ -4,6 +4,8 @@ export {
   type EnvConfig,
   EnvSchema,
   getMcpResponseBudgetTokens,
+  getSessionExtractMaxCharsPerChunk,
+  getSessionExtractMaxChunks,
   isMcpInvocationLogEnabled,
   parseEnv,
 } from "./env.js";
