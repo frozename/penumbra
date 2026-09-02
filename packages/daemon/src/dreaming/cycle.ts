@@ -1365,11 +1365,15 @@ async function fetchRewriteFromLlm(
 
   const passes = ctx.gateEnabled ? isWebSearchable(rewriteResult.value.query) : { ok: true };
   if (!passes.ok) {
-    recordRewriteFailure(db, ctx, {
-      memoryId: memory.memory_id,
-      latencyMs: rewriteLatencyMs,
+    ctx.emitDreamEvent("dream_p4_query_rejected_unsearchable", {
+      t2_memory_id: memory.memory_id,
+      stage: "post_rewrite",
+      cache_hit: false,
+      model: servingCandidate.model,
+      seat: servingCandidate.name,
+      host: new URL(servingCandidate.baseUrl).hostname,
+      latency_ms: rewriteLatencyMs,
       reason: passes.reason ?? "rejected_unsearchable",
-      candidate: servingCandidate,
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }

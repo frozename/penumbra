@@ -44,6 +44,8 @@ async function routeBody(services: Services): Promise<{
   cycles_crash_status: string;
   query_rewrite_failed_24h: number;
   query_rewrite_failed_recent: number;
+  query_rewrite_rejected_24h: number;
+  query_rewrite_rejected_recent: number;
   query_rewritten_24h: number;
   query_rewrite_status: string;
   cycles_crashed_24h: number;
@@ -67,6 +69,8 @@ async function routeBody(services: Services): Promise<{
     cycles_crash_status: string;
     query_rewrite_failed_24h: number;
     query_rewrite_failed_recent: number;
+    query_rewrite_rejected_24h: number;
+    query_rewrite_rejected_recent: number;
     query_rewritten_24h: number;
     query_rewrite_status: string;
     cycles_crashed_24h: number;
@@ -139,6 +143,44 @@ describe("dreamingHealthRoute", () => {
     expect(body.query_rewritten_24h).toBe(5);
     expect(body).not.toHaveProperty("query_rewrite_degraded_24h");
     expect(body.alerts).toContain("dream.health.rewrite_failing");
+  });
+
+  test("counts only post-rewrite unsearchable rejections and alerts without rewrite_failing", async () => {
+    const services = makeServices();
+    const log = new DispatchEventLog(services.db);
+    const ts = new Date().toISOString();
+    for (let i = 0; i < 12; i += 1) {
+      log.record({
+        handoff_id: `dream-cycle-post-reject-${String(i)}`,
+        source: "daemon",
+        kind: "dream_p4_query_rejected_unsearchable",
+        ts,
+        meta: {
+          stage: "post_rewrite",
+          model: "rewriter-a",
+          reason: "code_identifier",
+          cache_hit: false,
+        },
+      });
+    }
+    log.record({
+      handoff_id: "dream-cycle-pre-reject",
+      source: "daemon",
+      kind: "dream_p4_query_rejected_unsearchable",
+      ts,
+      meta: { model: "memory-title", reason: "conventional_commit", cache_hit: false },
+    });
+
+    const body = await routeBody(services);
+
+    expect(body.query_rewrite_failed_24h).toBe(0);
+    expect(body.query_rewrite_failed_recent).toBe(0);
+    expect(body.query_rewrite_rejected_24h).toBe(12);
+    expect(body.query_rewrite_rejected_recent).toBe(12);
+    expect(body.query_rewrite_status).toBe("unknown");
+    expect(body.alerts).toContain("dream.health.rewrite_unsearchable");
+    expect(body.alerts).not.toContain("dream.health.rewrite_failing");
+    expect(body.subsystem_health).toBeNull();
   });
 
   test("marks recovered query rewrite failures without stale rewrite alert", async () => {

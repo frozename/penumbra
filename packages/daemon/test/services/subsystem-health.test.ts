@@ -166,6 +166,39 @@ describe("subsystem health", () => {
     expect(computeSubsystemAlerts(db, opts)).not.toContain("dream.health.rewrite_failing");
   });
 
+  test("alerts on recent unsearchable post-rewrite volume without marking rewrite seat failing", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 0,
+      queryRewriteRejected24h: 12,
+      queryRewriteRejectedRecent: 12,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_unsearchable");
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
+    expect(readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM)).toBeNull();
+  });
+
+  test("keeps genuine query rewrite failures on the rewrite_failing alert", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 12,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 12,
+      queryRewriteRejected24h: 0,
+      queryRewriteRejectedRecent: 0,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_failing");
+    expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+  });
+
   test("alerts when a required LLM role has zero holders", () => {
     const db = setupDb();
 

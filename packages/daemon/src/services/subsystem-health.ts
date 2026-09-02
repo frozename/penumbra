@@ -6,6 +6,8 @@ const PRIMARY_TIER = "primary";
 export const DREAM_QUERY_REWRITE_SUBSYSTEM = "dream.query_rewrite";
 const PERMANENT_FALLBACK_AFTER_MS = 6 * 60 * 60_000;
 const QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD = 0.9;
+// Post-rewrite unsearchable output is content degradation, not a seat-liveness failure.
+const QUERY_REWRITE_UNSEARCHABLE_RATE_ALERT_THRESHOLD = 0.9;
 const QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD = 3;
 
 export interface LlmRoleFloorSpec {
@@ -70,7 +72,10 @@ export interface ComputeSubsystemAlertsOptions {
   queryRewriteFailed24h?: number;
   queryRewriteSuccess24h?: number;
   queryRewriteFailedRecent?: number;
+  queryRewriteRejected24h?: number;
+  queryRewriteRejectedRecent?: number;
   queryRewriteFailureRateAlertThreshold?: number;
+  queryRewriteUnsearchableRateAlertThreshold?: number;
   queryRewriteConsecutiveFailuresAlertThreshold?: number;
   requiredLlmRoleFloors?: LlmRoleFloorSpec[];
   agentchatConfig?: LlmRoleAgentchatConfig | null;
@@ -272,10 +277,18 @@ export function computeSubsystemAlerts(
   const rewriteFailures = opts.queryRewriteFailed24h ?? 0;
   const rewriteSuccesses = opts.queryRewriteSuccess24h ?? 0;
   const rewriteFailuresRecent = opts.queryRewriteFailedRecent;
+  const rewriteRejected = opts.queryRewriteRejected24h ?? 0;
+  const rewriteRejectedRecent = opts.queryRewriteRejectedRecent ?? 0;
   const rewriteAttempts = rewriteFailures + rewriteSuccesses;
   const rewriteFailureRate = rewriteAttempts > 0 ? rewriteFailures / rewriteAttempts : 0;
+  const rewriteSearchabilityAttempts = rewriteRejected + rewriteSuccesses;
+  const rewriteUnsearchableRate =
+    rewriteSearchabilityAttempts > 0 ? rewriteRejected / rewriteSearchabilityAttempts : 0;
   const rewriteFailureRateAlertThreshold =
     opts.queryRewriteFailureRateAlertThreshold ?? QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD;
+  const rewriteUnsearchableRateAlertThreshold =
+    opts.queryRewriteUnsearchableRateAlertThreshold ??
+    QUERY_REWRITE_UNSEARCHABLE_RATE_ALERT_THRESHOLD;
   const rewriteConsecutiveFailuresAlertThreshold =
     opts.queryRewriteConsecutiveFailuresAlertThreshold ??
     QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
@@ -290,6 +303,14 @@ export function computeSubsystemAlerts(
 
   if (rewriteVolumeFailure || rewriteConsecutiveFailure) {
     alerts.push("dream.health.rewrite_failing");
+  }
+
+  if (
+    rewriteRejected > 0 &&
+    rewriteRejectedRecent > 0 &&
+    rewriteUnsearchableRate >= rewriteUnsearchableRateAlertThreshold
+  ) {
+    alerts.push("dream.health.rewrite_unsearchable");
   }
 
   if (

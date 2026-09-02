@@ -116,6 +116,17 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       )
       .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
   ).c;
+  const query_rewrite_rejected_24h = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND json_extract(meta_json, '$.stage') = 'post_rewrite'`,
+      )
+      .get(yesterdayIso, "dream_p4_query_rejected_unsearchable") as { c: number }
+  ).c;
   const query_rewrite_failed_recent = (
     db
       .prepare("SELECT COUNT(*) as c FROM dispatch_events WHERE ts >= ? AND kind = ?")
@@ -131,6 +142,17 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
       .get(recencyIso, "dream_p4_query_rewritten") as { c: number }
+  ).c;
+  const query_rewrite_rejected_recent = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND json_extract(meta_json, '$.stage') = 'post_rewrite'`,
+      )
+      .get(recencyIso, "dream_p4_query_rejected_unsearchable") as { c: number }
   ).c;
   const subsystemHealth = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
   const subsystem_health = subsystemHealth
@@ -159,6 +181,8 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       queryRewriteFailed24h: query_rewrite_failed_24h,
       queryRewriteSuccess24h: query_rewritten_24h,
       queryRewriteFailedRecent: query_rewrite_failed_recent,
+      queryRewriteRejected24h: query_rewrite_rejected_24h,
+      queryRewriteRejectedRecent: query_rewrite_rejected_recent,
     }),
   );
 
@@ -178,6 +202,8 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
     query_rewritten_24h,
     query_rewrite_failed_recent,
     query_rewritten_recent,
+    query_rewrite_rejected_24h,
+    query_rewrite_rejected_recent,
     query_rewrite_status: statusFromRecentFailure(
       query_rewrite_failed_24h,
       query_rewrite_failed_recent,

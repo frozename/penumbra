@@ -1884,7 +1884,7 @@ it("P4 falls back to title when the rewriter returns an empty response", async (
   expect(events.some((entry) => entry.kind === "dream_p4_query_rewrite_failed")).toBe(true);
 });
 
-it("P4 rewritten query rejected by guard falls back to memory title and does not cache rejected rewrite", async () => {
+it("P4 rewritten query rejected by guard is tracked as unsearchable content, not seat failure", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-defense";
   const memoryId = seedT2MemoryWithProjectId(db, {
@@ -1905,8 +1905,8 @@ it("P4 rewritten query rejected by guard falls back to memory title and does not
     llmInvoke: () =>
       Promise.resolve({
         ok: true as const,
-        value: { kind: "query", query: "feat(daemon-workers): phase 5 supervisor" },
-        raw: '{"kind":"query","query":"feat(daemon-workers): phase 5 supervisor"}',
+        value: { kind: "query", query: "parseUpdatedAtMs stable input handling behavior" },
+        raw: '{"kind":"query","query":"parseUpdatedAtMs stable input handling behavior"}',
       }),
   });
 
@@ -1927,20 +1927,37 @@ it("P4 rewritten query rejected by guard falls back to memory title and does not
   ).n;
   expect(cacheCount).toBe(0);
 
-  const rewriteFailedEvent = events.find((entry) => entry.kind === "dream_p4_query_rewrite_failed");
-  expect(rewriteFailedEvent).toBeDefined();
-
   const unsearchableEvents = events.filter(
     (entry) => entry.kind === "dream_p4_query_rejected_unsearchable",
   );
-  expect(unsearchableEvents.length).toBe(0);
+  expect(unsearchableEvents.length).toBe(1);
+  expect(unsearchableEvents[0]?.meta).toMatchObject({
+    t2_memory_id: memoryId,
+    stage: "post_rewrite",
+    cache_hit: false,
+    model: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    seat: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    host: "127.0.0.1",
+    reason: "code_identifier",
+  });
+  expect(typeof (unsearchableEvents[0]?.meta as { latency_ms?: unknown })?.latency_ms).toBe(
+    "number",
+  );
 
   const rewriteFailedEvents = events.filter(
     (entry) => entry.kind === "dream_p4_query_rewrite_failed",
   );
-  expect(rewriteFailedEvents.length).toBe(1);
+  expect(rewriteFailedEvents.length).toBe(0);
   const skippedEvents = events.filter((entry) => entry.kind === "dream_p4_query_skipped");
   expect(skippedEvents.length).toBe(0);
+  const healthRow = db
+    .query<{ consecutive_failures: number; last_failure_reason: string }, []>(
+      `SELECT consecutive_failures, last_failure_reason
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow).toBeNull();
 });
 
 // ── P6 brief dedup ─────────────────────────────────────────────────────────
