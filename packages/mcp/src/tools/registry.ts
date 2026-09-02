@@ -1078,7 +1078,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   dispatch_land: {
     descriptor: {
       description:
-        "Land the handoff's recorded branch_name via curated squash or ff-only flow. verdict_unverified auto-passes when dispatch_audit is trustworthy+accept; force remains a manual override.",
+        "Land the handoff's recorded branch_name via curated squash or ff-only flow. Missing/error verdicts can auto-pass with dispatch_audit trustworthy+accept; explicit typecheck/tests fail at the branch head requires force.",
       inputSchema: DispatchLandInputShape,
     },
     makeHandler: dispatchLandHandler as unknown as ToolDef["makeHandler"],

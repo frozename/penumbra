@@ -23,7 +23,7 @@ export const DispatchLandInputShape = {
     .optional()
     .default(false)
     .describe(
-      "Bypass verdict_unverified gate manually. Default false. Without force, the gate auto-passes when dispatch_audit is trustworthy and recommends accept.",
+      "Bypass verdict_unverified manually. Default false. dispatch_audit trustworthy+accept can auto-pass only missing/error verdicts; explicit typecheck/tests fail at the branch head requires force.",
     ),
   reject_if_held: z
     .boolean()

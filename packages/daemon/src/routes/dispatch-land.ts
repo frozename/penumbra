@@ -296,12 +296,14 @@ function verdictHardFailCheck(verdict: Record<string, unknown>): "typecheck" | "
 }
 
 async function evaluateCurrentVerdictHardFail(input: {
+  services: Services;
+  handoffId: string;
   verdict: Record<string, unknown> | null;
   branch: string;
   force: boolean;
   deps: DispatchLandDeps;
 }): Promise<Response | null> {
-  const { verdict, branch, force, deps } = input;
+  const { services, handoffId, verdict, branch, force, deps } = input;
   if (force || !verdict || !verdictHardFail(verdict)) return null;
   const branchHeadResult = await deps.runGit(["rev-parse", branch]);
   if (branchHeadResult.code !== 0) {
@@ -319,11 +321,23 @@ async function evaluateCurrentVerdictHardFail(input: {
   const branchHeadSha = branchHeadResult.stdout.trim();
   const verdictHeadSha = typeof verdict.head_sha === "string" ? verdict.head_sha.trim() : "";
   if (verdictHeadSha === "" || verdictHeadSha !== branchHeadSha) return null;
+  const check = verdictHardFailCheck(verdict);
+  services.log.warn(
+    {
+      reason: "hard_fail",
+      handoff_id: handoffId,
+      branch,
+      check,
+      verdict_head_sha: verdictHeadSha,
+      branch_head_sha: branchHeadSha,
+    },
+    "dispatch-land: verdict_unverified gate blocked land",
+  );
   return json(
     {
       error: {
         code: "verdict_unverified",
-        check: verdictHardFailCheck(verdict),
+        check,
         verdict_head_sha: verdictHeadSha,
         branch_head_sha: branchHeadSha,
         verdict,
@@ -491,6 +505,8 @@ async function evaluateLandVerdictGates(input: {
   // dispatch_audit trustworthiness reflects the run's reliability — it must
   // not overrule a reviewer-confirmed failure at this branch head.
   const hardFailResponse = await evaluateCurrentVerdictHardFail({
+    services,
+    handoffId,
     verdict,
     branch,
     force,
@@ -501,7 +517,18 @@ async function evaluateLandVerdictGates(input: {
   // Unverified (no reviewer verdict on record): allow dispatch_audit to
   // rescue when the run looks trustworthy + accept.
   if (!verdictUnverified(verdict)) return null;
-  if (await isAuditTrustedAccept(services, handoffId)) return null;
+  const auditTrustedAccept = await isAuditTrustedAccept(services, handoffId);
+  if (auditTrustedAccept) return null;
+  services.log.warn(
+    {
+      reason: "unverified",
+      handoff_id: handoffId,
+      branch,
+      verdict_state: verdict === null ? "missing" : "error",
+      audit_trusted_accept: auditTrustedAccept,
+    },
+    "dispatch-land: verdict_unverified gate blocked land",
+  );
   return json({ error: { code: "verdict_unverified", verdict } }, 409);
 }
 

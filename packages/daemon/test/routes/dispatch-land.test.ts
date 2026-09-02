@@ -1563,6 +1563,10 @@ describe("dispatchLandRoute", () => {
 
   test("returns 409 verdict_unverified when reconciler verdict failed", async () => {
     const svc = services();
+    const warnCalls: unknown[][] = [];
+    stubLogWarn(svc, (...args: unknown[]) => {
+      warnCalls.push(args);
+    });
     seedHandoff(svc, "h-3", "c-3");
     writeVerdictEvent(svc, {
       eventId: "v-3",
@@ -1608,6 +1612,17 @@ describe("dispatchLandRoute", () => {
     expect(body.error.verdict_head_sha).toBe("head-h-3");
     expect(body.error.branch_head_sha).toBe("head-h-3");
     expect(body.error.verdict?.typecheck).toBe("fail");
+    expect(warnCalls).toContainEqual([
+      expect.objectContaining({
+        reason: "hard_fail",
+        handoff_id: "h-3",
+        branch: "agent/h-3",
+        check: "typecheck",
+        verdict_head_sha: "head-h-3",
+        branch_head_sha: "head-h-3",
+      }),
+      expect.stringContaining("verdict_unverified"),
+    ]);
   });
 
   test("does not block landing when a hard-fail verdict is stale relative to branch head", async () => {
@@ -1873,6 +1888,10 @@ describe("dispatchLandRoute", () => {
 
   test("returns 409 verdict_unverified when environment-error verdict lacks audit accept", async () => {
     const svc = services();
+    const warnCalls: unknown[][] = [];
+    stubLogWarn(svc, (...args: unknown[]) => {
+      warnCalls.push(args);
+    });
     seedHandoff(svc, "h-env-unverified", "c-env-unverified");
     writeVerdictEvent(svc, {
       eventId: "v-env-unverified",
@@ -1912,6 +1931,16 @@ describe("dispatchLandRoute", () => {
     const body = await readJsonAs<ErrorEnvelope>(res);
     expect(body.error.code).toBe("verdict_unverified");
     expect(body.error.verdict?.typecheck).toBe("error");
+    expect(warnCalls).toContainEqual([
+      expect.objectContaining({
+        reason: "unverified",
+        handoff_id: "h-env-unverified",
+        branch: "agent/h-env-unverified",
+        verdict_state: "error",
+        audit_trusted_accept: false,
+      }),
+      expect.stringContaining("verdict_unverified"),
+    ]);
   });
 
   test("auto-accepts environment-error verdict when dispatch audit is trustworthy + recommends accept", async () => {
