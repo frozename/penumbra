@@ -180,15 +180,55 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
 function parseCheck(result) {
   const hasLeanFields = result && typeof result === 'object' && typeof result.check_line === 'string'
   const text = hasLeanFields ? String(result.check_line || '') : String(result || '')
-  // The worker is told to BEGIN its final message with the marker, so only the first
-  // non-empty line counts — avoids a false PASS from the marker echoed inside
-  // instructions or failure output.
-  const firstLine = (text.split('\n').map((l) => l.trim()).find((l) => l.length > 0)) || ''
-  if (/^CHECK_RESULT:\s*PASS\b/i.test(firstLine)) return { passed: true, output: '' }
+  // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
+  // only an equal-or-longer run of the same marker character closes them.
+  const scanText = stripFencedBlocks(text)
+  let sawPass = false
+  let sawFail = false
+  for (const line of scanText.split('\n')) {
+    // Marker must be line-initial with <=3 leading spaces, matching the
+    // CommonMark indented-code-block boundary used by fence scanning.
+    const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
+    if (!marker) continue
+    if (marker[1].toUpperCase() === 'FAIL') sawFail = true
+    if (marker[1].toUpperCase() === 'PASS') sawPass = true
+  }
+  if (!sawFail && sawPass) return { passed: true, output: '' }
   if (hasLeanFields) {
     return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
   }
   return { passed: false, output: text.slice(-4000) }
+}
+
+function stripFencedBlocks(text) {
+  const visibleLines = []
+  let fence = null
+
+  for (const line of String(text).split('\n')) {
+    const fenceLine = /^( {0,3})(`{3,}|~{3,})/.exec(line)
+    if (!fence) {
+      if (fenceLine) {
+        const marker = fenceLine[2]
+        fence = { char: marker[0], length: marker.length }
+        continue
+      }
+      visibleLines.push(line)
+      continue
+    }
+
+    if (fenceLine) {
+      const marker = fenceLine[2]
+      const closesFence =
+        marker[0] === fence.char &&
+        marker.length >= fence.length &&
+        line.slice(fenceLine[1].length + marker.length).trim().length === 0
+      if (closesFence) {
+        fence = null
+      }
+    }
+  }
+
+  return visibleLines.join('\n')
 }
 
 function hopFields(result) {
