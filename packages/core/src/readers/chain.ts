@@ -40,7 +40,7 @@ export class ChainReader {
   ): AgentResponseEvent[] {
     const orderSql =
       which === "final"
-        ? "ORDER BY ts DESC, ingest_ts DESC, event_id DESC"
+        ? "ORDER BY (json_extract(payload_json, '$.text') IS NOT NULL AND json_extract(payload_json, '$.response') IS NULL) ASC, ts DESC, ingest_ts DESC, event_id DESC"
         : "ORDER BY ts ASC, ingest_ts ASC, event_id ASC";
     const limitSql = which === "final" ? "LIMIT 1" : "";
     type ResponseRow = {
@@ -86,7 +86,7 @@ export class ChainReader {
             .query<ResponseRow, string[]>(`${baseSelect}${orderLimit}`)
             .all(conversation_id, ...projectArgs);
 
-    return rows.map((row) => {
+    const responses = rows.map((row) => {
       const payload = parseAgentResponsePayload(row.payload_json);
       return {
         ts: row.ts,
@@ -96,9 +96,27 @@ export class ChainReader {
             : (row.source_detail ?? row.source),
         text: payload.text,
         handoff_id: payload.handoff_id,
+        kind: payload.kind,
         ...(payload.error ? { error: { message: payload.error } } : {}),
       };
     });
+    if (which !== "all") {
+      return responses.map(({ kind: _kind, ...response }) => response);
+    }
+
+    const handoffIdsWithTurns = new Set(
+      responses
+        .filter((response) => response.kind === "turn" && response.handoff_id !== null)
+        .map((response) => response.handoff_id),
+    );
+    return responses
+      .filter(
+        (response) =>
+          response.kind !== "segment" ||
+          response.handoff_id === null ||
+          !handoffIdsWithTurns.has(response.handoff_id),
+      )
+      .map(({ kind: _kind, ...response }) => response);
   }
 
   listChains(opts: {
@@ -346,6 +364,7 @@ function parseAgentResponsePayload(payload_json: string): {
   text: string;
   error?: string;
   handoff_id: string | null;
+  kind: "turn" | "segment" | "other";
 } {
   try {
     const payload = JSON.parse(payload_json) as {
@@ -355,11 +374,14 @@ function parseAgentResponsePayload(payload_json: string): {
       handoff_id?: unknown;
     };
     const handoff_id = typeof payload.handoff_id === "string" ? payload.handoff_id : null;
-    if (typeof payload.response === "string") return { text: payload.response, handoff_id };
-    if (typeof payload.text === "string") return { text: payload.text, handoff_id };
-    if (typeof payload.error === "string") return { text: "", error: payload.error, handoff_id };
-    return { text: "", handoff_id };
+    if (typeof payload.response === "string")
+      return { text: payload.response, handoff_id, kind: "turn" };
+    if (typeof payload.text === "string")
+      return { text: payload.text, handoff_id, kind: "segment" };
+    if (typeof payload.error === "string")
+      return { text: "", error: payload.error, handoff_id, kind: "other" };
+    return { text: "", handoff_id, kind: "other" };
   } catch {
-    return { text: "", error: "malformed payload_json", handoff_id: null };
+    return { text: "", error: "malformed payload_json", handoff_id: null, kind: "other" };
   }
 }

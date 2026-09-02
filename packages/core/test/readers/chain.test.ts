@@ -399,6 +399,155 @@ test("getResponses returns each response handoff_id and scopes by handoff_id", (
   ]);
 });
 
+test("getResponses all collapses segment rows into the turn row; final keeps it", () => {
+  insertEvent({
+    event_id: "ev-hop-seg-a",
+    ts: isoAt(1),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "A", handoff_id: "h-1" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-seg-b",
+    ts: isoAt(2),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "B", handoff_id: "h-1" }),
+  });
+  insertEvent({
+    event_id: "ev-hop-turn",
+    ts: isoAt(3),
+    session_id: "c-hop",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ response: "AB", handoff_id: "h-1" }),
+  });
+
+  expect(reader.getResponses("c-hop", "all").map((response) => response.text)).toEqual(["AB"]);
+  expect(reader.getResponses("c-hop", "final")[0]?.text).toBe("AB");
+});
+
+test("getResponses all collapses byte-identical segment twins into the turn row", () => {
+  insertEvent({
+    event_id: "ev-twin-seg",
+    ts: isoAt(1),
+    session_id: "c-twin",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "X", handoff_id: "h-twin" }),
+  });
+  insertEvent({
+    event_id: "ev-twin-turn",
+    ts: isoAt(2),
+    session_id: "c-twin",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ response: "X", handoff_id: "h-twin" }),
+  });
+
+  expect(reader.getResponses("c-twin", "all").map((response) => response.text)).toEqual(["X"]);
+});
+
+test("getResponses all keeps turn-only capture-only and error rows", () => {
+  insertEvent({
+    event_id: "ev-turn-only",
+    ts: isoAt(1),
+    session_id: "c-turn-only",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ response: "Y", handoff_id: "h-turn-only" }),
+  });
+  expect(reader.getResponses("c-turn-only", "all").map((response) => response.text)).toEqual(["Y"]);
+
+  insertEvent({
+    event_id: "ev-capture-only-1",
+    ts: isoAt(1),
+    session_id: "c-capture-only",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "S1", handoff_id: "h-capture-only" }),
+  });
+  insertEvent({
+    event_id: "ev-capture-only-2",
+    ts: isoAt(2),
+    session_id: "c-capture-only",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "S2", handoff_id: "h-capture-only" }),
+  });
+  expect(reader.getResponses("c-capture-only", "all").map((response) => response.text)).toEqual([
+    "S1",
+    "S2",
+  ]);
+
+  insertEvent({
+    event_id: "ev-error-seg",
+    ts: isoAt(1),
+    session_id: "c-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "seg", handoff_id: "h-error" }),
+  });
+  insertEvent({
+    event_id: "ev-error-turn",
+    ts: isoAt(2),
+    session_id: "c-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ error: "boom", handoff_id: "h-error" }),
+  });
+
+  const errorRows = reader.getResponses("c-error", "all");
+  expect(errorRows.map((response) => response.text)).toEqual(["seg", ""]);
+  expect(errorRows[1]?.error?.message).toBe("boom");
+});
+
+test("getResponses final demotes capture segments without outranking later errors", () => {
+  insertEvent({
+    event_id: "ev-final-turn",
+    ts: isoAt(1),
+    session_id: "c-final-turn",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ response: "R", handoff_id: "h-final-turn" }),
+  });
+  insertEvent({
+    event_id: "ev-final-segment",
+    ts: isoAt(2),
+    session_id: "c-final-turn",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "seg", handoff_id: "h-final-turn" }),
+  });
+  expect(reader.getResponses("c-final-turn", "final")[0]?.text).toBe("R");
+
+  insertEvent({
+    event_id: "ev-final-partial",
+    ts: isoAt(1),
+    session_id: "c-final-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ text: "partial", handoff_id: "h-final-error" }),
+  });
+  insertEvent({
+    event_id: "ev-final-error",
+    ts: isoAt(2),
+    session_id: "c-final-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ error: "boom", handoff_id: "h-final-error" }),
+  });
+  const errorRow = reader.getResponses("c-final-error", "final")[0];
+  expect(errorRow?.text).toBe("");
+  expect(errorRow?.error?.message).toBe("boom");
+
+  insertEvent({
+    event_id: "ev-final-r1",
+    ts: isoAt(1),
+    session_id: "c-final-retry-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ response: "R1", handoff_id: "h-final-retry-error" }),
+  });
+  insertEvent({
+    event_id: "ev-final-e",
+    ts: isoAt(2),
+    session_id: "c-final-retry-error",
+    event_type: "agent-response",
+    payload_json: JSON.stringify({ error: "E", handoff_id: "h-final-retry-error" }),
+  });
+  const retryErrorRow = reader.getResponses("c-final-retry-error", "final")[0];
+  expect(retryErrorRow?.text).toBe("");
+  expect(retryErrorRow?.error?.message).toBe("E");
+});
+
 test("getResponses with handoff_id does not fall back to unstamped sibling rows", () => {
   insertEvent({
     event_id: "ev-unstamped-sibling",
