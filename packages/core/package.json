@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bench:embed-recipe": "cd ../.. && PENUMBRA_RUN_EMBED_BENCH=1 bun scripts/bun-test-gate.ts packages/core/scripts/bench-embed-recipe.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "main": "./src/index.ts",

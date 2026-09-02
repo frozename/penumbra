@@ -945,6 +945,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Skip ONNX runtime initialization.",
   },
+  PENUMBRA_RUN_EMBED_BENCH: {
+    schema: Bool,
+    default: false,
+    description: "Run the opt-in embed recipe benchmark test.",
+  },
   PENUMBRA_TERMINAL_PROGRESS_CAP: {
     schema: NonNegInt,
     default: 5,
@@ -1247,6 +1252,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description:
       "Fixture-only env key used by ACP discovery tests to verify requested unset_env entries are removed from the child process.",
+  },
+  PENUMBRA_CC_MEMORY_DIR: {
+    schema: OptStr,
+    description: "Directory override for Claude Code memory-digest test and workflow output.",
   },
 } as const;
 

@@ -4,11 +4,11 @@
  * panic without masking real failures.
  *
  * `bun test` exits 133 ("panic(main thread): A C++ exception occurred / Bun has
- * crashed") at PROCESS TEARDOWN — AFTER printing a clean summary — when an
- * embedding-model NAPI (fastembed) and the sqlite-vec extension co-reside in one
- * test process. This reproduces on both the canary and the latest stable bun
- * (1.3.14), so it is an upstream bun bug, not test-code. A bare `bun test` exit
- * code therefore reds the CI gate even when every test passes.
+ * crashed") at PROCESS TEARDOWN — AFTER printing a clean summary — via
+ * oven-sh/bun PR #32569: libc exit() from Bun's Global.exit runs
+ * onnxruntime-node's global destructor, which throws into Bun's std::terminate
+ * handler. This is not bun #30431, which was fixed by #30291 and covered a
+ * different source of the same message; there is no Bun version floor.
  *
  * This wrapper runs `bun test`, streams its output, and gates on the REPORTED
  * failure/error counts instead of the raw exit code. It exits 0 only when the run
