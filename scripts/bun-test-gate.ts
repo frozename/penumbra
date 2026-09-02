@@ -15,8 +15,17 @@
  * reached its summary with 0 failures AND 0 errors AND the non-zero exit is the
  * known teardown panic. A real test failure (fail > 0), a load error (error > 0),
  * or any crash BEFORE the summary (no "Ran N tests" line) still fails the gate.
+ *
+ * Keep the child process asynchronous and stream both output pipes. Node's
+ * spawnSync default pipe buffer is 1 MiB per stream; large Bun shards can exceed
+ * that before reaching the final summary, causing the gate itself to terminate
+ * the child with ENOBUFS and then parse truncated output. Relay raw pipe chunks
+ * unchanged, and decode only the accumulated parser text.
  */
-import { spawnSync } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
+
+import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 import {
   isKnownBunTeardownPanicPass,
@@ -27,38 +36,75 @@ import {
 // noEmit, so any packages/*/dist/test/*.test.js are leftover artifacts that bun
 // would otherwise glob (failing on relative imports and inflating the count).
 // bun accepts multiple --path-ignore-patterns flags, so caller-supplied patterns still apply.
-const res = spawnSync(
+const child = spawn(
   "bun",
   ["test", "--path-ignore-patterns=**/dist/**", ...process.argv.slice(2)],
   {
-    encoding: "utf8",
     stdio: ["inherit", "pipe", "pipe"],
   },
 );
-const raw = res.stdout + res.stderr;
-// Echo the child's output so CI logs are unchanged.
-if (res.stdout) {
-  process.stdout.write(res.stdout);
-}
-if (res.stderr) {
-  process.stderr.write(res.stderr);
-}
 
-const code = res.status ?? 1;
-if (code === 0) {
-  process.exit(0);
+function writeChunk(stream: Writable, chunk: Buffer | string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    stream.write(chunk, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
-const report = parseBunTestReport(raw);
+async function collectAndForward(stream: Readable, target: Writable): Promise<string> {
+  const decoder = new StringDecoder("utf8");
+  let output = "";
 
-if (isKnownBunTeardownPanicPass(report)) {
-  console.error(
-    `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
-  );
-  process.exit(0);
+  for await (const chunk of stream) {
+    if (typeof chunk === "string") {
+      output += chunk;
+      await writeChunk(target, chunk);
+    } else {
+      const buffer = Buffer.from(chunk);
+      output += decoder.write(buffer);
+      await writeChunk(target, buffer);
+    }
+  }
+
+  output += decoder.end();
+  return output;
 }
 
-console.error(
-  `bun-test-gate: failing (exit ${String(code)}; fails=${String(report.fails)} errors=${String(report.errors)} reachedSummary=${String(report.reachedSummary)} knownPanic=${String(report.knownPanic)}).`,
-);
-process.exit(code);
+async function waitForChild(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return await new Promise((resolve, reject) => {
+    child.once("error", (error) => {
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      resolve({ code, signal });
+    });
+  });
+}
+
+const [stdout, stderr, result] = await Promise.all([
+  collectAndForward(child.stdout, process.stdout),
+  collectAndForward(child.stderr, process.stderr),
+  waitForChild(),
+]);
+
+const code = result.code ?? 1;
+if (result.code === 0) {
+  process.exitCode = 0;
+} else {
+  const report = parseBunTestReport(stdout + stderr);
+
+  if (isKnownBunTeardownPanicPass(report)) {
+    console.error(
+      `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
+    );
+    process.exitCode = 0;
+  } else {
+    const signalText = result.signal ? ` signal=${result.signal}` : "";
+    console.error(
+      `bun-test-gate: failing (exit ${String(code)}${signalText}; fails=${String(report.fails)} errors=${String(report.errors)} reachedSummary=${String(report.reachedSummary)} knownPanic=${String(report.knownPanic)}).`,
+    );
+    process.exitCode = code;
+  }
+}
