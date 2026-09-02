@@ -56,6 +56,10 @@ function normalizedTableRows(body: string): string[] {
     );
 }
 
+function offsetIso(base: Date, deltaMs: number): string {
+  return new Date(base.getTime() + deltaMs).toISOString();
+}
+
 test("session-handoff playbook fires on pre-compact, renders file, captures outcome", async () => {
   const root = mkdtempSync(join(tmpdir(), "sh-int-"));
   const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
@@ -97,6 +101,9 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
+    const fixedNow = new Date("2026-08-31T18:00:00Z");
+    const activeBiasExpiresAt = offsetIso(fixedNow, 24 * 60 * 60 * 1000);
+    const expiredBiasExpiresAt = offsetIso(fixedNow, -60 * 60 * 1000);
 
     const ts1 = "2026-05-04T10:00:00Z";
     const ts2 = "2026-05-04T11:00:00Z";
@@ -156,9 +163,29 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       VALUES
         ('h-pending-1', '2026-05-04T10:05:00Z', 'c1', 'maestro', 'worker', 'session-handoff seed message', 'pending');
     `);
-    db.run(
+    const routingBiasInsert = db.prepare(
       `INSERT INTO routing_bias (bias_id, scope, value, mode, weight, reason, created_at, expires_at)
-       VALUES ('bias-live', 'agent', 'codex-fast', 'exclude', NULL, 'active outage', '2026-05-04T10:00:00.000Z', '2026-09-01T18:00:00.000Z')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    routingBiasInsert.run(
+      "bias-live",
+      "agent",
+      "codex-fast",
+      "exclude",
+      null,
+      "active outage",
+      "2026-05-04T10:00:00.000Z",
+      activeBiasExpiresAt,
+    );
+    routingBiasInsert.run(
+      "bias-expired",
+      "agent",
+      "codex-stale",
+      "exclude",
+      null,
+      "expired outage",
+      "2026-05-04T10:00:00.000Z",
+      expiredBiasExpiresAt,
     );
     db.run(`
       INSERT INTO lane_ledger (lane_id, gate_status, ts_opened, task_class, implementer_handoff)
@@ -198,6 +225,7 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       project: "penumbra",
       sources: spec.recall,
       budgetTokens: spec.recall_budget_tokens,
+      now: (): Date => fixedNow,
     });
 
     const notesDir = join(root, "docs/notes");
@@ -208,7 +236,6 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     writeFileSync(preservedMorningNote, "operator morning note\n");
     writeFileSync(preservedPmNote, "operator pm note\n");
     writeFileSync(preservedEveningNote, "operator evening note\n");
-    const fixedNow = new Date("2026-08-31T18:00:00Z");
     const expectedSkeleton = `maestro-continuation-${fixedNow.toISOString().slice(0, 10)}-pm.skeleton.md`;
     const templateCtx: TemplateVarContext = {
       now: (): Date => fixedNow,
@@ -258,6 +285,8 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     expect(body).toContain("codex-fast");
     expect(body).toContain("exclude agent:codex-fast");
     expect(body).toContain("active outage");
+    expect(body).not.toContain("codex-stale");
+    expect(body).not.toContain("expired outage");
     expect(body).toContain("session-handoff-telemetry");
     expect(body).toContain(registrar.registrar_id);
     expect(body).toContain('"status":"complete"');

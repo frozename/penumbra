@@ -37,6 +37,7 @@ export type ComposeRecallOpts = {
   budgetTokens?: number;
   agentRegistry?: { listAgents(): { name: string }[] };
   templateCtx?: TemplateVarContext;
+  now?: () => Date;
 };
 
 const DEFAULT_BUDGET = 8000;
@@ -103,6 +104,7 @@ type RunSourceDeps = {
   storageRoot: string | undefined;
   project: string;
   agentRegistry: ComposeRecallOpts["agentRegistry"];
+  now: () => Date;
 };
 
 function withUnpushed(
@@ -124,7 +126,7 @@ async function runOneSource(
   byKey: Record<string, unknown>,
   warnings: string[],
 ): Promise<void> {
-  const { db, embedder, cwd, repoRoot, storageRoot, project, agentRegistry } = deps;
+  const { db, embedder, cwd, repoRoot, storageRoot, project, agentRegistry, now } = deps;
   switch (src.source) {
     case "memory_search": {
       const out = await runMemorySearchSource({ db, embedder, args: { project, ...args } });
@@ -177,7 +179,7 @@ async function runOneSource(
       return;
     }
     case "routing_bias_list": {
-      const out = runRoutingBiasListSource({ db, args });
+      const out = runRoutingBiasListSource({ db, args, now });
       mergeBucket(byKey, "routing_bias_list", out.rows);
       warnings.push(...out.warnings);
       return;
@@ -432,6 +434,7 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     storageRoot,
     project,
     agentRegistry: opts.agentRegistry,
+    now: opts.now ?? ((): Date => new Date()),
   };
 
   for (const src of sources) {
