@@ -93,8 +93,10 @@ export class ChainReader {
       return {
         ts: row.ts,
         agent:
-          payload.agent ||
-          row.source_detail ||
+          payload.agent ??
+          (typeof row.source_detail === "string" && row.source_detail.length > 0
+            ? row.source_detail
+            : null) ??
           (row.user_id && row.user_id !== "local-user" ? row.user_id : row.source),
         text: payload.text,
         handoff_id: payload.handoff_id,
