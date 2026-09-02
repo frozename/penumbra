@@ -5,6 +5,32 @@ import * as path from "node:path";
 
 import { executeGlob, executeGrep } from "../src/fs-search.js";
 
+const originalGlobScan = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scan");
+const originalGlobScanSync = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scanSync");
+
+function restoreGlobPrototype(): void {
+  if (originalGlobScan) Object.defineProperty(Bun.Glob.prototype, "scan", originalGlobScan);
+  if (originalGlobScanSync)
+    Object.defineProperty(Bun.Glob.prototype, "scanSync", originalGlobScanSync);
+}
+
+function restoreEnv(key: "PENUMBRA_RG_BINARY" | "ARGS_FILE", value: string | undefined): void {
+  if (key === "PENUMBRA_RG_BINARY") {
+    if (value === undefined) {
+      delete process.env.PENUMBRA_RG_BINARY;
+    } else {
+      process.env.PENUMBRA_RG_BINARY = value;
+    }
+    return;
+  }
+
+  if (value === undefined) {
+    delete process.env.ARGS_FILE;
+  } else {
+    process.env.ARGS_FILE = value;
+  }
+}
+
 describe("executeGlob", () => {
   let tmp: string;
 
@@ -14,6 +40,7 @@ describe("executeGlob", () => {
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
+    restoreGlobPrototype();
   });
 
   it("returns paths matching a simple pattern, relative to worktree", async () => {
@@ -28,23 +55,43 @@ describe("executeGlob", () => {
     fs.writeFileSync(path.join(tmp, "async.ts"), "x");
     fs.writeFileSync(path.join(tmp, "skip.md"), "y");
 
-    const originalScanSync = Bun.Glob.prototype.scanSync.bind(Bun.Glob.prototype);
-    const originalScan = Bun.Glob.prototype.scan.bind(Bun.Glob.prototype);
-    Bun.Glob.prototype.scanSync = (): never => {
-      throw new Error("scanSync should not be called");
-    };
-    Bun.Glob.prototype.scan = async function* (): AsyncGenerator<string, void, unknown> {
-      await Promise.resolve();
-      yield "async.ts";
-    };
+    const originalScanSync = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scanSync");
+    const originalScan = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scan");
+    Object.defineProperty(Bun.Glob.prototype, "scanSync", {
+      configurable: true,
+      value: (): never => {
+        throw new Error("scanSync should not be called");
+      },
+      writable: true,
+    });
+    Object.defineProperty(Bun.Glob.prototype, "scan", {
+      configurable: true,
+      value: async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "async.ts";
+      },
+      writable: true,
+    });
 
     try {
       const r = await executeGlob({ pattern: "*.ts" }, tmp);
       expect(r.results).toEqual(["async.ts"]);
     } finally {
-      Bun.Glob.prototype.scanSync = originalScanSync;
-      Bun.Glob.prototype.scan = originalScan;
+      if (originalScanSync) Object.defineProperty(Bun.Glob.prototype, "scanSync", originalScanSync);
+      if (originalScan) Object.defineProperty(Bun.Glob.prototype, "scan", originalScan);
     }
+  });
+
+  it("leaves Bun.Glob scan usable after prototype override tests", async () => {
+    fs.writeFileSync(path.join(tmp, "usable.ts"), "x");
+    const glob = new Bun.Glob("*.ts");
+    const results: string[] = [];
+
+    for await (const rel of glob.scan({ cwd: tmp, onlyFiles: true })) {
+      results.push(rel);
+    }
+
+    expect(results).toEqual(["usable.ts"]);
   });
 
   it("matches recursive ** patterns", async () => {
@@ -166,14 +213,19 @@ describe("executeGlob", () => {
 
 describe("executeGrep", () => {
   let tmp: string;
+  let originalRgBinary: string | undefined;
+  let originalArgsFile: string | undefined;
 
   beforeEach(() => {
+    originalRgBinary = process.env.PENUMBRA_RG_BINARY;
+    originalArgsFile = process.env.ARGS_FILE;
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fs-grep-"));
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
-    delete process.env.PENUMBRA_RG_BINARY;
+    restoreEnv("PENUMBRA_RG_BINARY", originalRgBinary);
+    restoreEnv("ARGS_FILE", originalArgsFile);
   });
 
   it("content mode: returns {path, line, text} rows for each match", async () => {
