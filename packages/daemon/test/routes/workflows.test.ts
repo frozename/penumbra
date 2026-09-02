@@ -77,140 +77,53 @@ function execMulti(db: Database, sql: string): void {
 
 function freshDb(): Database {
   const db = new Database(":memory:");
-  execMulti(
-    db,
-    `
-    CREATE TABLE IF NOT EXISTS t0_events (
-      event_id TEXT PRIMARY KEY,
-      ts TEXT NOT NULL,
-      ingest_ts TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_detail TEXT,
-      project_id TEXT,
-      user_id TEXT NOT NULL,
-      machine_id TEXT NOT NULL,
-      session_id TEXT,
-      event_type TEXT NOT NULL,
-      lane TEXT NOT NULL,
-      provider TEXT,
-      model TEXT,
-      tokens_in INTEGER,
-      tokens_out INTEGER,
-      cost_usd REAL,
-      latency_ms INTEGER,
-      request_id TEXT,
-      payload_json TEXT NOT NULL,
-      payload_summary TEXT,
-      origin TEXT
-    );
-    CREATE TABLE IF NOT EXISTS claude_code_sessions (
-      session_id TEXT PRIMARY KEY,
-      session_start_at TEXT NOT NULL,
-      last_seen_at TEXT,
-      project_id TEXT
-    );
-    CREATE TABLE IF NOT EXISTS t2_memories (
-      memory_id TEXT PRIMARY KEY,
-      project_id TEXT,
-      user_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      source_session_ids TEXT NOT NULL DEFAULT '[]',
-      window_start TEXT NOT NULL,
-      window_end TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      compressed_from TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      obs_type TEXT,
-      concepts TEXT,
-      severity TEXT,
-      file_paths TEXT,
-      last_verified_at TEXT,
-      last_verified_by TEXT,
-      last_verified_actor TEXT,
-      last_verified_reason TEXT,
-      last_verified_session_id TEXT,
-      origin TEXT
-    );
-    CREATE TABLE IF NOT EXISTS workflow_stats (
-      workflow_name TEXT PRIMARY KEY,
-      samples INTEGER NOT NULL DEFAULT 0,
-      successes INTEGER NOT NULL DEFAULT 0,
-      failures INTEGER NOT NULL DEFAULT 0,
-      avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-      last_run_at TEXT,
-      last_failure_at TEXT,
-      last_failure_reason TEXT,
-      consecutive_failures INTEGER NOT NULL DEFAULT 0,
-      quarantined INTEGER NOT NULL DEFAULT 0,
-      quarantine_reason TEXT,
-      refresh_runs INTEGER NOT NULL DEFAULT 0,
-      intentional_runs INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE IF NOT EXISTS handoffs (
-      handoff_id TEXT PRIMARY KEY,
-      ts TEXT NOT NULL,
-      project_id TEXT,
-      conversation_id TEXT NOT NULL,
-      from_agent TEXT NOT NULL,
-      to_agent TEXT NOT NULL,
-      to_role TEXT,
-      message TEXT NOT NULL,
-      status TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS lane_ledger (
-      lane_id TEXT PRIMARY KEY,
-      gate_status TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS dispatch_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      handoff_id TEXT NOT NULL,
-      worker_id TEXT,
-      source TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      ts TEXT NOT NULL,
-      meta_json TEXT
-    );
-    CREATE TABLE IF NOT EXISTS workflow_runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT,
-      workflow_name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      result_json TEXT,
-      error_json TEXT,
-      result_spill_path TEXT,
-      error_spill_path TEXT,
-      result_bytes INTEGER NOT NULL DEFAULT 0,
-      error_bytes INTEGER NOT NULL DEFAULT 0,
-      expires_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS notification_outbox (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id TEXT,
-      kind TEXT NOT NULL,
-      reference_id TEXT NOT NULL,
-      summary TEXT,
-      payload_json TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at INTEGER NOT NULL,
-      coalesce_key TEXT NOT NULL,
-      attempted_at INTEGER,
-      completed_at INTEGER,
-      error TEXT,
-      UNIQUE(kind, reference_id)
-    );
-  `,
-  );
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
   return db;
 }
 
 function markTrustedRoot(root: string): void {
   writeFileSync(join(root, ".penumbra-project"), "test-project\n");
 }
+
+function hermeticServiceDirs(root: string): { worktreeRootDir: string; mainRepoDir: string } {
+  const worktreeRootDir = join(root, "worktrees");
+  const mainRepoDir = join(root, "main");
+  mkdirSync(worktreeRootDir, { recursive: true });
+  mkdirSync(mainRepoDir, { recursive: true });
+  writeFileSync(join(mainRepoDir, "package.json"), "{}\n");
+  return { worktreeRootDir, mainRepoDir };
+}
+
+test("buildServices tolerates a seeded worktree root over the route test DB", () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-worktree-root-"));
+  try {
+    const { worktreeRootDir, mainRepoDir } = hermeticServiceDirs(root);
+    const handoffId = "11111111-2222-4333-8444-555555555555";
+    const wt = join(worktreeRootDir, handoffId);
+    mkdirSync(wt, { recursive: true });
+    const gitDir = join(root, "gitdir");
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${gitDir}\n`);
+    writeFileSync(join(gitDir, "HEAD"), `ref: refs/heads/agent/${handoffId}\n`);
+
+    const services = buildServices({
+      env: {},
+      input: {},
+      storageRoot: root,
+      db: freshDb(),
+      embedder: new TestEmbedder({ dim: 384 }),
+      worktreeRootDir,
+      mainRepoDir,
+    });
+
+    expect(services.worktreeManager.listWorktrees().map((h) => h.branchName)).toEqual([
+      `agent/${handoffId}`,
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 async function setupReg(): Promise<{ reg: Registry; root: string }> {
   const root = mkdtempSync(join(tmpdir(), "wfd-"));
@@ -1761,7 +1674,7 @@ test("POST /workflows/run resolves sessionStart from claude_code_sessions when s
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
     // After fix: dateStart is resolved to 2026-05-05T03:00:00Z, so only m-new should match.
-    // Confirm by checking workflow_stats logged itemCount of 1.
+    // Confirm by checking the logged recall itemCount.
     const stats = db
       .query("SELECT samples, successes FROM workflow_stats WHERE workflow_name = ?")
       .get("sid") as { samples: number; successes: number } | undefined;
@@ -1774,7 +1687,7 @@ test("POST /workflows/run resolves sessionStart from claude_code_sessions when s
       )
       .get();
     const payload = JSON.parse(evt!.payload_json) as { item_count: number };
-    expect(payload.item_count).toBe(0);
+    expect(payload.item_count).toBe(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1816,7 +1729,7 @@ test("POST /workflows/run falls back to now-8h when session_id is missing", asyn
       )
       .get();
     const payload = JSON.parse(evt!.payload_json) as { item_count: number };
-    expect(payload.item_count).toBe(0);
+    expect(payload.item_count).toBe(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1877,14 +1790,6 @@ test("POST /workflows/trigger includes memory-digest markdown on session-start",
       workflowsDir: join(root, "workflows"),
     });
     const db = freshDb();
-    execMulti(
-      db,
-      `
-      ALTER TABLE t2_memories ADD COLUMN slug TEXT;
-      ALTER TABLE t2_memories ADD COLUMN hook TEXT;
-      ALTER TABLE t2_memories ADD COLUMN retired_at TEXT;
-    `,
-    );
     db.prepare(
       `
       INSERT INTO t2_memories (
@@ -2131,6 +2036,7 @@ test("POST /workflows/trigger records NULL session_id when lifecycle body omits 
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
+    const { worktreeRootDir, mainRepoDir } = hermeticServiceDirs(root);
     const services = buildServices({
       env: {},
       input: {},
@@ -2139,6 +2045,8 @@ test("POST /workflows/trigger records NULL session_id when lifecycle body omits 
       embedder: new TestEmbedder({ dim: 384 }),
       workflowRegistry: reg,
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
+      worktreeRootDir,
+      mainRepoDir,
     });
     const req = new Request("http://localhost/workflows/trigger", {
       method: "POST",
@@ -2485,6 +2393,7 @@ test("session-summarize stop hook ignores workflow-generated observations in the
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-filter-"));
   try {
     const db = freshDb();
+    const { worktreeRootDir, mainRepoDir } = hermeticServiceDirs(root);
     const services = buildServices({
       env: {},
       input: {},
@@ -2493,6 +2402,8 @@ test("session-summarize stop hook ignores workflow-generated observations in the
       embedder: new TestEmbedder({ dim: 384 }),
       clock: () => new Date("2026-05-01T00:00:00.000Z"),
       uuid: () => "123e4567-e89b-12d3-a456-426614174000",
+      worktreeRootDir,
+      mainRepoDir,
     });
     const sessionId = "sess-filter";
     db.run(
@@ -2627,6 +2538,7 @@ test("workflows/trigger short-circuits unavailable registry before cwd validatio
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  const { worktreeRootDir, mainRepoDir } = hermeticServiceDirs(root);
   const services = buildServices({
     env: {},
     input: {},
@@ -2635,6 +2547,8 @@ test("workflows/trigger short-circuits unavailable registry before cwd validatio
     embedder: new TestEmbedder({ dim: 384 }),
     workflowRegistry: undefined,
     clock: () => new Date("2026-05-01T00:00:00.000Z"),
+    worktreeRootDir,
+    mainRepoDir,
   });
   try {
     const req = new Request("http://localhost/workflows/trigger", {
