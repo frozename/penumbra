@@ -183,6 +183,38 @@ describe("subsystem health", () => {
     expect(readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM)).toBeNull();
   });
 
+  test("alerts when the query rewrite unsearchable rate equals the alert threshold", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 1,
+      queryRewriteFailedRecent: 0,
+      queryRewriteRejected24h: 9,
+      queryRewriteRejectedRecent: 1,
+      queryRewriteUnsearchableRateAlertThreshold: 0.9,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_unsearchable");
+  });
+
+  test("does not alert when the query rewrite unsearchable rate is below the alert threshold", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 2,
+      queryRewriteFailedRecent: 0,
+      queryRewriteRejected24h: 8,
+      queryRewriteRejectedRecent: 1,
+      queryRewriteUnsearchableRateAlertThreshold: 0.9,
+    });
+
+    expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+  });
+
   test("keeps genuine query rewrite failures on the rewrite_failing alert", () => {
     const db = setupDb();
 
@@ -197,6 +229,54 @@ describe("subsystem health", () => {
 
     expect(alerts).toContain("dream.health.rewrite_failing");
     expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+  });
+
+  test("alerts when consecutive query rewrite failures equal the alert threshold", () => {
+    const db = setupDb();
+
+    for (let i = 0; i < 3; i += 1) {
+      recordSubsystemOutcome(db, {
+        subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+        tier: "fallback",
+        ok: false,
+        ts: `2026-08-18T12:0${String(i)}:00.000Z`,
+        reason: "timeout",
+      });
+    }
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 10,
+      queryRewriteFailedRecent: 0,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_failing");
+  });
+
+  test("does not alert when consecutive query rewrite failures are below the alert threshold", () => {
+    const db = setupDb();
+
+    for (let i = 0; i < 2; i += 1) {
+      recordSubsystemOutcome(db, {
+        subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+        tier: "fallback",
+        ok: false,
+        ts: `2026-08-18T12:0${String(i)}:00.000Z`,
+        reason: "timeout",
+      });
+    }
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 10,
+      queryRewriteFailedRecent: 0,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
   });
 
   test("alerts when a required LLM role has zero holders", () => {
