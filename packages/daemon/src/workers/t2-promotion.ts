@@ -279,6 +279,7 @@ function createJudgeWithRetry(
   opts: ChunkedJudgeOpts,
 ): (chunk: string, depth: number) => Promise<T2MemoryExtraction[]> {
   const failWhenAllChunksFail = opts.failWhenAllChunksFail ?? false;
+  /* eslint-disable sonarjs/cognitive-complexity -- Preserve the existing overflow retry policy while grandfathering its pre-existing complexity. */
   const retryAfterOverflow = async (
     chunk: string,
     depth: number,
@@ -287,7 +288,6 @@ function createJudgeWithRetry(
     recurse: (chunk: string, depth: number) => Promise<T2MemoryExtraction[]>,
     callCounter: { count: number },
   ): Promise<T2MemoryExtraction[]> => {
-    // eslint-disable-line sonarjs/cognitive-complexity -- Preserve the existing overflow retry policy while grandfathering its pre-existing complexity.
     if (chunk.length < 4000 || depth >= MAX_OVERFLOW_DEPTH) {
       if (failWhenAllChunksFail) throw new OverflowExhaustedError("context overflow exhausted");
       opts.log?.warn?.(
@@ -343,6 +343,7 @@ function createJudgeWithRetry(
     const m2 = await recurse(second, depth + 1);
     return [...m1, ...m2];
   };
+  /* eslint-enable sonarjs/cognitive-complexity */
 
   const judgeWithRetry = async (chunk: string, depth: number): Promise<T2MemoryExtraction[]> => {
     const callCounter = { count: 0 };
