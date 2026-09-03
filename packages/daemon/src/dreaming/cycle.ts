@@ -19,6 +19,7 @@ import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { ResearchDeps } from "./research.js";
 
 import {
+  type LlmInvokeCandidateFailure,
   type LlmInvokeInput,
   type LlmInvokeResult,
   llmInvoke as realLlmInvoke,
@@ -1209,25 +1210,30 @@ function recordRewriteFailure(
     reason: string;
     status?: number;
     candidate?: LlmServingCandidate;
+    candidateFailures?: LlmInvokeCandidateFailure[];
   },
 ): void {
   const ts = new Date().toISOString();
+  const failedCandidate = input.candidate ?? primaryRewriteCandidate(ctx);
   ctx.emitDreamEvent("dream_p4_query_rewrite_failed", {
     t2_memory_id: input.memoryId,
     cache_hit: false,
-    model: input.candidate?.model ?? ctx.rewriterModel,
+    model: failedCandidate.model,
     latency_ms: input.latencyMs,
     reason: input.reason,
     ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.candidateFailures === undefined
+      ? {}
+      : { candidate_failures: input.candidateFailures }),
   });
   recordSubsystemOutcome(db, {
     subsystem: "dream.query_rewrite",
-    tier: "fallback",
+    tier: failedCandidate.tier,
     ok: false,
     ts,
-    seat: input.candidate?.name ?? "memory-title",
-    model: input.candidate?.model ?? ctx.rewriterModel,
-    host: input.candidate ? new URL(input.candidate.baseUrl).hostname : null,
+    seat: failedCandidate.name,
+    model: failedCandidate.model,
+    host: new URL(failedCandidate.baseUrl).hostname,
     reason: input.reason,
     status: input.status,
   });
@@ -1334,7 +1340,8 @@ async function fetchRewriteFromLlm(
       latencyMs: rewriteLatencyMs,
       reason: rewriteResult.reason,
       status: "status" in rewriteResult ? rewriteResult.status : undefined,
-      candidate: rewriteResult.candidate,
+      candidate: rewriteResult.candidate ?? primaryRewriteCandidate(ctx),
+      candidateFailures: rewriteResult.failures,
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }

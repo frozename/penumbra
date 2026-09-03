@@ -127,6 +127,15 @@ describe("dreamingHealthRoute", () => {
         meta: { model: "rewriter-a", latency_ms: 123, cache_hit: false },
       });
     }
+    for (let i = 0; i < 13; i += 1) {
+      log.record({
+        handoff_id: `dream-cycle-skip-${String(i)}`,
+        source: "daemon",
+        kind: "dream_p4_query_skipped",
+        ts,
+        meta: { model: "rewriter-a", latency_ms: 123, cache_hit: false },
+      });
+    }
     for (let i = 0; i < 4; i += 1) {
       log.record({
         handoff_id: `dream-cycle-cache-${String(i)}`,
@@ -136,11 +145,18 @@ describe("dreamingHealthRoute", () => {
         meta: { model: "rewriter-a", latency_ms: 0, cache_hit: true },
       });
     }
+    log.record({
+      handoff_id: "dream-cycle-cache-skip",
+      source: "daemon",
+      kind: "dream_p4_query_skipped",
+      ts,
+      meta: { model: "rewriter-a", latency_ms: 0, cache_hit: true },
+    });
 
     const body = await routeBody(services);
 
     expect(body.query_rewrite_failed_24h).toBe(256);
-    expect(body.query_rewritten_24h).toBe(5);
+    expect(body.query_rewritten_24h).toBe(18);
     expect(body).not.toHaveProperty("query_rewrite_degraded_24h");
     expect(body.alerts).toContain("dream.health.rewrite_failing");
   });
@@ -258,6 +274,52 @@ describe("dreamingHealthRoute", () => {
     expect(body.query_rewrite_failed_recent).toBe(3);
     expect(body.query_rewrite_status).toBe("active_failure");
     expect(body.alerts).toContain("dream.health.rewrite_failing");
+  });
+
+  test("alerts when recent failures have no real recent rewrite success while skipped rewrites are landing", async () => {
+    const services = makeServices();
+    const failureTs = isoOffset(5 * 60 * 1000);
+    const staleSuccessTs = isoOffset(7 * 60 * 60 * 1000);
+
+    services.dispatchEventLog.record({
+      handoff_id: "dream-cycle-live-fail",
+      source: "daemon",
+      kind: "dream_p4_query_rewrite_failed",
+      ts: failureTs,
+      meta: { model: "rewriter-a", reason: "timeout" },
+    });
+    for (let i = 0; i < 13; i += 1) {
+      services.dispatchEventLog.record({
+        handoff_id: `dream-cycle-live-skip-${String(i)}`,
+        source: "daemon",
+        kind: "dream_p4_query_skipped",
+        ts: failureTs,
+        meta: { model: "rewriter-a", latency_ms: 123, cache_hit: false },
+      });
+    }
+    recordSubsystemOutcome(services.db, {
+      subsystem: "dream.query_rewrite",
+      tier: "fallback",
+      ok: false,
+      ts: failureTs,
+      model: "rewriter-a",
+      reason: "timeout",
+    });
+    recordSubsystemOutcome(services.db, {
+      subsystem: "dream.query_rewrite",
+      tier: "primary",
+      ok: true,
+      ts: staleSuccessTs,
+      model: "rewriter-a",
+    });
+
+    const body = await routeBody(services);
+
+    expect(body.query_rewrite_failed_recent).toBe(1);
+    expect(body.query_rewritten_recent).toBe(13);
+    expect(body.query_rewrite_status).toBe("active_failure");
+    expect(body.alerts).toContain("dream.health.rewrite_no_recent_success");
+    expect(body.alerts).not.toContain("dream.health.rewrite_failing");
   });
 
   test("keeps a fresh rewrite regression visible inside an already-lit 24h window", async () => {

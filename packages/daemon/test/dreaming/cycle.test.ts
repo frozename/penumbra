@@ -1790,9 +1790,43 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
     llmInvoke: () =>
       Promise.resolve({
         ok: false as const,
-        reason: "http_error",
-        status: 503,
-        failureMessage: "provider unavailable",
+        reason: "timeout",
+        failureMessage: "Request timed out",
+        candidate: {
+          name: "local-rewriter",
+          baseUrl: "http://127.0.0.1:7944/v1",
+          model: "local-rewriter",
+          provider: "local",
+          authSource: "none",
+          tier: "primary",
+        },
+        failures: [
+          {
+            reason: "timeout",
+            failureMessage: "Request timed out",
+            candidate: {
+              name: "local-rewriter",
+              baseUrl: "http://127.0.0.1:7944/v1",
+              model: "local-rewriter",
+              provider: "local",
+              authSource: "none",
+              tier: "primary",
+            },
+          },
+          {
+            reason: "http_error",
+            status: 503,
+            failureMessage: "provider unavailable",
+            candidate: {
+              name: "sakana-rewriter",
+              baseUrl: "https://api.sakana.ai/v1",
+              model: "sakana-rewriter",
+              provider: "sakana",
+              authSource: "bearer",
+              tier: "fallback",
+            },
+          },
+        ],
       }),
   });
 
@@ -1814,27 +1848,42 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
   expect(cacheRow.n).toBe(0);
   const failureEvent = events.find((entry) => entry.kind === "dream_p4_query_rewrite_failed");
   expect(failureEvent).toBeDefined();
-  expect(failureEvent?.meta).toMatchObject({ reason: "http_error", status: 503 });
+  expect(failureEvent?.meta).toMatchObject({
+    reason: "timeout",
+    candidate_failures: [
+      {
+        reason: "timeout",
+        candidate: { name: "local-rewriter", tier: "primary" },
+      },
+      {
+        reason: "http_error",
+        status: 503,
+        candidate: { name: "sakana-rewriter", tier: "fallback" },
+      },
+    ],
+  });
   const healthRow = db
     .query<
       {
         tier: string;
         consecutive_failures: number;
         last_failure_reason: string;
-        last_failure_status: number;
+        last_failure_status: number | null;
+        first_non_primary_ts: string | null;
       },
       []
     >(
-      `SELECT tier, consecutive_failures, last_failure_reason, last_failure_status
+      `SELECT tier, consecutive_failures, last_failure_reason, last_failure_status, first_non_primary_ts
        FROM subsystem_health
        WHERE subsystem = 'dream.query_rewrite'`,
     )
     .get();
   expect(healthRow).toEqual({
-    tier: "fallback",
+    tier: "primary",
     consecutive_failures: 1,
-    last_failure_reason: "http_error",
-    last_failure_status: 503,
+    last_failure_reason: "timeout",
+    last_failure_status: null,
+    first_non_primary_ts: null,
   });
   expect(events.some((entry) => entry.kind === "dream_p4_query_skipped")).toBe(false);
 });

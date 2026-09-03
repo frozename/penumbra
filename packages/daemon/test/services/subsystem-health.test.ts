@@ -206,6 +206,68 @@ describe("subsystem health", () => {
     expect(computeSubsystemAlerts(db, opts)).not.toContain("dream.health.rewrite_failing");
   });
 
+  test("alerts when rewrite failures are recent but the subsystem has no recent success", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: false,
+      ts: "2026-08-18T11:55:00.000Z",
+      reason: "timeout",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: true,
+      ts: "2026-08-18T05:59:59.999Z",
+      model: "rewriter-a",
+    });
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:00:00.000Z"),
+      healthRecencyWindowMs: 6 * 60 * 60 * 1000,
+      queryRewriteFailed24h: 1,
+      queryRewriteSuccess24h: 50,
+      queryRewriteFailedRecent: 1,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_no_recent_success");
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
+  });
+
+  test("does not alert no_recent_success after a success inside the recency window", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: false,
+      ts: "2026-08-18T11:55:00.000Z",
+      reason: "timeout",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: true,
+      ts: "2026-08-18T06:00:00.000Z",
+      model: "rewriter-a",
+    });
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:00:00.000Z"),
+      healthRecencyWindowMs: 6 * 60 * 60 * 1000,
+      queryRewriteFailed24h: 1,
+      queryRewriteSuccess24h: 50,
+      queryRewriteFailedRecent: 1,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).not.toContain("dream.health.rewrite_no_recent_success");
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
+  });
+
   test("alerts on recent unsearchable post-rewrite volume without marking rewrite seat failing", () => {
     const db = setupDb();
 

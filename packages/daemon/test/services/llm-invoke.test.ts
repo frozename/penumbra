@@ -485,6 +485,65 @@ test("advances past a per-attempt timeout", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
+test("reports the primary failure and all candidate failures when every candidate fails", async () => {
+  const fetchMock = mock((url: string, init?: RequestInit): Promise<Response> => {
+    if (url.startsWith("http://127.0.0.1:7944")) {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            reject(new DOMException("Request aborted", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    }
+    return Promise.resolve(new Response("bad gateway", { status: 502 }));
+  });
+
+  const result = await llmInvoke({
+    baseUrl: "http://127.0.0.1:7944",
+    model: "granite",
+    provider: "local",
+    auth: { source: "none" },
+    fallbackCandidates: [
+      {
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+        auth: { source: "bearer", token: "test-token" },
+      },
+    ],
+    messages: [{ role: "user", content: "hello" }],
+    schema: z.object({ answer: z.string() }),
+    timeoutMs: 10,
+    fetchFn: fetchMock as unknown as typeof fetch,
+  });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected failure");
+  expect(result).toMatchObject({
+    reason: "timeout",
+    failureMessage: "Request aborted",
+    candidate: { name: "granite", tier: "primary" },
+    failures: [
+      {
+        reason: "timeout",
+        failureMessage: "Request aborted",
+        candidate: { name: "granite", tier: "primary" },
+      },
+      {
+        reason: "http_error",
+        status: 502,
+        failureMessage: "bad gateway",
+        candidate: { name: "sakana-rewriter", tier: "fallback" },
+      },
+    ],
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
 test("advances past HTTP 200 with whitespace-only content", async () => {
   const fetchMock = mock(
     (url: string): Promise<Response> =>

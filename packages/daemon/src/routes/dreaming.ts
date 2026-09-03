@@ -111,10 +111,10 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
         `SELECT COUNT(*) as c
          FROM dispatch_events
          WHERE ts >= ?
-           AND kind = ?
+           AND kind IN (?, ?)
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
-      .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
+      .get(yesterdayIso, "dream_p4_query_rewritten", "dream_p4_query_skipped") as { c: number }
   ).c;
   const query_rewrite_rejected_24h = (
     db
@@ -138,10 +138,10 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
         `SELECT COUNT(*) as c
          FROM dispatch_events
          WHERE ts >= ?
-           AND kind = ?
+           AND kind IN (?, ?)
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
-      .get(recencyIso, "dream_p4_query_rewritten") as { c: number }
+      .get(recencyIso, "dream_p4_query_rewritten", "dream_p4_query_skipped") as { c: number }
   ).c;
   const query_rewrite_rejected_recent = (
     db
@@ -183,6 +183,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
       queryRewriteFailedRecent: query_rewrite_failed_recent,
       queryRewriteRejected24h: query_rewrite_rejected_24h,
       queryRewriteRejectedRecent: query_rewrite_rejected_recent,
+      healthRecencyWindowMs: HEALTH_RECENCY_WINDOW_MS,
     }),
   );
 

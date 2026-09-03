@@ -36,6 +36,20 @@ export interface LlmInvokeInput<T extends z.ZodType> {
   resolveKeychain?: ResolveKeychainSecret;
 }
 
+type LlmInvokeFailureReason =
+  | "http_error"
+  | "timeout"
+  | "invalid_json"
+  | "schema_violation"
+  | "empty_response";
+
+export interface LlmInvokeCandidateFailure {
+  reason: LlmInvokeFailureReason;
+  failureMessage: string;
+  status?: number;
+  candidate: LlmServingCandidate;
+}
+
 type LlmInvokeFailure =
   | {
       ok: false;
@@ -43,12 +57,14 @@ type LlmInvokeFailure =
       failureMessage: string;
       status: number;
       candidate?: LlmServingCandidate;
+      failures?: LlmInvokeCandidateFailure[];
     }
   | {
       ok: false;
       reason: "timeout" | "invalid_json" | "schema_violation" | "empty_response";
       failureMessage: string;
       candidate?: LlmServingCandidate;
+      failures?: LlmInvokeCandidateFailure[];
     };
 
 type SingleCandidateResult<T extends z.ZodType> =
@@ -172,8 +188,21 @@ export async function llmInvoke<T extends z.ZodType>(
   if (!finalFailure) {
     throw new Error("no LLM candidate attempt was made");
   }
+  const primaryFailure = attempted.failures[0] ?? finalFailure;
   if (candidates.length === 1) return finalFailure.error;
-  return { ...finalFailure.error, candidate: describeLlmCandidate(finalFailure.candidate) };
+  return {
+    ...primaryFailure.error,
+    candidate: describeLlmCandidate(primaryFailure.candidate),
+    failures: attempted.failures.map((failure): LlmInvokeCandidateFailure => {
+      const described = describeLlmCandidate(failure.candidate);
+      return {
+        reason: failure.error.reason,
+        failureMessage: failure.error.failureMessage,
+        ...("status" in failure.error ? { status: failure.error.status } : {}),
+        candidate: described,
+      };
+    }),
+  };
 }
 
 async function invokeCandidate<T extends z.ZodType>(

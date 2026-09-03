@@ -69,6 +69,7 @@ export interface SubsystemHealthRow {
 
 export interface ComputeSubsystemAlertsOptions {
   now?: Date;
+  healthRecencyWindowMs?: number;
   permanentFallbackAfterMs?: number;
   queryRewriteFailed24h?: number;
   queryRewriteSuccess24h?: number;
@@ -306,6 +307,25 @@ function hasRewriteUnsearchableAlert(input: {
   );
 }
 
+function hasRewriteNoRecentSuccessAlert(input: {
+  rewrite: SubsystemHealthRow | null;
+  now: Date;
+  healthRecencyWindowMs: number;
+}): boolean {
+  if (!input.rewrite?.last_failure_ts) return false;
+
+  const lastFailureMs = Date.parse(input.rewrite.last_failure_ts);
+  if (!Number.isFinite(lastFailureMs)) return false;
+
+  const windowStartMs = input.now.getTime() - input.healthRecencyWindowMs;
+  if (lastFailureMs < windowStartMs) return false;
+
+  if (input.rewrite.last_success_ts === null) return true;
+
+  const lastSuccessMs = Date.parse(input.rewrite.last_success_ts);
+  return Number.isFinite(lastSuccessMs) && lastSuccessMs < windowStartMs;
+}
+
 function hasPermanentFallbackAlert(input: {
   rewrite: SubsystemHealthRow | null;
   now: Date;
@@ -332,6 +352,7 @@ export function computeSubsystemAlerts(
 ): string[] {
   const alerts: string[] = [];
   const now = opts.now ?? new Date();
+  const healthRecencyWindowMs = opts.healthRecencyWindowMs ?? 6 * 60 * 60 * 1000;
   const permanentFallbackAfterMs = opts.permanentFallbackAfterMs ?? PERMANENT_FALLBACK_AFTER_MS;
   const rewriteFailures = opts.queryRewriteFailed24h ?? 0;
   const rewriteSuccesses = opts.queryRewriteSuccess24h ?? 0;
@@ -381,6 +402,10 @@ export function computeSubsystemAlerts(
     })
   ) {
     alerts.push("dream.health.rewrite_unsearchable");
+  }
+
+  if (hasRewriteNoRecentSuccessAlert({ rewrite, now, healthRecencyWindowMs })) {
+    alerts.push("dream.health.rewrite_no_recent_success");
   }
 
   if (hasPermanentFallbackAlert({ rewrite, now, permanentFallbackAfterMs })) {
