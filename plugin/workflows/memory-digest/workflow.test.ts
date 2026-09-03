@@ -538,6 +538,39 @@ test("Writes derived MEMORY.md with sentinel and footer to PENUMBRA_CC_MEMORY_DI
   }
 });
 
+test("Bounds persisted MEMORY.md by bytes and reports trimmed recall", async () => {
+  const db = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  const maxBytes = 520;
+
+  insertMemory(db, {
+    slug: "anchor",
+    title: "Budget Anchor Title",
+    hook: "recall anchor " + "wide recall question / ".repeat(80),
+    updatedAt: "2026-01-10T00:00:00Z",
+  });
+  for (let i = 0; i < 8; i += 1) {
+    insertMemory(db, {
+      slug: `extra-${i}`,
+      title: `Extra Title ${i}`,
+      hook: "extra recall " + "overflow / ".repeat(30),
+      updatedAt: `2026-01-09T00:00:0${i}Z`,
+    });
+  }
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    await withEnv("PENUMBRA_MEMORY_DIGEST_MAX_BYTES", String(maxBytes), async () => {
+      await fn(makeCtx(db), {});
+    });
+  });
+
+  const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+  expect(Buffer.byteLength(contents, "utf8")).toBeLessThanOrEqual(maxBytes);
+  expect(contents).toContain("- Budget Anchor Title — recall anchor");
+  expect(contents).toContain("…");
+  expect(contents).toMatch(/Recall partial: dropped \d+ rows and \d+ bytes\./);
+});
+
 test("Leaves foreign MEMORY.md byte-identical when sentinel is absent", async () => {
   const db = freshDb();
   insertMemory(db, {

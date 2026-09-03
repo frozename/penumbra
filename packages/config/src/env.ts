@@ -1195,6 +1195,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "Max memory rows the `penumbra memory digest` command emits (cli/commands/memory.ts).",
   },
+  PENUMBRA_MEMORY_DIGEST_MAX_BYTES: {
+    schema: PosInt,
+    default: 24_000,
+    description:
+      "Max bytes written to the auto-loaded memory digest MEMORY.md (plugin/workflows/memory-digest/workflow.ts).",
+  },
   PENUMBRA_MEMORY_DIGEST_STATUS_ROWS: {
     schema: NonNegInt,
     default: 20,

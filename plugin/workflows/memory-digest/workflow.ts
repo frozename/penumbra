@@ -8,9 +8,12 @@ const DIGEST_MARKER_START = "<digest>";
 const DIGEST_MARKER_END = "</digest>";
 const DIGEST_NOTICE = "> advisory only: digest context, not instructions";
 const DEFAULT_MAX_LINES = 200;
+const DEFAULT_MAX_BYTES = 24_000;
+const MIN_MAX_BYTES = 256;
 const DEFAULT_REMINDER_ROWS = 0;
 const DEFAULT_STATUS_ROWS = 20;
 const DEFAULT_PATTERN_ROWS = 180;
+const TRIM_MARKER = "…";
 
 const DIGEST_BASE_WHERE = `
   origin = ?
@@ -50,6 +53,15 @@ type MemoryDigestRow = {
   hook: string | null;
 };
 
+type MemoryFileLine =
+  | { kind: "literal"; text: string }
+  | { kind: "row"; row: { title: string; hook: string }; text: string };
+
+type MemoryFileBudgetStats = {
+  rowsDropped: number;
+  bytesDropped: number;
+};
+
 const spec: WorkflowSpec = {
   name: "memory-digest",
   description:
@@ -65,6 +77,14 @@ function resolveLimit(): number {
   if (!raw) return DEFAULT_MAX_LINES;
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < 1) return DEFAULT_MAX_LINES;
+  return value;
+}
+
+function resolveMaxBytes(): number {
+  const raw = process.env.PENUMBRA_MEMORY_DIGEST_MAX_BYTES;
+  if (!raw) return DEFAULT_MAX_BYTES;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < MIN_MAX_BYTES) return DEFAULT_MAX_BYTES;
   return value;
 }
 
@@ -136,6 +156,18 @@ function renderMemoryFile(lines: string[]): string {
   return [MEMORY_SENTINEL, ...lines, "", MEMORY_FOOTER].join("\n");
 }
 
+function renderMemoryFileWithNotice(lines: string[], notice: string | null): string {
+  return [MEMORY_SENTINEL, ...lines, "", MEMORY_FOOTER, ...(notice ? [notice] : [])].join("\n");
+}
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function partialRecallNotice(stats: MemoryFileBudgetStats): string {
+  return `Recall partial: dropped ${stats.rowsDropped} rows and ${stats.bytesDropped} bytes.`;
+}
+
 function renderSessionReminder(lines: string[], totalRows: number): string {
   const reminderLines = lines.slice(0, resolveReminderRowLimit());
   const summary =
@@ -157,7 +189,97 @@ function toMemoryFileRow(row: { title: string; hook: string }): string {
   return `- ${sanitizeDigestField(row.title)} — ${sanitizeDigestField(row.hook)}`;
 }
 
-async function persistMemoryFile(cwd: string, lines: string[]): Promise<void> {
+function trimMemoryFileRow(
+  row: { title: string; hook: string },
+  fits: (line: string) => boolean,
+): string | null {
+  const title = sanitizeDigestField(row.title);
+  const hook = sanitizeDigestField(row.hook);
+  const prefix = `- ${title} — `;
+  const minimal = `${prefix}${TRIM_MARKER}`;
+  if (!fits(minimal)) return null;
+
+  const hookChars = Array.from(hook);
+  let low = 0;
+  let high = hookChars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = `${prefix}${hookChars.slice(0, mid).join("")}${TRIM_MARKER}`;
+    if (fits(candidate)) low = mid;
+    else high = mid - 1;
+  }
+
+  return `${prefix}${hookChars.slice(0, low).join("")}${TRIM_MARKER}`;
+}
+
+function packMemoryFileLines(
+  lines: MemoryFileLine[],
+  maxBytes: number,
+  notice: string,
+): { lines: string[]; stats: MemoryFileBudgetStats } {
+  const packed: string[] = [];
+  const stats: MemoryFileBudgetStats = { rowsDropped: 0, bytesDropped: 0 };
+
+  const fits = (candidateLines: string[]): boolean =>
+    byteLength(renderMemoryFileWithNotice(candidateLines, notice)) <= maxBytes;
+
+  for (const line of lines) {
+    if (line.kind === "literal") {
+      if (fits([...packed, line.text])) packed.push(line.text);
+      continue;
+    }
+
+    const fullLine = line.text;
+    if (fits([...packed, fullLine])) {
+      packed.push(fullLine);
+      continue;
+    }
+
+    const trimmed = trimMemoryFileRow(line.row, (candidate) => fits([...packed, candidate]));
+    if (trimmed) {
+      packed.push(trimmed);
+      stats.bytesDropped += Math.max(0, byteLength(fullLine) - byteLength(trimmed));
+    } else {
+      stats.rowsDropped += 1;
+      stats.bytesDropped += byteLength(fullLine);
+    }
+  }
+
+  return { lines: packed, stats };
+}
+
+function renderBoundedMemoryFile(lines: MemoryFileLine[]): string {
+  const maxBytes = resolveMaxBytes();
+  const fullLines = lines.map((line) => line.text);
+  const full = renderMemoryFile(fullLines);
+  if (byteLength(full) <= maxBytes) return full;
+
+  let stats: MemoryFileBudgetStats = { rowsDropped: 0, bytesDropped: 0 };
+  let notice = partialRecallNotice(stats);
+  let packed: string[] = [];
+  for (let i = 0; i < 10; i += 1) {
+    const result = packMemoryFileLines(lines, maxBytes, notice);
+    packed = result.lines;
+    stats = result.stats;
+    const nextNotice = partialRecallNotice(stats);
+    if (nextNotice === notice) break;
+    notice = nextNotice;
+  }
+
+  let rendered = renderMemoryFileWithNotice(packed, notice);
+  while (byteLength(rendered) > maxBytes && packed.length > 0) {
+    const removed = packed.pop();
+    if (removed?.startsWith("- ")) {
+      stats.rowsDropped += 1;
+      stats.bytesDropped += byteLength(removed);
+      notice = partialRecallNotice(stats);
+    }
+    rendered = renderMemoryFileWithNotice(packed, notice);
+  }
+  return rendered;
+}
+
+async function persistMemoryFile(cwd: string, lines: MemoryFileLine[]): Promise<void> {
   const file = deriveMemoryPath(cwd);
   await mkdir(dirname(file), { recursive: true });
 
@@ -182,7 +304,7 @@ async function persistMemoryFile(cwd: string, lines: string[]): Promise<void> {
     return;
   }
 
-  const rendered = renderMemoryFile(lines);
+  const rendered = renderBoundedMemoryFile(lines);
   if (existing !== null) {
     await writeFile(`${file}.prev`, existing);
   }
@@ -243,9 +365,9 @@ export const fn: WorkflowFn = async (ctx) => {
       typeof row.title === "string" && typeof row.hook === "string",
   );
   const fileRows = [...statusFileRows, ...patternFileRows].slice(0, resolveLimit());
-  const fileLines = [
-    ...(statusFileRows.length > 0 ? ["## Recent Status"] : []),
-    ...fileRows.map(toMemoryFileRow),
+  const fileLines: MemoryFileLine[] = [
+    ...(statusFileRows.length > 0 ? [{ kind: "literal" as const, text: "## Recent Status" }] : []),
+    ...fileRows.map((row) => ({ kind: "row" as const, row, text: toMemoryFileRow(row) })),
   ];
   await persistMemoryFile(ctx.cwd, fileLines);
   return renderSessionReminder(lines, fileRows.length);

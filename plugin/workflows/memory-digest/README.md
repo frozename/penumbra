@@ -30,6 +30,8 @@ append it to `additionalContext`.
 
 `PENUMBRA_MEMORY_DIGEST_MAX_LINES` controls the maximum number of rows in the digest.
 If unset, it defaults to `200`.
+`PENUMBRA_MEMORY_DIGEST_MAX_BYTES` controls the maximum size of the auto-loaded
+`MEMORY.md` file. If unset, it defaults to `24000`.
 
 ## Data source
 
