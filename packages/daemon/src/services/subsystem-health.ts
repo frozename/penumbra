@@ -9,6 +9,7 @@ const QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD = 0.9;
 // Post-rewrite unsearchable output is content degradation, not a seat-liveness failure.
 const QUERY_REWRITE_UNSEARCHABLE_RATE_ALERT_THRESHOLD = 0.9;
 const QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD = 3;
+const QUERY_REWRITE_MIN_SAMPLE_ALERT_THRESHOLD = 5;
 
 export interface LlmRoleFloorSpec {
   role: string;
@@ -77,6 +78,7 @@ export interface ComputeSubsystemAlertsOptions {
   queryRewriteFailureRateAlertThreshold?: number;
   queryRewriteUnsearchableRateAlertThreshold?: number;
   queryRewriteConsecutiveFailuresAlertThreshold?: number;
+  queryRewriteMinSampleAlertThreshold?: number;
   requiredLlmRoleFloors?: LlmRoleFloorSpec[];
   agentchatConfig?: LlmRoleAgentchatConfig | null;
 }
@@ -270,13 +272,16 @@ export function readSubsystemHealth(db: Database, subsystem: string): SubsystemH
 function hasRewriteFailureAlert(input: {
   rewrite: SubsystemHealthRow | null;
   rewriteFailures: number;
+  rewriteAttempts: number;
   rewriteFailuresRecent: number | undefined;
   rewriteFailureRate: number;
   rewriteFailureRateAlertThreshold: number;
   rewriteConsecutiveFailuresAlertThreshold: number;
+  rewriteMinSampleAlertThreshold: number;
 }): boolean {
   const rewriteVolumeFailure =
     input.rewriteFailures > 0 &&
+    input.rewriteAttempts >= input.rewriteMinSampleAlertThreshold &&
     input.rewriteFailureRate >= input.rewriteFailureRateAlertThreshold &&
     (input.rewriteFailuresRecent === undefined || input.rewriteFailuresRecent > 0);
   const rewriteConsecutiveFailure =
@@ -287,12 +292,15 @@ function hasRewriteFailureAlert(input: {
 
 function hasRewriteUnsearchableAlert(input: {
   rewriteRejected: number;
+  rewriteSearchabilityAttempts: number;
   rewriteRejectedRecent: number;
   rewriteUnsearchableRate: number;
   rewriteUnsearchableRateAlertThreshold: number;
+  rewriteMinSampleAlertThreshold: number;
 }): boolean {
   return (
     input.rewriteRejected > 0 &&
+    input.rewriteSearchabilityAttempts >= input.rewriteMinSampleAlertThreshold &&
     input.rewriteRejectedRecent > 0 &&
     input.rewriteUnsearchableRate >= input.rewriteUnsearchableRateAlertThreshold
   );
@@ -343,16 +351,20 @@ export function computeSubsystemAlerts(
   const rewriteConsecutiveFailuresAlertThreshold =
     opts.queryRewriteConsecutiveFailuresAlertThreshold ??
     QUERY_REWRITE_CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
+  const rewriteMinSampleAlertThreshold =
+    opts.queryRewriteMinSampleAlertThreshold ?? QUERY_REWRITE_MIN_SAMPLE_ALERT_THRESHOLD;
   const rewrite = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
 
   if (
     hasRewriteFailureAlert({
       rewrite,
       rewriteFailures,
+      rewriteAttempts,
       rewriteFailuresRecent,
       rewriteFailureRate,
       rewriteFailureRateAlertThreshold,
       rewriteConsecutiveFailuresAlertThreshold,
+      rewriteMinSampleAlertThreshold,
     })
   ) {
     alerts.push("dream.health.rewrite_failing");
@@ -361,9 +373,11 @@ export function computeSubsystemAlerts(
   if (
     hasRewriteUnsearchableAlert({
       rewriteRejected,
+      rewriteSearchabilityAttempts,
       rewriteRejectedRecent,
       rewriteUnsearchableRate,
       rewriteUnsearchableRateAlertThreshold,
+      rewriteMinSampleAlertThreshold,
     })
   ) {
     alerts.push("dream.health.rewrite_unsearchable");

@@ -225,6 +225,40 @@ describe("subsystem health", () => {
 
   // Equality fixtures rely on integer ratios resolving to the same IEEE 754 double as the threshold literal (e.g. 9/(9+1) === 0.9).
 
+  test("alerts when the query rewrite unsearchable sample equals the floor", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 0,
+      queryRewriteRejected24h: 5,
+      queryRewriteRejectedRecent: 5,
+      queryRewriteUnsearchableRateAlertThreshold: 0.9,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_unsearchable");
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
+  });
+
+  test("does not alert when the query rewrite unsearchable sample is below the floor", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 0,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 0,
+      queryRewriteRejected24h: 4,
+      queryRewriteRejectedRecent: 4,
+      queryRewriteUnsearchableRateAlertThreshold: 0.9,
+    });
+
+    expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
+  });
+
   test("alerts when the query rewrite unsearchable rate equals the alert threshold", () => {
     const db = setupDb();
 
@@ -274,6 +308,42 @@ describe("subsystem health", () => {
     });
 
     expect(alerts).toContain("dream.health.rewrite_failing");
+    expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+  });
+
+  test("alerts when the query rewrite failure sample equals the floor", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 5,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 5,
+      queryRewriteRejected24h: 0,
+      queryRewriteRejectedRecent: 0,
+      queryRewriteFailureRateAlertThreshold: 0.9,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).toContain("dream.health.rewrite_failing");
+    expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
+  });
+
+  test("does not alert when the query rewrite failure sample is below the floor", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:05:00.000Z"),
+      queryRewriteFailed24h: 4,
+      queryRewriteSuccess24h: 0,
+      queryRewriteFailedRecent: 4,
+      queryRewriteRejected24h: 0,
+      queryRewriteRejectedRecent: 0,
+      queryRewriteFailureRateAlertThreshold: 0.9,
+      queryRewriteConsecutiveFailuresAlertThreshold: 3,
+    });
+
+    expect(alerts).not.toContain("dream.health.rewrite_failing");
     expect(alerts).not.toContain("dream.health.rewrite_unsearchable");
   });
 

@@ -343,13 +343,16 @@ describe("dreamingHealthRoute", () => {
 
   test("surfaces query rewrite subsystem health details", async () => {
     const services = makeServices();
-    services.dispatchEventLog.record({
-      handoff_id: "dream-cycle-2",
-      source: "daemon",
-      kind: "dream_p4_query_rewrite_failed",
-      ts: new Date().toISOString(),
-      meta: { model: "rewriter-a", reason: "timeout" },
-    });
+    // Five failures sit exactly at the min-sample floor, so the rate alert still fires.
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      services.dispatchEventLog.record({
+        handoff_id: `dream-cycle-${String(attempt)}`,
+        source: "daemon",
+        kind: "dream_p4_query_rewrite_failed",
+        ts: new Date().toISOString(),
+        meta: { model: "rewriter-a", reason: "timeout" },
+      });
+    }
     recordSubsystemOutcome(services.db, {
       subsystem: "dream.query_rewrite",
       tier: "fallback",
@@ -370,7 +373,7 @@ describe("dreamingHealthRoute", () => {
 
     const body = await routeBody(services);
 
-    expect(body.query_rewrite_failed_24h).toBe(1);
+    expect(body.query_rewrite_failed_24h).toBe(5);
     expect(body.alerts).toContain("dream.health.rewrite_failing");
     expect(body.subsystem_health).toEqual({
       subsystem: "dream.query_rewrite",
