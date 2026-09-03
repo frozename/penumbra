@@ -154,6 +154,209 @@ describe("subsystem health", () => {
     expect(alerts).not.toContain("dream.health.rewrite_failing");
   });
 
+  test("a primary failure no longer resets the permanent-fallback clock", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: true,
+      ts: "2026-08-18T05:00:00.000Z",
+      model: "fallback-title",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: false,
+      ts: "2026-08-18T08:00:00.000Z",
+      reason: "timeout",
+    });
+
+    const row = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
+    expect(row?.first_non_primary_ts).toBe("2026-08-18T05:00:00.000Z");
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: true,
+      ts: "2026-08-18T09:00:00.000Z",
+      model: "fallback-title",
+    });
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T11:00:00.001Z"),
+    });
+    expect(alerts).toContain("dream.health.rewrite_permanent_fallback");
+  });
+
+  test("a primary success still clears the permanent-fallback clock", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: true,
+      ts: "2026-08-18T05:00:00.000Z",
+      model: "fallback-title",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: true,
+      ts: "2026-08-18T08:00:00.000Z",
+      model: "rewriter-a",
+    });
+
+    const row = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
+    expect(row?.first_non_primary_ts).toBeNull();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: true,
+      ts: "2026-08-18T09:00:00.000Z",
+      model: "fallback-title",
+    });
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T11:00:00.001Z"),
+    });
+    expect(alerts).not.toContain("dream.health.rewrite_permanent_fallback");
+  });
+
+  test("records a skip as a neutral outcome that stamps last_skip_ts without touching other bookkeeping", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: true,
+      ts: "2026-08-18T05:00:00.000Z",
+      seat: "fallback-seat",
+      model: "fallback-title",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: false,
+      ts: "2026-08-18T08:00:00.000Z",
+      reason: "timeout",
+      status: 503,
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: "skip",
+      ts: "2026-08-18T09:00:00.000Z",
+      seat: "rewrite-seat-a",
+      model: "rewriter-a",
+      host: "127.0.0.1",
+    });
+
+    const row = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
+    expect(row).toMatchObject({
+      tier: "primary",
+      seat: "rewrite-seat-a",
+      model: "rewriter-a",
+      host: "127.0.0.1",
+      consecutive_failures: 1,
+      last_success_ts: "2026-08-18T05:00:00.000Z",
+      last_failure_ts: "2026-08-18T08:00:00.000Z",
+      last_failure_reason: "timeout",
+      last_failure_status: 503,
+      first_non_primary_ts: "2026-08-18T05:00:00.000Z",
+      last_skip_ts: "2026-08-18T09:00:00.000Z",
+    });
+  });
+
+  test("a skip does not reset consecutive failures", () => {
+    const db = setupDb();
+
+    for (const ts of ["2026-08-18T12:00:00.000Z", "2026-08-18T12:01:00.000Z"]) {
+      recordSubsystemOutcome(db, {
+        subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+        tier: "primary",
+        ok: false,
+        ts,
+        reason: "timeout",
+      });
+    }
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: "skip",
+      ts: "2026-08-18T12:02:00.000Z",
+    });
+
+    expect(readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM)?.consecutive_failures).toBe(2);
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: false,
+      ts: "2026-08-18T12:03:00.000Z",
+      reason: "timeout",
+    });
+
+    expect(
+      computeSubsystemAlerts(db, {
+        now: new Date("2026-08-18T12:05:00.000Z"),
+        queryRewriteConsecutiveFailuresAlertThreshold: 3,
+      }),
+    ).toContain("dream.health.rewrite_failing");
+  });
+
+  test("a skip does not refresh last_success_ts so rewrite_no_recent_success can still fire", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: true,
+      ts: "2026-08-18T05:00:00.000Z",
+      model: "rewriter-a",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: false,
+      ts: "2026-08-18T11:55:00.000Z",
+      reason: "timeout",
+    });
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "primary",
+      ok: "skip",
+      ts: "2026-08-18T11:57:00.000Z",
+    });
+
+    const alerts = computeSubsystemAlerts(db, {
+      now: new Date("2026-08-18T12:00:00.000Z"),
+      healthRecencyWindowMs: 6 * 60 * 60 * 1000,
+    });
+    expect(alerts).toContain("dream.health.rewrite_no_recent_success");
+  });
+
+  test("a skip on a fallback tier does not start the permanent-fallback clock", () => {
+    const db = setupDb();
+
+    recordSubsystemOutcome(db, {
+      subsystem: DREAM_QUERY_REWRITE_SUBSYSTEM,
+      tier: "fallback",
+      ok: "skip",
+      ts: "2026-08-18T05:00:00.000Z",
+      seat: "fallback-seat",
+      model: "fallback-title",
+    });
+
+    const row = readSubsystemHealth(db, DREAM_QUERY_REWRITE_SUBSYSTEM);
+    expect(row?.first_non_primary_ts).toBeNull();
+    expect(row?.last_skip_ts).toBe("2026-08-18T05:00:00.000Z");
+    expect(computeSubsystemAlerts(db, { now: new Date("2026-08-18T12:00:00.001Z") })).not.toContain(
+      "dream.health.rewrite_permanent_fallback",
+    );
+  });
+
   test("alerts on consecutive query rewrite failures before the 24h rate crosses the alert threshold", () => {
     const db = setupDb();
 

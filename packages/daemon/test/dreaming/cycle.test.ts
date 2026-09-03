@@ -1999,13 +1999,229 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
   const skippedEvents = events.filter((entry) => entry.kind === "dream_p4_query_skipped");
   expect(skippedEvents.length).toBe(0);
   const healthRow = db
-    .query<{ consecutive_failures: number; last_failure_reason: string }, []>(
-      `SELECT consecutive_failures, last_failure_reason
+    .query<
+      {
+        tier: string;
+        seat: string | null;
+        model: string | null;
+        host: string | null;
+        consecutive_failures: number;
+        last_success_ts: string | null;
+        last_failure_ts: string | null;
+        last_failure_reason: string | null;
+      },
+      []
+    >(
+      `SELECT tier, seat, model, host, consecutive_failures, last_success_ts, last_failure_ts, last_failure_reason
        FROM subsystem_health
        WHERE subsystem = 'dream.query_rewrite'`,
     )
     .get();
-  expect(healthRow).toBeNull();
+  expect(healthRow).not.toBeNull();
+  expect(healthRow?.tier).toBe("primary");
+  expect(healthRow?.seat).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
+  expect(healthRow?.model).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
+  expect(healthRow?.host).toBe("127.0.0.1");
+  expect(healthRow?.consecutive_failures).toBe(0);
+  expect(healthRow?.last_success_ts).not.toBeNull();
+  expect(healthRow?.last_failure_ts).toBeNull();
+  expect(healthRow?.last_failure_reason).toBeNull();
+});
+
+it("P4 fresh skip is recorded as a neutral subsystem outcome, not a success", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-skip-health";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "How to keep this stable under high load",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "skip", reason: "too-internal" },
+        raw: '{"kind":"skip","reason":"too-internal"}',
+      }),
+  });
+
+  const healthRow = db
+    .query<
+      {
+        tier: string;
+        seat: string | null;
+        consecutive_failures: number;
+        last_success_ts: string | null;
+        last_failure_ts: string | null;
+        first_non_primary_ts: string | null;
+      },
+      []
+    >(
+      `SELECT tier, seat, consecutive_failures, last_success_ts, last_failure_ts, first_non_primary_ts
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow).not.toBeNull();
+  expect(healthRow?.tier).toBe("primary");
+  expect(healthRow?.seat).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
+  expect(healthRow?.consecutive_failures).toBe(0);
+  expect(healthRow?.last_success_ts).toBeNull();
+  expect(healthRow?.last_failure_ts).toBeNull();
+  expect(healthRow?.first_non_primary_ts).toBeNull();
+});
+
+it("P4 primary failure keeps an established fallback clock running", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-fallback-clock";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "A stable architecture question with human language",
+  });
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "Another searchable question about queue throughput",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "query" as const, query: "searchable rewritten stability query" },
+        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
+        candidate: {
+          name: "sakana-rewriter",
+          baseUrl: "https://api.sakana.ai/v1",
+          model: "sakana-rewriter",
+          provider: "sakana" as const,
+          authSource: "bearer" as const,
+          tier: "fallback" as const,
+        },
+      }),
+  });
+
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: false as const,
+        reason: "timeout" as const,
+        failureMessage: "request timed out",
+        candidate: {
+          name: "local-rewriter",
+          baseUrl: "http://127.0.0.1:7944/v1",
+          model: "local-rewriter",
+          provider: "local" as const,
+          authSource: "none" as const,
+          tier: "primary" as const,
+        },
+      }),
+  });
+
+  const healthRow = db
+    .query<{ first_non_primary_ts: string | null }, []>(
+      `SELECT first_non_primary_ts
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow?.first_non_primary_ts).not.toBeNull();
+});
+
+it("P4 rewrite failure with a malformed candidate baseUrl does not crash the cycle", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-malformed-host";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "TypeScript strict null checks in async systems",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  const events: { kind: string; meta: unknown }[] = [];
+  const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: false as const,
+        reason: "timeout" as const,
+        failureMessage: "request timed out",
+        candidate: {
+          name: "local-rewriter",
+          baseUrl: "not-a-valid-url",
+          model: "local-rewriter",
+          provider: "local" as const,
+          authSource: "none" as const,
+          tier: "primary" as const,
+        },
+      }),
+  });
+
+  expect(getCycleOutcome(db, cycleId)).toBe("completed");
+  expect(events.some((entry) => entry.kind === "dream_p4_query_rewrite_failed")).toBe(true);
+  const healthRow = db
+    .query<{ host: string | null; last_failure_reason: string | null }, []>(
+      `SELECT host, last_failure_reason
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow).not.toBeNull();
+  expect(healthRow?.host).toBeNull();
+  expect(healthRow?.last_failure_reason).toBe("timeout");
+});
+
+it("P4 fresh skip with a malformed candidate baseUrl does not crash the cycle", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-skip-malformed-host";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "How to keep this stable under high load",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: () =>
+      Promise.resolve({
+        ok: true as const,
+        value: { kind: "skip", reason: "too-internal" },
+        raw: '{"kind":"skip","reason":"too-internal"}',
+        candidate: {
+          name: "local-rewriter",
+          baseUrl: "not-a-valid-url",
+          model: "local-rewriter",
+          provider: "local" as const,
+          authSource: "none" as const,
+          tier: "primary" as const,
+        },
+      }),
+  });
+
+  expect(getCycleOutcome(db, cycleId)).toBe("completed");
+  const healthRow = db
+    .query<{ host: string | null; last_success_ts: string | null }, []>(
+      `SELECT host, last_success_ts
+       FROM subsystem_health
+       WHERE subsystem = 'dream.query_rewrite'`,
+    )
+    .get();
+  expect(healthRow).not.toBeNull();
+  expect(healthRow?.host).toBeNull();
+  expect(healthRow?.last_success_ts).toBeNull();
 });
 
 // ── P6 brief dedup ─────────────────────────────────────────────────────────

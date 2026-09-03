@@ -450,6 +450,7 @@
       "last_failure_reason",
       "last_failure_status",
       "last_failure_ts",
+      "last_skip_ts",
       "last_success_ts",
       "model",
       "seat",

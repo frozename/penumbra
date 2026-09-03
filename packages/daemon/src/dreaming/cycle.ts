@@ -1201,6 +1201,14 @@ function fallbackToMemoryTitle(
   };
 }
 
+function safeHostname(baseUrl: string): string | null {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function recordRewriteFailure(
   db: Database,
   ctx: CycleCtx,
@@ -1233,7 +1241,7 @@ function recordRewriteFailure(
     ts,
     seat: failedCandidate.name,
     model: failedCandidate.model,
-    host: new URL(failedCandidate.baseUrl).hostname,
+    host: safeHostname(failedCandidate.baseUrl),
     reason: input.reason,
     status: input.status,
   });
@@ -1258,7 +1266,19 @@ function recordRewriteSuccess(db: Database, candidate: LlmServingCandidate): voi
     ts: new Date().toISOString(),
     seat: candidate.name,
     model: candidate.model,
-    host: new URL(candidate.baseUrl).hostname,
+    host: safeHostname(candidate.baseUrl),
+  });
+}
+
+function recordRewriteSkip(db: Database, candidate: LlmServingCandidate): void {
+  recordSubsystemOutcome(db, {
+    subsystem: "dream.query_rewrite",
+    tier: candidate.tier,
+    ok: "skip",
+    ts: new Date().toISOString(),
+    seat: candidate.name,
+    model: candidate.model,
+    host: safeHostname(candidate.baseUrl),
   });
 }
 
@@ -1366,7 +1386,7 @@ async function fetchRewriteFromLlm(
       model: servingCandidate.model,
       latency_ms: rewriteLatencyMs,
     });
-    recordRewriteSuccess(db, servingCandidate);
+    recordRewriteSkip(db, servingCandidate);
     return null;
   }
 
@@ -1378,10 +1398,15 @@ async function fetchRewriteFromLlm(
       cache_hit: false,
       model: servingCandidate.model,
       seat: servingCandidate.name,
-      host: new URL(servingCandidate.baseUrl).hostname,
+      host: safeHostname(servingCandidate.baseUrl),
       latency_ms: rewriteLatencyMs,
       reason: passes.reason ?? "rejected_unsearchable",
     });
+    // A rejection means the seat answered and the searchability gate worked, so it
+    // is a liveness success: keeping last_success_ts fresh prevents a false
+    // rewrite_no_recent_success alert while content degradation stays covered by
+    // the rewrite_unsearchable rate alert.
+    recordRewriteSuccess(db, servingCandidate);
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
 

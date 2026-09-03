@@ -438,6 +438,7 @@ const SCHEMA_DDL_BLOCK_01 = `
         last_failure_reason TEXT,
         last_failure_status INTEGER,
         first_non_primary_ts TEXT,
+        last_skip_ts TEXT,
         updated_at TEXT NOT NULL
       );
 
@@ -1366,6 +1367,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     applyHandoffsMigration(db);
     applyTasksMigration(db);
     addColumnsIfMissing(db, "agent_performance", AGENT_PERFORMANCE_ADDITIVE_COLUMNS);
+    addColumnIfMissing(db, "subsystem_health", "last_skip_ts", "TEXT");
     applyWorkflowsMigration(db);
     applyOriginTaggingMigration(db);
     applyT1RollupsMigration(db);

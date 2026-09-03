@@ -111,10 +111,21 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
         `SELECT COUNT(*) as c
          FROM dispatch_events
          WHERE ts >= ?
-           AND kind IN (?, ?)
+           AND kind = ?
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
-      .get(yesterdayIso, "dream_p4_query_rewritten", "dream_p4_query_skipped") as { c: number }
+      .get(yesterdayIso, "dream_p4_query_rewritten") as { c: number }
+  ).c;
+  const query_skipped_24h = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
+      )
+      .get(yesterdayIso, "dream_p4_query_skipped") as { c: number }
   ).c;
   const query_rewrite_rejected_24h = (
     db
@@ -138,10 +149,21 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
         `SELECT COUNT(*) as c
          FROM dispatch_events
          WHERE ts >= ?
-           AND kind IN (?, ?)
+           AND kind = ?
            AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
       )
-      .get(recencyIso, "dream_p4_query_rewritten", "dream_p4_query_skipped") as { c: number }
+      .get(recencyIso, "dream_p4_query_rewritten") as { c: number }
+  ).c;
+  const query_skipped_recent = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c
+         FROM dispatch_events
+         WHERE ts >= ?
+           AND kind = ?
+           AND COALESCE(json_extract(meta_json, '$.cache_hit'), 0) != 1`,
+      )
+      .get(recencyIso, "dream_p4_query_skipped") as { c: number }
   ).c;
   const query_rewrite_rejected_recent = (
     db
@@ -165,6 +187,7 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
         last_success_ts: subsystemHealth.last_success_ts,
         last_failure_ts: subsystemHealth.last_failure_ts,
         last_failure_reason: subsystemHealth.last_failure_reason,
+        last_skip_ts: subsystemHealth.last_skip_ts,
       }
     : null;
 
@@ -201,14 +224,17 @@ export function dreamingHealthRoute(req: Request, services: Services): Response 
     ),
     query_rewrite_failed_24h,
     query_rewritten_24h,
+    query_skipped_24h,
     query_rewrite_failed_recent,
     query_rewritten_recent,
+    query_skipped_recent,
     query_rewrite_rejected_24h,
     query_rewrite_rejected_recent,
     query_rewrite_status: statusFromRecentFailure(
       query_rewrite_failed_24h,
       query_rewrite_failed_recent,
-      query_rewritten_recent,
+      // Skips are neutral for rate denominators but still prove seat liveness here.
+      query_rewritten_recent + query_skipped_recent,
     ),
     subsystem_health,
     alerts,

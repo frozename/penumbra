@@ -43,7 +43,9 @@ interface LlmRoleAgentchatConfig {
 export interface RecordSubsystemOutcomeInput {
   subsystem: string;
   tier: string;
-  ok: boolean;
+  // "skip" is a neutral outcome: the seat answered but produced no rewrite, so it
+  // must neither mask failures (success) nor count against the seat (failure).
+  ok: boolean | "skip";
   ts?: Date | string;
   seat?: string | null;
   model?: string | null;
@@ -64,6 +66,7 @@ export interface SubsystemHealthRow {
   last_failure_reason: string | null;
   last_failure_status: number | null;
   first_non_primary_ts: string | null;
+  last_skip_ts: string | null;
   updated_at: string;
 }
 
@@ -202,31 +205,60 @@ function normalizeTs(ts: Date | string | undefined): string {
   return typeof ts === "string" ? ts : ts.toISOString();
 }
 
+function nextConsecutiveFailures(
+  existing: SubsystemHealthRow | null,
+  ok: boolean | "skip",
+  isPrimary: boolean,
+): number {
+  const prior = existing?.consecutive_failures ?? 0;
+  if (ok === "skip") return prior;
+  if (ok) return isPrimary ? 0 : prior;
+  return prior + 1;
+}
+
+function nextFirstNonPrimaryTs(
+  existing: SubsystemHealthRow | null,
+  ok: boolean | "skip",
+  isPrimary: boolean,
+  ts: string,
+): string | null {
+  // Only a primary success proves the primary rung is serving again: a primary
+  // failure must not restart the permanent-fallback clock, and a skip is neutral
+  // liveness that moves the clock in neither direction.
+  if (ok === "skip") return existing?.first_non_primary_ts ?? null;
+  if (isPrimary) return ok ? null : (existing?.first_non_primary_ts ?? null);
+  return existing?.first_non_primary_ts ?? ts;
+}
+
 export function recordSubsystemOutcome(db: Database, input: RecordSubsystemOutcomeInput): void {
   const ts = normalizeTs(input.ts);
   const existing = readSubsystemHealth(db, input.subsystem);
   const isPrimary = input.tier === PRIMARY_TIER;
-  const consecutiveFailures = input.ok
-    ? isPrimary
-      ? 0
-      : (existing?.consecutive_failures ?? 0)
-    : (existing?.consecutive_failures ?? 0) + 1;
-  const lastSuccessTs = input.ok ? ts : (existing?.last_success_ts ?? null);
-  const lastFailureTs = input.ok ? (existing?.last_failure_ts ?? null) : ts;
-  const lastFailureReason = input.ok
-    ? (existing?.last_failure_reason ?? null)
-    : (input.reason ?? null);
-  const lastFailureStatus = input.ok
-    ? (existing?.last_failure_status ?? null)
-    : (input.status ?? null);
-  const firstNonPrimaryTs = isPrimary ? null : (existing?.first_non_primary_ts ?? ts);
+  const isSkip = input.ok === "skip";
+  const succeeded = input.ok === true;
+  const failed = !isSkip && !succeeded;
+  const consecutiveFailures = nextConsecutiveFailures(existing, input.ok, isPrimary);
+  const lastSuccessTs = isSkip
+    ? (existing?.last_success_ts ?? null)
+    : succeeded
+      ? ts
+      : (existing?.last_success_ts ?? null);
+  const lastFailureTs = failed ? ts : (existing?.last_failure_ts ?? null);
+  const lastFailureReason = failed
+    ? (input.reason ?? null)
+    : (existing?.last_failure_reason ?? null);
+  const lastFailureStatus = failed
+    ? (input.status ?? null)
+    : (existing?.last_failure_status ?? null);
+  const firstNonPrimaryTs = nextFirstNonPrimaryTs(existing, input.ok, isPrimary, ts);
+  const lastSkipTs = isSkip ? ts : (existing?.last_skip_ts ?? null);
 
   db.run(
     `INSERT INTO subsystem_health (
        subsystem, tier, seat, model, host, consecutive_failures, last_success_ts,
        last_failure_ts, last_failure_reason, last_failure_status,
-       first_non_primary_ts, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       first_non_primary_ts, last_skip_ts, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(subsystem) DO UPDATE SET
        tier = excluded.tier,
        seat = excluded.seat,
@@ -238,6 +270,7 @@ export function recordSubsystemOutcome(db: Database, input: RecordSubsystemOutco
        last_failure_reason = excluded.last_failure_reason,
        last_failure_status = excluded.last_failure_status,
        first_non_primary_ts = excluded.first_non_primary_ts,
+       last_skip_ts = excluded.last_skip_ts,
        updated_at = excluded.updated_at`,
     [
       input.subsystem,
@@ -251,6 +284,7 @@ export function recordSubsystemOutcome(db: Database, input: RecordSubsystemOutco
       lastFailureReason,
       lastFailureStatus,
       firstNonPrimaryTs,
+      lastSkipTs,
       ts,
     ],
   );
@@ -262,7 +296,7 @@ export function readSubsystemHealth(db: Database, subsystem: string): SubsystemH
       .query<SubsystemHealthRow, [string]>(
         `SELECT subsystem, tier, seat, model, host, consecutive_failures,
                 last_success_ts, last_failure_ts, last_failure_reason,
-                last_failure_status, first_non_primary_ts, updated_at
+                last_failure_status, first_non_primary_ts, last_skip_ts, updated_at
          FROM subsystem_health
          WHERE subsystem = ?`,
       )
