@@ -344,10 +344,23 @@ interface LockControl {
   restoreJournalMode: string | null;
 }
 
-function beginLockControl(dbPath: string, holdMs: number): LockControl {
+function readWritableJournalMode(dbPath: string): string {
   const db = new Database(dbPath);
-  const originalJournalMode = readPragmaString(db, "journal_mode").toLowerCase();
-  if (originalJournalMode !== "wal") {
+  try {
+    return readPragmaString(db, "journal_mode").toLowerCase();
+  } finally {
+    db.close();
+  }
+}
+
+function beginLockControl(
+  dbPath: string,
+  holdMs: number,
+  originalJournalMode: string,
+): LockControl {
+  const db = new Database(dbPath);
+  const currentJournalMode = readPragmaString(db, "journal_mode").toLowerCase();
+  if (currentJournalMode !== "wal") {
     db.run("PRAGMA journal_mode=WAL");
   }
   db.run("BEGIN IMMEDIATE");
@@ -465,7 +478,17 @@ function classifyRound(round: ProbeRoundResult, options: ProbeRunOptions): Failu
   if (options.requireOverlap && maxIntervalOverlap(round.processes) < options.minOverlap) {
     classes.add("serialized_dispatch");
   }
-  if (options.requireOverlap && fixtureReceiveSkew(round.fixtureEvents) > MAX_RECEIVE_SKEW_MS) {
+  if (
+    options.requireOverlap &&
+    fixtureEventSkew(round.fixtureEvents, "session_new_received") > MAX_RECEIVE_SKEW_MS
+  ) {
+    classes.add("serialized_dispatch");
+  }
+  if (
+    options.requireOverlap &&
+    options.sqliteLockControlMs <= 0 &&
+    fixtureEventSkew(round.fixtureEvents, "session_new_responding") > MAX_RECEIVE_SKEW_MS
+  ) {
     classes.add("serialized_dispatch");
   }
   if (!lockWindowSatisfied(round, options)) {
@@ -474,14 +497,12 @@ function classifyRound(round: ProbeRoundResult, options: ProbeRunOptions): Failu
   return [...classes].sort();
 }
 
-function fixtureReceiveSkew(events: ProbeFixtureEvent[]): number {
-  const receivedAt = events
-    .filter((event) => event.kind === "session_new_received")
-    .map((event) => event.atMs);
-  if (receivedAt.length < 2) {
+function fixtureEventSkew(events: ProbeFixtureEvent[], kind: string): number {
+  const eventTimes = events.filter((event) => event.kind === kind).map((event) => event.atMs);
+  if (eventTimes.length < 2) {
     return 0;
   }
-  return Math.max(...receivedAt) - Math.min(...receivedAt);
+  return Math.max(...eventTimes) - Math.min(...eventTimes);
 }
 
 async function settleClients(
@@ -502,6 +523,8 @@ async function settleClients(
 }
 
 async function runRound(round: number, options: ProbeRunOptions): Promise<ProbeRoundResult> {
+  const lockJournalMode =
+    options.sqliteLockControlMs > 0 ? readWritableJournalMode(options.dbPath) : null;
   const preDb = safeDbSnapshot(options.dbPath);
   const clients = await initializeClients(options);
 
@@ -510,7 +533,11 @@ async function runRound(round: number, options: ProbeRunOptions): Promise<ProbeR
   let lockControl: LockControlEvidence | null = null;
   try {
     if (options.sqliteLockControlMs > 0) {
-      lock = beginLockControl(options.dbPath, options.sqliteLockControlMs);
+      lock = beginLockControl(
+        options.dbPath,
+        options.sqliteLockControlMs,
+        lockJournalMode ?? "delete",
+      );
     }
     const sessionResults = await Promise.all(
       clients.ready.map((client) => requestSession(client, round)),

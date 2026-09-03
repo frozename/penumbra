@@ -53,12 +53,34 @@ function openDb(dbPath: string): Database {
   return db;
 }
 
-function ensureSchema(db: Database): void {
-  db.run("PRAGMA journal_mode=WAL");
-  db.run("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at_ms REAL NOT NULL)");
-  db.run(
-    "CREATE TABLE IF NOT EXISTS probe_events (kind TEXT NOT NULL, pid INTEGER NOT NULL, round INTEGER NOT NULL, session_id TEXT, at_ms REAL NOT NULL)",
-  );
+function isSqliteBusy(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /SQLITE_BUSY|database is locked/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureSchema(db: Database): Promise<void> {
+  const deadline = nowMs() + 5_000;
+  for (;;) {
+    try {
+      db.run("PRAGMA journal_mode=WAL");
+      db.run(
+        "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at_ms REAL NOT NULL)",
+      );
+      db.run(
+        "CREATE TABLE IF NOT EXISTS probe_events (kind TEXT NOT NULL, pid INTEGER NOT NULL, round INTEGER NOT NULL, session_id TEXT, at_ms REAL NOT NULL)",
+      );
+      return;
+    } catch (err) {
+      if (!isSqliteBusy(err) || nowMs() >= deadline) {
+        throw err;
+      }
+      await sleep(25);
+    }
+  }
 }
 
 function writeResponse(id: number | string | undefined, result: Record<string, unknown>): void {
@@ -76,16 +98,21 @@ function recordEvent(
   kind: string,
   round: number,
   sessionId: string | null = null,
+  atMs: number = nowMs(),
 ): void {
   db.query(
     "INSERT INTO probe_events (kind, pid, round, session_id, at_ms) VALUES (?, ?, ?, ?, ?)",
-  ).run(kind, process.pid, round, sessionId, nowMs());
+  ).run(kind, process.pid, round, sessionId, atMs);
 }
 
-function createSession(db: Database, shouldInsert: boolean, round: number): string {
-  ensureSchema(db);
+function createSession(
+  db: Database,
+  shouldInsert: boolean,
+  round: number,
+  receivedAtMs: number,
+): string {
   const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
-  recordEvent(db, "session_new_received", round, sessionId);
+  recordEvent(db, "session_new_received", round, sessionId, receivedAtMs);
   if (shouldInsert) {
     db.query("INSERT INTO sessions (id, created_at_ms) VALUES (?, ?)").run(sessionId, nowMs());
   }
@@ -108,6 +135,7 @@ async function handleRequest(
   req: JsonRpcRequest,
   options: CliOptions,
   db: Database,
+  receivedAtMs: number | null,
 ): Promise<void> {
   if (req.method === "initialize") {
     writeResponse(req.id, {
@@ -138,13 +166,19 @@ async function handleRequest(
     await new Promise((resolve) => setTimeout(resolve, processIndex() * 75));
   }
 
-  const sessionId = createSession(db, options.mode !== "missing-row", requestRound(req));
+  const sessionId = createSession(
+    db,
+    options.mode !== "missing-row",
+    requestRound(req),
+    receivedAtMs ?? nowMs(),
+  );
   writeResponse(req.id, { sessionId });
 }
 
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2));
   const db = openDb(options.dbPath);
+  await ensureSchema(db);
   const rl = createInterface({ input: process.stdin });
 
   try {
@@ -154,7 +188,8 @@ async function main(): Promise<void> {
         continue;
       }
       const parsed = JSON.parse(trimmed) as JsonRpcRequest;
-      await handleRequest(parsed, options, db);
+      const receivedAtMs = parsed.method === "session/new" ? nowMs() : null;
+      await handleRequest(parsed, options, db, receivedAtMs);
     }
   } finally {
     db.close();
