@@ -16,6 +16,7 @@ import type { Database } from "bun:sqlite";
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
 const DEAD_PIN_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_DEAD_PIN_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEAD_PIN_FAILURE_WINDOW_ENV = "PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS";
 type AgentPoolLike =
   | string
@@ -48,14 +49,24 @@ function resolveDeadPinFailureWindowMs(
 ): number {
   const raw = env[DEAD_PIN_FAILURE_WINDOW_ENV];
   if (raw === undefined || raw.trim() === "") return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
+  const parsed = parsePositiveIntegerEnv(raw);
+  if (parsed === null) return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
+  // Thirty days still covers unusually slow follow-up cycles, but prevents
+  // stale history from acting like current liveness and keeps Date arithmetic representable.
+  if (parsed > MAX_DEAD_PIN_FAILURE_WINDOW_MS) return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
+  return parsed;
+}
+
+function parsePositiveIntegerEnv(raw: string): number | null {
+  const parsed = Number(raw.trim());
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return null;
   return parsed;
 }
 
 function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string): boolean {
   try {
-    const cutoff = new Date(Date.now() - resolveDeadPinFailureWindowMs()).toISOString();
+    const windowMs = resolveDeadPinFailureWindowMs();
+    const cutoff = new Date(Date.now() - windowMs).toISOString();
     const rows = db
       .query<{ outcome: string }, [string, string, string, number]>(
         `SELECT outcome
@@ -67,9 +78,35 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
          LIMIT ?`,
       )
       .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
-    return (
-      rows.length === DEAD_PIN_CONSECUTIVE_FAILURES && rows.every((row) => row.outcome === "failed")
-    );
+    const hasRecentFailures =
+      rows.length === DEAD_PIN_CONSECUTIVE_FAILURES &&
+      rows.every((row) => row.outcome === "failed");
+    if (hasRecentFailures) return true;
+
+    const staleRows = db
+      .query<{ outcome: string; ts: string }, [string, string, string, number]>(
+        `SELECT outcome, ts
+         FROM agent_performance
+         WHERE agent_name = ? AND task_type = ? AND source = 'worker'
+           AND (environment_failure IS NULL OR environment_failure != 'y')
+           AND ts < ?
+         ORDER BY ts DESC
+         LIMIT ?`,
+      )
+      .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
+    const revived =
+      staleRows.length === DEAD_PIN_CONSECUTIVE_FAILURES &&
+      staleRows.every((row) => row.outcome === "failed");
+    if (revived) {
+      console.warn("[workflow-agent-resolver] dead pin revived", {
+        agent,
+        task_type: taskType,
+        stale_failures: staleRows.length,
+        newest_stale_failure_ts: staleRows[0]?.ts ?? null,
+        window_ms: windowMs,
+      });
+    }
+    return false;
   } catch {
     return false;
   }

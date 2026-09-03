@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
   AgentPerformanceWriter,
@@ -34,6 +34,16 @@ function withDeadPinWindow<T>(value: string | undefined, fn: () => T): T {
   } finally {
     if (oldWindow === undefined) delete process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS;
     else process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS = oldWindow;
+  }
+}
+
+function withNow<T>(nowMs: number, fn: () => T): T {
+  const originalNow = Date.now;
+  Date.now = () => nowMs;
+  try {
+    return fn();
+  } finally {
+    Date.now = originalNow;
   }
 }
 
@@ -271,24 +281,29 @@ describe("resolveAgent", () => {
         { suffix: "stale-h2", ts: daysAgo(3), outcome: "failed" },
         { suffix: "stale-h1", ts: daysAgo(4), outcome: "failed" },
       ]);
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
 
-      expect(
-        resolveAgent(
-          { kind: "single", agent: "dead-pin-seat" },
-          "review_adversarial",
-          ctx({
-            config: {
-              role_routing: { headroom_weighting: false },
-              agents: [
-                { name: "dead-pin-seat", roles: ["reviewer"] },
-                { name: "healthy-seat", roles: ["reviewer"] },
-              ],
-            },
-            db: () => db,
-          }),
-          { fallback_role: "reviewer" },
-        ),
-      ).toBe("dead-pin-seat");
+      try {
+        expect(
+          resolveAgent(
+            { kind: "single", agent: "dead-pin-seat" },
+            "review_adversarial",
+            ctx({
+              config: {
+                role_routing: { headroom_weighting: false },
+                agents: [
+                  { name: "dead-pin-seat", roles: ["reviewer"] },
+                  { name: "healthy-seat", roles: ["reviewer"] },
+                ],
+              },
+              db: () => db,
+            }),
+            { fallback_role: "reviewer" },
+          ),
+        ).toBe("dead-pin-seat");
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 
@@ -319,6 +334,219 @@ describe("resolveAgent", () => {
 
       expect(result).not.toBe("dead-pin-seat");
     });
+  });
+
+  test("uses registry-style integer parsing for the dead-pin failure window", () => {
+    const fixedNow = Date.parse("2026-09-03T12:00:00.000Z");
+    withNow(fixedNow, () => {
+      withDeadPinWindow("60000.5", () => {
+        const db = freshDb();
+        writeDeadPinWorkerRows(db, [
+          {
+            suffix: "float-window-h3",
+            ts: new Date(fixedNow - 2 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+          {
+            suffix: "float-window-h2",
+            ts: new Date(fixedNow - 3 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+          {
+            suffix: "float-window-h1",
+            ts: new Date(fixedNow - 4 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+        ]);
+
+        const result = resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          ctx({
+            config: {
+              role_routing: { headroom_weighting: false },
+              agents: [
+                { name: "dead-pin-seat", roles: ["reviewer"] },
+                { name: "healthy-seat", roles: ["reviewer"] },
+              ],
+            },
+            db: () => db,
+          }),
+          { fallback_role: "reviewer" },
+        );
+
+        expect(result).not.toBe("dead-pin-seat");
+      });
+    });
+  });
+
+  test("includes a worker failure exactly at the dead-pin window boundary", () => {
+    const fixedNow = Date.parse("2026-09-03T12:00:00.000Z");
+    withNow(fixedNow, () => {
+      withDeadPinWindow("1000", () => {
+        const db = freshDb();
+        writeDeadPinWorkerRows(db, [
+          { suffix: "boundary-h3", ts: new Date(fixedNow - 998).toISOString(), outcome: "failed" },
+          { suffix: "boundary-h2", ts: new Date(fixedNow - 999).toISOString(), outcome: "failed" },
+          { suffix: "boundary-h1", ts: new Date(fixedNow - 1000).toISOString(), outcome: "failed" },
+        ]);
+
+        const result = resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          ctx({
+            config: {
+              role_routing: { headroom_weighting: false },
+              agents: [
+                { name: "dead-pin-seat", roles: ["reviewer"] },
+                { name: "healthy-seat", roles: ["reviewer"] },
+              ],
+            },
+            db: () => db,
+          }),
+          { fallback_role: "reviewer" },
+        );
+
+        expect(result).not.toBe("dead-pin-seat");
+      });
+    });
+  });
+
+  test("rejects representable oversized dead-pin windows instead of expanding into stale failures", () => {
+    const fixedNow = Date.parse("2026-09-03T12:00:00.000Z");
+    withNow(fixedNow, () => {
+      withDeadPinWindow(String(365 * 24 * 60 * 60_000), () => {
+        const db = freshDb();
+        writeDeadPinWorkerRows(db, [
+          {
+            suffix: "stale-oversized-h3",
+            ts: new Date(fixedNow - 100 * 24 * 60 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+          {
+            suffix: "stale-oversized-h2",
+            ts: new Date(fixedNow - 101 * 24 * 60 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+          {
+            suffix: "stale-oversized-h1",
+            ts: new Date(fixedNow - 102 * 24 * 60 * 60_000).toISOString(),
+            outcome: "failed",
+          },
+        ]);
+        const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+
+        try {
+          expect(
+            resolveAgent(
+              { kind: "single", agent: "dead-pin-seat" },
+              "review_adversarial",
+              ctx({
+                config: {
+                  role_routing: { headroom_weighting: false },
+                  agents: [
+                    { name: "dead-pin-seat", roles: ["reviewer"] },
+                    { name: "healthy-seat", roles: ["reviewer"] },
+                  ],
+                },
+                db: () => db,
+              }),
+              { fallback_role: "reviewer" },
+            ),
+          ).toBe("dead-pin-seat");
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+    });
+  });
+
+  test("does not fail open for a non-representable oversized dead-pin window", () => {
+    withDeadPinWindow("1e16", () => {
+      const db = freshDb();
+      writeDeadPinWorkerRows(db, [
+        { suffix: "huge-window-h3", ts: minutesAgo(1), outcome: "failed" },
+        { suffix: "huge-window-h2", ts: minutesAgo(2), outcome: "failed" },
+        { suffix: "huge-window-h1", ts: minutesAgo(3), outcome: "failed" },
+      ]);
+
+      const result = resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      );
+
+      expect(result).not.toBe("dead-pin-seat");
+    });
+  });
+
+  test("logs only when an old dead pin revives outside the failure window", () => {
+    const db = freshDb();
+    writeDeadPinWorkerRows(db, [
+      { suffix: "revived-h3", ts: daysAgo(8), outcome: "failed" },
+      { suffix: "revived-h2", ts: daysAgo(9), outcome: "failed" },
+      { suffix: "revived-h1", ts: daysAgo(10), outcome: "failed" },
+    ]);
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(
+        resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          ctx({
+            config: {
+              role_routing: { headroom_weighting: false },
+              agents: [
+                { name: "dead-pin-seat", roles: ["reviewer"] },
+                { name: "healthy-seat", roles: ["reviewer"] },
+              ],
+            },
+            db: () => db,
+          }),
+          { fallback_role: "reviewer" },
+        ),
+      ).toBe("dead-pin-seat");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toBe("[workflow-agent-resolver] dead pin revived");
+      expect(warnSpy.mock.calls[0]?.[1]).toMatchObject({
+        agent: "dead-pin-seat",
+        task_type: "review_adversarial",
+        stale_failures: 3,
+      });
+
+      warnSpy.mockClear();
+      const healthyDb = freshDb();
+      expect(
+        resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          ctx({
+            config: {
+              role_routing: { headroom_weighting: false },
+              agents: [
+                { name: "dead-pin-seat", roles: ["reviewer"] },
+                { name: "healthy-seat", roles: ["reviewer"] },
+              ],
+            },
+            db: () => healthyDb,
+          }),
+          { fallback_role: "reviewer" },
+        ),
+      ).toBe("dead-pin-seat");
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("keeps a single pinned agent when any recent worker row completed", () => {

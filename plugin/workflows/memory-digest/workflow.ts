@@ -83,9 +83,15 @@ function resolveLimit(): number {
 function resolveMaxBytes(): number {
   const raw = process.env.PENUMBRA_MEMORY_DIGEST_MAX_BYTES;
   if (!raw) return DEFAULT_MAX_BYTES;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value < MIN_MAX_BYTES) return DEFAULT_MAX_BYTES;
+  const value = parsePositiveIntegerEnv(raw);
+  if (value === null || value < MIN_MAX_BYTES) return DEFAULT_MAX_BYTES;
   return value;
+}
+
+function parsePositiveIntegerEnv(raw: string): number | null {
+  const parsed = Number(raw.trim());
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function resolveReminderRowLimit(): number {
@@ -164,6 +170,10 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+function packedLineBytes(line: string): number {
+  return byteLength(line) + 1;
+}
+
 function partialRecallNotice(stats: MemoryFileBudgetStats): string {
   return `Recall partial: dropped ${stats.rowsDropped} rows and ${stats.bytesDropped} bytes.`;
 }
@@ -219,25 +229,30 @@ function packMemoryFileLines(
 ): { lines: string[]; stats: MemoryFileBudgetStats } {
   const packed: string[] = [];
   const stats: MemoryFileBudgetStats = { rowsDropped: 0, bytesDropped: 0 };
+  let packedBytes = byteLength(renderMemoryFileWithNotice([], notice));
 
-  const fits = (candidateLines: string[]): boolean =>
-    byteLength(renderMemoryFileWithNotice(candidateLines, notice)) <= maxBytes;
+  const fits = (candidate: string): boolean => packedBytes + packedLineBytes(candidate) <= maxBytes;
 
   for (const line of lines) {
     if (line.kind === "literal") {
-      if (fits([...packed, line.text])) packed.push(line.text);
+      if (fits(line.text)) {
+        packed.push(line.text);
+        packedBytes += packedLineBytes(line.text);
+      }
       continue;
     }
 
     const fullLine = line.text;
-    if (fits([...packed, fullLine])) {
+    if (fits(fullLine)) {
       packed.push(fullLine);
+      packedBytes += packedLineBytes(fullLine);
       continue;
     }
 
-    const trimmed = trimMemoryFileRow(line.row, (candidate) => fits([...packed, candidate]));
+    const trimmed = trimMemoryFileRow(line.row, fits);
     if (trimmed) {
       packed.push(trimmed);
+      packedBytes += packedLineBytes(trimmed);
       stats.bytesDropped += Math.max(0, byteLength(fullLine) - byteLength(trimmed));
     } else {
       stats.rowsDropped += 1;
@@ -266,6 +281,8 @@ function renderBoundedMemoryFile(lines: MemoryFileLine[]): string {
     notice = nextNotice;
   }
 
+  // The bounded pack loop is an efficiency heuristic; this final shrink loop is
+  // the correctness guard if notice growth pushes the rendered file over budget.
   let rendered = renderMemoryFileWithNotice(packed, notice);
   while (byteLength(rendered) > maxBytes && packed.length > 0) {
     const removed = packed.pop();

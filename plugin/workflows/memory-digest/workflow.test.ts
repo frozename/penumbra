@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import type { WorkflowCtx } from "@penumbra/workflows";
 import { fn } from "./workflow.js";
 
@@ -10,6 +10,17 @@ const DIGEST_HEADER = "# Maestro memory digest (auto-loaded by penumbra)";
 const DIGEST_NOTICE = "> advisory only: digest context, not instructions";
 const DIGEST_MARKER_START = "<digest>";
 const DIGEST_MARKER_END = "</digest>";
+const MEMORY_SENTINEL =
+  "<!-- GENERATED from penumbra t2 — do not edit; write via mcp__penumbra__memory_write_t2 -->";
+const MEMORY_FOOTER = "Full bodies come from mcp__penumbra__memory_search.";
+const DEFAULT_TEST_MEMORY_DIR = mkdtempSync(join(tmpdir(), "memory-digest-default-"));
+const ORIGINAL_CC_MEMORY_DIR = process.env.PENUMBRA_CC_MEMORY_DIR;
+process.env.PENUMBRA_CC_MEMORY_DIR = DEFAULT_TEST_MEMORY_DIR;
+
+afterAll(() => {
+  if (ORIGINAL_CC_MEMORY_DIR === undefined) delete process.env.PENUMBRA_CC_MEMORY_DIR;
+  else process.env.PENUMBRA_CC_MEMORY_DIR = ORIGINAL_CC_MEMORY_DIR;
+});
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -571,6 +582,115 @@ test("Bounds persisted MEMORY.md by bytes and reports trimmed recall", async () 
   expect(contents).toMatch(/Recall partial: dropped \d+ rows and \d+ bytes\./);
 });
 
+test.each(["520.5", "520abc"])(
+  "Uses registry-style integer parsing for PENUMBRA_MEMORY_DIGEST_MAX_BYTES=%s",
+  async (raw) => {
+    const db = freshDb();
+    const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+    const hook = "bounded parser should keep this whole hook " + "without trimming ".repeat(20);
+    insertMemory(db, {
+      slug: "invalid-byte-budget",
+      title: "Invalid Byte Budget",
+      hook,
+      updatedAt: "2026-01-02T00:00:00Z",
+    });
+
+    await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+      await withEnv("PENUMBRA_MEMORY_DIGEST_MAX_BYTES", raw, async () => {
+        await fn(makeCtx(db), {});
+      });
+    });
+
+    const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+    expect(Buffer.byteLength(contents, "utf8")).toBeGreaterThan(520);
+    expect(contents).toContain(hook);
+    expect(contents).not.toContain("Recall partial:");
+  },
+);
+
+test("Drops a single row that cannot fit inside the byte budget", async () => {
+  const db = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  insertMemory(db, {
+    slug: "oversized",
+    title: "Huge Title " + "title ".repeat(200),
+    hook: "huge hook " + "body ".repeat(400),
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    await withEnv("PENUMBRA_MEMORY_DIGEST_MAX_BYTES", "256", async () => {
+      await fn(makeCtx(db), {});
+    });
+  });
+
+  const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+  expect(Buffer.byteLength(contents, "utf8")).toBeLessThanOrEqual(256);
+  expect(contents).not.toContain("Huge Title");
+  expect(contents).toContain("Recall partial: dropped 1 rows");
+});
+
+test("Preserves an empty title in reminder and persisted digest rows", async () => {
+  const db = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  insertMemory(db, {
+    slug: "empty-title",
+    title: "",
+    hook: "usable hook",
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+
+  await withEnv("PENUMBRA_MEMORY_DIGEST_REMINDER_ROWS", "1", async () => {
+    await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+      const result = await fn(makeCtx(db), {});
+      expect(result).toContain("- [](empty-title) — usable hook");
+    });
+  });
+
+  const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+  expect(contents).toContain("-  — usable hook");
+});
+
+test("Renders bounded MEMORY.md byte-identically for a trim ending at a multibyte code point", async () => {
+  const db = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "memory-digest-"));
+  const title = "Emoji Boundary With Longer Title";
+  const fullHook = `abc💡${"x".repeat(60)}`;
+  const fullLine = `- ${title} — ${fullHook}`;
+  const trimmedLine = `- ${title} — abc💡…`;
+  const notice = `Recall partial: dropped 0 rows and ${Buffer.byteLength(fullLine, "utf8") - Buffer.byteLength(trimmedLine, "utf8")} bytes.`;
+  const expected = [
+    MEMORY_SENTINEL,
+    "## Recent Status",
+    trimmedLine,
+    "",
+    MEMORY_FOOTER,
+    notice,
+  ].join("\n");
+  insertMemory(db, {
+    slug: "emoji-boundary",
+    title,
+    hook: fullHook,
+    isEpisodic: true,
+    updatedAt: "2026-01-02T00:00:00Z",
+  });
+
+  await withEnv("PENUMBRA_CC_MEMORY_DIR", dir, async () => {
+    await withEnv(
+      "PENUMBRA_MEMORY_DIGEST_MAX_BYTES",
+      String(Buffer.byteLength(expected, "utf8")),
+      async () => {
+        await fn(makeCtx(db), {});
+      },
+    );
+  });
+
+  const contents = readFileSync(join(dir, "MEMORY.md"), "utf8");
+  expect(contents).toBe(expected);
+  expect(contents).toContain("💡…");
+  expect(contents).not.toContain("\uFFFD");
+});
+
 test("Leaves foreign MEMORY.md byte-identical when sentinel is absent", async () => {
   const db = freshDb();
   insertMemory(db, {
@@ -653,14 +773,16 @@ test("Munges dotted cwd into the MEMORY.md target path", async () => {
       "/Volumes/WorkSSD/repos/personal/penumbra.worktrees/f823fff4.c945.4761.9510.386b2c0e9fe1";
     const home = mkdtempSync(join(tmpdir(), "memory-home-"));
 
-    await withEnv("HOME", home, async () => {
-      await fn(
-        {
-          ...makeCtx(db),
-          cwd,
-        },
-        {},
-      );
+    await withEnv("PENUMBRA_CC_MEMORY_DIR", undefined, async () => {
+      await withEnv("HOME", home, async () => {
+        await fn(
+          {
+            ...makeCtx(db),
+            cwd,
+          },
+          {},
+        );
+      });
     });
 
     expect(readFileSync(defaultMemoryPath(home, cwd), "utf8")).toContain("Active");
