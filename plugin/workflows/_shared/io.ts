@@ -1,6 +1,7 @@
+import type { WorkflowCtx } from "@penumbra/workflows";
+
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
-import type { WorkflowCtx } from "@penumbra/workflows";
 
 function canonicalizePathForWrite(path: string): string {
   const absPath = resolve(path);
@@ -24,7 +25,7 @@ function canonicalizePathForWrite(path: string): string {
 
 function sanitizeFileStem(input: string): string {
   const trimmed = input.trim().toLowerCase();
-  return trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "persona";
+  return trimmed.replaceAll(/[^a-z0-9._-]+/g, "-").replaceAll(/^-+|-+$/g, "") || "persona";
 }
 
 function resolveOutDir(
@@ -35,7 +36,7 @@ function resolveOutDir(
     ctx.cwd,
     ".penumbra",
     "reviews",
-    new Date().toISOString().replace(/:/g, "-"),
+    new Date().toISOString().replaceAll(":", "-"),
   );
   const outDir = !outDirArg
     ? defaultOutDir

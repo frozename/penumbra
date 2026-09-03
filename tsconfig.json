@@ -13,6 +13,7 @@
     { "path": "./packages/cli" },
     { "path": "./packages/integrations/sirius-middleware" },
     { "path": "./packages/workflows" },
-    { "path": "./packages/console" }
+    { "path": "./packages/console" },
+    { "path": "./plugin" }
   ]
 }

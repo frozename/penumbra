@@ -43,19 +43,19 @@ describe("directive surfaces", () => {
 
     for (const file of scannedFiles) {
       const lines = readFileSync(file, "utf8").split(/\r?\n/);
-      lines.forEach((line, index) => {
+      for (const [index, line] of lines.entries()) {
         if (
           !line.includes(ccProjectMemoryPath) ||
           line.includes("derived") ||
           line.includes("read-only")
         ) {
-          return;
+          continue;
         }
 
-        if (new RegExp(`\\.${"claude"}/projects/.*/memory`).test(line)) {
+        if (new RegExp(`\\.claude/projects/.*/memory`).test(line)) {
           failures.push(`${relative(file)}:${index + 1}: ${line}`);
         }
-      });
+      }
     }
 
     expect(failures).toEqual([]);

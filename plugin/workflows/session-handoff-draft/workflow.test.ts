@@ -1,5 +1,6 @@
-import { loadSqliteVec, migrate, SessionNoteDrafts } from "@penumbra/core";
 import type { RecallBundle, WorkflowCtx } from "@penumbra/workflows";
+
+import { loadSqliteVec, migrate, SessionNoteDrafts } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import {
@@ -43,6 +44,7 @@ type DraftRunResult = {
   draft_path?: string;
   skeleton_path?: string;
   period_key?: string;
+  sections?: number;
 };
 
 const GOOD_RESPONSE = [

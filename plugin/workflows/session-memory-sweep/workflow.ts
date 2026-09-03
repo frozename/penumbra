@@ -1,8 +1,9 @@
+import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+
 import { Database } from "bun:sqlite";
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
 
 const DEFAULT_MAX_CANDIDATES = 10;
 const MIN_TRANSCRIPT_CHARS = 200;
@@ -33,7 +34,7 @@ type RecallWarnings = {
   warnings?: string[];
 };
 
-type Args = {
+export type Args = {
   db?: Database;
   session_id?: string;
   project_id?: string | null;
@@ -146,8 +147,8 @@ function warn(recall: RecallWarnings, message: string): void {
 function scrubTranscriptMarkup(content: string): string {
   if (!content) return "";
   return content
-    .replace(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<\/?(?:function_calls|invoke|tool_call|tool_use|antml:[a-z_]+)\b[^>]*>/gi, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
@@ -355,8 +356,8 @@ function buildApprovedNoteCandidate(
     const slugName = sourceName
       .replace(/\.[^.]+$/, "")
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-+|-+$/g, "");
     return {
       action: "create",
       slug: `approved-session-note-${slugName || "narrative"}`,
@@ -376,7 +377,10 @@ function buildApprovedNoteCandidate(
   }
 }
 
-export const fn: WorkflowFn<Args> = async (ctx, recall) => {
+export const fn = (async (
+  ctx: WorkflowCtx<Args>,
+  recall: RecallWarnings & Partial<RecallBundle>,
+): Promise<string> => {
   if (process.env.PENUMBRA_SESSION_SWEEP_ENABLED === "0") return PRESERVE_NEXT_SESSION_PROMPT;
 
   const { db, shouldClose } = resolveDb(ctx);
@@ -431,6 +435,6 @@ export const fn: WorkflowFn<Args> = async (ctx, recall) => {
     ...sessionCandidates.slice(0, maxCandidates),
   ];
   return renderCandidates(candidates);
-};
+}) satisfies WorkflowFn<Args>;
 
 export default spec;

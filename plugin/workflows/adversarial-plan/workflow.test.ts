@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RecallBundle, WorkflowCtx } from "../../../packages/workflows/src/index.js";
+
+import type { Input } from "./workflow.js";
+
+import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
 import { dedupePersonas, fn } from "./workflow.js";
 
 describe("dedupePersonas", () => {
@@ -36,7 +39,7 @@ describe("adversarial-plan workflow", () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-plan-workflow-"));
     try {
       let dispatchCount = 0;
-      const ctx = {
+      const ctx = testWorkflowCtx<Input>({
         config: {
           workloads: {
             plan_refine: {
@@ -60,7 +63,7 @@ describe("adversarial-plan workflow", () => {
           timeout_ms: 1000,
           out_dir: "plan-out",
         },
-        dispatch: async (input: { agent: string }) => {
+        dispatch: async (input) => {
           dispatchCount += 1;
           if (input.agent === "synth") {
             throw new Error("synth unavailable");
@@ -75,15 +78,11 @@ describe("adversarial-plan workflow", () => {
           final_agent: "planner-agent",
           response_text: "Phase 1: write a failing test. Phase 2: implement the fix.",
         }),
-        fileWrite: async (path: string) => path,
-      } satisfies Partial<WorkflowCtx>;
-      const recall = {
-        byKey: {},
-        warnings: [],
-        estimatedTokens: 0,
-      } satisfies RecallBundle;
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall();
 
-      const result = (await fn(ctx as WorkflowCtx, recall)) as {
+      const result = (await fn(ctx, recall)) as {
         ok: boolean;
         synthesizer_status: string | null;
         synth_failed?: boolean;
@@ -101,7 +100,7 @@ describe("adversarial-plan workflow", () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-plan-workflow-"));
     try {
       let dispatchCount = 0;
-      const ctx = {
+      const ctx = testWorkflowCtx<Input>({
         config: {
           workloads: {
             plan_refine: {
@@ -125,7 +124,7 @@ describe("adversarial-plan workflow", () => {
           timeout_ms: 1000,
           out_dir: "plan-out",
         },
-        dispatch: async (input: { agent: string }) => {
+        dispatch: async (input) => {
           dispatchCount += 1;
           return {
             conversation_id:
@@ -133,10 +132,11 @@ describe("adversarial-plan workflow", () => {
             handoff_id: `handoff-${dispatchCount}`,
           };
         },
-        awaitChain: async (conversationId: string) =>
+        awaitChain: async (conversationId) =>
           conversationId === "synth-conversation"
             ? {
                 status: "timeout" as const,
+                final_agent: null,
                 response_text: null,
               }
             : {
@@ -144,15 +144,11 @@ describe("adversarial-plan workflow", () => {
                 final_agent: "planner-agent",
                 response_text: "Phase 1: write a failing test. Phase 2: implement the fix.",
               },
-        fileWrite: async (path: string) => path,
-      } satisfies Partial<WorkflowCtx>;
-      const recall = {
-        byKey: {},
-        warnings: [],
-        estimatedTokens: 0,
-      } satisfies RecallBundle;
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall();
 
-      const result = (await fn(ctx as WorkflowCtx, recall)) as {
+      const result = (await fn(ctx, recall)) as {
         ok: boolean;
         outcome: string;
         synthesizer_status: string | null;

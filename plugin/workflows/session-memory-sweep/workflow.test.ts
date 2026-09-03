@@ -1,13 +1,13 @@
+import { buildRegistry, evaluateTriggerEvent, type WorkflowCtx } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
-import {
-  buildRegistry,
-  evaluateTriggerEvent,
-  type WorkflowCtx,
-} from "../../../packages/workflows/src/index.js";
+
+import type { Args } from "./workflow.js";
+
+import { emptyRecall } from "../_shared/test-helpers.js";
 import { fn } from "./workflow.js";
 
 const APPROVED_NOTE_READ_CAP_BYTES = 256 * 1024;
@@ -78,7 +78,7 @@ function insertEvent(
   );
 }
 
-function makeCtx(db: Database, args: Record<string, unknown> = {}): WorkflowCtx {
+function makeCtx(db: Database, args: Args = {}): WorkflowCtx<Args> {
   return {
     config: {},
     cwd: "/repo/penumbra",
@@ -88,8 +88,9 @@ function makeCtx(db: Database, args: Record<string, unknown> = {}): WorkflowCtx 
     db: () => db,
     dispatch: async () => ({ conversation_id: "conversation", handoff_id: "handoff" }),
     awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
+    cancel: async () => {},
     fileWrite: async () => "/tmp/out",
-  } as WorkflowCtx;
+  };
 }
 
 function ordinaryCandidate(): Candidate {
@@ -294,7 +295,7 @@ test("a t2 candidate offered after an approval quotes the approved note's narrat
       ].join("\n"),
     );
     insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
-    const recall = { byKey: {}, warnings: [] };
+    const recall = emptyRecall();
 
     const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
       fn(
@@ -349,7 +350,7 @@ test("an approved note larger than the read cap is not quoted and warns", async 
       ].join("\n"),
     );
     insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
-    const recall = { byKey: {}, warnings: [] };
+    const recall = emptyRecall();
 
     const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
       fn(
@@ -406,7 +407,7 @@ test("an approved row whose note file is missing fails open with a warning", asy
   seedTranscript(db);
   const missingNotePath = join(tmpdir(), "missing-approved-session-note.md");
   insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: missingNotePath });
-  const recall = { byKey: {}, warnings: [] };
+  const recall = emptyRecall();
 
   const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
     fn(
@@ -441,7 +442,7 @@ test("when extraction fails after approval, renders the approved note candidate 
       [narrativeSection, "## Open follow-ups (worst-first)", "", "- Follow up."].join("\n"),
     );
     insertDraftReviewedEvent(db, { sessionId: "session-1", refPath: notePath });
-    const recall = { byKey: {}, warnings: [] };
+    const recall = emptyRecall();
 
     const result = await withEnv("PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS", "3", () =>
       fn(
@@ -538,7 +539,7 @@ test("registers pre-compact and stop lifecycle triggers", async () => {
       await Bun.file(join(import.meta.dir, "workflow.ts")).text(),
     );
 
-    const registry = await buildRegistry({ workflowsDir });
+    const registry = await buildRegistry({ playbooksDir: join(root, "playbooks"), workflowsDir });
     expect(registry.errors).toEqual([]);
     expect(
       evaluateTriggerEvent(registry, { kind: "lifecycle", event: "pre-compact" }).map(

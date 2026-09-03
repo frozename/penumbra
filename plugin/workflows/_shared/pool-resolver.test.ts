@@ -1,18 +1,24 @@
-import { describe, expect, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import type { WorkflowCtx } from "@penumbra/workflows";
+
 import {
+  type AgentOutcome,
   AgentOutcomeSchema,
+  type AgentPerformanceSource,
   AgentPerformanceWriter,
+  type AgentTaskType,
   loadSqliteVec,
   migrate,
-} from "../../../packages/core/src/index.js";
-import type { WorkflowCtx } from "../../../packages/workflows/src/ctx.js";
+} from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
+
 import {
   DEAD_PIN_FAILURE_OUTCOMES,
   DEAD_PIN_NON_FAILURE_OUTCOMES,
   parseAgentField,
   resolveAgent,
 } from "./pool-resolver.js";
+import { testWorkflowCtx } from "./test-helpers.js";
 
 if (process.platform === "darwin") {
   try {
@@ -63,11 +69,11 @@ function freshDb(): Database {
 function writePerf(
   db: Database,
   agent: string,
-  taskType = "review_adversarial",
+  taskType: AgentTaskType = "review_adversarial",
   opts: {
     handoffId?: string;
-    source?: string;
-    outcome?: string;
+    source?: AgentPerformanceSource;
+    outcome?: AgentOutcome;
     environmentFailure?: "y" | null;
     ts?: string;
   } = {},
@@ -89,7 +95,7 @@ function writePerf(
     cost_usd: null,
     tokens_used: 100,
     latency_ms: agent === "a" ? 10_000 : 60_000,
-    source: opts.source ?? "test",
+    source: opts.source ?? "manual_seed",
     notes: null,
     environment_failure: opts.environmentFailure ?? null,
     metadata_json: "{}",
@@ -102,8 +108,8 @@ function writeWorkerPerf(
     agent: string;
     handoffId: string;
     ts: string;
-    outcome: string;
-    taskType?: string;
+    outcome: AgentOutcome;
+    taskType?: AgentTaskType;
     environmentFailure?: "y" | null;
   },
 ): void {
@@ -132,7 +138,12 @@ function writeWorkerPerf(
 
 function writeDeadPinWorkerRows(
   db: Database,
-  rows: Array<{ suffix: string; ts: string; outcome: string; environmentFailure?: "y" | null }>,
+  rows: {
+    suffix: string;
+    ts: string;
+    outcome: AgentOutcome;
+    environmentFailure?: "y" | null;
+  }[],
 ): void {
   for (const row of rows) {
     writeWorkerPerf(db, {
@@ -183,7 +194,7 @@ function writeBias(
 }
 
 function ctx(overrides: Partial<WorkflowCtx> = {}): WorkflowCtx {
-  return {
+  return testWorkflowCtx({
     dispatch: async () => ({ conversation_id: "conv", handoff_id: "handoff" }),
     awaitChain: async () => ({ status: "completed", final_agent: "a", response_text: "ok" }),
     fileWrite: async () => "path",
@@ -209,7 +220,7 @@ function ctx(overrides: Partial<WorkflowCtx> = {}): WorkflowCtx {
     project: "proj",
     args: {},
     ...overrides,
-  };
+  });
 }
 
 describe("parseAgentField", () => {

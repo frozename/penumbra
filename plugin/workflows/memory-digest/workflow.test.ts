@@ -1,9 +1,11 @@
+import type { WorkflowCtx } from "@penumbra/workflows";
+
 import { Database } from "bun:sqlite";
+import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, expect, test } from "bun:test";
-import type { WorkflowCtx } from "@penumbra/workflows";
+
 import { fn } from "./workflow.js";
 
 const DIGEST_HEADER = "# Maestro memory digest (auto-loaded by penumbra)";
@@ -87,8 +89,9 @@ function makeCtx(db: Database): WorkflowCtx {
     args: { db },
     dispatch: async () => ({ conversation_id: "conversation", handoff_id: "handoff" }),
     awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
+    cancel: async () => {},
     fileWrite: async () => "/tmp/out",
-  } as WorkflowCtx;
+  };
 }
 
 function splitLines(markdown: string): string[] {
@@ -111,8 +114,8 @@ function withEnv(
 
   try {
     const result = fn();
-    if (result && typeof (result as Promise<void>).then === "function") {
-      return (result as Promise<void>).finally(restore);
+    if (result && typeof result.then === "function") {
+      return result.finally(restore);
     }
     restore();
   } catch (error) {
@@ -822,7 +825,7 @@ test("Respects PENUMBRA_MEMORY_DIGEST_MAX_LINES", async () => {
   }
 });
 
-const malformedReminderRowCases: Array<[string, number]> = [
+const malformedReminderRowCases: [string, number][] = [
   ["abc", 0],
   ["-3", 0],
   ["999999", 3],

@@ -1,6 +1,7 @@
+import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
 
 // dispatch-drift-guard
 //

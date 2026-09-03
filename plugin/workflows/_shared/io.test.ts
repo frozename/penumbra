@@ -1,8 +1,10 @@
+import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { expect, test } from "bun:test";
+
 import { canonicalizePathForWrite, resolveOutDir, sanitizeFileStem } from "./io.js";
+import { testWorkflowCtx } from "./test-helpers.js";
 
 test("sanitizeFileStem normalizes input and falls back to persona", () => {
   expect(sanitizeFileStem("  Foo Bar  ")).toBe("foo-bar");
@@ -27,16 +29,15 @@ test("resolveOutDir accepts paths inside cwd and rejects traversal or symlink es
   mkdirSync(join(workspace, ".penumbra", "reviews"), { recursive: true });
   symlinkSync(external, join(workspace, ".penumbra", "reviews", "escape"));
 
-  expect(resolveOutDir({ cwd: workspace, storageRoot } as any, "reports/run-1")).toEqual({
+  const ctx = testWorkflowCtx({ cwd: workspace, storageRoot });
+  expect(resolveOutDir(ctx, "reports/run-1")).toEqual({
     ok: true,
     path: canonicalizePathForWrite(resolve(workspace, "reports/run-1")),
   });
-  expect(resolveOutDir({ cwd: workspace, storageRoot } as any, "../outside")).toEqual({
+  expect(resolveOutDir(ctx, "../outside")).toEqual({
     ok: false,
   });
-  expect(
-    resolveOutDir({ cwd: workspace, storageRoot } as any, ".penumbra/reviews/escape/run-1"),
-  ).toEqual({
+  expect(resolveOutDir(ctx, ".penumbra/reviews/escape/run-1")).toEqual({
     ok: false,
   });
 
@@ -49,7 +50,10 @@ test("resolveOutDir returns the canonical path for writes", () => {
   const workspace = mkdtempSync(join(tmpdir(), "penumbra-workspace-"));
   const storageRoot = mkdtempSync(join(tmpdir(), "penumbra-storage-"));
   mkdirSync(join(workspace, "nested"), { recursive: true });
-  const result = resolveOutDir({ cwd: workspace, storageRoot } as any, "./nested/../nested/run-1");
+  const result = resolveOutDir(
+    testWorkflowCtx({ cwd: workspace, storageRoot }),
+    "./nested/../nested/run-1",
+  );
   expect(result).toEqual({
     ok: true,
     path: canonicalizePathForWrite(join(workspace, "nested", "run-1")),

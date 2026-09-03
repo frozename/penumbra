@@ -1,13 +1,15 @@
+import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 import { z } from "zod";
+
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
+  type AgentField,
   agentPoolToNames,
   parseAgentField,
   resolveAgent,
-  type AgentField,
 } from "../_shared/pool-resolver.js";
 
 type PlannerPersona = {
@@ -71,7 +73,7 @@ function shouldRetryWorkerUnavailable(err: unknown): boolean {
   return (
     /no_worker_registered/i.test(message) ||
     /worker_heartbeats_stale/i.test(message) ||
-    /503/.test(message)
+    message.includes("503")
   );
 }
 
@@ -129,7 +131,7 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona>
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const entries = Object.entries(raw as Record<string, unknown>).filter(
     ([, value]) => value && typeof value === "object" && !Array.isArray(value),
-  ) as Array<[string, Record<string, unknown>]>;
+  ) as [string, Record<string, unknown>][];
   const out: Record<string, PlannerPersona> = {};
   for (const [key, value] of entries) {
     const preferredAgent = parseAgentField(value.preferred_agent);
@@ -184,7 +186,7 @@ function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
 
 function getSynthesizer(ctx: WorkflowCtx): PlanSynthesizer | null {
   const workload = getPlanWorkload(ctx);
-  if (!workload || !workload.synthesizer) return null;
+  if (!workload?.synthesizer) return null;
   const field = parseAgentField(workload.synthesizer);
   if (!field) return null;
   return {
@@ -231,7 +233,7 @@ Produce a phased TDD plan. Every phase must include failing test -> implementati
 
 function synthesisPrompt(
   synth: PlanSynthesizer,
-  selected: Array<{ key: string; persona: PlannerPersona }>,
+  selected: { key: string; persona: PlannerPersona }[],
   personaResults: PersonaRunResult[],
   args: Input,
 ): string {

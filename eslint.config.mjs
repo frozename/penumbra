@@ -20,6 +20,7 @@ const SOURCE_GLOBS = [
   "packages/**/test/**/*.ts",
   "packages/**/bin/**/*.ts",
   "packages/**/scripts/**/*.ts",
+  "plugin/**/*.ts",
   "scripts/**/*.ts",
 ];
 
@@ -48,6 +49,31 @@ const LEGACY_LARGE_FILES = [
   "packages/daemon/src/sweepers/gh-task-sync.ts",
   "packages/mcp/src/daemon-client.ts",
   "packages/mcp/src/tools/registry.ts",
+  "plugin/workflows/adversarial-review/workflow.ts",
+];
+
+const LEGACY_LONG_FUNCTION_FILES = [
+  "plugin/workflows/adversarial-plan/workflow.ts",
+  "plugin/workflows/adversarial-review/workflow.ts",
+];
+
+const LEGACY_COMPLEX_FILES = [
+  "plugin/workflows/_shared/pool-resolver.ts",
+  "plugin/workflows/adversarial-plan/workflow.ts",
+  "plugin/workflows/adversarial-review/workflow.ts",
+  "plugin/workflows/session-handoff-draft/workflow.ts",
+  "plugin/workflows/session-memory-sweep/workflow.ts",
+];
+
+const LEGACY_PLUGIN_SOURCE_LINT_FILES = [
+  "plugin/skills/systematic-debugging/condition-based-waiting-example.ts",
+  "plugin/workflows/_shared/io.ts",
+  "plugin/workflows/adversarial-plan/workflow.ts",
+  "plugin/workflows/adversarial-review/workflow.ts",
+  "plugin/workflows/dispatch-drift-guard/workflow.ts",
+  "plugin/workflows/memory-digest/workflow.ts",
+  "plugin/workflows/session-handoff-draft/workflow.ts",
+  "plugin/workflows/session-memory-sweep/workflow.ts",
 ];
 
 const DEEP_RELATIVE_IMPORT_EXCEPTIONS = [
@@ -111,6 +137,7 @@ export default tseslint.config(
         project: [
           "./packages/*/tsconfig.eslint.json",
           "./packages/integrations/*/tsconfig.eslint.json",
+          "./plugin/tsconfig.eslint.json",
         ],
         tsconfigRootDir: import.meta.dirname,
       },
@@ -274,6 +301,55 @@ export default tseslint.config(
     files: LEGACY_LARGE_FILES,
     rules: {
       "max-lines": "off",
+    },
+  },
+  {
+    files: LEGACY_LONG_FUNCTION_FILES,
+    rules: {
+      "max-lines-per-function": "off",
+    },
+  },
+  {
+    files: LEGACY_COMPLEX_FILES,
+    rules: {
+      "sonarjs/cognitive-complexity": "off",
+    },
+  },
+  {
+    files: ["plugin/**/*.test.ts"],
+    rules: {
+      "@typescript-eslint/await-thenable": "off",
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-base-to-string": "off",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/no-deprecated": "off",
+      "@typescript-eslint/no-dynamic-delete": "off",
+      "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/no-unnecessary-type-conversion": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/unbound-method": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
+      "no-empty": "off",
+    },
+  },
+  {
+    files: LEGACY_PLUGIN_SOURCE_LINT_FILES,
+    rules: {
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
+      "no-control-regex": "off",
+      "no-empty": "off",
+      "no-irregular-whitespace": "off",
+      "no-useless-escape": "off",
+      "regexp/no-super-linear-backtracking": "off",
+      "regexp/no-unused-capturing-group": "off",
     },
   },
   {

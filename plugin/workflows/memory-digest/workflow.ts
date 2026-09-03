@@ -1,7 +1,8 @@
+import type { RecallBundle, WorkflowCtx, WorkflowSpec } from "@penumbra/workflows";
+
 import { Database } from "bun:sqlite";
-import { basename, dirname, join } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import type { WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+import { basename, dirname, join } from "node:path";
 
 const DIGEST_HEADER = "# Maestro memory digest (auto-loaded by penumbra)";
 const DIGEST_MARKER_START = "<digest>";
@@ -52,10 +53,12 @@ type MemoryDigestRow = {
   title: string | null;
   hook: string | null;
 };
+type CompleteMemoryDigestRow = { slug: string; title: string; hook: string };
+type MemoryFileRow = { title: string; hook: string };
 
 type MemoryFileLine =
   | { kind: "literal"; text: string }
-  | { kind: "row"; row: { title: string; hook: string }; text: string };
+  | { kind: "row"; row: MemoryFileRow; text: string };
 
 type MemoryFileBudgetStats = {
   rowsDropped: number;
@@ -124,9 +127,12 @@ function toMarkdownRow(row: { title: string; slug: string; hook: string }): stri
 }
 
 function sanitizeDigestText(text: string): string {
-  const controlFree = text.replace(/[\u0000-\u001F\u007F]/g, "");
-  const markdownSafe = controlFree.replace(/[\[\]().]/g, "\\$&");
-  const advisorySafe = markdownSafe.replace(/ignore/gi, (match) => `${match[0]}​${match.slice(1)}`);
+  const controlFree = text.replaceAll(/[\u0000-\u001F\u007F]/g, "");
+  const markdownSafe = controlFree.replaceAll(/[\[\]().]/g, "\\$&");
+  const advisorySafe = markdownSafe.replaceAll(
+    /ignore/gi,
+    (match) => `${match[0]}​${match.slice(1)}`,
+  );
   return advisorySafe;
 }
 
@@ -331,7 +337,12 @@ async function persistMemoryFile(cwd: string, lines: MemoryFileLine[]): Promise<
   await rename(tmp, file);
 }
 
-export const fn: WorkflowFn = async (ctx) => {
+type Args = { db?: Database };
+
+export async function fn(
+  ctx: WorkflowCtx<Args>,
+  _recall: Partial<RecallBundle> = {},
+): Promise<string> {
   const db = resolveDb(ctx);
   const shouldClose = !ctx.db && !(ctx as { args?: { db?: Database } }).args?.db;
   const projectId = basename(ctx.cwd);
@@ -358,11 +369,11 @@ export const fn: WorkflowFn = async (ctx) => {
   }
 
   const statusDigestRows = statusRows.filter(
-    (row): row is { title: string; slug: string; hook: string } =>
+    (row): row is CompleteMemoryDigestRow =>
       typeof row.title === "string" && typeof row.slug === "string" && typeof row.hook === "string",
   );
   const patternDigestRows = patternRows.filter(
-    (row): row is { title: string; slug: string; hook: string } =>
+    (row): row is CompleteMemoryDigestRow =>
       typeof row.title === "string" && typeof row.slug === "string" && typeof row.hook === "string",
   );
   const digestRows = [...statusDigestRows, ...patternDigestRows].slice(0, resolveLimit());
@@ -374,11 +385,11 @@ export const fn: WorkflowFn = async (ctx) => {
     ...digestRows.map(toMarkdownRow),
   ];
   const statusFileRows = statusRows.filter(
-    (row): row is { title: string; hook: string } =>
+    (row): row is MemoryDigestRow & MemoryFileRow =>
       typeof row.title === "string" && typeof row.hook === "string",
   );
   const patternFileRows = patternRows.filter(
-    (row): row is { title: string; hook: string } =>
+    (row): row is MemoryDigestRow & MemoryFileRow =>
       typeof row.title === "string" && typeof row.hook === "string",
   );
   const fileRows = [...statusFileRows, ...patternFileRows].slice(0, resolveLimit());
@@ -388,6 +399,6 @@ export const fn: WorkflowFn = async (ctx) => {
   ];
   await persistMemoryFile(ctx.cwd, fileLines);
   return renderSessionReminder(lines, fileRows.length);
-};
+}
 
 export default spec;

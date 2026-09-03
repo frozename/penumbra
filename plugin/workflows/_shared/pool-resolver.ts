@@ -1,18 +1,18 @@
-import { pickFromPool } from "../../../packages/core/src/tasks/pick-from-pool.js";
+import type { WorkflowCtx } from "@penumbra/workflows";
+import type { Database } from "bun:sqlite";
+
 import {
+  type AgentOutcome,
+  type AgentTaskType,
+  pickFromPool,
+  readRoutingBiases,
+  readSubscriptionPressure,
   resolveBiasEffect,
   resolveProvider,
   routeAgent,
   type RouteAgentInput,
-} from "../../../packages/core/src/services/agent-routing.js";
-import {
-  readRoutingBiases,
   type RoutingBias,
-} from "../../../packages/core/src/readers/routing-bias.js";
-import { readSubscriptionPressure } from "../../../packages/core/src/readers/subscription-pressure.js";
-import type { AgentOutcome } from "../../../packages/core/src/schemas/agent-performance.js";
-import type { WorkflowCtx } from "@penumbra/workflows";
-import type { Database } from "bun:sqlite";
+} from "@penumbra/core";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
 const DEAD_PIN_CONSECUTIVE_FAILURES = 3;
@@ -39,15 +39,16 @@ type AgentPoolLike =
   | string
   | string[]
   | {
-      members?: Array<{ agent?: unknown }>;
+      members?: { agent?: unknown }[];
     };
+type AgentPoolObject = { members?: { agent?: unknown }[] };
 
 export function agentPoolToNames(pool: unknown): string[] {
   if (typeof pool === "string") return pool.length > 0 ? [pool] : [];
   if (Array.isArray(pool))
     return pool.filter((value): value is string => typeof value === "string" && value.length > 0);
   if (!pool || typeof pool !== "object" || Array.isArray(pool)) return [];
-  const members = (pool as AgentPoolLike).members;
+  const members = (pool as AgentPoolObject).members;
   if (!Array.isArray(members)) return [];
   return members
     .map((member) => member.agent)
@@ -56,9 +57,18 @@ export function agentPoolToNames(pool: unknown): string[] {
 
 export function parseAgentField(raw: unknown): AgentField | null {
   const agents = agentPoolToNames(raw);
-  if (agents.length === 1 && typeof raw === "string") return { kind: "single", agent: agents[0]! };
+  const [agent] = agents;
+  if (agents.length === 1 && typeof raw === "string" && agent) {
+    return { kind: "single", agent };
+  }
   if (agents.length > 0) return { kind: "pool", agents };
   return null;
+}
+
+function firstPoolAgent(pool: string[]): string {
+  const [agent] = pool;
+  if (!agent) throw new Error("resolveAgent: pool must not be empty");
+  return agent;
 }
 
 function resolveDeadPinFailureWindowMs(
@@ -153,7 +163,7 @@ export function resolveAgent(
   }
 
   const db = ctx.db?.();
-  if (!db) return field.kind === "single" ? field.agent : pool![0]!;
+  if (!db) return field.kind === "single" ? field.agent : firstPoolAgent(pool ?? field.agents);
 
   let activeBiases: RoutingBias[] | undefined;
   try {
@@ -186,7 +196,7 @@ export function resolveAgent(
       const out = routeAgent({
         db,
         detail: "rank",
-        taskType: taskType as RouteAgentInput["taskType"],
+        taskType: taskType as AgentTaskType,
         agentRegistry: fallbackAgents,
         includeNeutral: true,
         applyPressure: pressure,
@@ -205,18 +215,21 @@ export function resolveAgent(
         const alternative = out.candidates.candidates[0]?.agent_name;
         if (alternative) return alternative;
       }
-    } catch {}
-    if (deadPinExcluded && !biasExcluded) return fallbackAgents[0]!;
+    } catch {
+      // Preserve fallback behavior when pressure-aware routing cannot score candidates.
+    }
+    if (deadPinExcluded && !biasExcluded) return firstPoolAgent(fallbackAgents);
     return field.agent;
   }
 
   const pressure = readSubscriptionPressure(db);
+  const poolAgents = pool ?? field.agents;
   return pickFromPool(
-    pool!,
+    poolAgents,
     db,
-    ctx.config as any,
+    agentchatConfig,
     pressure,
-    taskType as any,
+    taskType as AgentTaskType,
     opts.tool_free,
     activeBiases,
   );

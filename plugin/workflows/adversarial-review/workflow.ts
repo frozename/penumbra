@@ -1,13 +1,15 @@
+import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 import { z } from "zod";
+
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
+  type AgentField,
   agentPoolToNames,
   parseAgentField,
   resolveAgent,
-  type AgentField,
 } from "../_shared/pool-resolver.js";
 import {
   REQUIRED_SYNTHESIS_SECTION_LABELS,
@@ -30,6 +32,8 @@ type ReviewSynthesizer = {
   preferred_agent: AgentField;
   system_prompt: string;
 };
+
+type SynthFailover = { from: string; to: string };
 
 type ReviewWorkloadConfig = {
   eligible_agents: string[];
@@ -94,11 +98,11 @@ function isBlockingPersona(persona?: Pick<ReviewPersona, "optional">): boolean {
 }
 
 export function summarizePersonaCompletionOutcome(
-  personaResults: Array<{
+  personaResults: {
     persona: string;
     persona_key?: string;
     status: "completed" | "failed" | "timeout";
-  }>,
+  }[],
   minPassPct: number,
   personasByKey: Record<string, Pick<ReviewPersona, "optional">> = {},
 ): {
@@ -140,7 +144,7 @@ function shouldRetryWorkerUnavailable(err: unknown): boolean {
   return (
     /no_worker_registered/i.test(message) ||
     /worker_heartbeats_stale/i.test(message) ||
-    /503/.test(message)
+    message.includes("503")
   );
 }
 
@@ -194,7 +198,7 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> 
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const entries = Object.entries(raw as Record<string, unknown>).filter(
     ([, value]) => value && typeof value === "object" && !Array.isArray(value),
-  ) as Array<[string, Record<string, unknown>]>;
+  ) as [string, Record<string, unknown>][];
   const out: Record<string, ReviewPersona> = {};
   for (const [key, value] of entries) {
     const preferredAgent = parseAgentField(value.preferred_agent);
@@ -287,12 +291,11 @@ function uiActivatedPersona(persona: ReviewPersona): boolean {
 }
 
 function reviewTouchesUI(recall: RecallBundle, args: Input): boolean {
-  const gitDiff =
-    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  const gitDiff = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
   return diffTouchesUI(gitDiff) || contentPathTouchesUI(args.content_path);
 }
 
-function getPersonas(ctx: WorkflowCtx, recall: RecallBundle): PersonaResolution | null {
+function getPersonas(ctx: WorkflowCtx<Input>, recall: RecallBundle): PersonaResolution | null {
   const workload = getReviewWorkload(ctx);
   if (!workload) return null;
   const eligibleAgents = workload.fan_out
@@ -328,9 +331,9 @@ function getPersonas(ctx: WorkflowCtx, recall: RecallBundle): PersonaResolution 
   return { ok: true, personas: resolved };
 }
 
-function getSynthesizer(ctx: WorkflowCtx): ReviewSynthesizer | null {
+function getSynthesizer(ctx: WorkflowCtx<Input>): ReviewSynthesizer | null {
   const workload = getReviewWorkload(ctx);
-  if (!workload || !workload.synthesizer) return null;
+  if (!workload?.synthesizer) return null;
   const field = parseAgentField(workload.synthesizer);
   if (!field) return null;
   return {
@@ -366,9 +369,7 @@ function fileContentsBody(recall: RecallBundle): string {
 const REVIEW_MEMORY_TOP_K = 5;
 const REVIEW_MEMORY_BYTE_BUDGET = 2000;
 
-export function buildPriorFindingsBlock(
-  hits: Array<{ title: string; snippet: string }>,
-): string | null {
+export function buildPriorFindingsBlock(hits: { title: string; snippet: string }[]): string | null {
   if (hits.length === 0) return null;
   const header = "## Prior related findings (advisory — verify against current code)\n";
   let bytes = 0;
@@ -385,8 +386,7 @@ export function buildPriorFindingsBlock(
 
 export function buildMemoryQuery(recall: RecallBundle, args: Input): string {
   if (typeof args.focus === "string" && args.focus.length > 0) return args.focus;
-  const gitDiff =
-    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  const gitDiff = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
   const paths = new Set<string>();
   const changedPathHeaderPattern =
     /^---[ \t]+("(?:[^"\r\n]|\\.)*"|[^\r\n]+)\r?\n\+\+\+[ \t]+("(?:[^"\r\n]|\\.)*"|[^\r\n]+)/gm;
@@ -407,8 +407,8 @@ export function buildMemoryQuery(recall: RecallBundle, args: Input): string {
 
 function sanitizeFtsQuery(q: string): string {
   return q
-    .replace(/[^A-Za-z0-9\s]+/g, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/[^A-Za-z0-9\s]+/g, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 
@@ -433,7 +433,7 @@ async function fetchPriorFindings(ctx: WorkflowCtx, query: string): Promise<stri
          ORDER BY bm25(t2_fts)
          LIMIT ?`,
       )
-      .all(ftsQuery, REVIEW_MEMORY_TOP_K) as Array<{ title: string; body: string }>;
+      .all(ftsQuery, REVIEW_MEMORY_TOP_K) as { title: string; body: string }[];
     const hits = rows.map((r) => ({
       title: (r.title ?? "").slice(0, 120),
       snippet: (r.body ?? "").slice(0, 240),
@@ -450,8 +450,7 @@ function renderPersonaPrompt(
   args: Input,
   priorFindings?: string | null,
 ): string {
-  const gitDiff =
-    typeof recall.byKey["git.diff"] === "string" ? (recall.byKey["git.diff"] as string) : "";
+  const gitDiff = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
   const commits = formatGitShow(recall);
   const hasContentPath = typeof args.content_path === "string" && args.content_path.length > 0;
   const content = hasContentPath ? fileContentsBody(recall) : "";
@@ -628,7 +627,7 @@ type SynthesisSectionHeadingPattern = {
 };
 
 function buildSynthesisSectionHeadingRegex(label: string): RegExp {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = label.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(
     `^\\s*(?:#{1,6}\\s*)?(?:\\d+\\.\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:(?:\\s*\\([^\\r\\n)]{1,80}\\))?\\s*(?:[:—-]\\s*(.*))?|\\s+[^:\\r\\n—-]{1,80}\\s*[:—-]\\s*(.*))$`,
     "i",
@@ -659,8 +658,8 @@ function isSynthesisSectionHeading(line: string): boolean {
 function hasSynthesisSectionWithContent(lines: string[], label: string): boolean {
   let start = -1;
   let inlineContent = "";
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = matchSynthesisSectionHeading(lines[index] ?? "", label);
+  for (const [index, line] of lines.entries()) {
+    const match = matchSynthesisSectionHeading(line ?? "", label);
     if (!match) continue;
     start = index;
     inlineContent = `${match[1] ?? ""}${match[2] ?? ""}`;
@@ -1012,7 +1011,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthStatus: "completed" | "failed" | "timeout" | null = null;
   let synthHandoffId: string | null = null;
   let synthRetryUsed = false;
-  let synthFailover: { from: string; to: string } | null = null;
+  const synthFailover: { value: SynthFailover | null } = { value: null };
   let synthPoolExhausted = false;
   let finalSynthAgentForFailure = synthAgent;
   const attemptedSynthAgents = new Set<string>();
@@ -1042,7 +1041,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       }
     };
     const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
-      synthFailover = { from: synthFailover?.from ?? failedAgent, to: nextAgent };
+      synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
     };
     const failoverAgent = (): string | null => {
       if (synthesizer.preferred_agent.kind !== "pool") return null;
@@ -1116,8 +1115,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     const synthRetryBanner = synthRetryUsed
       ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
       : "";
-    const synthFailoverBanner = synthFailover
-      ? `> Synthesizer failover: ${synthFailover.from} -> ${synthFailover.to}\n\n`
+    const synthFailoverBanner = synthFailover.value
+      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
       : "";
     synthHandoffId = synthDispatch.handoff_id;
     synthStatus =
@@ -1132,8 +1131,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       target_ref: parsedArgs.target_ref,
       base_ref: parsedArgs.base_ref,
       synthesizer_agent: finalSynthAgent,
-      synthesizer_failover_from: synthFailover?.from,
-      synthesizer_failover_to: synthFailover?.to,
+      synthesizer_failover_from: synthFailover.value?.from,
+      synthesizer_failover_to: synthFailover.value?.to,
       pool_exhausted: synthPoolExhausted,
     });
     await ctx.fileWrite(
@@ -1147,8 +1146,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     const synthRetryBanner = synthRetryUsed
       ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
       : "";
-    const synthFailoverBanner = synthFailover
-      ? `> Synthesizer failover: ${synthFailover.from} -> ${synthFailover.to}\n\n`
+    const synthFailoverBanner = synthFailover.value
+      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
       : "";
     synthStatus = "failed";
     synthesisPath = join(absoluteOutDir, "synthesis.md");
@@ -1160,8 +1159,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           target_ref: parsedArgs.target_ref,
           base_ref: parsedArgs.base_ref,
           synthesizer_agent: finalSynthAgentForFailure,
-          synthesizer_failover_from: synthFailover?.from,
-          synthesizer_failover_to: synthFailover?.to,
+          synthesizer_failover_from: synthFailover.value?.from,
+          synthesizer_failover_to: synthFailover.value?.to,
           pool_exhausted: synthPoolExhausted,
         })
       : "";

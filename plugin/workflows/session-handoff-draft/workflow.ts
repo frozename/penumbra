@@ -1,5 +1,6 @@
-import { ChainStartRequestSchema, SessionNoteDrafts, type ChainStartRequest } from "@penumbra/core";
 import type { RecallBundle, WorkflowCtx, WorkflowSpec } from "@penumbra/workflows";
+
+import { type ChainStartRequest, ChainStartRequestSchema, SessionNoteDrafts } from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { open, readFile, rename, unlink } from "node:fs/promises";
@@ -222,7 +223,7 @@ async function startDraftDispatch(
 }
 
 export async function fn(ctx: WorkflowCtx, _recall: RecallBundle): Promise<DraftRunResult> {
-  const args = ctx.args as Record<string, unknown>;
+  const args = ctx.args;
   const warnings: string[] = [];
   const periodKey = currentPeriodKey();
   const skeletonRoot = stringArg(args, "repo_root") ?? ctx.cwd;
@@ -255,10 +256,7 @@ export async function fn(ctx: WorkflowCtx, _recall: RecallBundle): Promise<Draft
 
   let dispatch: { conversation_id: string; handoff_id: string };
   try {
-    dispatch = await startDraftDispatch(
-      ctx as ExtendedWorkflowCtx,
-      renderPrompt(skeletonForPrompt, transcript),
-    );
+    dispatch = await startDraftDispatch(ctx, renderPrompt(skeletonForPrompt, transcript));
   } catch (err) {
     return skip(err instanceof Error ? err.message : String(err));
   }
