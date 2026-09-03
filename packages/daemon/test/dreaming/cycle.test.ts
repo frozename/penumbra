@@ -1,4 +1,4 @@
-import type { Logger } from "@penumbra/core";
+import type { LlamactlInventory, Logger } from "@penumbra/core";
 
 import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
@@ -1224,6 +1224,15 @@ function makeProjectRegistry(projects: TestProject[]): {
   };
 }
 
+function inventoryWithModels(models: LlamactlInventory["models"]): LlamactlInventory {
+  return {
+    status: "ok",
+    messages: [],
+    nodes: [],
+    models,
+  };
+}
+
 it("P4 seeds research_query actions for projects with research_provider != off", async () => {
   const db = openTestDb();
   const projectId = "proj-firecrawl";
@@ -1694,6 +1703,247 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
     query: string;
   } | null;
   expect(cacheRow?.query).toBe("something searchable and useful query terms");
+});
+
+it("P4 skips rewriter candidates absent from llamactl inventory and attempts an advertised local model", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-inventory-filter";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "A stable architecture question with human language",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  let invokeInput: Record<string, unknown> | undefined;
+
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    rewriterCandidates: [
+      {
+        name: "macmini-granite-3b-proxy-http",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "granite-mini-3b",
+        provider: "local",
+        auth: { source: "none" },
+      },
+      {
+        name: "local-lfm2-generator",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "lfm2-generator",
+        provider: "local",
+        auth: { source: "none" },
+      },
+    ],
+    rewriterInventory: {
+      collect: () =>
+        Promise.resolve(
+          inventoryWithModels([
+            {
+              id: "lfm2-generator",
+              owned_by: "local-host",
+              node: { name: "local-host", endpoint: "http://127.0.0.1:7945" },
+            },
+          ]),
+        ),
+    },
+    llmInvoke: (input) => {
+      invokeInput = input as unknown as Record<string, unknown>;
+      return Promise.resolve({
+        ok: true as const,
+        value: { kind: "query" as const, query: "searchable rewritten stability query" },
+        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
+      });
+    },
+  });
+
+  expect(invokeInput?.candidateName).toBe("local-lfm2-generator");
+  expect(invokeInput?.model).toBe("lfm2-generator");
+  expect(invokeInput?.fallbackCandidates).toEqual([]);
+});
+
+it("P4 degrades to configured rewriter candidates when llamactl inventory is unavailable", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-inventory-unavailable";
+  const memoryId = seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "TypeScript strict null checks in async systems",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  let inventoryCalls = 0;
+  let invokeInput: Record<string, unknown> | undefined;
+
+  const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    rewriterCandidates: [
+      {
+        name: "primary-local",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "primary-local",
+        provider: "local",
+        auth: { source: "none" },
+      },
+      {
+        name: "fallback-local",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "fallback-local",
+        provider: "local",
+        auth: { source: "none" },
+      },
+    ],
+    rewriterInventory: {
+      collect: () => {
+        inventoryCalls += 1;
+        throw new Error("proxy down");
+      },
+    },
+    llmInvoke: (input) => {
+      invokeInput = input as unknown as Record<string, unknown>;
+      return Promise.resolve({
+        ok: false as const,
+        reason: "timeout" as const,
+        failureMessage: "Request timed out",
+      });
+    },
+  });
+
+  expect(getCycleOutcome(db, cycleId)).toBe("completed");
+  expect(inventoryCalls).toBe(1);
+  expect(invokeInput?.candidateName).toBe("primary-local");
+  expect(invokeInput?.fallbackCandidates).toEqual([
+    {
+      name: "fallback-local",
+      baseUrl: "http://127.0.0.1:7944/v1",
+      model: "fallback-local",
+      provider: "local",
+      auth: { source: "none" },
+    },
+  ]);
+  const cacheCount = (
+    db
+      .prepare(`SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`)
+      .get(memoryId) as { n: number }
+  ).n;
+  expect(cacheCount).toBe(0);
+});
+
+it("P4 reuses one llamactl inventory collection for every memory in a cycle", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-inventory-cycle-cache";
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "A stable architecture question with human language",
+  });
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "Another searchable question about queue throughput",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  let inventoryCalls = 0;
+  let llmCalls = 0;
+
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    rewriterCandidates: [
+      {
+        name: "local-lfm2-generator",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "lfm2-generator",
+        provider: "local",
+        auth: { source: "none" },
+      },
+    ],
+    rewriterInventory: {
+      collect: () => {
+        inventoryCalls += 1;
+        return Promise.resolve(
+          inventoryWithModels([
+            {
+              id: "lfm2-generator",
+              owned_by: "local-host",
+              node: { name: "local-host", endpoint: "http://127.0.0.1:7945" },
+            },
+          ]),
+        );
+      },
+    },
+    llmInvoke: () => {
+      llmCalls += 1;
+      return Promise.resolve({
+        ok: true as const,
+        value: { kind: "query" as const, query: "searchable rewritten stability query" },
+        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
+      });
+    },
+  });
+
+  expect(inventoryCalls).toBe(1);
+  expect(llmCalls).toBe(2);
+});
+
+it("P4 never selects a candidate whose advertised llamactl model is owned by a cloud gateway node", async () => {
+  const db = openTestDb();
+  const projectId = "proj-rewriter-inventory-cloud-gateway";
+  const memoryId = seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: "TypeScript strict null checks in async systems",
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
+  ]);
+  let llmCalls = 0;
+
+  const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    rewriterCandidates: [
+      {
+        name: "openai-direct-rewriter",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "openai-rewriter",
+        provider: "local",
+        auth: { source: "none" },
+      },
+    ],
+    rewriterInventory: {
+      collect: () =>
+        Promise.resolve(
+          inventoryWithModels([
+            {
+              id: "openai-rewriter",
+              owned_by: "openai-direct",
+              node: { name: "openai-direct", endpoint: "https://api.openai.com" },
+            },
+          ]),
+        ),
+    },
+    llmInvoke: () => {
+      llmCalls += 1;
+      return Promise.resolve({
+        ok: true as const,
+        value: { kind: "query" as const, query: "should not be used" },
+        raw: '{"kind":"query","query":"should not be used"}',
+      });
+    },
+  });
+
+  expect(getCycleOutcome(db, cycleId)).toBe("completed");
+  expect(llmCalls).toBe(0);
+  const action = db
+    .prepare(
+      `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+    )
+    .get() as { payload_json: string } | null;
+  expect(action).not.toBeNull();
+  expect((JSON.parse(action!.payload_json) as { source_memory_id: string }).source_memory_id).toBe(
+    memoryId,
+  );
+  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
+    "TypeScript strict null checks in async systems",
+  );
 });
 
 it("P4 wires the subscription HTTP rung and records the fallback candidate that served", async () => {

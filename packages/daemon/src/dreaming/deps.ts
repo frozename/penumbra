@@ -20,6 +20,10 @@ import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
 import { StubJudgePool } from "./judge-pool.js";
+import {
+  createCachedDreamingRewriterInventory,
+  DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
+} from "./rewriter-inventory.js";
 
 interface DreamingResearchConfig {
   research_provider?: "firecrawl" | "webfetch" | "off";
@@ -49,18 +53,49 @@ export function createDreamingRewriterCandidates(
       : [];
   const roleTag = process.env["PENUMBRA_DREAMING_REWRITER_ROLE"] ?? "dreaming-rewriter";
   try {
-    return resolveRoleLlmCandidates({
-      roleTag,
-      agentchatConfig: loadAgentChatConfig(),
-      fallbackCandidates,
-    });
+    return withDefaultLocalRewriterSecondary(
+      resolveRoleLlmCandidates({
+        roleTag,
+        agentchatConfig: loadAgentChatConfig(),
+        fallbackCandidates,
+      }),
+      dreamConfig,
+    );
   } catch (err) {
     log?.warn(
       { err, configDir: resolveAgentChatConfigPath(), roleTag },
       "dreaming: failed to resolve rewriter role candidates; using legacy environment candidate",
     );
-    return fallbackCandidates;
+    return withDefaultLocalRewriterSecondary(fallbackCandidates, dreamConfig);
   }
+}
+
+function withDefaultLocalRewriterSecondary(
+  candidates: LlmCandidate[],
+  dreamConfig: DreamConfig,
+): LlmCandidate[] {
+  if (!dreamConfig.rewriterBaseUrl) return candidates;
+  const provider = tryResolveLlmProvider(dreamConfig.rewriterBaseUrl) ?? "unknown";
+  if (provider !== "local") return candidates;
+  if (
+    candidates.some(
+      (candidate) =>
+        candidate.baseUrl === dreamConfig.rewriterBaseUrl &&
+        candidate.model === DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
+    )
+  ) {
+    return candidates;
+  }
+  return [
+    ...candidates,
+    {
+      name: DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
+      baseUrl: dreamConfig.rewriterBaseUrl,
+      model: DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
+      provider,
+      auth: { source: "none" },
+    },
+  ];
 }
 
 export function buildDreamCycleDeps(
@@ -128,6 +163,7 @@ export function buildDreamCycleDeps(
     judgePool,
     briefSynthesizer: briefSynthesizer ?? undefined,
     rewriterCandidates,
+    rewriterInventory: createCachedDreamingRewriterInventory(),
     contentQualityJudge,
     pressureGuard: {
       check: (): Promise<{ anyThrottled: boolean }> =>

@@ -45,6 +45,10 @@ import { isWebSearchable } from "./query-rewriting.js";
 import { sanitizeTitleForQuery } from "./query-sanitize.js";
 import { runReembedPhase } from "./reembed.js";
 import { hashQuery, runP5Phase } from "./research.js";
+import {
+  type DreamingRewriterInventory,
+  resolveRewriterCandidatesAgainstInventory,
+} from "./rewriter-inventory.js";
 
 // In-process mutex — prevents concurrent cycles within one daemon process.
 // Cross-process safety is handled by runStartupZombieSweep on daemon boot.
@@ -174,6 +178,7 @@ export interface DreamCycleDeps {
   briefSynthesizer?: BriefSynthesizer;
   contentQualityJudge?: ContentQualityJudge;
   rewriterCandidates?: LlmCandidate[];
+  rewriterInventory?: DreamingRewriterInventory;
   llmInvoke?: RewriteLlmInvoker;
   dispatchEventLog?: {
     record(event: DispatchEventInput): void;
@@ -1070,12 +1075,31 @@ async function runCycleP4(
 
   pruneExpiredRewriteCache(db, ctx.nowMs);
 
+  await prepareRewriterCandidatesForCycle(ctx, deps);
+
   if (deps.projectRegistry) {
     const tasks = buildProjectTasks(db, ctx, deps);
     await runWithConcurrency(tasks, ctx.rewriterConcurrency);
   }
 
   phaseEnd(db, ctx, "P4", p4Start);
+}
+
+async function prepareRewriterCandidatesForCycle(
+  ctx: CycleCtx,
+  deps: DreamCycleDeps,
+): Promise<void> {
+  if (!ctx.rewriterEnabled) return;
+  const candidates = await resolveRewriterCandidatesAgainstInventory({
+    candidates: ctx.rewriterCandidates,
+    inventory: deps.rewriterInventory,
+    log: ctx.log,
+  });
+  ctx.rewriterCandidates = candidates;
+  const primary = candidates[0];
+  if (!primary) return;
+  ctx.rewriterModel = primary.model;
+  ctx.rewriterBaseUrl = primary.baseUrl;
 }
 
 function enqueueProjectMemories(
@@ -1336,7 +1360,7 @@ async function fetchRewriteFromLlm(
   if (!ctx.costMeter.canAfford("P4", "llm", ctx.phaseCostEstimates.p4RewriterLlmUsd)) return null;
 
   const [primaryCandidate, ...fallbackCandidates] = ctx.rewriterCandidates;
-  if (!primaryCandidate) throw new Error("dreaming rewriter has no configured candidates");
+  if (!primaryCandidate) return fallbackToMemoryTitle(ctx, memory, 0);
   const prompt = buildDreamQueryRewritePrompt({ title: memory.title, bodyFirst200: memory.body });
   const rewriteStart = Date.now();
   const rewriteResult = await ctx.invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
