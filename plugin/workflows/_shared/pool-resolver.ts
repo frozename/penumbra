@@ -10,11 +10,28 @@ import {
   type RoutingBias,
 } from "../../../packages/core/src/readers/routing-bias.js";
 import { readSubscriptionPressure } from "../../../packages/core/src/readers/subscription-pressure.js";
+import type { AgentOutcome } from "../../../packages/core/src/schemas/agent-performance.js";
 import type { WorkflowCtx } from "@penumbra/workflows";
 import type { Database } from "bun:sqlite";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
 const DEAD_PIN_CONSECUTIVE_FAILURES = 3;
+export const DEAD_PIN_FAILURE_OUTCOMES: ReadonlySet<AgentOutcome> = new Set([
+  "failed",
+  "test_failed",
+  "typecheck_failed",
+  "pr_creation_failed",
+  "rejected",
+]);
+export const DEAD_PIN_NON_FAILURE_OUTCOMES: ReadonlySet<AgentOutcome> = new Set([
+  "pr_opened",
+  "merged",
+  "merged_with_concerns",
+  "no_changes",
+  "partial",
+  "bypassed",
+  "completed_with_output",
+]);
 const DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_DEAD_PIN_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEAD_PIN_FAILURE_WINDOW_ENV = "PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS";
@@ -63,6 +80,10 @@ function parsePositiveIntegerEnv(raw: string): number | null {
   return parsed;
 }
 
+function isDeadPinFailureOutcome(outcome: string): boolean {
+  return DEAD_PIN_FAILURE_OUTCOMES.has(outcome as AgentOutcome);
+}
+
 function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string): boolean {
   try {
     const windowMs = resolveDeadPinFailureWindowMs();
@@ -71,7 +92,7 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
       .query<{ outcome: string }, [string, string, string, number]>(
         `SELECT outcome
          FROM agent_performance
-         WHERE agent_name = ? AND task_type = ? AND source = 'worker'
+         WHERE agent_name = ? AND task_type = ? AND source IN ('worker','reconciler')
            AND (environment_failure IS NULL OR environment_failure != 'y')
            AND ts >= ?
          ORDER BY ts DESC
@@ -80,14 +101,14 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
       .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
     const hasRecentFailures =
       rows.length === DEAD_PIN_CONSECUTIVE_FAILURES &&
-      rows.every((row) => row.outcome === "failed");
+      rows.every((row) => isDeadPinFailureOutcome(row.outcome));
     if (hasRecentFailures) return true;
 
     const staleRows = db
       .query<{ outcome: string; ts: string }, [string, string, string, number]>(
         `SELECT outcome, ts
          FROM agent_performance
-         WHERE agent_name = ? AND task_type = ? AND source = 'worker'
+         WHERE agent_name = ? AND task_type = ? AND source IN ('worker','reconciler')
            AND (environment_failure IS NULL OR environment_failure != 'y')
            AND ts < ?
          ORDER BY ts DESC
@@ -96,7 +117,7 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
       .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
     const revived =
       staleRows.length === DEAD_PIN_CONSECUTIVE_FAILURES &&
-      staleRows.every((row) => row.outcome === "failed");
+      staleRows.every((row) => isDeadPinFailureOutcome(row.outcome));
     if (revived) {
       console.warn("[workflow-agent-resolver] dead pin revived", {
         agent,

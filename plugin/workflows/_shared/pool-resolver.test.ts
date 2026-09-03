@@ -1,12 +1,18 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
+  AgentOutcomeSchema,
   AgentPerformanceWriter,
   loadSqliteVec,
   migrate,
 } from "../../../packages/core/src/index.js";
 import type { WorkflowCtx } from "../../../packages/workflows/src/ctx.js";
-import { parseAgentField, resolveAgent } from "./pool-resolver.js";
+import {
+  DEAD_PIN_FAILURE_OUTCOMES,
+  DEAD_PIN_NON_FAILURE_OUTCOMES,
+  parseAgentField,
+  resolveAgent,
+} from "./pool-resolver.js";
 
 if (process.platform === "darwin") {
   try {
@@ -638,23 +644,105 @@ describe("resolveAgent", () => {
     ).toBe("dead-pin-seat");
   });
 
-  test("keeps a single pinned agent when recent failures are not worker-sourced", () => {
+  test("routes away from a single pinned agent after three recent reconciler failures", () => {
     const db = freshDb();
     writePerf(db, "dead-pin-seat", "review_adversarial", {
-      handoffId: "nonworker-h3",
-      ts: "2026-08-31T10:02:00.000Z",
-      outcome: "failed",
-    });
-    writePerf(db, "dead-pin-seat", "review_adversarial", {
-      handoffId: "nonworker-h2",
-      ts: "2026-08-31T10:01:00.000Z",
+      handoffId: "reconciler-h3",
+      ts: minutesAgo(1),
       outcome: "failed",
       source: "reconciler",
     });
     writePerf(db, "dead-pin-seat", "review_adversarial", {
-      handoffId: "nonworker-h1",
-      ts: "2026-08-31T10:00:00.000Z",
+      handoffId: "reconciler-h2",
+      ts: minutesAgo(2),
       outcome: "failed",
+      source: "reconciler",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "reconciler-h1",
+      ts: minutesAgo(3),
+      outcome: "failed",
+      source: "reconciler",
+    });
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).not.toBe("dead-pin-seat");
+  });
+
+  test("routes away from a single pinned agent after three recent terminal failure outcomes", () => {
+    const db = freshDb();
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "failure-shape-h3",
+      ts: minutesAgo(1),
+      outcome: "typecheck_failed",
+      source: "reconciler",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "failure-shape-h2",
+      ts: minutesAgo(2),
+      outcome: "test_failed",
+      source: "reconciler",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "failure-shape-h1",
+      ts: minutesAgo(3),
+      outcome: "pr_creation_failed",
+      source: "reconciler",
+    });
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).not.toBe("dead-pin-seat");
+  });
+
+  test("keeps a single pinned agent when recent failures are operator or manual seed sourced", () => {
+    const db = freshDb();
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h3",
+      ts: minutesAgo(1),
+      outcome: "failed",
+      source: "manual_seed",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h2",
+      ts: minutesAgo(2),
+      outcome: "failed",
+      source: "operator",
+    });
+    writePerf(db, "dead-pin-seat", "review_adversarial", {
+      handoffId: "nonworker-h1",
+      ts: minutesAgo(3),
+      outcome: "failed",
+      source: "manual_seed",
     });
 
     expect(
@@ -729,6 +817,20 @@ describe("resolveAgent", () => {
     );
 
     expect(result).not.toBe("dead-pin-seat");
+  });
+
+  test("classifies every agent outcome for dead-pin detection", () => {
+    const classified = new Set([...DEAD_PIN_FAILURE_OUTCOMES, ...DEAD_PIN_NON_FAILURE_OUTCOMES]);
+    const unclassified = AgentOutcomeSchema.options.filter((outcome) => !classified.has(outcome));
+    const overlap = AgentOutcomeSchema.options.filter(
+      (outcome) =>
+        DEAD_PIN_FAILURE_OUTCOMES.has(outcome) && DEAD_PIN_NON_FAILURE_OUTCOMES.has(outcome),
+    );
+
+    expect(unclassified, `unclassified dead-pin outcome(s): ${unclassified.join(", ")}`).toEqual(
+      [],
+    );
+    expect(overlap, `overlapping dead-pin outcome(s): ${overlap.join(", ")}`).toEqual([]);
   });
 
   test("keeps the configured single agent when no fallback role is provided", () => {
