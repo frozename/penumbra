@@ -14,7 +14,9 @@ type FailureClassification =
   | "nonzero_exit"
   | "serialized_dispatch"
   | "sqlite_busy"
-  | "transport_close";
+  | "target_instrumentation_absent"
+  | "transport_close"
+  | "zero_sessions_created";
 
 interface DbSnapshot {
   integrityCheck: string;
@@ -33,7 +35,44 @@ export interface ProbeFixtureEvent {
 
 export interface LockControlEvidence {
   lockAcquiredAt: number;
+  lockAcquiredWallMs: number;
   lockReleasedAt: number;
+  lockReleasedWallMs: number;
+}
+
+export interface RuntimeStamp {
+  bunVersion: string;
+  platform: string;
+  sqliteSetlkTimeout: boolean;
+  sqliteVersion: string;
+}
+
+export interface LockWindowEvidence {
+  baselineExceededHold: boolean;
+  overlapCount: number;
+  pairsEvaluated: number;
+  satisfied: boolean;
+}
+
+export interface ProbePredicateResult {
+  fired: boolean;
+  measurement: number | null;
+  threshold: number;
+}
+
+export interface SerializedDispatchEvidence {
+  intervalOverlap: ProbePredicateResult;
+  receivedSkew: ProbePredicateResult;
+  respondingSkew: ProbePredicateResult;
+  sendSkew: ProbePredicateResult;
+}
+
+export interface LockFreeControlEvidence {
+  classifications: FailureClassification[];
+  fixtureEvents: ProbeFixtureEvent[];
+  maxSendSkewMs: number;
+  processes: ProbeProcessResult[];
+  round: number;
 }
 
 export interface ProbeProcessResult {
@@ -52,12 +91,16 @@ export interface ProbeProcessResult {
 export interface ProbeRoundResult {
   classifications: FailureClassification[];
   fixtureEvents: ProbeFixtureEvent[];
+  lockFreeControl: LockFreeControlEvidence | null;
   lockControl: LockControlEvidence | null;
+  lockWindow: LockWindowEvidence;
   maxSendSkewMs: number;
   postDb: DbSnapshot;
   preDb: DbSnapshot;
   processes: ProbeProcessResult[];
   round: number;
+  runtime: RuntimeStamp;
+  serializedDispatch: SerializedDispatchEvidence;
 }
 
 export interface ProbeResult {
@@ -173,6 +216,27 @@ function readSessionCount(db: Database): number {
   }
   const row = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM sessions").get();
   return row?.count ?? 0;
+}
+
+function readRuntimeStamp(): RuntimeStamp {
+  const db = new Database(":memory:");
+  try {
+    const versionRow = db
+      .query<{ version: string }, []>("SELECT sqlite_version() AS version")
+      .get();
+    const compileOptions = db
+      .query<{ compile_options: string }, []>("PRAGMA compile_options")
+      .all()
+      .map((row) => row.compile_options);
+    return {
+      bunVersion: Bun.version,
+      platform: process.platform,
+      sqliteSetlkTimeout: compileOptions.some((option) => /SETLK/i.test(option)),
+      sqliteVersion: versionRow?.version ?? "",
+    };
+  } finally {
+    db.close();
+  }
 }
 
 function readFixtureEvents(dbPath: string, round: number): ProbeFixtureEvent[] {
@@ -333,9 +397,15 @@ async function requestSession(started: StartedClient, round: number): Promise<Pr
 
 async function releaseLockAfter(db: Database, holdMs: number): Promise<LockControlEvidence> {
   const lockAcquiredAt = nowMs();
+  const lockAcquiredWallMs = Date.now();
   await new Promise((resolve) => setTimeout(resolve, holdMs));
   db.run("COMMIT");
-  return { lockAcquiredAt, lockReleasedAt: nowMs() };
+  return {
+    lockAcquiredAt,
+    lockAcquiredWallMs,
+    lockReleasedAt: nowMs(),
+    lockReleasedWallMs: Date.now(),
+  };
 }
 
 interface LockControl {
@@ -439,70 +509,203 @@ function classifyErrors(results: ProbeProcessResult[]): Set<FailureClassificatio
   return classes;
 }
 
-function lockWindowSatisfied(round: ProbeRoundResult, options: ProbeRunOptions): boolean {
-  if (options.sqliteLockControlMs <= 0) {
-    return true;
+function sessionNewLatency(result: ProbeProcessResult): number | null {
+  if (result.sessionNewSendAt <= 0 || result.sessionNewResponseAt <= 0) {
+    return null;
   }
-  const lock = round.lockControl;
-  if (lock === null) {
-    return false;
-  }
-  const attempted = round.processes.filter((result) => result.sessionNewSendAt > 0);
-  if (attempted.length === 0) {
-    return false;
-  }
-  return attempted.every(
-    (result) =>
-      result.sessionNewSendAt >= lock.lockAcquiredAt &&
-      result.sessionNewSendAt <= lock.lockReleasedAt &&
-      result.sessionNewResponseAt >= lock.lockReleasedAt,
-  );
+  return result.sessionNewResponseAt - result.sessionNewSendAt;
 }
 
-function classifyRound(round: ProbeRoundResult, options: ProbeRunOptions): FailureClassification[] {
+interface LockWindowPair {
+  baselineLatency: number;
+  lockedLatency: number;
+}
+
+function lockWindowPairs(round: PendingRoundResult): LockWindowPair[] {
+  if (round.lockControl === null || round.lockFreeControl === null) {
+    return [];
+  }
+  const controlByIndex = new Map(
+    round.lockFreeControl.processes.map((result) => [result.index, result]),
+  );
+  const pairs: LockWindowPair[] = [];
+  for (const locked of round.processes) {
+    if (locked.sessionId === null || locked.error !== null) {
+      continue;
+    }
+    const control = controlByIndex.get(locked.index);
+    if (control === undefined) {
+      continue;
+    }
+    if (control.sessionId === null || control.error !== null) {
+      continue;
+    }
+    const baselineLatency = sessionNewLatency(control);
+    const lockedLatency = sessionNewLatency(locked);
+    if (baselineLatency === null || lockedLatency === null) {
+      continue;
+    }
+    pairs.push({ baselineLatency, lockedLatency });
+  }
+  return pairs;
+}
+
+function buildLockWindowEvidence(
+  round: PendingRoundResult,
+  options: ProbeRunOptions,
+): LockWindowEvidence {
+  if (options.sqliteLockControlMs <= 0) {
+    return { baselineExceededHold: false, overlapCount: 0, pairsEvaluated: 0, satisfied: true };
+  }
+  let baselineExceededHold = false;
+  let overlapCount = 0;
+  const pairs = lockWindowPairs(round);
+  for (const { baselineLatency, lockedLatency } of pairs) {
+    if (baselineLatency >= options.sqliteLockControlMs) {
+      baselineExceededHold = true;
+      continue;
+    }
+    if (lockedLatency - baselineLatency >= options.sqliteLockControlMs - MAX_SEND_SKEW_MS) {
+      overlapCount++;
+    }
+  }
+  return {
+    baselineExceededHold,
+    overlapCount,
+    pairsEvaluated: pairs.length,
+    satisfied: !baselineExceededHold && overlapCount >= options.minOverlap,
+  };
+}
+
+function hasTargetInstrumentation(
+  round: PendingRoundResult,
+  control: LockFreeControlEvidence | null,
+): boolean {
+  if (round.fixtureEvents.length > 0) {
+    return true;
+  }
+  return control !== null && control.fixtureEvents.length > 0;
+}
+
+function fixtureEventSkew(events: ProbeFixtureEvent[], kind: string): number | null {
+  const eventTimes = events.filter((event) => event.kind === kind).map((event) => event.atMs);
+  if (eventTimes.length < 2) {
+    return null;
+  }
+  return Math.max(...eventTimes) - Math.min(...eventTimes);
+}
+
+function skewPredicateResult(
+  events: ProbeFixtureEvent[],
+  kind: string,
+  requireOverlap: boolean,
+): ProbePredicateResult {
+  const measurement = fixtureEventSkew(events, kind);
+  return {
+    fired: requireOverlap && measurement !== null && measurement > MAX_RECEIVE_SKEW_MS,
+    measurement,
+    threshold: MAX_RECEIVE_SKEW_MS,
+  };
+}
+
+function buildSerializedDispatchEvidence(
+  round: PendingRoundResult,
+  options: ProbeRunOptions,
+  control: LockFreeControlEvidence | null,
+): SerializedDispatchEvidence {
+  const intervalOverlapCount = maxIntervalOverlap(round.processes);
+  return {
+    intervalOverlap: {
+      fired: options.requireOverlap && intervalOverlapCount < options.minOverlap,
+      measurement: intervalOverlapCount,
+      threshold: options.minOverlap,
+    },
+    receivedSkew: skewPredicateResult(
+      round.fixtureEvents,
+      "session_new_received",
+      options.requireOverlap,
+    ),
+    respondingSkew: skewPredicateResult(
+      control?.fixtureEvents ?? round.fixtureEvents,
+      "session_new_responding",
+      options.requireOverlap,
+    ),
+    sendSkew: {
+      fired: options.requireOverlap && round.maxSendSkewMs > MAX_SEND_SKEW_MS,
+      measurement: round.maxSendSkewMs,
+      threshold: MAX_SEND_SKEW_MS,
+    },
+  };
+}
+
+function controlEvidenceFor(round: ProbeRoundResult): LockFreeControlEvidence {
+  return {
+    classifications: round.classifications,
+    fixtureEvents: round.fixtureEvents,
+    maxSendSkewMs: round.maxSendSkewMs,
+    processes: round.processes,
+    round: round.round,
+  };
+}
+
+type PendingRoundResult = Omit<
+  ProbeRoundResult,
+  "classifications" | "lockWindow" | "serializedDispatch"
+>;
+
+function classifyRound(
+  round: PendingRoundResult,
+  options: ProbeRunOptions,
+  control: LockFreeControlEvidence | null,
+  serializedDispatch: SerializedDispatchEvidence,
+  lockWindow: LockWindowEvidence,
+): FailureClassification[] {
   const classes = classifyErrors(round.processes);
+  if (control !== null) {
+    for (const classification of control.classifications) {
+      classes.add(classification);
+    }
+  }
   const sessionIds = round.processes.flatMap((result) =>
     result.sessionId === null ? [] : [result.sessionId],
   );
   const uniqueSessionIds = new Set(sessionIds);
 
+  if (uniqueSessionIds.size === 0) {
+    classes.add("zero_sessions_created");
+  }
+  if (options.requireOverlap && !hasTargetInstrumentation(round, control)) {
+    classes.add("target_instrumentation_absent");
+  }
   if (sessionIds.length !== uniqueSessionIds.size) {
     classes.add("duplicate_session_id");
   }
   if (round.postDb.sessionsRowCount < round.preDb.sessionsRowCount + uniqueSessionIds.size) {
     classes.add("missing_session_rows");
   }
-  if (options.requireOverlap && round.maxSendSkewMs > MAX_SEND_SKEW_MS) {
-    classes.add("serialized_dispatch");
-  }
-  if (options.requireOverlap && maxIntervalOverlap(round.processes) < options.minOverlap) {
-    classes.add("serialized_dispatch");
-  }
   if (
-    options.requireOverlap &&
-    fixtureEventSkew(round.fixtureEvents, "session_new_received") > MAX_RECEIVE_SKEW_MS
+    serializedDispatch.sendSkew.fired ||
+    serializedDispatch.intervalOverlap.fired ||
+    serializedDispatch.receivedSkew.fired ||
+    serializedDispatch.respondingSkew.fired
   ) {
     classes.add("serialized_dispatch");
   }
-  if (
-    options.requireOverlap &&
-    options.sqliteLockControlMs <= 0 &&
-    fixtureEventSkew(round.fixtureEvents, "session_new_responding") > MAX_RECEIVE_SKEW_MS
-  ) {
-    classes.add("serialized_dispatch");
-  }
-  if (!lockWindowSatisfied(round, options)) {
+  if (!lockWindow.satisfied) {
     classes.add("lock_window_unverified");
   }
   return [...classes].sort();
 }
 
-function fixtureEventSkew(events: ProbeFixtureEvent[], kind: string): number {
-  const eventTimes = events.filter((event) => event.kind === kind).map((event) => event.atMs);
-  if (eventTimes.length < 2) {
-    return 0;
-  }
-  return Math.max(...eventTimes) - Math.min(...eventTimes);
+function evaluateRound(
+  partial: PendingRoundResult,
+  options: ProbeRunOptions,
+  control: LockFreeControlEvidence | null,
+): ProbeRoundResult {
+  const serializedDispatch = buildSerializedDispatchEvidence(partial, options, control);
+  const lockWindow = buildLockWindowEvidence(partial, options);
+  const classifications = classifyRound(partial, options, control, serializedDispatch, lockWindow);
+  return { ...partial, classifications, lockWindow, serializedDispatch };
 }
 
 async function settleClients(
@@ -522,7 +725,11 @@ async function settleClients(
   );
 }
 
-async function runRound(round: number, options: ProbeRunOptions): Promise<ProbeRoundResult> {
+async function runRound(
+  round: number,
+  options: ProbeRunOptions,
+  control: LockFreeControlEvidence | null = null,
+): Promise<ProbeRoundResult> {
   const lockJournalMode =
     options.sqliteLockControlMs > 0 ? readWritableJournalMode(options.dbPath) : null;
   const preDb = safeDbSnapshot(options.dbPath);
@@ -551,17 +758,32 @@ async function runRound(round: number, options: ProbeRunOptions): Promise<ProbeR
     }
   }
 
-  const partial: ProbeRoundResult = {
-    classifications: [],
+  const partial: PendingRoundResult = {
     fixtureEvents: readFixtureEvents(options.dbPath, round),
+    lockFreeControl: control,
     lockControl,
     maxSendSkewMs: maxSendSkew(processes),
     postDb: safeDbSnapshot(options.dbPath),
     preDb,
     processes,
     round,
+    runtime: readRuntimeStamp(),
   };
-  return { ...partial, classifications: classifyRound(partial, options) };
+  return evaluateRound(partial, options, control);
+}
+
+async function runLockedRoundWithControl(
+  round: number,
+  options: ProbeRunOptions,
+): Promise<ProbeRoundResult> {
+  if (options.sqliteLockControlMs <= 0) {
+    return await runRound(round, options);
+  }
+  const controlRound = await runRound(round + options.rounds, {
+    ...options,
+    sqliteLockControlMs: 0,
+  });
+  return await runRound(round, options, controlEvidenceFor(controlRound));
 }
 
 function rejectArtificialSleep(argv: string[]): void {
@@ -703,7 +925,7 @@ export async function runDevinContentionProbe(options: ProbeRunOptions): Promise
   assertSafeOptions(options);
   const rounds: ProbeRoundResult[] = [];
   for (let round = 0; round < options.rounds; round++) {
-    rounds.push(await runRound(round, options));
+    rounds.push(await runLockedRoundWithControl(round, options));
   }
   const summary = summarizeResult(rounds, options);
   const result = {

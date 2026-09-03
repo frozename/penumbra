@@ -1,7 +1,17 @@
 import { Database } from "bun:sqlite";
 import { createInterface } from "node:readline";
 
-type Mode = "busy" | "missing-row" | "no-db" | "normal" | "serialized";
+type Mode =
+  | "busy"
+  | "missing-row"
+  | "no-db"
+  | "no-events"
+  | "normal"
+  | "serialized"
+  | "serialized-late"
+  | "slow-normal"
+  | "slow-respond"
+  | "timeout";
 
 interface JsonRpcRequest {
   id?: number | string;
@@ -34,7 +44,12 @@ function parseCli(argv: string[]): CliOptions {
     mode !== "busy" &&
     mode !== "missing-row" &&
     mode !== "no-db" &&
-    mode !== "serialized"
+    mode !== "no-events" &&
+    mode !== "serialized" &&
+    mode !== "serialized-late" &&
+    mode !== "slow-normal" &&
+    mode !== "slow-respond" &&
+    mode !== "timeout"
   ) {
     throw new Error(`unsupported mode: ${mode}`);
   }
@@ -66,7 +81,6 @@ async function ensureSchema(db: Database): Promise<void> {
   const deadline = nowMs() + 5_000;
   for (;;) {
     try {
-      db.run("PRAGMA journal_mode=WAL");
       db.run(
         "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at_ms REAL NOT NULL)",
       );
@@ -99,24 +113,57 @@ function recordEvent(
   round: number,
   sessionId: string | null = null,
   atMs: number = nowMs(),
-): void {
-  db.query(
-    "INSERT INTO probe_events (kind, pid, round, session_id, at_ms) VALUES (?, ?, ?, ?, ?)",
-  ).run(kind, process.pid, round, sessionId, atMs);
+): Promise<void> {
+  return runWithRetry(db, () => {
+    db.query(
+      "INSERT INTO probe_events (kind, pid, round, session_id, at_ms) VALUES (?, ?, ?, ?, ?)",
+    ).run(kind, process.pid, round, sessionId, atMs);
+  });
 }
 
-function createSession(
+// Fine-grained retry instead of SQLite's doubling busy handler: while the
+// probe parent holds the lock, writers must resume within a few ms of the
+// release or the lock-round responding skew reflects the retry schedule
+// instead of the target's own behavior.
+async function runWithRetry(db: Database, run: () => void): Promise<void> {
+  const deadline = nowMs() + 6_000;
+  for (;;) {
+    try {
+      run();
+      return;
+    } catch (err) {
+      if (!isSqliteBusy(err) || nowMs() >= deadline) {
+        throw err;
+      }
+      await sleep(5);
+    }
+  }
+}
+
+function insertSessionRow(db: Database, sessionId: string): Promise<void> {
+  return runWithRetry(db, () => {
+    db.query("INSERT INTO sessions (id, created_at_ms) VALUES (?, ?)").run(sessionId, nowMs());
+  });
+}
+
+async function createSession(
   db: Database,
   shouldInsert: boolean,
   round: number,
   receivedAtMs: number,
-): string {
+): Promise<string> {
   const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
-  recordEvent(db, "session_new_received", round, sessionId, receivedAtMs);
+  await recordEvent(db, "session_new_received", round, sessionId, receivedAtMs);
   if (shouldInsert) {
-    db.query("INSERT INTO sessions (id, created_at_ms) VALUES (?, ?)").run(sessionId, nowMs());
+    await insertSessionRow(db, sessionId);
   }
-  recordEvent(db, "session_new_responding", round, sessionId);
+  await recordEvent(db, "session_new_responding", round, sessionId);
+  return sessionId;
+}
+
+function createSessionWithoutEvents(db: Database): string {
+  const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
+  db.query("INSERT INTO sessions (id, created_at_ms) VALUES (?, ?)").run(sessionId, nowMs());
   return sessionId;
 }
 
@@ -162,11 +209,47 @@ async function handleRequest(
     return;
   }
 
-  if (options.mode === "serialized") {
-    await new Promise((resolve) => setTimeout(resolve, processIndex() * 75));
+  if (options.mode === "no-events") {
+    writeResponse(req.id, { sessionId: createSessionWithoutEvents(db) });
+    return;
   }
 
-  const sessionId = createSession(
+  if (options.mode === "slow-normal") {
+    await sleep(350);
+    const sessionId = await createSession(db, true, requestRound(req), receivedAtMs ?? nowMs());
+    writeResponse(req.id, {
+      sessionId,
+    });
+    return;
+  }
+
+  if (options.mode === "slow-respond") {
+    const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
+    await recordEvent(
+      db,
+      "session_new_received",
+      requestRound(req),
+      sessionId,
+      receivedAtMs ?? nowMs(),
+    );
+    await insertSessionRow(db, sessionId);
+    await sleep(300);
+    await recordEvent(db, "session_new_responding", requestRound(req), sessionId);
+    writeResponse(req.id, { sessionId });
+    return;
+  }
+
+  if (options.mode === "timeout") {
+    return;
+  }
+
+  if (options.mode === "serialized") {
+    await new Promise((resolve) => setTimeout(resolve, processIndex() * 75));
+  } else if (options.mode === "serialized-late") {
+    await sleep(60 + processIndex() * 75);
+  }
+
+  const sessionId = await createSession(
     db,
     options.mode !== "missing-row",
     requestRound(req),
@@ -178,6 +261,13 @@ async function handleRequest(
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2));
   const db = openDb(options.dbPath);
+  if (
+    options.mode === "serialized" ||
+    options.mode === "serialized-late" ||
+    options.mode === "slow-respond"
+  ) {
+    db.run("PRAGMA busy_timeout=0");
+  }
   await ensureSchema(db);
   const rl = createInterface({ input: process.stdin });
 

@@ -81,14 +81,22 @@ describe("devin-contention-probe", () => {
     const round = requireRound(result);
     expect(round.maxSendSkewMs).toBeLessThanOrEqual(25);
     expect(round.postDb.integrityCheck).toBe("ok");
-    expect(round.postDb.sessionsRowCount).toBe(4);
-    expect(countSessions(dbPath)).toBe(4);
+    expect(round.postDb.sessionsRowCount).toBe(8);
+    expect(countSessions(dbPath)).toBe(8);
 
     const lock = round.lockControl;
     expect(lock).not.toBeNull();
     if (lock === null) {
       throw new Error("expected lock control evidence");
     }
+    expect(lock.lockAcquiredWallMs).toBeGreaterThan(0);
+    expect(lock.lockReleasedWallMs).toBeGreaterThanOrEqual(lock.lockAcquiredWallMs);
+    expect(round.lockFreeControl?.processes).toHaveLength(4);
+    expect(round.lockWindow.satisfied).toBe(true);
+    expect(round.lockWindow.baselineExceededHold).toBe(false);
+    expect(round.runtime.bunVersion).toBe(Bun.version);
+    expect(round.runtime.platform).toBe(process.platform);
+    expect(round.runtime.sqliteVersion).not.toBe("");
 
     for (const processResult of round.processes) {
       expect(processResult.sessionNewSendAt).toBeGreaterThanOrEqual(lock.lockAcquiredAt);
@@ -118,7 +126,7 @@ describe("devin-contention-probe", () => {
     const round = requireRound(result);
     expect(round.classifications).not.toContain("serialized_dispatch");
     expect(round.maxSendSkewMs).toBeLessThanOrEqual(25);
-    expect(round.postDb.sessionsRowCount).toBe(4);
+    expect(round.postDb.sessionsRowCount).toBe(8);
     const lock = round.lockControl;
     expect(lock).not.toBeNull();
     if (lock === null) {
@@ -147,8 +155,8 @@ describe("devin-contention-probe", () => {
       sqliteLockControlMs: 250,
     });
 
-    expect(result.ok).toBe(false);
     expect(requireRound(result).classifications).toContain("lock_window_unverified");
+    expect(result.ok).toBe(false);
   });
 
   test("restores the journal mode it switched for lock control", async () => {
@@ -189,6 +197,193 @@ describe("devin-contention-probe", () => {
     expect(requireRound(result).classifications).toContain("serialized_dispatch");
   });
 
+  test("isolates responding skew as the only serialized_dispatch predicate", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("serialized-late", dbPath),
+      binary: process.execPath,
+      concurrency: 3,
+      dbPath,
+      minOverlap: 3,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 0,
+    });
+
+    const round = requireRound(result);
+    expect(round.classifications).toContain("serialized_dispatch");
+    expect(result.ok).toBe(false);
+    expect(round.serializedDispatch.respondingSkew.fired).toBe(true);
+    expect(round.serializedDispatch.respondingSkew.measurement).toBeGreaterThan(100);
+    expect(round.serializedDispatch.sendSkew.fired).toBe(false);
+    expect(round.serializedDispatch.intervalOverlap.fired).toBe(false);
+    expect(round.serializedDispatch.receivedSkew.fired).toBe(false);
+  });
+
+  test("rejects forced serialization at the CLI default lock hold", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+    const options = parseProbeArgs([
+      "--binary",
+      process.execPath,
+      "--args",
+      JSON.stringify(fakeArgs("serialized", dbPath)),
+      "--db",
+      dbPath,
+      "--concurrency",
+      "3",
+      "--min-overlap",
+      "3",
+    ]);
+
+    const result = await runDevinContentionProbe(options);
+
+    const round = requireRound(result);
+    expect(round.classifications).toContain("serialized_dispatch");
+    expect(result.ok).toBe(false);
+    expect(round.serializedDispatch.respondingSkew.fired).toBe(true);
+    expect(round.serializedDispatch.respondingSkew.measurement).toBeGreaterThan(100);
+  });
+
+  test("reads responding skew from control events when the lock masks serialization", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("serialized", dbPath),
+      binary: process.execPath,
+      concurrency: 3,
+      dbPath,
+      minOverlap: 3,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 1500,
+    });
+
+    const round = requireRound(result);
+    expect(round.classifications).toContain("serialized_dispatch");
+    expect(result.ok).toBe(false);
+
+    const lockedResponding = round.fixtureEvents
+      .filter((event) => event.kind === "session_new_responding")
+      .map((event) => event.atMs);
+    expect(lockedResponding).toHaveLength(3);
+    expect(Math.max(...lockedResponding) - Math.min(...lockedResponding)).toBeLessThanOrEqual(100);
+
+    expect(round.serializedDispatch.respondingSkew.fired).toBe(true);
+    expect(round.serializedDispatch.respondingSkew.measurement).toBeGreaterThan(100);
+    expect(round.serializedDispatch.sendSkew.fired).toBe(false);
+    expect(round.serializedDispatch.intervalOverlap.fired).toBe(false);
+    expect(round.serializedDispatch.receivedSkew.fired).toBe(false);
+  }, 15_000);
+
+  test("rejects lock evidence when baseline latency already exceeds the hold", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("slow-normal", dbPath),
+      binary: process.execPath,
+      concurrency: 2,
+      dbPath,
+      minOverlap: 2,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 250,
+    });
+
+    expect(requireRound(result).classifications).toContain("lock_window_unverified");
+    expect(result.ok).toBe(false);
+  });
+
+  test("attributes lock_window_unverified to the baseline-exceeds-hold guard", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("slow-respond", dbPath),
+      binary: process.execPath,
+      concurrency: 2,
+      dbPath,
+      minOverlap: 2,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 250,
+    });
+
+    const round = requireRound(result);
+    expect(round.classifications).toContain("lock_window_unverified");
+    expect(round.classifications).not.toContain("serialized_dispatch");
+    expect(result.ok).toBe(false);
+    expect(round.lockWindow.baselineExceededHold).toBe(true);
+    expect(round.lockWindow.satisfied).toBe(false);
+    expect(round.lockWindow.pairsEvaluated).toBe(2);
+  });
+
+  test("classifies absent target instrumentation instead of treating missing events as zero skew", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("no-events", dbPath),
+      binary: process.execPath,
+      concurrency: 2,
+      dbPath,
+      minOverlap: 2,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 0,
+    });
+
+    expect(requireRound(result).classifications).toContain("target_instrumentation_absent");
+    expect(result.ok).toBe(false);
+  });
+
+  test("reports null skew measurements when only one sample exists per event kind", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("normal", dbPath),
+      binary: process.execPath,
+      concurrency: 1,
+      dbPath,
+      minOverlap: 1,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    const round = requireRound(result);
+    expect(round.classifications).toEqual([]);
+    expect(round.serializedDispatch.receivedSkew.measurement).toBeNull();
+    expect(round.serializedDispatch.receivedSkew.fired).toBe(false);
+    expect(round.serializedDispatch.respondingSkew.measurement).toBeNull();
+    expect(round.serializedDispatch.respondingSkew.fired).toBe(false);
+  });
+
+  test("classifies a round where all session creation requests time out", async () => {
+    const root = await freshTempRoot();
+    const dbPath = join(root, "sessions.sqlite");
+
+    const result = await runDevinContentionProbe({
+      args: fakeArgs("timeout", dbPath),
+      binary: process.execPath,
+      concurrency: 2,
+      dbPath,
+      minOverlap: 2,
+      requireOverlap: true,
+      rounds: 1,
+      sqliteLockControlMs: 0,
+    });
+
+    expect(requireRound(result).classifications).toContain("zero_sessions_created");
+    expect(result.ok).toBe(false);
+  }, 12_000);
+
   test("classifies SQLITE_BUSY fixture failures", async () => {
     const root = await freshTempRoot();
     const dbPath = join(root, "sessions.sqlite");
@@ -204,8 +399,8 @@ describe("devin-contention-probe", () => {
       sqliteLockControlMs: 0,
     });
 
-    expect(result.ok).toBe(false);
     expect(requireRound(result).classifications).toContain("sqlite_busy");
+    expect(result.ok).toBe(false);
   });
 
   test("fails when session/new succeeds but the DB row is missing", async () => {
@@ -223,8 +418,8 @@ describe("devin-contention-probe", () => {
       sqliteLockControlMs: 0,
     });
 
-    expect(result.ok).toBe(false);
     expect(requireRound(result).classifications).toContain("missing_session_rows");
+    expect(result.ok).toBe(false);
   });
 
   test("rejects artificial per-agent sleeps before session/new", () => {
