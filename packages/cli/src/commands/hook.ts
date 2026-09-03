@@ -359,6 +359,14 @@ export function shouldSkipLifecycleForwarding(env: NodeJS.ProcessEnv): boolean {
   return isLongLivedAgentEnv(env) || isSdkEntrypointEnv(env);
 }
 
+function snapshotLifecycleForwardingEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    CLAUDE_CODE_ENTRYPOINT: env.CLAUDE_CODE_ENTRYPOINT,
+    PENUMBRA_LONG_LIVED_AGENT_ID: env.PENUMBRA_LONG_LIVED_AGENT_ID,
+    PENUMBRA_LONG_LIVED_TICK_ID: env.PENUMBRA_LONG_LIVED_TICK_ID,
+  };
+}
+
 async function runLifecycleHook(opts: {
   hookOpts: RunHookOpts;
   lifecycleEvent: LifecycleEvent | null;
@@ -405,13 +413,14 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   const ev = parsed as ClaudeCodeHookEvent | null;
   const sessionId = opts.sessionId ?? ev?.session_id ?? null;
   const cwdForResolve = typeof ev?.cwd === "string" && ev.cwd.length > 0 ? ev.cwd : process.cwd();
+  const lifecycleForwardingEnv = snapshotLifecycleForwardingEnv(process.env);
   const projectIdForTouch = resolveTouchProjectId(opts, cwdForResolve);
   if (sessionId) {
     await touchSession(opts.storageRoot, sessionId, projectIdForTouch);
   }
 
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
-  const skipLifecycleForwarding = shouldSkipLifecycleForwarding(process.env);
+  const skipLifecycleForwarding = shouldSkipLifecycleForwarding(lifecycleForwardingEnv);
   const lifecycleTerminated = await runLifecycleHook({
     hookOpts: opts,
     lifecycleEvent,

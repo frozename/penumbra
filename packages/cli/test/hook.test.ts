@@ -191,7 +191,10 @@ interface TriggerCall {
 function stubStdoutWrite(chunks: string[]): () => void {
   const oldWrite = process.stdout.write.bind(process.stdout);
   process.stdout.write = (chunk: string | Uint8Array): boolean => {
-    chunks.push(String(chunk));
+    const text = String(chunk);
+    if (text.includes('"hookSpecificOutput"')) {
+      chunks.push(text);
+    }
     return true;
   };
   return (): void => {
@@ -383,6 +386,123 @@ test("runHook skips SessionStart lifecycle forwarding for SDK-driven sessions", 
     expect(touchCalls).toHaveLength(1);
     expect(triggerCalls).toHaveLength(0);
     expect(stdoutChunks).toHaveLength(0);
+  } finally {
+    if (oldTickId === undefined) delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+    else process.env.PENUMBRA_LONG_LIVED_TICK_ID = oldTickId;
+    if (oldAgentId === undefined) delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+    else process.env.PENUMBRA_LONG_LIVED_AGENT_ID = oldAgentId;
+    if (oldEntrypoint === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    else process.env.CLAUDE_CODE_ENTRYPOINT = oldEntrypoint;
+    restoreStdoutWrite();
+    void server.stop(true);
+  }
+});
+
+test("runHook captures lifecycle skip env before asynchronous session touch", async () => {
+  const oldTickId = process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+  const oldAgentId = process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+  const oldEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
+  const triggerCalls: TriggerCall[] = [];
+  const touchCalls: unknown[] = [];
+  const stdoutChunks: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/sessions/touch") {
+        touchCalls.push(await req.json());
+        process.env.CLAUDE_CODE_ENTRYPOINT = "cli";
+        return Response.json({});
+      }
+      if (url.pathname === "/workflows/trigger") {
+        triggerCalls.push((await req.json()) as TriggerCall);
+        return Response.json({ matched: [], additionalContext: "PRIME" });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), "penumbra-hook-sdk-snapshot-"));
+  writeFileSync(join(root, "port"), `${String(server.port)}\n`);
+  writeFileSync(join(root, "token"), "tk\n");
+
+  delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+  delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+  process.env.CLAUDE_CODE_ENTRYPOINT = "sdk-ts";
+  const restoreStdoutWrite = stubStdoutWrite(stdoutChunks);
+
+  try {
+    const exit = await runHook({
+      storageRoot: root,
+      rawEvent: JSON.stringify({
+        hook_event_name: "SessionStart",
+        session_id: "cc-sdk-snapshot-1",
+      }),
+      project: null,
+      sessionId: null,
+    });
+    expect(exit).toBe(0);
+    expect(touchCalls).toHaveLength(1);
+    expect(triggerCalls).toHaveLength(0);
+    expect(stdoutChunks).toHaveLength(0);
+  } finally {
+    if (oldTickId === undefined) delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+    else process.env.PENUMBRA_LONG_LIVED_TICK_ID = oldTickId;
+    if (oldAgentId === undefined) delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+    else process.env.PENUMBRA_LONG_LIVED_AGENT_ID = oldAgentId;
+    if (oldEntrypoint === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    else process.env.CLAUDE_CODE_ENTRYPOINT = oldEntrypoint;
+    restoreStdoutWrite();
+    void server.stop(true);
+  }
+});
+
+test("runHook captures long-lived lifecycle skip env before asynchronous session touch", async () => {
+  const oldTickId = process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+  const oldAgentId = process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+  const oldEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
+  const triggerCalls: TriggerCall[] = [];
+  const touchCalls: unknown[] = [];
+  const stdoutChunks: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/sessions/touch") {
+        touchCalls.push(await req.json());
+        process.env.PENUMBRA_LONG_LIVED_AGENT_ID = "agent-1";
+        return Response.json({});
+      }
+      if (url.pathname === "/workflows/trigger") {
+        triggerCalls.push((await req.json()) as TriggerCall);
+        return Response.json({ matched: [], additionalContext: "PRIME" });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), "penumbra-hook-ll-snapshot-"));
+  writeFileSync(join(root, "port"), `${String(server.port)}\n`);
+  writeFileSync(join(root, "token"), "tk\n");
+
+  delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+  delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
+  process.env.CLAUDE_CODE_ENTRYPOINT = "cli";
+  const restoreStdoutWrite = stubStdoutWrite(stdoutChunks);
+
+  try {
+    const exit = await runHook({
+      storageRoot: root,
+      rawEvent: JSON.stringify({
+        hook_event_name: "SessionStart",
+        session_id: "cc-ll-snapshot-1",
+      }),
+      project: null,
+      sessionId: null,
+    });
+    expect(exit).toBe(0);
+    expect(touchCalls).toHaveLength(1);
+    expect(triggerCalls).toHaveLength(1);
+    expect(triggerCalls[0]!.session_id).toBe("cc-ll-snapshot-1");
+    expect(stdoutChunks.join("")).toContain('"additionalContext":"PRIME"');
   } finally {
     if (oldTickId === undefined) delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
     else process.env.PENUMBRA_LONG_LIVED_TICK_ID = oldTickId;
