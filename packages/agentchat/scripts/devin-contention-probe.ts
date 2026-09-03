@@ -1,29 +1,20 @@
 import { Database } from "bun:sqlite";
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, statSync, writeFileSync } from "node:fs";
+
+import { JsonRpcClient } from "./devin-contention-probe-transport.js";
 
 type FailureClassification =
   | "boot_timeout"
   | "database_locked"
   | "duplicate_session_id"
+  | "lock_window_unverified"
   | "missing_session_id"
   | "missing_session_rows"
   | "nonzero_exit"
   | "serialized_dispatch"
   | "sqlite_busy"
   | "transport_close";
-
-interface JsonRpcResponse {
-  error?: { message?: string };
-  id?: number | string;
-  result?: unknown;
-}
-
-interface PendingRequest {
-  reject: (err: Error) => void;
-  resolve: (value: unknown) => void;
-  timeout: ReturnType<typeof setTimeout>;
-}
 
 interface DbSnapshot {
   integrityCheck: string;
@@ -80,6 +71,7 @@ export interface ProbeResult {
 }
 
 export interface ProbeRunOptions {
+  allowRealStore?: boolean;
   args: string[];
   binary: string;
   concurrency: number;
@@ -89,6 +81,7 @@ export interface ProbeRunOptions {
   requireOverlap: boolean;
   rounds: number;
   sqliteLockControlMs: number;
+  spawnStaggerMs?: number;
   summarize?: boolean;
 }
 
@@ -107,8 +100,32 @@ interface InitializedClients {
 
 const BOOT_TIMEOUT_MS = 4_000;
 const REQUEST_TIMEOUT_MS = 8_000;
-const STDERR_TAIL_BYTES = 8_192;
 const MAX_SEND_SKEW_MS = 25;
+// Receive spread is measured across processes on a shared wall clock, so it
+// includes OS pipe/scheduler jitter; keep it tolerant of jitter yet far below
+// the skew a genuinely serialized target produces (hundreds of ms and up).
+const MAX_RECEIVE_SKEW_MS = 100;
+const MAX_CONCURRENCY = 16;
+const MAX_ROUNDS = 10;
+const REAL_STORE_PATH_PATTERN = /(?:^|\/)share\/devin\/cli\//;
+const CHILD_ENV_KEYS = [
+  "HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "LANG",
+  "LC_ALL",
+  "NO_PROXY",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "TMPDIR",
+  "TZ",
+  "USER",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+];
+const CHILD_ENV_PREFIXES = ["DEVIN_", "WINDSURF_", "XDG_"];
 
 function nowMs(): number {
   return performance.now();
@@ -118,122 +135,12 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function appendTail(current: string, chunk: Buffer): string {
-  const next = current + chunk.toString("utf8");
-  return next.length > STDERR_TAIL_BYTES ? next.slice(-STDERR_TAIL_BYTES) : next;
-}
-
-class JsonRpcClient {
-  private buffer = "";
-  private readonly exitPromise: Promise<number | null>;
-  private readonly pending = new Map<number, PendingRequest>();
-  private requestId = 0;
-  private stderr = "";
-
-  constructor(private readonly proc: ChildProcessWithoutNullStreams) {
-    this.exitPromise = new Promise((resolve) => {
-      this.proc.once("exit", (code) => {
-        resolve(code);
-      });
-    });
-    this.proc.stdout.on("data", (chunk: Buffer) => {
-      this.consumeStdout(chunk.toString("utf8"));
-    });
-    this.proc.stderr.on("data", (chunk: Buffer) => {
-      this.stderr = appendTail(this.stderr, chunk);
-    });
-    this.proc.on("exit", () => {
-      this.rejectAll(new Error("transport closed"));
-    });
-  }
-
-  get pid(): number {
-    return this.proc.pid ?? 0;
-  }
-
-  get stderrTail(): string {
-    return this.stderr;
-  }
-
-  async close(): Promise<number | null> {
-    if (this.proc.exitCode !== null) {
-      return this.proc.exitCode;
-    }
-    this.proc.stdin.end();
-    const exitCode = await Promise.race([
-      this.exitPromise,
-      new Promise<null>((resolve) => {
-        setTimeout(() => {
-          this.proc.kill("SIGTERM");
-          resolve(null);
-        }, 1_000);
-      }),
-    ]);
-    return exitCode;
-  }
-
-  request(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
-    const id = ++this.requestId;
-    const body = JSON.stringify({ id, jsonrpc: "2.0", method, params });
-    const promise = new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} timed out`));
-      }, timeoutMs);
-      this.pending.set(id, { reject, resolve, timeout });
-    });
-    this.proc.stdin.write(`${body}\n`);
-    return promise;
-  }
-
-  private consumeStdout(data: string): void {
-    this.buffer += data;
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      this.consumeLine(line);
-    }
-  }
-
-  private consumeLine(line: string): void {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      return;
-    }
-    let parsed: JsonRpcResponse;
-    try {
-      parsed = JSON.parse(trimmed) as JsonRpcResponse;
-    } catch {
-      return;
-    }
-    if (typeof parsed.id !== "number") {
-      return;
-    }
-    const pending = this.pending.get(parsed.id);
-    if (pending === undefined) {
-      return;
-    }
-    this.pending.delete(parsed.id);
-    clearTimeout(pending.timeout);
-    if (parsed.error) {
-      pending.reject(new Error(parsed.error.message ?? "json-rpc error"));
-    } else {
-      pending.resolve(parsed.result);
-    }
-  }
-
-  private rejectAll(err: Error): void {
-    const pending = [...this.pending.values()];
-    this.pending.clear();
-    for (const item of pending) {
-      clearTimeout(item.timeout);
-      item.reject(err);
-    }
-  }
-}
-
 function safeDbSnapshot(dbPath: string): DbSnapshot {
-  const db = new Database(dbPath);
+  if (!existsSync(dbPath)) {
+    return { integrityCheck: "", journalMode: "", sessionsRowCount: 0, walBytes: 0 };
+  }
+  // Readonly: snapshots must never take write-side locks on the target store.
+  const db = new Database(dbPath, { readonly: true });
   try {
     const journalMode = readPragmaString(db, "journal_mode");
     const integrityCheck = readPragmaString(db, "integrity_check");
@@ -269,7 +176,10 @@ function readSessionCount(db: Database): number {
 }
 
 function readFixtureEvents(dbPath: string, round: number): ProbeFixtureEvent[] {
-  const db = new Database(dbPath);
+  if (!existsSync(dbPath)) {
+    return [];
+  }
+  const db = new Database(dbPath, { readonly: true });
   try {
     const table = db
       .query<
@@ -304,10 +214,26 @@ function fileSize(path: string): number {
   return existsSync(path) ? statSync(path).size : 0;
 }
 
+function childEnv(index: number): Record<string, string> {
+  const env: Record<string, string> = { DEVIN_CONTENTION_PROBE_INDEX: String(index) };
+  for (const key of CHILD_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && CHILD_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 function spawnClient(options: ProbeRunOptions, index: number): StartedClient {
   const startAt = nowMs();
   const proc = spawn(options.binary, options.args, {
-    env: { ...process.env, DEVIN_CONTENTION_PROBE_INDEX: String(index) },
+    env: childEnv(index),
     shell: false,
     stdio: "pipe",
   });
@@ -343,9 +269,16 @@ async function initializeClient(
 }
 
 async function initializeClients(options: ProbeRunOptions): Promise<InitializedClients> {
-  const started = Array.from({ length: options.concurrency }, (_, index) =>
-    spawnClient(options, index),
-  );
+  const staggerMs = options.spawnStaggerMs ?? 0;
+  const started: StartedClient[] = [];
+  for (let index = 0; index < options.concurrency; index++) {
+    if (index > 0 && staggerMs > 0) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, staggerMs);
+      });
+    }
+    started.push(spawnClient(options, index));
+  }
   const outcomes = await Promise.all(started.map((client) => initializeClient(client)));
   return {
     failures: outcomes.flatMap((outcome) => (outcome.failure === null ? [] : [outcome.failure])),
@@ -405,6 +338,40 @@ async function releaseLockAfter(db: Database, holdMs: number): Promise<LockContr
   return { lockAcquiredAt, lockReleasedAt: nowMs() };
 }
 
+interface LockControl {
+  db: Database;
+  evidence: Promise<LockControlEvidence>;
+  restoreJournalMode: string | null;
+}
+
+function beginLockControl(dbPath: string, holdMs: number): LockControl {
+  const db = new Database(dbPath);
+  const originalJournalMode = readPragmaString(db, "journal_mode").toLowerCase();
+  if (originalJournalMode !== "wal") {
+    db.run("PRAGMA journal_mode=WAL");
+  }
+  db.run("BEGIN IMMEDIATE");
+  const restoreJournalMode = originalJournalMode === "wal" ? null : originalJournalMode;
+  return { db, evidence: releaseLockAfter(db, holdMs), restoreJournalMode };
+}
+
+async function endLockControl(lock: LockControl): Promise<void> {
+  try {
+    await lock.evidence;
+  } catch {
+    // A failed commit rolls back when the connection closes below.
+  }
+  const restore = lock.restoreJournalMode;
+  if (restore !== null && restore.length > 0) {
+    try {
+      lock.db.run(`PRAGMA journal_mode=${restore}`);
+    } catch {
+      // Restoring is best-effort once the evidence is already recorded.
+    }
+  }
+  lock.db.close();
+}
+
 function maxSendSkew(results: ProbeProcessResult[]): number {
   const sendTimes = results.map((result) => result.sessionNewSendAt).filter((sendAt) => sendAt > 0);
   const min = Math.min(...sendTimes);
@@ -459,6 +426,26 @@ function classifyErrors(results: ProbeProcessResult[]): Set<FailureClassificatio
   return classes;
 }
 
+function lockWindowSatisfied(round: ProbeRoundResult, options: ProbeRunOptions): boolean {
+  if (options.sqliteLockControlMs <= 0) {
+    return true;
+  }
+  const lock = round.lockControl;
+  if (lock === null) {
+    return false;
+  }
+  const attempted = round.processes.filter((result) => result.sessionNewSendAt > 0);
+  if (attempted.length === 0) {
+    return false;
+  }
+  return attempted.every(
+    (result) =>
+      result.sessionNewSendAt >= lock.lockAcquiredAt &&
+      result.sessionNewSendAt <= lock.lockReleasedAt &&
+      result.sessionNewResponseAt >= lock.lockReleasedAt,
+  );
+}
+
 function classifyRound(round: ProbeRoundResult, options: ProbeRunOptions): FailureClassification[] {
   const classes = classifyErrors(round.processes);
   const sessionIds = round.processes.flatMap((result) =>
@@ -478,8 +465,11 @@ function classifyRound(round: ProbeRoundResult, options: ProbeRunOptions): Failu
   if (options.requireOverlap && maxIntervalOverlap(round.processes) < options.minOverlap) {
     classes.add("serialized_dispatch");
   }
-  if (options.requireOverlap && fixtureReceiveSkew(round.fixtureEvents) > MAX_SEND_SKEW_MS) {
+  if (options.requireOverlap && fixtureReceiveSkew(round.fixtureEvents) > MAX_RECEIVE_SKEW_MS) {
     classes.add("serialized_dispatch");
+  }
+  if (!lockWindowSatisfied(round, options)) {
+    classes.add("lock_window_unverified");
   }
   return [...classes].sort();
 }
@@ -515,24 +505,24 @@ async function runRound(round: number, options: ProbeRunOptions): Promise<ProbeR
   const preDb = safeDbSnapshot(options.dbPath);
   const clients = await initializeClients(options);
 
-  let lockDb: Database | null = null;
-  let lockPromise: Promise<LockControlEvidence> | null = null;
-  if (options.sqliteLockControlMs > 0) {
-    lockDb = new Database(options.dbPath);
-    lockDb.run("PRAGMA journal_mode=WAL");
-    lockDb.run("BEGIN IMMEDIATE");
-    lockPromise = releaseLockAfter(lockDb, options.sqliteLockControlMs);
+  let lock: LockControl | null = null;
+  let processes: ProbeProcessResult[] = [];
+  let lockControl: LockControlEvidence | null = null;
+  try {
+    if (options.sqliteLockControlMs > 0) {
+      lock = beginLockControl(options.dbPath, options.sqliteLockControlMs);
+    }
+    const sessionResults = await Promise.all(
+      clients.ready.map((client) => requestSession(client, round)),
+    );
+    processes = [...sessionResults, ...clients.failures].sort((a, b) => a.index - b.index);
+    lockControl = lock === null ? null : await lock.evidence;
+  } finally {
+    await settleClients(clients.started, processes);
+    if (lock !== null) {
+      await endLockControl(lock);
+    }
   }
-
-  const sessionResults = await Promise.all(
-    clients.ready.map((client) => requestSession(client, round)),
-  );
-  const processes = [...sessionResults, ...clients.failures].sort((a, b) => a.index - b.index);
-  const lockControl = lockPromise === null ? null : await lockPromise;
-  if (lockDb !== null) {
-    lockDb.close();
-  }
-  await settleClients(clients.started, processes);
 
   const partial: ProbeRoundResult = {
     classifications: [],
@@ -611,12 +601,15 @@ export function parseProbeArgs(argv: string[]): ProbeRunOptions {
   const dbPath = readCliFlag(argv, "db");
   if (binary === null || dbPath === null) {
     throw new Error(
-      "usage: devin-contention-probe --binary <path> --db <path> [--args '[...]'] [--rounds 3] [--concurrency 2]",
+      "usage: devin-contention-probe --binary <path> --db <path> [--args '[...]'] [--rounds 3] [--concurrency 2] [--allow-real-store]",
     );
   }
   const args = parseArgsValue(readCliFlag(argv, "args"));
   rejectArtificialSleep(args);
+  const allowRealStore = argv.includes("--allow-real-store");
+  assertNotRealStore(dbPath, allowRealStore);
   return {
+    allowRealStore,
     args,
     binary,
     concurrency: readIntFlag(argv, "concurrency", 2),
@@ -630,14 +623,36 @@ export function parseProbeArgs(argv: string[]): ProbeRunOptions {
   };
 }
 
+function assertNotRealStore(dbPath: string, allowRealStore: boolean): void {
+  if (allowRealStore) {
+    return;
+  }
+  const normalized = dbPath.replaceAll("\\", "/");
+  if (REAL_STORE_PATH_PATTERN.test(normalized)) {
+    throw new Error(
+      `--db ${dbPath} looks like a real devin CLI store; pass --allow-real-store to target it deliberately`,
+    );
+  }
+}
+
 function assertSafeOptions(options: ProbeRunOptions): void {
   if (options.concurrency < 1 || options.rounds < 1) {
     throw new Error("rounds and concurrency must be >= 1");
   }
+  if (options.concurrency > MAX_CONCURRENCY) {
+    throw new Error(`--concurrency must be <= ${String(MAX_CONCURRENCY)}`);
+  }
+  if (options.rounds > MAX_ROUNDS) {
+    throw new Error(`--rounds must be <= ${String(MAX_ROUNDS)}`);
+  }
   if (options.minOverlap < 1 || options.minOverlap > options.concurrency) {
     throw new Error("--min-overlap must be between 1 and --concurrency");
   }
+  if ((options.spawnStaggerMs ?? 0) < 0) {
+    throw new Error("--spawn-stagger-ms must be >= 0");
+  }
   rejectArtificialSleep([options.binary, ...options.args]);
+  assertNotRealStore(options.dbPath, options.allowRealStore === true);
 }
 
 function summarizeResult(

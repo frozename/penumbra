@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createInterface } from "node:readline";
 
-type Mode = "busy" | "missing-row" | "normal" | "serialized";
+type Mode = "busy" | "missing-row" | "no-db" | "normal" | "serialized";
 
 interface JsonRpcRequest {
   id?: number | string;
@@ -29,14 +29,22 @@ function parseCli(argv: string[]): CliOptions {
   if (dbPath === null) {
     throw new Error("missing --db");
   }
-  if (mode !== "normal" && mode !== "busy" && mode !== "missing-row" && mode !== "serialized") {
+  if (
+    mode !== "normal" &&
+    mode !== "busy" &&
+    mode !== "missing-row" &&
+    mode !== "no-db" &&
+    mode !== "serialized"
+  ) {
     throw new Error(`unsupported mode: ${mode}`);
   }
   return { dbPath, mode };
 }
 
 function nowMs(): number {
-  return performance.now();
+  // Wall clock, not performance.now(): these timestamps are compared across
+  // child processes, whose performance epochs each start at their own spawn.
+  return Date.now();
 }
 
 function openDb(dbPath: string): Database {
@@ -116,6 +124,13 @@ async function handleRequest(
 
   if (options.mode === "busy") {
     writeError(req.id, "SQLITE_BUSY: database is locked");
+    return;
+  }
+
+  if (options.mode === "no-db") {
+    writeResponse(req.id, {
+      sessionId: `fake-session-${String(process.pid)}-${crypto.randomUUID()}`,
+    });
     return;
   }
 
