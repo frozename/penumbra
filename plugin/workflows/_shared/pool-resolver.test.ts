@@ -15,6 +15,27 @@ if (process.platform === "darwin") {
 }
 
 const NOW = new Date().toISOString();
+const NOW_MS = Date.parse(NOW);
+
+function minutesAgo(minutes: number): string {
+  return new Date(NOW_MS - minutes * 60_000).toISOString();
+}
+
+function daysAgo(days: number): string {
+  return new Date(NOW_MS - days * 24 * 60 * 60_000).toISOString();
+}
+
+function withDeadPinWindow<T>(value: string | undefined, fn: () => T): T {
+  const oldWindow = process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS;
+  if (value === undefined) delete process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS;
+  else process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS = value;
+  try {
+    return fn();
+  } finally {
+    if (oldWindow === undefined) delete process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS;
+    else process.env.PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS = oldWindow;
+  }
+}
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -218,9 +239,9 @@ describe("resolveAgent", () => {
   test("routes away from a single pinned agent after three recent worker failures", () => {
     const db = freshDb();
     writeDeadPinWorkerRows(db, [
-      { suffix: "h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
-      { suffix: "h2", ts: "2026-08-31T10:01:00.000Z", outcome: "failed" },
-      { suffix: "h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+      { suffix: "h3", ts: minutesAgo(1), outcome: "failed" },
+      { suffix: "h2", ts: minutesAgo(2), outcome: "failed" },
+      { suffix: "h1", ts: minutesAgo(3), outcome: "failed" },
     ]);
 
     const result = resolveAgent(
@@ -242,16 +263,74 @@ describe("resolveAgent", () => {
     expect(result).not.toBe("dead-pin-seat");
   });
 
+  test("keeps a single pinned agent when three worker failures are outside the dead-pin window", () => {
+    withDeadPinWindow("86400000", () => {
+      const db = freshDb();
+      writeDeadPinWorkerRows(db, [
+        { suffix: "stale-h3", ts: daysAgo(2), outcome: "failed" },
+        { suffix: "stale-h2", ts: daysAgo(3), outcome: "failed" },
+        { suffix: "stale-h1", ts: daysAgo(4), outcome: "failed" },
+      ]);
+
+      expect(
+        resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          ctx({
+            config: {
+              role_routing: { headroom_weighting: false },
+              agents: [
+                { name: "dead-pin-seat", roles: ["reviewer"] },
+                { name: "healthy-seat", roles: ["reviewer"] },
+              ],
+            },
+            db: () => db,
+          }),
+          { fallback_role: "reviewer" },
+        ),
+      ).toBe("dead-pin-seat");
+    });
+  });
+
+  test("falls back to the default dead-pin window when the env value is invalid", () => {
+    withDeadPinWindow("not-a-number", () => {
+      const db = freshDb();
+      writeDeadPinWorkerRows(db, [
+        { suffix: "invalid-env-h3", ts: minutesAgo(1), outcome: "failed" },
+        { suffix: "invalid-env-h2", ts: minutesAgo(2), outcome: "failed" },
+        { suffix: "invalid-env-h1", ts: minutesAgo(3), outcome: "failed" },
+      ]);
+
+      const result = resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      );
+
+      expect(result).not.toBe("dead-pin-seat");
+    });
+  });
+
   test("keeps a single pinned agent when any recent worker row completed", () => {
     const db = freshDb();
     writeDeadPinWorkerRows(db, [
-      { suffix: "mixed-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      { suffix: "mixed-h3", ts: minutesAgo(1), outcome: "failed" },
       {
         suffix: "mixed-h2",
-        ts: "2026-08-31T10:01:00.000Z",
+        ts: minutesAgo(2),
         outcome: "completed_with_output",
       },
-      { suffix: "mixed-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+      { suffix: "mixed-h1", ts: minutesAgo(3), outcome: "failed" },
     ]);
 
     expect(
@@ -276,14 +355,14 @@ describe("resolveAgent", () => {
   test("keeps a single pinned agent when a recent worker failure was environmental", () => {
     const db = freshDb();
     writeDeadPinWorkerRows(db, [
-      { suffix: "env-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
+      { suffix: "env-h3", ts: minutesAgo(1), outcome: "failed" },
       {
         suffix: "env-h2",
-        ts: "2026-08-31T10:01:00.000Z",
+        ts: minutesAgo(2),
         outcome: "failed",
         environmentFailure: "y",
       },
-      { suffix: "env-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+      { suffix: "env-h1", ts: minutesAgo(3), outcome: "failed" },
     ]);
 
     expect(
@@ -308,9 +387,9 @@ describe("resolveAgent", () => {
   test("keeps a dead single pinned agent when no fallback role is provided", () => {
     const db = freshDb();
     writeDeadPinWorkerRows(db, [
-      { suffix: "nofallback-h3", ts: "2026-08-31T10:02:00.000Z", outcome: "failed" },
-      { suffix: "nofallback-h2", ts: "2026-08-31T10:01:00.000Z", outcome: "failed" },
-      { suffix: "nofallback-h1", ts: "2026-08-31T10:00:00.000Z", outcome: "failed" },
+      { suffix: "nofallback-h3", ts: minutesAgo(1), outcome: "failed" },
+      { suffix: "nofallback-h2", ts: minutesAgo(2), outcome: "failed" },
+      { suffix: "nofallback-h1", ts: minutesAgo(3), outcome: "failed" },
     ]);
 
     expect(
@@ -375,33 +454,33 @@ describe("resolveAgent", () => {
     writeWorkerPerf(db, {
       agent: "dead-pin-seat",
       handoffId: "env-sep-h5",
-      ts: "2026-08-31T10:04:00.000Z",
+      ts: minutesAgo(1),
       outcome: "completed_with_output",
       environmentFailure: "y",
     });
     writeWorkerPerf(db, {
       agent: "dead-pin-seat",
       handoffId: "env-sep-h4",
-      ts: "2026-08-31T10:03:00.000Z",
+      ts: minutesAgo(2),
       outcome: "failed",
     });
     writeWorkerPerf(db, {
       agent: "dead-pin-seat",
       handoffId: "env-sep-h3",
-      ts: "2026-08-31T10:02:00.000Z",
+      ts: minutesAgo(3),
       outcome: "completed_with_output",
       environmentFailure: "y",
     });
     writeWorkerPerf(db, {
       agent: "dead-pin-seat",
       handoffId: "env-sep-h2",
-      ts: "2026-08-31T10:01:00.000Z",
+      ts: minutesAgo(4),
       outcome: "failed",
     });
     writeWorkerPerf(db, {
       agent: "dead-pin-seat",
       handoffId: "env-sep-h1",
-      ts: "2026-08-31T10:00:00.000Z",
+      ts: minutesAgo(5),
       outcome: "failed",
     });
 

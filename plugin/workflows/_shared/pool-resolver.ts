@@ -15,6 +15,8 @@ import type { Database } from "bun:sqlite";
 
 export type AgentField = { kind: "single"; agent: string } | { kind: "pool"; agents: string[] };
 const DEAD_PIN_CONSECUTIVE_FAILURES = 3;
+const DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const DEAD_PIN_FAILURE_WINDOW_ENV = "PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS";
 type AgentPoolLike =
   | string
   | string[]
@@ -41,18 +43,30 @@ export function parseAgentField(raw: unknown): AgentField | null {
   return null;
 }
 
+function resolveDeadPinFailureWindowMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[DEAD_PIN_FAILURE_WINDOW_ENV];
+  if (raw === undefined || raw.trim() === "") return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DEAD_PIN_FAILURE_WINDOW_MS;
+  return parsed;
+}
+
 function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string): boolean {
   try {
+    const cutoff = new Date(Date.now() - resolveDeadPinFailureWindowMs()).toISOString();
     const rows = db
-      .query<{ outcome: string }, [string, string, number]>(
+      .query<{ outcome: string }, [string, string, string, number]>(
         `SELECT outcome
          FROM agent_performance
          WHERE agent_name = ? AND task_type = ? AND source = 'worker'
            AND (environment_failure IS NULL OR environment_failure != 'y')
+           AND ts >= ?
          ORDER BY ts DESC
          LIMIT ?`,
       )
-      .all(agent, taskType, DEAD_PIN_CONSECUTIVE_FAILURES);
+      .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
     return (
       rows.length === DEAD_PIN_CONSECUTIVE_FAILURES && rows.every((row) => row.outcome === "failed")
     );

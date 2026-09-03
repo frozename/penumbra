@@ -758,6 +758,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptNonNegInt,
     description: "Dispatch timeout in seconds.",
   },
+  PENUMBRA_DEAD_PIN_FAILURE_WINDOW_MS: {
+    schema: OptPosInt,
+    description:
+      "Recency window for workflow preferred-agent dead-pin worker failures in milliseconds. Missing or invalid values use the workflow default.",
+  },
   PENUMBRA_ORPHAN_HANDOFF_FAIL_FAST: {
     schema: Bool,
     default: false,
