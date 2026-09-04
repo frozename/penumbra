@@ -162,6 +162,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Path to the penumbra CLI binary.",
   },
+  PENUMBRA_CLAUDE_USER_DIR: {
+    schema: OptStr,
+    description:
+      "Directory that receives the bundled workflow install; defaults to ~/.claude. Set by the e2e harness so a test run cannot write into the developer real home.",
+  },
   PENUMBRA_CONFIG: {
     schema: OptStr,
     description: "Path to penumbra config file.",
