@@ -1,0 +1,114 @@
+{
+  "families": [
+    {
+      "family_label": "SWE 1.7",
+      "family_uid": "swe-1.7",
+      "slug": "swe-1-7",
+      "aliases": ["swe-1.7"],
+      "variants": [
+        {
+          "model_uid": "swe-1-7",
+          "label": "SWE 1.7",
+          "max_context_tokens": 256000,
+          "max_output_tokens": 32768,
+          "cost_tier": "Free",
+          "cost_summary": "Included in your plan",
+          "is_new": false,
+          "is_beta": false
+        },
+        {
+          "model_uid": "swe-1-7-medium",
+          "label": "SWE 1.7 Medium",
+          "max_context_tokens": 256000,
+          "max_output_tokens": 32768,
+          "cost_tier": "Free",
+          "cost_summary": "Included in your plan",
+          "is_new": false,
+          "is_beta": false
+        },
+        {
+          "model_uid": "swe-1-7-lightning",
+          "label": "SWE 1.7 Lightning",
+          "max_context_tokens": 256000,
+          "max_output_tokens": 32768,
+          "cost_tier": "Med cost",
+          "cost_summary": "Metered usage",
+          "is_new": false,
+          "is_beta": false
+        }
+      ]
+    },
+    {
+      "family_label": "GLM 5.2",
+      "family_uid": "glm-5.2",
+      "slug": "glm-5-2",
+      "aliases": ["glm-5.2"],
+      "variants": [
+        {
+          "model_uid": "glm-5-2",
+          "label": "GLM 5.2",
+          "max_context_tokens": 200000,
+          "max_output_tokens": 16384,
+          "cost_tier": "Free",
+          "cost_summary": "Included in your plan",
+          "is_new": false,
+          "is_beta": false
+        }
+      ]
+    },
+    {
+      "family_label": "Claude Opus 5",
+      "family_uid": "claude-opus-5",
+      "slug": "claude-opus-5",
+      "aliases": ["claude-opus-5"],
+      "variants": [
+        {
+          "model_uid": "claude-opus-5",
+          "label": "Claude Opus 5",
+          "max_context_tokens": 200000,
+          "max_output_tokens": 16384,
+          "cost_tier": "High cost",
+          "cost_summary": "Metered usage",
+          "is_new": false,
+          "is_beta": false
+        }
+      ]
+    },
+    {
+      "family_label": "GPT 5.5",
+      "family_uid": "gpt-5.5",
+      "slug": "gpt-5-5",
+      "aliases": ["gpt-5.5"],
+      "variants": [
+        {
+          "model_uid": "gpt-5-5",
+          "label": "GPT 5.5",
+          "max_context_tokens": 200000,
+          "max_output_tokens": 16384,
+          "cost_tier": "Free",
+          "cost_summary": "Included in your plan",
+          "is_new": false,
+          "is_beta": false
+        }
+      ]
+    },
+    {
+      "family_label": "Malformed Test",
+      "family_uid": "malformed-test",
+      "slug": "malformed-test",
+      "aliases": [],
+      "variants": [
+        {
+          "model_uid": "",
+          "label": "Broken Variant",
+          "max_context_tokens": 128000,
+          "max_output_tokens": 8192,
+          "cost_tier": "Free",
+          "cost_summary": "Included in your plan",
+          "is_new": false,
+          "is_beta": false
+        }
+      ]
+    }
+  ]
+}

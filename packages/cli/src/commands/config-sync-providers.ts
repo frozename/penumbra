@@ -41,6 +41,7 @@ import {
 } from "./generator/discovery-acp-session.js";
 import { discoverAgyModels } from "./generator/discovery-agy.js";
 import { discoverCodexModels } from "./generator/discovery-codex.js";
+import { discoverDevinModels } from "./generator/discovery-devin.js";
 import { discoverHttpModels, type HttpModelDiscoveryResult } from "./generator/discovery-http.js";
 import { fetchModelsDevPayload, joinModelsDevMetadata } from "./generator/discovery-models-dev.js";
 import { discoverOpencodeModels } from "./generator/discovery-opencode.js";
@@ -237,6 +238,7 @@ export function defaultDiscoveryAdapters(
     "agy-cli": async () => await discoverAgyModels(),
     opencode: async () => await discoverOpencodeModels(),
     "opencode-cli": async () => await discoverOpencodeModels(),
+    "devin-cli": async () => await discoverDevinModels(),
     http: discoverHttp,
     endpoint: discoverHttp,
   };

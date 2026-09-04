@@ -21,6 +21,7 @@ import {
   runConfigSyncProviders,
 } from "@src/commands/config-sync-providers.js";
 import type { AcpSessionSpawner } from "@src/commands/generator/discovery-acp-session.js";
+import { parseDevinModelsOutputReport } from "@src/commands/generator/discovery-devin.js";
 import { parseOpencodeModelsOutput } from "@src/commands/generator/discovery-opencode.js";
 
 let tempDirs: string[] = [];
@@ -2412,5 +2413,69 @@ describe("penumbra config sync-providers", () => {
     expect(invalidReasonResult.stdout).toContain(
       "provider openai skipped: discovery adapter returned an invalid skipped reason",
     );
+  });
+
+  test("a hand-written alias on a devin-* seat survives --apply (guard C6)", async () => {
+    const dir = await makeTempDir();
+    const devinProviders: ProviderSourcesConfig = {
+      devin: {
+        discovery: { kind: "devin-cli", locator: "devin models list --format json" },
+        auth: {},
+        bindings: {
+          "devin-acp": {
+            kind: "stdio-acp",
+            pricing_mode: "subscription",
+            api_provider: "devin",
+            subscription_provider: "devin",
+            model_carrier: "options.args.model",
+            seat_name_template: "devin-{model}-acp",
+            carriers: {
+              binary: "devin",
+              args_template: ["acp", "--model", "{model}"],
+            },
+          },
+        },
+      },
+    };
+    writeFileSync(join(dir, "providers.yaml"), YAML.stringify(devinProviders), "utf8");
+    writeFileSync(join(dir, "agents.yaml"), YAML.stringify({ agents: FLOOR_AGENTS }), "utf8");
+    writeFileSync(
+      join(dir, "model-aliases.yaml"),
+      YAML.stringify({
+        ...FLOOR_ALIASES,
+        "devin-custom-hand-seat": { aa_creator: "devin", aa_slug: "custom-hand" },
+      }),
+      "utf8",
+    );
+    writeFileSync(join(dir, "routing.yaml"), YAML.stringify({}), "utf8");
+
+    const devinFixture = readFileSync(
+      join(import.meta.dir, "fixtures", "devin-models.json"),
+      "utf8",
+    );
+
+    const result = await runConfigSyncProviders({
+      configDir: dir,
+      apply: true,
+      discoveryAdapters: {
+        "devin-cli": () =>
+          Promise.resolve(
+            parseDevinModelsOutputReport(devinFixture) as unknown as {
+              outcome: "discovered";
+              models: { sourceProviderId: string; modelId: string; displayName: string }[];
+              diagnostics: { row: string; reason: string }[];
+            },
+          ),
+      },
+      fetchModelsDevPayload: noModelsDev,
+      reloadConfig: (): Promise<{ ok: boolean }> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const aliases = readAliases(dir);
+    expect(aliases["devin-custom-hand-seat"]).toEqual({
+      aa_creator: "devin",
+      aa_slug: "custom-hand",
+    });
   });
 });
