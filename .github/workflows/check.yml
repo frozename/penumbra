@@ -8,7 +8,12 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Raised from 15 on 2026-09-04, when packages/e2e joined the sharded test
+    # step. Measured: the first run carrying the e2e shard took 871s against a
+    # 900s limit -- 29s of headroom. Runs without it had ranged 566-798s, so a
+    # slow runner plus the ~150s e2e shard would have exceeded 900s and failed
+    # as an opaque job timeout rather than a named test failure.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v1
