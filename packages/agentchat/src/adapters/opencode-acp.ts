@@ -32,6 +32,17 @@ function emitLifecycle(
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 const DEFAULT_OPEN_SESSION_TIMEOUT_MS = 60_000;
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 120_000;
+// Rolling per-gap inactivity budget for the SSE stream watchdog. The sibling
+// stdio-acp adapter uses its DEFAULT_REQUEST_TIMEOUT_MS (1_200_000 / 20min) as
+// the rolling prompt timeout — its comment notes 5min was too tight for stdio
+// JSON-RPC turns where a long LLM reply or multi-minute test run emits no
+// session/update for minutes. opencode-acp streams over HTTP/SSE, where events
+// flow more continuously than stdio request/response; a 5min gap in SSE
+// activity is a stronger signal of a wedged turn. 300s is also meaningfully
+// shorter than the 600s outer total budget, so the watchdog can actually fire
+// before requestAbort instead of being inert (Defect 1). Per-seat
+// `inactivityTimeoutMs` overrides this.
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 300_000;
 const LONG_LIVED_SELF_TOOL_NAMES = [
   "long_lived_self_state_get",
   "long_lived_self_state_set",
@@ -102,6 +113,7 @@ export interface OpencodeAcpOptions {
   opencodeBinary?: string;
   bootTimeoutMs?: number;
   requestTimeoutMs?: number;
+  inactivityTimeoutMs?: number;
   openSessionTimeoutMs?: number;
   firstEventTimeoutMs?: number;
   mcpServers?: McpServer[];
@@ -266,6 +278,39 @@ async function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Pro
   } finally {
     if (onAbort) signal.removeEventListener("abort", onAbort);
   }
+}
+
+interface RollingInactivityHandle {
+  arm(timeoutMs: number, makeError: (timeoutMs: number) => Error): void;
+  cleanup(): void;
+}
+
+// The watchdog aborts a per-turn AbortController instead of rejecting a
+// long-lived promise. Rejecting a stored promise only settled a race; it
+// left iterator.next(), the SSE reader.read(), and the POST /message fetch
+// pending until the server process was killed. The abort travels through
+// the composite client signal and tears the connection down. A fresh
+// controller per turn also removes the one-shot hazard: a stored rejection
+// permanently poisoned the promise (arm re-set the timer but could not
+// un-reject it), while an abort can only ever fire the turn it expired in.
+function createRollingInactivityHandle(controller: AbortController): RollingInactivityHandle {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const disarm = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  return {
+    arm(timeoutMs, makeError): void {
+      disarm();
+      if (timeoutMs <= 0 || controller.signal.aborted) return;
+      timer = setTimeout(() => {
+        controller.abort(makeError(timeoutMs));
+      }, timeoutMs);
+    },
+    cleanup: disarm,
+  };
 }
 
 export class OpencodeAcpAdapter implements Adapter {
@@ -448,6 +493,7 @@ export class OpencodeAcpAdapter implements Adapter {
     let sawEvent = false;
     let sawIdle = false;
     let lastEventType = "none";
+    const inactivityTimeoutMs = this.opts.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     const firstEventTimeoutMs = this.opts.firstEventTimeoutMs ?? DEFAULT_FIRST_EVENT_TIMEOUT_MS;
     const streamAbort = createPhaseAbortSignal(
       requestAbort.signal,
@@ -461,9 +507,15 @@ export class OpencodeAcpAdapter implements Adapter {
         return new Error(`opencode-acp: no stream events within ${String(firstEventTimeoutMs)}ms`);
       },
     );
+    const inactivityController = new AbortController();
+    const inactivity = createRollingInactivityHandle(inactivityController);
+    const clientSignal =
+      typeof AbortSignal.any === "function"
+        ? AbortSignal.any([streamAbort.signal, inactivityController.signal])
+        : streamAbort.signal;
     const client = this.deps.createClient({
       baseUrl,
-      signal: streamAbort.signal,
+      signal: clientSignal,
     });
     const messageStream = client.sendMessage(sessionId, input.prompt, {
       model: this.opts.model,
@@ -472,10 +524,29 @@ export class OpencodeAcpAdapter implements Adapter {
       workspace: workspaceId,
     });
     const iterator = messageStream[Symbol.asyncIterator]();
+    const inactivityError = (timeoutMs: number): Error =>
+      new Error(`opencode-acp: no wire activity for ${String(timeoutMs)}ms`);
     const nextEvent = async (): Promise<IteratorResult<AcpEvent, void>> => {
-      if (sawEvent) return await iterator.next();
+      if (!sawEvent) {
+        try {
+          const result = await awaitWithSignal(iterator.next(), clientSignal);
+          if (!result.done) {
+            sawEvent = true;
+            streamAbort.clearTimer();
+            inactivity.arm(inactivityTimeoutMs, inactivityError);
+          }
+          return result;
+        } catch (err) {
+          void iterator.return?.();
+          throw err;
+        }
+      }
       try {
-        return await awaitWithSignal(iterator.next(), streamAbort.signal);
+        const result = await awaitWithSignal(iterator.next(), clientSignal);
+        if (!result.done) {
+          inactivity.arm(inactivityTimeoutMs, inactivityError);
+        }
+        return result;
       } catch (err) {
         void iterator.return?.();
         throw err;
@@ -485,8 +556,6 @@ export class OpencodeAcpAdapter implements Adapter {
       streamLoop: for (;;) {
         const next = await nextEvent();
         if (next.done) break;
-        sawEvent = true;
-        streamAbort.clearTimer();
         const evtRaw = next.value;
         const evt = asWireEvent(evtRaw);
         const props = evt.properties;
@@ -524,6 +593,7 @@ export class OpencodeAcpAdapter implements Adapter {
         }
       }
     } finally {
+      inactivity.cleanup();
       streamAbort.cleanup();
     }
 

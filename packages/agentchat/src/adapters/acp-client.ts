@@ -192,6 +192,8 @@ export class AcpClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(messageRequest),
       signal: this.signal,
+      // @ts-expect-error bun-types 1.3.13 omits the `timeout` fetch option
+      timeout: false,
     }).then(async (res) => {
       if (!res.ok) {
         const errorText = await res.text().catch(() => "No error body");
@@ -248,6 +250,8 @@ export class AcpClient {
         Accept: "text/event-stream",
       },
       signal: signal ?? this.signal,
+      // @ts-expect-error bun-types 1.3.13 omits the `timeout` fetch option
+      timeout: false,
     });
 
     if (!res.ok) {
