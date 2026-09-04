@@ -1,0 +1,45 @@
+{
+  "optionSet": "tsconfig.base.json (strict + noUncheckedIndexedAccess; NO eslint-only flags)",
+  "packages": {
+    "packages/agentchat": {
+      "errorCount": 0
+    },
+    "packages/agy-acp-shim": {
+      "errorCount": 0
+    },
+    "packages/api-contract": {
+      "errorCount": 0
+    },
+    "packages/cli": {
+      "errorCount": 149
+    },
+    "packages/config": {
+      "errorCount": 28
+    },
+    "packages/console": {
+      "errorCount": 0
+    },
+    "packages/core": {
+      "errorCount": 287
+    },
+    "packages/daemon": {
+      "errorCount": 668
+    },
+    "packages/e2e": {
+      "errorCount": 313
+    },
+    "packages/integrations/sirius-middleware": {
+      "errorCount": 8
+    },
+    "packages/mcp": {
+      "errorCount": 182
+    },
+    "packages/workflows": {
+      "errorCount": 0
+    },
+    "scripts+test": {
+      "errorCount": 20
+    }
+  },
+  "total": 1655
+}

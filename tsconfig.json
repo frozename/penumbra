@@ -14,6 +14,8 @@
     { "path": "./packages/integrations/sirius-middleware" },
     { "path": "./packages/workflows" },
     { "path": "./packages/console" },
+    { "path": "./packages/e2e" },
+    { "path": "./packages/agy-acp-shim" },
     { "path": "./plugin" }
   ]
 }

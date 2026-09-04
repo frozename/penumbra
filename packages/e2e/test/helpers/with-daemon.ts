@@ -32,8 +32,11 @@ export function withDaemon(): {
 
   const token = "tok";
   const handler = createDaemonFetchHandler({ services, token });
-  const fetchImpl: typeof fetch = async (input, init) => {
-    const req = input instanceof Request ? input : new Request(input, init);
+  const fetchImpl = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const req = input instanceof Request ? input : new Request(input.toString(), init);
     return await handler(req);
   };
 
@@ -41,7 +44,7 @@ export function withDaemon(): {
   writeFileSync(join(storageRoot, "token"), `${token}\n`);
 
   return {
-    client: new PenumbraClient({ storageRoot, fetch: fetchImpl }),
+    client: new PenumbraClient({ storageRoot, fetch: fetchImpl as typeof fetch }),
     services,
     stop(): void {
       try {

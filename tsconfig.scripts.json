@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@penumbra/core": ["./packages/core/src/index.ts"]
+    }
+  },
+  "include": ["scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "coverage", ".penumbra"]
+}
