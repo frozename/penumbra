@@ -60,7 +60,7 @@ agents:
     PENUMBRA_CONFIG_DIR: penumbraConfigDir,
   });
   drainOutput(daemon);
-  await waitForPortFile(sb.dir, 5000);
+  await waitForPortFile(sb.dir, 30_000);
 
   worker = spawnBun(["packages/agentchat/bin/agentchat-worker.ts"], {
     PENUMBRA_STORAGE_ROOT: sb.dir,
@@ -68,7 +68,7 @@ agents:
     PENUMBRA_CONFIG_DIR: penumbraConfigDir,
   });
   drainOutput(worker);
-  await new Promise((r) => setTimeout(r, 2000));
+  await waitForWorkerHeartbeat(sb.dir);
 });
 
 afterEach(async () => {
@@ -106,6 +106,26 @@ function dumpSandboxLogs(dir: string): void {
   } catch {
     /* best-effort log dump */
   }
+}
+
+async function waitForWorkerHeartbeat(storageRoot: string, timeoutMs = 30_000): Promise<void> {
+  const dbPath = join(storageRoot, "db.sqlite");
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db
+        .query(
+          "SELECT 1 FROM dispatch_events WHERE kind = 'heartbeat.received' AND source = 'daemon' LIMIT 1",
+        )
+        .get();
+      if (row !== null) return;
+    } finally {
+      db.close();
+    }
+    await Bun.sleep(100);
+  }
+  throw new Error(`timed out waiting for worker heartbeat after ${String(timeoutMs)}ms`);
 }
 
 test("dispatch t0 capture end-to-end", async () => {
