@@ -70,6 +70,8 @@ export function spawnPenumbraMcp(
   return spawnBun([PENUMBRA_MCP_BIN], {
     PENUMBRA_STORAGE_ROOT: storageRoot,
     ...extraEnv,
+    // Scrub any ambient allowlist so MCP boot oracles see the full tool surface.
+    PENUMBRA_MCP_TOOL_ALLOWLIST: undefined,
   });
 }
 
