@@ -25,9 +25,17 @@ jobs:
         run: bun install --frozen-lockfile
       - name: typecheck
         run: bun run typecheck
+      - name: "typecheck coverage ratchet (blocking: floors fall, never rise)"
+        # bun run typecheck is `tsc --build`, which is SILENT on roughly 40% of
+        # this repo's TypeScript -- including most test files. This ratchet is the
+        # instrument that measures the hole and fences it. It ran in NO CI step
+        # until 2026-09-04, so the floors could drift unnoticed.
+        # Never fix a failure here by raising a floor or relaxing a strictness
+        # flag: that strips coverage from src/ and is worse than the bug.
+        run: bun scripts/check-typecheck-coverage.ts
       - name: "console (blocking: unit + build)"
         run: |
-          bun scripts/bun-test-gate.ts packages/console --path-ignore-patterns='**/e2e/**' --path-ignore-patterns='**/visual/**' --path-ignore-patterns='**/dist/**'
+          bun scripts/bun-test-gate.ts packages/console --path-ignore-patterns='**/console/e2e/**' --path-ignore-patterns='**/visual/**' --path-ignore-patterns='**/dist/**'
           bun run --cwd packages/console build
       - name: "test (blocking: sharded per package)"
         # Blocking: every shard runs green on the Linux runner since the
@@ -46,15 +54,23 @@ jobs:
         # known post-summary NAPI-teardown panic (exit 133) only when 0 failures.
         #
         # path-ignore-patterns excludes files `bun test` would otherwise glob but
-        # that are not bun unit/integration tests: Playwright specs under e2e/ and
-        # visual/ (different runner), the full-stack e2e package (needs a live
-        # daemon), benchmark scripts, and compiled dist/ copies. Colocated
-        # src/**/*.test.ts still run. Packages left with no applicable tests are
-        # skipped (bun exits non-zero on a no-files-matched filter).
+        # that are not bun unit/integration tests: Playwright specs under
+        # packages/console/e2e/ and visual/ (different runner), benchmark
+        # scripts, and compiled dist/ copies. Colocated src/**/*.test.ts still
+        # run. Packages left with no applicable tests are skipped (bun exits
+        # non-zero on a no-files-matched filter).
+        #
+        # This was the blanket pattern `**/e2e/**` until 2026-09-04. It also
+        # darkened packages/e2e (15 files) and
+        # packages/agentchat/test/e2e/handoff-roundtrip.test.ts, neither of which
+        # ran in ANY CI shard -- packages/e2e went unnoticed-broken for ~3.5
+        # months as a result. The stated reason, that the full-stack e2e package
+        # "needs a live daemon", was wrong: those suites mkdtemp a sandbox and
+        # spawn their own daemon per test. Keep this pattern narrow.
         run: |
           set -uo pipefail
           IGNORE=(
-            --path-ignore-patterns='**/e2e/**'
+            --path-ignore-patterns='**/console/e2e/**'
             --path-ignore-patterns='**/visual/**'
             --path-ignore-patterns='**/dist/**'
             --path-ignore-patterns='**/scripts/bench*.test.ts'
@@ -63,7 +79,7 @@ jobs:
           has_tests() {
             find "$1" -name '*.test.ts' \
               -not -path '*/node_modules/*' -not -path '*/dist/*' \
-              -not -path '*/e2e/*' -not -path '*/visual/*' 2>/dev/null \
+              -not -path '*/console/e2e/*' -not -path '*/visual/*' 2>/dev/null \
               | grep -vE '/bench[^/]*\.test\.ts$' | grep -c . >/dev/null
           }
           failed=()
