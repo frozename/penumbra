@@ -114,7 +114,7 @@ describe("devin model discovery", () => {
     const result = (await discoverDevinModels({
       runDevinModels: () => {
         runCount += 1;
-        return fixtureText;
+        return Promise.resolve(fixtureText);
       },
     })) as { models: ReturnType<typeof parseDevinModelsOutput> };
 
