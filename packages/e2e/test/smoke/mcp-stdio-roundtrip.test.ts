@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
+import { parseToolResultJson } from "../helpers/mcp-envelope.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
   type BunSubprocess,
@@ -37,10 +38,6 @@ afterEach(async () => {
   sb.cleanup();
 });
 
-interface CallToolResult {
-  content: { type: string; text: string }[];
-}
-
 test("observe → session.end → recall round-trip via stdio MCP", async () => {
   mcp = spawnPenumbraMcp(sb.dir);
   const client = new JsonRpcStdioClient(mcp);
@@ -53,7 +50,7 @@ test("observe → session.end → recall round-trip via stdio MCP", async () => 
   await client.notify("notifications/initialized");
 
   await client.request("tools/call", {
-    name: "memory.observe",
+    name: "memory_observe",
     arguments: {
       ts: new Date().toISOString(),
       source: "mcp",
@@ -68,7 +65,7 @@ test("observe → session.end → recall round-trip via stdio MCP", async () => 
   });
 
   await client.request("tools/call", {
-    name: "memory.observe",
+    name: "memory_observe",
     arguments: {
       ts: new Date().toISOString(),
       source: "mcp",
@@ -83,16 +80,15 @@ test("observe → session.end → recall round-trip via stdio MCP", async () => 
   });
 
   await client.request("tools/call", {
-    name: "session.end",
+    name: "session_end",
     arguments: { session_id: "s-stdio" },
   });
 
-  const recall = (await client.request("tools/call", {
-    name: "memory.recall",
+  const recall = await client.request("tools/call", {
+    name: "memory_recall",
     arguments: { query: "refactor auth middleware", project_id: "proj-stdio", limit: 5 },
-  })) as CallToolResult;
-  const text = recall.content[0]!.text;
-  const payload = JSON.parse(text) as { results: { tier: string; body: string }[] };
+  });
+  const payload = parseToolResultJson<{ results: { tier: string; body: string }[] }>(recall);
   expect(payload.results.length).toBe(1);
   expect(payload.results[0]!.tier).toBe("t1");
   expect(payload.results[0]!.body).toContain("refactor");

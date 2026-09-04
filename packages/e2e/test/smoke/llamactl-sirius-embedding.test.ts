@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:te
 import { join } from "node:path";
 
 import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
+import { parseToolResultJson } from "../helpers/mcp-envelope.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
   type BunSubprocess,
@@ -123,10 +124,6 @@ afterEach(async () => {
   sb.cleanup();
 });
 
-interface CallToolResult {
-  content: { type: string; text: string }[];
-}
-
 test.skipIf(!enabled)(
   "observe → end → recall round-trips through SiriusEmbedder",
   async () => {
@@ -151,7 +148,7 @@ test.skipIf(!enabled)(
     await client.notify("notifications/initialized");
 
     await client.request("tools/call", {
-      name: "memory.observe",
+      name: "memory_observe",
       arguments: {
         ts: new Date().toISOString(),
         source: "mcp",
@@ -165,17 +162,15 @@ test.skipIf(!enabled)(
       },
     });
     await client.request("tools/call", {
-      name: "session.end",
+      name: "session_end",
       arguments: { session_id: "s-llamactl" },
     });
 
-    const recall = (await client.request("tools/call", {
-      name: "memory.recall",
+    const recall = await client.request("tools/call", {
+      name: "memory_recall",
       arguments: { query: "sirius embeddings smoke", project_id: "proj-llamactl", limit: 5 },
-    })) as CallToolResult;
-    const payload = JSON.parse(recall.content[0]!.text) as {
-      results: { tier: string; body: string }[];
-    };
+    });
+    const payload = parseToolResultJson<{ results: { tier: string; body: string }[] }>(recall);
     expect(payload.results.length).toBe(1);
     expect(payload.results[0]!.body).toContain("sirius");
 

@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
+import { toolResultText } from "../helpers/mcp-envelope.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
   type BunSubprocess,
@@ -87,10 +88,6 @@ afterEach(async () => {
   sb.cleanup();
 });
 
-interface CallToolResult {
-  content: { type: string; text: string }[];
-}
-
 interface StartData {
   conversation_id: string;
   handoff_id: string;
@@ -122,12 +119,23 @@ test("dispatch t0 capture end-to-end", async () => {
   });
   await client.notify("notifications/initialized");
 
-  const startRes = (await client.request("tools/call", {
-    name: "chain.start",
-    arguments: { initial_agent: "mock-acp", message: "PHRASE_PROMPT_CCC" },
-  })) as CallToolResult;
+  const startRes = await client.request("tools/call", {
+    name: "chain_start",
+    arguments: {
+      initial_agent: "mock-acp",
+      message: "PHRASE_PROMPT_CCC",
+      task_class: "TRIVIAL",
+      // use_worktree:false is load-bearing beyond hermeticity. Without it,
+      // chain_start creates a REAL git worktree and branch in the developer's
+      // live repo on every run, and it also gates the cwd project resolution
+      // that would parent-walk the real ~/.config/penumbra/projects.yaml and
+      // get the handoff rejected by the sandbox worker. Do NOT substitute
+      // project_id:null — it also passes but still leaks a worktree per run.
+      use_worktree: false,
+    },
+  });
 
-  const startText = startRes.content[0]!.text;
+  const startText = toolResultText(startRes);
   process.stdout.write(`START_TEXT: ${JSON.stringify(startText)}\n`);
   const startJson = startText.substring(startText.indexOf("{"));
   let startData: StartData;
@@ -141,7 +149,7 @@ test("dispatch t0 capture end-to-end", async () => {
   const convId = startData.conversation_id;
 
   await client.request("tools/call", {
-    name: "chain.wait",
+    name: "chain_wait",
     arguments: { conversation_id: convId, timeout_ms: 15000 },
   });
 
@@ -169,8 +177,8 @@ test("dispatch t0 capture end-to-end", async () => {
   expect(types[0]).toBe("agent-prompt");
   expect(types[types.length - 1]).toBe("agent-response");
 
-  const recallRes = (await client.request("tools/call", {
-    name: "memory.recall",
+  const recallRes = await client.request("tools/call", {
+    name: "memory_recall",
     arguments: {
       query: "PHRASE_THOUGHT_BBB",
       session_id: convId,
@@ -178,9 +186,9 @@ test("dispatch t0 capture end-to-end", async () => {
       limit: 10,
       min_score: 0,
     },
-  })) as CallToolResult;
+  });
 
-  const recallText = recallRes.content[0]!.text;
+  const recallText = toolResultText(recallRes);
   expect(recallText).toContain("PHRASE_THOUGHT_BBB");
 
   await client.close();

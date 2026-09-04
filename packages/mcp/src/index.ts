@@ -12,3 +12,4 @@ export { handleLongLivedStateGet } from "./tools/long-lived-state-get.js";
 export { handleLongLivedStateSet } from "./tools/long-lived-state-set.js";
 export { longLivedTickHandler } from "./tools/long-lived-tick-mcp.js";
 export { handleLongLivedTicks } from "./tools/long-lived-ticks.js";
+export { TOOL_REGISTRY, type ToolDef } from "./tools/registry.js";

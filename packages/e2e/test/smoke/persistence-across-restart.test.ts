@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
+import { parseToolResultJson } from "../helpers/mcp-envelope.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
 import {
   type BunSubprocess,
@@ -32,10 +33,6 @@ afterEach(async () => {
   sb.cleanup();
 });
 
-interface CallToolResult {
-  content: { type: string; text: string }[];
-}
-
 interface RecallPayload {
   results: { tier: string; body: string }[];
 }
@@ -51,7 +48,7 @@ async function observeAndEnd(): Promise<void> {
   });
   await client.notify("notifications/initialized");
   await client.request("tools/call", {
-    name: "memory.observe",
+    name: "memory_observe",
     arguments: {
       ts: new Date().toISOString(),
       source: "mcp",
@@ -65,7 +62,7 @@ async function observeAndEnd(): Promise<void> {
     },
   });
   await client.request("tools/call", {
-    name: "session.end",
+    name: "session_end",
     arguments: { session_id: "s-persist" },
   });
   await client.close();
@@ -83,14 +80,14 @@ async function recall(): Promise<{ tier: string; body: string }[]> {
     clientInfo: { name: "penumbra-e2e", version: "0.0.0" },
   });
   await client.notify("notifications/initialized");
-  const r = (await client.request("tools/call", {
-    name: "memory.recall",
+  const r = await client.request("tools/call", {
+    name: "memory_recall",
     arguments: { query: "persist this content", project_id: "proj-persist", limit: 5 },
-  })) as CallToolResult;
+  });
   await client.close();
   await killGracefully(mcp);
   mcp = null;
-  return (JSON.parse(r.content[0]!.text) as RecallPayload).results;
+  return parseToolResultJson<RecallPayload>(r).results;
 }
 
 test("observed content survives daemon restart", async () => {

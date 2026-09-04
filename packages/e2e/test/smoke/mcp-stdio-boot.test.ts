@@ -1,6 +1,5 @@
+import { TOOL_REGISTRY } from "@penumbra/mcp";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import { JsonRpcStdioClient } from "../helpers/jsonrpc-stdio.js";
 import { makeSandbox, type Sandbox } from "../helpers/sandbox.js";
@@ -58,14 +57,30 @@ test("penumbra-mcp boots, registers all MCP tools, exits 0 on stdin close", asyn
     tools: { name: string }[];
   };
   const names = toolsResult.tools.map((t) => t.name).sort();
-  const serverSource = readFileSync(join(import.meta.dir, "../../../mcp/src/server.ts"), "utf8");
-  const registeredNames = Array.from(
-    serverSource.matchAll(/server\.registerTool\(\s*'([^']+)'/g),
-    (match) => match[1]!,
-  ).sort();
 
-  expect(names).toEqual(registeredNames);
-  expect(names.length).toBe(registeredNames.length);
+  // CORE_TOOLS is hand-written and asserted first on purpose: it is the only
+  // assertion here not derived from the registry itself, so it is the only one
+  // that would have gone red on the 2026-05-15 dotted->underscore registry
+  // rename (b8faf93e), which silently zeroed the previous scraped oracle.
+  const CORE_TOOLS = [
+    "chain_start",
+    "chain_wait",
+    "memory_observe",
+    "memory_recall",
+    "memory_search",
+    "read_handle",
+    "session_end",
+    "task_next",
+  ];
+  expect(CORE_TOOLS.filter((n) => !names.includes(n))).toEqual([]);
+
+  const TOOL_NAME_RULE = /^[a-z][a-z0-9_]*$/;
+  expect(names.filter((n) => !TOOL_NAME_RULE.test(n))).toEqual([]);
+
+  // read_handle registers outside TOOL_REGISTRY on purpose (it needs the
+  // HandleStore, not the daemon). Deriving the expected set from the registry
+  // keys keeps this assertion rename-blind by construction.
+  expect(names).toEqual([...Object.keys(TOOL_REGISTRY), "read_handle"].sort());
 
   await client.close();
   const exitCode = await Promise.race([

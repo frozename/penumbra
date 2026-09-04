@@ -58,7 +58,7 @@ test("memory.observe rejects traversal project_id and writes nothing outside the
   // an isError:true tool result (per MCP spec) rather than a JSON-RPC error.
   // Both forms are valid rejections at the protocol layer — assert isError.
   const observeResult = (await client.request("tools/call", {
-    name: "memory.observe",
+    name: "memory_observe",
     arguments: {
       ts: new Date().toISOString(),
       source: "mcp",
@@ -72,13 +72,21 @@ test("memory.observe rejects traversal project_id and writes nothing outside the
     },
   })) as CallToolResult;
   expect(observeResult.isError).toBe(true);
+  // The MCP boundary JSON-serializes the zod issues into the envelope text, so
+  // the message's inner quotes appear backslash-escaped. Pin the full
+  // traversal refinement message so a future tool-not-found or unrelated
+  // validation error cannot satisfy this assertion the way a bare isError
+  // check did while the suite was dark.
+  expect(observeResult.content[0]?.text).toContain(
+    "project_id must not contain \\\"..\\\" path components",
+  );
 
   // Trigger a session.end to ensure no rollup writer fires for the rejected
   // observation. Even if it did, the assertion below proves nothing escaped
   // the sandbox.
   await client
     .request("tools/call", {
-      name: "session.end",
+      name: "session_end",
       arguments: { session_id: "s-evil" },
     })
     .catch(() => {

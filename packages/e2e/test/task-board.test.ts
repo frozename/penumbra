@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { connectInMemory } from "../../mcp/test/helpers.js";
+import { parseToolResultJson } from "./helpers/mcp-envelope.js";
 import { makeSandbox } from "./helpers/sandbox.js";
 import {
   type BunSubprocess,
@@ -14,10 +15,6 @@ import {
   spawnPenumbra,
   waitForPortFile,
 } from "./helpers/spawn-bin.js";
-
-interface ToolResult {
-  content: { type: string; text: string }[];
-}
 
 interface TaskEvent {
   task_id: string;
@@ -51,17 +48,13 @@ interface TaskNextResponse {
 
 type McpClient = Awaited<ReturnType<typeof connectInMemory>>;
 
-function parseToolResult(out: unknown): unknown {
-  return JSON.parse((out as ToolResult).content[0]!.text);
-}
-
 async function callToolJson<T>(
   client: McpClient,
   name: string,
   args: Record<string, unknown>,
 ): Promise<T> {
   const out = await client.callTool({ name, arguments: args });
-  return parseToolResult(out) as T;
+  return parseToolResultJson<T>(out);
 }
 
 function readSseFrames(
@@ -260,20 +253,20 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
     const daemonClient = new DaemonClient({ baseUrl, token });
     mcp = await connectInMemory(daemonClient);
 
-    const doerLease = await callToolJson<TaskNextResponse | null>(mcp, "task.next", {
+    const doerLease = await callToolJson<TaskNextResponse | null>(mcp, "task_next", {
       agent_id: "e2e-doer",
     });
     expect(doerLease).not.toBeNull();
     expect(doerLease?.task_id).toBe(taskId);
     expect(doerLease?.prompt).toBe("smoke test");
 
-    const heartbeat = await callToolJson<{ expires_at: number }>(mcp, "task.heartbeat", {
+    const heartbeat = await callToolJson<{ expires_at: number }>(mcp, "task_heartbeat", {
       task_id: taskId,
       lease_id: doerLease!.lease_id,
     });
     expect(heartbeat.expires_at).toBeGreaterThan(0);
 
-    const completed = await callToolJson<{ status: string }>(mcp, "task.complete", {
+    const completed = await callToolJson<{ status: string }>(mcp, "task_complete", {
       task_id: taskId,
       lease_id: doerLease!.lease_id,
       result_summary: "smoke task completed",
@@ -282,7 +275,7 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
     });
     expect(completed.status).toBe("done_pending_review");
 
-    const reviewList = await callToolJson<{ tasks: TaskListItem[] }>(mcp, "task.list", {
+    const reviewList = await callToolJson<{ tasks: TaskListItem[] }>(mcp, "task_list", {
       kind: "review",
       parent_task_id: taskId,
     });
@@ -293,13 +286,13 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
     expect(reviewTask.kind).toBe("review");
     expect(reviewTask.eligibility.deny_agents).toContain("e2e-doer");
 
-    const reviewerLease = await callToolJson<TaskNextResponse | null>(mcp, "task.next", {
+    const reviewerLease = await callToolJson<TaskNextResponse | null>(mcp, "task_next", {
       agent_id: "e2e-reviewer",
     });
     expect(reviewerLease).not.toBeNull();
     expect(reviewerLease?.task_id).toBe(reviewTask.id);
 
-    const reviewComplete = await callToolJson<{ status: string }>(mcp, "task.complete", {
+    const reviewComplete = await callToolJson<{ status: string }>(mcp, "task_complete", {
       task_id: reviewTask.id,
       lease_id: reviewerLease!.lease_id,
       result_summary: "review done",
@@ -310,7 +303,7 @@ test("task board full-stack smoke: CLI + SSE + MCP + ledger", async () => {
     });
     expect(reviewComplete.status).toBe("done");
 
-    const parent = await callToolJson<TaskGetResponse>(mcp, "task.get", {
+    const parent = await callToolJson<TaskGetResponse>(mcp, "task_get", {
       task_id: taskId,
       include: ["events"],
     });
