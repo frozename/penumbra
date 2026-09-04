@@ -30,6 +30,57 @@ process.on("exit", () => {
 });
 
 /**
+ * Build an environment for a spawned child that keeps global/user-level state
+ * inside the test sandbox instead of leaking into the developer's real home,
+ * and is hermetic against ambient operator env.
+ *
+ * We deliberately do NOT override `HOME`: that is a blunt instrument that also
+ * rewrites git global config discovery (`~/.gitconfig`), Bun module cache
+ * lookup paths, and other legitimate home-directory dependencies. Instead, we
+ * point the specific penumbra paths that `penumbra init` and the daemon write
+ * to at the variables that already control them:
+ *
+ * - `AGENTCHAT_CONFIG` -> `<storageRoot>/home/.config/agentchat/agentchat.yaml`
+ * - `PENUMBRA_CONFIG_DIR` -> `<storageRoot>/home/.config/penumbra`
+ * - `PENUMBRA_CLAUDE_USER_DIR` -> `<storageRoot>/home/.claude`
+ *
+ * We also redirect Bun's runtime transpiler cache (`BUN_RUNTIME_TRANSPILER_CACHE_PATH`)
+ * under the same synthetic home so the child does not write back to the real
+ * `~/Library/Caches/bun` (or equivalent).
+ *
+ * The trap this guards: this suite frequently runs under a live penumbra
+ * worker whose environment carries operator overrides
+ * (`PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID`,
+ * `PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID`, `PENUMBRA_WORKER_PROJECT_ID`,
+ * ...). A plain `{ ...process.env, ...env }` merge leaks all of them into the
+ * child under test -- e.g. the require-explicit-project-id gates reject a
+ * `chain_start` whose sandbox cwd is not registered as a project. Scrub every
+ * ambient `PENUMBRA_*` / `AGENTCHAT_*` variable instead: the child sees only
+ * what the test explicitly sets (plus the redirects above). If a test needs
+ * one of these variables, pass it via `env`.
+ */
+function buildSandboxEnv(
+  env: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  const merged: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith("PENUMBRA_") || key.startsWith("AGENTCHAT_")) continue;
+    merged[key] = value;
+  }
+  Object.assign(merged, env);
+  const storageRoot = merged.PENUMBRA_STORAGE_ROOT;
+  if (typeof storageRoot !== "string" || storageRoot.length === 0) {
+    return merged;
+  }
+  const home = join(storageRoot, "home");
+  merged.AGENTCHAT_CONFIG ??= join(home, ".config", "agentchat", "agentchat.yaml");
+  merged.PENUMBRA_CONFIG_DIR ??= join(home, ".config", "penumbra");
+  merged.PENUMBRA_CLAUDE_USER_DIR ??= join(home, ".claude");
+  merged.BUN_RUNTIME_TRANSPILER_CACHE_PATH ??= join(home, "Library", "Caches", "bun");
+  return merged;
+}
+
+/**
  * Spawn `bun <args>` with all stdio piped. Tracks the child for emergency
  * cleanup on test-process exit.
  */
@@ -39,7 +90,7 @@ export function spawnBun(args: string[], env?: Record<string, string | undefined
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    ...(env !== undefined ? { env: { ...process.env, ...env } } : {}),
+    ...(env !== undefined ? { env: buildSandboxEnv(env) } : {}),
   });
   childRegistry.add(proc);
   return proc;

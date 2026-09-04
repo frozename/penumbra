@@ -15,7 +15,7 @@ import { createBoundsTracker } from "@penumbra/daemon/maestro/bounds-tracker";
 import { createOrchestrateReactor } from "@penumbra/daemon/reactors/orchestrate-reactor";
 import { chainStartInternal } from "@penumbra/daemon/routes/chains";
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,37 @@ try {
 } catch {
   /* already loaded or not available */
 }
+
+// This suite runs the daemon in-process, so ambient operator env leaks
+// directly into `process.env` reads. Under a live penumbra worker the dispatch
+// environment carries `PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID` /
+// `PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID` (among others), and
+// chainStartInternal then rejects the orchestrate dispatch because the
+// harness DB has no project registry entry. Strip ambient `PENUMBRA_*` /
+// `AGENTCHAT_*` variables for this file's tests and restore them after; bun
+// runs test files sequentially, so the window is contained to this file.
+const savedOperatorEnv: Record<string, string | undefined> = {};
+
+beforeAll(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("PENUMBRA_") || key.startsWith("AGENTCHAT_")) {
+      savedOperatorEnv[key] = process.env[key];
+      // Reflect.deleteProperty: a computed-key `delete` trips no-dynamic-delete,
+      // and assigning undefined coerces to the string "undefined".
+      Reflect.deleteProperty(process.env, key);
+    }
+  }
+});
+
+afterAll(() => {
+  for (const [key, value] of Object.entries(savedOperatorEnv)) {
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, key);
+    } else {
+      process.env[key] = value;
+    }
+  }
+});
 
 interface TaskEvent {
   task_id: string;

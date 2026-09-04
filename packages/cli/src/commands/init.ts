@@ -139,7 +139,8 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
 
   seedAgentchatConfig(opts.forceAgentchat);
 
-  const claudeUserDir = opts.claudeUserDir ?? join(homedir(), ".claude");
+  const claudeUserDir =
+    opts.claudeUserDir ?? process.env.PENUMBRA_CLAUDE_USER_DIR ?? join(homedir(), ".claude");
   const workflowsSourceDir =
     opts.workflowsSourceDir ?? resolveDefaultWorkflowsSourceDir(import.meta.dir);
   installBundledWorkflows(workflowsSourceDir, claudeUserDir);
