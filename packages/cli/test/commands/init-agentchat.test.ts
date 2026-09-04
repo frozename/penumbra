@@ -70,23 +70,35 @@ test("force-overwrites an existing agentchat config", async () => {
   expect(readFileSync(agentchatPath, "utf8")).toBe(AGENTCHAT_TEMPLATE);
 });
 
-test("seeded template includes devin-acp and resolves to stdio-acp(binary=devin, args=[acp])", async () => {
+test("seeded template includes devin-swe-1-7-acp and resolves to stdio-acp(binary=devin, hygiene-config args)", async () => {
   await runInit({ storageRoot, uuid: () => "tok-123", claudeUserDir });
 
   // Run through the REAL worker config loader (full schema + adapter-option refinement),
   // not just YAML.parse — this catches any future AgentOptionsSchema drift that would
-  // reject the seeded devin-acp entry.
+  // reject the seeded devin entry.
   const config = loadConfig(agentchatPath);
-  const devin = config.agents.find((a) => a.name === "devin-acp");
+  const devin = config.agents.find((a) => a.name === "devin-swe-1-7-acp");
   expect(devin).toBeDefined();
-  if (!devin) throw new Error("devin-acp entry missing from seeded template");
+  if (!devin) throw new Error("devin-swe-1-7-acp entry missing from seeded template");
   expect(devin.adapter).toBe("stdio-acp");
-  expect(devin.roles).toEqual(["executor", "planner"]);
+  // Roles are earned per-install after a smoke gate, never seeded: a fresh
+  // install must not auto-route work to this unsmoked seat.
+  expect(devin.roles).toEqual([]);
+  expect(devin.maestro_capable).toBeUndefined();
 
   // Build via the REAL registry factory (same path the worker uses) and verify
-  // it resolves to a stdio-acp adapter that will spawn `devin acp`.
+  // it resolves to a stdio-acp adapter that will spawn
+  // `devin --config ... acp --model swe-1-7`.
   const adapter = buildAdapter(devin.adapter, devin.options);
   const opts = (adapter as unknown as { opts: { binary?: string; args?: string[] } }).opts;
   expect(opts.binary).toBe("devin");
-  expect(opts.args).toEqual(["acp"]);
+  expect(opts.args).toEqual([
+    "--config",
+    "/absolute/path/to/devin-acp-hygiene.json",
+    "--respect-workspace-trust",
+    "false",
+    "acp",
+    "--model",
+    "swe-1-7",
+  ]);
 });

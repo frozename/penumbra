@@ -21,7 +21,7 @@ noise.
 | `sakana-fugu-ultra-http`, `sakana-fugu-http`, `codex-sakana-acp`, `codex-sakana-fugu-acp` | no sakana models in the AA snapshot |
 | `openai-codex-acp`, `openai-codex-spark-acp` | `gpt-5-3-codex-spark` absent from AA |
 | `openai-codex-fast-acp` | `gpt-5-4-mini-low` absent from AA |
-| `devin-acp` | no model carrier; no devin/cognition in AA |
+| `devin-swe-1-7-acp`, `devin-glm-5-2-acp` | replaced the deleted `devin-acp`. `devin-swe-1-7-acp` currently has no alias configured — no AA priors, routes on local history alone. `devin-glm-5-2-acp` IS alias-mapped (`aa_creator zai` / `aa_slug glm-5-2`), sharing the mapping with the pre-existing `opencode-glm-52-acp` seat |
 | `local-bge-m3-http` | embedder; AA carries no embedding models |
 | `local-qwen36-35b-a3b-mlx-http` | declares granite-mini-3b; seat quirk: DEAD, not serving its named model |
 
