@@ -23,9 +23,15 @@ interface McpToolResultLike {
 /** Returns the envelope text, throwing it as the message when isError is set. */
 export function toolResultText(out: unknown): string {
   const result = out as McpToolResultLike | null | undefined;
-  const text = result?.content?.[0]?.text ?? "";
+  const rawText = result?.content?.[0]?.text;
+  const text = rawText ?? "";
   if (result?.isError === true) {
     throw new Error(`MCP tool call returned an error envelope: ${text}`);
+  }
+  if (rawText === undefined) {
+    throw new Error(
+      `MCP tool result is missing content[0].text: got ${JSON.stringify(result ?? null).slice(0, 500)}`,
+    );
   }
   return text;
 }
