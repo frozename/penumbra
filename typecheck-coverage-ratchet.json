@@ -14,7 +14,7 @@
       "errorCount": 149
     },
     "packages/config": {
-      "errorCount": 28
+      "errorCount": 8
     },
     "packages/console": {
       "errorCount": 0
@@ -41,5 +41,5 @@
       "errorCount": 20
     }
   },
-  "total": 1655
+  "total": 1635
 }
