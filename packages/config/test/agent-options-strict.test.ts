@@ -36,6 +36,7 @@ const fullAgentOptions = {
   fsReadTextFile: true,
   fsWriteTextFile: true,
   hostEnvPolicy: { claude: true },
+  inactivityTimeoutMs: 300000,
   maxTokens: 1024,
   mcpServers: [{ name: "penumbra", command: "bun", args: ["penumbra-mcp.ts"] }],
   mcpWriteTools: true,
@@ -176,6 +177,26 @@ describe("AgentConfigSchema adapter-aware options", () => {
         options: { command: "claude", firstEventTimeoutMs: 120000 },
       }),
     ).toThrow(/firstEventTimeoutMs.*claude-cli/);
+  });
+
+  test("accepts inactivityTimeoutMs on opencode-acp", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "opencode",
+        adapter: "opencode-acp",
+        options: { model: "gpt-5", inactivityTimeoutMs: 300000 },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects inactivityTimeoutMs on claude-cli because that adapter does not consume it", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "claude",
+        adapter: "claude-cli",
+        options: { command: "claude", inactivityTimeoutMs: 300000 },
+      }),
+    ).toThrow(/inactivityTimeoutMs.*claude-cli/);
   });
 
   test("rejects warm_pool on opencode-acp because that adapter does not consume it", () => {

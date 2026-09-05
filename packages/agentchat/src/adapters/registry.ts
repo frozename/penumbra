@@ -181,6 +181,7 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
       requestTimeoutMs: opts.requestTimeoutMs,
       openSessionTimeoutMs: opts.openSessionTimeoutMs,
       firstEventTimeoutMs: opts.firstEventTimeoutMs,
+      inactivityTimeoutMs: opts.inactivityTimeoutMs,
       mcpServers: opts.mcpServers,
     });
   },
