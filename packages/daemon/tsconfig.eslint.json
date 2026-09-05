@@ -19,5 +19,6 @@
     "test/**/*.ts",
     "test-utils.ts",
     "../../plugin/workflows/memory-digest/workflow.ts"
-  ]
+  ],
+  "exclude": []
 }

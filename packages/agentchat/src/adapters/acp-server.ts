@@ -296,16 +296,15 @@ function spawnAcpChild(opts: StartAcpServerOptions, port: number): ChildProcessW
   const args = ["acp", "--port", port.toString(), "--cwd", opts.cwd];
   if (opts.pure !== false) args.push("--pure");
 
-  const childEnv = (() => {
+  const childEnv = ((): NodeJS.ProcessEnv | undefined => {
     const env = opts.env
       ? { ...process.env, ...opts.env }
       : opts.unsetEnv?.length
         ? { ...process.env }
         : undefined;
     if (env && opts.unsetEnv) {
-      for (const key of opts.unsetEnv) {
-        delete env[key];
-      }
+      const unset = new Set(opts.unsetEnv);
+      return Object.fromEntries(Object.entries(env).filter(([key]) => !unset.has(key)));
     }
     return env;
   })();

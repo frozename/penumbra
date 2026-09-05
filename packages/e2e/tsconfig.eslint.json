@@ -7,5 +7,6 @@
     "exactOptionalPropertyTypes": true,
     "noPropertyAccessFromIndexSignature": true
   },
-  "include": ["src/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+  "exclude": []
 }
