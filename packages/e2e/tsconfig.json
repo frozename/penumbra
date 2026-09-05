@@ -10,5 +10,6 @@
     { "path": "../mcp" },
     { "path": "../cli" }
   ],
-  "include": ["bin/**/*.ts", "src/**/*.ts", "test/helpers/**/*.ts"]
+  "include": ["bin/**/*.ts", "src/**/*.ts", "test/helpers/**/*.ts"],
+  "exclude": ["test/helpers/**/*.test.ts"]
 }

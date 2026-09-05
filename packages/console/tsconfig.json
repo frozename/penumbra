@@ -14,6 +14,7 @@
     "rootDir": ".",
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "visual/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "visual/**/*.ts"],
+  "exclude": ["visual/**/*.spec.ts"],
   "references": [{ "path": "../api-contract" }]
 }

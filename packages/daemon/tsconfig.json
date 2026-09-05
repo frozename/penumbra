@@ -11,5 +11,6 @@
     { "path": "../core" },
     { "path": "../workflows" }
   ],
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
 }

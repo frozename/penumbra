@@ -1,2 +1,3 @@
 [test]
 preload = ["./test/setup.ts"]
+pathIgnorePatterns = ["packages/console/e2e/**", "packages/console/visual/**"]
