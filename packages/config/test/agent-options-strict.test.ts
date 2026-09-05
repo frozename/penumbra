@@ -31,6 +31,7 @@ const fullAgentOptions = {
   emit_stdout_thoughts: true,
   env: { TEST_ENV: "1" },
   extraBody: { temperature: 0 },
+  firstEventTimeoutMs: 120000,
   framing: "newline",
   fsReadTextFile: true,
   fsWriteTextFile: true,
@@ -41,6 +42,7 @@ const fullAgentOptions = {
   model: "test-model",
   modelWarmupPrompt: "Reply READY.",
   model_warmup_prompt: "Reply READY.",
+  openSessionTimeoutMs: 60000,
   opencodeBinary: "opencode",
   pass_via: "argv",
   permission_ttl_s: 60,
@@ -150,6 +152,30 @@ describe("AgentConfigSchema adapter-aware options", () => {
         options: { command: "claude", agent: "local-exec" },
       }),
     ).toThrow(/agent.*claude-cli/);
+  });
+
+  test("accepts openSessionTimeoutMs and firstEventTimeoutMs on opencode-acp", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "opencode",
+        adapter: "opencode-acp",
+        options: {
+          model: "gpt-5",
+          openSessionTimeoutMs: 60000,
+          firstEventTimeoutMs: 120000,
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects firstEventTimeoutMs on claude-cli because that adapter does not consume it", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "claude",
+        adapter: "claude-cli",
+        options: { command: "claude", firstEventTimeoutMs: 120000 },
+      }),
+    ).toThrow(/firstEventTimeoutMs.*claude-cli/);
   });
 
   test("rejects warm_pool on opencode-acp because that adapter does not consume it", () => {
