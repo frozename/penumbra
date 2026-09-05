@@ -124,6 +124,7 @@ export interface OpencodeAcpOptions {
   openSessionTimeoutMs?: number;
   firstEventTimeoutMs?: number;
   mcpServers?: McpServer[];
+  unsetEnv?: string[];
 }
 
 type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
@@ -417,6 +418,7 @@ export class OpencodeAcpAdapter implements Adapter {
         opencodeBinary: this.opts.opencodeBinary ?? "opencode",
         bootTimeoutMs: this.opts.bootTimeoutMs,
         ...(extraEnv ? { env: extraEnv } : {}),
+        ...(this.opts.unsetEnv ? { unsetEnv: this.opts.unsetEnv } : {}),
       });
     } catch (err) {
       emitDispatchError(input, "server_boot", err);

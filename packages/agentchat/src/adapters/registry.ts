@@ -183,6 +183,7 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
       firstEventTimeoutMs: opts.firstEventTimeoutMs,
       inactivityTimeoutMs: opts.inactivityTimeoutMs,
       mcpServers: opts.mcpServers,
+      unsetEnv: opts.unsetEnv,
     });
   },
 };

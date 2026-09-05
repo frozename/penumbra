@@ -39,9 +39,11 @@ class FakeChildProcess extends EventEmitter {
 function createSpawn(
   child: FakeChildProcess,
   onSpawn?: (args: string[]) => void,
+  onOptions?: (options: { env?: Record<string, string> }) => void,
 ): AcpServerSpawner & ReturnType<typeof mock> {
-  return mock((_command: string, args: string[], _options: unknown) => {
+  return mock((_command: string, args: string[], options: unknown) => {
     onSpawn?.(args);
+    onOptions?.(options as { env?: Record<string, string> });
     return child as unknown as ReturnType<AcpServerSpawner>;
   }) as AcpServerSpawner & ReturnType<typeof mock>;
 }
@@ -186,6 +188,46 @@ test("startAcpServer logs child errors after boot settles", async () => {
 
   expect(warnings.some((err) => err.message.includes("post-boot EIO"))).toBe(true);
   await handle.kill();
+});
+
+serviceTest("startAcpServer removes unsetEnv keys after merging env", async () => {
+  const child = new FakeChildProcess(5435);
+  const previousFoo = process.env.FOO;
+  const previousBar = process.env.BAR;
+  process.env.FOO = "foo-from-process";
+  process.env.BAR = "bar-from-process";
+
+  let capturedEnv: Record<string, string> | undefined;
+  const spawn = createSpawn(child, undefined, (options) => {
+    capturedEnv = options.env;
+  });
+
+  try {
+    await startAcpServer({
+      cwd: "/tmp/penumbra-acp",
+      spawn,
+      bootTimeoutMs: 10,
+      env: { FOO: "foo-from-opts" },
+      unsetEnv: ["FOO"],
+    });
+  } catch {
+    // expected to time out; we only care about the env passed to spawn
+  }
+
+  expect(capturedEnv).toBeDefined();
+  expect(Object.hasOwn(capturedEnv ?? {}, "FOO")).toBe(false);
+  expect(capturedEnv?.BAR).toBe("bar-from-process");
+
+  if (previousFoo === undefined) {
+    delete process.env.FOO;
+  } else {
+    process.env.FOO = previousFoo;
+  }
+  if (previousBar === undefined) {
+    delete process.env.BAR;
+  } else {
+    process.env.BAR = previousBar;
+  }
 });
 
 const integrationEnabled =

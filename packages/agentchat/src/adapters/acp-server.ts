@@ -28,6 +28,7 @@ export interface StartAcpServerOptions {
   opencodeBinary?: string;
   bootTimeoutMs?: number;
   env?: Record<string, string>;
+  unsetEnv?: string[];
   spawn?: AcpServerSpawner;
   getPort?: () => Promise<number>;
   waitForPort?: AcpServerPortWaiter;
@@ -295,11 +296,25 @@ function spawnAcpChild(opts: StartAcpServerOptions, port: number): ChildProcessW
   const args = ["acp", "--port", port.toString(), "--cwd", opts.cwd];
   if (opts.pure !== false) args.push("--pure");
 
+  const childEnv = (() => {
+    const env = opts.env
+      ? { ...process.env, ...opts.env }
+      : opts.unsetEnv?.length
+        ? { ...process.env }
+        : undefined;
+    if (env && opts.unsetEnv) {
+      for (const key of opts.unsetEnv) {
+        delete env[key];
+      }
+    }
+    return env;
+  })();
+
   const spawnProcess = opts.spawn ?? spawn;
   const child = spawnProcess(opts.opencodeBinary ?? "opencode", args, {
     cwd: opts.cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: opts.env ? { ...process.env, ...opts.env } : undefined,
+    env: childEnv,
     detached: process.platform !== "win32",
   });
 

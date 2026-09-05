@@ -239,6 +239,35 @@ test("opencode-acp concatenates SSE text deltas into a single response", async (
   expect(handle.kill).toHaveBeenCalledTimes(1);
 });
 
+test("opencode-acp forwards unsetEnv to startServer and omits it when unset", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([{ type: "session.idle" }]);
+
+  const withUnset = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      unsetEnv: ["PENUMBRA_SIRIUS_TOKEN"],
+    },
+    { startServer, createClient: mock((_opts: AcpClientOptions): AcpClientLike => client) },
+  );
+  await withUnset.dispatch(createInput());
+  const withOpts = startServer.mock.calls[0]?.[0];
+  expect(withOpts).toBeDefined();
+  expect(withOpts !== undefined && withOpts.unsetEnv).toEqual(["PENUMBRA_SIRIUS_TOKEN"]);
+
+  startServer.mockClear();
+  const noUnset = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    { startServer, createClient: mock((_opts: AcpClientOptions): AcpClientLike => client) },
+  );
+  await noUnset.dispatch(createInput());
+  const noOpts = startServer.mock.calls[0]?.[0];
+  expect(noOpts).toBeDefined();
+  expect(noOpts !== undefined && Object.hasOwn(noOpts, "unsetEnv")).toBe(false);
+});
+
 test("opencode-acp times out stalled session opens and emits lifecycle events", async () => {
   const handle = createServerHandle();
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
