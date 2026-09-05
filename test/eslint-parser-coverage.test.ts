@@ -10,7 +10,8 @@ function extractStringLiterals(block: string): string[] {
   const re = /"([^"]*)"/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
-    values.push(m[1]);
+    const value = m[1];
+    if (value !== undefined) values.push(value);
   }
   return values;
 }
@@ -48,8 +49,13 @@ test("every file linted by eslint is covered by a type-aware parser project", as
   const configText = await Bun.file(ESLINT_CONFIG).text();
 
   const sourceGlobsMatch = configText.match(/const\s+SOURCE_GLOBS\s*=\s*\[([\s\S]*?)\];/);
-  expect(sourceGlobsMatch).not.toBeNull();
-  const sourceGlobs = extractStringLiterals(sourceGlobsMatch![1]);
+  const sourceGlobsBlock = sourceGlobsMatch?.[1];
+  if (sourceGlobsBlock === undefined) {
+    throw new Error(
+      `Could not parse SOURCE_GLOBS out of ${ESLINT_CONFIG}. This tripwire reads that array to learn which files eslint lints; if the declaration was renamed or reformatted, update this regex rather than deleting the check.`,
+    );
+  }
+  const sourceGlobs = extractStringLiterals(sourceGlobsBlock);
 
   const projectPatterns: string[] = [];
   const projectRe = /project:\s*(?:\[([\s\S]*?)\]|"([^"]+)")/g;
@@ -91,6 +97,14 @@ test("every file linted by eslint is covered by a type-aware parser project", as
       coveredFiles.add(f);
     }
   }
+
+  // Fail loudly rather than vacuously: if any of these parsing steps silently
+  // yields nothing, `uncovered` is empty and the check would "pass" while
+  // guarding nothing — the exact rot this tripwire exists to prevent.
+  expect(sourceGlobs.length).toBeGreaterThan(0);
+  expect(projectPatterns.length).toBeGreaterThan(0);
+  expect(lintedFiles.size).toBeGreaterThan(0);
+  expect(coveredFiles.size).toBeGreaterThan(0);
 
   const uncovered = [...lintedFiles].filter((f) => !coveredFiles.has(f)).sort();
 
