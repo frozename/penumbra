@@ -5,9 +5,9 @@
 # `git branch -D <handoff-branch>` + `git worktree remove` ran anyway, deleting a
 # branch whose commit was not yet in the integration branch. This guard makes
 # that class of mistake deterministically impossible: any command whose INTENT
-# is to delete a fleet branch (DB membership by `handoffs.branch_name`, plus
-# legacy `agent/<uuid>` fallback) or its worktree is BLOCKED unless that branch's
-# work is provably already in the base branch.
+# is to delete a branch (fleet, named, or one with a live worktree) is BLOCKED
+# unless that branch's work is provably already in the base branch. When the
+# target cannot be enumerated from the command string, the guard FAILS CLOSED.
 #
 # Three independent "safe" conditions (any one allows the delete):
 #   1. tip is an ancestor of the base (fast-forward / merge land)
@@ -23,9 +23,9 @@
 #       (override path configurable via $PENUMBRA_ALLOW_AGENT_GC_SENTINEL)
 #
 # Contract: reads the PreToolUse JSON on stdin. To BLOCK, print to stderr and
-# exit 2. Every other path exits 0 (fail-open) so the guard can never wedge a
-# session — the threat model is the operator's own bundled mistake, not an
-# adversary.
+# exit 2. Allow (exit 0) only when the command is non-destructive, or when it
+# names one explicit, safe branch, or when the single-ref override is set.
+# Destructive commands whose target cannot be enumerated FAIL CLOSED (exit 2).
 
 set -uo pipefail
 
@@ -73,9 +73,6 @@ allow_override() {
   fi
   return 1
 }
-if allow_override; then
-  exit 0
-fi
 
 clean_ref_token() {
   local ref=$1 prev
@@ -314,13 +311,61 @@ is_fleet_ref() {
   is_db_member_branch "$ref"
 }
 
-refs="$(
-  { extract_candidate_refs; extract_legacy_agent_refs; } | while IFS= read -r ref; do
-    [ -n "$ref" ] || continue
-    is_fleet_ref "$ref" && printf '%s\n' "$ref"
-  done | sort -u
-)"
-[ -n "$refs" ] || exit 0
+is_explicit_ref_token() {
+  local ref=$1
+  [ -n "$ref" ] || return 1
+  # Reject shell expansion, globs, redirections, separators.
+  printf '%s' "$ref" | grep -qE '[][\\|;&$`()<>*?{}]' && return 1
+  # Allow simple branch-shaped tokens: alphanumerics and ref separators.
+  # First character cannot be '-' so we do not mistake a flag for a ref.
+  printf '%s' "$ref" | grep -qE '^[A-Za-z0-9/._:@~+][A-Za-z0-9/._:@~+-]*$' || return 1
+  return 0
+}
+
+has_shell_meta() {
+  printf '%s' "$1" | grep -qE '[][\\|;&$`()<>*?{}]'
+}
+
+# --- enumerate concrete branch targets; fail-closed if we cannot. ------------
+candidates="$({ extract_candidate_refs; extract_legacy_agent_refs; } | sort -u)"
+
+has_non_explicit=0
+explicit_nonexistent=0
+refs=""
+
+while IFS= read -r ref; do
+  [ -n "$ref" ] || continue
+  if ! is_explicit_ref_token "$ref"; then
+    has_non_explicit=1
+    continue
+  fi
+  if git -C "$repo" rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+    refs="$refs $ref"
+  else
+    explicit_nonexistent=$((explicit_nonexistent + 1))
+  fi
+done <<< "$candidates"
+
+refs=${refs# }
+
+set -- $refs
+refs_count=$#
+explicit_total=$((refs_count + explicit_nonexistent))
+
+# --- override is only for a single explicitly-named ref, not a sweep. --------
+if [ "$explicit_total" -eq 1 ] && [ "$has_non_explicit" -eq 0 ] && ! has_shell_meta "$cmd" && allow_override; then
+  exit 0
+fi
+
+if [ "$refs_count" -eq 0 ]; then
+  if [ "$explicit_nonexistent" -eq 1 ] && [ "$has_non_explicit" -eq 0 ] && ! has_shell_meta "$cmd"; then
+    # Single, non-existent, explicitly-named branch: nothing to protect.
+    exit 0
+  fi
+  echo "BLOCKED: destructive command does not enumerate a single, explicitly-named branch to delete." >&2
+  echo "If you intend to delete one branch, name it directly. For bulk GC, run one explicit ref at a time." >&2
+  exit 2
+fi
 
 # --- resolve the integration base branch -------------------------------------
 # Hardcoding "main" fails OPEN in any repo whose default branch differs:

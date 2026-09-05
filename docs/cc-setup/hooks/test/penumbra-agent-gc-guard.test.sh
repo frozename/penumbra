@@ -229,19 +229,19 @@ R=$(mk_repo_ancestor_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBE
   run_case "DB-member named branch ancestor -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
-  run_case "non-member named branch unlanded -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R"; \
+  run_case "non-member named branch unlanded -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH" "$R"; \
   rm -rf "$R"
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
-  run_case "non-member named branch --delete unlanded -> ALLOW" 0 "git branch --delete $DBMEMBER_BRANCH" "$R"; \
+  run_case "non-member named branch --delete unlanded -> BLOCK" 2 "git branch --delete $DBMEMBER_BRANCH" "$R"; \
   rm -rf "$R"
 R=$(mk_repo_unlanded_named "some/unrelated"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
-  run_case "force-delete unrelated branch -> ALLOW" 0 "git branch --force -d some/unrelated" "$R" "PENUMBRA_DB=$DB"; \
+  run_case "force-delete unrelated unlanded branch -> BLOCK" 2 "git branch --force -d some/unrelated" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
   run_case "branch rename is non-destructive -> ALLOW" 0 "git branch -m old new" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); \
-  run_case "no DB named branch uses regex-only behavior -> ALLOW" 0 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=/tmp/missing-penumbra-db-$$.sqlite"; \
+  run_case "no DB named branch unlanded is still protected -> BLOCK" 2 "git branch -D $DBMEMBER_BRANCH" "$R" "PENUMBRA_DB=/tmp/missing-penumbra-db-$$.sqlite"; \
   rm -rf "$R"
 R=$(mk_repo_unlanded); \
   run_case "legacy uuid glued to semicolon before worktree prune -> BLOCK" 2 "git branch -D agent/$UUID; git worktree prune" "$R"; \
@@ -268,7 +268,7 @@ R=$(mk_repo_unlanded_named "$DBMEMBER_BRANCH"); DB=$(mk_db_with_branch "$DBMEMBE
   run_case "DB-member leading paren then double quote -> BLOCK" 2 "git branch -D (\"$DBMEMBER_BRANCH\"" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 R=$(mk_repo_unlanded_named "feat/bar"); DB=$(mk_db_with_branch "$DBMEMBER_BRANCH"); \
-  run_case "non-member glued to semicolon -> ALLOW" 0 "git branch -D feat/bar;" "$R" "PENUMBRA_DB=$DB"; \
+  run_case "non-member glued to semicolon -> BLOCK" 2 "git branch -D feat/bar;" "$R" "PENUMBRA_DB=$DB"; \
   rm -f "$DB"; rm -rf "$R"
 
 # non-destructive command -> ALLOW
