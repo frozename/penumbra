@@ -867,7 +867,7 @@ test("opencode-acp rejects a permission kind that is not in autoApprovePermissio
     "per_bash001",
     expect.objectContaining({
       reply: "reject",
-      message: expect.stringMatching(/^penumbra: permission '[^']*' auto-rejected$/),
+      message: "penumbra: permission 'bash' auto-rejected",
     }),
   );
   expect(client.respondPermission).not.toHaveBeenCalled();
@@ -991,7 +991,7 @@ test("opencode-acp rejects a v2 permission kind that is not in autoApprovePermis
     "per_v2_bash001",
     expect.objectContaining({
       reply: "reject",
-      message: expect.stringMatching(/^penumbra: permission '[^']*' auto-rejected$/),
+      message: "penumbra: permission 'bash' auto-rejected",
     }),
   );
   expect(client.replyPermission).not.toHaveBeenCalled();
@@ -1003,6 +1003,60 @@ test("opencode-acp rejects a v2 permission kind that is not in autoApprovePermis
     reply: "reject",
     permission: "bash",
     permission_id: "per_v2_bash001",
+    session_id: "sess-123",
+    wire_event: "permission.v2.asked",
+    adapter: "opencode-acp",
+  });
+});
+
+test("opencode-acp auto-approves a v2 permission kind that is in autoApprovePermissions", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    {
+      type: "permission.v2.asked",
+      properties: {
+        id: "per_v2_doom",
+        sessionID: "sess-123",
+        action: "doom_loop",
+        resources: ["src/**"],
+        save: [],
+        metadata: {},
+      },
+    },
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      autoApprovePermissions: ["doom_loop"],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "" });
+  expect(client.replySessionPermission).toHaveBeenCalledTimes(1);
+  expect(client.replySessionPermission).toHaveBeenCalledWith(
+    "sess-123",
+    "per_v2_doom",
+    expect.objectContaining({ reply: "always" }),
+  );
+  expect(client.replyPermission).not.toHaveBeenCalled();
+  expect(client.respondPermission).not.toHaveBeenCalled();
+  const permissionEvents = events.filter((event) => event.kind === "http.session.permission");
+  expect(permissionEvents).toHaveLength(1);
+  expect(permissionEvents[0]?.meta).toMatchObject({
+    outcome: "answered",
+    reply: "always",
+    permission: "doom_loop",
+    permission_id: "per_v2_doom",
     session_id: "sess-123",
     wire_event: "permission.v2.asked",
     adapter: "opencode-acp",
