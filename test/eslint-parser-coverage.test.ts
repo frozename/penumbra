@@ -32,8 +32,16 @@ async function listProjectFiles(configRel: string): Promise<string[]> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const out = await proc.stdout.text();
-  await proc.exited;
+  let out: string;
+  try {
+    out = await proc.stdout.text();
+  } finally {
+    // Reap unconditionally: a throw or a timeout here otherwise leaves the
+    // spawned tsc dangling, which bun reports as "killed N dangling processes"
+    // and which starves the rest of the shard.
+    proc.kill();
+    await proc.exited;
+  }
   const lines = out
     .split("\n")
     .filter((line) => line.startsWith(REPO_ROOT) && !line.includes("/node_modules/"));
@@ -133,4 +141,7 @@ test("every file linted by eslint is covered by a type-aware parser project", as
   }
 
   expect(uncovered).toEqual([]);
-});
+  // Spawns one `tsc --listFilesOnly` per parser project (~15). Measures 3-4s
+  // locally and timed out against bun's default 5000ms on the CI runner, so
+  // the budget is explicit and generous rather than incidental.
+}, 180_000);
