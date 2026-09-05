@@ -1,0 +1,46 @@
+#!/bin/sh
+# Strip AI-authorship trailers from commit messages.
+#
+# Repo policy: commits and PR text carry no AI/tool attribution. Enforcing that
+# by instruction alone has proven unreliable — work dispatched to agents runs
+# under harness guidance that adds these trailers, and that guidance wins over
+# the prompt. This hook is the one point every commit must pass through, so the
+# rule is enforced structurally here instead of being asked for repeatedly.
+#
+# Genuine human Co-Authored-By trailers are deliberately preserved: only ones
+# naming Claude/Anthropic are removed.
+#
+# To disable: delete this file (it is tracked, so commit the deletion).
+
+MSG="$1"
+[ -f "$MSG" ] || exit 0
+
+BEFORE=$(wc -c < "$MSG" | tr -d ' ')
+
+TMP="$MSG.strip.$$"
+grep -viE '^[[:space:]]*Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic\.com)' "$MSG" \
+  | grep -viE '^[[:space:]]*Claude-Session:' \
+  | grep -viE 'Generated with \[Claude Code\]' \
+  | grep -viE '^[[:space:]]*https://claude\.ai/code/session_' \
+  > "$TMP" 2>/dev/null
+
+# Never hand back an empty message: if stripping consumed everything, keep the
+# original and let the normal empty-message / review path deal with it.
+if [ ! -s "$TMP" ]; then
+  rm -f "$TMP"
+  exit 0
+fi
+
+# Drop trailing blank lines left behind by the removal.
+awk '{ lines[NR] = $0 }
+     END { last = NR
+           while (last > 0 && lines[last] ~ /^[[:space:]]*$/) last--
+           for (i = 1; i <= last; i++) print lines[i] }' "$TMP" > "$MSG"
+rm -f "$TMP"
+
+AFTER=$(wc -c < "$MSG" | tr -d ' ')
+if [ "$BEFORE" != "$AFTER" ]; then
+  echo "commit-msg: stripped AI-authorship trailer(s) per repo policy" >&2
+fi
+
+exit 0
