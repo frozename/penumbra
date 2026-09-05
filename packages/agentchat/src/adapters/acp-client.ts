@@ -296,6 +296,8 @@ export class AcpClient {
 
   /**
    * Respond to a specific session permission.
+   * Deprecated upstream (opencode `permission.respond`) but still the
+   * documented reply channel for `permission.asked` events.
    * @POST /session/{sessionId}/permissions/{permissionID}
    */
   async respondPermission(
@@ -310,5 +312,27 @@ export class AcpClient {
       signal: this.signal,
     });
     if (!res.ok) throw new Error(`ACP respondPermission failed (HTTP ${String(res.status)})`);
+  }
+
+  /**
+   * Reply to a permission request on the v2 session permission surface
+   * (`permission.v2.asked` events).
+   * @POST /api/session/{sessionId}/permission/{requestID}/reply
+   */
+  async replySessionPermission(
+    sessionId: string,
+    requestID: string,
+    reply: AcpPermissionReply,
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/session/${sessionId}/permission/${requestID}/reply`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(reply),
+        signal: this.signal,
+      },
+    );
+    if (!res.ok) throw new Error(`ACP replySessionPermission failed (HTTP ${String(res.status)})`);
   }
 }

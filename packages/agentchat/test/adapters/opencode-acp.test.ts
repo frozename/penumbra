@@ -9,6 +9,8 @@ import type { AcpServerHandle, StartAcpServerOptions } from "@src/adapters/acp-s
 import type {
   AcpCreateSessionRequest,
   AcpEvent,
+  AcpPermissionReply,
+  AcpPermissionResponse,
   AcpTool,
   McpServer,
   McpServerStdio,
@@ -16,7 +18,10 @@ import type {
 import { OpencodeAcpAdapter } from "@src/adapters/opencode-acp.js";
 import type { DispatchInput } from "@src/sdk/adapter.js";
 
-type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
+type AcpClientLike = Pick<
+  AcpClient,
+  "openSession" | "sendMessage" | "replyPermission" | "respondPermission" | "replySessionPermission"
+>;
 type ObservedDispatchEvent = Parameters<NonNullable<DispatchInput["onEvent"]>>[0];
 
 interface SendMessageOpts {
@@ -118,6 +123,17 @@ interface ClientMock extends AcpClientLike {
       (sessionId: string, content: string, opts?: SendMessageOpts) => AsyncIterable<AcpEvent>
     >
   >;
+  replyPermission: ReturnType<
+    typeof mock<(requestID: string, reply: AcpPermissionReply) => Promise<void>>
+  >;
+  respondPermission: ReturnType<
+    typeof mock<
+      (sessionId: string, permissionID: string, response: AcpPermissionResponse) => Promise<void>
+    >
+  >;
+  replySessionPermission: ReturnType<
+    typeof mock<(sessionId: string, requestID: string, reply: AcpPermissionReply) => Promise<void>>
+  >;
 }
 
 function createClient(events: readonly unknown[]): ClientMock {
@@ -129,7 +145,18 @@ function createClient(events: readonly unknown[]): ClientMock {
     (_sessionId: string, _content: string, _opts?: SendMessageOpts): AsyncIterable<AcpEvent> =>
       yieldEvents(events),
   );
-  return { openSession, sendMessage };
+  const replyPermission = mock(
+    (_requestID: string, _reply: AcpPermissionReply): Promise<void> => Promise.resolve(),
+  );
+  const respondPermission = mock(
+    (_sessionId: string, _permissionID: string, _response: AcpPermissionResponse): Promise<void> =>
+      Promise.resolve(),
+  );
+  const replySessionPermission = mock(
+    (_sessionId: string, _requestID: string, _reply: AcpPermissionReply): Promise<void> =>
+      Promise.resolve(),
+  );
+  return { openSession, sendMessage, replyPermission, respondPermission, replySessionPermission };
 }
 
 function createNeverStreamClient(): ClientMock {
@@ -255,7 +282,7 @@ test("opencode-acp forwards unsetEnv to startServer and omits it when unset", as
   await withUnset.dispatch(createInput());
   const withOpts = startServer.mock.calls[0]?.[0];
   expect(withOpts).toBeDefined();
-  expect(withOpts !== undefined && withOpts.unsetEnv).toEqual(["PENUMBRA_SIRIUS_TOKEN"]);
+  expect(withOpts?.unsetEnv).toEqual(["PENUMBRA_SIRIUS_TOKEN"]);
 
   startServer.mockClear();
   const noUnset = new OpencodeAcpAdapter(
@@ -694,6 +721,252 @@ test("opencode-acp preserves the original dispatch error when xdg cleanup also t
   } finally {
     warnSpy.mockRestore();
   }
+});
+
+function permissionAskedEvent(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    type: "permission.asked",
+    properties: {
+      id: "per_abc123",
+      sessionID: "sess-123",
+      permission: "doom_loop",
+      patterns: ["read"],
+      metadata: {},
+      always: ["read"],
+      tool: { messageID: "msg_1", callID: "call_1" },
+      ...overrides,
+    },
+  };
+}
+
+test("opencode-acp rejects a permission ask by default and answers exactly once", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "" });
+  expect(client.replyPermission).toHaveBeenCalledTimes(1);
+  expect(client.replyPermission).toHaveBeenCalledWith(
+    "per_abc123",
+    expect.objectContaining({ reply: "reject", message: expect.any(String) as string }),
+  );
+  expect(client.respondPermission).not.toHaveBeenCalled();
+  expect(client.replySessionPermission).not.toHaveBeenCalled();
+  const permissionEvents = events.filter((event) => event.kind === "http.session.permission");
+  expect(permissionEvents).toHaveLength(1);
+  expect(permissionEvents[0]?.meta).toMatchObject({
+    outcome: "answered",
+    reply: "reject",
+    permission: "doom_loop",
+    permission_id: "per_abc123",
+    session_id: "sess-123",
+  });
+});
+
+test("opencode-acp falls back to the session-scoped respond route when the request reply route fails", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
+  client.replyPermission = mock(
+    (_requestID: string, _reply: AcpPermissionReply): Promise<void> =>
+      Promise.reject(new Error("HTTP 404")),
+  );
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  await adapter.dispatch(input);
+
+  expect(client.replyPermission).toHaveBeenCalledTimes(1);
+  expect(client.respondPermission).toHaveBeenCalledTimes(1);
+  expect(client.respondPermission).toHaveBeenCalledWith("sess-123", "per_abc123", {
+    response: "reject",
+  });
+  expect(
+    events.some(
+      (event) => event.kind === "http.session.permission" && event.meta?.outcome === "answered",
+    ),
+  ).toBe(true);
+});
+
+test("opencode-acp auto-approves permission kinds in autoApprovePermissions", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    permissionAskedEvent(),
+    permissionAskedEvent({ id: "per_def456", permission: "bash" }),
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      autoApprovePermissions: ["doom_loop"],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  await adapter.dispatch(createInput());
+
+  expect(client.replyPermission).toHaveBeenCalledTimes(2);
+  expect(client.replyPermission).toHaveBeenNthCalledWith(
+    1,
+    "per_abc123",
+    expect.objectContaining({ reply: "always" }),
+  );
+  expect(client.replyPermission).toHaveBeenNthCalledWith(
+    2,
+    "per_def456",
+    expect.objectContaining({ reply: "reject" }),
+  );
+});
+
+test("opencode-acp continues the stream after answering a permission and terminates on session.idle", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    permissionAskedEvent(),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "recovered" },
+    },
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  const out = await adapter.dispatch(createInput());
+
+  expect(out).toEqual({ text: "recovered" });
+  expect(client.replyPermission).toHaveBeenCalledTimes(1);
+  expect(handle.kill).toHaveBeenCalledTimes(1);
+});
+
+test("opencode-acp answers permission.v2.asked via the session permission reply route", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    {
+      type: "permission.v2.asked",
+      properties: {
+        id: "per_v2x",
+        sessionID: "sess-123",
+        action: "edit",
+        resources: ["src/**"],
+        save: [],
+        metadata: {},
+      },
+    },
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  await adapter.dispatch(createInput());
+
+  expect(client.replySessionPermission).toHaveBeenCalledTimes(1);
+  expect(client.replySessionPermission).toHaveBeenCalledWith(
+    "sess-123",
+    "per_v2x",
+    expect.objectContaining({ reply: "reject" }),
+  );
+  expect(client.replyPermission).not.toHaveBeenCalled();
+  expect(client.respondPermission).not.toHaveBeenCalled();
+});
+
+test("opencode-acp does not throw or wedge on a malformed permission event", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    { type: "permission.asked" },
+    { type: "permission.asked", properties: { sessionID: "sess-123", permission: "bash" } },
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "" });
+  expect(client.replyPermission).not.toHaveBeenCalled();
+  expect(client.respondPermission).not.toHaveBeenCalled();
+  expect(client.replySessionPermission).not.toHaveBeenCalled();
+  expect(
+    events.filter(
+      (event) => event.kind === "http.session.permission" && event.meta?.outcome === "unanswerable",
+    ),
+  ).toHaveLength(2);
+});
+
+test("opencode-acp emits reply_failed telemetry when every reply route fails and still terminates", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
+  client.replyPermission = mock(
+    (_requestID: string, _reply: AcpPermissionReply): Promise<void> =>
+      Promise.reject(new Error("HTTP 404")),
+  );
+  client.respondPermission = mock(
+    (_sessionId: string, _permissionID: string, _response: AcpPermissionResponse): Promise<void> =>
+      Promise.reject(new Error("HTTP 404")),
+  );
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "" });
+  expect(client.replyPermission).toHaveBeenCalledTimes(1);
+  expect(client.respondPermission).toHaveBeenCalledTimes(1);
+  expect(
+    events.some(
+      (event) => event.kind === "http.session.permission" && event.meta?.outcome === "reply_failed",
+    ),
+  ).toBe(true);
 });
 
 const integrationEnabled =

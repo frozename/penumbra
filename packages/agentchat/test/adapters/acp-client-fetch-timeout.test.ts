@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { AcpClient, type AcpClientOptions } from "@src/adapters/acp-client.js";
 import type { AcpServerHandle, StartAcpServerOptions } from "@src/adapters/acp-server.js";
-import type { AcpCreateSessionRequest, AcpEvent, AcpTool } from "@src/adapters/acp-types.js";
+import type {
+  AcpCreateSessionRequest,
+  AcpEvent,
+  AcpPermissionReply,
+  AcpPermissionResponse,
+  AcpTool,
+} from "@src/adapters/acp-types.js";
 import { OpencodeAcpAdapter } from "@src/adapters/opencode-acp.js";
 import type { DispatchInput } from "@src/sdk/adapter.js";
 
@@ -111,7 +117,10 @@ describe("acp-client fetch budget", () => {
   });
 });
 
-type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
+type AcpClientLike = Pick<
+  AcpClient,
+  "openSession" | "sendMessage" | "replyPermission" | "respondPermission" | "replySessionPermission"
+>;
 
 interface SendMessageOpts {
   model?: string;
@@ -131,6 +140,17 @@ interface ClientMock extends AcpClientLike {
     typeof mock<
       (sessionId: string, content: string, opts?: SendMessageOpts) => AsyncIterable<AcpEvent>
     >
+  >;
+  replyPermission: ReturnType<
+    typeof mock<(requestID: string, reply: AcpPermissionReply) => Promise<void>>
+  >;
+  respondPermission: ReturnType<
+    typeof mock<
+      (sessionId: string, permissionID: string, response: AcpPermissionResponse) => Promise<void>
+    >
+  >;
+  replySessionPermission: ReturnType<
+    typeof mock<(sessionId: string, requestID: string, reply: AcpPermissionReply) => Promise<void>>
   >;
 }
 
@@ -163,6 +183,9 @@ function createClient(): ClientMock {
         Promise.resolve({ sessionId: "sess-123", workspaceId: "." }),
     ),
     sendMessage: mock((): AsyncIterable<AcpEvent> => neverYieldEvents()),
+    replyPermission: mock((): Promise<void> => Promise.resolve()),
+    respondPermission: mock((): Promise<void> => Promise.resolve()),
+    replySessionPermission: mock((): Promise<void> => Promise.resolve()),
   };
 }
 

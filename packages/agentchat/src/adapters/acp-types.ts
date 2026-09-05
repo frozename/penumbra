@@ -46,6 +46,36 @@ export interface AcpMessageRequest {
   parts: AcpMessagePart[];
 }
 
+/**
+ * `permission.asked` wire properties (opencode Permission.ask). The `per_*`
+ * id pairs with the session-scoped respond route and the request-keyed reply
+ * route; `sessionID` identifies the session that owns the pending ask.
+ */
+export interface AcpPermissionAsked {
+  id: string;
+  sessionID: string;
+  permission: string;
+  patterns: string[];
+  metadata: Record<string, unknown>;
+  always: string[];
+  tool?: { messageID: string; callID: string };
+}
+
+/**
+ * `permission.v2.asked` wire properties (opencode PermissionV2.ask). Defined
+ * alongside the v1 event in opencode 1.18.x; the v2 reply surface lives under
+ * the /api-prefixed session permission routes.
+ */
+export interface AcpPermissionV2Asked {
+  id: string;
+  sessionID: string;
+  action: string;
+  resources: string[];
+  save: string[];
+  metadata: Record<string, unknown>;
+  source?: { type: string; messageID?: string; callID?: string };
+}
+
 export type AcpEvent =
   | { type: "session.status"; status: string }
   | { type: "lsp.updated"; data: unknown }
@@ -57,16 +87,19 @@ export type AcpEvent =
       tool: string;
       arguments: Record<string, unknown>;
     }
-  | { type: "permission.request"; requestID: string; permission: unknown }
+  | { type: "permission.asked"; properties: AcpPermissionAsked }
+  | { type: "permission.v2.asked"; properties: AcpPermissionV2Asked }
   | { type: "done" };
 
+export type AcpPermissionReplyKind = "once" | "always" | "reject";
+
 export interface AcpPermissionReply {
-  reply: "allow" | "deny";
+  reply: AcpPermissionReplyKind;
   message?: string;
 }
 
 export interface AcpPermissionResponse {
-  response: Record<string, unknown>;
+  response: AcpPermissionReplyKind;
 }
 
 /**

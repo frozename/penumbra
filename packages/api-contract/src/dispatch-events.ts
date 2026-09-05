@@ -17,6 +17,7 @@ export const DispatchEventKindSchema = z.enum([
   "http.session.start",
   "http.session.open_timeout",
   "http.session.end",
+  "http.session.permission",
   "http.stream.first_event_timeout",
   "http.dispatch.error",
   "proc.spawn",

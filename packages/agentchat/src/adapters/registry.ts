@@ -184,6 +184,7 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
       inactivityTimeoutMs: opts.inactivityTimeoutMs,
       mcpServers: opts.mcpServers,
       unsetEnv: opts.unsetEnv,
+      autoApprovePermissions: opts.autoApprovePermissions,
     });
   },
 };

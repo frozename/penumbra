@@ -16,6 +16,7 @@ const fullAgentOptions = {
   api_key_env: "TEST_API_KEY",
   args: ["exec"],
   authMethodId: "auth-method",
+  autoApprovePermissions: ["doom_loop"],
   baseUrl: "http://127.0.0.1:8080/v1",
   binary: "codex",
   bootTimeoutMs: 1000,

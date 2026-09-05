@@ -26,6 +26,7 @@ export const AgentOptionsSchema = z.strictObject({
   api_key_env: z.string().optional(),
   args: z.array(z.string()).optional(),
   authMethodId: z.string().optional(),
+  autoApprovePermissions: z.array(z.string()).optional(),
   baseUrl: z.string().optional(),
   binary: z.string().optional(),
   bootTimeoutMs: z.number().int().optional(),
@@ -173,6 +174,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
   ],
   "opencode-acp": [
     "agent",
+    "autoApprovePermissions",
     "bootTimeoutMs",
     "firstEventTimeoutMs",
     "inactivityTimeoutMs",

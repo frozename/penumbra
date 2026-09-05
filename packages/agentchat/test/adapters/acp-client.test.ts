@@ -114,24 +114,36 @@ test("replyPermission POSTs to /permission/{id}/reply", async () => {
   installFetchMock((url, init) => {
     expect(url.toString()).toBe(`${baseUrl}/permission/req-1/reply`);
     expect(init?.method).toBe("POST");
-    expect(parseJsonBody(init)).toEqual({ reply: "allow" });
+    expect(parseJsonBody(init)).toEqual({ reply: "reject", message: "nope" });
     return Promise.resolve(new Response(null, { status: 200 }));
   });
 
   const client = new AcpClient({ baseUrl });
-  await client.replyPermission("req-1", { reply: "allow" });
+  await client.replyPermission("req-1", { reply: "reject", message: "nope" });
 });
 
 test("respondPermission POSTs to /session/{sid}/permissions/{pid}", async () => {
   installFetchMock((url, init) => {
     expect(url.toString()).toBe(`${baseUrl}/session/s1/permissions/p1`);
     expect(init?.method).toBe("POST");
-    expect(parseJsonBody(init)).toEqual({ response: { ok: true } });
+    expect(parseJsonBody(init)).toEqual({ response: "reject" });
     return Promise.resolve(new Response(null, { status: 200 }));
   });
 
   const client = new AcpClient({ baseUrl });
-  await client.respondPermission("s1", "p1", { response: { ok: true } });
+  await client.respondPermission("s1", "p1", { response: "reject" });
+});
+
+test("replySessionPermission POSTs to /api/session/{sid}/permission/{rid}/reply", async () => {
+  installFetchMock((url, init) => {
+    expect(url.toString()).toBe(`${baseUrl}/api/session/s1/permission/per_1/reply`);
+    expect(init?.method).toBe("POST");
+    expect(parseJsonBody(init)).toEqual({ reply: "once" });
+    return Promise.resolve(new Response(null, { status: 200 }));
+  });
+
+  const client = new AcpClient({ baseUrl });
+  await client.replySessionPermission("s1", "per_1", { reply: "once" });
 });
 
 test("sendMessage aborts the SSE stream and surfaces the send error when POST rejects", async () => {

@@ -2,7 +2,13 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { AcpServerHandle, StartAcpServerOptions } from "./acp-server.js";
-import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } from "./acp-types.js";
+import type {
+  AcpCreateSessionRequest,
+  AcpEvent,
+  AcpPermissionReplyKind,
+  McpServer,
+  McpServerStdio,
+} from "./acp-types.js";
 
 import { AcpClient, type AcpClientOptions } from "./acp-client.js";
 import { startAcpServer } from "./acp-server.js";
@@ -125,9 +131,13 @@ export interface OpencodeAcpOptions {
   firstEventTimeoutMs?: number;
   mcpServers?: McpServer[];
   unsetEnv?: string[];
+  autoApprovePermissions?: string[];
 }
 
-type AcpClientLike = Pick<AcpClient, "openSession" | "sendMessage">;
+type AcpClientLike = Pick<
+  AcpClient,
+  "openSession" | "sendMessage" | "replyPermission" | "respondPermission" | "replySessionPermission"
+>;
 
 interface OpencodeAcpDeps {
   startServer: (opts: StartAcpServerOptions) => Promise<AcpServerHandle>;
@@ -148,6 +158,10 @@ interface OpencodeWireEventProps {
   partID?: unknown;
   delta?: unknown;
   error?: { data?: { message?: unknown }; name?: unknown };
+  id?: unknown;
+  sessionID?: unknown;
+  permission?: unknown;
+  action?: unknown;
 }
 
 function asWireEvent(evt: unknown): OpencodeWireEvent {
@@ -193,6 +207,102 @@ function errorMessage(err: unknown): string {
 
 function truncateReason(reason: string): string {
   return reason.length > 300 ? reason.slice(0, 300) : reason;
+}
+
+interface PermissionAsk {
+  requestID: string;
+  sessionID: string;
+  permission: string;
+}
+
+// `permission.asked` carries the v1 shape {id, sessionID, permission, ...};
+// `permission.v2.asked` carries {id, sessionID, action, ...}. Normalizing here
+// lets one policy answer both — an ask that reads cleanly but cannot be tied
+// to a request id is unanswerable and must not wedge the stream loop.
+function readPermissionAsk(
+  wireType: string,
+  props: OpencodeWireEventProps | undefined,
+  fallbackSessionId: string,
+): PermissionAsk | null {
+  const rawId = props?.id;
+  const rawKind = wireType === "permission.v2.asked" ? props?.action : props?.permission;
+  const rawSession = props?.sessionID;
+  if (typeof rawId !== "string" || rawId.length === 0) return null;
+  if (typeof rawKind !== "string" || rawKind.length === 0) return null;
+  return {
+    requestID: rawId,
+    sessionID:
+      typeof rawSession === "string" && rawSession.length > 0 ? rawSession : fallbackSessionId,
+    permission: rawKind,
+  };
+}
+
+// Every permission ask on the wire gets exactly one reply attempt chain —
+// leaving one unanswered stalls the dispatch until the outer request budget,
+// and the inactivity watchdog cannot rescue it because server.heartbeat keeps
+// the stream live. Default is fail-closed reject; `autoApprovePermissions`
+// opts a seat into "always" for the named permission kinds. v1 asks go to the
+// request-keyed reply route first (it carries a rejection message back to the
+// model) and fall back to the deprecated session-scoped respond route, which
+// is the documented pairing for `permission.asked` and stays mounted on
+// builds where the experimental reply route is absent.
+async function answerPermissionAsk(args: {
+  input: DispatchInput;
+  client: AcpClientLike;
+  wireType: string;
+  props: OpencodeWireEventProps | undefined;
+  fallbackSessionId: string;
+  autoApprove: ReadonlySet<string>;
+  adapterKind: string;
+}): Promise<void> {
+  const { input, client, wireType, props, fallbackSessionId, autoApprove, adapterKind } = args;
+  const ask = readPermissionAsk(wireType, props, fallbackSessionId);
+  if (!ask) {
+    emitLifecycle(input, "http.session.permission", {
+      adapter: adapterKind,
+      session_id: fallbackSessionId,
+      wire_event: wireType,
+      outcome: "unanswerable",
+    });
+    return;
+  }
+  const approved = autoApprove.has(ask.permission);
+  const reply: AcpPermissionReplyKind = approved ? "always" : "reject";
+  const meta: Record<string, unknown> = {
+    adapter: adapterKind,
+    session_id: ask.sessionID,
+    permission_id: ask.requestID,
+    permission: ask.permission,
+    wire_event: wireType,
+    reply,
+  };
+  try {
+    if (wireType === "permission.v2.asked") {
+      await client.replySessionPermission(ask.sessionID, ask.requestID, {
+        reply,
+        ...(approved ? {} : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
+      });
+    } else {
+      try {
+        await client.replyPermission(ask.requestID, {
+          reply,
+          ...(approved
+            ? {}
+            : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
+        });
+      } catch {
+        await client.respondPermission(ask.sessionID, ask.requestID, { response: reply });
+      }
+    }
+  } catch (err) {
+    emitLifecycle(input, "http.session.permission", {
+      ...meta,
+      outcome: "reply_failed",
+      reason: truncateReason(errorMessage(err)),
+    });
+    return;
+  }
+  emitLifecycle(input, "http.session.permission", { ...meta, outcome: "answered" });
 }
 
 function emitDispatchError(
@@ -318,6 +428,48 @@ function createRollingInactivityHandle(controller: AbortController): RollingInac
       }, timeoutMs);
     },
     cleanup: disarm,
+  };
+}
+
+// The first event must arrive inside streamAbort's first-event budget; after
+// that, every event re-arms the rolling inactivity watchdog. An iterator
+// error ends the stream for good, so the generator is returned early on throw.
+function createNextEvent(args: {
+  iterator: AsyncIterator<AcpEvent>;
+  clientSignal: AbortSignal;
+  streamAbort: PhaseAbortHandle;
+  inactivity: RollingInactivityHandle;
+  inactivityTimeoutMs: number;
+}): () => Promise<IteratorResult<AcpEvent, void>> {
+  const { iterator, clientSignal, streamAbort, inactivity, inactivityTimeoutMs } = args;
+  const inactivityError = (timeoutMs: number): Error =>
+    new Error(`opencode-acp: no wire activity for ${String(timeoutMs)}ms`);
+  let sawEvent = false;
+  return async () => {
+    if (!sawEvent) {
+      try {
+        const result = await awaitWithSignal(iterator.next(), clientSignal);
+        if (!result.done) {
+          sawEvent = true;
+          streamAbort.clearTimer();
+          inactivity.arm(inactivityTimeoutMs, inactivityError);
+        }
+        return result;
+      } catch (err) {
+        void iterator.return?.();
+        throw err;
+      }
+    }
+    try {
+      const result = await awaitWithSignal(iterator.next(), clientSignal);
+      if (!result.done) {
+        inactivity.arm(inactivityTimeoutMs, inactivityError);
+      }
+      return result;
+    } catch (err) {
+      void iterator.return?.();
+      throw err;
+    }
   };
 }
 
@@ -498,8 +650,8 @@ export class OpencodeAcpAdapter implements Adapter {
     // and only accumulate deltas for parts whose type is 'text'.
     // Stream ends on session.idle (turn complete) or session.error.
     const partTypeById = new Map<string, string>();
+    const autoApprovePermissions = new Set(this.opts.autoApprovePermissions ?? []);
     let text = "";
-    let sawEvent = false;
     let sawIdle = false;
     let lastEventType = "none";
     const inactivityTimeoutMs = this.opts.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
@@ -533,35 +685,13 @@ export class OpencodeAcpAdapter implements Adapter {
       workspace: workspaceId,
       ...(this.opts.agent !== undefined ? { agent: this.opts.agent } : {}),
     });
-    const iterator = messageStream[Symbol.asyncIterator]();
-    const inactivityError = (timeoutMs: number): Error =>
-      new Error(`opencode-acp: no wire activity for ${String(timeoutMs)}ms`);
-    const nextEvent = async (): Promise<IteratorResult<AcpEvent, void>> => {
-      if (!sawEvent) {
-        try {
-          const result = await awaitWithSignal(iterator.next(), clientSignal);
-          if (!result.done) {
-            sawEvent = true;
-            streamAbort.clearTimer();
-            inactivity.arm(inactivityTimeoutMs, inactivityError);
-          }
-          return result;
-        } catch (err) {
-          void iterator.return?.();
-          throw err;
-        }
-      }
-      try {
-        const result = await awaitWithSignal(iterator.next(), clientSignal);
-        if (!result.done) {
-          inactivity.arm(inactivityTimeoutMs, inactivityError);
-        }
-        return result;
-      } catch (err) {
-        void iterator.return?.();
-        throw err;
-      }
-    };
+    const nextEvent = createNextEvent({
+      iterator: messageStream[Symbol.asyncIterator](),
+      clientSignal,
+      streamAbort,
+      inactivity,
+      inactivityTimeoutMs,
+    });
     try {
       streamLoop: for (;;) {
         const next = await nextEvent();
@@ -581,6 +711,19 @@ export class OpencodeAcpAdapter implements Adapter {
             if (!delta) break;
             text += delta;
             yield { type: "delta", text: delta };
+            break;
+          }
+          case "permission.asked":
+          case "permission.v2.asked": {
+            await answerPermissionAsk({
+              input,
+              client,
+              wireType: evt.type,
+              props,
+              fallbackSessionId: sessionId,
+              autoApprove: autoApprovePermissions,
+              adapterKind: this.kind,
+            });
             break;
           }
           case "session.error": {
