@@ -495,6 +495,83 @@ test("opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
   expect(startServer).toHaveBeenCalledTimes(1);
 });
 
+test("opencode-acp lets a user-supplied PENUMBRA_MCP_TOOL_ALLOWLIST pass through on non-long-lived dispatches", async () => {
+  const captured: { config: OpencodeConfigFile | null } = { config: null };
+  const handle = createServerHandle();
+  const startServer = mock(async (opts: StartAcpServerOptions) => {
+    const xdgConfigHome = opts.env?.XDG_CONFIG_HOME;
+    if (!xdgConfigHome) {
+      throw new Error("missing XDG_CONFIG_HOME");
+    }
+    const configPath = `${xdgConfigHome}/opencode/config.json`;
+    captured.config = JSON.parse(await Bun.file(configPath).text()) as OpencodeConfigFile;
+    return handle;
+  });
+  const client = createClient([{ type: "session.idle" }]);
+
+  const penumbraWithAllowlist: McpServerStdio = {
+    ...penumbraMcpServer,
+    env: [
+      ...penumbraMcpServer.env,
+      { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: "cost_recent,fs_read" },
+    ],
+  };
+
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      mcpServers: [penumbraWithAllowlist],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+
+  await withTempHome(() => adapter.dispatch({ ...createInput(), handoff_id: "handoff-1" }));
+
+  const mcp = captured.config?.mcp.penumbra;
+  expect(mcp?.environment.PENUMBRA_MCP_TOOL_ALLOWLIST).toBe("cost_recent,fs_read");
+  expect(mcp?.environment.PENUMBRA_HANDOFF_ID).toBe("handoff-1");
+});
+
+test("opencode-acp forwards options.agent to sendMessage and omits it when unset", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const events = [{ type: "session.idle" }];
+
+  const withAgent = createClient(events);
+  const adapterWithAgent = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", agent: "local-exec" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => withAgent),
+    },
+  );
+  await adapterWithAgent.dispatch(createInput());
+  expect(withAgent.sendMessage).toHaveBeenCalledWith("sess-123", "ping", {
+    model: "deepseek-v4",
+    tools: [],
+    directory: "/tmp/opencode-acp",
+    workspace: ".",
+    agent: "local-exec",
+  });
+
+  const noAgent = createClient(events);
+  const adapterNoAgent = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => noAgent),
+    },
+  );
+  await adapterNoAgent.dispatch(createInput());
+  const sentOpts = noAgent.sendMessage.mock.calls[0]?.[2];
+  expect(sentOpts).toBeDefined();
+  expect(sentOpts !== undefined && Object.hasOwn(sentOpts, "agent")).toBe(false);
+});
+
 test("opencode-acp injects long-lived env into penumbra mcp config for long_lived_tick dispatches", async () => {
   const captured: { config: OpencodeConfigFile | null } = { config: null };
   const handle = createServerHandle();

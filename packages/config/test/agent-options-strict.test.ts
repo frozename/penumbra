@@ -6,6 +6,7 @@ import { AgentConfigSchema, AgentOptionsSchema } from "../src/files/agents.js";
 import { listDir, lstatInfo, readUtf8 } from "../src/files/node-fs.js";
 
 const fullAgentOptions = {
+  agent: "local-exec",
   agentName: "codex-acp-fast",
   allowed_tools: ["mcp__penumbra__memory_recall"],
   apiKey: "test-key",
@@ -131,6 +132,26 @@ describe("AgentOptionsSchema strict key coverage", () => {
 });
 
 describe("AgentConfigSchema adapter-aware options", () => {
+  test("accepts agent on opencode-acp", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "opencode",
+        adapter: "opencode-acp",
+        options: { model: "gpt-5", agent: "local-exec" },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects agent on claude-cli because that adapter does not consume it", () => {
+    expect(() =>
+      AgentConfigSchema.parse({
+        name: "claude",
+        adapter: "claude-cli",
+        options: { command: "claude", agent: "local-exec" },
+      }),
+    ).toThrow(/agent.*claude-cli/);
+  });
+
   test("rejects warm_pool on opencode-acp because that adapter does not consume it", () => {
     expect(() =>
       AgentConfigSchema.parse({

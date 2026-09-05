@@ -53,7 +53,13 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   "PENUMBRA_MCP_ORIGIN",
   "PENUMBRA_LONG_LIVED_AGENT_ID",
   "PENUMBRA_LONG_LIVED_TICK_ID",
-  "PENUMBRA_MCP_TOOL_ALLOWLIST",
+  // Note: PENUMBRA_MCP_TOOL_ALLOWLIST is intentionally NOT in this strip-list.
+  // For long_lived_tick dispatches the adapter STILL appends its own value
+  // after the user-provided one (last-wins on env merge), so dispatch-side
+  // injection is unaffected. But for manual chain_start tests (and any
+  // non-long-lived dispatch path), the user's yaml-level allowlist now
+  // passes through — without this, the schema-injection bloat fix has no
+  // way to land outside the cron tick path.
 ]);
 const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
 const MCP_PATH_RE = /penumbra-mcp(?:\.[jt]s)?(?:$|[\s/])/;
@@ -109,6 +115,7 @@ function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpSe
 
 export interface OpencodeAcpOptions {
   model: string;
+  agent?: string;
   cwd?: string;
   opencodeBinary?: string;
   bootTimeoutMs?: number;
@@ -522,6 +529,7 @@ export class OpencodeAcpAdapter implements Adapter {
       tools: [],
       directory: cwd,
       workspace: workspaceId,
+      ...(this.opts.agent !== undefined ? { agent: this.opts.agent } : {}),
     });
     const iterator = messageStream[Symbol.asyncIterator]();
     const inactivityError = (timeoutMs: number): Error =>

@@ -174,6 +174,7 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
     if (!opts.model) throw new Error("opencode-acp: model is required");
     return new OpencodeAcpAdapter({
       model: opts.model,
+      agent: opts.agent,
       cwd: opts.cwd,
       opencodeBinary: opts.opencodeBinary,
       bootTimeoutMs: opts.bootTimeoutMs,

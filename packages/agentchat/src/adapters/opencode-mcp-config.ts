@@ -51,6 +51,10 @@ function mergeUserConfigFields(config: Record<string, unknown>, userConfig: unkn
   if (keybinds !== null && typeof keybinds === "object" && !Array.isArray(keybinds)) {
     config.keybinds = keybinds;
   }
+  const agent = source.agent;
+  if (agent !== null && typeof agent === "object" && !Array.isArray(agent)) {
+    config.agent = agent;
+  }
 }
 
 async function readUserOpencodeConfig(userConfigPath: string): Promise<unknown> {

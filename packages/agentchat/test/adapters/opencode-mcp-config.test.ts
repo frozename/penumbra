@@ -22,6 +22,7 @@ interface OpencodeConfigFile {
   provider?: unknown;
   plugin?: unknown;
   keybinds?: unknown;
+  agent?: unknown;
 }
 
 function readConfig(cfgPath: string): OpencodeConfigFile {
@@ -95,7 +96,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
     expect(fs.existsSync(xdgConfigHome)).toBe(false);
   });
 
-  it("merges provider, plugin, and keybinds from user config when present", async () => {
+  it("merges provider, plugin, keybinds, and agent from user config when present", async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "penumbra-oc-user-"));
     createdDirs.push(tmpDir);
     const userConfigPath = path.join(tmpDir, "config.json");
@@ -103,6 +104,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
       provider: { local: { type: "openai-compatible", baseURL: "http://localhost:8080" } },
       plugin: [{ name: "example-plugin" }],
       keybinds: { submit: "enter" },
+      agent: { "local-exec": { prompt: "you are local", tools: { write: false } } },
     };
     await fsp.writeFile(userConfigPath, `${JSON.stringify(userConfig, null, 2)}\n`);
 
@@ -116,6 +118,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
     expect(cfg.provider).toEqual(userConfig.provider);
     expect(cfg.plugin).toEqual(userConfig.plugin);
     expect(cfg.keybinds).toEqual(userConfig.keybinds);
+    expect(cfg.agent).toEqual(userConfig.agent);
     expect(cfg.mcp).toEqual({
       st: {
         type: "local",
@@ -125,6 +128,25 @@ describe("prepareOpencodeMcpConfigDir", () => {
       },
     });
     await cleanup();
+  });
+
+  it("ignores non-object agent fields in user config", async () => {
+    for (const agentValue of ["local-exec", ["local-exec"], 42]) {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "penumbra-oc-user-"));
+      createdDirs.push(tmpDir);
+      const userConfigPath = path.join(tmpDir, "config.json");
+      await fsp.writeFile(userConfigPath, `${JSON.stringify({ agent: agentValue }, null, 2)}\n`);
+
+      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
+        [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
+        userConfigPath,
+      );
+      createdDirs.push(xdgConfigHome);
+
+      const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
+      expect(cfg.agent).toBeUndefined();
+      await cleanup();
+    }
   });
 
   it("ignores user mcp and keeps the synthetic mcp payload", async () => {

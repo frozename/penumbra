@@ -16,6 +16,7 @@ const CANONICAL_PROVIDER_MESSAGE =
 // Unknown adapters skip adapter-specific refinement, but still cannot introduce
 // option keys that are absent from this schema.
 export const AgentOptionsSchema = z.strictObject({
+  agent: z.string().optional(),
   agentName: z.string().optional(),
   allowed_tools: z.array(z.string()).optional(),
   apiKey: z.string().optional(),
@@ -167,7 +168,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
     "requestExtras",
     "systemPrompt",
   ],
-  "opencode-acp": ["bootTimeoutMs", "opencodeBinary"],
+  "opencode-acp": ["agent", "bootTimeoutMs", "opencodeBinary"],
   "opencode-cli": CLI_OPTION_KEYS,
   "stdio-acp": [
     "agentName",
