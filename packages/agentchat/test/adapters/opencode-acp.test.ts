@@ -839,6 +839,47 @@ test("opencode-acp auto-approves permission kinds in autoApprovePermissions", as
   );
 });
 
+test("opencode-acp rejects a permission kind that is not in autoApprovePermissions", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const client = createClient([
+    permissionAskedEvent({ id: "per_bash001", permission: "bash" }),
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: "deepseek-v4",
+      cwd: "/tmp/opencode-acp",
+      autoApprovePermissions: ["doom_loop"],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "" });
+  expect(client.replyPermission).toHaveBeenCalledTimes(1);
+  expect(client.replyPermission).toHaveBeenCalledWith(
+    "per_bash001",
+    expect.objectContaining({ reply: "reject", message: expect.any(String) as string }),
+  );
+  expect(client.respondPermission).not.toHaveBeenCalled();
+  expect(client.replySessionPermission).not.toHaveBeenCalled();
+  const permissionEvents = events.filter((event) => event.kind === "http.session.permission");
+  expect(permissionEvents).toHaveLength(1);
+  expect(permissionEvents[0]?.meta).toMatchObject({
+    outcome: "answered",
+    reply: "reject",
+    permission: "bash",
+    permission_id: "per_bash001",
+    session_id: "sess-123",
+  });
+});
+
 test("opencode-acp continues the stream after answering a permission and terminates on session.idle", async () => {
   const handle = createServerHandle();
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
