@@ -133,7 +133,7 @@ describe("devin-contention-probe evidence", () => {
           fixtureEvent(0, "session_new_received", 1000),
           fixtureEvent(1, "session_new_received", 1120),
           fixtureEvent(0, "session_new_responding", 1300),
-          fixtureEvent(1, "session_new_responding", 1310),
+          fixtureEvent(1, "session_new_responding", 1420),
         ],
       }),
       baseOptions(),
@@ -143,6 +143,27 @@ describe("devin-contention-probe evidence", () => {
     expect(result.serializedDispatch.receivedSkew.fired).toBe(true);
     expect(result.serializedDispatch.receivedSkew.measurement).toBe(120);
     expectOnlySerializedPredicate(result.serializedDispatch, "receivedSkew");
+    expect(result.classifications).toContain("serialized_dispatch");
+    expect(result.classifications).toEqual(["serialized_dispatch"]);
+  });
+
+  test("classifies serialized dispatch from responding skew alone", () => {
+    const result = evaluateRound(
+      baseRound({
+        fixtureEvents: [
+          fixtureEvent(0, "session_new_received", 1000),
+          fixtureEvent(1, "session_new_received", 1010),
+          fixtureEvent(0, "session_new_responding", 1120),
+          fixtureEvent(1, "session_new_responding", 1010),
+        ],
+      }),
+      baseOptions(),
+      null,
+    );
+
+    expect(result.serializedDispatch.respondingSkew.fired).toBe(true);
+    expect(result.serializedDispatch.respondingSkew.measurement).toBe(120);
+    expectOnlySerializedPredicate(result.serializedDispatch, "respondingSkew");
     expect(result.classifications).toContain("serialized_dispatch");
     expect(result.classifications).toEqual(["serialized_dispatch"]);
   });
