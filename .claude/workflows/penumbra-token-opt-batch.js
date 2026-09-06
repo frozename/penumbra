@@ -148,7 +148,7 @@ const verified = await pipeline(
         `STEP 2: copy handoff_id + conversation_id + provisional branch_name verbatim from the chain_start result; the chain_start value is provisional because a collision suffix may be applied by the worker.`,
         `STEP 3: poll mcp__penumbra__chain_status until terminal; use chain_wait <=150s per call, one wait per step. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
         `STEP 4: in ${REPO} run: git rev-parse --verify --quiet <branch_name> (branch_tip, "MISSING" if absent); git rev-list --count main..<branch_name> (commit_count); git worktree list | grep <handoff_id> (worktree_path).`,
-        `STEP 5: once the chain is terminal, call mcp__penumbra__dispatch_audit({ handoff_id: <the chain_start handoff_id> }) and copy its status, trustworthy, and recommended_action fields VERBATIM into reliability_status, reliability_trustworthy, and reliability_action. The reliability block is served ONLY by dispatch_audit — handoff_get omits it, so do not substitute a handoff_get read.`,
+        `STEP 5: once the chain is terminal, call mcp__penumbra__dispatch_audit({ handoff_id: <the chain_start handoff_id> }). The dispatch_audit result is NESTED under a top-level "report" key — it looks like { "report": { "handoff_id": "...", "status": "...", "terminal": true/false, "trustworthy": true/false, "summary": "...", "missing_events": [], "evidence": {...}, "recommended_action": "..." } }. Copy report.status, report.trustworthy, and report.recommended_action VERBATIM into reliability_status, reliability_trustworthy, and reliability_action. Do not read top-level status/trustworthy/recommended_action — those fields do not exist. report.status is the reliability classifier status (e.g. "complete" or "non_terminal_stale") and is distinct from report.evidence.handoff_status. The reliability block is served ONLY by dispatch_audit — handoff_get omits it, so do not substitute a handoff_get read.`,
         `Return the structured object; every value from a tool result you saw this turn.`,
       ].join('\n'),
       { label: `dispatch:${m.tool}`, phase: 'DispatchVerify', schema: DISPATCH_SCHEMA, model: 'sonnet' },
@@ -162,7 +162,7 @@ const verified = await pipeline(
         dispatch: d,
         verify: null,
         skipped: 'no-branch',
-        reliability_trustworthy: d && d.reliability_trustworthy,
+        reliability_trustworthy: d?.reliability_trustworthy,
       }
     }
     const wt = d.worktree_path || `${REPO}-worktrees/${d.handoff_id}`
@@ -182,20 +182,21 @@ const verified = await pipeline(
       tool: m.tool,
       dispatch: d,
       verify,
-      reliability_trustworthy: d.reliability_trustworthy,
+      reliability_trustworthy: d?.reliability_trustworthy,
     }))
   },
 )
 
 const real = verified.filter(Boolean)
-// A verify-pass on an untrustworthy dispatch must NOT reach the land loop:
+// A verify-pass on an unverified or untrustworthy dispatch must NOT reach the land loop:
 // dispatch_audit trustworthy:false means the branch facts themselves are
 // suspect, so gating only on verify.verdict would land an unvetted branch.
+// Require the explicit boolean true; undefined/null is not trustworthy enough to land.
 const passed = real.filter(
-  (r) => r.verify && r.verify.verdict === 'pass' && r.reliability_trustworthy !== false,
+  (r) => r.verify && r.verify.verdict === 'pass' && r.reliability_trustworthy === true,
 )
 const failed = real.filter(
-  (r) => !r.verify || r.verify.verdict !== 'pass' || r.reliability_trustworthy === false,
+  (r) => !r.verify || r.verify.verdict !== 'pass' || r.reliability_trustworthy !== true,
 )
 
 log(`dispatch+verify done: ${passed.length} pass, ${failed.length} fail/skip of ${migrations.length}`)
@@ -235,6 +236,14 @@ return {
     verdict: r.verify ? r.verify.verdict : 'no-verify',
     skipped: r.skipped,
     reliability_trustworthy: r.reliability_trustworthy,
+    error_summary:
+      r.reliability_trustworthy !== true
+        ? 'reliability_unverified'
+        : r.skipped === 'no-branch'
+          ? 'no-branch'
+          : r.verify && r.verify.verdict === 'fail'
+            ? 'verify_failed'
+            : 'no-verify',
   })),
   landed,
   pushed: doPush,

@@ -8,6 +8,40 @@ const TOKEN_OPT_MIGRATE = ".claude/workflows/penumbra-token-opt-migrate.js";
 
 const ABS_REPO = "/abs/repo";
 
+// mcp__penumbra__dispatch_audit returns its payload nested under a top-level
+// "report" key. Tests below feed this real nested shape to the agent stubs so
+// the prompts must name report.status / report.trustworthy /
+// report.recommended_action for the stub to derive the flat schema fields.
+interface DispatchAuditReport {
+  status: string;
+  trustworthy: boolean;
+  recommended_action: string;
+}
+
+const DEFAULT_AUDIT_REPORT: { report: DispatchAuditReport } = {
+  report: {
+    status: "complete",
+    trustworthy: true,
+    recommended_action: "accept",
+  },
+};
+
+const UNTRUSTED_AUDIT_REPORT: { report: DispatchAuditReport } = {
+  report: {
+    status: "non_terminal_stale",
+    trustworthy: false,
+    recommended_action: "inspect_worktree",
+  },
+};
+
+function flattenAuditReport(audit: { report: DispatchAuditReport }) {
+  return {
+    reliability_status: audit.report.status,
+    reliability_trustworthy: audit.report.trustworthy,
+    reliability_action: audit.report.recommended_action,
+  };
+}
+
 interface ScriptReturn {
   ok?: boolean;
   tasks?: number;
@@ -79,6 +113,12 @@ const RELIABILITY_FIELDS = [
   "reliability_action",
 ] as const;
 
+const NESTED_RELIABILITY_PATHS = [
+  "report.status",
+  "report.trustworthy",
+  "report.recommended_action",
+] as const;
+
 describe("dispatch_audit reliability coverage", () => {
   const cases = [
     {
@@ -111,6 +151,13 @@ describe("dispatch_audit reliability coverage", () => {
       );
       expect(dispatchCall).toBeDefined();
       expect(dispatchCall!.prompt).toContain("mcp__penumbra__dispatch_audit");
+      for (const path of NESTED_RELIABILITY_PATHS) {
+        expect(dispatchCall!.prompt, `${name}: prompt must name ${path}`).toContain(path);
+      }
+      expect(
+        dispatchCall!.prompt,
+        `${name}: prompt must state dispatch_audit is nested under report`,
+      ).toContain('"report"');
       const schema = dispatchCall!.options?.schema as
         | { required?: string[]; properties?: Record<string, { type?: string }> }
         | undefined;
@@ -295,9 +342,7 @@ describe("penumbra-token-opt-batch", () => {
           branch: "b-untrusted",
           branch_tip: "abc1234",
           commit_count: 1,
-          reliability_status: "non_terminal_stale",
-          reliability_trustworthy: false,
-          reliability_action: "inspect_worktree",
+          ...flattenAuditReport(UNTRUSTED_AUDIT_REPORT),
         };
       }
       if (label.startsWith("verify:")) return { verdict: "pass" };
@@ -320,6 +365,44 @@ describe("penumbra-token-opt-batch", () => {
       tool: "m1",
       verdict: "pass",
       reliability_trustworthy: false,
+      error_summary: "reliability_unverified",
+    });
+    expect(result?.ok).toBe(false);
+  });
+
+  test("an audit-less verified migration is excluded from the land loop and reported as failed", async () => {
+    const stub: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("dispatch:")) {
+        // The dispatch agent failed to read the nested report, so the
+        // reliability fields are entirely absent despite a passing verify.
+        return {
+          handoff_id: "h-unaudited",
+          status: "completed",
+          branch: "b-unaudited",
+          branch_tip: "abc1234",
+          commit_count: 1,
+        };
+      }
+      if (label.startsWith("verify:")) return { verdict: "pass" };
+      return { landed: true, commit_sha: "abc1234", head_after: "abc1234" };
+    };
+
+    const { result, calls, error } = await runScript(
+      TOKEN_OPT_BATCH,
+      { migrations: [{ tool: "m1", dispatchPrompt: "p" }], repo: ABS_REPO },
+      stub,
+    );
+
+    expect(error).toBeUndefined();
+    const landCalls = calls.filter((call) => String(call.options?.label ?? "").startsWith("land:"));
+    expect(landCalls).toHaveLength(0);
+    expect(result?.landed).toHaveLength(0);
+    expect(result?.passed_verify).toEqual([]);
+    expect(result?.failed_verify?.[0]).toMatchObject({
+      tool: "m1",
+      verdict: "pass",
+      error_summary: "reliability_unverified",
     });
     expect(result?.ok).toBe(false);
   });
@@ -334,9 +417,7 @@ describe("penumbra-token-opt-batch", () => {
           branch: "b-ok",
           branch_tip: "abc1234",
           commit_count: 1,
-          reliability_status: "complete",
-          reliability_trustworthy: true,
-          reliability_action: "accept",
+          ...flattenAuditReport(DEFAULT_AUDIT_REPORT),
         };
       }
       if (label.startsWith("verify:")) return { verdict: "pass" };
