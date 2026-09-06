@@ -202,12 +202,51 @@ describe("penumbra-fanout dispatch contract", () => {
     expect(calls[0]?.prompt).toContain("index 0");
   });
 
+  test("the dispatch_audit step names the nested report.* paths", async () => {
+    const { prompts, error } = await runWorkflowCapturingPrompts(FANOUT, {
+      tasks: [{ message: "m" }],
+      defaults: { project_id: "penumbra" },
+    });
+
+    expect(error).toBeUndefined();
+    const prompt = prompts[0] ?? "";
+    const auditStep =
+      prompt.split("\n").find((line) => line.includes("mcp__penumbra__dispatch_audit")) ?? "";
+    expect(auditStep).not.toBe("");
+    // The tool nests its payload under `report` — bare top-level field names
+    // copy nothing, which is exactly how the fail-open gate shipped inert.
+    expect(auditStep).toContain("under a `report` key");
+    expect(auditStep).toMatch(/\breport\.status\b/);
+    expect(auditStep).toMatch(/\breport\.trustworthy\b/);
+    expect(auditStep).toMatch(/\breport\.recommended_action\b/);
+  });
+
+  test("the fail-closed rule is stated in step 6 and the ok schema description", async () => {
+    const { calls, error } = await runFanout(
+      { tasks: [{ message: "m" }], defaults: { project_id: "penumbra" } },
+      async () => ({ ok: false, status: "failed" }),
+    );
+
+    expect(error).toBeUndefined();
+    const prompt = calls[0]?.prompt ?? "";
+    expect(prompt).toContain("reliability_trustworthy === true");
+    expect(prompt).toContain("a missing audit is NOT trustworthy");
+    const schema = calls[0]?.options?.schema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined;
+    expect(schema?.properties?.ok?.description).toContain("reliability_trustworthy === true");
+    expect(schema?.properties?.ok?.description).toContain("NOT trustworthy");
+  });
+
   test("aggregate ok is false when a completed dispatch is reliability-untrustworthy", async () => {
     const { result, error } = await runFanout(
       { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      // dispatch_audit returns its payload nested under `report`; the proxy
+      // copies report.* into the flat reliability_* fields per the protocol.
       async () => ({
         ok: true,
         status: "completed",
+        report: { status: "complete", trustworthy: false, recommended_action: "inspect_worktree" },
         reliability_status: "complete",
         reliability_trustworthy: false,
         reliability_action: "inspect_worktree",
@@ -215,6 +254,8 @@ describe("penumbra-fanout dispatch contract", () => {
     );
 
     expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(false);
+    expect(result?.results?.[0]?.error_summary).toBe("reliability_untrustworthy");
     expect(result?.ok).toBe(false);
     expect(result?.completed).toBe(0);
     expect(result?.failed).toBe(1);
@@ -226,6 +267,7 @@ describe("penumbra-fanout dispatch contract", () => {
       async () => ({
         ok: true,
         status: "completed",
+        report: { status: "complete", trustworthy: true, recommended_action: "accept" },
         reliability_status: "complete",
         reliability_trustworthy: true,
         reliability_action: "accept",
@@ -233,9 +275,49 @@ describe("penumbra-fanout dispatch contract", () => {
     );
 
     expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(true);
     expect(result?.ok).toBe(true);
     expect(result?.completed).toBe(1);
     expect(result?.failed).toBe(0);
+  });
+
+  test("a completed-looking result with ABSENT reliability fields fails closed", async () => {
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "noaudit" }], defaults: { project_id: "penumbra" } },
+      // The proxy copied nothing — the reliability_* fields are absent
+      // entirely. Fail-open reads this as covered; the gate must read it as failed.
+      async () => ({ ok: true, status: "completed", label: "noaudit", index: 0 }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(false);
+    expect(result?.results?.[0]?.error_summary).toBe("reliability_unverified");
+    expect(result?.completed).toBe(0);
+    expect(result?.failed).toBe(1);
+    expect(result?.ok).toBe(false);
+  });
+
+  test("a proxy returning only the nested dispatch_audit report fails closed", async () => {
+    // The real tool returns { report: {...} }; a proxy that surfaced the
+    // nested payload without copying report.* into the flat reliability_*
+    // fields must NOT leak through the gate.
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "nested" }], defaults: { project_id: "penumbra" } },
+      async () => ({
+        ok: true,
+        status: "completed",
+        label: "nested",
+        index: 0,
+        report: { status: "complete", trustworthy: true, recommended_action: "accept" },
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(false);
+    expect(result?.results?.[0]?.error_summary).toBe("reliability_unverified");
+    expect(result?.completed).toBe(0);
+    expect(result?.failed).toBe(1);
+    expect(result?.ok).toBe(false);
   });
 
   test("a malformed JSON string for args throws a parse error, not a missing-tasks error", async () => {
