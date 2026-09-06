@@ -27,6 +27,21 @@ if (!a || !a.handoff_id || !a.commit_message) {
   throw new Error("args must include handoff_id and commit_message");
 }
 
+// Land/verify operate on an absolute repo path; relative paths or env fallbacks
+// would land in the wrong checkout and make verification fail with no_repo_scope.
+const rawRepo = (a && a.repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
+if (typeof rawRepo !== "string" || !rawRepo.startsWith("/")) {
+  return {
+    ok: false,
+    commit_sha: null,
+    head_verified: false,
+    lane_status: null,
+    task_status: null,
+    notes: "no_repo_scope: repo must be an absolute path",
+  };
+}
+const REPO = rawRepo;
+
 const LAND_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -124,7 +139,7 @@ phase("Verify");
 
 // Verify against the HOME checkout — the landed handoff's worktree is torn
 // down by dispatch_land, and main only moves in the home repo.
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
+// REPO is resolved and validated before phase("Land").
 
 const verifyRes = await agent(
   [

@@ -8,10 +8,20 @@ export const meta = {
   ],
 }
 
+let a = args
+if (typeof a === 'string') {
+  try {
+    a = JSON.parse(a)
+  } catch (err) {
+    throw new Error('integration-audit: args is not valid JSON: ' + (a.length > 300 ? a.slice(0, 300) + '...' : a))
+  }
+}
+if (!a || typeof a !== 'object') a = {}
+
 phase('Probe')
 
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".")
-const HOME = "~"
+const REPO = (a && a.repo) || (typeof process !== 'undefined' ? (process.env.PENUMBRA_REPO || process.cwd()) : '.')
+const HOME = (typeof process !== 'undefined' && process.env && process.env.HOME) || '~'
 
 const FINDING_SCHEMA = {
   type: 'object',
@@ -30,7 +40,7 @@ const FINDING_SCHEMA = {
 const PROBES = [
   {
     key: 'protocol',
-    prompt: `Read ${HOME}/.claude/CLAUDE.md. Confirm whether an "Anti-fabrication protocol" section exists and is loaded every turn (global CLAUDE.md is always in context). Report its concrete rules verbatim. surface="anti-fabrication-protocol". wired=true only if it is in the GLOBAL ~/.claude/CLAUDE.md (always loaded), not a project file.`,
+    prompt: `Read ${HOME}/.claude/CLAUDE.md. Confirm whether an "Anti-fabrication protocol" section exists and is loaded every turn (global CLAUDE.md is always in context). Report its concrete rules verbatim. surface="anti-fabrication-protocol". wired=true only if it is in the GLOBAL ${HOME}/.claude/CLAUDE.md (always loaded), not a project file.`,
   },
   {
     key: 'guard',
@@ -64,6 +74,11 @@ const findings = await parallel(
 
 const real = findings.filter(Boolean)
 
+const CRITICAL_SURFACES = ['anti-fabrication-protocol', 'data-loss-guard-hook', 'cc-workflow-lifecycle', 'proof-of-loop']
+const integrated = CRITICAL_SURFACES.every((surface) =>
+  real.some((f) => f.surface === surface && f.present === true && f.wired === true),
+)
+
 phase('Synthesize')
 
 const SYNTH_SCHEMA = {
@@ -90,4 +105,13 @@ const synth = await agent(
   { label: 'synthesize', phase: 'Synthesize', schema: SYNTH_SCHEMA, model: 'opus' },
 )
 
-return { findings: real, synthesis: synth }
+if (synth) {
+  // The verdict is derived from the per-surface findings, not the synthesizer's
+  // optimism — this is the guard that prevents an audit probe from "passing" when
+  // the underlying evidence says it should fail.
+  synth.integrated = integrated
+}
+
+const ok = integrated && !!synth && real.length > 0
+
+return { ok, integrated, findings: real, synthesis: synth }

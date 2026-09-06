@@ -18,7 +18,7 @@ if (typeof input === "string") {
   try {
     input = JSON.parse(input);
   } catch {
-    input = {};
+    throw new Error("session-first-moves: args is not valid JSON: " + input.slice(0, 300));
   }
 }
 

@@ -3,7 +3,7 @@
 //              args: { label: 'my-topic', spec: '<the planning spec markdown>',
 //                      personas?: [{name, prompt}, ...] } })
 // Fans out N persona lenses (CC subagents, sonnet) over args.spec in parallel,
-// then synthesizes one prioritized phased TDD plan (opus). Returns { label, personas, plan }.
+// then synthesizes one prioritized phased TDD plan (opus). Returns { ok, label, personas, plan, failed }.
 export const meta = {
   name: 'adversarial-plan-topic',
   description: 'CC adversarial-plan for one topic (args.spec): persona lenses draft phased TDD plans in parallel, then synthesize.',
@@ -23,7 +23,13 @@ const DEFAULT_PERSONAS = [
 const OUTPUT_INSTR = '\n\n## Output\nProduce a phased TDD plan from YOUR bias. Markdown, numbered phases. Each phase: failing test (name + assertion + file path) -> impl (smallest code, concrete file paths) -> verify (exact command). Note package boundaries, schema/flag deltas, and which services need a restart. End with a Trade-offs section. Do not implement; output only the plan.'
 
 let __args = args
-if (typeof __args === 'string') { try { __args = JSON.parse(__args) } catch { __args = {} } }
+if (typeof __args === 'string') {
+  try {
+    __args = JSON.parse(__args)
+  } catch (err) {
+    throw new Error('adversarial-plan-topic: args is not valid JSON: ' + (__args.length > 300 ? __args.slice(0, 300) + '...' : __args))
+  }
+}
 if (!__args || typeof __args !== 'object') __args = {}
 const spec = typeof __args.spec === 'string' ? __args.spec : ''
 const label = typeof __args.label === 'string' ? __args.label : 'topic'
@@ -31,6 +37,7 @@ const personas = (Array.isArray(__args.personas) && __args.personas.length) ? __
 if (!spec) {
   // Fail fast instead of fanning out personas on an empty topic.
   return {
+    ok: false,
     error: 'adversarial-plan-topic: empty spec — args did not arrive',
     args_type: typeof args,
     args_preview: typeof args === 'string' ? args.slice(0, 300) : JSON.stringify(args === undefined ? null : args).slice(0, 300),
@@ -43,7 +50,19 @@ const draftThunks = personas.map((p) => () =>
     .then((body) => ({ persona: p.name, body })),
 )
 const drafts = (await parallel(draftThunks)).filter((d) => d && d.body)
+const failed = personas.length - drafts.length
 log(`${label}: drafted ${drafts.length}/${personas.length} persona plans`)
+
+if (drafts.length === 0) {
+  return {
+    ok: false,
+    error: 'adversarial-plan-topic: all persona lenses failed',
+    label,
+    personas: [],
+    failed,
+    plan: null,
+  }
+}
 
 phase('Synthesize')
 const block = drafts.map((d) => `### ${d.persona}\n\n${d.body}`).join('\n\n')
@@ -64,4 +83,5 @@ const synthPrompt = [
 ].join('\n')
 const plan = await agent(synthPrompt, { label: `synth:${label}`, phase: 'Synthesize', model: 'opus' })
 
-return { label, personas: drafts.map((d) => d.persona), plan }
+const ok = failed === 0 && !!plan
+return { ok, label, personas: drafts.map((d) => d.persona), plan, failed }

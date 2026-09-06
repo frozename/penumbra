@@ -8,13 +8,29 @@ export const meta = {
   ],
 }
 
+let a = args
+if (typeof a === 'string') {
+  try {
+    a = JSON.parse(a)
+  } catch (err) {
+    throw new Error('adversarial-plan-integration: args is not valid JSON: ' + (a.length > 300 ? a.slice(0, 300) + '...' : a))
+  }
+}
+if (!a || typeof a !== 'object') a = {}
+
+const head_sha = typeof a.head_sha === 'string' ? a.head_sha.trim() : null
+
+const provenLoopLine = head_sha
+  ? `- Proven loop: 8 MCP tools migrated to envelope opt-in and landed via CC-Workflow -> penumbra-fleet (codex-acp-deep) -> dispatch_land: dispatch_timeline, chain_history, reconciler_verdicts, chain_list_agents, dispatch_audit, permission_get, fs_grep, fs_glob. origin/main == HEAD == ${head_sha}.`
+  : `- Proven loop: 8 MCP tools migrated to envelope opt-in and landed via CC-Workflow -> penumbra-fleet (codex-acp-deep) -> dispatch_land: dispatch_timeline, chain_history, reconciler_verdicts, chain_list_agents, dispatch_audit, permission_get, fs_grep, fs_glob. (Caller must verify the current HEAD SHA; do not invent one.)`
+
 const SPEC = `# Topic
 Maximize the mutual augmentation between CC ultracode/Workflows and penumbra-maestro — more parallelism/throughput WITHOUT reintroducing the fabrication or data-loss failure modes seen this session. Produce one prioritized, phased TDD plan.
 
 # Context (this session, all verified)
 - Anti-fabrication system built: (1) ~/.claude/CLAUDE.md "Anti-fabrication protocol" (7 hard rules: never narrate a result the same turn as the call; copy IDs/SHAs verbatim; one dispatch-lifecycle step per turn; land-before-teardown; single-token verification; prefer codified lifecycle; correct-don't-confabulate). (2) ~/.claude/hooks/penumbra-agent-gc-guard.sh wired into PreToolUse(Bash) — blocks force-delete/remove of fleet refs by handoff branch_name membership plus legacy agent/<uuid> fallback unless content is in main (3 safe checks: tip ancestor-of-main; full git diff branch..main empty; branch's OWN files diff empty for the squash + stale-base cases); fail-open on uncertainty. (3) CC Workflow lifecycle scripts (.claude/workflows/penumbra-token-opt-migrate.js single, penumbra-token-opt-batch.js batch) where each agent() returns schema-validated data so dispatch/land outcomes are never hand-narrated.
-- Proven loop: 8 MCP tools migrated to envelope opt-in and landed via CC-Workflow -> penumbra-fleet (codex-acp-deep) -> dispatch_land: dispatch_timeline, chain_history, reconciler_verdicts, chain_list_agents, dispatch_audit, permission_get, fs_grep, fs_glob. origin/main == HEAD == a8e327b6.
 - penumbra-token-opt-batch.js written but NOT yet run: fan out dispatch+verify across N tools in PARALLEL, then land each verified branch SEQUENTIALLY (serialize only the git-write on main).
+${provenLoopLine}
 - Integration audit verdict: integrated, 88/100. Held below per-surface 9-10s by real seams found in verified hook source.
 
 # Scope to plan (prioritize + sequence; surface dependencies, independence, and per-item risk)
@@ -60,6 +76,17 @@ const plans = await parallel(
 )
 
 const real = plans.filter((p) => p && p.body)
+const failed = PERSONAS.length - real.length
+
+if (real.length === 0) {
+  return {
+    ok: false,
+    error: 'adversarial-plan-integration: all persona lenses failed',
+    personas: [],
+    failed,
+    plan: null,
+  }
+}
 
 phase('Synthesize')
 
@@ -82,4 +109,6 @@ const merged = await agent(
   { label: 'synthesize', phase: 'Synthesize', model: 'opus' },
 )
 
-return { personas: real.map((p) => p.persona), failed: PERSONAS.length - real.length, plan: merged }
+const ok = failed === 0 && !!merged
+
+return { ok, personas: real.map((p) => p.persona), failed, plan: merged }
