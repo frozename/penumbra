@@ -51,6 +51,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_CONCURRENCY = 16;
 const MAX_ROUNDS = 10;
 const REAL_STORE_PATH_PATTERN = /(?:^|\/)share\/devin\/cli\//;
+const LOCK_HOLD_MARGIN_MS = 25;
 const CHILD_ENV_KEYS = [
   "HOME",
   "HTTP_PROXY",
@@ -372,13 +373,27 @@ async function settleClients(
   );
 }
 
+function roundResponseSpanMs(round: ProbeRoundResult): number {
+  const sends = round.processes
+    .filter((processResult) => processResult.sessionNewSendAt > 0)
+    .map((processResult) => processResult.sessionNewSendAt);
+  const responses = round.processes
+    .filter((processResult) => processResult.sessionNewResponseAt > 0)
+    .map((processResult) => processResult.sessionNewResponseAt);
+  if (sends.length === 0 || responses.length === 0) {
+    return 0;
+  }
+  return Math.max(...responses) - Math.min(...sends);
+}
+
 async function runRound(
   round: number,
   options: ProbeRunOptions,
   control: LockFreeControlEvidence | null = null,
+  lockHoldMs?: number,
 ): Promise<ProbeRoundResult> {
-  const lockJournalMode =
-    options.sqliteLockControlMs > 0 ? readWritableJournalMode(options.dbPath) : null;
+  const holdMs = lockHoldMs ?? options.sqliteLockControlMs;
+  const lockJournalMode = holdMs > 0 ? readWritableJournalMode(options.dbPath) : null;
   const preDb = safeDbSnapshot(options.dbPath);
   const clients = await initializeClients(options);
 
@@ -386,12 +401,8 @@ async function runRound(
   let processes: ProbeProcessResult[] = [];
   let lockControl: LockControlEvidence | null = null;
   try {
-    if (options.sqliteLockControlMs > 0) {
-      lock = beginLockControl(
-        options.dbPath,
-        options.sqliteLockControlMs,
-        lockJournalMode ?? "delete",
-      );
+    if (holdMs > 0) {
+      lock = beginLockControl(options.dbPath, holdMs, lockJournalMode ?? "delete");
     }
     const sessionResults = await Promise.all(
       clients.ready.map((client) => requestSession(client, round)),
@@ -430,7 +441,9 @@ async function runLockedRoundWithControl(
     ...options,
     sqliteLockControlMs: 0,
   });
-  return await runRound(round, options, controlEvidenceFor(controlRound));
+  const controlSpan = roundResponseSpanMs(controlRound);
+  const effectiveHoldMs = options.sqliteLockControlMs + controlSpan + LOCK_HOLD_MARGIN_MS;
+  return await runRound(round, options, controlEvidenceFor(controlRound), effectiveHoldMs);
 }
 
 function rejectArtificialSleep(argv: string[]): void {
