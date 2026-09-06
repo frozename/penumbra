@@ -3,7 +3,7 @@ export const meta = {
   description:
     "CC-runtime port of the penumbra adversarial-review. Runs the proven DAEMON multi-persona fleet review (config-driven personas + agent_performance capture preserved) and returns SCHEMA-VALIDATED typed findings (severity buckets as data, not synthesis.md prose). Optionally drives the dispatch-quality-gates lifecycle inline: one fix-round for HIGH findings under the 2-round cap, an independent grader that can reject regression-risk fixes, then a recommended lane_close gate_status. Wraps the daemon workflow rather than reimplementing personas. Lands nothing.",
   whenToUse:
-    "When you want adversarial-review findings as typed data (to feed lane_close metadata or branch on HIGH counts), or want review -> fix -> independent grade -> re-review codified in one run. Args { target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? }.",
+    "When you want adversarial-review findings as typed data (to feed lane_close metadata or branch on HIGH counts), or want review -> fix -> independent grade -> re-review codified in one run. Args { repo, target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? } — repo is a required ABSOLUTE path; the review fails closed without it.",
   phases: [
     {
       title: "Review",
@@ -23,7 +23,9 @@ export const meta = {
 };
 
 // ---- args ----
-// args: { target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? }
+// args: { repo, target_ref, base_ref?, fixRound?, laneId?, fixAgent?, graderModel?, taskIntent? }
+// repo is a required ABSOLUTE path — it becomes workflow_run/workflow_wait cwd
+// and chain_start caller_cwd; without it the run blocks before spending.
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 let a = args;
 if (typeof a === "string") {
@@ -42,7 +44,40 @@ const graderModel = a && a.graderModel;
 const taskIntent =
   (a && a.taskIntent) ||
   `Preserve the intent of the pre-fix diff ${base_ref}..${target_ref}: address only the HIGH review findings without reverting, weakening, or deleting unrelated existing behavior.`;
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
+// Workflow script sandboxes have no process object, so repo scope must come
+// from parsed args.repo — never process.env or process.cwd(). There is
+// deliberately no default: a missing repo is what lets the daemon resolve cwd
+// to its own tree and return a clean-looking void review.
+const REPO = String((a && a.repo) || "").trim();
+if (!REPO.startsWith("/")) {
+  log(
+    "adversarial-review: args.repo must be a non-empty ABSOLUTE path — it is passed as workflow_run cwd; without it the daemon resolves cwd to ITS OWN repo and every persona reviews the wrong tree, returning a clean-looking VOID report",
+  );
+  return {
+    ranNothingToMain: true,
+    target_ref,
+    base_ref,
+    rounds: 0,
+    outcome: "failed",
+    verdict: "block",
+    high: [],
+    medium: [],
+    low: [],
+    high_count: 0,
+    medium_count: 0,
+    low_count: 0,
+    completed_personas: [],
+    failed_personas: ["no_repo_scope"],
+    fix: null,
+    fix_grade: null,
+    fix_round_status: "NOT_RUN",
+    fix_rejected: false,
+    land_candidate: target_ref,
+    land_candidate_reason: "review refused: args.repo missing or not an absolute path",
+    laneRecommendation: null,
+    next: "adversarial-review refused to run — pass args.repo as a non-empty ABSOLUTE path so the daemon review resolves the right repo.",
+  };
+}
 
 // ---- schemas (typed findings — the primary payoff over parsing synthesis.md) ----
 const FINDING = {
@@ -83,6 +118,14 @@ const SYNTHESIS_SCHEMA = {
         "verbatim persona->handoff_id mapping from synthesis.md frontmatter (JSON or text)",
     },
     synthesis_handoff_id: { type: "string" },
+    resolution_warning: {
+      type: "string",
+      description: "verbatim resolution_warning from the workflow_run response, when present",
+    },
+    review_cwd: {
+      type: "string",
+      description: "absolute cwd passed to workflow_run and workflow_wait",
+    },
   },
 };
 const FIX_SCHEMA = {
@@ -127,12 +170,12 @@ function reviewPrompt(ref) {
   return [
     `Run the penumbra DAEMON adversarial-review over a diff and return its findings as TYPED data. Report only verbatim values from tool results; never invent a handoff_id.`,
     `YOU ARE A PROXY — your ONLY job is to dispatch the daemon review, poll it, and parse its synthesis. You MUST NOT read, diff, or review the code yourself. If you ever find yourself running \`git diff\`/\`git show\` or analyzing the implementation, STOP — that is wrong, it is not your job, and a long manual review trips the no-progress watchdog (kill+retry+thrash). On ANY failure (STEP 1 workflow_run errors; STEP 3 result.outcome is "failed"; or there is no synthesis_path), DO NOT fall back to a manual inline review — instead return SYNTHESIS_SCHEMA with verdict="block", shared_concerns="daemon adversarial-review unavailable: <verbatim reason>", empty high/medium/low arrays, completed_personas=[], and failed_personas=["daemon-review-failed"].`,
-    `STEP 1: mcp__penumbra__workflow_run name="adversarial-review", wait=false, args={ base_ref: "${base_ref}", target_ref: "${ref}" }. Copy the workflow_run_id verbatim. If this call itself errors, apply the PROXY failure rule above and return immediately.`,
+    `STEP 1: mcp__penumbra__workflow_run name="adversarial-review", wait=false, cwd="${REPO}", args={ base_ref: "${base_ref}", target_ref: "${ref}" }. Copy the workflow_run_id verbatim. If the response carries a resolution_warning field, copy it VERBATIM into the resolution_warning output field — a value of "workflow_cwd_inferred_from_mcp_cwd" means the run resolved to the daemon's own repo and every persona is reviewing the wrong tree, so apply the PROXY failure rule above (verdict="block") and return immediately. If this call itself errors, apply the PROXY failure rule above and return immediately.`,
     `  (This fans personas out on the penumbra fleet — preserving agent_performance capture + config personas. Do NOT reimplement personas.)`,
-    `STEP 2 (watchdog-safe poll — do NOT use wait=true, it would block >180s and trip the workflow watchdog -> duplicate runs): loop mcp__penumbra__workflow_wait with timeout_ms=150000 (one call per step) until status is terminal (completed/failed), for AT MOST 12 iterations (~30min). On timeout, call it again. If still not terminal after 12 polls, apply the PROXY failure rule (verdict="block", failed_personas=["daemon-review-timeout"]) and return. Never a single block longer than ~150s, and never substitute your own review for the daemon's.`,
+    `STEP 2 (watchdog-safe poll — do NOT use wait=true, it would block >180s and trip the workflow watchdog -> duplicate runs): loop mcp__penumbra__workflow_wait with timeout_ms=150000 and cwd="${REPO}" (one call per step) until status is terminal (completed/failed), for AT MOST 12 iterations (~30min). On timeout, call it again. If still not terminal after 12 polls, apply the PROXY failure rule (verdict="block", failed_personas=["daemon-review-timeout"]) and return. Never a single block longer than ~150s, and never substitute your own review for the daemon's.`,
     `STEP 3: from the terminal result.runResult read: outcome, completed_personas, failed_personas, out_dir, synthesis_path, synthesis_handoff_id (if present).`,
     `STEP 4: read the synthesis markdown at synthesis_path. Parse YAML frontmatter for persona_handoff_ids + synthesis_handoff_id (verbatim). Parse the body: headline verdict (land / land with revisions / block), shared concerns, and EVERY finding under the HIGH / MEDIUM / LOW headings (id like F1, title, the personas that raised it, file, detail, fix).`,
-    `STEP 5: return SYNTHESIS_SCHEMA. Place each finding in high/medium/low by its heading. completed_personas/failed_personas and outcome from STEP 3. Every handoff_id verbatim from a tool result.`,
+    `STEP 5: return SYNTHESIS_SCHEMA. Place each finding in high/medium/low by its heading. completed_personas/failed_personas and outcome from STEP 3. Every handoff_id verbatim from a tool result. Set review_cwd to the cwd you passed to workflow_run (${REPO}) and resolution_warning verbatim from the workflow_run response when present.`,
   ].join("\n");
 }
 
