@@ -41,15 +41,28 @@ export const RegistrarAppendInputShape = {
     .describe(
       "Required for blocker (opened|resolved), follow_up (owed|done|dropped), phase_transition target status, and entry_transition target status (active|paused|complete|abandoned).",
     ),
-  ref_event_id: z.number().int().positive().optional(),
+  ref_event_id: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "References a prior event on this registrar. Required when closing an event: blocker state='resolved' and follow_up state='done' or 'dropped' are rejected without it. Only valid on blocker and follow_up kinds; optional otherwise.",
+    ),
   from_status: z
     .union([RegistrarPhaseStatusSchema, RegistrarStatusSchema])
     .optional()
     .describe(
       "Required only for phase_transition (the phase status being transitioned from) and entry_transition (the entry status being transitioned from, including draft).",
     ),
-  link_kind: RegistrarLinkKindSchema.optional(),
-  link_value: z.string().min(1).optional(),
+  link_kind: RegistrarLinkKindSchema.optional().describe(
+    "Link category. Required for kind='link'; optional on any other kind. Must be sent together with link_value.",
+  ),
+  link_value: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Link target. Must be sent together with link_kind."),
 };
 
 export const RegistrarAppendInputSchema = z

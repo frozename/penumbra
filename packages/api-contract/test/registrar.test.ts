@@ -95,6 +95,88 @@ describe("RegistrarEventInputSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  test("accepts link_kind/link_value on non-link event kinds", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "follow_up",
+        state: "done",
+        ref_event_id: 3,
+        link_kind: "commit_sha",
+        link_value: "feec0a0e",
+      }).success,
+    ).toBe(true);
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "progress",
+        link_kind: "memory_id",
+        link_value: "7b8f6f8e-0000-4000-8000-000000000000",
+      }).success,
+    ).toBe(true);
+  });
+
+  test("rejects link_kind without link_value and vice versa", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "progress",
+        link_kind: "commit_sha",
+      }).success,
+    ).toBe(false);
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "follow_up",
+        state: "owed",
+        link_value: "feec0a0e",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("rejects a link_kind outside the storage enum", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "progress",
+        link_kind: "anything_i_want",
+        link_value: "feec0a0e",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("kind='link' still requires both link fields", () => {
+    expect(
+      RegistrarEventInputSchema.safeParse({ ...base, kind: "link", link_kind: "commit_sha" })
+        .success,
+    ).toBe(false);
+    expect(
+      RegistrarEventInputSchema.safeParse({
+        ...base,
+        kind: "link",
+        link_kind: "commit_sha",
+        link_value: "feec0a0e",
+      }).success,
+    ).toBe(true);
+  });
+
+  test("done/dropped follow_ups still require ref_event_id, link fields notwithstanding", () => {
+    for (const state of ["done", "dropped"] as const) {
+      expect(
+        RegistrarEventInputSchema.safeParse({ ...base, kind: "follow_up", state }).success,
+      ).toBe(false);
+      expect(
+        RegistrarEventInputSchema.safeParse({
+          ...base,
+          kind: "follow_up",
+          state,
+          link_kind: "commit_sha",
+          link_value: "feec0a0e",
+        }).success,
+      ).toBe(false);
+    }
+  });
 });
 
 describe("RegistrarCreateRequestSchema", () => {
