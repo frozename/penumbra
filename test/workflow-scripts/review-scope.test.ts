@@ -10,6 +10,23 @@ const FANOUT = ".claude/workflows/penumbra-fanout.js";
 
 type AgentStub = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
 
+interface ReviewResultRecord {
+  ok?: boolean;
+  target_ref?: string;
+  index?: number;
+  error_summary?: string;
+  [key: string]: unknown;
+}
+
+interface SweepReturn {
+  ok?: boolean;
+  total?: number;
+  reviewed_ok?: number;
+  dropped?: ReviewResultRecord[];
+  results?: ReviewResultRecord[];
+  [key: string]: unknown;
+}
+
 // The shared harness drops the workflow's return value; these tests assert on
 // the returned object, so run the body with the same stub surface locally.
 async function runReturning(
@@ -187,6 +204,77 @@ describe("penumbra-review-sweep repo scope", () => {
 
   test("validator block is byte-identical to penumbra-fanout's", () => {
     expect(validatorBlock(SWEEP)).toBe(validatorBlock(FANOUT));
+  });
+});
+
+describe("penumbra-review-sweep dropped results", () => {
+  test("a dropped proxy result is substituted in place, keeping index order stable", async () => {
+    let call = 0;
+    const { result, error } = await runReturning(
+      SWEEP,
+      {
+        repo: "/tmp/x",
+        targets: [{ target_ref: "first" }, { target_ref: "mid" }, { target_ref: "third" }],
+      },
+      async () => {
+        call += 1;
+        return call === 2 ? null : { ok: true, outcome: "success" };
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const sweep = result as SweepReturn | undefined;
+    const results = sweep?.results ?? [];
+    expect(results).toHaveLength(3);
+    expect(results.map((r) => r.index)).toEqual([0, 1, 2]);
+    expect(results[0]).toMatchObject({ ok: true, target_ref: "first", index: 0 });
+    expect(results[1]).toMatchObject({
+      ok: false,
+      target_ref: "mid",
+      index: 1,
+      error_summary: "agent_dropped",
+    });
+    expect(results[2]).toMatchObject({ ok: true, target_ref: "third", index: 2 });
+    expect(sweep?.ok).toBe(false);
+    expect(sweep?.total).toBe(3);
+    expect(sweep?.reviewed_ok).toBe(2);
+    expect(sweep?.dropped).toHaveLength(1);
+    expect(sweep?.dropped?.[0]).toMatchObject({ target_ref: "mid", index: 1 });
+  });
+
+  test("a target without target_ref gets the stable target-i identity in its dropped record", async () => {
+    const { result, error } = await runReturning(
+      SWEEP,
+      { repo: "/tmp/x", targets: [{}] },
+      async () => null,
+    );
+
+    expect(error).toBeUndefined();
+    const sweep = result as SweepReturn | undefined;
+    expect(sweep?.results?.[0]).toMatchObject({
+      ok: false,
+      target_ref: "target-0",
+      index: 0,
+      error_summary: "agent_dropped",
+    });
+  });
+
+  test("REVIEW_RESULT requires target_ref and index, and the prompt instructs a verbatim echo", async () => {
+    const { prompts, schemas, error } = await runReturning(SWEEP, {
+      repo: "/tmp/x",
+      targets: [{ target_ref: "a" }, {}],
+    });
+
+    expect(error).toBeUndefined();
+    const schema = schemas[0] as
+      | { required?: string[]; properties?: Record<string, { type?: string }> }
+      | undefined;
+    expect(schema?.required).toEqual(expect.arrayContaining(["target_ref", "index"]));
+    expect(schema?.properties?.index?.type).toBe("integer");
+    expect(prompts[0] ?? "").toContain('target_ref "a"');
+    expect(prompts[0] ?? "").toContain("index 0");
+    expect(prompts[1] ?? "").toContain('target_ref "target-1"');
+    expect(prompts[1] ?? "").toContain("index 1");
   });
 });
 

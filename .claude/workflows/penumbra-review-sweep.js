@@ -101,10 +101,11 @@ const maxPolls = Math.ceil(reviewTimeoutMs / 90000)
 const REVIEW_RESULT = {
   type: 'object',
   additionalProperties: false,
-  required: ['ok', 'target_ref'],
+  required: ['ok', 'target_ref', 'index'],
   properties: {
     ok: { type: 'boolean' },
-    target_ref: { type: 'string' },
+    target_ref: { type: 'string', description: 'the target_ref echoed verbatim, binding this result to its sweep target' },
+    index: { type: 'integer', description: 'zero-based position of this target in the sweep, echoed verbatim' },
     base_ref: { type: 'string' },
     outcome: { type: 'string', description: 'success | success_partial | failed | error' },
     workflow_run_id: { type: 'string' },
@@ -116,7 +117,8 @@ const REVIEW_RESULT = {
   },
 }
 
-function buildPrompt(target) {
+function buildPrompt(target, i) {
+  const targetId = target.target_ref || `target-${i}`
   const reviewArgs = {
     target_ref: target.target_ref || 'HEAD',
     base_ref: target.base_ref || defaults.base_ref || 'main',
@@ -136,14 +138,14 @@ function buildPrompt(target) {
     `Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000, cwd: ${JSON.stringify(targetRepo)} }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ${maxPolls} iterations (~${Math.round(reviewTimeoutMs / 60000)} min total). NEVER issue one long wait, and NEVER call workflow_run again.`,
     'When terminal, read outcome and any synthesis.md artifact path from the TERMINAL mcp__penumbra__workflow_wait response you already polled; workflow_status is progress-only run state and does not include the result payload.',
     '',
-    'Return StructuredOutput per schema. ok=true only when the run reached success or success_partial AND carried no resolution_warning; otherwise ok=false with error_summary.',
+    `Return StructuredOutput per schema. ok=true only when the run reached success or success_partial AND carried no resolution_warning; otherwise ok=false with error_summary. Echo the target_ref "${targetId}" and index ${i} VERBATIM into target_ref and index.`,
   ].join('\n')
 }
 
 phase('Review')
 const results = await parallel(
   targets.map((target, i) => () =>
-    agent(buildPrompt(target), {
+    agent(buildPrompt(target, i), {
       label: `review:${target.target_ref || 'HEAD'}#${i}`,
       phase: 'Review',
       schema: REVIEW_RESULT,
@@ -152,12 +154,26 @@ const results = await parallel(
   ),
 )
 
-const clean = results.filter(Boolean)
+// Index-preserving: results[i] answers targets[i] even when the proxy call
+// dropped, so positional consumers keep their target pairing.
+const clean = results.map((r, i) => {
+  const targetRef = targets[i].target_ref || `target-${i}`
+  return r
+    ? { ...r, target_ref: targetRef, index: i }
+    : { ok: false, target_ref: targetRef, index: i, error_summary: 'agent_dropped' }
+})
 const ok = clean.filter((r) => r.ok)
-log(`penumbra-review-sweep: ${ok.length}/${targets.length} targets reviewed ok.`)
+const dropped = clean.filter((r) => r.error_summary === 'agent_dropped')
+log(
+  `penumbra-review-sweep: ${ok.length}/${targets.length} targets reviewed ok.` +
+    (dropped.length
+      ? ` ${dropped.length} dropped (agent skipped/errored): ${dropped.map((d) => d.target_ref).join(', ')}`
+      : ''),
+)
 return {
-  ok: ok.length === targets.length && clean.length === targets.length,
+  ok: ok.length === targets.length,
   total: targets.length,
   reviewed_ok: ok.length,
+  dropped,
   results: clean,
 }
