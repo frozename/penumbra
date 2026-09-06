@@ -562,7 +562,32 @@ export class WorktreeManager {
     baseRef: string,
   ): Promise<void> {
     const { name, email } = await this.resolveParentGitIdentity(repoRoot, baseRef);
-    await this.git(["-C", repoRoot, "config", "extensions.worktreeConfig", "true"]);
+
+    // Enable per-worktree config files. This is a persistent, repo-wide
+    // format extension stored in the parent repository's .git/config; it is
+    // required for `git config --worktree` to write values scoped to this
+    // worktree. The extension is unavoidable: a hand-written
+    // $GIT_DIR/worktrees/<id>/config.worktree is ignored unless it is set. We
+    // check first and only write when it is not already enabled, so a dispatch
+    // does not keep mutating the shared repo state on every worktree creation.
+    let worktreeConfigEnabled = false;
+    try {
+      const { stdout } = await this.git([
+        "-C",
+        repoRoot,
+        "config",
+        "--get",
+        "--local",
+        "extensions.worktreeConfig",
+      ]);
+      worktreeConfigEnabled = stdout.trim() === "true";
+    } catch {
+      // Not yet set in the parent repository.
+    }
+    if (!worktreeConfigEnabled) {
+      await this.git(["-C", repoRoot, "config", "extensions.worktreeConfig", "true"]);
+    }
+
     await this.git(["-C", wtPath, "config", "--worktree", "user.name", name]);
     await this.git(["-C", wtPath, "config", "--worktree", "user.email", email]);
   }
@@ -599,6 +624,11 @@ export class WorktreeManager {
     repoRoot: string,
   ): Promise<{ name: string; email: string } | null> {
     try {
+      // Read the parent repository's *effective* identity (local > global >
+      // system), not just the local .git/config. Worktrees inherit this through
+      // git's normal config resolution, and the explicit worktree-scoped value
+      // we write below overrides whatever the ACP agent's environment fails to
+      // provide.
       const { stdout: nameOut } = await this.git(["-C", repoRoot, "config", "user.name"]);
       const { stdout: emailOut } = await this.git(["-C", repoRoot, "config", "user.email"]);
       const name = nameOut.trim();
@@ -607,7 +637,7 @@ export class WorktreeManager {
         return { name, email };
       }
     } catch {
-      // Missing or unreadable local config falls through to commit author.
+      // No effective user.name/user.email for this repository.
     }
     return null;
   }

@@ -25,6 +25,7 @@ async function setupTempRepo(
   prefix: string,
   opts?: {
     user?: { name: string; email: string };
+    global?: { name: string; email: string };
     commitAuthor?: { name: string; email: string };
   },
 ): Promise<{ repoDir: string; isolatedEnv: NodeJS.ProcessEnv }> {
@@ -35,6 +36,13 @@ async function setupTempRepo(
     HOME: isolatedHome,
     XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
   };
+
+  if (opts?.global) {
+    fs.writeFileSync(
+      path.join(isolatedHome, ".gitconfig"),
+      `[user]\n\tname = ${opts.global.name}\n\temail = ${opts.global.email}\n`,
+    );
+  }
 
   await git(repoDir, ["init", "-b", "main"], isolatedEnv);
 
@@ -156,6 +164,99 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
     expect(logAuthor.trim()).toBe("Commit Author <commit@example.com>");
 
     await manager.teardownWorktree("22222222-2222-4222-8222-222222222222", true);
+  });
+
+  it("prefers the effective parent config (including global) over the base ref commit author", async () => {
+    repo = await setupTempRepo("penumbra-wt-identity-global-", {
+      global: { name: "Global Author", email: "global@example.com" },
+      commitAuthor: { name: "Base Commit Author", email: "basecommit@example.com" },
+    });
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: isolatedRunner(repo.isolatedEnv),
+    });
+
+    const handle = await manager.createWorktree("44444444-4444-4444-8444-444444444444");
+
+    const { stdout: name } = await git(handle.path, ["config", "user.name"], repo.isolatedEnv);
+    const { stdout: email } = await git(handle.path, ["config", "user.email"], repo.isolatedEnv);
+
+    expect(name.trim()).toBe("Global Author");
+    expect(email.trim()).toBe("global@example.com");
+
+    await commitInWorktree(handle.path, repo.isolatedEnv);
+
+    const { stdout: logAuthor } = await git(
+      handle.path,
+      ["log", "-1", "--format=%an <%ae>"],
+      repo.isolatedEnv,
+    );
+    expect(logAuthor.trim()).toBe("Global Author <global@example.com>");
+
+    const { stdout: baseAuthor } = await git(
+      repo.repoDir,
+      ["log", "-1", "--format=%an <%ae>", "HEAD"],
+      repo.isolatedEnv,
+    );
+    expect(baseAuthor.trim()).toBe("Base Commit Author <basecommit@example.com>");
+
+    await manager.teardownWorktree("44444444-4444-4444-8444-444444444444", true);
+  });
+
+  it("does not re-enable extensions.worktreeConfig when it is already set", async () => {
+    repo = await setupTempRepo("penumbra-wt-identity-wtconfig-idempotent-", {
+      user: { name: "Local Author", email: "local@example.com" },
+    });
+
+    await git(repo.repoDir, ["config", "extensions.worktreeConfig", "true"], repo.isolatedEnv);
+
+    const calls: string[][] = [];
+    const recordingRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      calls.push(args);
+      return execFile(cmd, args, {
+        ...opts,
+        env: { ...process.env, ...repo.isolatedEnv },
+        encoding: opts?.encoding ?? "utf8",
+      });
+    };
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: recordingRunner,
+    });
+
+    const handle = await manager.createWorktree("55555555-5555-4555-8555-555555555555");
+
+    const setWorktreeConfig = calls.filter(
+      (args) =>
+        args[0] === "-C" &&
+        args[1] === repo.repoDir &&
+        args[2] === "config" &&
+        args[3] === "extensions.worktreeConfig" &&
+        args[4] === "true",
+    );
+    expect(setWorktreeConfig).toEqual([]);
+
+    const getWorktreeConfig = calls.filter(
+      (args) =>
+        args[0] === "-C" &&
+        args[1] === repo.repoDir &&
+        args[2] === "config" &&
+        args[3] === "--get" &&
+        args[4] === "--local" &&
+        args[5] === "extensions.worktreeConfig",
+    );
+    expect(getWorktreeConfig.length).toBe(1);
+
+    const { stdout: name } = await git(handle.path, ["config", "user.name"], repo.isolatedEnv);
+    const { stdout: email } = await git(handle.path, ["config", "user.email"], repo.isolatedEnv);
+    expect(name.trim()).toBe("Local Author");
+    expect(email.trim()).toBe("local@example.com");
+
+    await manager.teardownWorktree("55555555-5555-4555-8555-555555555555", true);
   });
 
   it("refuses to provision when the parent repository has no usable identity", async () => {
