@@ -12,8 +12,8 @@ interface FanoutArgs {
 }
 
 describe("penumbra-swarm argument forwarding", () => {
-  test("maxTasks:0 dispatches nothing", async () => {
-    const { workflowCalls, error } = await runWorkflowCapturingPrompts(SWARM, {
+  test("maxTasks:0 dispatches nothing and makes no planner agent call", async () => {
+    const { prompts, workflowCalls, error } = await runWorkflowCapturingPrompts(SWARM, {
       goal: "ship it",
       maxTasks: 0,
       defaults: { project_id: "penumbra" },
@@ -23,6 +23,7 @@ describe("penumbra-swarm argument forwarding", () => {
     const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
     expect(fanout).toBeUndefined();
     expect(workflowCalls).toHaveLength(0);
+    expect(prompts).toHaveLength(0);
   });
 
   test("defaults.task_name reaches penumbra-fanout", async () => {

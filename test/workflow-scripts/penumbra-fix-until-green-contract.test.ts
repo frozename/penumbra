@@ -22,6 +22,7 @@ interface FixUntilGreenResult {
   result: Record<string, unknown> | undefined;
   workflowCalls: Array<{ name: string; args: unknown }>;
   agentCalls: Array<{ prompt: string; options?: Record<string, unknown> }>;
+  logs: string[];
   error?: unknown;
 }
 
@@ -53,7 +54,10 @@ async function runFixUntilGreen(
     );
 
   const phase = async (_name: string, fn?: () => unknown) => (fn ? fn() : undefined);
-  const log = () => {};
+  const logs: string[] = [];
+  const log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
 
   const workflow = async (name: string, wArgs: unknown) => {
     workflowCalls.push({ name, args: wArgs });
@@ -85,9 +89,9 @@ async function runFixUntilGreen(
     const result = (await run(agent, parallel, pipeline, phase, log, args, {}, workflow)) as
       | Record<string, unknown>
       | undefined;
-    return { result, workflowCalls, agentCalls };
+    return { result, workflowCalls, agentCalls, logs };
   } catch (error) {
-    return { result: undefined, workflowCalls, agentCalls, error };
+    return { result: undefined, workflowCalls, agentCalls, logs, error };
   }
 }
 
@@ -221,7 +225,7 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
   });
 
   test("untrustworthy_dispatch when reliability_trustworthy is false", async () => {
-    const { result } = await runFixUntilGreen(
+    const { result, logs } = await runFixUntilGreen(
       {
         task: { message: "m" },
         check: "true",
@@ -240,6 +244,28 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
     expect(result?.ok).toBe(false);
     const rounds = result?.rounds as Round[] | undefined;
     expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
+    expect(logs.some((log) => log.includes("audited and distrusted"))).toBe(true);
+  });
+
+  test("untrustworthy_dispatch when reliability_trustworthy is missing", async () => {
+    const { result, logs } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [{ ok: true, branch: "feat/x", label: "t0", index: 0 }],
+        }),
+      },
+    );
+
+    expect(result?.ok).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
+    expect(logs.some((log) => log.includes("never audited"))).toBe(true);
   });
 });
 
@@ -255,7 +281,14 @@ describe("penumbra-fix-until-green grader availability", () => {
       },
       {
         workflow: async () => ({
-          results: [{ ok: true, branch: "feat/x", check_line: "CHECK_RESULT: PASS" }],
+          results: [
+            {
+              ok: true,
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: PASS",
+            },
+          ],
         }),
         agent: async (_prompt, options) => {
           if (String(options?.label ?? "").startsWith("rubric")) return null;
@@ -290,6 +323,7 @@ describe("penumbra-fix-until-green full response parsing", () => {
             {
               ok: true,
               branch: "feat/x",
+              reliability_trustworthy: true,
               response: "Here is some narrative\n\nCHECK_RESULT: PASS\n",
             },
           ],

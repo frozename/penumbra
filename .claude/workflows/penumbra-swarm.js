@@ -113,6 +113,11 @@ const agentType = opts.agentType
 const plannerModel = opts.plannerModel
 const dispatcherModel = opts.dispatcherModel || 'sonnet'
 
+if (maxTasks === 0) {
+  log('penumbra-swarm: no tasks were requested (maxTasks: 0).')
+  return { ok: false, error: 'empty_plan', goal, plan: undefined }
+}
+
 const PLAN_SCHEMA = {
   type: 'object',
   additionalProperties: false,

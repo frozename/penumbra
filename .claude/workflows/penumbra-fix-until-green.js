@@ -426,7 +426,7 @@ for (let i = 0; i < maxRounds; i++) {
   let dispatchFailure = null
   if (!r) {
     dispatchFailure = 'agent_dropped'
-  } else if (r.reliability_trustworthy === false) {
+  } else if (r.reliability_trustworthy !== true) {
     dispatchFailure = 'untrustworthy_dispatch'
   } else if (!r.ok) {
     dispatchFailure = 'chain_failed'
@@ -434,8 +434,9 @@ for (let i = 0; i < maxRounds; i++) {
     dispatchFailure = 'completed_no_branch'
   }
   if (dispatchFailure) {
+    const detail = dispatchFailure === 'untrustworthy_dispatch' ? (r.reliability_trustworthy === false ? 'audited and distrusted' : 'never audited') : ''
     rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r) })
-    log(`fix-until-green round ${i + 1}: ${dispatchFailure}; stopping.`)
+    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}; stopping.`)
     break
   }
 
