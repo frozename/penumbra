@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test";
+import { z } from "zod";
 
 import type { DaemonClient } from "@src/daemon-client.js";
 import { HandleStore } from "@src/handle-store.js";
@@ -7,7 +8,12 @@ import { DEFAULT_BUDGET, estimateTokens } from "@src/responses/budget.js";
 import type { EnvelopeResult } from "@src/responses/envelope.js";
 import { isEnvelopeResult } from "@src/responses/envelope.js";
 import { readHandleHandler } from "@src/tools/read-handle.js";
-import { workflowStatusHandler, workflowWaitHandler } from "@src/tools/workflow-status.js";
+import {
+  workflowStatusHandler,
+  WorkflowStatusInputShape,
+  workflowWaitHandler,
+  WorkflowWaitInputShape,
+} from "@src/tools/workflow-status.js";
 
 import { fakeDaemon } from "../helpers.js";
 
@@ -307,4 +313,86 @@ test("workflow_wait exposes result_handle_id after central response budgeting", 
   } finally {
     store.close();
   }
+});
+
+test("WorkflowStatusInputShape accepts cwd and rejects missing workflow_run_id", () => {
+  const schema = z.object(WorkflowStatusInputShape);
+  expect(schema.parse({ workflow_run_id: "wfrun-1", cwd: "/foo/bar" })).toMatchObject({
+    workflow_run_id: "wfrun-1",
+    cwd: "/foo/bar",
+  });
+  expect(schema.parse({ workflow_run_id: "wfrun-1" })).toMatchObject({
+    workflow_run_id: "wfrun-1",
+  });
+  expect(() => schema.parse({})).toThrow();
+  expect(() => schema.parse({ workflow_run_id: "wfrun-1", cwd: 123 })).toThrow();
+});
+
+test("WorkflowWaitInputShape accepts cwd and timeout_ms and rejects missing workflow_run_id", () => {
+  const schema = z.object(WorkflowWaitInputShape);
+  expect(schema.parse({ workflow_run_id: "wfrun-1", cwd: "/foo/bar" })).toMatchObject({
+    workflow_run_id: "wfrun-1",
+    cwd: "/foo/bar",
+  });
+  expect(schema.parse({ workflow_run_id: "wfrun-1" })).toMatchObject({
+    workflow_run_id: "wfrun-1",
+    timeout_ms: 300000,
+  });
+  expect(
+    schema.parse({ workflow_run_id: "wfrun-1", cwd: "/foo/bar", timeout_ms: 60000 }),
+  ).toMatchObject({
+    workflow_run_id: "wfrun-1",
+    cwd: "/foo/bar",
+    timeout_ms: 60000,
+  });
+  expect(() => schema.parse({})).toThrow();
+  expect(() => schema.parse({ workflow_run_id: "wfrun-1", cwd: 123 })).toThrow();
+});
+
+test("workflow_status forwards cwd to daemon.workflowStatus", async () => {
+  const workflowStatus = mock<WorkflowStatusFn>(() => Promise.resolve({ status: "running" }));
+  const handler = workflowStatusHandler(fakeDaemon({ workflowStatus }));
+  await handler({ workflow_run_id: "wfrun-1", cwd: "/some/project" });
+  expect(workflowStatus).toHaveBeenCalledWith({
+    workflow_run_id: "wfrun-1",
+    cwd: "/some/project",
+  });
+});
+
+test("workflow_status omits cwd from the request body when it is not provided", async () => {
+  const workflowStatus = mock<WorkflowStatusFn>(() => Promise.resolve({ status: "running" }));
+  const handler = workflowStatusHandler(fakeDaemon({ workflowStatus }));
+  await handler({ workflow_run_id: "wfrun-1" });
+  expect(workflowStatus).toHaveBeenCalledWith({ workflow_run_id: "wfrun-1" });
+  const callArg = workflowStatus.mock.calls[0]![0] as Record<string, unknown>;
+  expect("cwd" in callArg).toBe(false);
+  expect(Object.keys(callArg)).toEqual(["workflow_run_id"]);
+});
+
+test("workflow_wait forwards cwd and timeout_ms to daemon.workflowWait", async () => {
+  const workflowWait = mock<WorkflowWaitFn>(() => Promise.resolve({ status: "completed" }));
+  const handler = workflowWaitHandler(fakeDaemon({ workflowWait }));
+  await handler({
+    workflow_run_id: "wfrun-2",
+    timeout_ms: 5000,
+    cwd: "/other/project",
+  });
+  expect(workflowWait).toHaveBeenCalledWith({
+    workflow_run_id: "wfrun-2",
+    timeout_ms: 5000,
+    cwd: "/other/project",
+  });
+});
+
+test("workflow_wait omits cwd from the request body when it is not provided", async () => {
+  const workflowWait = mock<WorkflowWaitFn>(() => Promise.resolve({ status: "completed" }));
+  const handler = workflowWaitHandler(fakeDaemon({ workflowWait }));
+  await handler({ workflow_run_id: "wfrun-2", timeout_ms: 5000 });
+  expect(workflowWait).toHaveBeenCalledWith({
+    workflow_run_id: "wfrun-2",
+    timeout_ms: 5000,
+  });
+  const callArg = workflowWait.mock.calls[0]![0] as Record<string, unknown>;
+  expect("cwd" in callArg).toBe(false);
+  expect(Object.keys(callArg)).toEqual(["workflow_run_id", "timeout_ms"]);
 });

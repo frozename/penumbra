@@ -215,12 +215,16 @@ export class DaemonClient {
     return await this.post("/workflows/run", input);
   }
 
-  async workflowStatus(input: { workflow_run_id: string }): Promise<unknown> {
+  async workflowStatus(input: { workflow_run_id: string; cwd?: string }): Promise<unknown> {
     // Returns the bounded light status shape (no inline result/error payload).
     return await this.post("/workflows/status", input);
   }
 
-  async workflowWait(input: { workflow_run_id: string; timeout_ms?: number }): Promise<unknown> {
+  async workflowWait(input: {
+    workflow_run_id: string;
+    timeout_ms?: number;
+    cwd?: string;
+  }): Promise<unknown> {
     return await this.post("/workflows/wait", input);
   }
 

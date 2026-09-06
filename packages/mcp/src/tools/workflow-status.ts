@@ -108,10 +108,18 @@ function boundField(
 
 export const WorkflowStatusInputShape = {
   workflow_run_id: z.string().min(1).describe("Workflow run id returned by workflow_run."),
+  cwd: z
+    .string()
+    .optional()
+    .describe("Optional cwd that scopes project resolution; omitting it keeps today's behavior."),
 };
 
 export const WorkflowWaitInputShape = {
   workflow_run_id: z.string().min(1).describe("Workflow run id returned by workflow_run."),
+  cwd: z
+    .string()
+    .optional()
+    .describe("Optional cwd that scopes project resolution; omitting it keeps today's behavior."),
   timeout_ms: z
     .number()
     .int()
@@ -124,9 +132,14 @@ export const WorkflowWaitInputShape = {
 
 export function workflowStatusHandler(
   daemon: DaemonClient,
-): (input: { workflow_run_id: string }) => Promise<TextContentEnvelope> {
-  return async (input): Promise<TextContentEnvelope> =>
-    toTextContent(await daemon.workflowStatus(input));
+): (input: { workflow_run_id: string; cwd?: string }) => Promise<TextContentEnvelope> {
+  return async (input): Promise<TextContentEnvelope> => {
+    const body: { workflow_run_id: string; cwd?: string } = {
+      workflow_run_id: input.workflow_run_id,
+    };
+    if (input.cwd !== undefined) body.cwd = input.cwd;
+    return toTextContent(await daemon.workflowStatus(body));
+  };
 }
 
 function shrinkOneRound(out: Record<string, unknown>, previewKeys: string[]): boolean {
@@ -162,9 +175,15 @@ export function workflowWaitHandler(
 ): (input: {
   workflow_run_id: string;
   timeout_ms?: number;
+  cwd?: string;
 }) => Promise<TextContentEnvelope | EnvelopeResult> {
   return async (input): Promise<TextContentEnvelope | EnvelopeResult> => {
-    const payload = (await daemon.workflowWait(input)) as Record<string, unknown>;
+    const body: { workflow_run_id: string; timeout_ms?: number; cwd?: string } = {
+      workflow_run_id: input.workflow_run_id,
+    };
+    if (input.timeout_ms !== undefined) body.timeout_ms = input.timeout_ms;
+    if (input.cwd !== undefined) body.cwd = input.cwd;
+    const payload = (await daemon.workflowWait(body)) as Record<string, unknown>;
     let out: Record<string, unknown> = { ...payload };
     const handleStore = opts?.handleStore;
     const resultOutcome = boundField(out, payload, "result", handleStore);
