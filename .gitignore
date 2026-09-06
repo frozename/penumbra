@@ -40,5 +40,8 @@ docs/quality/
 
 # Stray local agent/editor config symlinks
 .antigravitycli/
+# Generated read-only memory view written by tooling, not source.
+# Narrow on purpose: tracked .claude/ paths (workflows/, settings*.json) stay tracked.
+.claude/projects/
 # Root-level macOS cache artifact from fleet worktrees
 /Library/
