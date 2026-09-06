@@ -46,15 +46,105 @@ export const meta = {
 // is one level only (a child's own workflow() call throws). So the fix-until-green loop is
 // inlined here directly on top of penumbra-fanout. penumbra-fanout and adversarial-review are
 // safe to compose because they use agent()/MCP, not the workflow() hook.
+
+// task-spec-validation:begin
+function validateSpec(spec) {
+  const workflowName = spec.workflowName || 'workflow'
+  const allowedList = (keys) => keys.join(', ')
+
+  function validateObject(value, location, allowedKeys, requiredKeys) {
+    const allowed = new Set(allowedKeys || [])
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${workflowName}: ${location} must be an object; allowed keys: ${allowedList(allowedKeys || [])}`)
+    }
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        throw new Error(`${workflowName}: unknown key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+    for (const key of requiredKeys || []) {
+      if (!(key in value) || value[key] === undefined || value[key] === null || value[key] === '') {
+        throw new Error(`${workflowName}: missing required key "${key}" at ${location}; allowed keys: ${allowedList(allowedKeys || [])}`)
+      }
+    }
+  }
+
+  if (spec.validateTopLevel !== false) {
+    validateObject(spec.input || {}, 'args', spec.topLevelAllowedKeys || [], spec.requiredTopLevelKeys || [])
+  }
+
+  if (spec.defaults !== undefined) {
+    validateObject(spec.defaults, 'defaults', spec.defaultsAllowedKeys || [], [])
+  }
+
+  if (spec.tasks !== undefined) {
+    if (!Array.isArray(spec.tasks) || (spec.requireTasks && spec.tasks.length === 0)) {
+      throw new Error(`${workflowName}: tasks must be a non-empty array; allowed keys: ${allowedList(spec.taskAllowedKeys || [])}`)
+    }
+    for (let i = 0; i < spec.tasks.length; i++) {
+      const location = spec.taskLocationPrefix === 'task' && spec.tasks.length === 1 ? 'task' : `${spec.taskLocationPrefix || 'tasks'}[${i}]`
+      validateObject(spec.tasks[i], location, spec.taskAllowedKeys || [], spec.taskRequiredKeys || [])
+    }
+  }
+}
+// task-spec-validation:end
+
 let a = args;
 if (typeof a === "string") {
   try {
     a = JSON.parse(a);
   } catch {
-    a = { scope: a };
+    throw new Error(
+      'penumbra-loop-discover-to-green: args was a string but not valid JSON: ' + String(args).slice(0, 200),
+    );
   }
 }
 a = a || {};
+
+const defaults = a.defaults || {};
+const fanoutDefaults = { ...defaults };
+if (a.project_id !== undefined) fanoutDefaults.project_id = a.project_id;
+if (a.caller_cwd !== undefined) fanoutDefaults.caller_cwd = a.caller_cwd;
+
+validateSpec({
+  workflowName: 'penumbra-loop-discover-to-green',
+  input: a,
+  topLevelAllowedKeys: [
+    'scope',
+    'exclude',
+    'base',
+    'candidates',
+    'fixAgent',
+    'maxFixRounds',
+    'dryRunPlan',
+    'dispatcherModel',
+    'finderModel',
+    'plannerModel',
+    'graderModel',
+    'seedCandidates',
+    'repo',
+    'project_id',
+    'caller_cwd',
+    'defaults',
+  ],
+  defaults: fanoutDefaults,
+  defaultsAllowedKeys: [
+    'initial_agent',
+    'task_class',
+    'task_type',
+    'trust_mode',
+    'use_worktree',
+    'max_hops',
+    'timeout_ms',
+    'task_name',
+    'branch_type',
+    'branch_base',
+    'response_mode',
+    'project_id',
+    'caller_cwd',
+    'isolated_install',
+  ],
+})
 
 const scope =
   a.scope ||
@@ -66,9 +156,6 @@ const fixAgent = a.fixAgent || "executor";
 const maxFixRounds = Math.max(1, Math.min(5, a.maxFixRounds || 3));
 const dryRunPlan = !!a.dryRunPlan;
 const dispatcherModel = a.dispatcherModel || "sonnet";
-const fanoutDefaults = {};
-if (a.project_id !== undefined) fanoutDefaults.project_id = a.project_id;
-if (a.caller_cwd !== undefined) fanoutDefaults.caller_cwd = a.caller_cwd;
 const finderModel = a.finderModel || "sonnet";
 const plannerModel = a.plannerModel || "sonnet";
 const graderModel = a.graderModel;
@@ -79,7 +166,10 @@ const graderModel = a.graderModel;
 const seedCandidates = Array.isArray(a.seedCandidates) ? a.seedCandidates.filter(Boolean) : [];
 const seedMode = seedCandidates.length > 0;
 
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".");
+const REPO = typeof a.repo === 'string' ? a.repo.trim() : ''
+if (!REPO || !REPO.startsWith('/')) {
+  throw new Error('penumbra-loop-discover-to-green: args.repo must be an absolute path')
+}
 
 // ---- schemas ----
 const CANDIDATES_SCHEMA = {
@@ -364,6 +454,10 @@ function implMessage(roundIndex, prevBranch, prevOutput) {
   ].join("\n");
 }
 
+function clampTaskName(s) {
+  return typeof s === 'string' ? s.slice(0, 120) : s
+}
+
 const fixRounds = [];
 let prevBranch = null;
 let prevOutput = null;
@@ -375,7 +469,7 @@ for (let i = 0; i < maxFixRounds; i++) {
   roundsUsed = i + 1;
   const t = {
     label: `impl#${i + 1}:${fixAgent}`,
-    task_name: top.title || plan.summary || `improvement-round-${i + 1}`,
+    task_name: clampTaskName(top.title) || clampTaskName(plan.summary) || `improvement-round-${i + 1}`,
     branch_type: 'fix',
     initial_agent: fixAgent,
     task_class: "STANDARD",
@@ -388,9 +482,54 @@ for (let i = 0; i < maxFixRounds; i++) {
     t.branch_base = prevBranch;
   }
 
+  validateSpec({
+    workflowName: 'penumbra-loop-discover-to-green',
+    input: {},
+    defaults: fanoutDefaults,
+    defaultsAllowedKeys: [
+      'initial_agent',
+      'task_class',
+      'task_type',
+      'trust_mode',
+      'use_worktree',
+      'max_hops',
+      'timeout_ms',
+      'task_name',
+      'branch_type',
+      'branch_base',
+      'response_mode',
+      'project_id',
+      'caller_cwd',
+      'isolated_install',
+    ],
+    tasks: [t],
+    requireTasks: true,
+    taskAllowedKeys: [
+      'label',
+      'name',
+      'title',
+      'task_name',
+      'branch_type',
+      'initial_agent',
+      'task_class',
+      'task_type',
+      'trust_mode',
+      'use_worktree',
+      'max_hops',
+      'timeout_ms',
+      'message',
+      'branch_base',
+      'response_mode',
+      'project_id',
+      'caller_cwd',
+      'isolated_install',
+    ],
+    taskRequiredKeys: ['message'],
+  })
+
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(a.repo !== undefined ? { repo: a.repo } : {}) },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, repo: a.repo },
   );
   const r = ((fan && fan.results) || [])[0];
   if (!r || !r.ok || !r.branch) {
@@ -449,6 +588,7 @@ const review = await workflow(
     fixAgent,
     ...(graderModel ? { graderModel } : {}),
     taskIntent: `Implement the planned fix for "${top.title}" (${top.file}) and keep the check (${plan.check_command}) green; address only HIGH review findings without reverting or weakening unrelated behavior.`,
+    repo: REPO,
   },
 );
 
