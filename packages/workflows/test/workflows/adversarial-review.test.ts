@@ -3,13 +3,17 @@ import type { z } from "zod";
 
 import { loadAgentChatConfigFromDir, reloadAgentChatConfig } from "@penumbra/config";
 import { AgentPerformanceWriter, loadSqliteVec, migrate } from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+
+import { composeRecall } from "@src/recall.js";
 
 // Plugin workflows live outside packages/ and so are not in the eslint
 // tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
@@ -2120,6 +2124,135 @@ test("awaitChain uses persona timeout_ms override when configured", async () => 
     const result = (await fn(ctx, baseRecall())) as { ok: boolean };
     expect(result.ok).toBe(true);
     expect(seenTimeouts[0]).toBe(50);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Empty review target fail-closed ──────────────────────────────────────────
+
+function makeFixtureRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "adv-review-repo-"));
+  execFileSync("git", ["init", "-b", "main", dir]);
+  execFileSync("git", [
+    "-C",
+    dir,
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "user.name=test",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "init",
+  ]);
+  return dir;
+}
+
+test("recall with no diff and no content fails closed as empty_review_target before persona dispatch", async () => {
+  const repoDir = makeFixtureRepo();
+  const absentRef = "0000000000000000000000000000000000000000";
+  const db = freshDb();
+  try {
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repoDir,
+      project: "demo",
+      sources: spec.recall,
+      budgetTokens: 8000,
+      templateCtx: {
+        now: () => new Date(),
+        project: "demo",
+        sessionStart: new Date().toISOString(),
+        tz: "UTC",
+        cwd: repoDir,
+        args: { base_ref: "main", target_ref: absentRef },
+      },
+    });
+    expect(bundle.byKey["git.diff"]).toBe("");
+    expect(bundle.warnings.some((w) => w.startsWith("git.diff:"))).toBe(true);
+
+    const { ctx, root, dispatch } = makeCtx({
+      args: { base_ref: "main", target_ref: absentRef },
+    });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        outcome: string;
+        error?: string;
+        cwd?: string;
+        target_ref?: string;
+        base_ref?: string;
+        recall_warnings?: string[];
+      };
+      expect(result.ok).toBe(false);
+      expect(result.outcome).toBe("failed");
+      expect(result.error).toBe("empty_review_target");
+      expect(result.cwd).toBe(repoDir);
+      expect(result.target_ref).toBe(absentRef);
+      expect(result.base_ref).toBe("main");
+      expect(result.recall_warnings).toBeDefined();
+      expect(result.recall_warnings!.length).toBeGreaterThan(0);
+      expect(
+        result.recall_warnings!.every((w) => /^(?:git\.diff|git\.show|file\.contents):/.test(w)),
+      ).toBe(true);
+      // The whole point: a void run must not spend persona/synthesizer dispatches.
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+test("content_path recall with an empty git diff still reviews the resolved file body", async () => {
+  const contentOnlyRecall: RecallBundle = {
+    byKey: {
+      "git.diff": "",
+      "git.show": [],
+      "file.contents": {
+        path: "/repo/docs/state.md",
+        body: "Document under review. It proposes a direction worth critiquing.",
+        truncated: false,
+        byte_size: 66,
+      },
+    },
+    warnings: ["git.diff: Command failed: git -C /repo diff main...HEAD"],
+    estimatedTokens: 10,
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: { content_path: "/repo/docs/state.md" },
+  });
+  try {
+    const result = (await fn(ctx, contentOnlyRecall)) as {
+      ok: boolean;
+      error?: string;
+      synthesizer_status: string | null;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.synthesizer_status).toBe("completed");
+    expect(dispatch).toHaveBeenCalledTimes(3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("non-empty git diff recall does not trip the empty_review_target guard", async () => {
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      error?: string;
+      synthesizer_status: string | null;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.synthesizer_status).toBe("completed");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

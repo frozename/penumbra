@@ -786,6 +786,30 @@ function buildSynthesisFrontmatter(args: {
 }
 
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
+  // Fail closed before persona resolution: an empty diff AND an empty
+  // file.contents body means the refs resolved to nothing in this cwd — the
+  // wrong-repo dispatch case, where recall ran against the daemon's repo, not
+  // the target. Reporting "clean" here would close a review lane on a void run
+  // after paying for every persona. `&&` is load-bearing: a content_path-only
+  // review legitimately has an empty git.diff.
+  const diffText = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
+  const contentText = fileContentsBody(recall);
+  const recallErrs = recall.warnings.filter((w) =>
+    /^(?:git\.diff|git\.show|file\.contents):/.test(w),
+  );
+  if (diffText.trim().length === 0 && contentText.trim().length === 0) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "empty_review_target",
+      cwd: ctx.cwd,
+      target_ref: ctx.args.target_ref,
+      base_ref: ctx.args.base_ref,
+      recall_warnings: recallErrs,
+      hint: "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.",
+    };
+  }
+
   const personaResolution = getPersonas(ctx, recall);
   if (!personaResolution) {
     return {

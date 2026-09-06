@@ -110,7 +110,10 @@ describe("adversarial-review workflow", () => {
         fileWrite: async (path) => path,
       });
       const recall = emptyRecall({
-        byKey: { "git.diff": "", "git.show": [] },
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
       });
 
       const result = (await fn(ctx, recall)) as {
@@ -207,7 +210,12 @@ describe("adversarial-review workflow", () => {
 
       const result = (await fn(
         ctx,
-        emptyRecall({ byKey: { "git.diff": "", "git.show": [] } }),
+        emptyRecall({
+          byKey: {
+            "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+            "git.show": [],
+          },
+        }),
       )) as {
         ok: boolean;
         synthesizer_status: string | null;
