@@ -53,7 +53,7 @@ of its phase.
 | sessions | `/sessions`, `/sessions/:sessionId` | existing timeline + end/touch, extraction, Maestro sessions | P2 |
 | memory | `/memory`, `/memory/:memoryId`, `/memory/corpora`, `/memory/efficacy` | status, recall/search playground, write T2, verify, timeline, corpora, efficacy jobs | P2 |
 | dreaming | `/dreaming` | cycle health, pending actions apply/revert, curator patterns | P2 |
-| agents | `/agents`, `/agents/long-lived/:id` | fleet: configured agents, rank/recommend/route_for, fleet latency, performance, routing biases; long-lived detail (state, ticks, audit, goals, stream) | P2 |
+| agents | `/agents`, `/agents/:name`, `/agents/long-lived/:id` | fleet table; per-agent detail (config/provider/model, performance metrics, dispatch history, routing rank + biases, provider quota); rank/recommend/route_for explorer, fleet latency, performance ledger; long-lived detail (state, ticks, audit, goals, stream) | P2 |
 | workflows | `/workflows`, `/workflows/runs/:runId` | list specs/triggers, run (dry-run), status/wait, history, suggest | P3 |
 | workspace | `/workspace`, `/workspace/worktrees/:id`, `/workspace/shells` | worktree list/inspect/cleanup, fs browser (glob/grep/read), guarded write/edit/exec, shell sessions, `dispatch/land` | P3 |
 | ops | `/ops/health`, `/ops/workers`, `/ops/usage`, `/ops/quality`, `/ops/reconciler`, `/ops/config` | subsystem health, sweeper/cron status, workers & heartbeats, usage/quota/pressure, quality status, reconciler verdicts + orphan sweep, config show + reload | P3 |
@@ -147,10 +147,11 @@ Badge count = sum of queues; bulk approve is allowed only for `safe` kinds.
 
 | feature | routes | replaces | UI | tier |
 |---|---|---|---|---|
-| Configured agents | `GET /chains/agents`, `GET /maestro/capabilities` | `agents.yaml` reading | fleet table: name, adapter, roles, capabilities | read |
+| Configured agents | `GET /chains/agents` (names only today), **new route** `GET /agents` (§6) | `agents.yaml` reading | fleet table: name, adapter kind, provider/model, roles, trust, warm-pool status, 24h success rate / p50 exec / queue depth / cost | read |
+| Agent detail | `GET /agents/:name` (§6), `GET /agents/performance?agent=` (§6), `GET /handoffs?agent=` + `GET /dispatch/events?agent=` (§6 filters), `GET /routing/bias?value=`, `GET /usage/*?provider=` | `agent` CLI, `cost recent --provider` | page per agent — **Config** card (adapter, binary/args, model, provider, roles, capabilities, options with secrets redacted); **Metrics** tab (from `agent_performance`: outcome/gate_outcome mix, rounds, smoke_pass, reviewer_findings, maestro_score, reliability_status/failure_class histogram, cost_usd/tokens/latency/exec/framework_overhead trends by task_type + window); **Dispatches** tab (handoffs run by this agent with reliability chip → handoff detail); **Routing** tab (rank position per task type, biases targeting this agent); **Provider** tab (usage/quota/subscription pressure for the agent's provider) | read |
 | Fleet latency | `GET /agents/fleet_latency` | `fleet_latency` | per-agent latency/throughput/queue depth sparklines | read |
 | Rank / recommend / route_for | `GET /agents/rank`, `/recommend`, `/route_for` | `agent rank`, `agent_*` | "Routing explorer": pick task type/risk/role → ranked list + decision explanation | read |
-| Performance ledger | `GET /agents/performance/markdown`, `POST /agents/performance/import-markdown` | `agent` ledger ops | rendered report + import drawer | guarded |
+| Performance ledger | `GET /agents/performance` (§6), `GET /agents/performance/markdown`, `POST /agents/performance/import-markdown` | `agent` ledger ops | filterable row table (agent, task_type, outcome, source, window) with drill-in to the handoff; rendered markdown report; import drawer | guarded |
 | Performance captures | `POST /agents/performance/{reconciler,dispatch,operator}` | pipelines | **not exposed** (machine writes) | — |
 | Routing biases | `GET/POST /routing/bias`, `POST /routing/bias/clear` | `routing_bias_*` | table with TTL countdown; set form; clear (destructive for all) | guarded / destructive |
 | Long-lived list | `GET /long-lived`, `/long-lived/federation-health` | `long-lived list` | roster cards: status, schedule, circuit breaker, last tick | read |
@@ -268,6 +269,9 @@ without daemon work. Each is a small read route in `packages/daemon/src/routes`.
 | Long-lived pending actions across agents | per-agent route only | `GET /long-lived/pending-actions?status=pending` |
 | Task lease history | `task_leases` (only current lease via includes) | `GET /tasks/:id/leases` |
 | Dream cycle history | `dream_cycles` | `GET /dreaming/cycles?limit=` |
+| Agent config detail | `agents.yaml` via `@penumbra/config` (`/chains/agents` returns `{name}` only) | `GET /agents` → `[{name, adapter, provider, model, roles, capabilities, trust, warm}]`; `GET /agents/:name` with redacted `options` |
+| Per-agent performance rows | `agent_performance` (only aggregates via `/agents/rank`, `/agents/fleet_latency`, markdown) | `GET /agents/performance?agent=&task_type=&since=&limit=&cursor=` returning raw rows |
+| Dispatch history by agent | `handoffs.agent`, `dispatch_events` | add `agent=` filter to `GET /handoffs` and `GET /dispatch/events` |
 
 Ingest-side gaps are intentionally left alone (§3.10).
 
