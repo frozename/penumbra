@@ -39,6 +39,25 @@ async function setupTempRepo(prefix: string): Promise<string> {
   return repoDir;
 }
 
+function fakeGitIdentityResponse(args: string[]): { stdout: string; stderr: string } | undefined {
+  if (args[0] === "-C" && args[2] === "config" && args[3] === "user.name") {
+    return { stdout: "test\n", stderr: "" };
+  }
+  if (args[0] === "-C" && args[2] === "config" && args[3] === "user.email") {
+    return { stdout: "test@example.com\n", stderr: "" };
+  }
+  if (args[0] === "-C" && args[2] === "config" && args[3] === "extensions.worktreeConfig") {
+    return { stdout: "", stderr: "" };
+  }
+  if (args[0] === "-C" && args[2] === "config" && args[3] === "--worktree") {
+    return { stdout: "", stderr: "" };
+  }
+  if (args[0] === "-C" && args[2] === "log") {
+    return { stdout: "test\0test@example.com\n", stderr: "" };
+  }
+  return undefined;
+}
+
 describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
   let homeRoot: string;
   let homeRepo: string;
@@ -124,6 +143,8 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       ) {
         return { stdout: "", stderr: "" };
       }
+      const identity = fakeGitIdentityResponse(args);
+      if (identity) return identity;
       if (args[0] === "rev-parse") {
         throw new Error("not a worktree");
       }
@@ -177,6 +198,8 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       ) {
         return { stdout: "", stderr: "" };
       }
+      const identity = fakeGitIdentityResponse(args);
+      if (identity) return identity;
       if (args[0] === "rev-parse") {
         throw new Error("not a worktree");
       }

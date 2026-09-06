@@ -487,6 +487,8 @@ export class WorktreeManager {
 
     let createdBranchName: string | null = null;
     try {
+      await this.configureWorktreeIdentity(wtPath, repoRoot, baseRef);
+
       const branchName = await this.checkoutNewBranchWithCollisionRetry(
         repoRoot,
         wtPath,
@@ -552,6 +554,62 @@ export class WorktreeManager {
     } catch {
       // Branch may not exist if creation failed before checkout completed.
     }
+  }
+
+  private async configureWorktreeIdentity(
+    wtPath: string,
+    repoRoot: string,
+    baseRef: string,
+  ): Promise<void> {
+    const { name, email } = await this.resolveParentGitIdentity(repoRoot, baseRef);
+    await this.git(["-C", repoRoot, "config", "extensions.worktreeConfig", "true"]);
+    await this.git(["-C", wtPath, "config", "--worktree", "user.name", name]);
+    await this.git(["-C", wtPath, "config", "--worktree", "user.email", email]);
+  }
+
+  private async resolveParentGitIdentity(
+    repoRoot: string,
+    baseRef: string,
+  ): Promise<{ name: string; email: string }> {
+    const configured = await this.resolveConfiguredGitIdentity(repoRoot);
+    if (configured) return configured;
+
+    const { stdout } = await this.git([
+      "-C",
+      repoRoot,
+      "log",
+      "-1",
+      "--format=%an%x00%ae",
+      baseRef,
+    ]);
+    const parts = stdout.split("\0");
+    const name = parts[0]?.trim() ?? "";
+    const email = parts[1]?.trim() ?? "";
+
+    if (!isValidGitIdentity(name, email)) {
+      throw new Error(
+        `worktree_parent_identity_missing: parent repository has no user.name/user.email or valid commit author to inherit`,
+      );
+    }
+
+    return { name, email };
+  }
+
+  private async resolveConfiguredGitIdentity(
+    repoRoot: string,
+  ): Promise<{ name: string; email: string } | null> {
+    try {
+      const { stdout: nameOut } = await this.git(["-C", repoRoot, "config", "user.name"]);
+      const { stdout: emailOut } = await this.git(["-C", repoRoot, "config", "user.email"]);
+      const name = nameOut.trim();
+      const email = emailOut.trim();
+      if (isValidGitIdentity(name, email)) {
+        return { name, email };
+      }
+    } catch {
+      // Missing or unreadable local config falls through to commit author.
+    }
+    return null;
   }
 
   async stageMergedBase(
@@ -1558,6 +1616,15 @@ function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger):
 function globSegmentToRegExp(segment: string): RegExp {
   const escaped = segment.replaceAll(/[|\\{}()[\]^$+?.]/g, "\\$&").replaceAll("*", ".*");
   return new RegExp(`^${escaped}$`);
+}
+
+function isValidGitIdentity(name: string, email: string): boolean {
+  return (
+    name.length > 0 &&
+    email.length > 0 &&
+    email.includes("@") &&
+    !email.endsWith(".local")
+  );
 }
 
 function isMissingError(err: unknown): boolean {
