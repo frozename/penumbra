@@ -3,10 +3,20 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const source = readFileSync(resolve(".claude/workflows/penumbra-fix-until-green.js"), "utf8");
-const start = source.indexOf("function parseCheck(result)");
-expect(start, "parseCheck should exist").toBeGreaterThanOrEqual(0);
-const end = source.indexOf("function hopFields(result)", start);
-expect(end, "hopFields should follow parseCheck").toBeGreaterThan(start);
+function declarationIndex(name: string): number {
+  const match = source.match(new RegExp(`function ${name}\\s*\\(`));
+  if (match?.index === undefined) {
+    throw new Error(
+      `${name} function declaration not found in .claude/workflows/penumbra-fix-until-green.js; ` +
+        "the source-slice extraction lost its anchor",
+    );
+  }
+  return match.index;
+}
+
+const start = declarationIndex("parseCheck");
+const end = declarationIndex("hopFields");
+expect(end, "hopFields must follow parseCheck").toBeGreaterThan(start);
 
 const parseCheck = new Function(`${source.slice(start, end)}\nreturn parseCheck`)();
 
