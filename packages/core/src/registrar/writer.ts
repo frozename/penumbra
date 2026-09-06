@@ -113,8 +113,8 @@ export class RegistrarWriter {
       }
 
       const state = "state" in validated ? validated.state : null;
-      const link_kind = "link_kind" in validated ? validated.link_kind : null;
-      const link_value = "link_value" in validated ? validated.link_value : null;
+      const link_kind = "link_kind" in validated ? (validated.link_kind ?? null) : null;
+      const link_value = "link_value" in validated ? (validated.link_value ?? null) : null;
       const inserted = this.db
         .query<
           unknown,

@@ -37,6 +37,42 @@ test("an unknown kind throws at the zod boundary and daemon.registrarAppend is n
   expect(registrarAppend).not.toHaveBeenCalled();
 });
 
+test("link_kind/link_value on a non-link kind pass validation and reach the daemon", async () => {
+  const calls: Parameters<DaemonClient["registrarAppend"]>[] = [];
+  const registrarAppend = mock<DaemonClient["registrarAppend"]>((req) => {
+    calls.push([req]);
+    return Promise.resolve({ event: {} as never });
+  });
+  const handler = registrarAppendHandler(fakeDaemon({ registrarAppend }));
+
+  await handler({
+    registrar_id: "registrar-1",
+    kind: "follow_up",
+    state: "done",
+    ref_event_id: 3,
+    actor: "maestro",
+    body: "landed in feec0a0e",
+    link_kind: "commit_sha",
+    link_value: "feec0a0e",
+  });
+
+  expect(registrarAppend).toHaveBeenCalledTimes(1);
+  expect(calls[0]).toEqual([
+    {
+      registrar_id: "registrar-1",
+      event: {
+        actor: "maestro",
+        body: "landed in feec0a0e",
+        kind: "follow_up",
+        state: "done",
+        ref_event_id: 3,
+        link_kind: "commit_sha",
+        link_value: "feec0a0e",
+      },
+    },
+  ]);
+});
+
 test("a daemon 409 is surfaced as 'phase already transitioned', not a raw HTTP dump", async () => {
   const registrarAppend = mock<DaemonClient["registrarAppend"]>(() =>
     Promise.reject(

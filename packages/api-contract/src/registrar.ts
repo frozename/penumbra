@@ -57,6 +57,8 @@ const eventBase = {
   phase_no: z.number().int().positive().optional(),
   actor: RegistrarActorSchema,
   body: RegistrarBodySchema,
+  link_kind: RegistrarLinkKindSchema.optional(),
+  link_value: z.string().min(1).optional(),
 };
 
 const RegistrarBlockerStateSchema = z.enum(["opened", "resolved"]);
@@ -136,6 +138,8 @@ export const RegistrarEventInputSchema = z.discriminatedUnion("kind", [
       kind: z.literal("entry_transition"),
       from_status: RegistrarStatusSchema,
       state: RegistrarEntryTransitionTargetSchema,
+      link_kind: RegistrarLinkKindSchema.optional(),
+      link_value: z.string().min(1).optional(),
     })
     .strict()
     .superRefine((event, ctx) => {
@@ -147,7 +151,18 @@ export const RegistrarEventInputSchema = z.discriminatedUnion("kind", [
         });
       }
     }),
-]);
+])
+// kind="link" requires both fields at the variant level; every other kind may
+// attach a link only as a complete pair.
+.superRefine((event, ctx) => {
+  if ((event.link_kind === undefined) !== (event.link_value === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [event.link_kind === undefined ? "link_kind" : "link_value"],
+      message: "link_kind and link_value must be provided together",
+    });
+  }
+});
 export type RegistrarEventInput = z.infer<typeof RegistrarEventInputSchema>;
 
 export const RegistrarEntrySchema = z.object({
