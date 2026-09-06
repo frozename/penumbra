@@ -80,6 +80,9 @@ validateSpec({
   tasks: a && a.tasks,
   requireTasks: true,
   taskAllowedKeys: [
+    // The camelCase keys are this workflow's documented public vocabulary;
+    // test/workflow-scripts/task-spec-validation.test.ts records the mapping to
+    // real chain_start params in its KEY_ALIASES census.
     'name',
     'dispatchPrompt',
     'agent',
@@ -90,6 +93,7 @@ validateSpec({
     'label',
     'title',
     'branch_type',
+    'isolated_install',
   ],
   taskRequiredKeys: ['name', 'dispatchPrompt'],
 })
@@ -157,7 +161,7 @@ const results = await pipeline(
     agent(
       [
         `Dispatch ONE task to the penumbra fleet; report ONLY verbatim tool-output values. Never invent an id or SHA.`,
-        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'executor'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}message = the EXACT contract below.`,
+        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'executor'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}${typeof t.isolated_install === 'boolean' ? `isolated_install=${t.isolated_install}, ` : ''}message = the EXACT contract below.`,
         `--- CONTRACT (verbatim) ---`,
         t.dispatchPrompt,
         `--- END CONTRACT ---`,

@@ -88,8 +88,10 @@ if (typeof input === 'object' && input) {
       'task_name',
       'branch_type',
       'branch_base',
+      'response_mode',
       'project_id',
       'caller_cwd',
+      'isolated_install',
     ],
   })
 }

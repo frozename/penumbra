@@ -91,6 +91,7 @@ validateSpec({
     'response_mode',
     'project_id',
     'caller_cwd',
+    'isolated_install',
   ],
   tasks: input && input.tasks,
   requireTasks: true,
@@ -112,6 +113,7 @@ validateSpec({
     'response_mode',
     'project_id',
     'caller_cwd',
+    'isolated_install',
   ],
   taskRequiredKeys: ['message'],
 })
@@ -207,6 +209,12 @@ function buildSpec(t) {
   // like fix-until-green that build on the previous round's branch).
   const branchBase = t.branch_base || defaults.branch_base
   if (branchBase) spec.branch_base = branchBase
+  // isolated_install carries FALSE as its load-bearing value: the daemon resolves an
+  // omitted key to true whenever PENUMBRA_ISOLATED_INSTALL_AUTO is set (it is set to 1
+  // in both live plists), which forces a bun install and dies on a non-JS repo.
+  // ?? not ||, and omit-when-undefined so existing dispatches keep the daemon default.
+  const isolatedInstall = t.isolated_install ?? defaults.isolated_install
+  if (typeof isolatedInstall === 'boolean') spec.isolated_install = isolatedInstall
   // The daemon launchd plist enables the explicit project gate, so dispatches
   // must carry project_id or a caller_cwd the MCP layer can resolve.
   const projectId = t.project_id ?? defaults.project_id
@@ -246,7 +254,7 @@ function buildPrompt(t) {
     '',
     'Protocol:',
     '1. Pass initial_agent verbatim to chain_start. A role name ("executor", "reviewer", "planner") is the DEFAULT: the daemon model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin — pass it verbatim, never substitute it. If initial_agent is the literal "AUTO" (legacy), use "executor". Do NOT call agent_recommend to pre-pick a seat; it is forensic only.',
-    '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, task_name, branch_type, project_id, caller_cwd, and branch_base if present in the spec. Capture conversation_id, handoff_id, and provisional branch_name from the result. Store the chain_start handoff_id as root_handoff_id; handoff_id in your output keeps this same ROOT-hop meaning.',
+    '2. Call mcp__penumbra__chain_start with initial_agent, message, task_class, task_type, trust_mode, use_worktree, max_hops, task_name, branch_type, project_id, caller_cwd, and branch_base and isolated_install if present in the spec. Pass isolated_install EXACTLY as it appears in the spec, INCLUDING when it is false — false is load-bearing (it selects the symlink_mirror worktree path for non-JS repos and is the only override of the daemon\'s PENUMBRA_ISOLATED_INSTALL_AUTO default); never omit it for being falsy. Capture conversation_id, handoff_id, and provisional branch_name from the result. Store the chain_start handoff_id as root_handoff_id; handoff_id in your output keeps this same ROOT-hop meaning.',
     `3. Poll with bounded waits so you never stall: repeatedly call mcp__penumbra__chain_wait({ conversation_id, timeout_ms: ${CHAIN_WAIT_SLICE_MS} }) — each returns within ~240s (under the workflow runtime no-progress watchdog), reporting terminal-or-still-running — until status is terminal (completed/failed), for at most ceil(spec.timeout_ms / ${CHAIN_WAIT_SLICE_MS}) iterations. Do NOT issue a single long blocking wait. Capture latest_handoff_id from the terminal chain_wait last_handoff_id. After terminal, enumerate the conversation hop id set as the UNION of: (a) root_handoff_id from chain_start; (b) latest_handoff_id from the terminal chain_wait last_handoff_id; (c) event_id of every event returned by mcp__penumbra__chain_get_messages({ conversation_id, types: ["agent-handoff"] }) where event_type === "agent-handoff"; and (d) payload.handoff_id of every event returned by mcp__penumbra__chain_get_messages({ conversation_id, types: ["agent-response"] }) where event_type === "agent-response". chain_get_messages returns JSON with events[]; each event object has event_id, ts, event_type, source, source_detail, user_id, and payload fields. Agent-response payloads carry handoff_id when available. Also call mcp__penumbra__chain_get_messages({ conversation_id, types: ["user-prompt"] }) and count user-prompt events whose payload.prompt starts with "[silent-failure-retry]"; store that integer as retry_prompt_count. For EVERY hop id in the union, call mcp__penumbra__handoff_get({ handoff_id, compact: false }); the tool returns JSON with a handoff object. Build hops[] from the handoff row fields: handoff_id, status, branch from branch_name, to_agent, branch_base, parent_handoff_id, created_ts from ts, and is_retry true only when the handoff row message starts with "[silent-failure-retry]". Sort hops by created_ts. Set hops_incomplete=true when retry_prompt_count is greater than the number of hops with is_retry true, because a retry that produced no response and is not the latest row cannot be enumerated. Take branch from the ROOT handoff row branch_name; fallback to the terminal chain_wait branch_name only when the root row has no branch_name, then fallback to the chain_start provisional branch_name. Fill top-level branch_base and parent_handoff_id from the ROOT handoff row.`,
     '4. Response handling depends on spec.response_mode. For "full" (the default), call mcp__penumbra__chain_get_response({ conversation_id, handoff_id: root_handoff_id, which: "final" }) and return the worker response in response. For "first_line", call chain_get_response only on a completed terminal state and pass { conversation_id, handoff_id: root_handoff_id, which: "final" }, return only the first non-empty line as check_line, and if that line signals failure include only the last 4000 chars as failure_tail. For "none", skip chain_get_response entirely; the terminal chain_wait payload plus root chain_status payload carry status, branch_name, and latest_handoff_id.',
     '5. Return StructuredOutput per schema. ok=true only when the ROOT hop reached a completed terminal state; otherwise ok=false with status and error_summary. Fill handoff_id and root_handoff_id with root_handoff_id, latest_handoff_id with the terminal chain_wait last_handoff_id, hop_count with hops.length, extra_hops with max(hop_count - 1, 0), retry_prompt_count with the retry user-prompt count, hops_incomplete as defined above, hops with every enumerable conversation hop, branch with the ROOT hop branch as defined above, and branch_base/parent_handoff_id from the ROOT handoff row. Do not retry.',

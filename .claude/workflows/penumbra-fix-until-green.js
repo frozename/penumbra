@@ -97,6 +97,7 @@ validateSpec({
     'response_mode',
     'project_id',
     'caller_cwd',
+    'isolated_install',
   ],
   tasks: input.task ? [input.task] : [],
   requireTasks: true,
