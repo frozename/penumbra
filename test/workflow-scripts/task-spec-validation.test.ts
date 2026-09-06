@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { ChainStartInputShape } from "../../packages/mcp/src/tools/chain-start.js";
+import {
+  readNamedArray,
+  readRuntimeBody,
+  runWorkflow,
+  runWorkflowCapturingPrompts,
+} from "./harness.js";
 
 const WORKFLOWS = [
   {
@@ -174,219 +180,16 @@ function readValidatorBlock(path: string): string {
   return match![1];
 }
 
-function findMatchingDelimiter(
-  source: string,
-  openIndex: number,
-  open: string,
-  close: string,
-): number {
-  let depth = 0;
-  let quote: string | null = null;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let i = openIndex; i < source.length; i++) {
-    const ch = source[i];
-    const next = source[i + 1];
-
-    if (lineComment) {
-      if (ch === "\n") lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (ch === "*" && next === "/") {
-        blockComment = false;
-        i++;
-      }
-      continue;
-    }
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      lineComment = true;
-      i++;
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      blockComment = true;
-      i++;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      continue;
-    }
-    if (ch === open) depth++;
-    if (ch === close) {
-      depth--;
-      if (depth === 0) return i;
-    }
-  }
-
-  throw new Error("unterminated export const meta object");
-}
-
-function findMatchingBrace(source: string, openIndex: number): number {
-  return findMatchingDelimiter(source, openIndex, "{", "}");
-}
-
-function findMatchingBracket(source: string, openIndex: number): number {
-  return findMatchingDelimiter(source, openIndex, "[", "]");
-}
-
-// Extracts the literal `name: ['a', 'b']` array declared in a workflow script so
-// the WORKFLOWS fixture can be checked against the source instead of drifting as
-// an unverified third copy. Returns null when the script declares no such array.
-function readNamedArray(path: string, name: string): string[] | null {
-  const source = readFileSync(resolve(path), "utf8");
-  const matches = [...source.matchAll(new RegExp(`\\b${name}\\s*:\\s*\\[`, "g"))];
-  if (matches.length === 0) return null;
-  expect(matches.length, `${path} should declare ${name} exactly once`).toBe(1);
-  const open = matches[0]!.index + matches[0]![0].length - 1;
-  const close = findMatchingBracket(source, open);
-  const body = source
-    .slice(open + 1, close)
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-  return [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2]!);
-}
-
-function readRuntimeBody(path: string): string {
-  const source = readFileSync(resolve(path), "utf8");
-  const marker = "export const meta";
-  const start = source.indexOf(marker);
-  expect(start, `${path} should include export const meta`).toBeGreaterThanOrEqual(0);
-  const equals = source.indexOf("=", start + marker.length);
-  expect(equals, `${path} should assign export const meta`).toBeGreaterThanOrEqual(0);
-  const open = source.indexOf("{", equals);
-  expect(open, `${path} should assign an object literal to meta`).toBeGreaterThanOrEqual(0);
-  const close = findMatchingBrace(source, open);
-  const after = source[close + 1] === ";" ? close + 2 : close + 1;
-
-  return source.slice(0, start) + source.slice(after);
-}
-
-async function runWorkflow(
-  path: string,
-  args: unknown,
-): Promise<{ agentCalls: number; error?: unknown }> {
-  const body = readRuntimeBody(path);
-  const calls = { agent: 0 };
-  const agent = async () => {
-    calls.agent++;
-    return {};
-  };
-  const parallel = async (items: unknown[]) => Promise.all(items.map((item) => item));
-  const pipeline = async (...items: unknown[]) => items.at(-1);
-  const phase = async (_name: string, fn?: () => unknown) => (fn ? fn() : undefined);
-  const log = () => {};
-  const budget = {};
-  const workflow = async () => ({});
-  const run = new Function(
-    "agent",
-    "parallel",
-    "pipeline",
-    "phase",
-    "log",
-    "args",
-    "budget",
-    "workflow",
-    `"use strict"; return (async () => {\n${body}\n})()`,
-  ) as (
-    agent: typeof agent,
-    parallel: typeof parallel,
-    pipeline: typeof pipeline,
-    phase: typeof phase,
-    log: typeof log,
-    args: unknown,
-    budget: typeof budget,
-    workflow: typeof workflow,
-  ) => Promise<unknown>;
-
-  try {
-    await run(agent, parallel, pipeline, phase, log, args, budget, workflow);
-  } catch (error) {
-    return { agentCalls: calls.agent, error };
-  }
-  return { agentCalls: calls.agent };
+function parseDispatchSpec(prompt: string): Record<string, unknown> {
+  const m = prompt.match(/```dispatch\n([\s\S]*?)\n```/);
+  if (!m || m[1] === undefined) throw new Error("no ```dispatch fence in prompt");
+  return JSON.parse(m[1]) as Record<string, unknown>;
 }
 
 async function invokeWorkflow(path: string, args: unknown): Promise<{ agentCalls: number }> {
   const result = await runWorkflow(path, args);
   if (result.error) throw result.error;
   return { agentCalls: result.agentCalls };
-}
-
-// Unlike runWorkflow, this harness invokes the thunks fanout hands to `parallel`
-// (the existing stub resolves the closures without calling them, so no dispatch
-// prompt ever reaches the agent stub) and records nested `workflow(...)` calls
-// so forwarders (fix-until-green / swarm -> penumbra-fanout) can be asserted on.
-async function runWorkflowCapturingPrompts(
-  path: string,
-  args: unknown,
-): Promise<{
-  prompts: string[];
-  workflowCalls: Array<{ name: string; args: unknown }>;
-  error?: unknown;
-}> {
-  const body = readRuntimeBody(path);
-  const prompts: string[] = [];
-  const workflowCalls: Array<{ name: string; args: unknown }> = [];
-  // A planner-shaped result keeps penumbra-swarm's planner stage producing a
-  // valid task so the run reaches its workflow('penumbra-fanout', ...) handoff.
-  const agent = async (prompt: string) => {
-    prompts.push(String(prompt));
-    return { tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }] };
-  };
-  const parallel = async (items: unknown[]) =>
-    Promise.all(
-      items.map((item) => (typeof item === "function" ? (item as () => unknown)() : item)),
-    );
-  const pipeline = async (items: unknown[], ...stages: Array<(...a: unknown[]) => unknown>) =>
-    stages.reduce<Promise<unknown[]>>(
-      async (acc, stage) => Promise.all((await acc).map((item, i) => stage(item, items[i]))),
-      Promise.resolve(items),
-    );
-  const phase = async (_name: string, fn?: () => unknown) => (fn ? fn() : undefined);
-  const log = () => {};
-  const budget = {};
-  const workflow = async (name: string, wArgs: unknown) => {
-    workflowCalls.push({ name, args: wArgs });
-    return {};
-  };
-  const run = new Function(
-    "agent",
-    "parallel",
-    "pipeline",
-    "phase",
-    "log",
-    "args",
-    "budget",
-    "workflow",
-    `"use strict"; return (async () => {\n${body}\n})()`,
-  ) as (...a: unknown[]) => Promise<unknown>;
-
-  try {
-    await run(agent, parallel, pipeline, phase, log, args, budget, workflow);
-  } catch (error) {
-    return { prompts, workflowCalls, error };
-  }
-  return { prompts, workflowCalls };
-}
-
-function parseDispatchSpec(prompt: string): Record<string, unknown> {
-  const m = prompt.match(/```dispatch\n([\s\S]*?)\n```/);
-  if (!m || m[1] === undefined) throw new Error("no ```dispatch fence in prompt");
-  return JSON.parse(m[1]) as Record<string, unknown>;
 }
 
 const blocks = WORKFLOWS.map((workflow) => readValidatorBlock(workflow.path));
@@ -492,6 +295,20 @@ describe("workflow task-spec validation block", () => {
       expect(result.agentCalls).toBe(0);
     });
   }
+
+  test("harness invokes parallel thunks before validation", async () => {
+    const source = readFileSync(resolve(".claude/workflows/penumbra-fanout.js"), "utf8");
+    const spliced = source.replace(
+      "validateSpec({",
+      "await parallel([() => agent('PROBE')]);\nvalidateSpec({",
+    );
+    const root = mkdtempSync(resolve(tmpdir(), "penumbra-harness-probe-"));
+    const splicedPath = resolve(root, "probe-fanout.js");
+    writeFileSync(splicedPath, spliced);
+    const result = await runWorkflow(splicedPath, {});
+    rmSync(root, { recursive: true, force: true });
+    expect(result.agentCalls).toBeGreaterThan(0);
+  });
 
   for (const workflowName of ["penumbra-fanout", "penumbra-fleet-verify"]) {
     test(`${workflowName} requires top-level tasks during runtime invocation`, async () => {
