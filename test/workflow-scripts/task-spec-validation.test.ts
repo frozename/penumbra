@@ -185,6 +185,126 @@ const WORKFLOWS = [
     validInput: { task: { message: "do the work" }, check: "bun test" },
     taskLocationPrefix: "task",
   },
+  {
+    path: ".claude/workflows/penumbra-loop-discover-to-green.js",
+    name: "penumbra-loop-discover-to-green",
+    topLevelAllowedKeys: [
+      "scope",
+      "exclude",
+      "base",
+      "candidates",
+      "fixAgent",
+      "maxFixRounds",
+      "dryRunPlan",
+      "dispatcherModel",
+      "finderModel",
+      "plannerModel",
+      "graderModel",
+      "seedCandidates",
+      "repo",
+      "project_id",
+      "caller_cwd",
+      "defaults",
+    ],
+    defaultsAllowedKeys: [
+      "initial_agent",
+      "task_class",
+      "task_type",
+      "trust_mode",
+      "use_worktree",
+      "max_hops",
+      "timeout_ms",
+      "task_name",
+      "branch_type",
+      "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
+      "isolated_install",
+    ],
+    taskAllowedKeys: [
+      "label",
+      "name",
+      "title",
+      "task_name",
+      "branch_type",
+      "initial_agent",
+      "task_class",
+      "task_type",
+      "trust_mode",
+      "use_worktree",
+      "max_hops",
+      "timeout_ms",
+      "message",
+      "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
+      "isolated_install",
+    ],
+    taskRequiredKeys: ["message"],
+    validInput: { repo: "/tmp/pen-loop" },
+    validTasks: [{ message: "do the work" }],
+    taskLocationPrefix: "task",
+  },
+  {
+    path: ".claude/workflows/penumbra-tournament.js",
+    name: "penumbra-tournament",
+    topLevelAllowedKeys: [
+      "task",
+      "agents",
+      "defaults",
+      "dispatcherModel",
+      "judgeModel",
+      "project_id",
+      "caller_cwd",
+      "repo",
+    ],
+    defaultsAllowedKeys: [
+      "initial_agent",
+      "task_class",
+      "task_type",
+      "trust_mode",
+      "use_worktree",
+      "max_hops",
+      "timeout_ms",
+      "task_name",
+      "branch_type",
+      "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
+      "isolated_install",
+    ],
+    taskAllowedKeys: [
+      "label",
+      "name",
+      "title",
+      "task_name",
+      "branch_type",
+      "initial_agent",
+      "task_class",
+      "task_type",
+      "trust_mode",
+      "use_worktree",
+      "max_hops",
+      "timeout_ms",
+      "message",
+      "branch_base",
+      "response_mode",
+      "project_id",
+      "caller_cwd",
+      "isolated_install",
+    ],
+    taskRequiredKeys: ["message"],
+    validInput: {
+      task: { message: "do the work" },
+      agents: ["executor"],
+      repo: "/tmp/pen-tournament",
+    },
+    validTasks: [{ message: "do the work" }],
+    taskLocationPrefix: "task",
+  },
 ];
 
 function readValidatorBlock(path: string): string {
@@ -532,6 +652,7 @@ const WORKFLOW_LOCAL_KEYS = new Set([
   // orchestration args consumed by the script itself, never forwarded
   "tasks",
   "task",
+  "agents",
   "defaults",
   "repo",
   "goal",
@@ -545,6 +666,15 @@ const WORKFLOW_LOCAL_KEYS = new Set([
   "dispatcherModel",
   "plannerModel",
   "graderModel",
+  "judgeModel",
+  "scope",
+  "exclude",
+  "candidates",
+  "fixAgent",
+  "maxFixRounds",
+  "dryRunPlan",
+  "finderModel",
+  "seedCandidates",
   // display-name fallbacks resolved to task_name before dispatch
   "label",
   "name",
@@ -619,7 +749,7 @@ describe("workflow allowlists vs chain_start schema", () => {
           source,
           `${workflow.name} fixture lists ${name} but the script does not declare it`,
         ).not.toBeNull();
-        expect([...source!].sort()).toEqual([...fixture].sort());
+        expect(source).toEqual(fixture);
       }
     });
   }
@@ -670,5 +800,294 @@ describe("workflow allowlists vs chain_start schema", () => {
     }
     expect(problems).toEqual([]);
     expect(Object.keys(NOT_EXPOSED).length).toBe(NOT_EXPOSED_EXPECTED_SIZE);
+  });
+});
+
+describe("task key forwarding", () => {
+  const TASK_KEY_IGNORED: Record<string, Record<string, string>> = {
+    "penumbra-fanout": {
+      label: "display-name fallback resolved to task_name before dispatch",
+      name: "display-name fallback resolved to task_name before dispatch",
+      title: "display-name fallback resolved to task_name before dispatch",
+      caller_cwd:
+        "fanout resolves project scope from project_id in preference to caller_cwd; when a task carries project_id, caller_cwd is intentionally omitted from the dispatch spec",
+    },
+    "penumbra-fleet-verify": {
+      label: "display-name fallback resolved to task_name in the dispatch STEP-1 line",
+      name: "display-name fallback resolved to task_name in the dispatch STEP-1 line",
+      title: "display-name fallback resolved to task_name in the dispatch STEP-1 line",
+      verifyChecklist:
+        "verifier checklist text consumed in the stage-2 verify prompt, not the dispatch STEP-1",
+    },
+    "penumbra-fix-until-green": {
+      label: "display-name fallback resolved to task_name before the fanout call",
+      name: "display-name fallback resolved to task_name before the fanout call",
+      title: "display-name fallback resolved to task_name before the fanout call",
+    },
+    "penumbra-loop-discover-to-green": {
+      label: "loop hardcodes the implementation task label; not a caller-supplied value",
+      name: "display-name fallback on a generated task; the generated task uses title for task_name",
+      title:
+        "display-name fallback on a generated task; the generated task uses title for task_name",
+    },
+    "penumbra-swarm": {
+      rationale: "planner justification, stripped before the fanout call",
+    },
+    "penumbra-tournament": {},
+  };
+  const TASK_KEY_IGNORED_EXPECTED_SIZE = 15;
+
+  function forwardingValue(key: string): unknown {
+    switch (key) {
+      case "message":
+      case "dispatchPrompt":
+        return "fwd-message";
+      case "label":
+        return "fwd-label";
+      case "name":
+        return "fwd-name";
+      case "title":
+        return "fwd-title";
+      case "task_name":
+        return "fwd-task_name";
+      case "branch_type":
+        return "fwd-branch";
+      case "initial_agent":
+      case "agent":
+        return "fwd-initial_agent";
+      case "task_class":
+      case "taskClass":
+        return "TRIVIAL";
+      case "task_type":
+        return "health_check";
+      case "trust_mode":
+        return "config";
+      case "use_worktree":
+        return true;
+      case "max_hops":
+        return 99;
+      case "timeout_ms":
+        return 12345;
+      case "branch_base":
+      case "branchBase":
+        return "fwd-branch_base";
+      case "response_mode":
+        return "none";
+      case "project_id":
+        return "fwd-project_id";
+      case "caller_cwd":
+        return "/tmp/fwd-caller_cwd";
+      case "isolated_install":
+        return false;
+      case "rationale":
+        return "fwd-rationale";
+      case "verifyChecklist":
+        return "fwd-verifyChecklist";
+      default:
+        throw new Error(`no forwarding value defined for key "${key}"`);
+    }
+  }
+
+  function buildAllKeysTask(keys: string[]): Record<string, unknown> {
+    const task: Record<string, unknown> = {};
+    for (const key of keys) {
+      task[key] = forwardingValue(key);
+    }
+    return task;
+  }
+
+  function fanoutCall(calls: Array<{ name: string; args: unknown }>) {
+    return calls.find((c) => c.name === "penumbra-fanout");
+  }
+
+  function dispatchSpecFromPrompt(prompt: string): Record<string, unknown> {
+    const m = prompt.match(/```dispatch\n([\s\S]*?)\n```/);
+    if (!m || !m[1]) throw new Error("no ```dispatch fence in prompt");
+    return JSON.parse(m[1]) as Record<string, unknown>;
+  }
+
+  function messageFromFanoutPrompt(prompt: string): string | undefined {
+    const m = prompt.match(/## Task message[\s\S]*?\n([\s\S]*?)\n\nProtocol:/);
+    return m ? m[1] : undefined;
+  }
+
+  function assertValueInOutput(
+    workflow: (typeof WORKFLOWS)[number],
+    key: string,
+    value: unknown,
+    prompts: string[],
+    workflowCalls: Array<{ name: string; args: unknown }>,
+  ) {
+    if (workflow.name === "penumbra-fanout") {
+      const spec = dispatchSpecFromPrompt(prompts[0] ?? "");
+      if (key === "message") {
+        const message = messageFromFanoutPrompt(prompts[0] ?? "");
+        expect(message ?? "").toContain(String(value));
+        return;
+      }
+      expect(spec[key]).toEqual(value);
+      return;
+    }
+
+    if (workflow.name === "penumbra-fleet-verify") {
+      const prompt = prompts[0] ?? "";
+      if (key === "dispatchPrompt") {
+        const contract = prompt.match(
+          /--- CONTRACT \(verbatim\) ---\n([\s\S]*?)\n--- END CONTRACT ---/,
+        );
+        expect(contract?.[1] ?? "").toBe(value as string);
+        return;
+      }
+      if (key === "isolated_install") {
+        expect(prompt).toContain(`isolated_install=${value}`);
+        return;
+      }
+      expect(prompt).toContain(String(value));
+      return;
+    }
+
+    const fanout = fanoutCall(workflowCalls);
+    expect(fanout, `${workflow.name} should call penumbra-fanout`).toBeDefined();
+    const args = fanout!.args as {
+      tasks?: Array<Record<string, unknown>>;
+      defaults?: Record<string, unknown>;
+    };
+    const haystack = JSON.stringify(args);
+
+    if (key === "message") {
+      const taskMessage = args.tasks?.[0]?.message;
+      expect(typeof taskMessage).toBe("string");
+      expect(String(taskMessage)).toContain(String(value));
+      return;
+    }
+    if (key === "use_worktree") {
+      expect(args.tasks?.[0]?.use_worktree ?? args.defaults?.use_worktree).toBe(value);
+      return;
+    }
+    if (key === "isolated_install") {
+      expect(args.tasks?.[0]?.isolated_install ?? args.defaults?.isolated_install).toBe(value);
+      return;
+    }
+
+    const jsonValue = JSON.stringify(value);
+    const keyValue = `"${key}":${jsonValue}`;
+    expect(haystack).toContain(keyValue);
+  }
+
+  function buildForwardingInput(
+    workflow: (typeof WORKFLOWS)[number],
+    task: Record<string, unknown>,
+    agentStub: (prompt: string, options?: Record<string, unknown>) => Promise<unknown>,
+  ): { args: unknown; agentStub: typeof agentStub } {
+    if (workflow.name === "penumbra-fanout") {
+      return { args: { tasks: [task], repo: "/tmp/pen" }, agentStub };
+    }
+    if (workflow.name === "penumbra-fleet-verify") {
+      return { args: { tasks: [task], repo: "/tmp/pen" }, agentStub };
+    }
+    if (workflow.name === "penumbra-fix-until-green") {
+      return { args: { task, check: "true", repo: "/tmp/pen" }, agentStub };
+    }
+    if (workflow.name === "penumbra-tournament") {
+      const agent = String(task.initial_agent ?? "executor");
+      task.label = `compete:${agent}`;
+      return { args: { task, agents: [agent], repo: "/tmp/pen" }, agentStub };
+    }
+    if (workflow.name === "penumbra-swarm") {
+      const stub: typeof agentStub = async (_prompt, options) => {
+        if (options?.label === "plan") return { tasks: [task] };
+        return {
+          tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }],
+        };
+      };
+      return {
+        args: {
+          goal: "ship it",
+          defaults: { project_id: "fwd-project_id", caller_cwd: "/tmp/fwd-caller_cwd" },
+        },
+        agentStub: stub,
+      };
+    }
+    if (workflow.name === "penumbra-loop-discover-to-green") {
+      const defaults: Record<string, unknown> = {};
+      for (const k of Object.keys(task)) {
+        if (
+          k !== "label" &&
+          k !== "name" &&
+          k !== "title" &&
+          k !== "task_name" &&
+          k !== "initial_agent" &&
+          k !== "branch_base" &&
+          k !== "message"
+        ) {
+          defaults[k] = task[k];
+        }
+      }
+      const stub: typeof agentStub = async (_prompt, options) => {
+        if (options?.label === "plan") {
+          return {
+            summary: "summary",
+            files: "files",
+            check_command: "bun test",
+            spec: task.message,
+          };
+        }
+        return {
+          tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }],
+        };
+      };
+      return {
+        args: {
+          repo: "/tmp/pen",
+          seedCandidates: [
+            {
+              title: task.task_name,
+              severity: "MEDIUM",
+              file: "src/x.ts:1",
+              why_real: "it breaks",
+              fix_sketch: "fix it",
+              suggested_check: "bun test",
+              confidence: "high",
+            },
+          ],
+          fixAgent: task.initial_agent,
+          base: task.branch_base,
+          defaults,
+        },
+        agentStub: stub,
+      };
+    }
+    throw new Error(`no forwarding input builder for ${workflow.name}`);
+  }
+
+  for (const workflow of WORKFLOWS) {
+    test(`${workflow.name} forwards every taskAllowedKey or documents why it is ignored`, async () => {
+      const keys = readNamedArray(workflow.path, "taskAllowedKeys") ?? [];
+      const task = buildAllKeysTask(keys);
+      const { args, agentStub } = buildForwardingInput(workflow, task, async () => ({
+        tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }],
+      }));
+
+      const { prompts, workflowCalls, error } = await runWorkflowCapturingPrompts(
+        workflow.path,
+        args,
+        agentStub,
+      );
+      expect(error).toBeUndefined();
+
+      const ignored = TASK_KEY_IGNORED[workflow.name] ?? {};
+      for (const key of keys) {
+        if (Object.hasOwn(ignored, key)) continue;
+        assertValueInOutput(workflow, key, task[key], prompts, workflowCalls);
+      }
+    });
+  }
+
+  test("TASK_KEY_IGNORED size matches expected", () => {
+    const total = Object.values(TASK_KEY_IGNORED).reduce(
+      (sum, map) => sum + Object.keys(map).length,
+      0,
+    );
+    expect(total).toBe(TASK_KEY_IGNORED_EXPECTED_SIZE);
   });
 });

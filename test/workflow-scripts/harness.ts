@@ -78,23 +78,36 @@ function findMatchingBracket(source: string, openIndex: number): number {
   return findMatchingDelimiter(source, openIndex, "[", "]");
 }
 
-export function readNamedArray(path: string, name: string): string[] | null {
-  const source = readFileSync(resolve(path), "utf8");
-  const matches = [...source.matchAll(new RegExp(`\\b${name}\\s*:\\s*\\[`, "g"))];
-  if (matches.length === 0) return null;
-  // Exactly-once is load-bearing: a second declaration of the same allowlist
-  // name would silently shadow the first, and the fixture-vs-source drift test
-  // that consumes this is the only thing catching that class.
-  if (matches.length !== 1) {
-    throw new Error(`${path} should declare ${name} exactly once`);
-  }
-  const open = matches[0]!.index + matches[0]![0].length - 1;
-  const close = findMatchingBracket(source, open);
+function extractArray(source: string, open: number, close: number): string[] {
   const body = source
     .slice(open + 1, close)
     .replace(/\/\/[^\n]*/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "");
   return [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2]!);
+}
+
+export function readNamedArray(path: string, name: string): string[] | null {
+  const source = readFileSync(resolve(path), "utf8");
+  const matches = [...source.matchAll(new RegExp(`\\b${name}\\s*:\\s*\\[`, "g"))];
+  if (matches.length === 0) return null;
+
+  const arrays: string[][] = [];
+  for (const match of matches) {
+    const open = match.index! + match[0].length - 1;
+    const close = findMatchingBracket(source, open);
+    arrays.push(extractArray(source, open, close));
+  }
+
+  const first = arrays[0]!;
+  for (let i = 1; i < arrays.length; i++) {
+    const sortedFirst = [...first].sort();
+    const sortedOther = [...arrays[i]!].sort();
+    if (JSON.stringify(sortedFirst) !== JSON.stringify(sortedOther)) {
+      throw new Error(`${path} declares ${name} more than once with different contents`);
+    }
+  }
+
+  return first;
 }
 
 export function readRuntimeBody(path: string): string {
@@ -112,7 +125,7 @@ export function readRuntimeBody(path: string): string {
   return source.slice(0, start) + source.slice(after);
 }
 
-type AgentStub = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
+export type AgentStub = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
 type WorkflowStub = (name: string, wArgs: unknown) => Promise<unknown>;
 
 async function baseRun(
@@ -195,18 +208,16 @@ export async function runWorkflow(path: string, args: unknown): Promise<RunWorkf
   return { agentCalls, error };
 }
 
+const DEFAULT_AGENT_STUB: AgentStub = async () => ({
+  tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }],
+});
+
 export async function runWorkflowCapturingPrompts(
   path: string,
   args: unknown,
+  agentStub: AgentStub = DEFAULT_AGENT_STUB,
 ): Promise<RunWorkflowCapturingPromptsResult> {
   const body = readRuntimeBody(path);
-  const { prompts, workflowCalls, error } = await baseRun(
-    body,
-    args,
-    async () => ({
-      tasks: [{ task_class: "STANDARD", task_type: "implement_small", message: "stub" }],
-    }),
-    async () => ({}),
-  );
+  const { prompts, workflowCalls, error } = await baseRun(body, args, agentStub, async () => ({}));
   return { prompts, workflowCalls, error };
 }

@@ -14,8 +14,6 @@ const UNGUARDED: Record<string, string> = {
   "integration-audit.js":
     "read-only integration audit; chain_start appears only in a probe prompt, no real dispatch",
   "land-and-close.js": "post-dispatch land/verify/close tail; uses dispatch_land, not chain_start",
-  "penumbra-loop-discover-to-green.js":
-    "full discover->plan->implement->review loop; self-guarded by task-spec-validation block, no direct chain_start",
   "penumbra-research.js": "memory-augmented web research; no dispatch",
   "penumbra-review-sweep.js":
     "sweep of adversarial-review targets; self-guarded by task-spec-validation block, no direct chain_start",
@@ -23,13 +21,11 @@ const UNGUARDED: Record<string, string> = {
     "batch token-opt migrations with real chain_start calls; the dispatch contract is caller-provided",
   "penumbra-token-opt-migrate.js":
     "single token-opt migration with a real chain_start call; hardcoded param shape",
-  "penumbra-tournament.js":
-    "best-of-N fleet tournament; self-guarded by task-spec-validation block, no direct chain_start",
   "session-first-moves.js": "read-only session diagnostics, no dispatch",
   "session-memory-sweep.js": "t2 memory candidate collect/approve; no chain_start dispatch",
 };
 
-const UNGUARDED_EXPECTED_SIZE = 13;
+const UNGUARDED_EXPECTED_SIZE = 11;
 
 function readWorkflowsFixture(): string[] {
   const source = readFileSync(FIXTURE_PATH, "utf8");
