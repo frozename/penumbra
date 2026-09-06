@@ -9,18 +9,27 @@ export const meta = {
   ],
 }
 
-// args (JSON string or object): { tasks: [{ name, dispatchPrompt, agent?, taskClass?, verifyChecklist? }] }
+// args (JSON string or object): { tasks: [{ name, dispatchPrompt, agent?, taskClass?, task_type?, verifyChecklist? }], defaults?, repo }
 //   name            - short label (reporting only)
 //   dispatchPrompt  - verbatim chain_start message (the task contract; MUST tell the
 //                     agent to commit explicitly with a neutral message and run its
 //                     own typecheck/tests)
-//   agent           - fleet agent (default executor)
-//   taskClass       - BOUNDARY | STANDARD | TRIVIAL (default STANDARD)
+//   agent           - fleet agent (default executor; defaults.initial_agent also honored)
+//   taskClass       - BOUNDARY | STANDARD | TRIVIAL (default STANDARD; defaults.task_class also honored)
+//   task_type       - chain_start workload classification (default implement_small;
+//                     defaults.task_type also honored). Flows into agent_performance
+//                     routing data — set it honestly.
 //   verifyChecklist - extra free-text checks the verifier should measure/report
 //   branchBase      - optional git ref to base the worktree on (e.g. an unlanded
 //                     handoff branch_name for a fix-round building on prior work);
 //                     defaults to main. Verify uses merge-base, so the squash-land
 //                     of the resulting branch carries the full base+fix footprint.
+//   defaults        - chain_start defaults for every task: initial_agent, task_class,
+//                     task_type, trust_mode, use_worktree, max_hops, timeout_ms,
+//                     task_name, branch_type, branch_base, project_id, caller_cwd,
+//                     isolated_install.
+//   repo            - REQUIRED absolute path to the home checkout; passed to
+//                     chain_start as caller_cwd so the MCP layer resolves scope.
 // task-spec-validation:begin
 function validateSpec(spec) {
   const workflowName = spec.workflowName || 'workflow'
@@ -75,8 +84,27 @@ if (typeof a === 'string') {
 validateSpec({
   workflowName: 'penumbra-fleet-verify',
   input: a || {},
-  topLevelAllowedKeys: ['tasks', 'repo'],
+  topLevelAllowedKeys: ['tasks', 'defaults', 'repo'],
   requiredTopLevelKeys: ['tasks'],
+  defaults: a && a.defaults,
+  // Mirrors penumbra-fanout's defaults vocabulary minus response_mode —
+  // fleet-verify's dispatch proxy never fetches a response, so accepting that
+  // key here would be silently ignored.
+  defaultsAllowedKeys: [
+    'initial_agent',
+    'task_class',
+    'task_type',
+    'trust_mode',
+    'use_worktree',
+    'max_hops',
+    'timeout_ms',
+    'task_name',
+    'branch_type',
+    'branch_base',
+    'project_id',
+    'caller_cwd',
+    'isolated_install',
+  ],
   tasks: a && a.tasks,
   requireTasks: true,
   taskAllowedKeys: [
@@ -87,6 +115,7 @@ validateSpec({
     'dispatchPrompt',
     'agent',
     'taskClass',
+    'task_type',
     'verifyChecklist',
     'branchBase',
     'task_name',
@@ -120,13 +149,35 @@ if (!REPO || !REPO.startsWith('/')) {
 const DISPATCH_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['name', 'handoff_id', 'status', 'branch', 'branch_tip', 'commit_count'],
+  required: [
+    'name',
+    'handoff_id',
+    'status',
+    'reliability_status',
+    'reliability_trustworthy',
+    'reliability_action',
+    'branch',
+    'branch_tip',
+    'commit_count',
+  ],
   properties: {
     name: { type: 'string' },
     handoff_id: { type: 'string', description: 'verbatim from chain_start result' },
     conversation_id: { type: 'string' },
     status: { type: 'string', description: 'terminal status from chain_status' },
-    reliability_action: { type: 'string' },
+    reliability_status: {
+      type: 'string',
+      description: 'status copied verbatim from mcp__penumbra__dispatch_audit on the handoff',
+    },
+    reliability_trustworthy: {
+      type: 'boolean',
+      description:
+        'trustworthy copied verbatim from dispatch_audit; false marks a completed-looking dispatch as untrustworthy',
+    },
+    reliability_action: {
+      type: 'string',
+      description: 'recommended_action copied verbatim from dispatch_audit',
+    },
     branch: { type: 'string', description: 'handoff branch_name, or "MISSING"' },
     branch_tip: { type: 'string' },
     commit_count: { type: 'integer' },
@@ -154,27 +205,56 @@ const VERIFY_SCHEMA = {
 
 phase('DispatchVerify')
 
+const defs = (a && a.defaults) || {}
+
+function resolveTask(t) {
+  const callerCwd =
+    typeof defs.caller_cwd === 'string' && defs.caller_cwd.trim().startsWith('/')
+      ? defs.caller_cwd.trim()
+      : REPO
+  return {
+    initialAgent: t.agent || defs.initial_agent || 'executor',
+    taskClass: t.taskClass || defs.task_class || 'STANDARD',
+    taskType: t.task_type || defs.task_type || 'implement_small',
+    taskName: t.task_name || t.label || t.name || t.title || defs.task_name || '',
+    trustMode: defs.trust_mode || 'all',
+    useWorktree: defs.use_worktree ?? true,
+    maxHops: defs.max_hops ?? 8,
+    timeoutMs: defs.timeout_ms ?? 1800000,
+    projectId: typeof defs.project_id === 'string' ? defs.project_id.trim() : '',
+    callerCwd,
+    branchBase: t.branchBase || defs.branch_base,
+    branchType: t.branch_type || defs.branch_type,
+    isolatedInstall: t.isolated_install ?? defs.isolated_install,
+  }
+}
+
+log(`fleet-verify: dispatching ${tasks.length} task(s) to the fleet in parallel (repo=${REPO})`)
+
 const results = await pipeline(
   tasks,
   // Stage 1: dispatch + wait + collect real branch facts.
-  (t) =>
-    agent(
+  (t) => {
+    const r = resolveTask(t)
+    return agent(
       [
         `Dispatch ONE task to the penumbra fleet; report ONLY verbatim tool-output values. Never invent an id or SHA.`,
-        `STEP 1: mcp__penumbra__chain_start with initial_agent="${t.agent || 'executor'}", task_class="${t.taskClass || 'STANDARD'}", task_type="implement_small", task_name="${t.task_name || t.label || t.name || t.title}", caller_cwd="${REPO}", ${t.branchBase ? `branch_base="${t.branchBase}", ` : ''}${t.branch_type ? `branch_type="${t.branch_type}", ` : ''}${typeof t.isolated_install === 'boolean' ? `isolated_install=${t.isolated_install}, ` : ''}message = the EXACT contract below.`,
+        `STEP 1: mcp__penumbra__chain_start with initial_agent=${JSON.stringify(r.initialAgent)}, task_class=${JSON.stringify(r.taskClass)}, task_type=${JSON.stringify(r.taskType)}, task_name=${JSON.stringify(r.taskName)}, caller_cwd=${JSON.stringify(r.callerCwd)}, trust_mode=${JSON.stringify(r.trustMode)}, use_worktree=${r.useWorktree}, max_hops=${r.maxHops}, ${r.projectId ? `project_id=${JSON.stringify(r.projectId)}, ` : ''}${r.branchBase ? `branch_base=${JSON.stringify(r.branchBase)}, ` : ''}${r.branchType ? `branch_type=${JSON.stringify(r.branchType)}, ` : ''}${typeof r.isolatedInstall === 'boolean' ? `isolated_install=${r.isolatedInstall}, ` : ''}message = the EXACT contract below.`,
         `--- CONTRACT (verbatim) ---`,
         t.dispatchPrompt,
         `--- END CONTRACT ---`,
         `STEP 2: copy handoff_id + conversation_id + provisional branch_name verbatim from the chain_start result; the chain_start value is provisional because a collision suffix may be applied by the worker.`,
-        `STEP 3: poll mcp__penumbra__chain_status until terminal; chain_wait <=150s per call, one wait per step. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
+        `STEP 3: poll mcp__penumbra__chain_status until terminal; chain_wait <=150s per call, one wait per step, for at most ${Math.ceil(r.timeoutMs / 150000)} waits (~${r.timeoutMs}ms total). Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
         `STEP 4: in ${REPO}: git rev-parse --verify --quiet <branch_name> (branch_tip, "MISSING" if absent); git rev-list --count main..<branch_name> (commit_count); git worktree list | grep <handoff_id> (worktree_path).`,
-        `Set name="${t.name}". Return the structured object; every value from a tool result you saw this turn.`,
+        `STEP 5: once the chain is terminal, call mcp__penumbra__dispatch_audit({ handoff_id: <the chain_start handoff_id> }) and copy its status, trustworthy, and recommended_action fields VERBATIM into reliability_status, reliability_trustworthy, and reliability_action. The reliability block is served ONLY by dispatch_audit — handoff_get omits it, so do not substitute a handoff_get read.`,
+        `Set name=${JSON.stringify(t.name)}. Return the structured object; every value from a tool result you saw this turn.`,
       ].join('\n'),
       // dispatch driver is mechanical glue (chain_start + poll + git facts) — runs on a
       // cheap tier, not the inherited session model. Sonnet (not Haiku) to stay reliable
       // on the multi-step poll lifecycle + verbatim id/SHA copying.
       { label: `dispatch:${t.name}`, phase: 'DispatchVerify', schema: DISPATCH_SCHEMA, model: 'sonnet' },
-    ).then((dispatch) => ({ task: t, dispatch })),
+    ).then((dispatch) => ({ task: t, dispatch }))
+  },
   // Stage 2: verify (skip if no branch).
   (prev, t) => {
     const d = prev && prev.dispatch
@@ -184,14 +264,14 @@ const results = await pipeline(
     const wt = d.worktree_path || `${REPO}-worktrees/${d.handoff_id}`
     return agent(
       [
-        `Independently VERIFY fleet task "${t.name}" on branch ${d.branch} (tip ${d.branch_tip}). DO NOT land/push/edit/delete. Worktree: ${wt}.`,
+        `Independently VERIFY fleet task ${JSON.stringify(t.name)} on branch ${d.branch} (tip ${d.branch_tip}). DO NOT land/push/edit/delete. Worktree: ${wt}.`,
         `Measure exact values (single-token outputs for counts):`,
         `1. in worktree: run the repo typecheck for the touched package(s) (e.g. bunx tsc --build packages/<pkg>/tsconfig.json) -> typecheck_exit. If you cannot determine the package, set -1 and explain in notes.`,
         `2. in worktree: run the relevant test slice (bun test <paths>) -> tests_pass, tests_fail.`,
         `3. from ${REPO}: compute the branch's OWN footprint using the merge-base: run "git diff --name-only $(git merge-base main ${d.branch})..${d.branch}" -> files_changed (count) + changed_files (the list). MUST use the merge-base form, NOT "main..${d.branch}" — commits that landed on main in parallel would otherwise show as bogus changed/deleted files and trigger a false scope-bleed fail.`,
         `4. git log main..${d.branch} --format=%B | count (co-authored|claude|codex|gpt|assistant|generated with|robot) -> attribution_lines.`,
         `5. checklist_result: measure these task-specific checks and report findings: ${t.verifyChecklist || '(none beyond the standard gates)'}`,
-        `Set name="${t.name}" and verdict per schema. Report only measured values.`,
+        `Set name=${JSON.stringify(t.name)} and verdict per schema. Report only measured values.`,
       ].join('\n'),
       // verifier is the adversarial QUALITY GATE (runs tests, classifies failures,
       // checks the contract) — keep it capable: Sonnet, never Haiku. Do NOT economize
@@ -202,11 +282,24 @@ const results = await pipeline(
 )
 
 const real = results.filter(Boolean)
+const dropped = results.map((r, i) => (r ? null : tasks[i].name)).filter(Boolean)
+const skipped = real.filter((r) => r && r.skipped === 'no-branch')
 const landable = real.filter((r) => r.verify && r.verify.verdict === 'pass')
+const failed = real.filter((r) => !r.skipped && !(r.verify && r.verify.verdict === 'pass'))
+
+log(
+  `fleet-verify done: ${landable.length} landable, ${failed.length} failed, ${skipped.length} skipped, ${dropped.length} dropped of ${tasks.length}`,
+)
 
 return {
+  // Hardcoded literal, not a measurement: this workflow lands nothing by design —
+  // maestro lands each landable branch manually after reviewing the verdicts.
   ranNothingToMain: true,
+  ok: failed.length === 0 && skipped.length === 0 && dropped.length === 0,
   tasks: tasks.length,
+  failed: failed.map((r) => r.name),
+  dropped,
+  skipped: skipped.map((r) => r.name),
   results: real,
   landable: landable.map((r) => ({
     name: r.name,

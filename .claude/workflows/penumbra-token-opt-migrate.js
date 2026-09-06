@@ -10,9 +10,11 @@ export const meta = {
   ],
 }
 
-// args: { tool: string, dispatchPrompt: string }
+// args: { tool: string, dispatchPrompt: string, repo: string }
 //   tool           - the tool name being migrated (for labels/reporting only)
 //   dispatchPrompt - the full chain_start message (the migration contract)
+//   repo           - REQUIRED absolute path to the home checkout; passed to
+//                    chain_start as caller_cwd so the MCP layer resolves scope.
 // The script keeps every high-entropy value (handoff_id, branch tip, SHAs) as
 // data flowing between phases, and forces the verifier to return a validated
 // object — so maestro reports from returned data, never from generated prose.
@@ -34,7 +36,14 @@ if (!dispatchPrompt) {
   throw new Error('args.dispatchPrompt is required (the chain_start migration contract)')
 }
 
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".")
+// Workflow script sandboxes have no process object, so repo scope must come
+// from the parsed args.repo value rather than process.env or process.cwd().
+const REPO = typeof (parsedArgs && parsedArgs.repo) === 'string' ? parsedArgs.repo.trim() : ''
+if (!REPO || !REPO.startsWith('/')) {
+  throw new Error(
+    'penumbra-token-opt-migrate: args.repo must be a non-empty ABSOLUTE path - it is passed as chain_start caller_cwd so the MCP layer can resolve project scope. The daemon rejects scope-less dispatches with HTTP 400 project_id_required when PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID is set.',
+  )
+}
 
 phase('Dispatch')
 
@@ -43,12 +52,34 @@ phase('Dispatch')
 const DISPATCH_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['handoff_id', 'conversation_id', 'status', 'branch', 'branch_tip', 'commit_count'],
+  required: [
+    'handoff_id',
+    'conversation_id',
+    'status',
+    'reliability_status',
+    'reliability_trustworthy',
+    'reliability_action',
+    'branch',
+    'branch_tip',
+    'commit_count',
+  ],
   properties: {
     handoff_id: { type: 'string', description: 'handoff_id copied verbatim from chain_start result' },
     conversation_id: { type: 'string' },
     status: { type: 'string', description: 'terminal status from chain_status (completed/failed/timeout)' },
-    reliability_action: { type: 'string', description: 'dispatch reliability recommended_action if present, else "unknown"' },
+    reliability_status: {
+      type: 'string',
+      description: 'status copied verbatim from mcp__penumbra__dispatch_audit on the handoff',
+    },
+    reliability_trustworthy: {
+      type: 'boolean',
+      description:
+        'trustworthy copied verbatim from dispatch_audit; false marks a completed-looking dispatch as untrustworthy',
+    },
+    reliability_action: {
+      type: 'string',
+      description: 'recommended_action copied verbatim from dispatch_audit',
+    },
     branch: { type: 'string', description: 'handoff branch_name, or "MISSING" if absent' },
     branch_tip: { type: 'string', description: 'short SHA of the branch tip from git rev-parse, or "" if missing' },
     commit_count: { type: 'integer', description: 'git rev-list --count main..<branch>' },
@@ -78,6 +109,7 @@ const dispatch = await agent(
     `  git rev-parse --verify --quiet <branch_name>         (branch tip short sha; "MISSING" if absent)`,
     `  git rev-list --count main..<branch_name>             (commit_count)`,
     `  git worktree list | grep <handoff_id>                (worktree_path)`,
+    `STEP 5: once the chain is terminal, call mcp__penumbra__dispatch_audit({ handoff_id: <the chain_start handoff_id> }) and copy its status, trustworthy, and recommended_action fields VERBATIM into reliability_status, reliability_trustworthy, and reliability_action. The reliability block is served ONLY by dispatch_audit — handoff_get omits it, so do not substitute a handoff_get read.`,
     `Return the structured object. Every value MUST come from a tool result you actually saw this turn.`,
   ].join('\n'),
   { label: `dispatch:${tool}`, phase: 'Dispatch', schema: DISPATCH_SCHEMA, model: 'sonnet' },

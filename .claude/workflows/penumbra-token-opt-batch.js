@@ -10,7 +10,9 @@ export const meta = {
   ],
 }
 
-// args (JSON string or object): { migrations: [{ tool, dispatchPrompt }], push?: boolean }
+// args (JSON string or object): { migrations: [{ tool, dispatchPrompt }], repo, push?: boolean }
+//   repo        - REQUIRED absolute path to the home checkout; passed to chain_start
+//                 as caller_cwd so the MCP layer resolves project scope.
 //   migrations  - one entry per tool; dispatchPrompt is the verbatim chain_start contract
 //   push        - default false. When false, the workflow lands+commits to LOCAL main only
 //                 and returns a summary; maestro does ONE `git push` after review (single
@@ -34,17 +36,45 @@ for (const m of migrations) {
   }
 }
 
-const REPO = ((typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : (args || {})).repo) || (typeof process !== "undefined" ? (process.env.PENUMBRA_REPO || process.cwd()) : ".")
+// Workflow script sandboxes have no process object, so repo scope must come
+// from the parsed args.repo value rather than process.env or process.cwd().
+const REPO = typeof (a && a.repo) === 'string' ? a.repo.trim() : ''
+if (!REPO || !REPO.startsWith('/')) {
+  throw new Error(
+    'penumbra-token-opt-batch: args.repo must be a non-empty ABSOLUTE path - it is passed as chain_start caller_cwd so the MCP layer can resolve project scope. The daemon rejects scope-less dispatches with HTTP 400 project_id_required when PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID is set.',
+  )
+}
 
 const DISPATCH_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['handoff_id', 'status', 'branch', 'branch_tip', 'commit_count'],
+  required: [
+    'handoff_id',
+    'status',
+    'reliability_status',
+    'reliability_trustworthy',
+    'reliability_action',
+    'branch',
+    'branch_tip',
+    'commit_count',
+  ],
   properties: {
     handoff_id: { type: 'string', description: 'verbatim from chain_start result' },
     conversation_id: { type: 'string' },
     status: { type: 'string' },
-    reliability_action: { type: 'string' },
+    reliability_status: {
+      type: 'string',
+      description: 'status copied verbatim from mcp__penumbra__dispatch_audit on the handoff',
+    },
+    reliability_trustworthy: {
+      type: 'boolean',
+      description:
+        'trustworthy copied verbatim from dispatch_audit; false marks a completed-looking dispatch as untrustworthy',
+    },
+    reliability_action: {
+      type: 'string',
+      description: 'recommended_action copied verbatim from dispatch_audit',
+    },
     branch: { type: 'string', description: 'handoff branch_name, or "MISSING"' },
     branch_tip: { type: 'string' },
     commit_count: { type: 'integer' },
@@ -118,6 +148,7 @@ const verified = await pipeline(
         `STEP 2: copy handoff_id + conversation_id + provisional branch_name verbatim from the chain_start result; the chain_start value is provisional because a collision suffix may be applied by the worker.`,
         `STEP 3: poll mcp__penumbra__chain_status until terminal; use chain_wait <=150s per call, one wait per step. Take the FINAL branch_name from the terminal chain_wait or chain_status result; fallback to the chain_start value only if the terminal result lacks it.`,
         `STEP 4: in ${REPO} run: git rev-parse --verify --quiet <branch_name> (branch_tip, "MISSING" if absent); git rev-list --count main..<branch_name> (commit_count); git worktree list | grep <handoff_id> (worktree_path).`,
+        `STEP 5: once the chain is terminal, call mcp__penumbra__dispatch_audit({ handoff_id: <the chain_start handoff_id> }) and copy its status, trustworthy, and recommended_action fields VERBATIM into reliability_status, reliability_trustworthy, and reliability_action. The reliability block is served ONLY by dispatch_audit — handoff_get omits it, so do not substitute a handoff_get read.`,
         `Return the structured object; every value from a tool result you saw this turn.`,
       ].join('\n'),
       { label: `dispatch:${m.tool}`, phase: 'DispatchVerify', schema: DISPATCH_SCHEMA, model: 'sonnet' },
@@ -126,7 +157,13 @@ const verified = await pipeline(
   (prev, m) => {
     const d = prev && prev.dispatch
     if (!d || d.branch === 'MISSING' || d.commit_count < 1) {
-      return { tool: m.tool, dispatch: d, verify: null, skipped: 'no-branch' }
+      return {
+        tool: m.tool,
+        dispatch: d,
+        verify: null,
+        skipped: 'no-branch',
+        reliability_trustworthy: d && d.reliability_trustworthy,
+      }
     }
     const wt = d.worktree_path || `${REPO}-worktrees/${d.handoff_id}`
     return agent(
@@ -141,13 +178,25 @@ const verified = await pipeline(
         `Set verdict per schema. Use single-token outputs for counts.`,
       ].join('\n'),
       { label: `verify:${m.tool}`, phase: 'DispatchVerify', schema: VERIFY_SCHEMA, model: 'sonnet' },
-    ).then((verify) => ({ tool: m.tool, dispatch: d, verify }))
+    ).then((verify) => ({
+      tool: m.tool,
+      dispatch: d,
+      verify,
+      reliability_trustworthy: d.reliability_trustworthy,
+    }))
   },
 )
 
 const real = verified.filter(Boolean)
-const passed = real.filter((r) => r.verify && r.verify.verdict === 'pass')
-const failed = real.filter((r) => !r.verify || r.verify.verdict !== 'pass')
+// A verify-pass on an untrustworthy dispatch must NOT reach the land loop:
+// dispatch_audit trustworthy:false means the branch facts themselves are
+// suspect, so gating only on verify.verdict would land an unvetted branch.
+const passed = real.filter(
+  (r) => r.verify && r.verify.verdict === 'pass' && r.reliability_trustworthy !== false,
+)
+const failed = real.filter(
+  (r) => !r.verify || r.verify.verdict !== 'pass' || r.reliability_trustworthy === false,
+)
 
 log(`dispatch+verify done: ${passed.length} pass, ${failed.length} fail/skip of ${migrations.length}`)
 
@@ -181,7 +230,12 @@ return {
   ok: failed.length === 0 && landed.every((l) => l && l.landed),
   requested: migrations.length,
   passed_verify: passed.map((r) => r.tool),
-  failed_verify: failed.map((r) => ({ tool: r.tool, verdict: r.verify ? r.verify.verdict : 'no-verify', skipped: r.skipped })),
+  failed_verify: failed.map((r) => ({
+    tool: r.tool,
+    verdict: r.verify ? r.verify.verdict : 'no-verify',
+    skipped: r.skipped,
+    reliability_trustworthy: r.reliability_trustworthy,
+  })),
   landed,
   pushed: doPush,
   next: doPush
