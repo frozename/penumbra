@@ -52,6 +52,12 @@ const MAX_CONCURRENCY = 16;
 const MAX_ROUNDS = 10;
 const REAL_STORE_PATH_PATTERN = /(?:^|\/)share\/devin\/cli\//;
 const LOCK_HOLD_MARGIN_MS = 25;
+// Mirrors the per-write retry deadline in fixtures/devin-contention-fake.ts.
+const FAKE_CHILD_RETRY_DEADLINE_MS = 6_000;
+// Cap the adaptive hold below the lower of the parent request timeout and the
+// child's retry deadline, with twice the lock-hold margin as a safety buffer.
+const EFFECTIVE_HOLD_CAP_MS =
+  Math.min(REQUEST_TIMEOUT_MS, FAKE_CHILD_RETRY_DEADLINE_MS) - LOCK_HOLD_MARGIN_MS * 2;
 const CHILD_ENV_KEYS = [
   "HOME",
   "HTTP_PROXY",
@@ -373,13 +379,15 @@ async function settleClients(
   );
 }
 
-function roundResponseSpanMs(round: ProbeRoundResult): number {
-  const sends = round.processes
-    .filter((processResult) => processResult.sessionNewSendAt > 0)
-    .map((processResult) => processResult.sessionNewSendAt);
-  const responses = round.processes
-    .filter((processResult) => processResult.sessionNewResponseAt > 0)
-    .map((processResult) => processResult.sessionNewResponseAt);
+export function roundResponseSpanMs(round: { processes: ProbeProcessResult[] }): number {
+  const ok = round.processes.filter(
+    (processResult) =>
+      processResult.error === null &&
+      processResult.sessionNewSendAt > 0 &&
+      processResult.sessionNewResponseAt > 0,
+  );
+  const sends = ok.map((processResult) => processResult.sessionNewSendAt);
+  const responses = ok.map((processResult) => processResult.sessionNewResponseAt);
   if (sends.length === 0 || responses.length === 0) {
     return 0;
   }
@@ -430,6 +438,10 @@ async function runRound(
   return evaluateRound(partial, options, control);
 }
 
+export function effectiveHoldMs(configured: number, controlSpan: number): number {
+  return Math.min(configured + controlSpan + LOCK_HOLD_MARGIN_MS, EFFECTIVE_HOLD_CAP_MS);
+}
+
 async function runLockedRoundWithControl(
   round: number,
   options: ProbeRunOptions,
@@ -442,8 +454,8 @@ async function runLockedRoundWithControl(
     sqliteLockControlMs: 0,
   });
   const controlSpan = roundResponseSpanMs(controlRound);
-  const effectiveHoldMs = options.sqliteLockControlMs + controlSpan + LOCK_HOLD_MARGIN_MS;
-  return await runRound(round, options, controlEvidenceFor(controlRound), effectiveHoldMs);
+  const holdMs = effectiveHoldMs(options.sqliteLockControlMs, controlSpan);
+  return await runRound(round, options, controlEvidenceFor(controlRound), holdMs);
 }
 
 function rejectArtificialSleep(argv: string[]): void {

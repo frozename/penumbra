@@ -244,7 +244,7 @@ async function handleRequest(
   }
 
   if (options.mode === "serialized") {
-    await new Promise((resolve) => setTimeout(resolve, processIndex() * 75));
+    await new Promise((resolve) => setTimeout(resolve, processIndex() * 200));
   } else if (options.mode === "serialized-late") {
     await sleep(60 + processIndex() * 75);
   }

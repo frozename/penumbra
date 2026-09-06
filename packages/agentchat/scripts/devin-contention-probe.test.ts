@@ -4,9 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ProbeProcessResult } from "./devin-contention-probe-evidence.js";
+
 import {
+  effectiveHoldMs,
   parseProbeArgs,
   type ProbeResult,
+  roundResponseSpanMs,
   runDevinContentionProbe,
 } from "./devin-contention-probe.js";
 
@@ -508,5 +512,107 @@ describe("devin-contention-probe", () => {
       }),
       /rounds/,
     );
+  });
+
+  test("measures round response span excluding errored sessions", () => {
+    const processes: ProbeProcessResult[] = [
+      {
+        endAt: null,
+        error: null,
+        exitCode: null,
+        index: 0,
+        pid: 1000,
+        sessionId: "s0",
+        sessionNewResponseAt: 200,
+        sessionNewSendAt: 100,
+        startAt: 90,
+        stderrTail: "",
+      },
+      {
+        endAt: null,
+        error: null,
+        exitCode: null,
+        index: 1,
+        pid: 1001,
+        sessionId: "s1",
+        sessionNewResponseAt: 240,
+        sessionNewSendAt: 120,
+        startAt: 110,
+        stderrTail: "",
+      },
+    ];
+    expect(roundResponseSpanMs({ processes })).toBe(140);
+  });
+
+  test("excludes a timed-out response from round response span", () => {
+    const processes: ProbeProcessResult[] = [
+      {
+        endAt: null,
+        error: null,
+        exitCode: null,
+        index: 0,
+        pid: 1000,
+        sessionId: "s0",
+        sessionNewResponseAt: 200,
+        sessionNewSendAt: 100,
+        startAt: 90,
+        stderrTail: "",
+      },
+      {
+        endAt: null,
+        error: "request timed out",
+        exitCode: null,
+        index: 1,
+        pid: 1001,
+        sessionId: null,
+        sessionNewResponseAt: 5_000,
+        sessionNewSendAt: 120,
+        startAt: 110,
+        stderrTail: "",
+      },
+    ];
+    expect(roundResponseSpanMs({ processes })).toBe(100);
+  });
+
+  test("round response span returns 0 when all sends or responses are missing", () => {
+    const missingSends: ProbeProcessResult[] = [
+      {
+        endAt: null,
+        error: null,
+        exitCode: null,
+        index: 0,
+        pid: 1000,
+        sessionId: "s0",
+        sessionNewResponseAt: 200,
+        sessionNewSendAt: 0,
+        startAt: 90,
+        stderrTail: "",
+      },
+    ];
+    const missingResponses: ProbeProcessResult[] = [
+      {
+        endAt: null,
+        error: null,
+        exitCode: null,
+        index: 0,
+        pid: 1000,
+        sessionId: "s0",
+        sessionNewResponseAt: 0,
+        sessionNewSendAt: 100,
+        startAt: 90,
+        stderrTail: "",
+      },
+    ];
+    expect(roundResponseSpanMs({ processes: missingSends })).toBe(0);
+    expect(roundResponseSpanMs({ processes: missingResponses })).toBe(0);
+    expect(roundResponseSpanMs({ processes: [] })).toBe(0);
+  });
+
+  test("scales effective hold with control span and caps it", () => {
+    expect(effectiveHoldMs(250, 50)).toBe(325);
+    expect(effectiveHoldMs(250, 0)).toBe(275);
+    expect(effectiveHoldMs(1_500, 155)).toBe(1_680);
+    expect(effectiveHoldMs(250, 1_000_000)).toBe(5_950);
+    expect(effectiveHoldMs(6_000, 0)).toBe(5_950);
   });
 });
