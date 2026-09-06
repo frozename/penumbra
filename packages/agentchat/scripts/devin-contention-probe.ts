@@ -52,7 +52,9 @@ const MAX_CONCURRENCY = 16;
 const MAX_ROUNDS = 10;
 const REAL_STORE_PATH_PATTERN = /(?:^|\/)share\/devin\/cli\//;
 const LOCK_HOLD_MARGIN_MS = 25;
-// Mirrors the per-write retry deadline in fixtures/devin-contention-fake.ts.
+// Mirrors the per-write retry deadline in fixtures/devin-contention-fake.ts
+// (the `deadline` inside runWithRetry); devin-contention-probe-retry-deadline.test.ts
+// fails if the two drift apart.
 const FAKE_CHILD_RETRY_DEADLINE_MS = 6_000;
 // Cap the adaptive hold below the lower of the parent request timeout and the
 // child's retry deadline, with twice the lock-hold margin as a safety buffer.
