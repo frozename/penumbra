@@ -286,12 +286,47 @@ function skewPredicateResult(
   };
 }
 
+// Per-child response latency (responding - received) spread. This removes
+// confounding from staggered child starts or environment jitter in receipt.
+function fixtureEventResponseLatencySkew(
+  events: ProbeFixtureEvent[],
+  receivedKind: string,
+  respondingKind: string,
+): number | null {
+  const receivedByPid = new Map<number, number>();
+  const respondingByPid = new Map<number, number>();
+  for (const event of events) {
+    if (event.kind === receivedKind) {
+      receivedByPid.set(event.pid, event.atMs);
+    } else if (event.kind === respondingKind) {
+      respondingByPid.set(event.pid, event.atMs);
+    }
+  }
+  const latencies: number[] = [];
+  for (const [pid, receivedAt] of receivedByPid) {
+    const respondingAt = respondingByPid.get(pid);
+    if (respondingAt !== undefined) {
+      latencies.push(respondingAt - receivedAt);
+    }
+  }
+  if (latencies.length < 2) {
+    return null;
+  }
+  return Math.max(...latencies) - Math.min(...latencies);
+}
+
 function buildSerializedDispatchEvidence(
   round: PendingRoundResult,
   options: ProbeRunOptions,
   control: LockFreeControlEvidence | null,
 ): SerializedDispatchEvidence {
   const intervalOverlapCount = maxIntervalOverlap(round.processes);
+  const respondingEvents = control?.fixtureEvents ?? round.fixtureEvents;
+  const respondingSkewMeasurement = fixtureEventResponseLatencySkew(
+    respondingEvents,
+    "session_new_received",
+    "session_new_responding",
+  );
   return {
     intervalOverlap: {
       fired: options.requireOverlap && intervalOverlapCount < options.minOverlap,
@@ -303,11 +338,11 @@ function buildSerializedDispatchEvidence(
       "session_new_received",
       options.requireOverlap,
     ),
-    respondingSkew: skewPredicateResult(
-      control?.fixtureEvents ?? round.fixtureEvents,
-      "session_new_responding",
-      options.requireOverlap,
-    ),
+    respondingSkew: {
+      fired: options.requireOverlap && respondingSkewMeasurement !== null && respondingSkewMeasurement > MAX_RECEIVE_SKEW_MS,
+      measurement: respondingSkewMeasurement,
+      threshold: MAX_RECEIVE_SKEW_MS,
+    },
     sendSkew: {
       fired: options.requireOverlap && round.maxSendSkewMs > MAX_SEND_SKEW_MS,
       measurement: round.maxSendSkewMs,

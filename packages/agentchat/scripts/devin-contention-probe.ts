@@ -268,8 +268,11 @@ function extractSessionId(value: unknown): string | null {
   return nonEmptyString(result.sessionId) ?? nonEmptyString(result.session_id);
 }
 
-async function requestSession(started: StartedClient, round: number): Promise<ProbeProcessResult> {
-  const sendAt = nowMs();
+async function requestSession(
+  started: StartedClient,
+  round: number,
+  sendAt: number,
+): Promise<ProbeProcessResult> {
   try {
     const response = await started.client.request(
       "session/new",
@@ -414,8 +417,11 @@ async function runRound(
     if (holdMs > 0) {
       lock = beginLockControl(options.dbPath, holdMs, lockJournalMode ?? "delete");
     }
+    // One timestamp for the whole batch so parent event-loop jitter cannot
+    // masquerade as session/new send skew across children.
+    const sendAt = nowMs();
     const sessionResults = await Promise.all(
-      clients.ready.map((client) => requestSession(client, round)),
+      clients.ready.map((client) => requestSession(client, round, sendAt)),
     );
     processes = [...sessionResults, ...clients.failures].sort((a, b) => a.index - b.index);
     lockControl = lock === null ? null : await lock.evidence;
