@@ -130,7 +130,7 @@ const dispatcherModel = input.dispatcherModel || 'sonnet'
 const graderModel = input.graderModel
 const baseAgent = input.agent || defaults.initial_agent || 'executor' // role-routed default; args.agent and escalateTo are deliberate pins
 const escalateTo = input.escalateTo // optional stronger agent for the final round
-const maxRounds = input.maxRounds || 3
+const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
 
@@ -186,9 +186,18 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
   ].join('\n')
 }
 
-function parseCheck(result) {
-  const hasLeanFields = result && typeof result === 'object' && typeof result.check_line === 'string'
-  const text = hasLeanFields ? String(result.check_line || '') : String(result || '')
+function parseCheck(result, responseMode = 'first_line') {
+  const hasCheckLine = result && typeof result === 'object' && typeof result.check_line === 'string'
+  const hasResponse = result && typeof result === 'object' && typeof result.response === 'string'
+  const useFirstLine = responseMode === 'first_line' && hasCheckLine
+  if (!useFirstLine && responseMode !== 'first_line') {
+    log(`WARNING: fix-until-green: response_mode is ${responseMode}; check parsing will scan the full worker response for CHECK_RESULT rather than only the first line.`)
+  }
+  const text = useFirstLine
+    ? String(result.check_line || '')
+    : hasResponse
+      ? String(result.response || '')
+      : String(result || '')
   // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
   // only an equal-or-longer run of the same marker character closes them.
   const scanText = stripFencedBlocks(text)
@@ -203,7 +212,7 @@ function parseCheck(result) {
     if (marker[1].toUpperCase() === 'PASS') sawPass = true
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
-  if (hasLeanFields) {
+  if (useFirstLine) {
     return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
   }
   return { passed: false, output: text.slice(-4000) }
@@ -392,14 +401,15 @@ let prevOutput = null
 
 for (let i = 0; i < maxRounds; i++) {
   const agentForRound = i === maxRounds - 1 && escalateTo ? escalateTo : baseAgent
+  const responseMode = task.response_mode || defaults.response_mode || 'first_line'
   const t = {
     label: `fix#${i + 1}:${agentForRound}`,
-    task_name: task.task_name || task.label || task.name || task.title || `fix-${i + 1}`,
+    task_name: task.task_name || task.label || task.name || task.title || defaults.task_name || `fix-${i + 1}`,
     branch_type: task.branch_type || defaults.branch_type,
     initial_agent: agentForRound,
     task_class: task.task_class || defaults.task_class || 'STANDARD',
     task_type: task.task_type || defaults.task_type || 'implement_small',
-    response_mode: 'first_line',
+    response_mode: responseMode,
     message: roundMessage(i, prevBranch, prevOutput),
   }
   if (i === 0) {
@@ -413,13 +423,23 @@ for (let i = 0; i < maxRounds; i++) {
     { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(input.repo !== undefined ? { repo: input.repo } : {}) },
   )
   const r = ((fan && fan.results) || [])[0]
-  if (!r || !r.ok || !r.branch) {
-    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, result: r || null, ...hopFields(r) })
-    log(`fix-until-green round ${i + 1}: dispatch failed; stopping.`)
+  let dispatchFailure = null
+  if (!r) {
+    dispatchFailure = 'agent_dropped'
+  } else if (r.reliability_trustworthy === false) {
+    dispatchFailure = 'untrustworthy_dispatch'
+  } else if (!r.ok) {
+    dispatchFailure = 'chain_failed'
+  } else if (!r.branch) {
+    dispatchFailure = 'completed_no_branch'
+  }
+  if (dispatchFailure) {
+    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r) })
+    log(`fix-until-green round ${i + 1}: ${dispatchFailure}; stopping.`)
     break
   }
 
-  const verdict = parseCheck(r && Object.prototype.hasOwnProperty.call(r, 'check_line') ? r : r.response)
+  const verdict = parseCheck(r, responseMode)
   prevBranch = r.branch
   prevOutput = verdict.output
   if (r.extra_hops > 0 || r.hops_incomplete === true) {
@@ -435,6 +455,23 @@ for (let i = 0; i < maxRounds; i++) {
         effort: 'low',
         ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
       })
+      if (grade === null) {
+        const graderUnavailableOutput = 'Independent rubric grader was unavailable; rubric not attested.'
+        rounds.push({
+          round: i + 1,
+          agent: agentForRound,
+          branch: r.branch,
+          handoff_id: r.handoff_id,
+          ...hopFields(r),
+          check_passed: true,
+          rubric_status: 'GRADER_UNAVAILABLE',
+          rubric_grade: null,
+          passed: false,
+        })
+        log(`fix-until-green round ${i + 1}: grader unavailable; rubric not attested on ${r.branch}`)
+        prevOutput = graderUnavailableOutput
+        break
+      }
       // Decide from the grader's explicit overall_pass when present;
       // fall back to all(criteria.pass). Never infer from the notes string.
       const rubricPassed = rubricVerdict(grade)

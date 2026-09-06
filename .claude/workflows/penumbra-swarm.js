@@ -102,7 +102,7 @@ if (!goal || !String(goal).trim()) {
   return { ok: false, error: 'no_goal' }
 }
 
-const maxTasks = opts.maxTasks || 8
+const maxTasks = Math.max(0, opts.maxTasks ?? 8)
 const defaults = opts.defaults || {}
 const fanoutDefaults = { ...defaults }
 if (opts.project_id !== undefined) fanoutDefaults.project_id = opts.project_id
