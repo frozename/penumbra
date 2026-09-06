@@ -442,10 +442,13 @@ test("onChainEnd receives final response text from dispatch result", async () =>
     null,
     null,
     null,
-    0,
+    expect.any(Number),
     null,
     "This is the final response text returned by the worker dispatcher.",
   );
+  const wallMs =
+    mockCalls<[unknown, string, null, null, null, number, null, string]>(onChainEnd)[0]?.[5];
+  expect(wallMs).toBeGreaterThanOrEqual(0);
 });
 
 test("emits dispatch.start and dispatch.end events on successful dispatch", async () => {
