@@ -315,12 +315,20 @@ function fixtureEventResponseLatencySkew(
   return Math.max(...latencies) - Math.min(...latencies);
 }
 
+function sendSkewThreshold(control: LockFreeControlEvidence | null): number {
+  if (control === null) {
+    return MAX_SEND_SKEW_MS;
+  }
+  return control.maxSendSkewMs + MAX_SEND_SKEW_MS;
+}
+
 function buildSerializedDispatchEvidence(
   round: PendingRoundResult,
   options: ProbeRunOptions,
   control: LockFreeControlEvidence | null,
 ): SerializedDispatchEvidence {
   const intervalOverlapCount = maxIntervalOverlap(round.processes);
+  const sendSkewThresholdValue = sendSkewThreshold(control);
   const respondingEvents = control?.fixtureEvents ?? round.fixtureEvents;
   const respondingSkewMeasurement = fixtureEventResponseLatencySkew(
     respondingEvents,
@@ -344,9 +352,9 @@ function buildSerializedDispatchEvidence(
       threshold: MAX_RECEIVE_SKEW_MS,
     },
     sendSkew: {
-      fired: options.requireOverlap && round.maxSendSkewMs > MAX_SEND_SKEW_MS,
+      fired: options.requireOverlap && round.maxSendSkewMs > sendSkewThresholdValue,
       measurement: round.maxSendSkewMs,
-      threshold: MAX_SEND_SKEW_MS,
+      threshold: sendSkewThresholdValue,
     },
   };
 }
