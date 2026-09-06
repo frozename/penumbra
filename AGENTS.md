@@ -139,6 +139,16 @@ Working memory is stored in `long_lived_state.working_memory_json`. Per-thread `
 
 After a daemon kickstart, in-flight ticks die mid-session and trip the agent's circuit breaker. Recover via `long_lived.resume` per agent; `long_lived.tick` then resumes the schedule.
 
+## Activating a landed change
+
+Landing a change does not activate it. Three independent surfaces reload three different ways:
+
+- **Daemon + worker runtime** (`packages/core`, `packages/daemon`, the `packages/agentchat` runtime) — `launchctl kickstart -k gui/501/dev.penumbra.daemon` and the same for `dev.penumbra.worker`. Both processes run from source via bun (`packages/cli/bin/penumbra.ts`, `packages/agentchat/bin/agentchat-worker.ts`), so there is no dist rebuild step. Bounce them together; the daemon respawns its child workers and the mcp-allowlist-proxy.
+- **MCP tool surface** (`packages/mcp` schemas, `packages/api-contract` validators, tool descriptions) — `/mcp reconnect penumbra` from the Claude Code session. A daemon bounce does nothing here: the penumbra MCP server is a stdio child of the Claude Code process, not of the daemon, has no launchd job, and runs penumbra source frozen at its own start time. Reconnecting replaces the child under the same parent — restarting Claude Code itself is not required.
+- **CC workflow scripts** (`.claude/workflows/*.js`) — resolve from a session snapshot and require a new session. Neither action above affects them.
+
+After activating anything, prove it with an observation that would fail if the change were not live — e.g. a call the old schema rejected and the new one accepts. Do not infer activation from the fact that you restarted something.
+
 ## Daemon-supervised extra workers
 
 - Config path: `~/.config/penumbra/workers.yaml` (legacy fallback `~/.penumbra/workers.yaml`), override with `PENUMBRA_WORKERS_CONFIG_PATH` (or relocate the whole dir via `PENUMBRA_CONFIG_DIR`).
