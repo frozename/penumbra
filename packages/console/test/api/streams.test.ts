@@ -5,6 +5,7 @@ import {
   __resetBrokerForTests,
   __setSchedulers,
   createStreamBroker,
+  getStreamState,
   paramsKey,
   type StreamBrokerDeps,
   type StreamMessage,
@@ -472,6 +473,30 @@ describe("streams broker", () => {
     expect(() => subscribe("not-a-topic" as "dispatch-events", noop())).toThrow(
       /unknown stream topic/,
     );
+  });
+
+  test("subscribe('permission-events') opens /permissions/events once for two subscribers", async () => {
+    const sub1 = subscribe("permission-events", noop());
+    const sub2 = subscribe("permission-events", noop());
+    await flushMicrotasks();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/permissions/events");
+    sub1.unsubscribe();
+    sub2.unsubscribe();
+  });
+
+  test("getStreamState reports off with no subscribers and connected after a healthy connect", async () => {
+    expect(getStreamState().state).toBe("off");
+    expect(getStreamState().ringSize).toBe(0);
+
+    const sub = subscribe("dispatch-events", noop());
+    await flushMicrotasks();
+
+    expect(getStreamState().state).toBe("connected");
+    expect(getStreamState().ringSize).toBe(0);
+
+    sub.unsubscribe();
   });
 });
 

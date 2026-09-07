@@ -4,6 +4,9 @@ import { createSseSource, type EventSourceLike, type ShimOpts } from "./event-so
 
 export const TOPIC_PATHS = {
   "dispatch-events": "/dispatch/events/stream",
+  "permission-events": "/permissions/events",
+  "handoff-events": "/handoffs/events",
+  "task-events": "/tasks/events",
 } as const;
 
 export type StreamTopic = keyof typeof TOPIC_PATHS;
@@ -35,12 +38,16 @@ export interface StreamBrokerDeps {
   clock?: () => number;
 }
 
+export type StreamState = { state: "connected" | "reconnecting" | "off"; ringSize: number };
+
 export interface StreamBroker {
   subscribe<T>(
     topic: StreamTopic,
     onMessage: (msg: StreamMessage<T>) => void,
     opts?: SubscribeOpts,
   ): Subscription;
+  getStreamState(): StreamState;
+  onStreamStateChange(cb: () => void): () => void;
   /** Test helper: drop all entries + close all sources. */
   reset(): void;
 }
@@ -79,10 +86,40 @@ interface BrokerCtx {
   setTimeoutImpl: SetTimeoutLike;
   clearTimeoutImpl: ClearTimeoutLike;
   getConfig: () => { baseUrl: string; token: string };
+  stateListeners: Set<() => void>;
+  lastStateValue: "connected" | "reconnecting" | "off";
 }
 
 export function paramsKey(params?: Record<string, string>): string {
   return JSON.stringify(Object.entries(params ?? {}).sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+function computeBrokerState(entries: Map<string, BrokerEntry>): StreamState {
+  if (entries.size === 0) return { state: "off", ringSize: 0 };
+  let reconnecting = false;
+  let ringSize = 0;
+  for (const e of entries.values()) {
+    if (e.awaitingReconnectAck || e.reconnectHandle !== null) {
+      reconnecting = true;
+    }
+    if (e.ring.length > ringSize) {
+      ringSize = e.ring.length;
+    }
+  }
+  return { state: reconnecting ? "reconnecting" : "connected", ringSize };
+}
+
+function notifyStateChange(ctx: BrokerCtx): void {
+  const { state } = computeBrokerState(ctx.entries);
+  if (state === ctx.lastStateValue) return;
+  ctx.lastStateValue = state;
+  for (const cb of ctx.stateListeners) {
+    try {
+      cb();
+    } catch (err) {
+      console.error("[stream] state listener threw", err);
+    }
+  }
 }
 
 function topicPath(topic: StreamTopic): string {
@@ -110,7 +147,7 @@ function dispatchToSubscribers(entry: BrokerEntry, msg: StreamMessage<unknown>):
   }
 }
 
-function dispatchReconnectSynthetic(entry: BrokerEntry): void {
+function dispatchReconnectSynthetic(ctx: BrokerCtx, entry: BrokerEntry): void {
   entry.awaitingReconnectAck = false;
   // reconnectAttempt is reset by the health-confirm timer, NOT here — this
   // fires on HTTP headers-OK before any byte is read, so an accept-then-die
@@ -122,11 +159,16 @@ function dispatchReconnectSynthetic(entry: BrokerEntry): void {
     raw: { reconnect: true },
   };
   dispatchToSubscribers(entry, reconnectMsg);
+  notifyStateChange(ctx);
 }
 
-function handleMessage(entry: BrokerEntry, raw: { data: string; type: string }): void {
+function handleMessage(
+  ctx: BrokerCtx,
+  entry: BrokerEntry,
+  raw: { data: string; type: string },
+): void {
   if (entry.awaitingReconnectAck) {
-    dispatchReconnectSynthetic(entry);
+    dispatchReconnectSynthetic(ctx, entry);
   }
   let data: unknown;
   try {
@@ -155,7 +197,7 @@ function openSource(ctx: BrokerCtx, entry: BrokerEntry): void {
     headers,
     onConnected: (): void => {
       if (entry.awaitingReconnectAck) {
-        dispatchReconnectSynthetic(entry);
+        dispatchReconnectSynthetic(ctx, entry);
       }
       if (entry.healthConfirmHandle !== null) {
         ctx.clearTimeoutImpl(entry.healthConfirmHandle);
@@ -171,7 +213,7 @@ function openSource(ctx: BrokerCtx, entry: BrokerEntry): void {
   });
   entry.source = source;
   source.addEventListener("message", (raw) => {
-    handleMessage(entry, raw);
+    handleMessage(ctx, entry, raw);
   });
 }
 
@@ -191,6 +233,7 @@ function handleTransportError(ctx: BrokerCtx, entry: BrokerEntry, err: unknown):
   }
   entry.awaitingReconnectAck = true;
   scheduleReconnect(ctx, entry);
+  notifyStateChange(ctx);
 }
 
 function scheduleReconnect(ctx: BrokerCtx, entry: BrokerEntry): void {
@@ -199,10 +242,12 @@ function scheduleReconnect(ctx: BrokerCtx, entry: BrokerEntry): void {
   const delay = BACKOFF_MS[idx] ?? BACKOFF_MS[BACKOFF_MS.length - 1] ?? 1_000;
   entry.reconnectHandle = ctx.setTimeoutImpl(() => {
     entry.reconnectHandle = null;
+    notifyStateChange(ctx);
     entry.reconnectAttempt += 1;
     if (entry.refcount === 0) return;
     openSource(ctx, entry);
   }, delay);
+  notifyStateChange(ctx);
 }
 
 function ensureEntry(
@@ -254,6 +299,7 @@ function lingerTeardown(ctx: BrokerCtx, captured: BrokerEntry): void {
     captured.healthConfirmHandle = null;
   }
   ctx.entries.delete(captured.key);
+  notifyStateChange(ctx);
 }
 
 function makeUnsubscribe(
@@ -303,6 +349,7 @@ function subscribeOn<T>(
     entry.awaitingReconnectAck = false;
     openSource(ctx, entry);
   }
+  notifyStateChange(ctx);
 
   return {
     tail: (): readonly StreamMessage<unknown>[] => entry.ring.slice(),
@@ -318,6 +365,7 @@ function resetCtx(ctx: BrokerCtx): void {
     e.source?.close();
   }
   ctx.entries.clear();
+  notifyStateChange(ctx);
 }
 
 function makeSetTimeoutImpl(deps: StreamBrokerDeps): SetTimeoutLike {
@@ -352,6 +400,8 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
     setTimeoutImpl: makeSetTimeoutImpl(deps),
     clearTimeoutImpl: makeClearTimeoutImpl(deps),
     getConfig: deps.getConfig,
+    stateListeners: new Set(),
+    lastStateValue: "off",
   };
   return {
     subscribe<T>(
@@ -360,6 +410,15 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
       opts?: SubscribeOpts,
     ): Subscription {
       return subscribeOn(ctx, topic, onMessage, opts);
+    },
+    getStreamState(): StreamState {
+      return computeBrokerState(ctx.entries);
+    },
+    onStreamStateChange(cb: () => void): () => void {
+      ctx.stateListeners.add(cb);
+      return (): void => {
+        ctx.stateListeners.delete(cb);
+      };
     },
     reset(): void {
       resetCtx(ctx);
@@ -400,6 +459,14 @@ const defaultBroker = createStreamBroker({
 });
 
 export const subscribe = defaultBroker.subscribe.bind(defaultBroker);
+
+export function getStreamState(): StreamState {
+  return defaultBroker.getStreamState();
+}
+
+export function onStreamStateChange(cb: () => void): () => void {
+  return defaultBroker.onStreamStateChange(cb);
+}
 
 export function __setSchedulers(
   s: typeof globalThis.setTimeout,
