@@ -108,62 +108,69 @@ const RegistrarFollowUpInputSchema = z
     }
   });
 
-export const RegistrarEventInputSchema = z.discriminatedUnion("kind", [
-  z.object({ ...eventBase, kind: z.literal("progress") }).strict(),
-  z.object({ ...eventBase, kind: z.literal("caveat") }).strict(),
-  RegistrarBlockerInputSchema,
-  RegistrarFollowUpInputSchema,
-  z.object({ ...eventBase, kind: z.literal("decision") }).strict(),
-  z
-    .object({
-      ...eventBase,
-      phase_no: z.number().int().positive(),
-      kind: z.literal("phase_transition"),
-      from_status: RegistrarPhaseStatusSchema,
-      state: RegistrarPhaseStatusSchema,
-    })
-    .strict(),
-  z
-    .object({
-      ...eventBase,
-      kind: z.literal("link"),
-      link_kind: RegistrarLinkKindSchema,
-      link_value: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      actor: RegistrarActorSchema,
-      body: RegistrarBodySchema,
-      kind: z.literal("entry_transition"),
-      from_status: RegistrarStatusSchema,
-      state: RegistrarEntryTransitionTargetSchema,
-      link_kind: RegistrarLinkKindSchema.optional(),
-      link_value: z.string().min(1).optional(),
-    })
-    .strict()
-    .superRefine((event, ctx) => {
-      if (event.state === event.from_status) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["state"],
-          message: "entry_transition requires state !== from_status",
-        });
-      }
-    }),
-])
-// kind="link" requires both fields at the variant level; every other kind may
-// attach a link only as a complete pair.
-.superRefine((event, ctx) => {
-  if ((event.link_kind === undefined) !== (event.link_value === undefined)) {
-    ctx.addIssue({
-      code: "custom",
-      path: [event.link_kind === undefined ? "link_kind" : "link_value"],
-      message: "link_kind and link_value must be provided together",
-    });
-  }
-});
+export const RegistrarEventInputSchema = z
+  .discriminatedUnion("kind", [
+    z.object({ ...eventBase, kind: z.literal("progress") }).strict(),
+    z.object({ ...eventBase, kind: z.literal("caveat") }).strict(),
+    RegistrarBlockerInputSchema,
+    RegistrarFollowUpInputSchema,
+    z.object({ ...eventBase, kind: z.literal("decision") }).strict(),
+    z
+      .object({
+        ...eventBase,
+        phase_no: z.number().int().positive(),
+        kind: z.literal("phase_transition"),
+        from_status: RegistrarPhaseStatusSchema,
+        state: RegistrarPhaseStatusSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...eventBase,
+        kind: z.literal("link"),
+        link_kind: RegistrarLinkKindSchema,
+        link_value: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        actor: RegistrarActorSchema,
+        body: RegistrarBodySchema,
+        kind: z.literal("entry_transition"),
+        from_status: RegistrarStatusSchema,
+        state: RegistrarEntryTransitionTargetSchema,
+        link_kind: RegistrarLinkKindSchema.optional(),
+        link_value: z.string().min(1).optional(),
+      })
+      .strict()
+      .superRefine((event, ctx) => {
+        if (event.state === event.from_status) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["state"],
+            message: "entry_transition requires state !== from_status",
+          });
+        }
+      }),
+  ])
+  // kind="link" requires both fields at the variant level; every other kind may
+  // attach a link only as a complete pair.
+  .superRefine((event, ctx) => {
+    if ((event.link_kind === undefined) !== (event.link_value === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [event.link_kind === undefined ? "link_kind" : "link_value"],
+        message: "link_kind and link_value must be provided together",
+      });
+    }
+  });
 export type RegistrarEventInput = z.infer<typeof RegistrarEventInputSchema>;
+
+export const RegistrarRollupSchema = z.object({
+  open_blockers: z.number().int().nonnegative(),
+  open_follow_ups: z.number().int().nonnegative(),
+});
+export type RegistrarRollup = z.infer<typeof RegistrarRollupSchema>;
 
 export const RegistrarEntrySchema = z.object({
   registrar_id: z.string(),
@@ -174,6 +181,7 @@ export const RegistrarEntrySchema = z.object({
   status: RegistrarStatusSchema,
   created_at: z.number().int(),
   updated_at: z.number().int(),
+  rollup: RegistrarRollupSchema.optional(),
 });
 export type RegistrarEntry = z.infer<typeof RegistrarEntrySchema>;
 
@@ -253,12 +261,6 @@ export const RegistrarCreateRequestSchema = z
   .strict();
 export type RegistrarCreateRequest = z.infer<typeof RegistrarCreateRequestSchema>;
 
-export const RegistrarRollupSchema = z.object({
-  open_blockers: z.number().int().nonnegative(),
-  open_follow_ups: z.number().int().nonnegative(),
-});
-export type RegistrarRollup = z.infer<typeof RegistrarRollupSchema>;
-
 export const RegistrarDetailSchema = z
   .object({
     entry: RegistrarEntrySchema,
@@ -275,3 +277,10 @@ export const RegistrarListResponseSchema = z
   })
   .loose();
 export type RegistrarListResponse = z.infer<typeof RegistrarListResponseSchema>;
+
+export const RegistrarEventsListResponseSchema = z
+  .object({
+    events: z.array(RegistrarEventSchema),
+  })
+  .loose();
+export type RegistrarEventsListResponse = z.infer<typeof RegistrarEventsListResponseSchema>;
