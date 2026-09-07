@@ -1,6 +1,7 @@
 import "../setup";
-import { describe, expect, test } from "bun:test";
 import { render, within } from "@testing-library/react";
+import { describe, expect, test } from "bun:test";
+
 import { Badge } from "@src/ui/Badge";
 import { Button } from "@src/ui/Button";
 import { Card, CardHead } from "@src/ui/Card";

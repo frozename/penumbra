@@ -1,10 +1,13 @@
 import { useMemo } from "react";
+
 import { DaemonClient } from "@src/api/client";
 import { useDaemonStore } from "@src/stores/daemon-store";
-import { PendingDraft } from "./PendingDraft";
+
 import type { PendingDraftProps } from "./PendingDraft";
-import { SessionTimeline } from "./SessionTimeline";
 import type { SessionTimelineProps } from "./SessionTimeline";
+
+import { PendingDraft } from "./PendingDraft";
+import { SessionTimeline } from "./SessionTimeline";
 
 export interface SessionsViewProps {
   client?: DaemonClient;

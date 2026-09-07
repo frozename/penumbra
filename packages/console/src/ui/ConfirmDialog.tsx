@@ -1,4 +1,4 @@
-import { createContext, useContext, useId, useRef, useState, type ReactNode } from "react";
+import { createContext, type ReactNode, useContext, useId, useRef, useState } from "react";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -32,14 +32,18 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element | null {
           aria-label="Reason"
           className="dialog-textarea"
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => {
+            setReason(e.target.value);
+          }}
         />
         {typedTarget !== undefined && (
           <input
             aria-label="Confirmation target"
             className="dialog-input"
             value={targetValue}
-            onChange={(e) => setTargetValue(e.target.value)}
+            onChange={(e) => {
+              setTargetValue(e.target.value);
+            }}
           />
         )}
         <div className="dialog-actions">
@@ -50,7 +54,9 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element | null {
             type="button"
             className="btn btn-primary"
             disabled={confirmDisabled}
-            onClick={() => onConfirm(reason)}
+            onClick={() => {
+              onConfirm(reason);
+            }}
           >
             Confirm
           </button>

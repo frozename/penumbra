@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import type { DaemonClient } from "@src/api/client";
 import { sessionEvents } from "@src/lib/query-keys";
-import { SessionTimeline } from "./SessionTimeline";
+
 import { makeStoryChain, makeStoryEvent, parsedStoryEvents } from "./fixtures";
+import { SessionTimeline } from "./SessionTimeline";
 
 const NOW = Date.parse("2026-09-01T18:00:00.000Z");
 

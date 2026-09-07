@@ -987,7 +987,11 @@ async function finalizeDispatch(
     ts: new Date().toISOString(),
     meta: buildDispatchEndMeta(ctx),
   });
-  if (ctx.outcome.status === "error") {
+  // Fail closed: anything that is not a clean success routes through
+  // markFailed. "aborted" used to fall through to complete(), which durably
+  // masked an in-flight hop whose daemon row was still `dispatched` — a
+  // shutdown abort stamps no cancel_requested_at, so markCompleted wins.
+  if (ctx.outcome.status !== "ok") {
     await failDispatch(deps, handoff, ctx);
     return;
   }
@@ -1005,16 +1009,24 @@ async function finalizeDispatch(
   }
 }
 
-// An errored dispatch must NOT be marked completed: that durably masks the
-// failure and suppresses retry/recovery (sweepers, re-dispatch). Route it
-// through markFailed with the error summary instead. Idempotent against an
-// already-terminal row (e.g. dispatchHandoff already failed it) via 409.
+// An errored OR aborted dispatch must NOT be marked completed: that durably
+// masks the failure and suppresses retry/recovery (sweepers, re-dispatch).
+// Route it through markFailed with the error summary instead. Idempotent
+// against an already-terminal row (e.g. dispatchHandoff already failed it)
+// via 409.
+function failureReasonOf(ctx: DispatchLifecycleContext): string {
+  // An aborted dispatch is reported as "cancelled", never as the adapter's
+  // abort text ("claude: aborted"), which reads as a seat fault downstream.
+  if (ctx.outcome.status === "aborted") return "cancelled";
+  return ctx.outcome.errorText ?? "dispatch error";
+}
+
 async function failDispatch(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
   ctx: DispatchLifecycleContext,
 ): Promise<void> {
-  const reason = ctx.outcome.errorText ?? "dispatch error";
+  const reason = failureReasonOf(ctx);
   try {
     await deps.markFailed(handoff.handoff_id, reason);
   } catch (err: unknown) {

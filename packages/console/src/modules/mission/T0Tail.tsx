@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { DispatchEvent } from "@penumbra/api-contract";
+
 import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import type { DispatchEvent } from "@penumbra/api-contract";
-import { Card, CardHead } from "@src/ui/Card";
-import { Button } from "@src/ui/Button";
-import { EventTypeChip } from "@src/ui/EventTypeChip";
-import { useStream } from "@src/hooks/useStream";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
+import { useStream } from "@src/hooks/useStream";
 import { chainsByStatus, handoffsPending } from "@src/lib/query-keys";
+import { Button } from "@src/ui/Button";
+import { Card, CardHead } from "@src/ui/Card";
+import { EventTypeChip } from "@src/ui/EventTypeChip";
+
 import { useMissionStore } from "./store";
 
 type SubscribeImpl = <T>(
@@ -69,7 +72,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
   const queryClient = useQueryClient();
   const lastReconnectSeen = useRef(0);
   const [showReconnected, setShowReconnected] = useState(false);
-  const frozenRef = useRef<ReadonlyArray<StreamMessage<DispatchEvent>> | null>(null);
+  const frozenRef = useRef<readonly StreamMessage<DispatchEvent>[] | null>(null);
   const postResumeStartRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -83,13 +86,16 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
       postResumeStartRef.current = null;
       void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
       void queryClient.invalidateQueries({ queryKey: handoffsPending() });
-      const handle = setTimeout(() => setShowReconnected(false), RECONNECTED_BANNER_MS);
-      return () => clearTimeout(handle);
+      const handle = setTimeout(() => {
+        setShowReconnected(false);
+      }, RECONNECTED_BANNER_MS);
+      return () => {
+        clearTimeout(handle);
+      };
     }
     return undefined;
     // Intentionally read the latest `pausedTail` and `stream.messages` from
     // the render that bumped reconnectCount, not from later renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.reconnectCount, queryClient]);
 
   // Frozen snapshot when paused: capture once at the moment pause flips on.
@@ -103,10 +109,9 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     // Intentionally only depend on `pausedTail` — we want the snapshot to
     // capture whatever messages are present at the instant pause flips on,
     // not to refresh while paused.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pausedTail]);
 
-  const sourceMessages: ReadonlyArray<StreamMessage<DispatchEvent>> = useMemo(() => {
+  const sourceMessages: readonly StreamMessage<DispatchEvent>[] = useMemo(() => {
     if (pausedTail && frozenRef.current) {
       return frozenRef.current;
     }
@@ -143,7 +148,9 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
               type="text"
               placeholder="filter…"
               value={tailFilter ?? ""}
-              onChange={(e) => setTailFilter(e.target.value || null)}
+              onChange={(e) => {
+                setTailFilter(e.target.value || null);
+              }}
               className="mono"
               style={{
                 fontSize: 11,
@@ -155,7 +162,12 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
               }}
               aria-label="Filter t0 events"
             />
-            <Button variant="ghost" onClick={() => setPausedTail(!pausedTail)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setPausedTail(!pausedTail);
+              }}
+            >
               {pausedTail ? "▶ resume" : "⏸ pause"}
             </Button>
           </>

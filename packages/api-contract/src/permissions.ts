@@ -23,21 +23,25 @@ export const PermissionRequestRowSchema = z.object({
 });
 export type PermissionRequestRow = z.infer<typeof PermissionRequestRowSchema>;
 
-export const CreatePermissionRequestSchema = z.object({
-  permission_id: z.string().min(1),
-  parent_handoff_id: z.string().min(1),
-  conversation_id: z.string().min(1),
-  agent_name: z.string().min(1),
-  tool_name: z.string().min(1),
-  raw_input: z.unknown(),
-  ttl_seconds: z.number().int().positive().optional(),
-});
+export const CreatePermissionRequestSchema = z
+  .object({
+    permission_id: z.string().min(1),
+    parent_handoff_id: z.string().min(1),
+    conversation_id: z.string().min(1),
+    agent_name: z.string().min(1),
+    tool_name: z.string().min(1),
+    raw_input: z.unknown(),
+    ttl_seconds: z.number().int().positive().optional(),
+  })
+  .strict();
 export type CreatePermissionRequest = z.infer<typeof CreatePermissionRequestSchema>;
 
-export const ApprovePermissionRequestSchema = z.object({
-  decision: z.enum(["approve", "reject"]),
-  remember: PermissionRememberSchema.optional(),
-  reason: z.string().optional(),
-  resolved_by: z.string().min(1).optional(),
-});
+export const ApprovePermissionRequestSchema = z
+  .object({
+    decision: z.enum(["approve", "reject"]),
+    remember: PermissionRememberSchema.optional(),
+    reason: z.string().optional(),
+    resolved_by: z.string().min(1).optional(),
+  })
+  .strict();
 export type ApprovePermissionRequest = z.infer<typeof ApprovePermissionRequestSchema>;

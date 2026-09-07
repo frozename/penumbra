@@ -1,6 +1,7 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
 import type { DaemonClient } from "@src/api/client";
 import { useDaemonHealth } from "@src/hooks/useDaemonHealth";
 import { useDaemonStore } from "@src/stores/daemon-store";
@@ -43,7 +44,9 @@ describe("useDaemonHealth", () => {
 
     const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 20 }));
 
-    await waitFor(() => expect(health).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(health).toHaveBeenCalledTimes(1);
+    });
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(health.mock.calls.length).toBeGreaterThanOrEqual(2);
     unmount();
@@ -65,10 +68,10 @@ describe("useDaemonHealth", () => {
   });
 
   test("ignores stale out-of-order poll response", async () => {
-    const resolvers: Array<{
+    const resolvers: {
       resolve: (v: { status: "ok" }) => void;
       reject: (err: Error) => void;
-    }> = [];
+    }[] = [];
     const health = mock(
       () =>
         new Promise<{ status: "ok" }>((resolve, reject) => {
@@ -79,10 +82,14 @@ describe("useDaemonHealth", () => {
 
     const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 50 }));
 
-    await waitFor(() => expect(resolvers.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => {
+      expect(resolvers.length).toBeGreaterThanOrEqual(2);
+    });
 
     resolvers[1]!.resolve({ status: "ok" });
-    await waitFor(() => expect(useDaemonStore.getState().health).toBe("ok"));
+    await waitFor(() => {
+      expect(useDaemonStore.getState().health).toBe("ok");
+    });
 
     resolvers[0]!.reject(new Error("stale"));
     for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -97,7 +104,9 @@ describe("useDaemonHealth", () => {
 
     const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 20 }));
 
-    await waitFor(() => expect(health).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(health).toHaveBeenCalledTimes(1);
+    });
     unmount();
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(health.mock.calls.length).toBe(1);

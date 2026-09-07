@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { Statusbar } from "./Statusbar";
 
 const meta: Meta<typeof Statusbar> = {

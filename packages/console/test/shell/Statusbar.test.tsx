@@ -1,6 +1,7 @@
 import "../setup";
-import { beforeEach, describe, expect, test } from "bun:test";
 import { act, render } from "@testing-library/react";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import { Statusbar } from "@src/shell/Statusbar";
 import { useDaemonStore } from "@src/stores/daemon-store";
 
@@ -17,7 +18,7 @@ describe("Statusbar", () => {
   test("daemon health dot reflects store health", () => {
     const { container, rerender } = render(<Statusbar />);
 
-    const getDot = () => container.querySelector(".dot") as HTMLElement | null;
+    const getDot = () => container.querySelector(".dot");
 
     expect(getDot()?.className).toBe("dot dot-warn");
 

@@ -1,6 +1,11 @@
 import { buildRequestUrl } from "../lib/url.js";
 import { useDaemonStore } from "../stores/daemon-store.js";
-import { createSseSource, type EventSourceLike, type ShimOpts } from "./event-source-shim.js";
+import {
+  createSseSource,
+  type EventSourceLike,
+  type ShimOpts,
+  SseConnectError,
+} from "./event-source-shim.js";
 
 export const TOPIC_PATHS = {
   "dispatch-events": "/dispatch/events/stream",
@@ -73,6 +78,7 @@ interface BrokerEntry {
   healthConfirmHandle: unknown;
   reconnectAttempt: number;
   awaitingReconnectAck: boolean;
+  terminal: boolean;
   ring: StreamMessage<unknown>[];
   subscribers: Set<(msg: StreamMessage<unknown>) => void>;
 }
@@ -98,7 +104,10 @@ function computeBrokerState(entries: Map<string, BrokerEntry>): StreamState {
   if (entries.size === 0) return { state: "off", ringSize: 0 };
   let reconnecting = false;
   let ringSize = 0;
+  let hasLive = false;
   for (const e of entries.values()) {
+    if (e.terminal) continue;
+    hasLive = true;
     if (e.awaitingReconnectAck || e.reconnectHandle !== null) {
       reconnecting = true;
     }
@@ -106,6 +115,7 @@ function computeBrokerState(entries: Map<string, BrokerEntry>): StreamState {
       ringSize = e.ring.length;
     }
   }
+  if (!hasLive) return { state: "off", ringSize };
   return { state: reconnecting ? "reconnecting" : "connected", ringSize };
 }
 
@@ -231,6 +241,17 @@ function handleTransportError(ctx: BrokerCtx, entry: BrokerEntry, err: unknown):
     }
     entry.source = null;
   }
+  if (err instanceof SseConnectError && err.status === 401) {
+    entry.terminal = true;
+    entry.awaitingReconnectAck = false;
+    if (entry.reconnectHandle !== null) {
+      ctx.clearTimeoutImpl(entry.reconnectHandle);
+      entry.reconnectHandle = null;
+    }
+    useDaemonStore.getState().setSessionInvalid(true);
+    notifyStateChange(ctx);
+    return;
+  }
   entry.awaitingReconnectAck = true;
   scheduleReconnect(ctx, entry);
   notifyStateChange(ctx);
@@ -271,6 +292,7 @@ function ensureEntry(
       healthConfirmHandle: null,
       reconnectAttempt: 0,
       awaitingReconnectAck: false,
+      terminal: false,
       ring: [],
       subscribers: new Set(),
     };

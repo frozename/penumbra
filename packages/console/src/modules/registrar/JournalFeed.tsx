@@ -1,6 +1,7 @@
 import type { RegistrarEvent, RegistrarEventKind } from "@penumbra/api-contract";
-import { Badge, type BadgeVariant } from "@src/ui/Badge";
+
 import { fmtTs } from "@src/lib/format";
+import { Badge, type BadgeVariant } from "@src/ui/Badge";
 
 const KIND_LABEL: Record<RegistrarEventKind, string> = {
   progress: "Progress",
@@ -55,7 +56,9 @@ export function JournalFeed({ events }: JournalFeedProps): JSX.Element {
             alignItems: "start",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}
+          >
             <Badge variant={KIND_VARIANT[event.kind] ?? "muted"}>
               <span data-testid="journal-kind">{KIND_LABEL[event.kind]}</span>
             </Badge>

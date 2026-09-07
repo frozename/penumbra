@@ -1,7 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { registrarDetail, registrarList } from "@src/lib/query-keys";
-import { RegistrarList } from "./RegistrarList";
+
 import { makeStoryDetail, makeStoryEntry } from "./fixtures";
+import { RegistrarList } from "./RegistrarList";
 
 const meta: Meta<typeof RegistrarList> = {
   title: "Registrar/RegistrarList",
@@ -24,7 +26,9 @@ export const OneOpenBlocker: Story = {
     queryCache: [
       {
         key: registrarList(),
-        data: { entries: [makeStoryEntry({ registrar_id: "reg-story-1", title: "Blocked rollout" })] },
+        data: {
+          entries: [makeStoryEntry({ registrar_id: "reg-story-1", title: "Blocked rollout" })],
+        },
       },
       {
         key: registrarDetail("reg-story-1"),
