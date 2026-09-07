@@ -3,6 +3,8 @@ import { z } from "zod";
 import { AgentTaskTypeSchema } from "./agent-performance.js";
 import { SafeProjectIdSchema } from "./project-id.js";
 
+export { type ApproveHandoffRequest, ApproveHandoffRequestSchema } from "@penumbra/api-contract";
+
 export const HandoffStatusSchema = z.enum([
   "pending",
   "approved",
@@ -90,15 +92,3 @@ export const CreateHandoffRequestSchema = z.object({
   branch_name: z.string().min(1).optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;
-
-export const ApproveHandoffRequestSchema = z
-  .object({
-    redirect_to: z.string().min(1).optional(),
-    reject: z.boolean().optional(),
-    reason: z.string().optional(),
-    resolved_by: z.string().min(1).optional(),
-  })
-  .refine((v) => !(v.redirect_to && v.reject === true), {
-    message: "redirect_to and reject are mutually exclusive",
-  });
-export type ApproveHandoffRequest = z.infer<typeof ApproveHandoffRequestSchema>;

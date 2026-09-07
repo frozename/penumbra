@@ -179,6 +179,24 @@ export class CodexRolloutReader implements UsageReader {
     const limitId = readString(latestRateLimits, "limit_id") ?? undefined;
     const provider = modelProvider?.length ? modelProvider : this.canonicalizeProvider(limitId);
     for (const key of ["primary", "secondary"] as const) {
+      const raw = latestRateLimits[key];
+      // Present-but-null means upstream retired the window; an absent key keeps
+      // the old skip semantics so payload shapes that never had the window do
+      // not start emitting tombstones.
+      if (raw === undefined) continue;
+      if (raw === null) {
+        snapshots.push({
+          provider,
+          window_label: key,
+          used_pct: 0,
+          retired: true,
+          extra: {
+            plan_type: readString(latestRateLimits, "plan_type"),
+            limit_id: limitId,
+          },
+        });
+        continue;
+      }
       const windowState = readRecord(latestRateLimits, key);
       if (!windowState) continue;
       snapshots.push({

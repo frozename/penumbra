@@ -67,3 +67,24 @@ export const HandoffsCompletedSinceResponseSchema = z.object({
 export const HandoffsLatestResponseSchema = z.object({
   handoff: HandoffRowSchema,
 });
+
+export const ApproveHandoffRequestSchema = z
+  .object({
+    redirect_to: z.string().min(1).optional(),
+    reject: z.boolean().optional(),
+    reason: z.string().optional(),
+    resolved_by: z.string().min(1).optional(),
+  })
+  .refine((v) => !(v.redirect_to && v.reject === true), {
+    message: "redirect_to and reject are mutually exclusive",
+  });
+export type ApproveHandoffRequest = z.infer<typeof ApproveHandoffRequestSchema>;
+
+export const ApproveHandoffResponseSchema = z
+  .object({
+    handoff_id: z.string(),
+    status: HandoffStatusSchema,
+    redirected_to: z.string().nullable().optional(),
+  })
+  .loose();
+export type ApproveHandoffResponse = z.infer<typeof ApproveHandoffResponseSchema>;
