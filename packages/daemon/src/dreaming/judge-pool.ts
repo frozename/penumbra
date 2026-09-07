@@ -4,6 +4,9 @@ export interface JudgeVote {
   promote: boolean;
   confidence: number;
   rationale?: string;
+  // True when the judge never produced a ballot (transport failure, throw).
+  // Abstentions are excluded from the quorum numerator AND denominator.
+  abstained?: boolean;
 }
 
 export interface JudgePool {

@@ -136,6 +136,31 @@ describe("DreamingJudgePool.judgeAll", () => {
     const errVote = results.find((r) => r.rationale === "judge_error");
     expect(errVote).toBeDefined();
   });
+
+  it("marks unreachable judge votes as abstentions rather than NO votes", async () => {
+    const fakeFetch = ((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return Promise.resolve(
+        url.includes("1111")
+          ? makeVoteResponse(true, 0.95)
+          : new Response("server error", { status: 500 }),
+      );
+    }) as unknown as typeof fetch;
+
+    const judges: DreamingJudgeEntry[] = [
+      { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+      { name: "j2", baseUrl: "http://localhost:9999/v1", apiKey: "", model: "local" },
+    ];
+    const pool = createDreamingJudgePool(judges, fakeFetch);
+    const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
+
+    expect(results).toHaveLength(2);
+    const errVote = results.find((r) => r.rationale === "judge_error");
+    expect(errVote?.abstained).toBe(true);
+    const realVote = results.find((r) => r.rationale !== "judge_error");
+    expect(realVote?.abstained ?? false).toBe(false);
+    expect(realVote?.promote).toBe(true);
+  });
 });
 
 // --- pool: judge round-robins ---

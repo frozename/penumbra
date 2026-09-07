@@ -35,7 +35,7 @@ import { runPC1Phase } from "./curator/pc1-ephemera.js";
 import { runPC2Phase } from "./curator/pc2-cluster.js";
 import { REWRITE_RESPONSE_SCHEMA } from "./dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "./dream-rewriter-prompt.js";
-import { type JudgePool, StubJudgePool } from "./judge-pool.js";
+import { type JudgePool, type JudgeVote, StubJudgePool } from "./judge-pool.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
@@ -533,6 +533,11 @@ function ensureSchemaColumns(db: Database): void {
   alterIfMissing("ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER");
   alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN project_id TEXT");
   alterIfMissing("ALTER TABLE t2_memories ADD COLUMN project_id TEXT");
+  alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_unusable_excerpt_at INTEGER");
+  alterIfMissing(
+    "ALTER TABLE t1_rollups ADD COLUMN promotion_retry_count INTEGER NOT NULL DEFAULT 0",
+  );
+  alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_retry_after INTEGER");
 }
 
 async function canAdvance(config: DreamConfig, deps: DreamCycleDeps): Promise<boolean> {
@@ -622,16 +627,37 @@ async function runCycleP1(
 
   for (const rollup of claimedRollups) {
     const body = rollup.first_prompt_excerpt;
-    if (!body || body.trim().length < 40) continue;
+    if (!body || body.trim().length < 40) {
+      // Terminal ineligibility, distinct from a judged NO: without this mark the
+      // rollup stays claimable and re-blocks the ORDER BY started_at ASC head
+      // every cycle, starving every newer eligible rollup behind it.
+      db.prepare(`UPDATE t1_rollups SET promotion_unusable_excerpt_at=? WHERE rollup_id=?`).run(
+        ctx.nowMs,
+        rollup.rollup_id,
+      );
+      continue;
+    }
 
     const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
-    if (ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) continue;
+    if (ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) {
+      // A queued action awaiting review is not a verdict; defer so the rollup
+      // does not re-block the claim head while it sits pending.
+      deferT1PromotionRetry(db, ctx, rollup, "queued_action_pending");
+      continue;
+    }
 
     const votes = await getPromoteVotes(ctx.judgePool, body);
-    const total = votes.length;
-    const yesCount = votes.filter((v) => v.promote).length;
-    const avgConfidence = votes.reduce((s, v) => s + v.confidence, 0) / Math.max(total, 1);
-    const autoPromote = total >= autoPromoteMinJudges && yesCount >= Math.ceil((total * 2) / 3);
+    const countedVotes = votes.filter((v) => !v.abstained);
+    if (countedVotes.length === 0 || countedVotes.length < autoPromoteMinJudges) {
+      // Too few real ballots is a non-verdict, not a judged NO: defer with
+      // backoff instead of writing a permanent promotion_filtered_at mark.
+      deferT1PromotionRetry(db, ctx, rollup, "insufficient_judge_votes");
+      continue;
+    }
+    const total = countedVotes.length;
+    const yesCount = countedVotes.filter((v) => v.promote).length;
+    const avgConfidence = countedVotes.reduce((s, v) => s + v.confidence, 0) / total;
+    const autoPromote = yesCount >= Math.ceil((total * 2) / 3);
 
     const result = await maybeAutoPromoteT1(
       db,
@@ -655,7 +681,7 @@ async function runCycleP1(
       result.status,
       rollupTargetIds,
       JSON.stringify({
-        votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
+        votes: serializeJudgeVotes(votes),
         ...(result.mintedT2Id ? { t2_memory_id: result.mintedT2Id } : {}),
       }),
     );
@@ -671,17 +697,67 @@ async function runCycleP1(
   phaseEnd(db, ctx, "P1", p1Start);
 }
 
+interface ClaimedT1Rollup {
+  rollup_id: string;
+  first_prompt_excerpt: string | null;
+  project_id: string | null;
+  promotion_retry_count: number;
+}
+
+// Non-verdict backoff: keeps a retryable rollup out of the claim head without
+// ever marking it terminally. Exponential from 1h, capped at 24h.
+const P1_PROMOTION_RETRY_BASE_MS = 60 * 60_000;
+const P1_PROMOTION_RETRY_MAX_MS = 24 * 60 * 60_000;
+
+function deferT1PromotionRetry(
+  db: Database,
+  ctx: CycleCtx,
+  rollup: ClaimedT1Rollup,
+  reason: "insufficient_judge_votes" | "queued_action_pending",
+): void {
+  const attempt = rollup.promotion_retry_count;
+  const delayMs = Math.min(
+    P1_PROMOTION_RETRY_BASE_MS * 2 ** Math.min(attempt, 5),
+    P1_PROMOTION_RETRY_MAX_MS,
+  );
+  db.prepare(
+    `UPDATE t1_rollups SET promotion_retry_count=?, promotion_retry_after=? WHERE rollup_id=?`,
+  ).run(attempt + 1, ctx.nowMs + delayMs, rollup.rollup_id);
+  ctx.log?.info(
+    {
+      phase: "P1",
+      cycleId: ctx.cycleId,
+      rollupId: rollup.rollup_id,
+      reason,
+      retryCount: attempt + 1,
+      retryAfterMs: delayMs,
+    },
+    "dream-cycle P1 promotion deferred",
+  );
+}
+
+function serializeJudgeVotes(
+  votes: JudgeVote[],
+): { promote: boolean; confidence: number; abstained?: boolean }[] {
+  return votes.map((v) => ({
+    promote: v.promote,
+    confidence: v.confidence,
+    ...(v.abstained === true ? { abstained: true } : {}),
+  }));
+}
+
 function claimT1Rollups(
   db: Database,
   ctx: CycleCtx,
   config: DreamConfig,
   longLivedFilter: string,
-): { rollup_id: string; first_prompt_excerpt: string | null; project_id: string | null }[] {
+): ClaimedT1Rollup[] {
   const baseParams = [
     ctx.nowMs,
     ctx.cycleId,
-    ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+    ctx.nowMs,
     ...EPHEMERA_PROMPT_LIKE_PATTERNS,
+    ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
     config.p1BatchSize,
   ];
 
@@ -691,23 +767,27 @@ function claimT1Rollups(
         `UPDATE t1_rollups SET claimed_at = ?, claimed_by_cycle = ?
         WHERE rollup_id IN (
           SELECT rollup_id FROM (
-            SELECT rollup_id, project_id FROM t1_rollups
+            SELECT rollup_id, project_id, promotion_retry_count FROM t1_rollups
                WHERE t2_promoted_at IS NULL
                  AND claimed_at IS NULL
                  AND promotion_filtered_at IS NULL
+                 AND promotion_unusable_excerpt_at IS NULL
+                 AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
                  AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
                  ${longLivedFilter}
+                 AND NOT EXISTS (
+                   SELECT 1 FROM dream_actions da
+                   WHERE da.action_type = 'promote_t1'
+                     AND da.status = 'queued'
+                     AND da.target_ids = json_array(t1_rollups.rollup_id)
+                 )
                  ORDER BY started_at ASC
                  LIMIT ?
             )
         )
-        RETURNING rollup_id, first_prompt_excerpt, project_id`,
+        RETURNING rollup_id, first_prompt_excerpt, project_id, promotion_retry_count`,
       )
-      .all(...baseParams) as {
-      rollup_id: string;
-      first_prompt_excerpt: string | null;
-      project_id: string | null;
-    }[];
+      .all(...baseParams) as ClaimedT1Rollup[];
   }
 
   const rows = db
@@ -718,32 +798,43 @@ function claimT1Rollups(
           WHERE t2_promoted_at IS NULL
             AND claimed_at IS NULL
             AND promotion_filtered_at IS NULL
+            AND promotion_unusable_excerpt_at IS NULL
+            AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
             AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
             ${longLivedFilter}
+            AND NOT EXISTS (
+              SELECT 1 FROM dream_actions da
+              WHERE da.action_type = 'promote_t1'
+                AND da.status = 'queued'
+                AND da.target_ids = json_array(t1_rollups.rollup_id)
+            )
           ORDER BY started_at ASC
           LIMIT ?
       )
-      RETURNING rollup_id, first_prompt_excerpt`,
+      RETURNING rollup_id, first_prompt_excerpt, promotion_retry_count`,
     )
-    .all(...baseParams) as { rollup_id: string; first_prompt_excerpt: string | null }[];
+    .all(...baseParams) as Omit<ClaimedT1Rollup, "project_id">[];
   return rows.map((r) => ({ ...r, project_id: null }));
 }
 
-async function getPromoteVotes(
-  judgePool: JudgePool,
-  body: string,
-): Promise<{ promote: boolean; confidence: number; rationale?: string }[]> {
-  if (judgePool.judgeAll) {
-    return await judgePool.judgeAll({ body, kind: "promote_t1" });
+async function getPromoteVotes(judgePool: JudgePool, body: string): Promise<JudgeVote[]> {
+  try {
+    if (judgePool.judgeAll) {
+      return await judgePool.judgeAll({ body, kind: "promote_t1" });
+    }
+    const result = await judgePool.judge({ body, kind: "promote_t1" });
+    return [
+      {
+        promote: result.verdict === "yes",
+        confidence: result.confidence,
+        rationale: result.rationale,
+      },
+    ];
+  } catch {
+    // A pool that throws outright is equivalent to every judge abstaining:
+    // no verdict, retryable, never a permanent filter.
+    return [{ promote: false, confidence: 0, rationale: "judge_error", abstained: true }];
   }
-  const result = await judgePool.judge({ body, kind: "promote_t1" });
-  return [
-    {
-      promote: result.verdict === "yes",
-      confidence: result.confidence,
-      rationale: result.rationale,
-    },
-  ];
 }
 
 async function maybeAutoPromoteT1(
@@ -753,7 +844,7 @@ async function maybeAutoPromoteT1(
   rollup: { rollup_id: string; first_prompt_excerpt: string | null; project_id: string | null },
   body: string,
   autoPromote: boolean,
-  votes: { promote: boolean; confidence: number }[],
+  votes: JudgeVote[],
   avgConfidence: number,
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
   if (!autoPromote) return { skip: false, status: "queued" };
@@ -782,7 +873,7 @@ async function maybeAutoPromoteT1(
         avgConfidence,
         rollupTargetIds,
         JSON.stringify({
-          votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
+          votes: serializeJudgeVotes(votes),
           dedup_against: existing.memory_id,
           project_id: rollup.project_id,
         }),

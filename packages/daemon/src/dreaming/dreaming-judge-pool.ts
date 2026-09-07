@@ -151,7 +151,9 @@ class DreamingJudgePoolImpl implements JudgePool {
           const raw = await this.callJudge(judge, prompt);
           return { promote: raw.promote, confidence: raw.confidence, rationale: raw.rationale };
         } catch {
-          return { promote: false, confidence: 0, rationale: "judge_error" };
+          // An unreachable judge abstains — it must not count as a NO vote
+          // in the quorum denominator.
+          return { promote: false, confidence: 0, rationale: "judge_error", abstained: true };
         }
       }),
     );

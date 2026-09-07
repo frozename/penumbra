@@ -61,7 +61,10 @@ interface DreamActionRow {
 it("P1 with REAL judge produces well-formed dream_actions rows (no parse failure)", async () => {
   const db = openTestDb();
   seedUnpromotedRollups(db, 2);
-  const realJudge = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  const realJudge = makeFakeJudgePool([
+    { promote: true, confidence: 1 },
+    { promote: true, confidence: 0.9 },
+  ]);
   const cycleId = await runDreamCycle(db, testConfig(), { judgePool: realJudge });
   const actions = db
     .prepare<DreamActionRow, []>(`SELECT * FROM dream_actions WHERE phase='P1'`)

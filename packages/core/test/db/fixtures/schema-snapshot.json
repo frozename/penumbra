@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 43,
+  "schemaVersion": 44,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -506,6 +506,9 @@
       "origin",
       "project_id",
       "promotion_filtered_at",
+      "promotion_retry_after",
+      "promotion_retry_count",
+      "promotion_unusable_excerpt_at",
       "provider_breakdown_json",
       "rollup_id",
       "session_id",

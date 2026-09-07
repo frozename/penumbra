@@ -269,7 +269,11 @@ it("P1 releases claims held by terminal cycles so rollups are re-selectable", as
     rollupId,
   );
 
-  const cycleId = await runDreamCycle(db, testConfig());
+  const pool = makeFakeJudgePool([
+    { promote: false, confidence: 0.4 },
+    { promote: false, confidence: 0.3 },
+  ]);
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
   const action = db
     .prepare(
       `SELECT 1 AS ok
@@ -299,7 +303,11 @@ it("P1 releases stale claims by TTL using millisecond timestamps", async () => {
     `UPDATE t1_rollups SET claimed_at=?, claimed_by_cycle='still-running' WHERE rollup_id=?`,
   ).run(now - P1_CLAIM_TTL_MS + 60_000, freshRollupId);
 
-  const cycleId = await runDreamCycle(db, testConfig());
+  const pool = makeFakeJudgePool([
+    { promote: false, confidence: 0.4 },
+    { promote: false, confidence: 0.3 },
+  ]);
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
   const staleAction = db
     .prepare(
       `SELECT 1 AS ok
@@ -508,6 +516,7 @@ function seedUnpromotedRollup(
     userId?: string;
     firstPromptExcerpt?: string | null;
     projectId?: string | null;
+    startedAt?: string;
   },
 ): string {
   const rollupId = crypto.randomUUID();
@@ -516,8 +525,15 @@ function seedUnpromotedRollup(
     opts.firstPromptExcerpt === undefined ? opts.body : opts.firstPromptExcerpt;
   db.prepare(
     `INSERT INTO t1_rollups(rollup_id, user_id, session_id, project_id, started_at, n_events, first_prompt_excerpt)
-     VALUES(?, ?, ?, ?, '2026-01-01T00:00:00Z', 1, ?)`,
-  ).run(rollupId, userId, crypto.randomUUID(), opts.projectId ?? null, firstPromptExcerpt);
+     VALUES(?, ?, ?, ?, ?, 1, ?)`,
+  ).run(
+    rollupId,
+    userId,
+    crypto.randomUUID(),
+    opts.projectId ?? null,
+    opts.startedAt ?? "2026-01-01T00:00:00Z",
+    firstPromptExcerpt,
+  );
   return rollupId;
 }
 
@@ -825,6 +841,317 @@ it("P1 skips NULL and short first_prompt_excerpt rollups (no UUID fallback)", as
     )
     .get(cycleId) as { n: number };
   expect(p1Actions.n).toBe(0);
+});
+
+it("P1 marks unusable-excerpt rollups ineligible with a marker distinct from a judged NO", async () => {
+  const db = openTestDb();
+  const nullRollupId = seedUnpromotedRollup(db, {
+    body: "ignored",
+    firstPromptExcerpt: null,
+  });
+  const shortRollupId = seedUnpromotedRollup(db, {
+    body: "ignored",
+    firstPromptExcerpt: "too short",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.9 },
+  ]);
+
+  const firstCycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const firstClaims = getClaimedRollups(db, firstCycleId);
+  expect(firstClaims).toContain(nullRollupId);
+  expect(firstClaims).toContain(shortRollupId);
+
+  const rows = db
+    .prepare(
+      `SELECT rollup_id, promotion_unusable_excerpt_at, promotion_filtered_at
+       FROM t1_rollups WHERE rollup_id IN (?, ?)`,
+    )
+    .all(nullRollupId, shortRollupId) as {
+    rollup_id: string;
+    promotion_unusable_excerpt_at: number | null;
+    promotion_filtered_at: string | null;
+  }[];
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.promotion_unusable_excerpt_at).not.toBeNull();
+    expect(row.promotion_filtered_at).toBeNull();
+  }
+
+  const secondCycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const secondClaims = getClaimedRollups(db, secondCycleId);
+  expect(secondClaims).not.toContain(nullRollupId);
+  expect(secondClaims).not.toContain(shortRollupId);
+});
+
+it("P1 advances the claim head past unusable excerpts to reach a judgeable rollup", async () => {
+  const db = openTestDb();
+  const unusableIds: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    unusableIds.push(
+      seedUnpromotedRollup(db, {
+        body: "ignored",
+        firstPromptExcerpt: i % 2 === 0 ? null : "tiny",
+        startedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+  }
+  const usableRollupId = seedUnpromotedRollup(db, {
+    body: "durable design decision: dispatch ordering and backoff policy for the handoff queue.",
+    startedAt: "2026-02-01T00:00:00Z",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.9 },
+  ]);
+  const config = testConfig({ p1BatchSize: 5, autoPromoteMinJudges: 2 });
+
+  let usableJudged = false;
+  for (let i = 0; i < 4 && !usableJudged; i++) {
+    await runDreamCycle(db, config, { judgePool: pool, onReembed: testP1Embed });
+    usableJudged =
+      db
+        .prepare(
+          `SELECT 1 AS ok FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+        )
+        .get(JSON.stringify([usableRollupId])) !== null;
+  }
+  expect(usableJudged).toBe(true);
+
+  const action = db
+    .prepare(
+      `SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+    )
+    .get(JSON.stringify([usableRollupId])) as { status: string } | null;
+  expect(action?.status).toBe("auto_applied");
+
+  const lastCycleId = await runDreamCycle(db, config, {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const lastClaims = getClaimedRollups(db, lastCycleId);
+  for (const id of unusableIds) {
+    expect(lastClaims).not.toContain(id);
+  }
+});
+
+it("P1 excludes abstained judges from the quorum denominator", async () => {
+  const db = openTestDb();
+  seedUnpromotedRollup(db, {
+    body: "durable convention: migration ordering rules for schema changes across the fleet.",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.85 },
+  ]);
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+
+  const action = db
+    .prepare(`SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
+    .get() as { status: string } | null;
+  expect(action?.status).toBe("auto_applied");
+});
+
+it("P1 treats all-abstain outcomes as a retryable non-verdict, never a permanent filter", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: judge abstention must not permanently filter a promotable rollup.",
+  });
+  const abstainPool = makeFakeJudgePool([
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+  ]);
+  const config = testConfig({ autoPromoteMinJudges: 2 });
+
+  const firstCycleId = await runDreamCycle(db, config, { judgePool: abstainPool });
+  expect(getClaimedRollups(db, firstCycleId)).toContain(rollupId);
+
+  const filtered = db
+    .prepare(`SELECT promotion_filtered_at FROM t1_rollups WHERE rollup_id=?`)
+    .get(rollupId) as { promotion_filtered_at: string | null } | null;
+  expect(filtered?.promotion_filtered_at).toBeNull();
+
+  const retry = db
+    .prepare(
+      `SELECT promotion_retry_after, promotion_retry_count FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_after: number | null;
+    promotion_retry_count: number;
+  } | null;
+  expect(retry?.promotion_retry_count).toBe(1);
+  expect(retry?.promotion_retry_after).toBeGreaterThan(Date.now());
+
+  const actionCount = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { n: number };
+  expect(actionCount.n).toBe(0);
+
+  const secondCycleId = await runDreamCycle(db, config, { judgePool: abstainPool });
+  expect(getClaimedRollups(db, secondCycleId)).not.toContain(rollupId);
+
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_after=0 WHERE rollup_id=?`).run(rollupId);
+  const yesPool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.9 },
+  ]);
+  await runDreamCycle(db, config, { judgePool: yesPool, onReembed: testP1Embed });
+  const promoted = db
+    .prepare(`SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id=?`)
+    .get(rollupId) as { t2_promoted_at: string | null } | null;
+  expect(promoted?.t2_promoted_at).not.toBeNull();
+});
+
+it("P1 treats a throwing judge call as an abstention instead of crashing the cycle", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable fact: an unreachable single judge must not take down the promotion cycle.",
+  });
+  const throwingPool = {
+    judge: (): Promise<never> => Promise.reject(new Error("judge unreachable")),
+  };
+
+  const cycleId = await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: throwingPool,
+  });
+  expect(getCycleOutcome(db, cycleId)).not.toBe("crashed");
+
+  const row = db
+    .prepare(`SELECT promotion_filtered_at FROM t1_rollups WHERE rollup_id=?`)
+    .get(rollupId) as { promotion_filtered_at: string | null } | null;
+  expect(row?.promotion_filtered_at).toBeNull();
+});
+
+it("P1 excludes a rollup with a pending queued promote_t1 action from the claim batch", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable knowledge: pending review must not re-block the promotion claim head.",
+  });
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P1', 'promote_t1', 0.5, 'queued', ?, '{}')`,
+  ).run(crypto.randomUUID(), JSON.stringify([rollupId]));
+
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.9 },
+  ]);
+  const firstCycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  expect(getClaimedRollups(db, firstCycleId)).not.toContain(rollupId);
+
+  const secondCycleId = await runDreamCycle(db, testConfig(), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  expect(getClaimedRollups(db, secondCycleId)).not.toContain(rollupId);
+
+  const queuedCount = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dream_actions
+        WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { n: number };
+  expect(queuedCount.n).toBe(1);
+
+  const retry = db
+    .prepare(
+      `SELECT promotion_retry_count, promotion_retry_after FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  };
+  expect(retry.promotion_retry_count).toBe(0);
+  expect(retry.promotion_retry_after).toBeNull();
+});
+
+it("P1 reaches a usable promotable rollup past queued promote actions in a single cycle", async () => {
+  const db = openTestDb();
+  ensureSeedCycle(db);
+  const queuedRollupIds: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    const id = seedUnpromotedRollup(db, {
+      body: `durable queued backlog entry ${String(i)}: this rollup already has a pending promote action awaiting operator review.`,
+      startedAt: `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+    });
+    queuedRollupIds.push(id);
+    db.prepare(
+      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+       VALUES(?, 'seed-cycle', 'P1', 'promote_t1', 0.5, 'queued', ?, '{}')`,
+    ).run(crypto.randomUUID(), JSON.stringify([id]));
+  }
+
+  const usableRollupId = seedUnpromotedRollup(db, {
+    body: "durable design decision: claim batch must skip queued promotes and reach the next eligible rollup.",
+    startedAt: "2026-02-01T00:00:00Z",
+  });
+
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.9 },
+  ]);
+  const config = testConfig({ p1BatchSize: 10, autoPromoteMinJudges: 2 });
+  const cycleId = await runDreamCycle(db, config, {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+
+  const claims = getClaimedRollups(db, cycleId);
+  expect(claims).toContain(usableRollupId);
+  for (const id of queuedRollupIds) {
+    expect(claims).not.toContain(id);
+  }
+
+  const action = db
+    .prepare(
+      `SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+    )
+    .get(JSON.stringify([usableRollupId])) as { status: string } | null;
+  expect(action?.status).toBe("auto_applied");
+});
+
+it("P1 claim batch never returns rollups that already carry a queued promote_t1 action", async () => {
+  const db = openTestDb();
+  ensureSeedCycle(db);
+  const queuedRollupIds: string[] = [];
+  for (let i = 0; i < 15; i++) {
+    const id = seedUnpromotedRollup(db, {
+      body: `durable queued rollup ${String(i)}: backlog entries consume zero claim capacity.`,
+      startedAt: `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+    });
+    queuedRollupIds.push(id);
+    db.prepare(
+      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+       VALUES(?, 'seed-cycle', 'P1', 'promote_t1', 0.5, 'queued', ?, '{}')`,
+    ).run(crypto.randomUUID(), JSON.stringify([id]));
+  }
+
+  const cycleId = await runDreamCycle(db, testConfig({ p1BatchSize: 10 }), {
+    onReembed: testP1Embed,
+  });
+
+  const claims = getClaimedRollups(db, cycleId);
+  expect(claims).toHaveLength(0);
 });
 
 it("P1 queues queued auto-promote when title already exists in active t2 memory", async () => {
