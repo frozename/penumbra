@@ -330,6 +330,39 @@ async function emitOneSink(
   }
 }
 
+async function finalizeAndCapture(
+  opts: ExecuteOpts,
+  start: number,
+  artifacts: string[],
+  warnings: string[],
+  recallSourceNames: string[],
+  itemCount: number,
+  outcome: ExecuteOutcome,
+  rest?: Partial<Omit<ExecuteResult, "outcome" | "artifacts" | "warnings" | "latencyMs">>,
+): Promise<ExecuteResult> {
+  const result: ExecuteResult = { outcome, artifacts, warnings, latencyMs: Date.now() - start, ...rest };
+  await runCapture(opts, result, recallSourceNames, itemCount);
+  return result;
+}
+
+function preRunFailureReason(spec: WorkflowSpec, bundle: RecallBundle): string | undefined {
+  const badGates = (spec.process_gates ?? []).filter((g) => !EXECUTOR_SATISFIABLE_GATES.has(g));
+  if (badGates.length > 0) {
+    return `spec lists process_gates the executor cannot satisfy: ${badGates.join(", ")}`;
+  }
+  const badOutputs = spec.output.map((o) => o.kind).filter((k) => !EXECUTOR_SATISFIABLE_OUTPUT_KINDS.has(k));
+  if (badOutputs.length > 0) {
+    return `spec lists output kinds the executor cannot satisfy: ${badOutputs.join(", ")}`;
+  }
+  const requiredRecallFailures = bundle.requiredFailures ?? [];
+  if (requiredRecallFailures.length > 0) {
+    return `required recall source(s) failed — ${requiredRecallFailures
+      .map((f) => `${f.source}: ${f.message}`)
+      .join("; ")}`;
+  }
+  return undefined;
+}
+
 export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult> {
   const start = Date.now();
   const { spec, bundle, fn, storageRoot } = opts;
@@ -342,34 +375,18 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     0,
   );
 
-  const unsatisfiableGates = (spec.process_gates ?? []).filter(
-    (g) => !EXECUTOR_SATISFIABLE_GATES.has(g),
-  );
-  if (unsatisfiableGates.length > 0) {
-    const result: ExecuteResult = {
-      outcome: "run_error",
+  const preRunFailure = preRunFailureReason(spec, bundle);
+  if (preRunFailure) {
+    return await finalizeAndCapture(
+      opts,
+      start,
       artifacts,
       warnings,
-      errorMessage: `spec lists process_gates the executor cannot satisfy: ${unsatisfiableGates.join(", ")}`,
-      latencyMs: Date.now() - start,
-    };
-    await runCapture(opts, result, recallSourceNames, itemCount);
-    return result;
-  }
-
-  const unsatisfiableOutputs = spec.output
-    .map((o) => o.kind)
-    .filter((k) => !EXECUTOR_SATISFIABLE_OUTPUT_KINDS.has(k));
-  if (unsatisfiableOutputs.length > 0) {
-    const result: ExecuteResult = {
-      outcome: "run_error",
-      artifacts,
-      warnings,
-      errorMessage: `spec lists output kinds the executor cannot satisfy: ${unsatisfiableOutputs.join(", ")}`,
-      latencyMs: Date.now() - start,
-    };
-    await runCapture(opts, result, recallSourceNames, itemCount);
-    return result;
+      recallSourceNames,
+      itemCount,
+      "run_error",
+      { errorMessage: preRunFailure },
+    );
   }
 
   const tplCtx: TemplateVarContext = opts.templateCtx ?? {
@@ -394,32 +411,31 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       disposeWorkflowCtx(baseCtx);
     }
   } catch (err: unknown) {
-    const result: ExecuteResult = {
-      outcome: spec.run.kind === "markdown-template" ? "render_error" : "run_error",
-      composedPrompt,
+    return await finalizeAndCapture(
+      opts,
+      start,
       artifacts,
       warnings,
-      errorMessage: err instanceof Error ? err.message : String(err),
-      latencyMs: Date.now() - start,
-    };
-    await runCapture(opts, result, recallSourceNames, itemCount);
-    return result;
+      recallSourceNames,
+      itemCount,
+      spec.run.kind === "markdown-template" ? "render_error" : "run_error",
+      { composedPrompt, errorMessage: err instanceof Error ? err.message : String(err) },
+    );
   }
 
   const body = bodyFromRunResult(composedPrompt, runResult);
   const { gateEvidence, blockingFailure } = runProcessGates(spec, body);
   if (blockingFailure) {
-    const result: ExecuteResult = {
-      outcome: "gated_failure",
-      composedPrompt,
-      runResult,
+    return await finalizeAndCapture(
+      opts,
+      start,
       artifacts,
       warnings,
-      latencyMs: Date.now() - start,
-      gateEvidence,
-    };
-    await runCapture(opts, result, recallSourceNames, itemCount);
-    return result;
+      recallSourceNames,
+      itemCount,
+      "gated_failure",
+      { composedPrompt, runResult, gateEvidence },
+    );
   }
 
   const octx: OutputCtx = { body, storageRoot, spec, tplCtx, opts, start };
@@ -429,27 +445,28 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     : undefined;
   const gateEvidenceOut = Object.keys(gateEvidence).length ? gateEvidence : undefined;
 
-  const baseResult = {
-    composedPrompt,
-    runResult,
+  return await finalizeAndCapture(
+    opts,
+    start,
     artifacts,
     warnings,
-    latencyMs: Date.now() - start,
-    gateEvidence: gateEvidenceOut,
-    sessionReminder,
-  };
-  const result: ExecuteResult =
-    sinkRun.requiredFailures.length > 0
-      ? {
-          ...baseResult,
-          outcome: "run_error",
-          errorMessage: `required output sink(s) failed — ${sinkRun.requiredFailures
-            .map((f) => `${f.kind}: ${f.reason}`)
-            .join("; ")}`,
-        }
-      : { ...baseResult, outcome: "success" };
-  await runCapture(opts, result, recallSourceNames, itemCount);
-  return result;
+    recallSourceNames,
+    itemCount,
+    sinkRun.requiredFailures.length > 0 ? "run_error" : "success",
+    {
+      composedPrompt,
+      runResult,
+      gateEvidence: gateEvidenceOut,
+      sessionReminder,
+      ...(sinkRun.requiredFailures.length > 0
+        ? {
+            errorMessage: `required output sink(s) failed — ${sinkRun.requiredFailures
+              .map((f) => `${f.kind}: ${f.reason}`)
+              .join("; ")}`,
+          }
+        : {}),
+    },
+  );
 }
 
 async function runOutputSinks(

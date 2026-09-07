@@ -45,13 +45,18 @@ export const TriggerSchema = z.discriminatedUnion("kind", [
 
 const ArgsRecord = z.record(z.string(), z.unknown());
 
+// Any recall source may be marked required: composeRecall reports it in
+// RecallBundle.requiredFailures when it throws or yields nothing usable, and
+// executeWorkflow then fails the run closed instead of emitting a hollow artifact.
+const RequiredFlag = { required: z.boolean().optional() };
+
 export const RecallSourceSchema = z.discriminatedUnion("source", [
-  z.object({ source: z.literal("memory_search"), args: ArgsRecord }),
-  z.object({ source: z.literal("memory_timeline"), args: ArgsRecord }),
-  z.object({ source: z.literal("memory_get_observations"), args: ArgsRecord }),
-  z.object({ source: z.literal("git.log"), args: ArgsRecord }),
-  z.object({ source: z.literal("git.show"), args: ArgsRecord }),
-  z.object({ source: z.literal("git.diff"), args: ArgsRecord }),
+  z.object({ source: z.literal("memory_search"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("memory_timeline"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("memory_get_observations"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("git.log"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("git.show"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("git.diff"), args: ArgsRecord, ...RequiredFlag }),
   z.object({
     source: z.literal("file.contents"),
     args: z.object({
@@ -59,24 +64,35 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
       max_bytes: z.number().int().positive().optional(),
       allowed_roots: z.array(z.string()).optional(),
     }),
+    ...RequiredFlag,
   }),
   z.object({
     source: z.literal("latest_continuation_note"),
     args: ArgsRecord.optional(),
+    ...RequiredFlag,
   }),
   z.object({
     source: z.literal("session_first_moves"),
     args: ArgsRecord.optional(),
+    ...RequiredFlag,
   }),
-  z.object({ source: z.literal("routing_bias_list"), args: ArgsRecord.optional() }),
-  z.object({ source: z.literal("registrar_status"), args: ArgsRecord.optional() }),
-  z.object({ source: z.literal("dispatch_events"), args: ArgsRecord }),
-  z.object({ source: z.literal("session_events"), args: ArgsRecord }),
-  z.object({ source: z.literal("handoff_list_pending"), args: ArgsRecord.optional() }),
-  z.object({ source: z.literal("agents"), args: ArgsRecord.optional() }),
-  z.object({ source: z.literal("fs_glob"), args: ArgsRecord }),
-  z.object({ source: z.literal("fs_grep"), args: ArgsRecord }),
-  z.object({ source: z.literal("daemon.endpoint"), args: z.object({ path: z.string() }) }),
+  z.object({ source: z.literal("routing_bias_list"), args: ArgsRecord.optional(), ...RequiredFlag }),
+  z.object({ source: z.literal("registrar_status"), args: ArgsRecord.optional(), ...RequiredFlag }),
+  z.object({ source: z.literal("dispatch_events"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("session_events"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({
+    source: z.literal("handoff_list_pending"),
+    args: ArgsRecord.optional(),
+    ...RequiredFlag,
+  }),
+  z.object({ source: z.literal("agents"), args: ArgsRecord.optional(), ...RequiredFlag }),
+  z.object({ source: z.literal("fs_glob"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("fs_grep"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({
+    source: z.literal("daemon.endpoint"),
+    args: z.object({ path: z.string() }),
+    ...RequiredFlag,
+  }),
 ]);
 
 export const ProcessGateNameSchema = z.enum([
