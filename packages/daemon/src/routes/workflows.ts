@@ -456,12 +456,32 @@ type WorkflowRunBody = {
   wait?: boolean;
 };
 
+// executeWorkflow RESOLVES on a workflow-fn throw (packages/workflows/src/exec.ts:396-407),
+// so the persist path must read the outcome instead of assuming success.
+const FAILED_WORKFLOW_OUTCOMES = new Set(["run_error", "render_error", "gated_failure"]);
+
+function workflowResultOutcome(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  const outcome = (result as { outcome?: unknown }).outcome;
+  return typeof outcome === "string" ? outcome : undefined;
+}
+
+function isFailedWorkflowResult(result: unknown): boolean {
+  const outcome = workflowResultOutcome(result);
+  return outcome !== undefined && FAILED_WORKFLOW_OUTCOMES.has(outcome);
+}
+
 async function persistRunResult(
   workflowRuns: WorkflowRunsRegistryWithLifecycle,
   workflowRunId: string,
   start: number,
   result: unknown,
 ): Promise<void> {
+  if (isFailedWorkflowResult(result)) {
+    // Keep the full ExecuteResult as the stored payload; only the status changes.
+    await persistRunError(workflowRuns, workflowRunId, start, result);
+    return;
+  }
   workflowRuns.setExecutionRecord(workflowRunId, {
     status: "completed",
     started_at: start,
@@ -953,6 +973,8 @@ function buildWaitResponseBody(status: NonNullable<WorkflowWaitStatus>): Record<
     result_bytes: resultBytes,
     error_bytes: errorBytes,
   };
+  const outcome = workflowResultOutcome(status.result ?? status.error);
+  if (outcome !== undefined) response.outcome = outcome;
   if (status.result !== undefined) response.result = status.result;
   if (status.error !== undefined) response.error = status.error;
   return response;

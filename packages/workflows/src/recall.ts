@@ -20,10 +20,13 @@ import { runSessionEventsSource, type SessionEvent } from "./recall-sources/sess
 import { runSessionFirstMovesSource } from "./recall-sources/session-first-moves.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
+export type RecallRequiredFailure = { source: string; message: string };
+
 export type RecallBundle = {
   byKey: Record<string, unknown>;
   warnings: string[];
   estimatedTokens: number;
+  requiredFailures?: RecallRequiredFailure[];
 };
 
 export type ComposeRecallOpts = {
@@ -421,6 +424,64 @@ function trimToBudget(
   return cur;
 }
 
+// Recall sources catch their own errors and degrade to an empty value plus a
+// warning (runGitLog returns { text: "" } outside a repo; runMemorySearchSource
+// returns []; the unimplemented sources at runOneSource's fallthrough set null).
+// A required source therefore fails on the VALUE, not only on a thrown error.
+export function isEmptyRecallValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if ("error" in record && typeof record.error === "string") return true;
+    if ("body" in record && (record.body === null || record.body === undefined)) return true;
+    return Object.keys(record).length === 0;
+  }
+  return false;
+}
+
+// mergeBucket writes dispatch_events under "dispatch_summaries" when the source
+// returns summaries (recall.ts case "dispatch_events"); check both keys so a
+// healthy summarized fetch is never mistaken for an empty one.
+const RECALL_BUCKET_ALIASES: Record<string, string[]> = {
+  dispatch_events: ["dispatch_events", "dispatch_summaries"],
+};
+
+export function resolveRecallSourceValue(
+  byKey: Record<string, unknown>,
+  source: string,
+): unknown {
+  for (const key of RECALL_BUCKET_ALIASES[source] ?? [source]) {
+    const value = byKey[key];
+    if (!isEmptyRecallValue(value)) return value;
+  }
+  return null;
+}
+
+async function runSourceWithRequiredCheck(
+  src: RecallSource,
+  args: Record<string, unknown>,
+  deps: RunSourceDeps,
+  byKey: Record<string, unknown>,
+  warnings: string[],
+): Promise<RecallRequiredFailure | null> {
+  try {
+    await runOneSource(src, args, deps, byKey, warnings);
+    if (src.required !== true) return null;
+    if (isEmptyRecallValue(resolveRecallSourceValue(byKey, src.source))) {
+      return { source: src.source, message: "source produced no usable content" };
+    }
+    return null;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warnings.push(`${src.source}: ${msg}`);
+    byKey[src.source] = null;
+    if (src.required === true) return { source: src.source, message: msg };
+    return null;
+  }
+}
+
 export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBundle> {
   const { db, embedder, cwd, repoRoot, storageRoot, project, sources } = opts;
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET;
@@ -437,16 +498,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     now: opts.now ?? ((): Date => new Date()),
   };
 
+  const requiredFailures: RecallRequiredFailure[] = [];
   for (const src of sources) {
     const rawArgs = (("args" in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
     const args = resolveArgs(rawArgs, opts.templateCtx);
-    try {
-      await runOneSource(src, args, deps, byKey, warnings);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      warnings.push(`${src.source}: ${msg}`);
-      byKey[src.source] = null;
-    }
+    const failure = await runSourceWithRequiredCheck(src, args, deps, byKey, warnings);
+    if (failure) requiredFailures.push(failure);
   }
 
   const { total, sized } = computeSizes(byKey);
@@ -455,7 +512,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     finalTotal = trimToBudget(byKey, sized, total, budget, warnings);
   }
 
-  return { byKey, warnings, estimatedTokens: finalTotal };
+  return {
+    byKey,
+    warnings,
+    estimatedTokens: finalTotal,
+    ...(requiredFailures.length > 0 ? { requiredFailures } : {}),
+  };
 }
 
 export type { DispatchEvent, DispatchSummary, Handoff, MemoryHit, SessionEvent };

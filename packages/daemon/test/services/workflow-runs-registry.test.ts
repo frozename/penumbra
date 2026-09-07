@@ -960,3 +960,52 @@ test("boot sweep leaves spill files whose workflow_runs rows still exist", async
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("waitForResult keeps enforcing the waiter cap once a running run outlives the TTL", async () => {
+  let now = new Date("2026-04-26T00:00:00Z");
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-1",
+    clock: () => now,
+    db: freshDb(":memory:"),
+    storageRoot: tmpdir(),
+    ttlMs: 10_000,
+    waiterLimit: 1,
+  });
+  const id = registry.register("wf-a", "proj");
+  expect(id).toBe("wfrun-1");
+
+  const held = registry.waitForResult(id!, 120_000);
+  await expectRejectsWith(registry.waitForResult(id!, 30), "waiter_capacity_exhausted");
+
+  // The run is STILL 'running', but its entry is now older than ttlMs.
+  now = new Date("2026-04-26T00:00:11Z");
+  const overCap = await registry.waitForResult(id!, 30).then(
+    () => "admitted",
+    (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  );
+  expect(overCap).toBe("waiter_capacity_exhausted");
+
+  await registry.recordResult(id!, { ok: true });
+  expect(await held).toMatchObject({ status: "completed", result: { ok: true } });
+});
+
+test("sweepExpired still evicts an expired running entry that has no waiters", async () => {
+  let now = new Date("2026-04-26T00:00:00Z");
+  const db = freshDb(":memory:");
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => "wfrun-orphan",
+    clock: () => now,
+    db,
+    storageRoot: tmpdir(),
+    ttlMs: 10_000,
+  });
+  const id = registry.register("wf-orphan", "proj");
+  expect(id).toBe("wfrun-orphan");
+
+  // No waiter was ever registered against this run.
+  now = new Date("2026-04-26T00:00:11Z");
+  // A wait on an unrelated id drives the sweep; the orphan entry must be dropped
+  // from the in-memory cache while staying re-hydratable from SQLite.
+  expect(await registry.waitForResult("wfrun-missing", 5)).toBeNull();
+  expect(registry.verify("wfrun-orphan")).toMatchObject({ workflow_name: "wf-orphan" });
+});

@@ -199,10 +199,17 @@ function clearRunState(ctx: RegistryCtx, workflowRunId: string): void {
 
 function sweepExpired(ctx: RegistryCtx, nowMs: number): void {
   for (const [workflowRunId, entry] of ctx.entries) {
-    if (entry.record?.status !== "running" && entry.registered_at + ctx.ttlMs < nowMs) {
-      ctx.entries.delete(workflowRunId);
-      clearRunState(ctx, workflowRunId);
-    }
+    // Mirror evictIfNeeded's terminal guard: a freshly registered run has no
+    // record yet, so `entry.record?.status !== "running"` was true for every
+    // live run and the TTL sweep silently emptied waitersByRunId, defeating the
+    // waiter cap exactly when a run was long enough for waiters to pile up.
+    if (entry.record?.status === "running") continue;
+    if (entry.registered_at + ctx.ttlMs >= nowMs) continue;
+    // Keep evicting orphan entries so capacity still drains, but never drop an
+    // entry that live waiters are parked on.
+    if (!entry.record && ctx.waitersByRunId.has(workflowRunId)) continue;
+    ctx.entries.delete(workflowRunId);
+    clearRunState(ctx, workflowRunId);
   }
 }
 
