@@ -60,6 +60,32 @@ export class DaemonHttpError extends Error {
   }
 }
 
+/**
+ * Default per-request wall-clock deadline for short daemon calls (ms).
+ * Long-poll routes (POST /workflows/wait, up to 1_800_000 ms) deliberately pass
+ * no deadline and keep owning their own budget.
+ */
+export const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 60_000;
+
+export interface DaemonRequestOptions {
+  /**
+   * Per-request wall-clock deadline in ms. Omitted / non-finite / non-positive
+   * leaves the request unbounded: Bun's client fetch applies no default
+   * timeout, so such a request is capped only by the daemon's own Bun.serve
+   * idleTimeout (packages/daemon/src/serve.ts:1499, 255s).
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Build the AbortSignal for a daemon request, or undefined when the caller
+ * declared no deadline. Mirrors packages/core/src/routing/aa-client.ts:112.
+ */
+export function daemonRequestSignal(timeoutMs: number | undefined): AbortSignal | undefined {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return undefined;
+  return AbortSignal.timeout(timeoutMs);
+}
+
 export class DaemonClient {
   private readonly resolve: () => { baseUrl: string; token: string };
 
@@ -510,9 +536,14 @@ export class DaemonClient {
     return await this.get(`/handoffs/pending${qs}`);
   }
 
-  async getLatestHandoff(conversation_id: string): Promise<{ handoff: HandoffShape }> {
+  async getLatestHandoff(
+    conversation_id: string,
+    opts: DaemonRequestOptions = {},
+  ): Promise<{ handoff: HandoffShape }> {
     return await this.get(
       `/handoffs/latest?conversation_id=${encodeURIComponent(conversation_id)}`,
+      {},
+      opts,
     );
   }
 
@@ -571,6 +602,7 @@ export class DaemonClient {
         "content-type": "application/json",
       },
       body: JSON.stringify(requestBody),
+      signal: daemonRequestSignal(pollTimeoutMs),
     });
     if (!res.ok && res.status !== 202) throw await daemonHttpError("/dispatch/land", res);
     if (res.status !== 202) {
@@ -596,6 +628,7 @@ export class DaemonClient {
       await Bun.sleep(pollIntervalMs);
       const taskRes = await fetch(`${baseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
         headers: this.authHeaders(token),
+        signal: daemonRequestSignal(timeoutMs),
       });
       if (!taskRes.ok)
         throw await daemonHttpError(`/dispatch/land/${encodeURIComponent(taskId)}`, taskRes);
@@ -621,7 +654,10 @@ export class DaemonClient {
     };
   }
 
-  async getHandoffStatus(handoff_id: string): Promise<{
+  async getHandoffStatus(
+    handoff_id: string,
+    opts: DaemonRequestOptions = {},
+  ): Promise<{
     handoff_id: string;
     status: string;
     error_summary: string | null;
@@ -638,6 +674,7 @@ export class DaemonClient {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/handoffs/${encodeURIComponent(handoff_id)}/status`, {
       headers: this.authHeaders(token),
+      signal: daemonRequestSignal(opts.timeoutMs ?? DEFAULT_DAEMON_REQUEST_TIMEOUT_MS),
     });
     if (res.status === 404) {
       throw new Error(`handoff not found: ${handoff_id}`);
@@ -1041,7 +1078,7 @@ export class DaemonClient {
 
   async taskNext(
     input: { agent_id: string; tags?: string[]; max_cost_cents?: number },
-    opts: { origin?: string } = {},
+    opts: { origin?: string; timeoutMs?: number } = {},
   ): Promise<{
     task_id: string;
     prompt: string;
@@ -1059,6 +1096,7 @@ export class DaemonClient {
         "content-type": "application/json",
       },
       body: JSON.stringify(input),
+      signal: daemonRequestSignal(opts.timeoutMs ?? DEFAULT_DAEMON_REQUEST_TIMEOUT_MS),
     });
     if (res.status === 204) return null;
     if (!res.ok) throw await daemonHttpError("/tasks/lease", res);
@@ -1135,10 +1173,15 @@ export class DaemonClient {
     return await this.post("/tasks/sync-gh-now", input);
   }
 
-  private async get<T>(path: string, extraHeaders: Record<string, string> = {}): Promise<T> {
+  private async get<T>(
+    path: string,
+    extraHeaders: Record<string, string> = {},
+    opts: DaemonRequestOptions = {},
+  ): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, {
       headers: { ...this.authHeaders(token), ...extraHeaders },
+      signal: daemonRequestSignal(opts.timeoutMs),
     });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
@@ -1148,6 +1191,7 @@ export class DaemonClient {
     path: string,
     body: unknown,
     extraHeaders: Record<string, string> = {},
+    opts: DaemonRequestOptions = {},
   ): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, {
@@ -1158,6 +1202,7 @@ export class DaemonClient {
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: daemonRequestSignal(opts.timeoutMs),
     });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;

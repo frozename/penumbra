@@ -2,7 +2,11 @@ import { type TextContentEnvelope, toTextContent } from "@novaproto/mcp-shared";
 import { TaskClassSchema } from "@penumbra/core";
 import { z } from "zod";
 
-import type { DaemonClient } from "../daemon-client.js";
+import {
+  type DaemonClient,
+  daemonRequestSignal,
+  DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+} from "../daemon-client.js";
 
 export const LaneLedgerRecentInputShape = {
   status: z.enum(["open", "passed", "failed", "skipped", "review_debt"]).optional(),
@@ -50,6 +54,7 @@ async function getFromDaemon(
     headers: {
       authorization: `Bearer ${token}`,
     },
+    signal: daemonRequestSignal(DEFAULT_DAEMON_REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw await daemonHttpError(path, res);
   return await res.json();

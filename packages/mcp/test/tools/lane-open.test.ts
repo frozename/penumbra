@@ -111,6 +111,34 @@ test("laneOpenHandler surfaces daemon 400 errors", async () => {
   }
 });
 
+test("laneOpenHandler bounds its daemon POST with an AbortSignal deadline", async () => {
+  let seenSignal: AbortSignal | undefined;
+  const { daemon, restore } = installFetchMock(((_input, init): Promise<Response> => {
+    seenSignal = init?.signal ?? undefined;
+    return Promise.resolve(
+      Response.json({
+        lane_id: "lane-1",
+        ts_opened: "2026-05-12T00:00:00Z",
+        ts_closed: null,
+        task_class: "STANDARD",
+        implementer_handoff: "handoff-1",
+        reviewer_handoff: null,
+        gate_status: "open",
+        recalled_memory_ids: [],
+        recalled_query: null,
+        override_reason: null,
+        metadata_json: "{}",
+      }),
+    );
+  }) as typeof fetch);
+  try {
+    await laneOpenHandler(daemon)({ implementer_handoff_id: "handoff-1", task_class: "STANDARD" });
+  } finally {
+    restore();
+  }
+  expect(seenSignal).toBeInstanceOf(AbortSignal);
+});
+
 async function expectRejection(promise: Promise<unknown>, needle: string): Promise<void> {
   try {
     await promise;
