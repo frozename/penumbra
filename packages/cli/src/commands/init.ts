@@ -1,7 +1,14 @@
 import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
 import { resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 
@@ -22,11 +29,38 @@ export interface RunInitOpts {
 // main's tracked source. Skip any candidate under a worktree and keep climbing.
 const WORKTREE_SEGMENT = `${sep}.claude${sep}worktrees${sep}`;
 
+// Path shape alone cannot fence this: fleet worktrees live at
+// `<root>-worktrees/<uuid>`, outside `.claude/worktrees/`. The structural signal is
+// that a linked checkout — a `git worktree` of any layout, a submodule, any
+// `.git`-file setup — has `.git` as a FILE containing a `gitdir:` pointer at its
+// root, while a main checkout has `.git` as a DIRECTORY. Find the nearest enclosing
+// `.git` and fail closed: non-directory or unreadable means linked — skip.
+function isLinkedCheckout(dir: string): boolean {
+  let current = dir;
+  for (;;) {
+    try {
+      const gitEntry = lstatSync(join(current, ".git"), { throwIfNoEntry: false });
+      if (gitEntry !== undefined) return !gitEntry.isDirectory();
+    } catch {
+      return true;
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 export function resolveDefaultWorkflowsSourceDir(fromDir: string): string {
   let current = fromDir;
   for (;;) {
     const candidate = join(current, ".claude/workflows");
-    if (existsSync(candidate) && !`${candidate}${sep}`.includes(WORKTREE_SEGMENT)) return candidate;
+    if (
+      existsSync(candidate) &&
+      !`${candidate}${sep}`.includes(WORKTREE_SEGMENT) &&
+      !isLinkedCheckout(current)
+    ) {
+      return candidate;
+    }
     const parent = dirname(current);
     if (parent === current) return join(fromDir, ".claude/workflows");
     current = parent;

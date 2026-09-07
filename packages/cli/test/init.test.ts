@@ -1,6 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,6 +170,72 @@ test("the default workflows source dir never resolves inside a worktree", () => 
     const from = join(root, ".claude/worktrees/wt-1/packages/cli/src/commands");
     mkdirSync(mainWorkflows, { recursive: true });
     mkdirSync(worktreeWorkflows, { recursive: true });
+    mkdirSync(from, { recursive: true });
+
+    expect(resolveDefaultWorkflowsSourceDir(from)).toBe(mainWorkflows);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the default workflows source dir skips a fleet <root>-worktrees/<uuid> linked worktree", () => {
+  // Fleet worktrees live at `<root>-worktrees/<uuid>` — OUTSIDE
+  // `.claude/worktrees/`, so the path-segment fence cannot see them. The
+  // structural fence can: a linked worktree's `.git` is a FILE containing a
+  // `gitdir:` pointer, not a directory. The worktree's own .claude/workflows
+  // must be skipped; with no non-worktree candidate above it, the walk falls
+  // through to the fromDir fallback (which does not exist → init warns and
+  // installs nothing — fail closed).
+  const root = mkdtempSync(join(tmpdir(), "penumbra-cli-fleet-wt-"));
+  const worktreesBase = `${root}-worktrees`;
+  try {
+    const worktreeRoot = join(worktreesBase, "5192186a-222a-441f-b9d1-3f9429b55bbc");
+    const worktreeWorkflows = join(worktreeRoot, ".claude/workflows");
+    const from = join(worktreeRoot, "packages/cli/src/commands");
+    mkdirSync(worktreeWorkflows, { recursive: true });
+    mkdirSync(from, { recursive: true });
+    writeFileSync(join(worktreeRoot, ".git"), `gitdir: ${join(root, ".git/worktrees/fleet")}\n`);
+
+    const resolved = resolveDefaultWorkflowsSourceDir(from);
+    expect(resolved).not.toBe(worktreeWorkflows);
+    expect(resolved).toBe(join(from, ".claude/workflows"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(worktreesBase, { recursive: true, force: true });
+  }
+});
+
+test("the default workflows source dir climbs out of a linked worktree to an enclosing checkout", () => {
+  // A linked worktree nested at a non-`.claude/worktrees/` path under a main
+  // checkout: the worktree's candidate is skipped and the walk continues to the
+  // enclosing main checkout's .claude/workflows.
+  const root = mkdtempSync(join(tmpdir(), "penumbra-cli-nested-wt-"));
+  try {
+    const mainWorkflows = join(root, ".claude/workflows");
+    const worktreeRoot = join(root, "nested-checkout");
+    const worktreeWorkflows = join(worktreeRoot, ".claude/workflows");
+    const from = join(worktreeRoot, "packages/cli/src/commands");
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(mainWorkflows, { recursive: true });
+    mkdirSync(worktreeWorkflows, { recursive: true });
+    mkdirSync(from, { recursive: true });
+    writeFileSync(join(worktreeRoot, ".git"), `gitdir: ${join(root, ".git/worktrees/nested")}\n`);
+
+    expect(resolveDefaultWorkflowsSourceDir(from)).toBe(mainWorkflows);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the default workflows source dir accepts a normal main checkout (.git directory)", () => {
+  // Happy path: `penumbra init` on a fresh normal machine must still install.
+  // A main checkout has `.git` as a DIRECTORY, so the fence must not fire.
+  const root = mkdtempSync(join(tmpdir(), "penumbra-cli-main-"));
+  try {
+    const mainWorkflows = join(root, ".claude/workflows");
+    const from = join(root, "packages/cli/src/commands");
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(mainWorkflows, { recursive: true });
     mkdirSync(from, { recursive: true });
 
     expect(resolveDefaultWorkflowsSourceDir(from)).toBe(mainWorkflows);
