@@ -858,6 +858,48 @@ test("POST /handoffs/:id/approve flips to approved", async () => {
   expect(body.status).toBe("approved");
 });
 
+test("POST /handoffs/:id/approve rejects a misspelled key instead of silently approving", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const createReq = new Request("http://x/handoffs", {
+    method: "POST",
+    body: JSON.stringify({
+      from: "claude",
+      to: "gemini",
+      to_role: "executor",
+      message: "go",
+      conversation_id: "c-1",
+      project_id: "auth-svc",
+      triggered_by_event_id: "e",
+    }),
+  });
+  const createRes = await handoffsCreateRoute(createReq, services);
+  const create = await readJsonAs<CreateBody>(createRes);
+  const id = create.handoff_id;
+
+  const res = await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ redirec_to: "codex" }),
+    }),
+    id,
+    services,
+  );
+  expect(res.status).toBe(400);
+  const body = await readJsonAs<{
+    error: { code: string; field_errors: { path: string[]; message: string }[] };
+  }>(res);
+  expect(body.error.code).toBe("validation_error");
+  expect(JSON.stringify(body.error.field_errors)).toContain("redirec_to");
+
+  const row = db
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id=?")
+    .get(id);
+  expect(row?.status).toBe("pending");
+});
+
 test("POST /handoffs/:id/approve returns 409 if already resolved", async () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
