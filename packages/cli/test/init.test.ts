@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runInit } from "../src/commands/init.js";
+import { resolveDefaultWorkflowsSourceDir, runInit } from "../src/commands/init.js";
 
 try {
   if (process.platform === "darwin") {
@@ -120,4 +120,51 @@ test("init copies all .js workflows including non-prefixed ones", async () => {
     "export default 'ia';\n",
   );
   expect(existsSync(join(targetDir, "README.md"))).toBe(false);
+});
+
+test("init does not copy through a symlinked mirror entry", async () => {
+  // Three real ~/.claude/workflows entries are symlinks into the main checkout.
+  // copyFileSync follows a symlinked DESTINATION, so a plain copy rewrites the
+  // link target — i.e. main's tracked source — from an unlanded worktree.
+  const canaryDir = mkdtempSync(join(tmpdir(), "penumbra-cli-canary-"));
+  const canary = join(canaryDir, "penumbra-swarm.js");
+  writeFileSync(canary, "export default 'MAIN-CHECKOUT';\n");
+  writeFileSync(join(workflowsSourceDir, "penumbra-swarm.js"), "export default 'FROM-WORKTREE';\n");
+
+  const targetDir = join(claudeUserDir, "workflows");
+  mkdirSync(targetDir, { recursive: true });
+  symlinkSync(canary, join(targetDir, "penumbra-swarm.js"));
+
+  try {
+    const exit = await runInit({
+      storageRoot: dir,
+      uuid: () => "tok-symlink",
+      claudeUserDir,
+      workflowsSourceDir,
+    });
+    expect(exit).toBe(0);
+    expect(readFileSync(canary, "utf8")).toBe("export default 'MAIN-CHECKOUT';\n");
+    expect(lstatSync(join(targetDir, "penumbra-swarm.js")).isSymbolicLink()).toBe(true);
+  } finally {
+    rmSync(canaryDir, { recursive: true, force: true });
+  }
+});
+
+test("the default workflows source dir never resolves inside a worktree", () => {
+  // Run from .claude/worktrees/<id>/..., the upward walk must skip the worktree's
+  // own .claude/workflows and keep climbing to the main checkout, so an unlanded
+  // branch can never seed the global mirror.
+  const root = mkdtempSync(join(tmpdir(), "penumbra-cli-worktree-"));
+  try {
+    const mainWorkflows = join(root, ".claude/workflows");
+    const worktreeWorkflows = join(root, ".claude/worktrees/wt-1/.claude/workflows");
+    const from = join(root, ".claude/worktrees/wt-1/packages/cli/src/commands");
+    mkdirSync(mainWorkflows, { recursive: true });
+    mkdirSync(worktreeWorkflows, { recursive: true });
+    mkdirSync(from, { recursive: true });
+
+    expect(resolveDefaultWorkflowsSourceDir(from)).toBe(mainWorkflows);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
