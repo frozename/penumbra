@@ -34,6 +34,14 @@ export interface GhLabelPullRequestInput {
   comment?: string;
 }
 
+export interface GhMergePullRequestInput {
+  number: number;
+  method: "squash" | "merge" | "rebase";
+  subject?: string;
+  body?: string;
+  deleteBranch?: boolean;
+}
+
 export interface GhCreateIssueInput {
   repo: string;
   title: string;
@@ -66,6 +74,7 @@ export interface GhClient {
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
   labelPullRequest?(input: GhLabelPullRequestInput): Promise<void>;
+  mergePullRequest?(input: GhMergePullRequestInput): Promise<void>;
 }
 
 interface GhExecResult {
@@ -369,6 +378,14 @@ export function createGhCliClient(
 
     async closePullRequest(input: GhClosePullRequestInput): Promise<void> {
       const args = ["pr", "close", String(input.number), "--comment", input.comment];
+      if (input.deleteBranch) args.push("--delete-branch");
+      await runOrThrow(exec, [...args]);
+    },
+
+    async mergePullRequest(input: GhMergePullRequestInput): Promise<void> {
+      const args = ["pr", "merge", String(input.number), `--${input.method}`];
+      if (input.subject) args.push("--subject", input.subject);
+      if (input.body) args.push("--body", input.body);
       if (input.deleteBranch) args.push("--delete-branch");
       await runOrThrow(exec, [...args]);
     },

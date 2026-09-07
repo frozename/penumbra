@@ -389,4 +389,78 @@ describe("createGhCliClient", () => {
     expect(calls[0]).toEqual(["api", "user", "--jq", ".login"]);
     expect(login).toBe("penumbra-bot");
   });
+
+  test("mergePullRequest builds squash argv with subject and body", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({
+      number: 42,
+      method: "squash",
+      subject: "feat(core): merge via gh",
+      body: "full body text",
+    });
+
+    expect(calls).toEqual([
+      [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--subject",
+        "feat(core): merge via gh",
+        "--body",
+        "full body text",
+      ],
+    ]);
+  });
+
+  test("mergePullRequest builds merge argv without subject/body", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({ number: 7, method: "merge" });
+
+    expect(calls).toEqual([["pr", "merge", "7", "--merge"]]);
+  });
+
+  test("mergePullRequest builds rebase argv with deleteBranch", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({ number: 99, method: "rebase", deleteBranch: true });
+
+    expect(calls).toEqual([["pr", "merge", "99", "--rebase", "--delete-branch"]]);
+  });
+
+  test("mergePullRequest propagates gh errors", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: "",
+        stderr: "GraphQL: merge conflict",
+        exitCode: 1,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await expectRejectsWithMessage(
+      client.mergePullRequest({ number: 1, method: "squash" }),
+      "gh pr merge 1 --squash failed: GraphQL: merge conflict",
+    );
+  });
 });
