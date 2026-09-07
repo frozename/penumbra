@@ -73,6 +73,7 @@ export function readSubscriptionPressure(
   ) as SnapshotRow[];
 
   const latestByGroup = new Map<string, PressureSnapshot>();
+  const retiredGroups = new Set<string>();
   const warnings: PressureWarning[] = [];
   const nowMs = now().getTime();
 
@@ -83,9 +84,18 @@ export function readSubscriptionPressure(
       used_pct: number;
       resets_at: number | null;
       source_kind: string;
+      retired?: boolean;
     };
     const key = `${row.provider}\u0000${payload.window_label}\u0000${payload.model ?? ""}`;
-    if (latestByGroup.has(key)) continue;
+    if (latestByGroup.has(key) || retiredGroups.has(key)) continue;
+    // A tombstone row means upstream retired the window: the group is gone,
+    // not stale — drop it with no warning. Rows arrive ts-DESC, so a real
+    // observation newer than a tombstone is seen first and resurrects the
+    // group without ever touching retiredGroups.
+    if (payload.retired === true) {
+      retiredGroups.add(key);
+      continue;
+    }
 
     const snapshot: PressureSnapshot = {
       provider: row.provider,

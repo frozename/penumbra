@@ -31,6 +31,7 @@ function insertSnapshotRow(
     used_pct: number;
     resets_at: number | null;
     source_kind: string;
+    retired?: boolean;
   },
 ): void {
   db.prepare(
@@ -51,6 +52,7 @@ function insertSnapshotRow(
       used_pct: row.used_pct,
       resets_at: row.resets_at,
       source_kind: row.source_kind,
+      ...(row.retired === true ? { retired: true } : {}),
     }),
   );
 }
@@ -300,6 +302,136 @@ describe("readSubscriptionPressure", () => {
     });
 
     expect(out.warnings).toHaveLength(0);
+  });
+
+  it("omits a window whose latest row is a retirement and emits no stale warning", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "stale-secondary",
+      ts: "2026-09-02T18:23:31Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 100,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+    });
+    insertSnapshotRow(db, {
+      event_id: "retire-secondary",
+      ts: "2026-09-07T15:09:35Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 0,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+      retired: true,
+    });
+    insertSnapshotRow(db, {
+      event_id: "fresh-primary",
+      ts: "2026-09-07T15:09:35Z",
+      provider: "openai",
+      window_label: "primary",
+      used_pct: 0,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+    });
+
+    const out = readSubscriptionPressure(db, {
+      stale_after_seconds: 1800,
+      now: () => new Date("2026-09-07T15:10:00Z"),
+    });
+
+    expect(out.snapshots.map((s) => s.window_label).sort()).toEqual(["primary"]);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it("a real observation newer than a retirement resurrects the window", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "old-secondary",
+      ts: "2026-09-02T18:23:31Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 100,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+    });
+    insertSnapshotRow(db, {
+      event_id: "retire-secondary",
+      ts: "2026-09-05T00:00:00Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 0,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+      retired: true,
+    });
+    insertSnapshotRow(db, {
+      event_id: "new-secondary",
+      ts: "2026-09-07T00:00:00Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 12,
+      resets_at: 500,
+      source_kind: "local-state-codex-rollout",
+    });
+
+    const out = readSubscriptionPressure(db, {
+      stale_after_seconds: 86400,
+      now: () => new Date("2026-09-07T01:00:00Z"),
+    });
+
+    const secondary = out.snapshots.find((s) => s.window_label === "secondary");
+    expect(secondary).toMatchObject({
+      provider: "openai",
+      used_pct: 12,
+      resets_at: 500,
+      observed_at: "2026-09-07T00:00:00Z",
+    });
+    expect(out.warnings).toEqual([]);
+  });
+
+  it("a retirement does not suppress snapshots or stale warnings for other windows", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "retire-secondary",
+      ts: "2026-09-07T15:09:35Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 0,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+      retired: true,
+    });
+    insertSnapshotRow(db, {
+      event_id: "stale-five-hour",
+      ts: "2026-05-08T00:00:00Z",
+      provider: "anthropic-claude",
+      window_label: "five_hour",
+      used_pct: 10,
+      resets_at: 100,
+      source_kind: "local-state-claude-statusline",
+    });
+
+    const out = readSubscriptionPressure(db, {
+      stale_after_seconds: 1800,
+      now: () => new Date("2026-05-08T01:00:00Z"),
+    });
+
+    expect(out.snapshots).toHaveLength(1);
+    expect(out.snapshots[0]).toMatchObject({
+      provider: "anthropic-claude",
+      window_label: "five_hour",
+      used_pct: 10,
+    });
+    expect(out.warnings).toEqual([
+      {
+        code: "stale_snapshot",
+        provider: "anthropic-claude",
+        window_label: "five_hour",
+        model: null,
+        age_seconds: 3600,
+      },
+    ]);
   });
 
   it("back-compat: row without model in payload yields model=null", () => {

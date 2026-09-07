@@ -1,3 +1,5 @@
+import { applySchema, loadSqliteVec, readSubscriptionPressure } from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import {
   appendFileSync,
@@ -11,6 +13,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CodexRolloutReader } from "@src/usage-readers/codex-rollout-reader.js";
+import { startUsagePoller } from "@src/usage-readers/poller.js";
+
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded in this process
+}
 
 function writeRollout(dir: string, name: string, lines: object[]): string {
   const path = join(dir, name);
@@ -347,5 +358,142 @@ describe("CodexRolloutReader", () => {
     expect(r.rate_limit_snapshots).toHaveLength(2);
     expect(r.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(4.0);
     expect(r.rate_limit_snapshots.find((s) => s.window_label === "secondary")?.used_pct).toBe(40.0);
+  });
+
+  it("emits a retirement tombstone when a window key is present but null", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "09", "07");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-09-07T15-09-35-retired.jsonl", [
+      {
+        timestamp: "2026-09-07T15:09:35Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          rate_limits: {
+            limit_id: "codex",
+            primary: { used_percent: 0.0, window_minutes: 300, resets_at: 1788798575 },
+            secondary: null,
+            plan_type: "prolite",
+          },
+        },
+      },
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(2);
+    const primary = r.rate_limit_snapshots.find((s) => s.window_label === "primary");
+    expect(primary?.used_pct).toBe(0.0);
+    expect(primary?.retired).toBeUndefined();
+    const secondary = r.rate_limit_snapshots.find((s) => s.window_label === "secondary");
+    expect(secondary?.retired).toBe(true);
+    expect(secondary?.provider).toBe("openai");
+  });
+
+  it("emits no tombstone when the window key is absent entirely", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "09", "07");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-09-07T15-09-35-absent.jsonl", [
+      {
+        timestamp: "2026-09-07T15:09:35Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          rate_limits: {
+            limit_id: "codex",
+            primary: { used_percent: 0.0, window_minutes: 300, resets_at: 1788798575 },
+            plan_type: "prolite",
+          },
+        },
+      },
+    ]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(1);
+    expect(r.rate_limit_snapshots[0]?.window_label).toBe("primary");
+    expect(r.rate_limit_snapshots[0]?.retired).toBeUndefined();
+  });
+
+  it("a present-but-null window retires the group end-to-end through subscription pressure", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+    db.prepare(
+      `
+      INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+    `,
+    ).run(
+      "prior-secondary",
+      "2026-09-02T18:23:31Z",
+      "2026-09-02T18:23:31Z",
+      "openai",
+      JSON.stringify({
+        window_label: "secondary",
+        model: null,
+        used_pct: 100,
+        resets_at: null,
+        source_kind: "local-state-codex-rollout",
+      }),
+    );
+
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
+    const dayDir = join(root, "2026", "09", "07");
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, "rollout-2026-09-07T15-09-35-e2e.jsonl", [
+      {
+        timestamp: "2026-09-07T15:09:35Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          rate_limits: {
+            limit_id: "codex",
+            primary: { used_percent: 0.0, window_minutes: 300, resets_at: 1788798575 },
+            secondary: null,
+            plan_type: "prolite",
+          },
+        },
+      },
+    ]);
+
+    interface EmittedEvent {
+      event_id: string;
+      ts: string;
+      event_type: string;
+      provider: string;
+      payload_json: Record<string, unknown>;
+    }
+    const observed: EmittedEvent[] = [];
+    const poller = startUsagePoller({
+      readers: [new CodexRolloutReader({ rootDir: root })],
+      intervalMs: 30_000,
+      cursorPath: join(root, "cursors.json"),
+      emit: (e) => {
+        observed.push(e);
+        return Promise.resolve({ event_id: e.event_id });
+      },
+      log: { info: () => undefined, error: () => undefined },
+    });
+    await poller.runOnce();
+    poller.stop();
+
+    const insert = db.prepare(
+      `
+      INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', ?, 'cli-subscription', ?, ?)
+    `,
+    );
+    for (const e of observed) {
+      insert.run(e.event_id, e.ts, e.ts, e.event_type, e.provider, JSON.stringify(e.payload_json));
+    }
+
+    const out = readSubscriptionPressure(db, { stale_after_seconds: 1800 });
+    expect(out.snapshots.map((s) => s.window_label).sort()).toEqual(["primary"]);
+    expect(out.warnings).toEqual([]);
   });
 });

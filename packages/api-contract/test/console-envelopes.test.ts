@@ -103,7 +103,7 @@ describe("RegistrarListResponseSchema", () => {
     const withRollup = RegistrarListResponseSchema.parse({
       entries: [{ ...entry, rollup: { open_blockers: 1, open_follow_ups: 0 } }],
     });
-    expect(withRollup.entries[0].rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
+    expect(withRollup.entries[0]?.rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
     expect(RegistrarListResponseSchema.safeParse({ entries: [entry] }).success).toBe(true);
     expect(
       RegistrarListResponseSchema.safeParse({
@@ -132,7 +132,7 @@ describe("PermissionRequestRowSchema", () => {
       agent_name: "a",
       tool_name: "t",
       raw_input_json: "{}",
-      status: "pending",
+      status: "pending" as const,
       remember_scope: null,
       decision_reason: null,
       decided_by: null,

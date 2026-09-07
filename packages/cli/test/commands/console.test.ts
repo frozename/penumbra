@@ -371,7 +371,7 @@ test("a text/event-stream upstream writing frame 1, then frame 2 after 200 ms: t
       headers: { Cookie: `penumbra_session=${cookieValue ?? ""}` },
     });
     expect(res.status).toBe(200);
-    const reader: ReadableStreamDefaultReader<Uint8Array> = res.body!.getReader();
+    const reader = res.body!.getReader() as ReadableStreamDefaultReader<Uint8Array>;
     try {
       const first = await Promise.race([
         reader.read(),

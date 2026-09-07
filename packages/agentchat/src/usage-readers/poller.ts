@@ -361,10 +361,14 @@ function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): UsageP
     window_minutes: snapshot.window_minutes,
     resets_at: snapshot.resets_at,
     extra: snapshot.extra ?? null,
+    ...(snapshot.retired === true ? { retired: true } : {}),
     source_kind: `local-state-${readerId}`,
   };
-  event.payload_summary =
-    `${snapshot.provider}/${snapshot.window_label}: ${String(snapshot.used_pct)}%`.slice(0, 240);
+  event.payload_summary = (
+    snapshot.retired === true
+      ? `${snapshot.provider}/${snapshot.window_label}: retired`
+      : `${snapshot.provider}/${snapshot.window_label}: ${String(snapshot.used_pct)}%`
+  ).slice(0, 240);
   return event;
 }
 
@@ -377,6 +381,7 @@ function stableRateLimitEventId(readerId: string, snapshot: RateLimitDelta): str
     used_pct: snapshot.used_pct,
     window_minutes: snapshot.window_minutes ?? null,
     resets_at: snapshot.resets_at ?? null,
+    retired: snapshot.retired === true,
   });
   return `usage-poller-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }

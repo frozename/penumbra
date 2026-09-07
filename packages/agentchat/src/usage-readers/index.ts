@@ -21,6 +21,13 @@ export interface RateLimitDelta {
   /** Optional model scope. When present, the snapshot is for this specific model within `provider`. */
   model?: string | null;
   used_pct: number;
+  /**
+   * Tombstone marker: the upstream payload explicitly reported this window as
+   * retired (present-but-null), as opposed to merely omitting it. Aggregators
+   * must drop the (provider, window_label, model) group instead of pinning its
+   * last observed value; used_pct is meaningless when set.
+   */
+  retired?: boolean;
   /** Window length in minutes. Optional — claude doesn't expose this directly. */
   window_minutes?: number;
   /** Unix seconds until the window resets. */
