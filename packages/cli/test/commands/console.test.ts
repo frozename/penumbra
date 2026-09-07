@@ -14,6 +14,9 @@ let mockDaemonRequests: {
   authorization: string | null;
   cookie: string | null;
   operator: string | null;
+  origin: string | null;
+  penumbraHeaders: [string, string][];
+  customForward: string | null;
 }[] = [];
 
 const TOKEN = "test-token-xyz";
@@ -41,6 +44,9 @@ function startMockDaemon(echoBody = "ok"): number {
         authorization: req.headers.get("authorization"),
         cookie: req.headers.get("cookie"),
         operator: req.headers.get("x-penumbra-operator"),
+        origin: req.headers.get("x-penumbra-origin"),
+        penumbraHeaders: [...req.headers.entries()].filter(([k]) => k.startsWith("x-penumbra-")),
+        customForward: req.headers.get("x-custom-forward"),
       });
       if (req.headers.get("authorization") !== `Bearer ${expectedDaemonToken}`) {
         return new Response(JSON.stringify({ error: "unauthorized" }), {
@@ -457,6 +463,66 @@ test("an inbound X-Penumbra-Operator header is dropped", async () => {
     expect(apiRes.status).toBe(200);
     expect(mockDaemonRequests.length).toBe(1);
     expect(mockDaemonRequests[0]!.operator).toBeNull();
+    expect(mockDaemonRequests[0]!.penumbraHeaders).toEqual([]);
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test("a forged inbound X-Penumbra-Origin header is dropped before reaching the daemon", async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
+    const apiRes = await fetch(`${prepared.url}/api/handoffs?status=pending`, {
+      headers: {
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
+        "X-Penumbra-Origin": "forged-origin",
+      },
+    });
+    expect(apiRes.status).toBe(200);
+    expect(mockDaemonRequests.length).toBe(1);
+    expect(mockDaemonRequests[0]!.origin).toBeNull();
+    expect(mockDaemonRequests[0]!.penumbraHeaders).toEqual([]);
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test("an arbitrary inbound x-penumbra-* header is dropped before reaching the daemon", async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
+    const apiRes = await fetch(`${prepared.url}/api/handoffs?status=pending`, {
+      headers: {
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
+        "X-Penumbra-Anything": "future-header",
+        "x-penumbra-tenant": "spoofed-tenant",
+      },
+    });
+    expect(apiRes.status).toBe(200);
+    expect(mockDaemonRequests.length).toBe(1);
+    expect(mockDaemonRequests[0]!.penumbraHeaders).toEqual([]);
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test("an unrelated inbound header is still forwarded upstream", async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get("set-cookie"));
+    const apiRes = await fetch(`${prepared.url}/api/handoffs?status=pending`, {
+      headers: {
+        Cookie: `penumbra_session=${cookieValue ?? ""}`,
+        "X-Custom-Forward": "yes",
+      },
+    });
+    expect(apiRes.status).toBe(200);
+    expect(mockDaemonRequests.length).toBe(1);
+    expect(mockDaemonRequests[0]!.customForward).toBe("yes");
   } finally {
     await prepared.stop();
   }
