@@ -27,7 +27,7 @@ function mockServices(partial: Record<string, unknown>): Services {
     trace: (): undefined => undefined,
     fatal: (): undefined => undefined,
   };
-  return { ...partial, log: noopLog } as Services;
+  return { ...partial, log: noopLog } as unknown as Services;
 }
 
 function freshDb(): Database {
