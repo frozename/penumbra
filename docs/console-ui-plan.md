@@ -275,6 +275,105 @@ without daemon work. Each is a small read route in `packages/daemon/src/routes`.
 
 Ingest-side gaps are intentionally left alone (§3.10).
 
+## 6b. Additions beyond route mapping
+
+A second pass over `packages/core/src/db/schema.ts`, the readers, CLI and MCP
+surfaced state and views that a route-by-route mapping misses. Ordered by
+value; "gap" marks items needing a daemon route.
+
+### Cross-entity trace (P1, mostly no new routes)
+
+The schema is already a graph: `handoffs.conversation_id/project_id/worker_id`,
+`tasks.chain_id`, `maestro_sessions.task_id/chain_handoff_id`,
+`dispatch_events.handoff_id`, `agent_performance.handoff_id`,
+`lane_ledger.implementer_handoff/reviewer_handoff` + recalled memory ids,
+`registrar_events.{handoff_id,lane_id,workflow_run_id,memory_id,plan_id,gh_issue}`.
+Add a **Trace** view reachable from any entity: left-to-right execution trace
+(plan → task → maestro → chain → handoff → dispatch events → lane gate → land →
+agent_performance) with every node deep-linking to its module. Edges come from
+routes that already exist (`/handoffs/:id/status`, `/dispatch/events`,
+`/chains/:id/messages`, `/workflows/status`, `/lanes/recent`, registrar
+status). Show missing edges as unknown, never inferred. This is the single
+highest-leverage addition: it turns 13 modules into one navigable system.
+
+### Rich payloads deserving real visualisations (P1–P2)
+
+| payload | source | visualisation |
+|---|---|---|
+| Handoff reliability report | `/handoffs/:id/status` (events, final responses, worktree/commit snapshots, latency, error summary, trust, recommended action) | phase waterfall with latency segments, reliability badge, evidence drawer (worktree/commit) |
+| Dispatch events | `/dispatch/events{,/stream}` (`kind`, `worker_id`, `source`, bounded `meta`, replay cursor) | event waterfall with expandable meta, filter chips, "expected event missing" diagnostics |
+| Dispatch audit | `/dispatch/audit` (classifier inputs, decline reason) | trust-decision panel + auto-land eligibility |
+| Chain transcript | `/chains/:id/{history,messages,response}` | conversation timeline with message-type lanes, tool-call cards, pagination, parent/child handoff links |
+| Recall results | `/recall` (score, fused score, source tiers, explanations, quote, verification ts) | explainability drawer: rank fusion, tier contribution, verification age |
+| Routing decision | `routing_decisions` (factors, alternatives, fallback chain, freshness, confidence, predicted cost/latency) — **gap**, no reader/route | per-handoff "why this agent" panel; predicted vs actual cost/latency |
+| Workflow run | `workflow_runs.result_json/error_json/spill paths`, `/workflows/status` | run detail with status timeline, spill-handle resolver, result/error tabs |
+| Usage/quota | `/usage/*` (provider/model breakdown, cache read/write %, pressure) | stacked cost chart, quota burn projection, cache-efficiency, pressure incident markers |
+| Memory verification | `t2_memory_verification_events` (claim, basis, authorizing handoff) | verification chain with stale/unverified flags |
+| Maestro budget | `maestro_sessions` (budgets, consumption, warning/termination) | per-task budget gauge + burn-rate line |
+
+### State still without a read route (add to §6)
+
+| gap | backing state | proposed route |
+|---|---|---|
+| Routing decisions | `routing_decisions` | `GET /routing/decisions?handoff=&agent=&since=&limit=` |
+| Recall audit | `recall_audit` (query, project, user, result ids) | `GET /recall/audit?project=&since=&limit=` |
+| Subsystem health (general) | `subsystem_health` (tier/seat/model/host, consecutive failures, fallback/skip ts); only surfaced via `/dreaming/health` | `GET /health/subsystems` |
+| Judge pool health | in-memory in `t2-judge-pool.ts` | include in `/health/subsystems` (runtime-only, mark as such) |
+| Efficacy findings | `memory_efficacy_cache` (finding, severity, classification, raw response) | `GET /memory/efficacy/findings?severity=&since=` |
+| Worker token inventory | `worker_tokens` (issued/last seen/revoked; **never** the token) | fold into §6 `GET /workers` |
+| Long-lived cooldowns | `long_lived_cooldowns` | `GET /long-lived/:id/cooldowns` |
+| Project registry | referenced by handoff/chain project guards | `GET /projects` (needed by the project switcher below) |
+| Playbook source | `plugin/playbooks/*/playbook.md` frontmatter/body, registry errors, generated slash commands | `GET /workflows/:id/source` + `registry_errors` in `/workflows/list` |
+| Notification config (redacted) | Discord default/general/project webhooks, quiet/include-prompt toggles | `GET /notifications/config` (booleans + channel names only) |
+| UI action audit | none today — `actor`/`source: operator` are domain attribution, not identity | new `operator_actions` table + server-side write on every browser mutation; `GET /ops/audit` |
+
+### Modules / panels to add
+
+- **Activity & alerts center** (mission or its own rail entry): dispatch SSE +
+  notification outbox as one feed; browser notifications opt-in, coalesced by
+  event key; shows outbox delivery state and retry errors. Event kinds already
+  cover worker wedges, plan quarantine, lane overrides, expired actions.
+- **Analytics** (ops): cost/tokens/cache by provider/model/day (`recentCost`),
+  dispatch success/stale/retry rate (`dispatch_events`), gate pass / review-debt
+  rate (`lane_ledger`), workflow duration/error rate, efficacy classification
+  trend, subsystem failure/recovery sparklines. Use bounded windows or server
+  rollups; never ship raw `t0_events` payloads.
+- **Project switcher** (shell): persisted in URL; must display scope mode
+  (`project` / `global` / `inferred` / `unknown`) because workflows infer
+  project from CWD and hide runs from other projects, and the notification
+  sweeper ignores `project_id`. Never blindly append `project_id`.
+- **Playbooks browser** (workflows): markdown preview, input schema, triggers,
+  recall budget, generated slash command, registry errors, last runs.
+- **Quality cockpit** (ops): `qualityStatus` freshness/sample counts, gate
+  funnel from lanes, judge availability, "aggregation degraded" badges.
+- **Memory graph** (memory): corpora membership, memory→link→brief/research
+  edges with orphan/stale indicators.
+- **Registrar ledger** (plans): typed-link event log with actor filter, not
+  just phases.
+- **Capability index** (command palette): every MCP/CLI capability with its
+  tier, backing route, and whether the result is live or spilled.
+- **Diagnostics** (ops): health probes for daemon, workers, judge pool, DB
+  integrity, stream freshness, notification delivery, project registry;
+  redacted effective config with source (default/env/file) and
+  restart-required flag (`PENUMBRA_DEBUG_ERRORS`, extra-worker/probe toggles,
+  judge limits, notification scheduler, project strictness).
+
+### Local-only CLI ergonomics (surface as copyable commands, not routes)
+
+`repair`, `init`, `notes rotate`, `export`/`import`, `config sync-local` /
+`sync-providers`, `watchdog`, bench scripts. Show them in ops with a preview
+of what they touch and a "copy command" affordance; only add routes after a
+filesystem/dangerous-action policy exists. `agentchat discord validate/render/
+test` is a good fit for a notification-config test-send flow (no secrets to the
+browser).
+
+### Security prerequisite
+
+The console authenticates with the shared bearer/cookie; there is no operator
+identity, roles, or UI action audit. Before shipping `destructive`-tier
+actions: add the `operator_actions` audit table, show the effective principal
+and scope in the confirm dialog, and record request id + decision payload.
+
 ## 7. Coverage checklist
 
 Definition of done: every route in the daemon route table is either (a)
