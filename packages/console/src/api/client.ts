@@ -1,83 +1,64 @@
 import {
-  ChainsListResponseSchema,
-  HandoffsListResponseSchema,
+  type ApproveHandoffResponse,
   type HandoffStatus,
-  RegistrarDetailSchema,
-  RegistrarEventSchema,
-  RegistrarListResponseSchema,
-  type SessionEvent,
-  SessionEventSchema,
-  SessionNoteDraftsListResponseSchema,
+  type MissionSession,
+  type RegistrarDetail,
+  type RegistrarListResponse,
+  type SessionNoteDraftsListResponse,
   type SessionNoteDraftStatus,
-  UsageQuotaResponseSchema,
-  UsageRecentResponseSchema,
-  UsageSubscriptionPressureResponseSchema,
+  type Workspace,
 } from "@penumbra/api-contract";
-import { MissionSessionSchema } from "@penumbra/api-contract";
-import { z } from "zod";
 
+import { type ChainsListResponse, chainsSlice, type ChainsSlice } from "./domains/chains.js";
+import {
+  type ApproveHandoffOpts,
+  type HandoffsListResponse,
+  handoffsSlice,
+  type HandoffsSlice,
+} from "./domains/handoffs.js";
+import { daemonSlice, type DaemonSlice } from "./domains/health.js";
+import { registrarSlice, type RegistrarSlice } from "./domains/registrar.js";
+import {
+  type SessionEventsListTolerantResponse,
+  sessionEventsSlice,
+  type SessionEventsSlice,
+} from "./domains/session-events.js";
+import { sessionNotesSlice, type SessionNotesSlice } from "./domains/session-notes.js";
+import { sessionsSlice, type SessionsSlice } from "./domains/sessions.js";
+import {
+  type UsageQuotaResponse,
+  type UsageRecentResponse,
+  usageSlice,
+  type UsageSlice,
+  type UsageSubscriptionPressureResponse,
+} from "./domains/usage.js";
+import { workspaceSlice, type WorkspaceSlice } from "./domains/workspace.js";
 import { DaemonTransport } from "./transport.js";
 
-const HealthResponseSchema = z.object({ status: z.literal("ok") });
-const WorkspaceSchema = z.object({
-  projectId: z.string().nullable(),
-  branch: z.string().nullable(),
-  dirty: z.number().nullable(),
-});
-const ApproveHandoffResponseSchemaLoose = z
-  .object({
-    handoff_id: z.string(),
-    status: z.string(),
-    redirected_to: z.string().nullable().optional(),
-  })
-  .loose();
+export type { ChainsListResponse } from "./domains/chains.js";
+export type { ApproveHandoffOpts, HandoffsListResponse } from "./domains/handoffs.js";
+export type { RegistrarEventsResponse } from "./domains/registrar.js";
+export type {
+  SessionEventParseResult,
+  SessionEventsListTolerantResponse,
+} from "./domains/session-events.js";
+export type {
+  UsageQuotaResponse,
+  UsageRecentResponse,
+  UsageSubscriptionPressureResponse,
+} from "./domains/usage.js";
+export type { ApproveHandoffResponse } from "@penumbra/api-contract";
 
-const RegistrarEventsResponseSchema = z
-  .object({
-    events: z.array(RegistrarEventSchema),
-  })
-  .loose();
-const SessionEventsEnvelopeSchema = z
-  .object({
-    events: z.array(z.unknown()),
-  })
-  .loose();
-
-export type HandoffsListResponse = z.infer<typeof HandoffsListResponseSchema>;
-export type ChainsListResponse = z.infer<typeof ChainsListResponseSchema>;
-export type UsageRecentResponse = z.infer<typeof UsageRecentResponseSchema>;
-export type UsageQuotaResponse = z.infer<typeof UsageQuotaResponseSchema>;
-export type UsageSubscriptionPressureResponse = z.infer<
-  typeof UsageSubscriptionPressureResponseSchema
->;
-export type MissionSession = z.infer<typeof MissionSessionSchema>;
-export type Workspace = z.infer<typeof WorkspaceSchema>;
-export type RegistrarListResponse = z.infer<typeof RegistrarListResponseSchema>;
-export type RegistrarDetail = z.infer<typeof RegistrarDetailSchema>;
-export type RegistrarEventsResponse = z.infer<typeof RegistrarEventsResponseSchema>;
-export type SessionNoteDraftsListResponse = z.infer<typeof SessionNoteDraftsListResponseSchema>;
-export type SessionEventParseResult =
-  | { ok: true; event: SessionEvent }
-  | { ok: false; raw: unknown; reason: string };
-export interface SessionEventsListTolerantResponse {
-  events: SessionEventParseResult[];
-}
+export type {
+  MissionSession,
+  RegistrarDetail,
+  RegistrarListResponse,
+  SessionNoteDraftsListResponse,
+  Workspace,
+} from "@penumbra/api-contract";
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
-}
-
-export interface ApproveHandoffOpts {
-  reject?: boolean;
-  reason?: string;
-  redirectTo?: string;
-  resolvedBy?: string;
-}
-
-export interface ApproveHandoffResponse {
-  handoff_id: string;
-  status: string;
-  redirected_to?: string | null;
 }
 
 export class DaemonClient {
@@ -85,38 +66,41 @@ export class DaemonClient {
     getConfig: (): { baseUrl: string; token: string } => this.deps.getConfig(),
   });
 
-  constructor(private readonly deps: DaemonClientDeps) {}
+  readonly daemon: DaemonSlice;
+  readonly handoffs: HandoffsSlice;
+  readonly chains: ChainsSlice;
+  readonly usage: UsageSlice;
+  readonly session: SessionsSlice;
+  readonly workspace: WorkspaceSlice;
+  readonly registrar: RegistrarSlice;
+  readonly sessionEvents: SessionEventsSlice;
+  readonly sessionNotes: SessionNotesSlice;
+
+  constructor(private readonly deps: DaemonClientDeps) {
+    this.daemon = daemonSlice(this.transport);
+    this.handoffs = handoffsSlice(this.transport);
+    this.chains = chainsSlice(this.transport);
+    this.usage = usageSlice(this.transport);
+    this.session = sessionsSlice(this.transport);
+    this.workspace = workspaceSlice(this.transport);
+    this.registrar = registrarSlice(this.transport);
+    this.sessionEvents = sessionEventsSlice(this.transport);
+    this.sessionNotes = sessionNotesSlice(this.transport);
+  }
 
   async health(): Promise<{ status: "ok" }> {
-    return await this.transport.request({
-      path: "/health",
-      schema: HealthResponseSchema,
-    });
+    return await this.daemon.health();
   }
 
   async listHandoffs(opts?: { status?: HandoffStatus }): Promise<HandoffsListResponse> {
-    return await this.transport.request({
-      path: "/handoffs",
-      query: { status: opts?.status },
-      schema: HandoffsListResponseSchema,
-    });
+    return await this.handoffs.list(opts);
   }
 
   async approveHandoff(
     handoffId: string,
     opts?: ApproveHandoffOpts,
   ): Promise<ApproveHandoffResponse> {
-    const body: Record<string, unknown> = {};
-    if (opts?.reject !== undefined) body.reject = opts.reject;
-    if (opts?.reason !== undefined) body.reason = opts.reason;
-    if (opts?.redirectTo !== undefined) body.redirect_to = opts.redirectTo;
-    if (opts?.resolvedBy !== undefined) body.resolved_by = opts.resolvedBy;
-    return await (this.transport.request({
-      method: "POST",
-      path: `/handoffs/${encodeURIComponent(handoffId)}/approve`,
-      body,
-      schema: ApproveHandoffResponseSchemaLoose,
-    }) as Promise<ApproveHandoffResponse>);
+    return await this.handoffs.approve(handoffId, opts);
   }
 
   async listChains(opts?: {
@@ -125,90 +109,50 @@ export class DaemonClient {
     offset?: number;
     projectId?: string;
   }): Promise<ChainsListResponse> {
-    return await this.transport.request({
-      path: "/chains",
-      query: {
-        status: opts?.status,
-        limit: opts?.limit,
-        offset: opts?.offset,
-        project_id: opts?.projectId,
-      },
-      schema: ChainsListResponseSchema,
-    });
+    return await this.chains.list(opts);
   }
 
-  /** Returns the loose `/usage/recent` payload as `Record<string, unknown>`. */
   async getUsageRecent(opts?: {
     since?: string;
     projectId?: string | null;
   }): Promise<UsageRecentResponse> {
-    return await this.transport.request({
-      path: "/usage/recent",
-      query: { since: opts?.since, project_id: opts?.projectId },
-      schema: UsageRecentResponseSchema,
-    });
+    return await this.usage.recent(opts);
   }
 
-  /** Returns the loose `/usage/quota_status` payload as `Record<string, unknown>`. */
   async getQuotaStatus(opts?: {
     since?: string;
     window?: "24h" | "5h" | "7d";
   }): Promise<UsageQuotaResponse> {
-    return await this.transport.request({
-      path: "/usage/quota_status",
-      query: { since: opts?.since, window: opts?.window },
-      schema: UsageQuotaResponseSchema,
-    });
+    return await this.usage.quotaStatus(opts);
   }
 
-  /** Returns the loose `/usage/subscription_pressure` payload as `Record<string, unknown>`. */
   async getSubscriptionPressure(opts?: {
     provider?: string;
     staleAfterSeconds?: number;
   }): Promise<UsageSubscriptionPressureResponse> {
-    return await this.transport.request({
-      path: "/usage/subscription_pressure",
-      query: {
-        provider: opts?.provider,
-        stale_after_seconds: opts?.staleAfterSeconds,
-      },
-      schema: UsageSubscriptionPressureResponseSchema,
-    });
+    return await this.usage.subscriptionPressure(opts);
   }
 
   async getSession(): Promise<MissionSession> {
-    return await this.transport.request({
-      path: "/session/current",
-      schema: MissionSessionSchema,
-    });
+    return await this.session.current();
   }
 
   async getWorkspace(): Promise<Workspace> {
-    return await this.transport.request({
-      path: "/workspace",
-      schema: WorkspaceSchema,
-    });
+    return await this.workspace.get();
   }
 
   async listRegistrarEntries(): Promise<RegistrarListResponse> {
-    return await this.transport.request({
-      path: "/registrar",
-      schema: RegistrarListResponseSchema,
-    });
+    return await this.registrar.list();
   }
 
   async getRegistrarEntry(registrarId: string): Promise<RegistrarDetail> {
-    return await this.transport.request({
-      path: `/registrar/${encodeURIComponent(registrarId)}`,
-      schema: RegistrarDetailSchema,
-    });
+    return await this.registrar.get(registrarId);
   }
 
-  async listRegistrarEvents(registrarId: string): Promise<RegistrarEventsResponse> {
-    return await this.transport.request({
-      path: `/registrar/${encodeURIComponent(registrarId)}/events`,
-      schema: RegistrarEventsResponseSchema,
-    });
+  async listRegistrarEvents(
+    registrarId: string,
+  ): Promise<import("./domains/registrar.js").RegistrarEventsResponse> {
+    return await this.registrar.events(registrarId);
   }
 
   async listSessionEvents(query?: {
@@ -217,34 +161,13 @@ export class DaemonClient {
     since?: string;
     limit?: number;
   }): Promise<SessionEventsListTolerantResponse> {
-    const raw = await this.transport.request({
-      path: "/session-events",
-      query,
-      schema: SessionEventsEnvelopeSchema,
-    });
-    return { events: raw.events.map(parseSessionEventRow) };
+    return await this.sessionEvents.list(query);
   }
 
   async listSessionNoteDrafts(query?: {
     status?: SessionNoteDraftStatus;
     limit?: number;
   }): Promise<SessionNoteDraftsListResponse> {
-    return await this.transport.request({
-      path: "/session-notes/drafts",
-      query,
-      schema: SessionNoteDraftsListResponseSchema,
-    });
+    return await this.sessionNotes.drafts(query);
   }
-}
-
-function parseSessionEventRow(raw: unknown): SessionEventParseResult {
-  const parsed = SessionEventSchema.safeParse(raw);
-  if (parsed.success) {
-    return { ok: true, event: parsed.data };
-  }
-  return {
-    ok: false,
-    raw,
-    reason: parsed.error.issues.map((issue) => issue.message).join("; "),
-  };
 }
