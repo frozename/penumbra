@@ -1,6 +1,7 @@
 import "../setup";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
+import { act } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MODULES } from "@src/modules/manifest";
@@ -104,5 +105,24 @@ describe("Shell", () => {
 
     expect(view.container.textContent ?? "").toContain("Chains module");
     expect(useUIStore.getState().activeModule).toBe("chains");
+  });
+
+  test("shows the reload banner only when sessionInvalid is true", () => {
+    const view = renderShellAt("/mission");
+    expect(view.queryByRole("alert")).toBeNull();
+    act(() => useDaemonStore.getState().setSessionInvalid(true));
+    const banner = view.getByRole("alert");
+    expect(banner.textContent ?? "").toContain("console restarted — reload");
+  });
+
+  test("banner is not a direct child of .app when visible (does not disturb grid layout)", () => {
+    const view = renderShellAt("/mission");
+    act(() => useDaemonStore.getState().setSessionInvalid(true));
+    const appEl = view.container.querySelector(".app");
+    expect(appEl).not.toBeNull();
+    const banner = view.getByRole("alert");
+    // The banner must NOT be a direct child of .app — it would add a 4th grid
+    // child and shift every row. It should be outside the grid flow.
+    expect(appEl!.contains(banner)).toBe(false);
   });
 });

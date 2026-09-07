@@ -21,4 +21,11 @@ describe("@penumbra/console themes", () => {
     expect(readTheme("tokens.css")).toContain("--color-brand");
     expect(readTheme("colors_and_type.css")).toContain("--color-brand");
   });
+
+  test("app.css defines rules for .session-invalid-banner, .dialog-overlay and .toast-region", () => {
+    const css = readTheme("app.css");
+    expect(css).toMatch(/\.session-invalid-banner\s*\{/);
+    expect(css).toMatch(/\.dialog-overlay\s*\{/);
+    expect(css).toMatch(/\.toast-region\s*\{/);
+  });
 });

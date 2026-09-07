@@ -1149,3 +1149,137 @@ em.ok {
   pointer-events: none;
   z-index: 0;
 }
+
+/* ============ SESSION-INVALID BANNER ============ */
+.session-invalid-banner {
+  position: fixed;
+  inset: 0 0 auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-err);
+  color: var(--color-err);
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 200;
+}
+.session-invalid-banner button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-err);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.session-invalid-banner button:hover {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+/* ============ DIALOG OVERLAY ============ */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 150;
+}
+.dialog-overlay .dialog {
+  width: 440px;
+  max-width: 92vw;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dialog-overlay .dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.dialog-overlay .dialog-body {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.dialog-overlay .dialog-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+  background: var(--color-surface-0);
+  color: var(--color-text);
+}
+.dialog-overlay .dialog-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--color-surface-0);
+  color: var(--color-text);
+}
+.dialog-overlay .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ============ TOAST REGION ============ */
+.toast-region {
+  position: fixed;
+  bottom: 36px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 150;
+  pointer-events: none;
+}
+.toast-region .toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  font-size: 12.5px;
+  pointer-events: auto;
+}
+.toast-region .toast-error {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+.toast-region .toast-info {
+  border-color: rgba(96, 165, 250, 0.3);
+}
+.toast-region .toast-text {
+  flex: 1;
+  min-width: 0;
+}
+.toast-region .toast-dismiss {
+  all: unset;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.toast-region .toast-dismiss:hover {
+  color: var(--color-text);
+}
