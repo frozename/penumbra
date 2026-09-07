@@ -1,6 +1,6 @@
+import { usePressureSnapshot } from "@src/hooks/usePressureSnapshot";
 import { Card, CardHead } from "@src/ui/Card";
 import { PressureOrb } from "@src/ui/PressureOrb";
-import { usePressureSnapshot } from "@src/hooks/usePressureSnapshot";
 
 export function PressureGrid(): JSX.Element {
   const { windows } = usePressureSnapshot();

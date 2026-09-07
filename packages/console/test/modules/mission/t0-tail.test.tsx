@@ -1,12 +1,14 @@
 import "../../setup";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { T0Tail } from "@src/modules/mission/T0Tail";
-import { useMissionStore } from "@src/modules/mission/store";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
+import { useMissionStore } from "@src/modules/mission/store";
+import { T0Tail } from "@src/modules/mission/T0Tail";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -78,9 +80,9 @@ class FakeResizeObserver {
           borderBoxSize: [],
           contentBoxSize: [],
           devicePixelContentBoxSize: [],
-        } as unknown as ResizeObserverEntry,
+        },
       ],
-      this as unknown as ResizeObserver,
+      this,
     );
   }
   unobserve(): void {}
@@ -147,19 +149,18 @@ describe("T0Tail", () => {
     );
 
     // Stub layout for happy-dom so virtualizer sees nonzero size.
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     const ts = new Date().toISOString();
     act(() => {
@@ -219,19 +220,18 @@ describe("T0Tail", () => {
         <T0Tail subscribeImpl={subscribeImpl} />
       </Wrapper>,
     );
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     act(() => {
       useMissionStore.setState({ tailFilter: "agent.thought" });
@@ -287,19 +287,18 @@ describe("T0Tail", () => {
         <T0Tail subscribeImpl={subscribeImpl} />
       </Wrapper>,
     );
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     const ts = new Date().toISOString();
     act(() => {
@@ -362,24 +361,23 @@ describe("T0Tail", () => {
         <T0Tail subscribeImpl={subscribeImpl} />
       </Wrapper>,
     );
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     act(() => {
       emit({
         event: "__reconnect__",
-        data: { reconnect: true } as unknown,
+        data: { reconnect: true },
         raw: { reconnect: true },
       });
     });
@@ -401,19 +399,18 @@ describe("T0Tail", () => {
         <T0Tail subscribeImpl={subscribeImpl} />
       </Wrapper>,
     );
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     const ts = new Date().toISOString();
     act(() => {
@@ -484,19 +481,18 @@ describe("T0Tail", () => {
         <T0Tail subscribeImpl={subscribeImpl} />
       </Wrapper>,
     );
-    const scroll = container.querySelector(".t0-tail-scroll") as HTMLElement;
-    scroll.getBoundingClientRect = () =>
-      ({
-        width: 600,
-        height: 280,
-        top: 0,
-        left: 0,
-        right: 600,
-        bottom: 280,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
 
     const ts = new Date().toISOString();
     act(() => {
@@ -532,7 +528,7 @@ describe("T0Tail", () => {
     act(() => {
       emit({
         event: "__reconnect__",
-        data: { reconnect: true } as unknown,
+        data: { reconnect: true },
         raw: { reconnect: true },
       });
     });
@@ -578,7 +574,7 @@ describe("T0Tail", () => {
       const btns = Array.from(container.querySelectorAll("button"));
       const btn = btns.find((b) => /pause|resume/i.test(b.textContent ?? ""));
       if (!btn) throw new Error("pause/resume button not found");
-      return btn as HTMLButtonElement;
+      return btn;
     };
 
     expect(useMissionStore.getState().pausedTail).toBe(false);

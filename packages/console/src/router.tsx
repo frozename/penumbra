@@ -1,4 +1,5 @@
-import { Navigate, createBrowserRouter, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, Navigate, type RouteObject } from "react-router-dom";
+
 import { MODULES } from "./modules/manifest";
 import { MissionControl } from "./modules/mission";
 import { RegistrarDetail, RegistrarList } from "./modules/registrar";

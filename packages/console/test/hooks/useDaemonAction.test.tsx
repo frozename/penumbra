@@ -1,20 +1,21 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
-import { getByLabelText, getByRole } from "@testing-library/dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getByLabelText, getByRole } from "@testing-library/dom";
+import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { DaemonClient } from "@src/api/client";
 import { DaemonHttpError } from "@src/api/errors";
 import {
   ActionTierUnavailable,
-  useDaemonAction,
   type DaemonActionSpec,
+  useDaemonAction,
 } from "@src/hooks/useDaemonAction";
+import { useDaemonStore } from "@src/stores/daemon-store";
 import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
 import { ToastProvider } from "@src/ui/Toast";
-import { useDaemonStore } from "@src/stores/daemon-store";
 
 interface Args {
   id: string;
@@ -49,7 +50,7 @@ function makeSpec(
     id: "test-action",
     tier: "safe",
     label: "Test action",
-    run: run as unknown as DaemonActionSpec<Args, { ok: true }>["run"],
+    run: run,
     invalidate: (_args, _result) => [
       ["handoffs", "pending"],
       ["registrar", "list"],

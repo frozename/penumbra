@@ -1,7 +1,8 @@
 import "../setup";
-import { afterEach, describe, expect, test } from "bun:test";
-import { act, cleanup, fireEvent, renderHook, within } from "@testing-library/react";
 import { getByRole } from "@testing-library/dom";
+import { act, cleanup, fireEvent, renderHook, within } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "bun:test";
+
 import { ToastProvider, useToast } from "@src/ui/Toast";
 
 afterEach(cleanup);
@@ -32,7 +33,7 @@ describe("Toast", () => {
     const status = getByRole(document.body, "status");
     expect(status.textContent).toContain("chain started");
 
-    const dismissBtn = within(status).getByLabelText("Dismiss") as HTMLButtonElement;
+    const dismissBtn = within(status).getByLabelText("Dismiss");
     fireEvent.click(dismissBtn);
 
     expect(getByRole(document.body, "status").textContent).toBe("");

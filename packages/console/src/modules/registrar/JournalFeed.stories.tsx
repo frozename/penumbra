@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { JournalFeed } from "./JournalFeed";
+
 import { makeStoryEvents } from "./fixtures";
+import { JournalFeed } from "./JournalFeed";
 
 const meta: Meta<typeof JournalFeed> = {
   title: "Registrar/JournalFeed",

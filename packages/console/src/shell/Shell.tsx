@@ -1,7 +1,8 @@
 import { Outlet } from "react-router-dom";
+
+import { useDaemonHealth } from "../hooks/useDaemonHealth";
 import { ConfirmDialogProvider } from "../ui/ConfirmDialog";
 import { ToastProvider } from "../ui/Toast";
-import { useDaemonHealth } from "../hooks/useDaemonHealth";
 import { Explorer } from "./Explorer";
 import { Rail } from "./Rail";
 import { SessionInvalidBanner } from "./SessionInvalidBanner";

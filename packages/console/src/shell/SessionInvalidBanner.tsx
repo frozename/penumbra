@@ -6,7 +6,12 @@ export function SessionInvalidBanner(): JSX.Element | null {
   return (
     <div role="alert" className="session-invalid-banner">
       console restarted — reload{" "}
-      <button type="button" onClick={() => window.location.reload()}>
+      <button
+        type="button"
+        onClick={() => {
+          window.location.reload();
+        }}
+      >
         Reload
       </button>
     </div>

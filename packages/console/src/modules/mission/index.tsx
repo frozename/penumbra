@@ -1,19 +1,21 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { type ChainSummary } from "@penumbra/api-contract";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { DaemonClient } from "@src/api/client";
 import { usePressureSnapshot } from "@src/hooks/usePressureSnapshot";
 import { useSession } from "@src/hooks/useSession";
-import { useDaemonStore } from "@src/stores/daemon-store";
-import { chainsByStatus, handoffsPending } from "@src/lib/query-keys";
 import { fmtDur, providerLabel } from "@src/lib/format";
+import { chainsByStatus, handoffsPending } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
-import { StatRow } from "./StatRow";
+import { useDaemonStore } from "@src/stores/daemon-store";
+
+import { InFlightChains } from "./InFlightChains";
 import { PendingHandoffs } from "./PendingHandoffs";
 import { PressureGrid } from "./PressureGrid";
-import { InFlightChains } from "./InFlightChains";
-import { T0Tail } from "./T0Tail";
 import { RecentResolved } from "./RecentResolved";
+import { StatRow } from "./StatRow";
+import { T0Tail } from "./T0Tail";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });

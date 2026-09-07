@@ -1,9 +1,10 @@
 import "../../setup";
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter } from "react-router-dom";
 
 import type { DaemonClient } from "@src/api/client";
 import { RegistrarList } from "@src/modules/registrar";

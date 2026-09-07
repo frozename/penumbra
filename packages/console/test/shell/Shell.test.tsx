@@ -1,9 +1,10 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
-import { act } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
 import { MODULES } from "@src/modules/manifest";
 import { Shell } from "@src/shell/Shell";
 import { useDaemonStore } from "@src/stores/daemon-store";
@@ -76,7 +77,7 @@ describe("Shell", () => {
   test("mounts titlebar, rail, statusbar at /mission and shows mission stub", () => {
     const view = renderShellAt("/mission");
 
-    const brand = view.container.querySelector(".tb .brand") as HTMLElement | null;
+    const brand = view.container.querySelector(".tb .brand");
     expect(brand?.textContent ?? "").toContain("penumbra");
     expect(view.getByTitle("Mission control")).toBeTruthy();
     expect(view.container.querySelector(".exp-proj-card")).toBeTruthy();
@@ -96,9 +97,7 @@ describe("Shell", () => {
   test("clicking the chains rail button navigates and renders the chains route", () => {
     const view = renderShellAt("/mission");
 
-    const chainsButton = view.container.querySelector(
-      'button[title="Chains"]',
-    ) as HTMLButtonElement | null;
+    const chainsButton = view.container.querySelector('button[title="Chains"]');
     expect(chainsButton).not.toBeNull();
     if (!chainsButton) return;
     fireEvent.click(chainsButton);
@@ -110,14 +109,18 @@ describe("Shell", () => {
   test("shows the reload banner only when sessionInvalid is true", () => {
     const view = renderShellAt("/mission");
     expect(view.queryByRole("alert")).toBeNull();
-    act(() => useDaemonStore.getState().setSessionInvalid(true));
+    act(() => {
+      useDaemonStore.getState().setSessionInvalid(true);
+    });
     const banner = view.getByRole("alert");
     expect(banner.textContent ?? "").toContain("console restarted — reload");
   });
 
   test("banner is not a direct child of .app when visible (does not disturb grid layout)", () => {
     const view = renderShellAt("/mission");
-    act(() => useDaemonStore.getState().setSessionInvalid(true));
+    act(() => {
+      useDaemonStore.getState().setSessionInvalid(true);
+    });
     const appEl = view.container.querySelector(".app");
     expect(appEl).not.toBeNull();
     const banner = view.getByRole("alert");

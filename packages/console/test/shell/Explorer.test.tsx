@@ -1,8 +1,9 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react/pure";
-import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, waitFor } from "@testing-library/react/pure";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MemoryRouter } from "react-router-dom";
+
 import { Explorer } from "@src/shell/Explorer";
 import { useDaemonStore } from "@src/stores/daemon-store";
 
