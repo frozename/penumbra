@@ -72,11 +72,13 @@ validateSpec({
     'rubric',
     'agent',
     'escalateTo',
+    'verifyCheck',
     'maxRounds',
     'base',
     'defaults',
     'dispatcherModel',
     'graderModel',
+    'verifierModel',
     'project_id',
     'caller_cwd',
     'repo',
@@ -128,8 +130,10 @@ if (input.project_id !== undefined) fanoutDefaults.project_id = input.project_id
 if (input.caller_cwd !== undefined) fanoutDefaults.caller_cwd = input.caller_cwd
 const dispatcherModel = input.dispatcherModel || 'sonnet'
 const graderModel = input.graderModel
+const verifierModel = input.verifierModel || 'sonnet'
 const baseAgent = input.agent || defaults.initial_agent || 'executor' // role-routed default; args.agent and escalateTo are deliberate pins
 const escalateTo = input.escalateTo // optional stronger agent for the final round
+const verifyCheck = input.verifyCheck !== false // default ON: a round passes only when an independent verifier re-runs the CHECK. Opt out explicitly with verifyCheck:false.
 const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
@@ -158,6 +162,19 @@ const RUBRIC_RESULT = {
       },
     },
     notes: { type: 'string', maxLength: 600 },
+  },
+}
+
+const CHECK_VERIFY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ran', 'check_exit'],
+  properties: {
+    ran: { type: 'boolean', description: 'true iff you actually executed the CHECK command to completion' },
+    check_exit: { type: 'integer', description: 'exit code of the CHECK run verbatim in the worktree; -1 if it could not be run' },
+    failing_segment: { type: 'string', description: 'the && segment that failed, verbatim, or empty when check_exit is 0' },
+    output_tail: { type: 'string', description: 'last ~2000 characters of the CHECK output' },
+    notes: { type: 'string' },
   },
 }
 
@@ -212,6 +229,21 @@ function parseCheck(result, responseMode = 'first_line') {
     if (marker[1].toUpperCase() === 'PASS') sawPass = true
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
+  if (useFirstLine && !sawFail && !sawPass && hasResponse) {
+    const fullScan = stripFencedBlocks(String(result.response || ''))
+    let fullSawPass = false
+    let fullSawFail = false
+    for (const line of fullScan.split('\n')) {
+      const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
+      if (!marker) continue
+      if (marker[1].toUpperCase() === 'FAIL') fullSawFail = true
+      if (marker[1].toUpperCase() === 'PASS') fullSawPass = true
+    }
+    if (!fullSawFail && fullSawPass) {
+      log('fix-until-green: check_line held no CHECK_RESULT marker (worker narrated first); recovered the verdict from the full response.')
+      return { passed: true, output: '' }
+    }
+  }
   if (useFirstLine) {
     return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
   }
@@ -398,6 +430,7 @@ phase('Iterate')
 const rounds = []
 let prevBranch = null
 let prevOutput = null
+let consecutiveVerifyNotRun = 0
 
 for (let i = 0; i < maxRounds; i++) {
   const agentForRound = i === maxRounds - 1 && escalateTo ? escalateTo : baseAgent
@@ -447,15 +480,77 @@ for (let i = 0; i < maxRounds; i++) {
     log(`WARNING: fix-until-green round ${i + 1}: ignored ${r.extra_hops || 0} extra hop(s) for branch selection; retry_prompt_count=${r.retry_prompt_count || 0} hops_incomplete=${r.hops_incomplete === true}; using root_handoff_id=${r.root_handoff_id} branch=${r.branch}`)
   }
   log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
+  let checkVerified = false
+  let checkVerifyStatus = 'skipped'
+  if (verdict.passed && verifyCheck) {
+    const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
+    const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
+    const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
+    const verifyPrompt = [
+      'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
+      '',
+      'The worker claimed PASS. Do not trust that claim — measure it.',
+      '',
+      worktreePath
+        ? `The worktree is likely at ${worktreePath}; try that directory first. If it does not exist, locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you still cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`
+        : `The worktree path could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd. Locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`,
+      '',
+      'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:',
+      `    ${bashCheckCommand(check)}`,
+      '',
+      'Report the true exit code as check_exit and set ran:true only if you ran the CHECK to completion.',
+      'If the CHECK could not be run, set ran:false and check_exit:-1.',
+      'If the CHECK fails (check_exit is not 0), populate failing_segment with the failing command/segment verbatim and output_tail with the last ~2000 characters of the CHECK output.',
+    ].join('\n')
+    let v
+    try {
+      v = await agent(verifyPrompt, { label: `verify-check#${i + 1}`, phase: 'Iterate', schema: CHECK_VERIFY_SCHEMA, model: verifierModel })
+    } catch {
+      v = null
+    }
+    if (v == null || typeof v !== 'object') {
+      checkVerifyStatus = 'unavailable'
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: true, verified: false, passed: false })
+      prevOutput = 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.'
+      log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; worker PASS not attested on ${r.branch}`)
+      break
+    }
+    if (v.ran !== true || v.check_exit !== 0) {
+      const verifierRan = v.ran === true
+      consecutiveVerifyNotRun = verifierRan ? 0 : consecutiveVerifyNotRun + 1
+      checkVerifyStatus = 'failed'
+      const failOutput = [v.failing_segment, v.output_tail, v.notes].filter(Boolean).join('\n')
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: true, verified: false, check_exit: v.check_exit, passed: false })
+      prevOutput = failOutput
+      if (verifierRan) {
+        log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}; treating as FAIL`)
+      } else {
+        log(`fix-until-green round ${i + 1}: the independent CHECK verifier could not run the CHECK (ran=false, check_exit=${v.check_exit}); treating as FAIL`)
+      }
+      if (consecutiveVerifyNotRun >= 2) {
+        log(`fix-until-green: independent CHECK verifier could not run in ${consecutiveVerifyNotRun} consecutive rounds; stopping.`)
+        break
+      }
+      continue
+    }
+    consecutiveVerifyNotRun = 0
+    checkVerified = true
+    checkVerifyStatus = 'passed'
+  }
   if (verdict.passed) {
     if (rubric.length > 0) {
-      const grade = await agent(rubricPrompt(r.branch, r.handoff_id), {
-        label: `rubric#${i + 1}`,
-        phase: 'Iterate',
-        schema: RUBRIC_RESULT,
-        effort: 'low',
-        ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
-      })
+      let grade
+      try {
+        grade = await agent(rubricPrompt(r.branch, r.handoff_id), {
+          label: `rubric#${i + 1}`,
+          phase: 'Iterate',
+          schema: RUBRIC_RESULT,
+          effort: 'low',
+          ...(graderModel === 'inherit' ? {} : { model: graderModel || 'sonnet' }),
+        })
+      } catch {
+        grade = null
+      }
       if (grade === null) {
         const graderUnavailableOutput = 'Independent rubric grader was unavailable; rubric not attested.'
         rounds.push({
@@ -465,8 +560,10 @@ for (let i = 0; i < maxRounds; i++) {
           handoff_id: r.handoff_id,
           ...hopFields(r),
           check_passed: true,
+          check_verify_status: checkVerifyStatus,
           rubric_status: 'GRADER_UNAVAILABLE',
           rubric_grade: null,
+          verified: checkVerified,
           passed: false,
         })
         log(`fix-until-green round ${i + 1}: grader unavailable; rubric not attested on ${r.branch}`)
@@ -485,7 +582,9 @@ for (let i = 0; i < maxRounds; i++) {
         ...hopFields(r),
         passed: rubricPassed,
         check_passed: true,
+        check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
+        verified: checkVerified,
       })
       log(`fix-until-green round ${i + 1}: rubric ${rubricPassed ? 'PASS' : 'FAIL'} on ${r.branch}`)
       if (rubricPassed) {
@@ -493,11 +592,11 @@ for (let i = 0; i < maxRounds; i++) {
       }
       prevOutput = failedOutput
     } else {
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_verify_status: checkVerifyStatus, verified: checkVerified })
       return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check }
     }
   } else {
-    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: false })
+    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: false, check_verify_status: 'skipped' })
   }
 }
 

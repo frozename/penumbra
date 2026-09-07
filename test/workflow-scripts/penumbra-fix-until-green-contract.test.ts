@@ -16,6 +16,10 @@ interface Round {
   rubric_status?: string;
   rubric_grade?: unknown;
   passed?: boolean;
+  verified?: boolean;
+  check_exit?: number;
+  check_verify_status?: string;
+  check_passed?: boolean;
 }
 
 interface FixUntilGreenResult {
@@ -291,6 +295,8 @@ describe("penumbra-fix-until-green grader availability", () => {
           ],
         }),
         agent: async (_prompt, options) => {
+          if (String(options?.label ?? "").startsWith("verify-check"))
+            return { ran: true, check_exit: 0 };
           if (String(options?.label ?? "").startsWith("rubric")) return null;
           return {};
         },
@@ -305,6 +311,45 @@ describe("penumbra-fix-until-green grader availability", () => {
     expect(agentCalls.some((call) => String(call.options?.label ?? "").startsWith("rubric"))).toBe(
       true,
     );
+  });
+
+  test("a throwing rubric grader yields GRADER_UNAVAILABLE instead of rejecting", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: true,
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: PASS",
+              handoff_id: "h-123",
+            },
+          ],
+        }),
+        agent: async (_prompt, options) => {
+          if (String(options?.label ?? "").startsWith("verify-check"))
+            return { ran: true, check_exit: 0 };
+          if (String(options?.label ?? "").startsWith("rubric")) throw new Error("grader exploded");
+          return {};
+        },
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(rounds?.[0]?.rubric_grade).toBeNull();
+    expect(rounds?.[0]?.passed).toBe(false);
   });
 });
 
@@ -328,6 +373,7 @@ describe("penumbra-fix-until-green full response parsing", () => {
             },
           ],
         }),
+        agent: async () => ({ ran: true, check_exit: 0 }),
       },
     );
 
@@ -337,5 +383,354 @@ describe("penumbra-fix-until-green full response parsing", () => {
     expect(fanout).toBeDefined();
     const args = fanout.args as FanoutArgs;
     expect(args.tasks[0]?.response_mode).toBe("full");
+  });
+});
+
+describe("penumbra-fix-until-green independent check verification", () => {
+  const trustworthyPassFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        branch: "feat/x",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+        handoff_id: "h-123",
+      },
+    ],
+  });
+
+  test("a worker PASS with a verifier check_exit 1 is not green", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({
+          ran: true,
+          check_exit: 1,
+          failing_segment: "bun run lint:strict",
+          output_tail: "2 problems",
+        }),
+      },
+    );
+
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(false);
+    expect(rounds?.[0]?.check_exit).toBe(1);
+  });
+
+  test("a worker PASS with a verifier check_exit 0 is green", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+  });
+
+  test("a null verifier fails closed and does not report green", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => null,
+      },
+    );
+
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_verify_status).toBe("unavailable");
+  });
+
+  test("verifyCheck:false skips the verifier and preserves the old behaviour", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        verifyCheck: false,
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(result?.green).toBe(true);
+    expect(agentCalls).toHaveLength(0);
+  });
+
+  test("a verifier that reports ran:false is treated as a failure", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: false, check_exit: -1 }),
+      },
+    );
+
+    expect(result?.green).toBe(false);
+  });
+
+  test("check_line holding narration recovers the verdict from the full response", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: true,
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "Let me inspect the file.",
+              response: "Working...\nCHECK_RESULT: PASS\ndone",
+              handoff_id: "h-123",
+            },
+          ],
+        }),
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(result?.green).toBe(true);
+  });
+
+  test("an explicit CHECK_RESULT: FAIL in check_line stays a failure", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: true,
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: FAIL",
+              response: "CHECK_RESULT: PASS",
+              handoff_id: "h-123",
+            },
+          ],
+        }),
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    expect(agentCalls).toHaveLength(0);
+  });
+
+  test("a caller with caller_cwd but no repo still reaches green", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        caller_cwd: "/abs/repo",
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+    expect(rounds?.[0]?.check_verify_status).toBe("passed");
+  });
+
+  test("a throwing verifier yields VERIFIER_UNAVAILABLE rather than rejecting", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => {
+          throw new Error("verifier crashed");
+        },
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_verify_status).toBe("unavailable");
+    expect(rounds?.[0]?.verified).toBe(false);
+  });
+
+  test("the verifier prompt offers the git worktree list fallback even when the repo root is absolute", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("/abs-worktrees/h-123");
+    expect(verifyCall!.prompt).toContain("git worktree list");
+    expect(verifyCall!.prompt).toContain("feat/x");
+    expect(verifyCall!.prompt).toContain("h-123");
+  });
+
+  test("the verifier prompt requests failing_segment and output_tail", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("failing_segment");
+    expect(verifyCall!.prompt).toContain("output_tail");
+  });
+
+  test("an undefined verifier result fails closed and never yields green", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => undefined,
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_verify_status).toBe("unavailable");
+    expect(rounds?.[0]?.verified).toBe(false);
+  });
+
+  test("two consecutive rounds with ran:false break the loop", async () => {
+    const { result, workflowCalls, logs } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 4,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: false, check_exit: -1 }),
+      },
+    );
+
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds).toHaveLength(2);
+    expect(logs.some((entry) => /verifier/i.test(entry) && /consecutive/i.test(entry))).toBe(true);
+  });
+
+  test("a round where the verifier ran resets the consecutive ran:false counter", async () => {
+    const verifierResults = [
+      { ran: false, check_exit: -1 },
+      {
+        ran: true,
+        check_exit: 1,
+        failing_segment: "bun run lint:strict",
+        output_tail: "boom",
+      },
+      { ran: false, check_exit: -1 },
+      { ran: true, check_exit: 0 },
+    ];
+    let verifyCallIndex = 0;
+    const { result, workflowCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run lint:strict",
+        maxRounds: 4,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => verifierResults[Math.min(verifyCallIndex++, verifierResults.length - 1)],
+      },
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(4);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds).toHaveLength(4);
   });
 });
