@@ -16,8 +16,7 @@ import {
 import { MissionSessionSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
-import { buildRequestUrl } from "../lib/url.js";
-import { DaemonContractError, DaemonHttpError } from "./errors.js";
+import { DaemonTransport } from "./transport.js";
 
 const HealthResponseSchema = z.object({ status: z.literal("ok") });
 const WorkspaceSchema = z.object({
@@ -81,26 +80,22 @@ export interface ApproveHandoffResponse {
   redirected_to?: string | null;
 }
 
-interface RequestOpts<S extends z.ZodType> {
-  method?: "GET" | "POST";
-  path: string;
-  query?: Record<string, string | number | boolean | null | undefined>;
-  body?: unknown;
-  schema: S;
-}
-
 export class DaemonClient {
+  private readonly transport = new DaemonTransport({
+    getConfig: (): { baseUrl: string; token: string } => this.deps.getConfig(),
+  });
+
   constructor(private readonly deps: DaemonClientDeps) {}
 
   async health(): Promise<{ status: "ok" }> {
-    return await this.request({
+    return await this.transport.request({
       path: "/health",
       schema: HealthResponseSchema,
     });
   }
 
   async listHandoffs(opts?: { status?: HandoffStatus }): Promise<HandoffsListResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/handoffs",
       query: { status: opts?.status },
       schema: HandoffsListResponseSchema,
@@ -116,7 +111,7 @@ export class DaemonClient {
     if (opts?.reason !== undefined) body.reason = opts.reason;
     if (opts?.redirectTo !== undefined) body.redirect_to = opts.redirectTo;
     if (opts?.resolvedBy !== undefined) body.resolved_by = opts.resolvedBy;
-    return await (this.request({
+    return await (this.transport.request({
       method: "POST",
       path: `/handoffs/${encodeURIComponent(handoffId)}/approve`,
       body,
@@ -130,7 +125,7 @@ export class DaemonClient {
     offset?: number;
     projectId?: string;
   }): Promise<ChainsListResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/chains",
       query: {
         status: opts?.status,
@@ -147,7 +142,7 @@ export class DaemonClient {
     since?: string;
     projectId?: string | null;
   }): Promise<UsageRecentResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/usage/recent",
       query: { since: opts?.since, project_id: opts?.projectId },
       schema: UsageRecentResponseSchema,
@@ -159,7 +154,7 @@ export class DaemonClient {
     since?: string;
     window?: "24h" | "5h" | "7d";
   }): Promise<UsageQuotaResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/usage/quota_status",
       query: { since: opts?.since, window: opts?.window },
       schema: UsageQuotaResponseSchema,
@@ -171,7 +166,7 @@ export class DaemonClient {
     provider?: string;
     staleAfterSeconds?: number;
   }): Promise<UsageSubscriptionPressureResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/usage/subscription_pressure",
       query: {
         provider: opts?.provider,
@@ -182,35 +177,35 @@ export class DaemonClient {
   }
 
   async getSession(): Promise<MissionSession> {
-    return await this.request({
+    return await this.transport.request({
       path: "/session/current",
       schema: MissionSessionSchema,
     });
   }
 
   async getWorkspace(): Promise<Workspace> {
-    return await this.request({
+    return await this.transport.request({
       path: "/workspace",
       schema: WorkspaceSchema,
     });
   }
 
   async listRegistrarEntries(): Promise<RegistrarListResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/registrar",
       schema: RegistrarListResponseSchema,
     });
   }
 
   async getRegistrarEntry(registrarId: string): Promise<RegistrarDetail> {
-    return await this.request({
+    return await this.transport.request({
       path: `/registrar/${encodeURIComponent(registrarId)}`,
       schema: RegistrarDetailSchema,
     });
   }
 
   async listRegistrarEvents(registrarId: string): Promise<RegistrarEventsResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: `/registrar/${encodeURIComponent(registrarId)}/events`,
       schema: RegistrarEventsResponseSchema,
     });
@@ -222,7 +217,7 @@ export class DaemonClient {
     since?: string;
     limit?: number;
   }): Promise<SessionEventsListTolerantResponse> {
-    const raw = await this.request({
+    const raw = await this.transport.request({
       path: "/session-events",
       query,
       schema: SessionEventsEnvelopeSchema,
@@ -234,71 +229,11 @@ export class DaemonClient {
     status?: SessionNoteDraftStatus;
     limit?: number;
   }): Promise<SessionNoteDraftsListResponse> {
-    return await this.request({
+    return await this.transport.request({
       path: "/session-notes/drafts",
       query,
       schema: SessionNoteDraftsListResponseSchema,
     });
-  }
-
-  private buildHeaders(extra?: Record<string, string>): Record<string, string> {
-    const cfg = this.deps.getConfig();
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-      ...(extra ?? {}),
-    };
-    if (cfg.token) {
-      headers["Authorization"] = `Bearer ${cfg.token}`;
-    }
-    return headers;
-  }
-
-  private async request<S extends z.ZodType>(opts: RequestOpts<S>): Promise<z.infer<S>> {
-    const { baseUrl } = this.deps.getConfig();
-    const url = buildRequestUrl(baseUrl, opts.path, opts.query);
-    const init: RequestInit = {
-      method: opts.method ?? "GET",
-      credentials: "include",
-      headers: this.buildHeaders(
-        opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
-      ),
-    };
-    if (opts.body !== undefined) {
-      init.body = JSON.stringify(opts.body);
-    }
-
-    let response: Response;
-    try {
-      response = await fetch(url, init);
-    } catch (err) {
-      throw new DaemonHttpError({
-        status: 0,
-        statusText: "network_error",
-        bodyText: err instanceof Error ? err.message : String(err),
-        url,
-      });
-    }
-
-    if (!response.ok) {
-      const bodyText: string = await response.text().catch(() => "");
-      throw new DaemonHttpError({
-        status: response.status,
-        statusText: response.statusText,
-        bodyText,
-        url,
-      });
-    }
-
-    const rawBody: unknown = await response.json();
-    const parsed = opts.schema.safeParse(rawBody);
-    if (!parsed.success) {
-      throw new DaemonContractError({
-        url,
-        issues: parsed.error.issues,
-        rawBody,
-      });
-    }
-    return parsed.data;
   }
 }
 

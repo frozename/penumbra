@@ -1,6 +1,21 @@
 import type { z } from "zod";
 
+import { ErrorEnvelopeSchema } from "@penumbra/api-contract";
+
 type ZodIssueLike = z.core.$ZodIssue;
+
+export function extractErrorCode(bodyText: string): string | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  const parsed = ErrorEnvelopeSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const e = parsed.data.error;
+  return typeof e === "string" ? e : e.code;
+}
 
 export class DaemonHttpError extends Error {
   override name = "DaemonHttpError";
@@ -8,6 +23,8 @@ export class DaemonHttpError extends Error {
   readonly statusText: string;
   readonly bodyText: string;
   readonly url: string;
+  readonly code: string | null;
+  readonly reloadRequired: boolean;
 
   constructor(args: { status: number; statusText: string; bodyText: string; url: string }) {
     super(`daemon ${String(args.status)} ${args.statusText} for ${args.url}`);
@@ -15,6 +32,8 @@ export class DaemonHttpError extends Error {
     this.statusText = args.statusText;
     this.bodyText = args.bodyText;
     this.url = args.url;
+    this.code = extractErrorCode(args.bodyText);
+    this.reloadRequired = args.status === 401 && this.code === "invalid_session";
   }
 }
 
