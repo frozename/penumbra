@@ -20,6 +20,9 @@ const SOURCE_GLOBS = [
   "packages/**/test/**/*.ts",
   "packages/**/bin/**/*.ts",
   "packages/**/scripts/**/*.ts",
+  "packages/console/src/**/*.tsx",
+  "packages/console/test/**/*.tsx",
+  "packages/console/.storybook/**/*.tsx",
   "plugin/**/*.ts",
   "scripts/**/*.ts",
 ];
@@ -51,6 +54,40 @@ const LEGACY_LARGE_FILES = [
   "packages/mcp/src/tools/registry.ts",
   "plugin/workflows/adversarial-review/workflow.ts",
 ];
+
+// Burn-down list — may only shrink. .tsx files over the max-lines cap (700)
+// when the .tsx globs were turned on. An override block turns max-lines and
+// max-lines-per-function off for exactly these files.
+export const LEGACY_TSX_FILES = [];
+
+// Burn-down list — may only shrink. Non-autofixable rules residual after
+// `eslint --fix` on the console's .tsx files. Applied to packages/console/**/*.tsx.
+export const LEGACY_TSX_RULES = {
+  "@typescript-eslint/explicit-module-boundary-types": "off",
+  "@typescript-eslint/explicit-function-return-type": "off",
+  "@typescript-eslint/no-deprecated": "off",
+  "@typescript-eslint/no-unnecessary-condition": "off",
+  "@typescript-eslint/restrict-template-expressions": "off",
+  "@typescript-eslint/no-misused-promises": "off",
+  "no-warning-comments": "off",
+  "sonarjs/cognitive-complexity": "off",
+  "@typescript-eslint/no-empty-function": "off",
+  "@typescript-eslint/require-await": "off",
+  "@typescript-eslint/prefer-nullish-coalescing": "off",
+  eqeqeq: "off",
+  "@typescript-eslint/unbound-method": "off",
+  "@typescript-eslint/no-unsafe-assignment": "off",
+  "@typescript-eslint/no-unsafe-argument": "off",
+  "@typescript-eslint/no-unsafe-member-access": "off",
+  "@typescript-eslint/no-redundant-type-constituents": "off",
+  "@typescript-eslint/no-non-null-assertion": "off",
+  "@typescript-eslint/no-explicit-any": "off",
+  "no-restricted-imports": "off",
+  "@typescript-eslint/no-floating-promises": "off",
+  "@typescript-eslint/no-base-to-string": "off",
+  "@typescript-eslint/no-unnecessary-type-assertion": "off",
+  "@typescript-eslint/non-nullable-type-assertion-style": "off",
+};
 
 const LEGACY_LONG_FUNCTION_FILES = [
   "plugin/workflows/adversarial-plan/workflow.ts",
@@ -358,5 +395,23 @@ export default tseslint.config(
       "no-restricted-imports": "off",
     },
   },
+  {
+    files: ["packages/console/**/*.tsx"],
+    rules: {
+      "max-lines-per-function": "off",
+      ...LEGACY_TSX_RULES,
+    },
+  },
+  ...(LEGACY_TSX_FILES.length > 0
+    ? [
+        {
+          files: LEGACY_TSX_FILES,
+          rules: {
+            "max-lines": "off",
+            "max-lines-per-function": "off",
+          },
+        },
+      ]
+    : []),
   prettierConfig,
 );

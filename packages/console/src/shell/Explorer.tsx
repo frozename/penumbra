@@ -1,12 +1,13 @@
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { useLocation } from "react-router-dom";
-import { useSession } from "../hooks/useSession";
+
 import { DaemonClient } from "../api/client";
-import { useDaemonStore } from "../stores/daemon-store";
-import { chainsByStatus, handoffsPending, workspace } from "../lib/query-keys";
+import { useSession } from "../hooks/useSession";
 import { summarizeWords } from "../lib/format";
+import { chainsByStatus, handoffsPending, workspace } from "../lib/query-keys";
 import { HEARTBEAT_MS } from "../lib/timing";
+import { useDaemonStore } from "../stores/daemon-store";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });

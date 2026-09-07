@@ -1,6 +1,8 @@
-import { useMemo } from "react";
 import type { SessionNoteDraft } from "@penumbra/api-contract";
+
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { DaemonClient } from "@src/api/client";
 import { sessionNoteDrafts } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";

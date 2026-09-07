@@ -95,3 +95,15 @@ test("findByTrigger returns matching specs", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("every shipped plugin workflow and playbook loads with zero registry errors", async () => {
+  const repoRoot = join(import.meta.dir, "../../..");
+  const reg = await buildRegistry({
+    playbooksDir: join(repoRoot, "plugin/playbooks"),
+    workflowsDir: join(repoRoot, "plugin/workflows"),
+  });
+  // A load failure is caught per-file and pushed here, so a broken shipped
+  // workflow is otherwise indistinguishable from one that was never deployed.
+  expect(reg.errors).toEqual([]);
+  expect(reg.list().length).toBeGreaterThanOrEqual(15);
+});

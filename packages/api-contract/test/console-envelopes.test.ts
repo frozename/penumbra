@@ -23,6 +23,16 @@ describe("ApproveHandoffRequestSchema", () => {
       true,
     );
   });
+
+  test("ApproveHandoffRequestSchema rejects unknown keys and names the key", () => {
+    const result = ApproveHandoffRequestSchema.safeParse({ redirec_to: "gemini" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue?.code).toBe("unrecognized_keys");
+      expect(JSON.stringify(result.error.issues)).toContain("redirec_to");
+    }
+  });
 });
 
 describe("ApproveHandoffResponseSchema", () => {
@@ -121,6 +131,17 @@ describe("ApprovePermissionRequestSchema", () => {
         .success,
     ).toBe(true);
   });
+
+  test("ApprovePermissionRequestSchema rejects unknown keys and names the key", () => {
+    const result = ApprovePermissionRequestSchema.safeParse({
+      decision: "approve",
+      remmeber: "this_dispatch",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toContain("remmeber");
+    }
+  });
 });
 
 describe("PermissionRequestRowSchema", () => {
@@ -147,5 +168,21 @@ describe("PermissionRequestRowSchema", () => {
 describe("CreatePermissionRequestSchema", () => {
   test("CreatePermissionRequestSchema requires permission_id", () => {
     expect(CreatePermissionRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  test("CreatePermissionRequestSchema rejects unknown keys and names the key", () => {
+    const result = CreatePermissionRequestSchema.safeParse({
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input: {},
+      tll_seconds: 60,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toContain("tll_seconds");
+    }
   });
 });

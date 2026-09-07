@@ -10,7 +10,9 @@ export interface DaemonStoreState {
   bootError: Error | null;
   health: DaemonHealth;
   lastHealthAt: number | null;
+  sessionInvalid: boolean;
   setHealth: (health: DaemonHealth, checkedAt: number) => void;
+  setSessionInvalid: (v: boolean) => void;
 }
 
 export const useDaemonStore = create<DaemonStoreState>((set) => {
@@ -22,8 +24,12 @@ export const useDaemonStore = create<DaemonStoreState>((set) => {
       bootError: null,
       health: "unknown",
       lastHealthAt: null,
+      sessionInvalid: false,
       setHealth: (health, checkedAt): void => {
         set({ health, lastHealthAt: checkedAt });
+      },
+      setSessionInvalid: (v): void => {
+        set({ sessionInvalid: v });
       },
     };
   } catch (error) {
@@ -33,8 +39,12 @@ export const useDaemonStore = create<DaemonStoreState>((set) => {
       bootError: error instanceof Error ? error : new Error("Failed to load daemon config"),
       health: "unknown",
       lastHealthAt: null,
+      sessionInvalid: false,
       setHealth: (health, checkedAt): void => {
         set({ health, lastHealthAt: checkedAt });
+      },
+      setSessionInvalid: (v): void => {
+        set({ sessionInvalid: v });
       },
     };
   }

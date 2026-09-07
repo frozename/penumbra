@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { useEffect } from "react";
+
 import { ConfirmDialog, ConfirmDialogProvider } from "./ConfirmDialog";
 
 const meta: Meta<typeof ConfirmDialog> = {
@@ -38,9 +40,7 @@ export const WithTypedTarget: Story = {
 
 function ReasonFilledStory() {
   useEffect(() => {
-    const textarea = document.querySelector(
-      'textarea[aria-label="Reason"]',
-    ) as HTMLTextAreaElement | null;
+    const textarea = document.querySelector('textarea[aria-label="Reason"]');
     if (textarea) {
       const setter = Object.getOwnPropertyDescriptor(
         window.HTMLTextAreaElement.prototype,

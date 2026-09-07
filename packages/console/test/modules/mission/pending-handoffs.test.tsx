@@ -1,11 +1,12 @@
 import "../../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+
+import type { DaemonClient, HandoffsListResponse } from "@src/api/client";
 import { PendingHandoffs } from "@src/modules/mission/PendingHandoffs";
-import type { DaemonClient } from "@src/api/client";
-import type { HandoffsListResponse } from "@src/api/client";
 
 function makeWrapper(): {
   Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
@@ -77,7 +78,7 @@ describe("PendingHandoffs", () => {
   test("renders empty state when no handoffs are pending", async () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {
-      listHandoffs: mock(async () => ({ handoffs: [] }) as HandoffsListResponse),
+      listHandoffs: mock(async () => ({ handoffs: [] })),
       approveHandoff: mock(async () => ({
         handoff_id: "x",
         status: "approved",
@@ -161,7 +162,7 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const approveBtn = within(container).getByText("Approve") as HTMLButtonElement;
+    const approveBtn = within(container).getByText("Approve");
     fireEvent.click(approveBtn);
 
     await waitFor(() => {
@@ -205,7 +206,7 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const approveBtn = within(container).getByText("Approve") as HTMLButtonElement;
+    const approveBtn = within(container).getByText("Approve");
     fireEvent.click(approveBtn);
 
     await waitFor(() => {
@@ -314,7 +315,7 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const denyBtn = within(container).getByText("Deny") as HTMLButtonElement;
+    const denyBtn = within(container).getByText("Deny");
     fireEvent.click(denyBtn);
 
     const input = (await waitFor(() => {
@@ -324,7 +325,7 @@ describe("PendingHandoffs", () => {
     })) as HTMLInputElement;
 
     typeIntoInput(input, "looks bad");
-    const submit = within(container).getByText("Submit deny") as HTMLButtonElement;
+    const submit = within(container).getByText("Submit deny");
     fireEvent.click(submit);
 
     await waitFor(() => {

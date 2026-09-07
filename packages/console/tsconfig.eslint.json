@@ -13,6 +13,7 @@
     "scripts/**/*.ts",
     "test/**/*.ts",
     "test/**/*.tsx",
-    "visual/**/*.ts"
+    "visual/**/*.ts",
+    ".storybook/**/*.tsx"
   ]
 }

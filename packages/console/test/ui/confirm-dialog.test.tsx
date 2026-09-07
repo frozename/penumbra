@@ -1,7 +1,8 @@
 import "../setup";
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { getByLabelText, getByRole } from "@testing-library/dom";
 import { act, cleanup, fireEvent, render, renderHook, within } from "@testing-library/react";
-import { getByRole, getByLabelText } from "@testing-library/dom";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+
 import { ConfirmDialog, ConfirmDialogProvider, useConfirm } from "@src/ui/ConfirmDialog";
 
 afterEach(cleanup);
@@ -82,7 +83,7 @@ describe("ConfirmDialog", () => {
     const reasonField = getByLabelText(document.body, "Reason") as HTMLTextAreaElement;
     typeIntoField(reasonField, "because");
 
-    const confirmBtn = within(document.body).getByText("Confirm") as HTMLButtonElement;
+    const confirmBtn = within(document.body).getByText("Confirm");
     fireEvent.click(confirmBtn);
 
     expect(await promise).toEqual({ reason: "because" });
@@ -91,7 +92,7 @@ describe("ConfirmDialog", () => {
       promise = result.current({ title: "Approve handoff" });
     });
 
-    const cancelBtn = within(document.body).getByText("Cancel") as HTMLButtonElement;
+    const cancelBtn = within(document.body).getByText("Cancel");
     fireEvent.click(cancelBtn);
 
     expect(await promise).toBeNull();

@@ -1,6 +1,7 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
 import {
   __resetBrokerForTests,
   type StreamMessage,
@@ -57,7 +58,9 @@ describe("useStream", () => {
       });
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1);
+    });
     expect(result.current.messages[0]!.data).toEqual({ id: 1 });
     expect(result.current.reconnectCount).toBe(0);
   });
@@ -84,7 +87,9 @@ describe("useStream", () => {
       useStream<{ id: number }>("dispatch-events", { enabled: true }, { subscribeImpl }),
     );
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(2);
+    });
     expect(result.current.messages.map((m) => m.data)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 
@@ -116,7 +121,9 @@ describe("useStream", () => {
       });
     });
 
-    await waitFor(() => expect(result.current.reconnectCount).toBe(1));
+    await waitFor(() => {
+      expect(result.current.reconnectCount).toBe(1);
+    });
     expect(result.current.messages).toHaveLength(0);
 
     act(() => {
@@ -127,7 +134,9 @@ describe("useStream", () => {
       });
     });
 
-    await waitFor(() => expect(result.current.reconnectCount).toBe(2));
+    await waitFor(() => {
+      expect(result.current.reconnectCount).toBe(2);
+    });
     expect(subscribeImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -188,7 +197,9 @@ describe("useStream", () => {
       }
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(200));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(200);
+    });
     // Oldest 50 dropped — first kept is index 50, last is 249.
     expect(result.current.messages[0]!.data).toEqual({ i: 50 });
     expect(result.current.messages[199]!.data).toEqual({ i: 249 });
@@ -223,7 +234,9 @@ describe("useStream", () => {
       }
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(50));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(50);
+    });
     expect(result.current.messages[0]!.data).toEqual({ i: 50 });
     expect(result.current.messages[49]!.data).toEqual({ i: 99 });
   });
@@ -257,7 +270,9 @@ describe("useStream", () => {
       }
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(0));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(0);
+    });
   });
 
   test("shrinking bufferSize clamps existing snapshot immediately", async () => {
@@ -291,11 +306,15 @@ describe("useStream", () => {
       }
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(10));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(10);
+    });
 
     rerender({ bufferSize: 3 });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(3);
+    });
     expect(result.current.messages.map((m) => m.data)).toEqual([{ i: 7 }, { i: 8 }, { i: 9 }]);
   });
 
@@ -330,7 +349,9 @@ describe("useStream", () => {
       }
     });
 
-    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(3);
+    });
 
     rerender({ bufferSize: 10 });
 

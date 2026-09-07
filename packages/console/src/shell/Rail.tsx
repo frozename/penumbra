@@ -1,12 +1,13 @@
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { MODULES, type ModuleId } from "../modules/manifest";
-import { useUIStore } from "../stores/ui-store";
+
 import { DaemonClient } from "../api/client";
-import { useDaemonStore } from "../stores/daemon-store";
 import { handoffsPending } from "../lib/query-keys";
 import { HEARTBEAT_MS } from "../lib/timing";
+import { type ModuleId, MODULES } from "../modules/manifest";
+import { useDaemonStore } from "../stores/daemon-store";
+import { useUIStore } from "../stores/ui-store";
 
 export type RailModuleId = ModuleId;
 
@@ -43,7 +44,9 @@ function RailButtons({
         <button
           key={n.id}
           className={"rail-btn " + (activeModule === n.id ? "active" : "")}
-          onClick={() => onSelect(n.id)}
+          onClick={() => {
+            onSelect(n.id);
+          }}
           title={n.label}
         >
           <span style={{ fontSize: 16, fontFamily: "var(--font-mono)" }}>{n.icon}</span>

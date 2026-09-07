@@ -1270,6 +1270,8 @@ function persistChainStart(args: PersistChainStartArgs): void {
       chain_trust_mode: input.trust_mode ?? null,
       chain_task_type: route?.taskType ?? input.task_type ?? null,
       dispatch_kind: input.dispatch_kind ?? null,
+      // The claim-spread fairness cap and every workflow-to-cost join key on this column.
+      workflow_run_id: input.workflow_run_id ?? null,
       long_lived_agent_id: input.long_lived_agent_id ?? null,
       long_lived_tick_id: input.long_lived_tick_id ?? null,
       use_worktree: input.use_worktree ?? true,

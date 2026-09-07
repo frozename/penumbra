@@ -1,13 +1,15 @@
-import { useMemo } from "react";
 import type { MissionSession } from "@penumbra/api-contract";
+
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { DaemonClient } from "@src/api/client";
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
 import { useSession } from "@src/hooks/useSession";
 import { useStream } from "@src/hooks/useStream";
-import { useDaemonStore } from "@src/stores/daemon-store";
 import { usageQuotaStatus } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
+import { useDaemonStore } from "@src/stores/daemon-store";
 import { StatCard } from "@src/ui/StatCard";
 
 type SubscribeImpl = <T>(

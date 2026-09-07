@@ -1,17 +1,19 @@
 import "../../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, render, waitFor, cleanup } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter } from "react-router-dom";
+
+import type { DaemonClient } from "@src/api/client";
+import type { EventSourceLike } from "@src/api/event-source-shim";
+import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
+import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
 import { MissionControl } from "@src/modules/mission";
 import { StatRow } from "@src/modules/mission/StatRow";
 import { useMissionStore } from "@src/modules/mission/store";
 import { useDaemonStore } from "@src/stores/daemon-store";
-import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
-import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
-import type { EventSourceLike } from "@src/api/event-source-shim";
-import type { DaemonClient } from "@src/api/client";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -37,11 +39,10 @@ function makeWrapper(): {
 }
 
 function noopSubscribe(): SubscribeImpl {
-  return ((..._args: unknown[]) =>
-    ({
-      tail: () => [],
-      unsubscribe: () => {},
-    }) as Subscription) as unknown as SubscribeImpl;
+  return (..._args: unknown[]) => ({
+    tail: () => [],
+    unsubscribe: () => {},
+  });
 }
 
 function inertSourceFactory(): EventSourceLike {
@@ -81,7 +82,7 @@ describe("MissionControl scaffold", () => {
   test("renders surface-head with the Mission Control title and lede", () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {
-      getQuotaStatus: mock(async () => ({}) as Record<string, unknown>),
+      getQuotaStatus: mock(async () => ({})),
     } as unknown as DaemonClient;
 
     const { container, unmount } = render(
@@ -144,7 +145,7 @@ describe("StatRow", () => {
         resolved: 0,
         failed: 0,
       })),
-      getQuotaStatus: mock(async () => ({}) as Record<string, unknown>),
+      getQuotaStatus: mock(async () => ({})),
     } as unknown as DaemonClient;
 
     const { container, unmount } = render(

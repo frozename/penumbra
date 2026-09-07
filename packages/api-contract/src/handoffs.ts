@@ -75,6 +75,7 @@ export const ApproveHandoffRequestSchema = z
     reason: z.string().optional(),
     resolved_by: z.string().min(1).optional(),
   })
+  .strict()
   .refine((v) => !(v.redirect_to && v.reject === true), {
     message: "redirect_to and reject are mutually exclusive",
   });

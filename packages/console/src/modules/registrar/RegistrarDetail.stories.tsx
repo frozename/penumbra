@@ -1,8 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { Route, Routes } from "react-router-dom";
+
 import { registrarDetail } from "@src/lib/query-keys";
-import { RegistrarDetail } from "./RegistrarDetail";
+
 import { makeStoryDetail } from "./fixtures";
+import { RegistrarDetail } from "./RegistrarDetail";
 
 const meta: Meta<typeof RegistrarDetail> = {
   title: "Registrar/RegistrarDetail",

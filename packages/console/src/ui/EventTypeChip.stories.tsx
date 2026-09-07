@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { EventTypeChip } from "./EventTypeChip";
 
 const meta: Meta<typeof EventTypeChip> = {

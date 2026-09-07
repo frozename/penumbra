@@ -1,9 +1,11 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { fireEvent, render } from "@testing-library/react";
-import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+
 import { MODULES } from "@src/modules/manifest";
 import { Rail } from "@src/shell/Rail";
 import { useUIStore } from "@src/stores/ui-store";
@@ -68,8 +70,7 @@ describe("Rail", () => {
       </Wrapper>,
     );
 
-    const getButton = (title: string) =>
-      container.querySelector(`button[title="${title}"]`) as HTMLButtonElement | null;
+    const getButton = (title: string) => container.querySelector(`button[title="${title}"]`);
 
     expect(getButton("Mission control")?.className).toContain("active");
     expect(getButton("Chains")?.className).not.toContain("active");
@@ -92,7 +93,7 @@ describe("Rail", () => {
         <Rail activeModule="mission" onSelect={onSelect} />
       </Wrapper>,
     );
-    const chains = container.querySelector('button[title="Chains"]') as HTMLButtonElement | null;
+    const chains = container.querySelector('button[title="Chains"]');
 
     expect(chains).not.toBeNull();
     if (!chains) return;
@@ -127,7 +128,7 @@ describe("Rail", () => {
         </MemoryRouter>
       </Wrapper>,
     );
-    const chains = container.querySelector('button[title="Chains"]') as HTMLButtonElement | null;
+    const chains = container.querySelector('button[title="Chains"]');
 
     expect(chains).not.toBeNull();
     if (!chains) return;

@@ -1,14 +1,15 @@
 import "../../setup";
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import type { DaemonClient } from "@src/api/client";
 import { RegistrarDetail } from "@src/modules/registrar";
-import { PhaseTimeline } from "@src/modules/registrar/PhaseTimeline";
 import { JournalFeed } from "@src/modules/registrar/JournalFeed";
+import { PhaseTimeline } from "@src/modules/registrar/PhaseTimeline";
 
 const BASE_TS = 1_756_200_000_000;
 

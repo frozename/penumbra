@@ -1,14 +1,16 @@
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Card, CardHead } from "@src/ui/Card";
+
 import { DaemonClient } from "@src/api/client";
-import { useDaemonStore } from "@src/stores/daemon-store";
+import { fmtTs } from "@src/lib/format";
 import { registrarDetail } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
-import { fmtTs } from "@src/lib/format";
-import { PhaseTimeline } from "./PhaseTimeline";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { Card, CardHead } from "@src/ui/Card";
+
 import { JournalFeed } from "./JournalFeed";
+import { PhaseTimeline } from "./PhaseTimeline";
 
 export interface RegistrarDetailProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */
@@ -43,11 +45,7 @@ export function RegistrarDetail(props: RegistrarDetailProps = {}): JSX.Element {
   if (detail.isError) {
     const message = detail.error instanceof Error ? detail.error.message : String(detail.error);
     return (
-      <div
-        className="t-tertiary mono"
-        data-testid="registrar-detail-error"
-        style={{ padding: 12 }}
-      >
+      <div className="t-tertiary mono" data-testid="registrar-detail-error" style={{ padding: 12 }}>
         Failed to load initiative: {message}
       </div>
     );

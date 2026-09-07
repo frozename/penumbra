@@ -1,6 +1,8 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import type { SessionEvent } from "@penumbra/api-contract";
+
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { DaemonClient, type SessionEventParseResult } from "@src/api/client";
 import { fmtTs } from "@src/lib/format";
 import { sessionEvents } from "@src/lib/query-keys";

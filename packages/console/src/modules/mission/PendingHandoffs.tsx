@@ -1,12 +1,14 @@
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { HandoffRow } from "@penumbra/api-contract";
-import { Card, CardHead } from "@src/ui/Card";
-import { Button } from "@src/ui/Button";
+
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+
 import { DaemonClient } from "@src/api/client";
-import { useDaemonStore } from "@src/stores/daemon-store";
 import { handoffsPending } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { Button } from "@src/ui/Button";
+import { Card, CardHead } from "@src/ui/Card";
 
 export interface PendingHandoffsProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */
@@ -229,7 +231,9 @@ function PendingHandoffRow({ row, client, queryClient }: PendingHandoffRowProps)
             <input
               name="deny-reason"
               value={reason}
-              onChange={(e) => setReason(e.currentTarget.value)}
+              onChange={(e) => {
+                setReason(e.currentTarget.value);
+              }}
               placeholder="reason (optional)"
               style={{
                 flex: 1,
@@ -270,7 +274,9 @@ function PendingHandoffRow({ row, client, queryClient }: PendingHandoffRowProps)
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
           <Button
             variant="danger"
-            onClick={() => setDenying(true)}
+            onClick={() => {
+              setDenying(true);
+            }}
             disabled={disabled}
             style={{ fontSize: 11 }}
           >
