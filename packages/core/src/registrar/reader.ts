@@ -52,7 +52,8 @@ export class RegistrarReader {
              ORDER BY updated_at DESC, registrar_id ASC`,
           )
           .all();
-    return rows.map((row) => RegistrarEntrySchema.parse(row));
+    const entries = rows.map((row) => RegistrarEntrySchema.parse(row));
+    return entries.map((entry) => ({ ...entry, rollup: this.getRollup(entry.registrar_id) }));
   }
 
   listPhases(registrar_id: string): RegistrarPhase[] {
