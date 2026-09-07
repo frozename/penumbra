@@ -727,6 +727,49 @@ test("successful dispatch still completes (regression guard for the error routin
   expect(d.markFailed).not.toHaveBeenCalled();
 });
 
+test("aborted dispatch is failed, not completed (shutdown must not mask an in-flight hop)", async () => {
+  const started = Promise.withResolvers<undefined>();
+  const d = deps({
+    markFailed: mock().mockResolvedValue(undefined),
+    dispatch: mock().mockImplementation(
+      async (_h: unknown, _onChunk: unknown, signal: AbortSignal) => {
+        started.resolve(undefined);
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        // The reachable race: dispatch-handoff returns this WITHOUT marking the
+        // row failed (dispatch-handoff.ts:309), so the daemon row is still
+        // `dispatched` and a complete() here would win.
+        return {
+          next: null,
+          terminatedReason: "handoff_creation_failed" as const,
+          text: "",
+          agent: "executor",
+        };
+      },
+    ),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-abort", "c-abort"));
+  await started.promise;
+  // The shutdown.ts sequence: dispatcher.stop() then dispatcher.idle().
+  dispatcher.stop();
+  await dispatcher.idle();
+
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+  const [id, reason] = mockCalls<[string, string]>(d.markFailed)[0] ?? ["", ""];
+  expect(id).toBe("h-abort");
+  expect(reason).toBe("cancelled");
+});
+
 test("missing cli binary fails only the handoff and does not surface an unhandled rejection", async () => {
   const events: DispatchEventInput[] = [];
   const unhandled: unknown[] = [];
