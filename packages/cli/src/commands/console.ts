@@ -59,6 +59,14 @@ const HOP_BY_HOP = new Set([
   "upgrade",
 ]);
 
+const STRIPPED_REQUEST_HEADERS = new Set([
+  "authorization",
+  "content-length",
+  "cookie",
+  "host",
+  "x-penumbra-operator",
+]);
+
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
@@ -236,11 +244,7 @@ function makeUpstreamRequestInit(
   const fwdHeaders = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lk = key.toLowerCase();
-    if (HOP_BY_HOP.has(lk)) continue;
-    if (lk === "cookie") continue;
-    if (lk === "host") continue;
-    if (lk === "authorization") continue;
-    if (lk === "content-length") continue;
+    if (HOP_BY_HOP.has(lk) || STRIPPED_REQUEST_HEADERS.has(lk)) continue;
     fwdHeaders.set(key, value);
   }
   fwdHeaders.set("Authorization", `Bearer ${token}`);
@@ -249,6 +253,7 @@ function makeUpstreamRequestInit(
     method: req.method,
     headers: fwdHeaders,
     redirect: "manual",
+    signal: req.signal,
   };
   if (body !== undefined) {
     init.body = body;
@@ -343,21 +348,20 @@ function jsonError(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-export function prepareConsoleServer(
-  opts: PrepareConsoleServerOpts,
-): Promise<PreparedConsoleServer> {
-  const storageRoot = resolveStorageRoot(opts.storageRoot);
-  const daemon = new FileDaemonBootstrap(storageRoot);
-  const distPath = resolveDistPath(opts.distPath);
-  ensureDistReady(distPath);
-  const distNorm = normalize(distPath);
-  const sessionNonce = randomBytes(32).toString("hex");
+export function buildServeOptions(deps: {
+  port: number;
+  distNorm: string;
+  daemon: DaemonBootstrap;
+  sessionNonce: string;
+}): Parameters<typeof Bun.serve>[0] {
+  const { distNorm, daemon, sessionNonce } = deps;
   let cachedStrictIndex: string | null = null;
 
-  const server = Bun.serve({
+  return {
     hostname: "127.0.0.1",
-    port: opts.port ?? 0,
-    async fetch(req) {
+    port: deps.port,
+    idleTimeout: 255,
+    async fetch(req): Promise<Response> {
       const url = new URL(req.url);
 
       if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
@@ -365,14 +369,18 @@ export function prepareConsoleServer(
       }
 
       const requested = url.pathname === "/" ? "/index.html" : url.pathname;
-      const file = safeJoin(distNorm, requested);
-      if (!file) {
+      const indexPath = join(distNorm, "index.html");
+      const joined = safeJoin(distNorm, requested);
+      if (!joined) {
         const headers = new Headers({ "content-type": "text/plain" });
         applySecurityHeaders(headers);
         return new Response("forbidden", { status: 403, headers });
       }
-      const isIndex = file === join(distNorm, "index.html");
-      if (!isIndex && !existsSync(file)) {
+      const exists = existsSync(joined);
+      const spaFallback = !exists && req.method === "GET" && !/\.[a-z0-9]+$/i.test(url.pathname);
+      const file = spaFallback ? indexPath : joined;
+      const isIndex = file === indexPath;
+      if (!isIndex && !exists) {
         const headers = new Headers({ "content-type": "text/plain" });
         applySecurityHeaders(headers);
         return new Response("not found", { status: 404, headers });
@@ -393,7 +401,22 @@ export function prepareConsoleServer(
       applySecurityHeaders(headers);
       return new Response(Bun.file(file), { headers });
     },
-  });
+  };
+}
+
+export function prepareConsoleServer(
+  opts: PrepareConsoleServerOpts,
+): Promise<PreparedConsoleServer> {
+  const storageRoot = resolveStorageRoot(opts.storageRoot);
+  const daemon = new FileDaemonBootstrap(storageRoot);
+  const distPath = resolveDistPath(opts.distPath);
+  ensureDistReady(distPath);
+  const distNorm = normalize(distPath);
+  const sessionNonce = randomBytes(32).toString("hex");
+
+  const server = Bun.serve(
+    buildServeOptions({ port: opts.port ?? 0, distNorm, daemon, sessionNonce }),
+  );
 
   const port = server.port ?? opts.port ?? 0;
   const url = `http://127.0.0.1:${String(port)}`;
