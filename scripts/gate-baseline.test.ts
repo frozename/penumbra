@@ -270,6 +270,72 @@ describe("computeDelta", () => {
     expect(deltaExitCode(rows)).toBe(1);
   });
 
+  test("a rising fail count is a regression even while the gate stays red", () => {
+    const rows = computeDelta(
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 2 })],
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 3 })],
+      { scoped: false },
+    );
+
+    expect(rows[0]?.status).toBe("regression");
+    expect(rows[0]?.note).toBe("fail count rose 2 -> 3");
+    expect(deltaExitCode(rows)).toBe(1);
+  });
+
+  test("a rising fail count beats a rising pass count: regression, not improved", () => {
+    const rows = computeDelta(
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 2 })],
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 101, fail: 5 })],
+      { scoped: false },
+    );
+
+    expect(rows[0]?.status).toBe("regression");
+    expect(rows[0]?.note).toBe("fail count rose 2 -> 5");
+    expect(deltaExitCode(rows)).toBe(1);
+  });
+
+  test("a dropping fail count is improved", () => {
+    const rows = computeDelta(
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 5 })],
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 2 })],
+      { scoped: false },
+    );
+
+    expect(rows[0]?.status).toBe("improved");
+    expect(rows[0]?.note).toBe("fail count dropped 5 -> 2");
+    expect(deltaExitCode(rows)).toBe(0);
+  });
+
+  test("a dropping fail count does not mask a dropping pass count", () => {
+    const rows = computeDelta(
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 100, fail: 5 })],
+      [gate({ name: "packages/daemon", exit_code: 1, ok: false, pass: 50, fail: 2 })],
+      { scoped: false },
+    );
+
+    expect(rows[0]?.status).toBe("regression");
+    expect(deltaExitCode(rows)).toBe(1);
+  });
+
+  test("a null fail count on either side falls back to the pass-based classification", () => {
+    const rows = computeDelta(
+      [
+        gate({ name: "packages/a", pass: 100, fail: null }),
+        gate({ name: "packages/b", pass: 100, fail: 5 }),
+        gate({ name: "packages/c", pass: 100, fail: null }),
+      ],
+      [
+        gate({ name: "packages/a", pass: 101, fail: 5 }),
+        gate({ name: "packages/b", pass: 101, fail: null }),
+        gate({ name: "packages/c", pass: 101, fail: null }),
+      ],
+      { scoped: false },
+    );
+
+    expect(rows.map((row) => row.status)).toEqual(["improved", "improved", "improved"]);
+    expect(deltaExitCode(rows)).toBe(0);
+  });
+
   test("a red gate that stays red at the same counts is not a regression", () => {
     const red = gate({ name: "format:check", exit_code: 1, ok: false, ci_gated: false });
     const rows = computeDelta([red], [red], { scoped: false });

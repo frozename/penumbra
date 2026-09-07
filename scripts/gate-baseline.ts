@@ -40,7 +40,8 @@
  * Exit codes:
  *   0 — baseline captured, or --compare found no regression
  *   1 — --compare found a regression: a green gate went red, a pass count
- *       dropped, or an UNSCOPED run lost a gate the baseline had
+ *       dropped, a fail count rose, or an UNSCOPED run lost a gate the
+ *       baseline had
  *   2 — usage or IO error (unknown flag, unreadable or malformed baseline)
  *
  * Usage:
@@ -544,6 +545,50 @@ function toSnapshot(gate: GateResult): GateSnapshot {
   };
 }
 
+/**
+ * A count moving the wrong way. Fail is checked before pass: a red shard that
+ * added tests AND broke more would otherwise read the pass rise as an
+ * improvement and report exit 0.
+ */
+function classifyCountRegression(
+  before: GateSnapshot,
+  after: GateSnapshot,
+): { status: DeltaStatus; note: string } | null {
+  if (before.fail !== null && after.fail !== null && after.fail > before.fail) {
+    return {
+      status: "regression",
+      note: `fail count rose ${String(before.fail)} -> ${String(after.fail)}`,
+    };
+  }
+  if (before.pass !== null && after.pass !== null && after.pass < before.pass) {
+    return {
+      status: "regression",
+      note: `pass count dropped ${String(before.pass)} -> ${String(after.pass)}`,
+    };
+  }
+  return null;
+}
+
+/** A count moving the right way. Only consulted once no regression applies. */
+function classifyCountImprovement(
+  before: GateSnapshot,
+  after: GateSnapshot,
+): { status: DeltaStatus; note: string } | null {
+  if (before.fail !== null && after.fail !== null && after.fail < before.fail) {
+    return {
+      status: "improved",
+      note: `fail count dropped ${String(before.fail)} -> ${String(after.fail)}`,
+    };
+  }
+  if (before.pass !== null && after.pass !== null && after.pass > before.pass) {
+    return {
+      status: "improved",
+      note: `pass count rose ${String(before.pass)} -> ${String(after.pass)}`,
+    };
+  }
+  return null;
+}
+
 function classify(
   before: GateSnapshot,
   after: GateSnapshot,
@@ -554,19 +599,13 @@ function classify(
   if (!before.ok && after.ok) {
     return { status: "fixed", note: `exit ${String(before.exit_code)} -> green` };
   }
-  if (before.pass !== null && after.pass !== null && after.pass < before.pass) {
-    return {
-      status: "regression",
-      note: `pass count dropped ${String(before.pass)} -> ${String(after.pass)}`,
-    };
-  }
-  if (before.pass !== null && after.pass !== null && after.pass > before.pass) {
-    return {
-      status: "improved",
-      note: `pass count rose ${String(before.pass)} -> ${String(after.pass)}`,
-    };
-  }
-  return { status: "same", note: before.ok ? "green, unchanged" : "red, unchanged" };
+  return (
+    classifyCountRegression(before, after) ??
+    classifyCountImprovement(before, after) ?? {
+      status: "same",
+      note: before.ok ? "green, unchanged" : "red, unchanged",
+    }
+  );
 }
 
 function classifyMissing(scoped: boolean): { status: DeltaStatus; note: string } {
@@ -619,7 +658,7 @@ export function computeDelta(
   return rows;
 }
 
-/** Green went red, or a pass count dropped, or an unscoped run lost a gate. */
+/** Green went red, a count moved the wrong way, or an unscoped run lost a gate. */
 export function deltaExitCode(rows: readonly DeltaRow[]): number {
   return rows.some((row) => row.status === "regression") ? 1 : 0;
 }
