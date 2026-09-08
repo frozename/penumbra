@@ -14,6 +14,12 @@ export interface GhPullRequestLite {
   number: number;
 }
 
+export interface GhPullRequestView {
+  number: number;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  mergeCommitOid: string | null;
+}
+
 export interface GhOpenPullRequest {
   number: number;
   title?: string;
@@ -75,6 +81,7 @@ export interface GhClient {
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
   labelPullRequest?(input: GhLabelPullRequestInput): Promise<void>;
   mergePullRequest?(input: GhMergePullRequestInput): Promise<void>;
+  getPullRequest?(prNumber: number): Promise<GhPullRequestView>;
 }
 
 interface GhExecResult {
@@ -390,6 +397,8 @@ export function createGhCliClient(
       await runOrThrow(exec, [...args]);
     },
 
+    getPullRequest: (prNumber) => ghGetPullRequest(exec, prNumber),
+
     labelPullRequest: (input) => ghLabelPullRequest(exec, input),
   };
 }
@@ -401,6 +410,25 @@ async function ghLabelPullRequest(exec: GhExec, input: GhLabelPullRequestInput):
   if (input.comment !== undefined && input.comment.length > 0) {
     await runOrThrow(exec, ["pr", "comment", String(input.number), "--body", input.comment]);
   }
+}
+
+async function ghGetPullRequest(exec: GhExec, prNumber: number): Promise<GhPullRequestView> {
+  const text = await runOrThrow(exec, [
+    "pr",
+    "view",
+    String(prNumber),
+    "--json",
+    "state,mergeCommit",
+  ]);
+  const p = JSON.parse(text) as { state: string; mergeCommit: { oid: string } | null };
+  const upper = p.state.toUpperCase();
+  const state: GhPullRequestView["state"] =
+    upper === "MERGED" ? "MERGED" : upper === "CLOSED" ? "CLOSED" : "OPEN";
+  return {
+    number: prNumber,
+    state,
+    mergeCommitOid: p.mergeCommit?.oid ?? null,
+  };
 }
 
 async function runCreateIssueWithLabelRetry(

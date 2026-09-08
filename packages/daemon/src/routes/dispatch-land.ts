@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
-import { createGhCliClient, type GhClient } from "../services/gh-client.js";
+import { createGhCliClient, type GhClient, type GhPullRequestView } from "../services/gh-client.js";
 import { json } from "./_helpers.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
@@ -70,7 +70,10 @@ interface DispatchLandTaskRecord {
 
 export interface DispatchLandDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
-  gh: Pick<GhClient, "listOpenPullRequestsByHead" | "closePullRequest" | "mergePullRequest">;
+  gh: Pick<
+    GhClient,
+    "listOpenPullRequestsByHead" | "closePullRequest" | "mergePullRequest" | "getPullRequest"
+  >;
   now: () => Date;
 }
 
@@ -263,7 +266,7 @@ function createDefaultDeps(services: Services, repoDir: string): DispatchLandDep
           });
         });
       }),
-    gh: createGhCliClient(),
+    gh: createGhCliClient({ repoDir }),
     now: services.clock,
   };
 }
@@ -968,10 +971,11 @@ async function resolveLocalBranchSha(
 interface VerifiedGhDeps {
   listOpenPullRequestsByHead: NonNullable<DispatchLandDeps["gh"]["listOpenPullRequestsByHead"]>;
   mergePullRequest: NonNullable<DispatchLandDeps["gh"]["mergePullRequest"]>;
+  getPullRequest: NonNullable<DispatchLandDeps["gh"]["getPullRequest"]>;
 }
 
 function verifyGhCapabilities(deps: DispatchLandDeps): VerifiedGhDeps | DispatchLandFailure {
-  const { mergePullRequest, listOpenPullRequestsByHead } = deps.gh;
+  const { mergePullRequest, listOpenPullRequestsByHead, getPullRequest } = deps.gh;
   if (typeof mergePullRequest !== "function") {
     return {
       status: 500,
@@ -990,7 +994,16 @@ function verifyGhCapabilities(deps: DispatchLandDeps): VerifiedGhDeps | Dispatch
       },
     };
   }
-  return { listOpenPullRequestsByHead, mergePullRequest };
+  if (typeof getPullRequest !== "function") {
+    return {
+      status: 500,
+      error: {
+        code: "gh_merge_unavailable",
+        message: "gh client does not support getPullRequest; cannot use gh mode",
+      },
+    };
+  }
+  return { listOpenPullRequestsByHead, mergePullRequest, getPullRequest };
 }
 
 async function verifyBranchPushed(
@@ -1024,6 +1037,28 @@ function noOpenPrFailure(branch: string): DispatchLandFailure {
       branch,
     },
   };
+}
+
+function ghPrNotMergedFailure(prNumber: number, prState: string): DispatchLandFailure {
+  return {
+    status: 409,
+    error: {
+      code: "gh_pr_not_merged",
+      message: `PR ${String(prNumber)} state is ${prState}, not MERGED; the merge may have been enqueued or rejected`,
+      pr_number: prNumber,
+      pr_state: prState,
+    },
+  };
+}
+
+async function verifyGhPrMerged(
+  getPullRequest: VerifiedGhDeps["getPullRequest"],
+  prNumber: number,
+): Promise<{ merge_commit_oid: string } | DispatchLandFailure> {
+  const prView: GhPullRequestView = await getPullRequest(prNumber);
+  if (prView.state !== "MERGED") return ghPrNotMergedFailure(prNumber, prView.state);
+  if (!prView.mergeCommitOid) return ghPrNotMergedFailure(prNumber, prView.state);
+  return { merge_commit_oid: prView.mergeCommitOid };
 }
 
 async function mergePrWithAlreadyLandedRecovery(
@@ -1061,7 +1096,9 @@ async function performLandGhFlow(
   deps: DispatchLandDeps,
   branch: string,
   resolvedCommitMessage: string,
-): Promise<{ already_landed: boolean; pr_number: number } | DispatchLandFailure> {
+): Promise<
+  { already_landed: boolean; pr_number: number; merge_commit_oid: string } | DispatchLandFailure
+> {
   const verified = verifyGhCapabilities(deps);
   if ("error" in verified) return verified;
 
@@ -1073,11 +1110,27 @@ async function performLandGhFlow(
 
   if (!pr) return noOpenPrFailure(branch);
 
-  return await mergePrWithAlreadyLandedRecovery(
+  const mergeResult = await mergePrWithAlreadyLandedRecovery(
     verified.mergePullRequest,
     pr.number,
     resolvedCommitMessage,
   );
+  if ("error" in mergeResult) return mergeResult;
+
+  // Read the PR back from GitHub to verify the merge actually landed and
+  // obtain the authoritative merge commit oid. git fetch origin updates
+  // refs/remotes/origin/* but NOT refs/heads/main, so readMainSha would
+  // return the pre-merge local main sha. A merge queue or branch protection
+  // can make `gh pr merge` exit 0 without merging — fail closed unless the
+  // PR state is MERGED with a mergeCommit oid.
+  const verifiedMerge = await verifyGhPrMerged(verified.getPullRequest, pr.number);
+  if ("error" in verifiedMerge) return verifiedMerge;
+
+  return {
+    already_landed: mergeResult.already_landed,
+    pr_number: pr.number,
+    merge_commit_oid: verifiedMerge.merge_commit_oid,
+  };
 }
 
 async function performLandGhGitOps(
@@ -1088,6 +1141,10 @@ async function performLandGhGitOps(
   const ghResult = await performLandGhFlow(deps, branch, resolvedCommitMessage);
   if ("error" in ghResult) return ghResult;
 
+  // Keep git fetch origin so the local checkout learns about the new commits,
+  // but do NOT derive commit_sha from local main — the merge commit oid from
+  // GitHub is authoritative (git fetch updates refs/remotes/origin/*, not
+  // refs/heads/main).
   const fetchResult = await deps.runGit(["fetch", "origin"]);
   if (fetchResult.code !== 0) {
     return {
@@ -1099,11 +1156,9 @@ async function performLandGhGitOps(
       },
     };
   }
-  const after = await readMainSha(deps, "rev_parse_main_after");
-  if ("error" in after) return after;
 
   return {
-    commit_sha: after.sha,
+    commit_sha: ghResult.merge_commit_oid,
     already_landed: ghResult.already_landed,
     pr_number: ghResult.pr_number,
   };

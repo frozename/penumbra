@@ -463,4 +463,69 @@ describe("createGhCliClient", () => {
       "gh pr merge 1 --squash failed: GraphQL: merge conflict",
     );
   });
+
+  test("getPullRequest parses state and mergeCommit oid from gh pr view", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({
+        stdout: JSON.stringify({ state: "MERGED", mergeCommit: { oid: "abc123def456" } }),
+        stderr: "",
+        exitCode: 0,
+      });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(42);
+
+    expect(calls).toEqual([["pr", "view", "42", "--json", "state,mergeCommit"]]);
+    expect(pr).toEqual({ number: 42, state: "MERGED", mergeCommitOid: "abc123def456" });
+  });
+
+  test("getPullRequest returns null mergeCommitOid when mergeCommit is absent", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: JSON.stringify({ state: "OPEN", mergeCommit: null }),
+        stderr: "",
+        exitCode: 0,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(7);
+    expect(pr).toEqual({ number: 7, state: "OPEN", mergeCommitOid: null });
+  });
+
+  test("getPullRequest normalizes CLOSED state", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: JSON.stringify({ state: "closed", mergeCommit: null }),
+        stderr: "",
+        exitCode: 0,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(9);
+    expect(pr.state).toBe("CLOSED");
+  });
+
+  test("default exec runs gh with repoDir as cwd", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), "gh-client-repodir-"));
+    const ghPath = join(binDir, "gh");
+    writeFileSync(ghPath, "#!/usr/bin/env bun\nconsole.log(process.cwd());\n");
+    chmodSync(ghPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    try {
+      const client = createGhCliClient({ repoDir: binDir });
+      if (!client.getAuthenticatedLogin) throw new Error("missing getAuthenticatedLogin");
+      const cwdOutput = await client.getAuthenticatedLogin();
+      expect(cwdOutput).toBe(binDir);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
 });
