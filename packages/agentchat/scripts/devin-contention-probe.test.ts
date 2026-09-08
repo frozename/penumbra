@@ -283,7 +283,7 @@ describe("devin-contention-probe", () => {
     expect(round.serializedDispatch.receivedSkew.fired).toBe(false);
   }, 15_000);
 
-  test("rejects lock evidence when baseline latency already exceeds the hold", async () => {
+  test("calibrated hold covers a slow-normal baseline without rejecting the lock window", async () => {
     const root = await freshTempRoot();
     const dbPath = join(root, "sessions.sqlite");
 
@@ -298,11 +298,12 @@ describe("devin-contention-probe", () => {
       sqliteLockControlMs: 250,
     });
 
-    expect(requireRound(result).classifications).toContain("lock_window_unverified");
-    expect(result.ok).toBe(false);
+    const round = requireRound(result);
+    expect(round.classifications).not.toContain("lock_window_unverified");
+    expect(result.ok).toBe(true);
   });
 
-  test("attributes lock_window_unverified to the baseline-exceeds-hold guard", async () => {
+  test("calibrated hold covers a slow-respond baseline and the lock window is satisfied", async () => {
     const root = await freshTempRoot();
     const dbPath = join(root, "sessions.sqlite");
 
@@ -318,11 +319,11 @@ describe("devin-contention-probe", () => {
     });
 
     const round = requireRound(result);
-    expect(round.classifications).toContain("lock_window_unverified");
+    expect(round.classifications).not.toContain("lock_window_unverified");
     expect(round.classifications).not.toContain("serialized_dispatch");
-    expect(result.ok).toBe(false);
-    expect(round.lockWindow.baselineExceededHold).toBe(true);
-    expect(round.lockWindow.satisfied).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(round.lockWindow.baselineExceededHold).toBe(false);
+    expect(round.lockWindow.satisfied).toBe(true);
     expect(round.lockWindow.pairsEvaluated).toBe(2);
   });
 

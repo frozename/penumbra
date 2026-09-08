@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   evaluateRound,
+  type LockControlEvidence,
+  type LockFreeControlEvidence,
   type PendingRoundResult,
   type ProbeFixtureEvent,
   type ProbeProcessResult,
@@ -166,5 +168,56 @@ describe("devin-contention-probe evidence", () => {
     expectOnlySerializedPredicate(result.serializedDispatch, "respondingSkew");
     expect(result.classifications).toContain("serialized_dispatch");
     expect(result.classifications).toEqual(["serialized_dispatch"]);
+  });
+
+  test("uses applied hold when checking baseline latency in lock window", () => {
+    const controlProcess = processResult(0, 1000, 1200);
+    const lockedProcess = processResult(0, 1000, 1400);
+    const lockControl: LockControlEvidence = {
+      lockAcquiredAt: 1000,
+      lockAcquiredWallMs: 1000,
+      lockReleasedAt: 1400,
+      lockReleasedWallMs: 1400,
+    };
+    const lockFreeControl: LockFreeControlEvidence = {
+      classifications: [],
+      fixtureEvents: [
+        fixtureEvent(0, "session_new_received", 1000),
+        fixtureEvent(0, "session_new_responding", 1300),
+      ],
+      maxSendSkewMs: 0,
+      processes: [controlProcess],
+      round: 0,
+    };
+    const round = baseRound({
+      fixtureEvents: [],
+      lockControl,
+      lockFreeControl,
+      maxSendSkewMs: 0,
+      processes: [lockedProcess],
+    });
+    const options = baseOptions({ minOverlap: 1, sqliteLockControlMs: 150 });
+
+    const result = evaluateRound(round, options, lockFreeControl, 400);
+
+    expect(result.lockWindow.baselineExceededHold).toBe(false);
+    expect(result.lockWindow.satisfied).toBe(true);
+  });
+
+  test("does not inherit serialized_dispatch from lock-free control", () => {
+    const lockFreeControl: LockFreeControlEvidence = {
+      classifications: ["serialized_dispatch", "sqlite_busy"],
+      fixtureEvents: [],
+      maxSendSkewMs: 0,
+      processes: [],
+      round: 0,
+    };
+    const round = baseRound({ lockFreeControl });
+    const options = baseOptions();
+
+    const result = evaluateRound(round, options, lockFreeControl);
+
+    expect(result.classifications).toContain("sqlite_busy");
+    expect(result.classifications).not.toContain("serialized_dispatch");
   });
 });
