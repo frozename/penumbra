@@ -43,6 +43,8 @@ export interface RegistrarEntryRow {
   status: "draft" | "active" | "paused" | "complete" | "abandoned";
   created_at: number;
   updated_at: number;
+  rollup?: { open_blockers: number; open_follow_ups: number };
+  phase_progress?: { complete: number; total: number };
 }
 
 export interface RegistrarPhaseRow {

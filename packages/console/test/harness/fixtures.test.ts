@@ -182,3 +182,185 @@ describe("permissions fixture", () => {
     }
   });
 });
+
+describe("registrar fixture", () => {
+  test("GET /registrar list entries carry rollup and phase_progress computed from harness phases and events", async () => {
+    const h = await startHarness();
+    const BASE_TS = 1_756_200_000_000;
+    try {
+      h.setRegistrarEntries([
+        {
+          registrar_id: "reg-e2e-1",
+          slug: "plan-e2e",
+          title: "E2E initiative",
+          home_project: "penumbra",
+          source_doc_path: null,
+          status: "active",
+          created_at: BASE_TS,
+          updated_at: BASE_TS + 60_000,
+        },
+        {
+          registrar_id: "reg-e2e-2",
+          slug: "plan-e2e-second",
+          title: "Second E2E initiative",
+          home_project: "penumbra",
+          source_doc_path: null,
+          status: "active",
+          created_at: BASE_TS,
+          updated_at: BASE_TS + 30_000,
+        },
+      ]);
+      const phaseStatuses = [
+        "complete",
+        "complete",
+        "complete",
+        "complete",
+        "pending",
+        "abandoned",
+      ] as const;
+      for (const [index, status] of phaseStatuses.entries()) {
+        h.addRegistrarPhase({
+          registrar_id: "reg-e2e-1",
+          phase_no: index + 1,
+          title: `Phase ${String(index + 1)}`,
+          status,
+          updated_at: BASE_TS + (index + 1) * 1000,
+        });
+      }
+      h.addRegistrarEvent({
+        registrar_id: "reg-e2e-1",
+        phase_no: 1,
+        kind: "progress",
+        state: null,
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "maestro",
+        body: "Kickoff complete",
+        created_at: BASE_TS + 1000,
+      });
+      h.addRegistrarEvent({
+        registrar_id: "reg-e2e-1",
+        phase_no: 2,
+        kind: "blocker",
+        state: "opened",
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "worker",
+        body: "Waiting on review",
+        created_at: BASE_TS + 2000,
+      });
+      h.addRegistrarEvent({
+        registrar_id: "reg-e2e-1",
+        phase_no: 3,
+        kind: "follow_up",
+        state: "owed",
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "operator",
+        body: "Document the kill switch",
+        created_at: BASE_TS + 3000,
+      });
+      const secondPhaseStatuses = ["complete", "pending"] as const;
+      for (const [index, status] of secondPhaseStatuses.entries()) {
+        h.addRegistrarPhase({
+          registrar_id: "reg-e2e-2",
+          phase_no: index + 1,
+          title: `Second phase ${String(index + 1)}`,
+          status,
+          updated_at: BASE_TS + (index + 1) * 1000,
+        });
+      }
+      h.addRegistrarEvent({
+        registrar_id: "reg-e2e-2",
+        phase_no: 1,
+        kind: "blocker",
+        state: "opened",
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "worker",
+        body: "Second registrar blocker",
+        created_at: BASE_TS + 4000,
+      });
+
+      const res = await Bun.fetch(`${h.baseUrl}/registrar`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        entries: {
+          registrar_id: string;
+          rollup?: { open_blockers: number; open_follow_ups: number };
+          phase_progress?: { complete: number; total: number };
+        }[];
+      };
+      expect(body.entries[0]!.phase_progress).toEqual({ complete: 4, total: 6 });
+      expect(body.entries[0]!.rollup).toEqual({ open_blockers: 1, open_follow_ups: 1 });
+      expect(body.entries[1]!.phase_progress).toEqual({ complete: 1, total: 2 });
+      expect(body.entries[1]!.rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("a closing event of a different kind does not close a blocker", async () => {
+    const h = await startHarness();
+    const BASE_TS = 1_756_200_000_000;
+    try {
+      h.setRegistrarEntries([
+        {
+          registrar_id: "reg-e2e-kinds",
+          slug: "plan-e2e-kinds",
+          title: "Kind mismatch initiative",
+          home_project: "penumbra",
+          source_doc_path: null,
+          status: "active",
+          created_at: BASE_TS,
+          updated_at: BASE_TS + 60_000,
+        },
+      ]);
+      h.addRegistrarEvent({
+        event_id: 1,
+        registrar_id: "reg-e2e-kinds",
+        phase_no: 1,
+        kind: "blocker",
+        state: "opened",
+        ref_event_id: null,
+        link_kind: null,
+        link_value: null,
+        actor: "worker",
+        body: "Waiting on review",
+        created_at: BASE_TS + 1000,
+      });
+      h.addRegistrarEvent({
+        registrar_id: "reg-e2e-kinds",
+        phase_no: 1,
+        kind: "follow_up",
+        state: "done",
+        ref_event_id: 1,
+        link_kind: null,
+        link_value: null,
+        actor: "operator",
+        body: "Follow-up closed against the blocker id",
+        created_at: BASE_TS + 2000,
+      });
+
+      const res = await Bun.fetch(`${h.baseUrl}/registrar`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        entries: {
+          registrar_id: string;
+          rollup?: { open_blockers: number; open_follow_ups: number };
+        }[];
+      };
+      expect(body.entries[0]!.rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
+    } finally {
+      await h.stop();
+    }
+  });
+});
