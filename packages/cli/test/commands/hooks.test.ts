@@ -685,6 +685,10 @@ describe("hooks install --claude-md (dispatch-discipline managed block)", () => 
     expect(body).toContain("Dispatch discipline (penumbra)");
     expect(body).toContain("ultracode");
     expect(body).toContain("SOLO-OK");
+    expect(body).toContain("Registrar discipline (penumbra)");
+    expect(body).toContain(
+      "A merge is not finished until the registrar phase transition is written",
+    );
   });
 
   it("is idempotent: a second run is a no-op (byte-identical)", async () => {
@@ -731,6 +735,9 @@ describe("hooks install --claude-md (dispatch-discipline managed block)", () => 
     expect(headerCount).toBe(1);
     expect(body).not.toContain("stale body");
     expect(body).toContain("Dispatch discipline (penumbra)");
+    // An already-installed older block must pick up newer sections on upgrade, not just
+    // the ones it shipped with — otherwise a bumped rule reaches only fresh installs.
+    expect(body).toContain("Registrar discipline (penumbra)");
   });
 
   it("rewrites a stale block even when the current version string appears OUTSIDE it (FIX 4)", async () => {

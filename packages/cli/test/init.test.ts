@@ -73,6 +73,8 @@ test("init installs the dispatch-discipline CLAUDE.md block in the temp claudeUs
   const body = readFileSync(mdPath, "utf8");
   expect(body).toContain("managed [dispatch-discipline] block");
   expect(body).toContain("Dispatch discipline (penumbra)");
+  // The registrar rule ships globally with every install, not just in this repo's AGENTS.md.
+  expect(body).toContain("Registrar discipline (penumbra)");
 });
 
 test("init copies bundled penumbra workflows into claude user workflows dir", async () => {

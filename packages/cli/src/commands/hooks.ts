@@ -314,7 +314,7 @@ const CLAUDE_MD_HEADER =
 const CLAUDE_MD_FOOTER = "<!-- penumbra: end managed [dispatch-discipline] block -->";
 
 // Bump this when CLAUDE_MD_BODY changes so an installed-but-stale block is rewritten.
-const CLAUDE_MD_VERSION = "v2";
+const CLAUDE_MD_VERSION = "v3";
 
 const CLAUDE_MD_BODY = [
   CLAUDE_MD_HEADER,
@@ -328,6 +328,14 @@ const CLAUDE_MD_BODY = [
   "Serial diagnosis is exempt (read, grep, run, reason) — but the fix-list it produces is dispatchable; dispatch it.",
   "",
   "Under **ultracode**, workflow-first for *every* substantive task: token cost is not a constraint. The automatic post-tool-use hook nudge (dispatch-drift-guard) is binding — when it fires, either dispatch the remaining work-list or reply with one line `SOLO-OK: <reason>` before continuing.",
+  "",
+  "## Registrar discipline (penumbra)",
+  "",
+  "**A merge is not finished until the registrar phase transition is written.** Pair them in the same turn, the way a land is paired with its verification. Session close is too late — that is exactly when the ledger rots, and a stale entry causes the next session to re-dispatch shipped work or block on an already-satisfied dependency.",
+  "",
+  "A phase `status` records what someone last WROTE, not what merged. Verify against the substrate before acting on it: `gh pr view <n> --json state,mergedAt,isDraft`. Distinguish MERGED from COMPLETE — one of six tasks merged is `active`, not `complete`.",
+  "",
+  "Read with `registrar_list` (cheap: status, rollup, phase_progress). Reach for `registrar_status` only when you need the event bodies — it returns every one in full and truncates past ~20k tokens on a mature entry, costing you the most recent events. Prefer the latest event on any question; later ones routinely correct earlier ones.",
   CLAUDE_MD_FOOTER,
   "",
 ].join("\n");

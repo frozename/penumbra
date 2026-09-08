@@ -127,6 +127,57 @@ Four sweepers cooperate:
 
 The `stdio-acp` adapter emits a synthetic `agent.heartbeat` lifecycle event every 60 s while the agent subprocess is alive but emits no `session/update` for ≥ 45 s. This keeps the sweepers' liveness signal accurate for agents that don't naturally emit `agent_thought_chunk` (gemini-acp default is the canonical case).
 
+## Plan registrar — use, read, update
+
+The registrar is the durable record of a multi-phase initiative: what shipped, what is owed, and which traps were already paid for. It outlives the session, the plan document and the branch. Treat it as the initiative's source of truth for _state_, and git/GitHub as the source of truth for _fact_ — the two drift, and when they disagree, git wins.
+
+### Use — when an entry earns its keep
+
+Create one (`registrar_create`) for work that spans more than one session or more than one PR. A single-PR fix does not need an entry; an 11-phase remediation does. The entry's value is not the phase list — it is the accumulated `caveat`, `decision` and `follow_up` events that stop the next person re-litigating a settled question or re-detonating a known trap.
+
+Record a `decision` when you choose a mechanism and reject alternatives, with the reason. Record a `caveat` when landing something in the wrong order would cause harm. Record a `blocker` when work cannot proceed, and a `follow_up` when it can proceed but something is owed. Write the _why_ and the _activation condition_, not just the fact — "arming X without Y starves the fan-out, and the symptom is rows stuck in `approved`" is useful; "fixed X" is not.
+
+`source_doc_path` frequently points into `docs/plans/`, which is **gitignored**. The referenced plan may exist only in one checkout and not in git at all. Never assume the doc is fetchable; the registrar events must stand alone.
+
+### Read — cheap sweep first, and never trust status alone
+
+- `registrar_list` for the status sweep: entries, `status`, `rollup` (open blockers / follow-ups) and `phase_progress`. This is the cheap call.
+- `registrar_status` **only when you need the events** — it returns every event body in full. Mature entries run 20k+ tokens and will truncate mid-payload, costing you the tail (which is usually the most recent, most relevant part). Reach for `registrar_list` first and `registrar_status` deliberately.
+
+**A phase `status` is a claim about what someone last wrote, not about what merged.** It is the single most drift-prone field in the system. Before acting on it, verify against the substrate:
+
+```bash
+gh pr view <n> --json state,mergedAt,isDraft        # did it actually merge?
+git merge-tree --write-tree origin/main <branch>    # is there anything left to land?
+```
+
+Read the events in order and prefer the _latest_ statement on any question — later events routinely correct earlier ones (a "confirmed closed" can be reopened by a later live check). An event saying a thing was verified in tests is not evidence it works in production; look for an explicit live-proof event before believing runtime behaviour.
+
+### Update — the update is owed at merge time, not at session close
+
+**This is where the registrar rots.** Drift is not caused by writing bad events; it is caused by writing none. The failure mode observed on `workflow-dispatch-remediation`: five PRs merged inside four hours, the session ended, and no phase transition was recorded. The entry then read `0 of 11 phases complete` with phase 1 still `active` while phase 1 had been on main for fourteen hours. A reader would have concluded nothing shipped, and could have re-dispatched merged work or blocked on a dependency that was already satisfied.
+
+The rule: **a merge is not finished until the phase transition is written.** Pair them in the same turn, the way you pair a land with its verification.
+
+- `phase_transition` requires `from_status` (the status you are moving _from_) and `state` (the target). Read the current value via `registrar_list`/`registrar_status` first — a wrong `from_status` is rejected.
+- Distinguish **merged** from **complete**. A phase with one of six tasks merged is `active`, not `complete`. Use `active` to mean "shipped code exists on main, do not re-dispatch it", and `complete` only when every task in the phase is done.
+- Closing a `blocker` (`state: resolved`) or a `follow_up` (`state: done` / `dropped`) **requires `ref_event_id`** naming the event being closed. This is enforced, and it is what keeps the ledger auditable.
+- Attach `link_kind`/`link_value` (`gh_issue`, `commit_sha`, `handoff_id`, `workflow_run_id`, `memory_id`) whenever one exists. A phase transition carrying its PR number is self-auditing; one without is a claim someone has to go re-derive.
+- When you correct an earlier event, say so explicitly and say what was wrong. A silent correction leaves two contradictory events and no way to tell which is current.
+
+### Forensics — the tables, and the trap in them
+
+Runtime state lives in `dispatch_events` (`kind`, `meta_json`) and `handoffs`. There is no `events` or `dispatch_event_log` table; guessing those names fails closed with a SQL error, which is the good case.
+
+The bad case is a false positive. `dispatch_events.kind` is **shared across mechanisms** — `claim.reoffer` is emitted by orphan requeue, by `left_dispatched`, _and_ by the claim-spread sweeper. Counting the kind proves nothing about which subsystem ran. Always disambiguate on the cause:
+
+```sql
+SELECT json_extract(meta_json,'$.cause') AS cause, COUNT(*)
+FROM dispatch_events WHERE kind='claim.reoffer' GROUP BY cause;
+```
+
+And never conclude a feature fired from a substring match on `meta_json` — `LIKE '%claim_spread%'` returns 64 `agent.thought` rows from the agents who _wrote_ the feature. Agent chatter is not telemetry.
+
 ## Long-lived agents
 
 Long-lived agents run on cron via the daemon's reactor. They have their own MCP allowlist + approval gate. Built-in roster:
