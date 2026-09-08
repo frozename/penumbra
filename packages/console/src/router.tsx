@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, type RouteObject } from "react-router-dom";
 
+import { ApprovalsView } from "./modules/approvals";
 import { MODULES, type ModuleSpec } from "./modules/manifest";
 import { MissionControl } from "./modules/mission";
 import { RegistrarDetail, RegistrarList } from "./modules/registrar";
@@ -13,6 +14,9 @@ function NotFound(): JSX.Element {
 function moduleElement(m: ModuleSpec): JSX.Element | null {
   if (m.id === "mission") {
     return <MissionControl />;
+  }
+  if (m.id === "approvals") {
+    return <ApprovalsView />;
   }
   if (m.id === "sessions") {
     return <SessionsView />;

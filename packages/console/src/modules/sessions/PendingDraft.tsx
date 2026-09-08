@@ -5,7 +5,7 @@ import { useMemo } from "react";
 
 import { DaemonClient } from "@src/api/client";
 import { useDaemonAction } from "@src/hooks/useDaemonAction";
-import { approvalsCount, sessionNoteDrafts } from "@src/lib/query-keys";
+import { sessionNoteDrafts, sessionNoteDraftsInvalidations } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { Badge } from "@src/ui/Badge";
@@ -78,7 +78,7 @@ function DraftRow({ client, draft, nowMs }: DraftRowProps): JSX.Element {
       tier: "safe",
       label: "Approve draft",
       run: (c, args) => c.sessionNotes.approve({ draft_id: args.draft_id, approve: true }),
-      invalidate: (_args, _result) => [sessionNoteDrafts(), approvalsCount()],
+      invalidate: () => [...sessionNoteDraftsInvalidations()],
     },
     { client },
   );

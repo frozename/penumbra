@@ -1,12 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { DaemonClient } from "../api/client";
-import { handoffsPending } from "../lib/query-keys";
-import { HEARTBEAT_MS } from "../lib/timing";
+import { useApprovalsCount } from "../modules/approvals/hooks";
 import { type ModuleId, MODULES, type ModuleSpec } from "../modules/manifest";
-import { useDaemonStore } from "../stores/daemon-store";
 import { useUIStore } from "../stores/ui-store";
 
 export type RailModuleId = ModuleId;
@@ -15,19 +10,6 @@ export interface RailProps {
   activeModule?: RailModuleId;
   onSelect?: (id: string) => void;
   modules?: readonly ModuleSpec[];
-}
-
-function usePendingHandoffsCount(): number {
-  const client = useMemo(
-    () => new DaemonClient({ getConfig: () => useDaemonStore.getState() }),
-    [],
-  );
-  const { data } = useQuery({
-    queryKey: handoffsPending(),
-    queryFn: () => client.listHandoffs({ status: "pending" }),
-    refetchInterval: HEARTBEAT_MS,
-  });
-  return data?.handoffs?.length ?? 0;
 }
 
 function RailButtons({
@@ -56,7 +38,7 @@ function RailButtons({
           >
             <span style={{ fontSize: 16, fontFamily: "var(--font-mono)" }}>{n.icon}</span>
             <span className="lbl">{n.label}</span>
-            {n.id === "mission" && pendingCount > 0 && (
+            {n.id === "approvals" && pendingCount > 0 && (
               <span className="pip warn">{pendingCount}</span>
             )}
           </button>
@@ -97,7 +79,7 @@ function RailWithNavigation({
 
 export function Rail(props: RailProps): JSX.Element {
   const activeModule = props.activeModule ?? useUIStore((s) => s.activeModule);
-  const pendingCount = usePendingHandoffsCount();
+  const pendingCount = useApprovalsCount();
   const modules = props.modules ?? MODULES;
 
   if (props.onSelect) {

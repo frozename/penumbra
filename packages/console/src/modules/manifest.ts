@@ -13,6 +13,7 @@ export interface ModuleSpec {
 
 export const MODULES = [
   { id: "mission", path: "/mission", label: "Mission control", icon: "◐", available: true },
+  { id: "approvals", path: "/approvals", label: "Approvals", icon: "✓", available: true },
   { id: "registrar", path: "/registrar", label: "Plans", icon: "▤", available: true },
   { id: "sessions", path: "/sessions", label: "Sessions", icon: "◷", available: true },
   { id: "chains", path: "/chains", label: "Chains", icon: "≋", available: false },

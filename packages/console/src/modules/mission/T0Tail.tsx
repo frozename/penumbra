@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
 import { useStream } from "@src/hooks/useStream";
-import { chainsByStatus, handoffsPending } from "@src/lib/query-keys";
+import { chainsByStatus, handoffsPendingInvalidations } from "@src/lib/query-keys";
 import { Button } from "@src/ui/Button";
 import { Card, CardHead } from "@src/ui/Card";
 import { EventTypeChip } from "@src/ui/EventTypeChip";
@@ -85,7 +85,9 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
       frozenRef.current = pausedTail ? stream.messages : null;
       postResumeStartRef.current = null;
       void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
-      void queryClient.invalidateQueries({ queryKey: handoffsPending() });
+      for (const key of handoffsPendingInvalidations()) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
       const handle = setTimeout(() => {
         setShowReconnected(false);
       }, RECONNECTED_BANNER_MS);

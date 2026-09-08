@@ -15,7 +15,7 @@ function makeWrapper(): {
   client: QueryClient;
 } {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 } },
   });
   function Wrapper({ children }: { children: ReactNode }): JSX.Element {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -23,23 +23,7 @@ function makeWrapper(): {
   return { Wrapper, client };
 }
 
-function stubFetchHandoffs(rows: unknown[]): typeof globalThis.fetch {
-  return mock(async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
-    if (url.includes("/handoffs")) {
-      return new Response(JSON.stringify({ handoffs: rows }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    return new Response(JSON.stringify({}), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }) as unknown as typeof globalThis.fetch;
-}
-
-function fakeRow(id: string): Record<string, unknown> {
+function fakeHandoffRow(id: string): Record<string, unknown> {
   return {
     handoff_id: id,
     ts: new Date().toISOString(),
@@ -59,13 +43,79 @@ function fakeRow(id: string): Record<string, unknown> {
     chain_trust_mode: null,
     chain_task_type: null,
     use_worktree: false,
-    open_pr_on_review: null,
-    branch_base: null,
     error_message: null,
     cancel_requested_at: null,
     worker_id: null,
     parent_handoff_id: null,
   };
+}
+
+function fakePermissionRow(id: string): Record<string, unknown> {
+  return {
+    permission_id: id,
+    parent_handoff_id: "h-parent",
+    conversation_id: "conv-1",
+    agent_name: "claude",
+    tool_name: "shell.run",
+    raw_input_json: "{}",
+    status: "pending",
+    remember_scope: null,
+    decision_reason: null,
+    decided_by: null,
+    ttl_at: "2026-09-07T11:00:00.000Z",
+    created_at: new Date().toISOString(),
+    decided_at: null,
+  };
+}
+
+function fakeDraftRow(id: string): Record<string, unknown> {
+  return {
+    draft_id: id,
+    session_id: "s-1",
+    project_id: "penumbra",
+    period_key: "2026-09-01-am",
+    skeleton_path: "/notes/skeleton.md",
+    draft_path: "/notes/draft.md",
+    note_path: "/notes/note.md",
+    handoff_id: null,
+    status: "awaiting_approval",
+    composed_at: new Date().toISOString(),
+    reviewed_at: null,
+    composed_event_id: 1,
+    review_event_id: null,
+  };
+}
+
+function stubFetchAll(data: {
+  handoffs: unknown[];
+  permissions: unknown[];
+  drafts: unknown[];
+}): typeof globalThis.fetch {
+  return mock(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/session-notes/drafts")) {
+      return new Response(JSON.stringify({ drafts: data.drafts }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/permissions")) {
+      return new Response(JSON.stringify({ permissions: data.permissions }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/handoffs")) {
+      return new Response(JSON.stringify({ handoffs: data.handoffs }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as unknown as typeof globalThis.fetch;
 }
 
 let originalFetch: typeof globalThis.fetch;
@@ -77,6 +127,7 @@ beforeEach(() => {
     token: "test-token",
     health: "unknown",
     lastHealthAt: null,
+    sessionInvalid: false,
   });
   originalFetch = globalThis.fetch;
 });
@@ -89,12 +140,17 @@ afterEach(() => {
     token: "",
     health: "unknown",
     lastHealthAt: null,
+    sessionInvalid: false,
   });
 });
 
-describe("Rail mission pip badge", () => {
-  test("renders pip with count when pending handoffs > 0", async () => {
-    globalThis.fetch = stubFetchHandoffs([fakeRow("h-1"), fakeRow("h-2"), fakeRow("h-3")]);
+describe("Rail approvals pip badge", () => {
+  test("approvals pip = pending handoffs + pending permissions + awaiting drafts (2+1+1 → '4')", async () => {
+    globalThis.fetch = stubFetchAll({
+      handoffs: [fakeHandoffRow("h-1"), fakeHandoffRow("h-2")],
+      permissions: [fakePermissionRow("p-1")],
+      drafts: [fakeDraftRow("d-1")],
+    });
 
     const { Wrapper, client } = makeWrapper();
     const { container, unmount } = render(
@@ -106,17 +162,22 @@ describe("Rail mission pip badge", () => {
     );
 
     await waitFor(() => {
-      const pip = container.querySelector(".rail-btn .pip.warn");
+      const approvalsBtn = container.querySelector('button[title="Approvals"]');
+      if (!approvalsBtn) throw new Error("Approvals button not rendered");
+      const pip = approvalsBtn.querySelector(".pip");
       if (!pip) throw new Error("pip not yet rendered");
-      expect(pip.textContent).toBe("3");
+      expect(pip.textContent).toBe("4");
     });
+
+    const missionBtn = container.querySelector('button[title="Mission control"]');
+    expect(missionBtn?.querySelector(".pip")).toBeNull();
 
     unmount();
     client.clear();
   });
 
-  test("renders no pip when pending handoffs is 0", async () => {
-    globalThis.fetch = stubFetchHandoffs([]);
+  test("no pip when all three queues are empty", async () => {
+    globalThis.fetch = stubFetchAll({ handoffs: [], permissions: [], drafts: [] });
 
     const { Wrapper, client } = makeWrapper();
     const { container, unmount } = render(
@@ -127,7 +188,6 @@ describe("Rail mission pip badge", () => {
       </Wrapper>,
     );
 
-    // Allow the initial poll to complete
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(container.querySelector(".rail-btn .pip")).toBeNull();
 

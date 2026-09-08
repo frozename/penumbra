@@ -40,13 +40,25 @@ beforeEach(() => {
   });
   localStorage.clear();
   originalFetch = globalThis.fetch;
-  globalThis.fetch = mock(
-    async () =>
-      new Response(JSON.stringify({ handoffs: [] }), {
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/session-notes/drafts")) {
+      return new Response(JSON.stringify({ drafts: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
-  ) as unknown as typeof globalThis.fetch;
+      });
+    }
+    if (url.includes("/permissions")) {
+      return new Response(JSON.stringify({ permissions: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ handoffs: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as unknown as typeof globalThis.fetch;
 });
 
 afterEach(() => {

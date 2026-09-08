@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 
 import { type ApproveHandoffResponse, DaemonClient } from "@src/api/client";
 import { useDaemonAction } from "@src/hooks/useDaemonAction";
-import { handoffsPending } from "@src/lib/query-keys";
+import { handoffsPending, handoffsPendingInvalidations } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { Button } from "@src/ui/Button";
@@ -80,7 +80,7 @@ function PendingHandoffRow({ row, client }: PendingHandoffRowProps): JSX.Element
       tier: "safe",
       label: "Approve handoff",
       run: (daemon, { handoff_id }) => daemon.approveHandoff(handoff_id),
-      invalidate: () => [handoffsPending()],
+      invalidate: () => [...handoffsPendingInvalidations()],
     },
     { client },
   );
@@ -96,7 +96,7 @@ function PendingHandoffRow({ row, client }: PendingHandoffRowProps): JSX.Element
           reject: true,
           reason: ctx.reason ?? "", // unreachable: ConfirmDialog gates Confirm on a non-blank reason
         }),
-      invalidate: () => [handoffsPending()],
+      invalidate: () => [...handoffsPendingInvalidations()],
     },
     { client },
   );

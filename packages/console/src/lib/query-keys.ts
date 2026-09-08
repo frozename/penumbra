@@ -64,9 +64,19 @@ export function registrarEvents(id: string): readonly ["registrar", "events", st
   return ["registrar", "events", id] as const;
 }
 
-/** Approvals inbox count badge. */
-export function approvalsCount(): readonly ["approvals", "count"] {
-  return ["approvals", "count"] as const;
+/** Approvals inbox handoffs queue (ApprovalItem[] shape, distinct from handoffsPending). */
+export function approvalsHandoffs(): readonly ["approvals", "handoffs"] {
+  return ["approvals", "handoffs"] as const;
+}
+
+/** Approvals inbox permissions queue (ApprovalItem[] shape, distinct from permissionsByStatus). */
+export function approvalsPermissions(): readonly ["approvals", "permissions"] {
+  return ["approvals", "permissions"] as const;
+}
+
+/** Approvals inbox drafts queue (ApprovalItem[] shape, distinct from sessionNoteDrafts). */
+export function approvalsDrafts(): readonly ["approvals", "drafts"] {
+  return ["approvals", "drafts"] as const;
 }
 
 /** Session event timeline (Sessions module). */
@@ -77,4 +87,31 @@ export function sessionEvents(): readonly ["sessions", "events"] {
 /** Pending session-note drafts (Sessions module). */
 export function sessionNoteDrafts(): readonly ["sessions", "note-drafts"] {
   return ["sessions", "note-drafts"] as const;
+}
+
+/**
+ * Invalidation helper for the handoffs resource — returns BOTH the legacy
+ * handoffsPending key and the approvals-handoffs key so that invalidating
+ * from either module refreshes the other.
+ */
+export function handoffsPendingInvalidations(): readonly (readonly string[])[] {
+  return [handoffsPending(), approvalsHandoffs()];
+}
+
+/**
+ * Invalidation helper for the permissions resource — returns BOTH the
+ * permissionsByStatus key and the approvals-permissions key.
+ */
+export function permissionsByStatusInvalidations(
+  status: PermissionStatus,
+): readonly (readonly string[])[] {
+  return [permissionsByStatus(status), approvalsPermissions()];
+}
+
+/**
+ * Invalidation helper for the session-note drafts resource — returns BOTH
+ * the sessionNoteDrafts key and the approvals-drafts key.
+ */
+export function sessionNoteDraftsInvalidations(): readonly (readonly string[])[] {
+  return [sessionNoteDrafts(), approvalsDrafts()];
 }
