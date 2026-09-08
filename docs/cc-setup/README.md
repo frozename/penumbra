@@ -30,10 +30,14 @@ fresh machine or a fresh clone has to be reconstituted from here.
 ## Make the workflows global (every project, not just penumbra)
 
 ```sh
-mkdir -p ~/.claude/workflows && cp <repo>/.claude/workflows/*.js ~/.claude/workflows/
+bun packages/cli/bin/penumbra.ts init   # run from the main checkout, never a linked worktree
 ```
 Project-local `.claude/workflows/` only applies when CC runs inside that project; the global dir
-applies everywhere. (The mirror was done when this branch was created.)
+applies everywhere. Do NOT use a plain `cp` here: several `~/.claude/workflows` entries are symlinks
+back into this checkout's tracked source, and `cp` follows destination symlinks — a hand copy writes
+straight into the git tree. `penumbra init` is the fenced installer: it refuses to write through a
+symlinked mirror entry, and refuses to seed the mirror from a linked worktree. (The mirror was done
+when this branch was created.)
 
 ## Workflow model-tiering policy (cost/quality)
 

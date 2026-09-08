@@ -15,6 +15,10 @@ const UNGUARDED: Record<string, string> = {
     "read-only integration audit; chain_start appears only in a probe prompt, no real dispatch",
   "land-and-close.js": "post-dispatch land/verify/close tail; uses dispatch_land, not chain_start",
   "penumbra-research.js": "memory-augmented web research; no dispatch",
+  "plan-author-audit.js":
+    "plan authoring and assembled-document audit; fans out in-harness agents only, no chain_start",
+  "plan-verify-recon.js":
+    "claim verification and substrate recon fan-out; fans out in-harness agents only, no chain_start",
   "penumbra-review-sweep.js":
     "sweep of adversarial-review targets; self-guarded by task-spec-validation block, no direct chain_start",
   "penumbra-token-opt-batch.js":
@@ -25,7 +29,7 @@ const UNGUARDED: Record<string, string> = {
   "session-memory-sweep.js": "t2 memory candidate collect/approve; no chain_start dispatch",
 };
 
-const UNGUARDED_EXPECTED_SIZE = 11;
+const UNGUARDED_EXPECTED_SIZE = 13;
 
 function readWorkflowsFixture(): string[] {
   const source = readFileSync(FIXTURE_PATH, "utf8");
