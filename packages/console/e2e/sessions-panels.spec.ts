@@ -73,7 +73,7 @@ test.beforeEach(() => {
   fixture.harness.reset();
 });
 
-test("sessions view renders continuity events and read-only pending drafts", async ({
+test("sessions view renders continuity events and an approvable pending draft", async ({
   page,
 }: {
   page: Page;
@@ -87,4 +87,32 @@ test("sessions view renders continuity events and read-only pending drafts", asy
   await expect(
     page.getByTestId("pending-draft-panel").getByRole("button", { name: /^Approve$/ }),
   ).toHaveCount(1);
+});
+
+test("approve draft posts /session-notes/approve and the row leaves the list", async ({
+  page,
+}: {
+  page: Page;
+}) => {
+  seedSessions();
+  await page.goto("/sessions");
+
+  await expect(page.getByTestId("pending-draft-row")).toContainText("2026-09-01-am", {
+    timeout: 10_000,
+  });
+  await expect(page.locator('.rail-btn[title="Approvals"] .pip.warn')).toHaveText("1");
+
+  await page
+    .getByTestId("pending-draft-panel")
+    .getByRole("button", { name: /^Approve$/ })
+    .click();
+
+  await expect(page.getByTestId("pending-draft-row")).toHaveCount(0, { timeout: 2_000 });
+  await expect(page.locator('.rail-btn[title="Approvals"] .pip')).toBeHidden();
+
+  const approveCall = fixture.harness
+    .getCalls()
+    .find((c) => c.method === "POST" && c.path === "/session-notes/approve");
+  expect(approveCall).toBeDefined();
+  expect(approveCall!.body).toMatchObject({ draft_id: "draft-e2e-1", approve: true });
 });

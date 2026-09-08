@@ -39,6 +39,15 @@ test("rail click navigates between mission, plans, and sessions", async ({ page 
   await expect(page.locator("h1", { hasText: "Mission Control" })).toBeVisible();
 });
 
+test("rail click navigates to approvals", async ({ page }) => {
+  await page.goto("/mission");
+
+  const approvals = page.locator('.rail-btn[title="Approvals"]');
+  await approvals.click();
+  await expect(page).toHaveURL(/\/approvals$/);
+  await expect(approvals).toHaveClass(/active/);
+});
+
 test("available:false modules render no rail button", async ({ page }) => {
   await page.goto("/mission");
 

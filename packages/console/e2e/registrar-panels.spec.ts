@@ -103,6 +103,26 @@ test("list row shows status, phase progress, and open blocker/follow-up badges f
   await expect(page.getByTestId("registrar-open-follow-ups")).toHaveText("1 follow-ups");
 });
 
+test("the list renders rollups with no per-row detail request", async ({
+  page,
+}: {
+  page: Page;
+}) => {
+  seedInitiative();
+  await page.goto("/registrar");
+
+  const row = page.getByTestId("registrar-row");
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  const calls = fixture.harness.getCalls();
+  expect(
+    calls.filter((c) => c.method === "GET" && c.path === "/registrar").length,
+  ).toBeGreaterThanOrEqual(1);
+  expect(
+    calls.filter((c) => c.method === "GET" && /^\/registrar\/[^/?]+/.test(c.path)),
+  ).toHaveLength(0);
+});
+
 test("detail view renders the phase timeline in phase_no order and the journal chronologically", async ({
   page,
 }: {
