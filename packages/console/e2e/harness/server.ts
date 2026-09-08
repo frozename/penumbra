@@ -96,6 +96,29 @@ export interface SessionNoteDraftRow {
   review_event_id: number | null;
 }
 
+export interface PermissionRow {
+  permission_id: string;
+  parent_handoff_id: string;
+  conversation_id: string;
+  agent_name: string;
+  tool_name: string;
+  raw_input_json: string;
+  status: "pending" | "approved" | "rejected" | "expired";
+  remember_scope: "this_call" | "this_dispatch" | null;
+  decision_reason: string | null;
+  decided_by: string | null;
+  ttl_at: string;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface PermissionEventPush {
+  kind: string;
+  permission_id: string;
+  seq: number;
+  payload: unknown;
+}
+
 export interface E2EHarness {
   port: number;
   token: string;
@@ -117,6 +140,9 @@ export interface E2EHarness {
   ) => void;
   setSessionEvents: (rows: SessionEventRow[]) => void;
   setSessionNoteDrafts: (rows: SessionNoteDraftRow[]) => void;
+  setPermissions: (rows: PermissionRow[]) => void;
+  addPermissionEvent: (evt: PermissionEventPush) => void;
+  waitForPermissionSseClient: (opts?: { timeoutMs?: number }) => Promise<void>;
   setQuotaStatus: (data: {
     dispatched_count: number;
     cap: number;
@@ -179,6 +205,9 @@ export interface HarnessState {
   registrarSeq: number;
   sessionEvents: SessionEventRow[];
   sessionNoteDrafts: SessionNoteDraftRow[];
+  permissions: PermissionRow[];
+  permissionSseClients: Set<ServerResponse<IncomingMessage>>;
+  permissionSseWaiters: Set<SseWaiter>;
   quotaStatus: {
     dispatched_count: number;
     cap: number;
@@ -210,6 +239,9 @@ export function createInitialState(): HarnessState {
     registrarSeq: 0,
     sessionEvents: [],
     sessionNoteDrafts: [],
+    permissions: [],
+    permissionSseClients: new Set(),
+    permissionSseWaiters: new Set(),
     quotaStatus: { dispatched_count: 0, cap: 6, subscription: { synth_total: 0 } },
     session: {
       id: "no-session",
@@ -237,6 +269,9 @@ export function resetState(state: HarnessState): void {
   state.registrarSeq = 0;
   state.sessionEvents = [];
   state.sessionNoteDrafts = [];
+  state.permissions = [];
+  state.permissionSseClients.clear();
+  state.permissionSseWaiters.clear();
   state.quotaStatus = {
     dispatched_count: 0,
     cap: 6,
@@ -260,6 +295,15 @@ export function resolveSseWaiters(state: HarnessState): void {
   for (const waiter of Array.from(state.sseWaiters)) {
     clearTimeout(waiter.timer);
     state.sseWaiters.delete(waiter);
+    waiter.resolve();
+  }
+}
+
+export function resolvePermissionSseWaiters(state: HarnessState): void {
+  if (state.permissionSseClients.size === 0) return;
+  for (const waiter of Array.from(state.permissionSseWaiters)) {
+    clearTimeout(waiter.timer);
+    state.permissionSseWaiters.delete(waiter);
     waiter.resolve();
   }
 }

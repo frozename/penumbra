@@ -148,28 +148,6 @@ function configDirOf(configPath: string): string {
 // adding a new entry is a visible, deliberate act that fails the test.
 // To add an entry you must also bump ALLOWLIST_EXPECTED_SIZE.
 const ALLOWLIST = new Set<string>([
-  // Playwright e2e specs — eslint ignores **/*.spec.ts globally; these are
-  // compiled and run by Playwright's own runner, not tsc.
-  "packages/console/e2e/handoff-flows.spec.ts",
-  "packages/console/e2e/mission-panels.spec.ts",
-  "packages/console/e2e/mission-smoke.spec.ts",
-  "packages/console/e2e/navigation.spec.ts",
-  "packages/console/e2e/parity.spec.ts",
-  "packages/console/e2e/registrar-panels.spec.ts",
-  "packages/console/e2e/sessions-panels.spec.ts",
-  "packages/console/e2e/smoke.spec.ts",
-  "packages/console/e2e/t0-tail.spec.ts",
-  // Playwright e2e helpers — consumed only by .spec.ts files above.
-  // The harness/ directory was split out of e2e/harness.ts by the table-driven harness refactor.
-  "packages/console/e2e/_helpers.ts",
-  "packages/console/e2e/harness.ts",
-  "packages/console/e2e/harness/fixtures/index.ts",
-  "packages/console/e2e/harness/fixtures/mission.ts",
-  "packages/console/e2e/harness/fixtures/registrar.ts",
-  "packages/console/e2e/harness/fixtures/sessions.ts",
-  "packages/console/e2e/harness/index.ts",
-  "packages/console/e2e/harness/server.ts",
-  "packages/console/e2e/parity-fixture.ts",
   // Framework config files — imported by Vite/Playwright at runtime, not tsc.
   "packages/console/vite.config.ts",
   "packages/console/playwright.config.ts",
@@ -187,7 +165,7 @@ const ALLOWLIST = new Set<string>([
   "packages/mcp/scripts/invocations-summarize.ts",
 ]);
 
-const ALLOWLIST_EXPECTED_SIZE = 27;
+const ALLOWLIST_EXPECTED_SIZE = 9;
 
 test("typecheck census: every package tsconfig.json is reachable from the root build graph", () => {
   const reachable = buildReachableSet(ROOT_CONFIG);

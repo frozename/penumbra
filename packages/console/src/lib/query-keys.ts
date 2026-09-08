@@ -1,4 +1,4 @@
-import type { HandoffStatus } from "@penumbra/api-contract";
+import type { HandoffStatus, PermissionStatus } from "@penumbra/api-contract";
 
 /**
  * Centralized TanStack Query key registry.
@@ -50,6 +50,23 @@ export function registrarList(): readonly ["registrar", "list"] {
 /** Registrar detail (entry + phases + rollup) and journal, scoped by registrar id. */
 export function registrarDetail(registrarId: string): readonly ["registrar", "detail", string] {
   return ["registrar", "detail", registrarId] as const;
+}
+
+/** Permissions list, scoped by status filter. */
+export function permissionsByStatus(
+  status: PermissionStatus,
+): readonly ["permissions", PermissionStatus] {
+  return ["permissions", status] as const;
+}
+
+/** Registrar events journal, scoped by registrar id. */
+export function registrarEvents(id: string): readonly ["registrar", "events", string] {
+  return ["registrar", "events", id] as const;
+}
+
+/** Approvals inbox count badge. */
+export function approvalsCount(): readonly ["approvals", "count"] {
+  return ["approvals", "count"] as const;
 }
 
 /** Session event timeline (Sessions module). */

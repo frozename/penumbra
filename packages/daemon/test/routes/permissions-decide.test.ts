@@ -1,3 +1,4 @@
+import { PermissionDecideResponseSchema } from "@penumbra/api-contract";
 import {
   type EmittedPermissionEvent,
   loadSqliteVec,
@@ -162,4 +163,23 @@ test("POST /permissions/:id/decide returns 400 for invalid body", async () => {
     services,
   );
   expect(res.status).toBe(400);
+});
+
+test("POST /permissions/:id/decide body parses with PermissionDecideResponseSchema", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  await seedPending(services);
+  const res = await permissionsDecideRoute(
+    new Request("http://x/permissions/perm-1/decide", {
+      method: "POST",
+      body: JSON.stringify({ decision: "approve" }),
+    }),
+    "perm-1",
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(PermissionDecideResponseSchema.safeParse(body).success).toBe(true);
 });

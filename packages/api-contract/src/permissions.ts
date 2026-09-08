@@ -45,3 +45,18 @@ export const ApprovePermissionRequestSchema = z
   })
   .strict();
 export type ApprovePermissionRequest = z.infer<typeof ApprovePermissionRequestSchema>;
+
+export const PermissionsListResponseSchema = z
+  .object({ permissions: z.array(PermissionRequestRowSchema) })
+  .loose();
+export type PermissionsListResponse = z.infer<typeof PermissionsListResponseSchema>;
+
+export const PermissionGetResponseSchema = z
+  .object({ permission: PermissionRequestRowSchema })
+  .loose();
+export type PermissionGetResponse = z.infer<typeof PermissionGetResponseSchema>;
+
+export const PermissionDecideResponseSchema = z
+  .object({ permission_id: z.string(), status: PermissionStatusSchema, decided_at: z.string() })
+  .loose();
+export type PermissionDecideResponse = z.infer<typeof PermissionDecideResponseSchema>;
