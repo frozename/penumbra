@@ -181,4 +181,57 @@ describe("Rail + PendingHandoffs co-mount", () => {
     unmount();
     queryClient.clear();
   });
+
+  test("a PendingHandoffs-side approve clears the Rail approvals pip via cross-key invalidation, not the poll", async () => {
+    const seed = {
+      handoffs: [fakeHandoffRow("h-1")],
+      permissions: [] as unknown[],
+      drafts: [] as unknown[],
+    };
+    globalThis.fetch = stubFetch(seed);
+
+    const { Wrapper, client: queryClient } = makeWrapper();
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <Rail />
+        <PendingHandoffs />
+      </Wrapper>,
+    );
+
+    const railPip = (): Element | null => container.querySelector('button[title="Approvals"] .pip');
+
+    await waitFor(() => {
+      expect(railPip()?.textContent).toBe("1");
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-testid="pending-handoff-row"]').length).toBe(1);
+    });
+
+    const missionRow = container.querySelector('[data-testid="pending-handoff-row"]');
+    if (!missionRow) throw new Error("pending-handoff-row not rendered");
+    const approveButtons = missionRow.querySelectorAll("button.btn-ok");
+    expect(approveButtons.length).toBe(1);
+    const approveBtn = approveButtons.item(0);
+    expect(approveBtn.textContent).toBe("Approve");
+
+    await act(async () => {
+      fireEvent.click(approveBtn);
+      // The daemon resolves the handoff, so the next fetch drains the queue.
+      // stubFetch reads seed.handoffs at request time; assigning here lands
+      // before the invalidation-triggered refetch issues its request.
+      seed.handoffs = [];
+    });
+
+    // The pip's own poll is COOL_POLL_MS (30s) and no timer is advanced, so the
+    // pip can only clear if the mission-side approve invalidated the
+    // approvalsHandoffs() key the Rail observes.
+    await waitFor(() => {
+      expect(railPip()).toBeNull();
+    });
+
+    unmount();
+    queryClient.clear();
+  });
 });
