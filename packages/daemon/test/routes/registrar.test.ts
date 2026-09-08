@@ -589,6 +589,31 @@ test("GET /registrar returns open_blockers/open_followups/phase progress matchin
   }
 });
 
+test("after one appended blocker event, GET /registrar entries[0].rollup is {open_blockers:1, open_follow_ups:0} and RegistrarListResponseSchema.safeParse(body).success", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const id = await createRegistrar(daemon);
+    daemon.services.registrarWriter.appendEvent(id, {
+      phase_no: 1,
+      kind: "blocker",
+      state: "opened",
+      actor: "maestro",
+      body: "x",
+    });
+
+    const res = await daemon.fetch("/registrar", { headers: authHeaders(daemon.token) });
+    expect(res.status).toBe(200);
+    const raw = (await res.json()) as { entries: { rollup?: unknown }[] };
+    expect(raw.entries[0]?.rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
+    expect(RegistrarListResponseSchema.safeParse(raw).success).toBe(true);
+    expect(RegistrarListResponseSchema.parse(raw).entries[0]?.rollup).toEqual(
+      daemon.services.registrarReader.getRollup(id),
+    );
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("with PENUMBRA_REGISTRAR=0 the routes are not mounted (404)", async () => {
   const previous = process.env.PENUMBRA_REGISTRAR;
   process.env.PENUMBRA_REGISTRAR = "0";

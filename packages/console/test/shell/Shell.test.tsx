@@ -94,16 +94,16 @@ describe("Shell", () => {
     });
   });
 
-  test("clicking the chains rail button navigates and renders the chains route", () => {
+  test("clicking the plans rail button navigates and renders the plans route", () => {
     const view = renderShellAt("/mission");
 
-    const chainsButton = view.container.querySelector('button[title="Chains"]');
-    expect(chainsButton).not.toBeNull();
-    if (!chainsButton) return;
-    fireEvent.click(chainsButton);
+    const plansButton = view.container.querySelector('button[title="Plans"]');
+    expect(plansButton).not.toBeNull();
+    if (!plansButton) return;
+    fireEvent.click(plansButton);
 
     expect(view.container.textContent ?? "").toContain("Chains module");
-    expect(useUIStore.getState().activeModule).toBe("chains");
+    expect(useUIStore.getState().activeModule).toBe("registrar");
   });
 
   test("shows the reload banner only when sessionInvalid is true", () => {
