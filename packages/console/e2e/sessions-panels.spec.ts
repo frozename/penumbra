@@ -84,8 +84,7 @@ test("sessions view renders continuity events and read-only pending drafts", asy
   await expect(page.getByTestId("session-event-row")).toHaveCount(3, { timeout: 10_000 });
   await expect(page.getByTestId("session-event-superseded-badge")).toHaveText("superseded");
   await expect(page.getByTestId("pending-draft-row")).toContainText("2026-09-01-am");
-  await expect(page.getByTestId("pending-draft-approve-command")).toContainText("draft-e2e-1");
   await expect(
-    page.getByTestId("pending-draft-panel").locator('button, input, form, [role="button"]'),
-  ).toHaveCount(0);
+    page.getByTestId("pending-draft-panel").getByRole("button", { name: /^Approve$/ }),
+  ).toHaveCount(1);
 });

@@ -1,13 +1,16 @@
 import "../../setup";
-import type { SessionNoteDraft } from "@penumbra/api-contract";
 import type { ReactNode } from "react";
 
+import { SessionNoteApproveRequestSchema, type SessionNoteDraft } from "@penumbra/api-contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, type Mock, mock, test } from "bun:test";
 
 import type { DaemonClient } from "@src/api/client";
+import { DaemonHttpError } from "@src/api/errors";
 import { PendingDraft } from "@src/modules/sessions";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 function makeWrapper(): {
   Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
@@ -17,7 +20,13 @@ function makeWrapper(): {
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   });
   function Wrapper({ children }: { children: ReactNode }): JSX.Element {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <ConfirmDialogProvider>{children}</ConfirmDialogProvider>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
   }
   return { Wrapper, client };
 }
@@ -41,10 +50,23 @@ function makeDraft(overrides: Partial<SessionNoteDraft> = {}): SessionNoteDraft 
   };
 }
 
-function makeClient(drafts: SessionNoteDraft[]): DaemonClient {
+function makeClient(
+  drafts: SessionNoteDraft[],
+  approve: (body: { draft_id: string; approve: true }) => Promise<unknown> = mock(
+    async (_body) => ({ ok: true }),
+  ),
+): {
+  client: DaemonClient;
+  listMock: Mock<() => Promise<{ drafts: SessionNoteDraft[] }>>;
+} {
+  const listMock = mock(async () => ({ drafts: [...drafts] }));
   return {
-    listSessionNoteDrafts: mock(async () => ({ drafts })),
-  } as unknown as DaemonClient;
+    client: {
+      listSessionNoteDrafts: listMock,
+      sessionNotes: { approve },
+    } as unknown as DaemonClient,
+    listMock,
+  };
 }
 
 afterEach(() => {
@@ -52,15 +74,18 @@ afterEach(() => {
 });
 
 describe("PendingDraft", () => {
-  test("renders awaiting drafts with elapsed text and no interactive controls", async () => {
+  test("renders an Approve control that submits SessionNoteApproveRequestSchema", async () => {
     const draft = makeDraft();
+    const drafts: SessionNoteDraft[] = [draft];
+    const approveMock = mock(async (_body: { draft_id: string; approve: true }) => {
+      drafts.length = 0;
+      return { draft };
+    });
     const { Wrapper, client } = makeWrapper();
+    const { client: daemonClient, listMock } = makeClient(drafts, approveMock);
     const view = render(
       <Wrapper>
-        <PendingDraft
-          client={makeClient([draft])}
-          now={() => Date.parse("2026-09-01T12:35:00.000Z")}
-        />
+        <PendingDraft client={daemonClient} now={() => Date.parse("2026-09-01T12:35:00.000Z")} />
       </Wrapper>,
     );
 
@@ -72,10 +97,63 @@ describe("PendingDraft", () => {
       "session-note-draft.md",
     );
     expect(view.getByTestId("pending-draft-elapsed").textContent).toBe("pending 2h 35m");
-    expect(view.getByTestId("pending-draft-approve-command").textContent ?? "").toContain(
-      draft.draft_id,
+    expect(view.getByRole("button", { name: /^Approve$/ })).toBeTruthy();
+
+    fireEvent.click(view.getByRole("button", { name: /^Approve$/ }));
+
+    await waitFor(() => {
+      expect(approveMock).toHaveBeenCalledTimes(1);
+    });
+
+    const call = approveMock.mock.calls[0];
+    expect(call).toBeDefined();
+    const arg = call![0];
+    expect(arg).toEqual({ draft_id: draft.draft_id, approve: true });
+    expect(SessionNoteApproveRequestSchema.safeParse(arg).success).toBe(true);
+
+    await waitFor(() => {
+      expect(listMock).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(view.queryByTestId("pending-draft-row")).toBeNull();
+    });
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("Approve failure shows a toast and keeps the row", async () => {
+    const draft = makeDraft();
+    const approveMock = mock(async (_body: { draft_id: string; approve: true }) => {
+      throw new DaemonHttpError({
+        status: 409,
+        statusText: "Conflict",
+        bodyText: '{"error":"note_exists"}',
+        url: "/session-notes/approve",
+      });
+    });
+    const { Wrapper, client } = makeWrapper();
+    const { client: daemonClient, listMock } = makeClient([draft], approveMock);
+    const view = render(
+      <Wrapper>
+        <PendingDraft client={daemonClient} now={() => Date.now()} />
+      </Wrapper>,
     );
-    expect(view.container.querySelectorAll('button, input, form, [role="button"]').length).toBe(0);
+
+    await waitFor(() => {
+      expect(view.getByTestId("pending-draft-row")).toBeTruthy();
+    });
+
+    fireEvent.click(view.getByRole("button", { name: /^Approve$/ }));
+
+    await waitFor(() => {
+      expect(view.getByRole("status").textContent ?? "").toContain("note_exists");
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(listMock).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId("pending-draft-row")).toBeTruthy();
 
     view.unmount();
     client.clear();
@@ -83,9 +161,10 @@ describe("PendingDraft", () => {
 
   test("renders empty state when no drafts are awaiting approval", async () => {
     const { Wrapper, client } = makeWrapper();
+    const { client: daemonClient } = makeClient([]);
     const view = render(
       <Wrapper>
-        <PendingDraft client={makeClient([])} />
+        <PendingDraft client={daemonClient} />
       </Wrapper>,
     );
 

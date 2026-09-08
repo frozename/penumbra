@@ -1,6 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import type { ReactNode } from "react";
 
 import { sessionNoteDrafts } from "@src/lib/query-keys";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 import { makeStoryDraft } from "./fixtures";
 import { PendingDraft } from "./PendingDraft";
@@ -15,15 +18,31 @@ const meta: Meta<typeof PendingDraft> = {
 export default meta;
 type Story = StoryObj;
 
+function Wrapper({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <ToastProvider>
+      <ConfirmDialogProvider>{children}</ConfirmDialogProvider>
+    </ToastProvider>
+  );
+}
+
 export const Awaiting: Story = {
-  render: () => <PendingDraft now={() => NOW} />,
+  render: () => (
+    <Wrapper>
+      <PendingDraft now={() => NOW} />
+    </Wrapper>
+  ),
   parameters: {
     queryCache: [{ key: sessionNoteDrafts(), data: { drafts: [makeStoryDraft()] } }],
   },
 };
 
 export const Empty: Story = {
-  render: () => <PendingDraft now={() => NOW} />,
+  render: () => (
+    <Wrapper>
+      <PendingDraft now={() => NOW} />
+    </Wrapper>
+  ),
   parameters: {
     queryCache: [{ key: sessionNoteDrafts(), data: { drafts: [] } }],
   },

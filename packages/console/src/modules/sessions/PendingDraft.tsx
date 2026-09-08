@@ -4,10 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import { DaemonClient } from "@src/api/client";
-import { sessionNoteDrafts } from "@src/lib/query-keys";
+import { useDaemonAction } from "@src/hooks/useDaemonAction";
+import { approvalsCount, sessionNoteDrafts } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { Badge } from "@src/ui/Badge";
+import { Button } from "@src/ui/Button";
 import { Card, CardHead } from "@src/ui/Card";
 
 export interface PendingDraftProps {
@@ -54,7 +56,7 @@ export function PendingDraft(props: PendingDraftProps = {}): JSX.Element {
               </div>
             )}
             {drafts.map((draft) => (
-              <DraftRow draft={draft} key={draft.draft_id} nowMs={now()} />
+              <DraftRow client={client} draft={draft} key={draft.draft_id} nowMs={now()} />
             ))}
           </div>
         </>
@@ -63,7 +65,24 @@ export function PendingDraft(props: PendingDraftProps = {}): JSX.Element {
   );
 }
 
-function DraftRow({ draft, nowMs }: { draft: SessionNoteDraft; nowMs: number }): JSX.Element {
+interface DraftRowProps {
+  client: DaemonClient;
+  draft: SessionNoteDraft;
+  nowMs: number;
+}
+
+function DraftRow({ client, draft, nowMs }: DraftRowProps): JSX.Element {
+  const action = useDaemonAction<{ draft_id: string }, unknown>(
+    {
+      id: "session-note.approve",
+      tier: "safe",
+      label: "Approve draft",
+      run: (c, args) => c.sessionNotes.approve({ draft_id: args.draft_id, approve: true }),
+      invalidate: (_args, _result) => [sessionNoteDrafts(), approvalsCount()],
+    },
+    { client },
+  );
+
   return (
     <div
       data-testid="pending-draft-row"
@@ -88,16 +107,17 @@ function DraftRow({ draft, nowMs }: { draft: SessionNoteDraft; nowMs: number }):
           {pendingElapsed(draft.composed_at, nowMs)}
         </span>
       </div>
-      <code
-        data-testid="pending-draft-approve-command"
-        style={{
-          fontSize: 11,
-          color: "var(--color-text-secondary)",
-          overflowWrap: "anywhere",
-        }}
-      >
-        {approvalCommand(draft.draft_id)}
-      </code>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Button
+          variant="primary"
+          onClick={() => {
+            void action.execute({ draft_id: draft.draft_id });
+          }}
+          disabled={action.isPending}
+        >
+          Approve
+        </Button>
+      </div>
     </div>
   );
 }
@@ -108,10 +128,6 @@ function pendingElapsed(composedAt: string, nowMs: number): string {
   const minutes = elapsedMinutes % 60;
   if (hours === 0) return `pending ${String(minutes)}m`;
   return `pending ${String(hours)}h ${String(minutes)}m`;
-}
-
-function approvalCommand(draftId: string): string {
-  return `session_note_approve ${JSON.stringify({ draft_id: draftId })}`;
 }
 
 function basename(path: string): string {
