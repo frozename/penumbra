@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react";
 
-import { registrarDetail, registrarList } from "@src/lib/query-keys";
+import { registrarList } from "@src/lib/query-keys";
 
-import { makeStoryDetail, makeStoryEntry } from "./fixtures";
+import { makeStoryEntry } from "./fixtures";
 import { RegistrarList } from "./RegistrarList";
 
 const meta: Meta<typeof RegistrarList> = {
@@ -27,15 +27,15 @@ export const OneOpenBlocker: Story = {
       {
         key: registrarList(),
         data: {
-          entries: [makeStoryEntry({ registrar_id: "reg-story-1", title: "Blocked rollout" })],
+          entries: [
+            makeStoryEntry({
+              registrar_id: "reg-story-1",
+              title: "Blocked rollout",
+              rollup: { open_blockers: 1, open_follow_ups: 0 },
+              phase_progress: { complete: 1, total: 3 },
+            }),
+          ],
         },
-      },
-      {
-        key: registrarDetail("reg-story-1"),
-        data: makeStoryDetail({
-          entry: { registrar_id: "reg-story-1", title: "Blocked rollout" },
-          rollup: { open_blockers: 1, open_follow_ups: 0 },
-        }),
       },
     ],
   },
@@ -54,23 +54,11 @@ export const AllPhasesComplete: Story = {
               slug: "plan-done",
               title: "Shipped initiative",
               status: "complete",
+              rollup: { open_blockers: 0, open_follow_ups: 0 },
+              phase_progress: { complete: 5, total: 5 },
             }),
           ],
         },
-      },
-      {
-        key: registrarDetail("reg-story-2"),
-        data: makeStoryDetail({
-          entry: {
-            registrar_id: "reg-story-2",
-            slug: "plan-done",
-            title: "Shipped initiative",
-            status: "complete",
-          },
-          phaseStatuses: ["complete", "complete", "complete", "complete", "complete"],
-          events: [],
-          rollup: { open_blockers: 0, open_follow_ups: 0 },
-        }),
       },
     ],
   },

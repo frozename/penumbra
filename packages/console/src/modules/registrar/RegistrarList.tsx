@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 
 import { DaemonClient } from "@src/api/client";
 import { fmtTs } from "@src/lib/format";
-import { registrarDetail, registrarList } from "@src/lib/query-keys";
+import { registrarList } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import type { BadgeVariant } from "@src/ui/Badge";
@@ -76,7 +76,7 @@ export function RegistrarList(props: RegistrarListProps = {}): JSX.Element {
                 </div>
               )}
               {entries.map((entry) => (
-                <RegistrarRow key={entry.registrar_id} entry={entry} client={client} />
+                <RegistrarRow key={entry.registrar_id} entry={entry} />
               ))}
             </div>
           </>
@@ -88,22 +88,11 @@ export function RegistrarList(props: RegistrarListProps = {}): JSX.Element {
 
 interface RegistrarRowProps {
   entry: RegistrarEntry;
-  client: DaemonClient;
 }
 
-function RegistrarRow({ entry, client }: RegistrarRowProps): JSX.Element {
-  // The list endpoint carries no rollup, so each row polls its own detail to
-  // surface phases and the daemon-computed open blocker/follow-up counts.
-  const detail = useQuery({
-    queryKey: registrarDetail(entry.registrar_id),
-    queryFn: () => client.getRegistrarEntry(entry.registrar_id),
-    refetchInterval: HEARTBEAT_MS,
-  });
-
-  const phases = detail.data?.phases;
-  const rollup = detail.data?.rollup;
-  const completedPhases = phases?.filter((phase) => phase.status === "complete").length;
-  const rollupUnavailable = detail.isError;
+function RegistrarRow({ entry }: RegistrarRowProps): JSX.Element {
+  const rollup = entry.rollup;
+  const progress = entry.phase_progress;
 
   return (
     <Link
@@ -144,9 +133,9 @@ function RegistrarRow({ entry, client }: RegistrarRowProps): JSX.Element {
             {entry.status}
           </span>
           <span data-testid="registrar-phase-progress" className="chip">
-            {phases ? `${completedPhases}/${phases.length} phases` : "… phases"}
+            {progress ? `${progress.complete}/${progress.total} phases` : "—"}
           </span>
-          {rollupUnavailable ? (
+          {rollup === undefined ? (
             <span
               data-testid="registrar-rollup-unavailable"
               className="badge badge-muted"
@@ -156,22 +145,20 @@ function RegistrarRow({ entry, client }: RegistrarRowProps): JSX.Element {
               —
             </span>
           ) : (
-            rollup && (
-              <>
-                <span
-                  data-testid="registrar-open-blockers"
-                  className={`badge ${rollup.open_blockers > 0 ? "badge-err" : "badge-muted"}`}
-                >
-                  {rollup.open_blockers} blockers
-                </span>
-                <span
-                  data-testid="registrar-open-follow-ups"
-                  className={`badge ${rollup.open_follow_ups > 0 ? "badge-warn" : "badge-muted"}`}
-                >
-                  {rollup.open_follow_ups} follow-ups
-                </span>
-              </>
-            )
+            <>
+              <span
+                data-testid="registrar-open-blockers"
+                className={`badge ${rollup.open_blockers > 0 ? "badge-err" : "badge-muted"}`}
+              >
+                {rollup.open_blockers} blockers
+              </span>
+              <span
+                data-testid="registrar-open-follow-ups"
+                className={`badge ${rollup.open_follow_ups > 0 ? "badge-warn" : "badge-muted"}`}
+              >
+                {rollup.open_follow_ups} follow-ups
+              </span>
+            </>
           )}
         </div>
       </div>
