@@ -1,4 +1,12 @@
-import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export interface ToastEntry {
   id: number;
@@ -47,8 +55,10 @@ export function ToastProvider({
     [dismissMs, dismiss],
   );
 
+  const api = useMemo<ToastApi>(() => ({ push }), [push]);
+
   return (
-    <ToastContext.Provider value={{ push }}>
+    <ToastContext.Provider value={api}>
       {children}
       <div role="status" aria-live="polite" className="toast-region">
         {toasts.map((t) => (

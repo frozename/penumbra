@@ -2,11 +2,11 @@ import "../setup";
 import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
-import { MODULES } from "@src/modules/manifest";
+import { MODULES, type ModuleSpec } from "@src/modules/manifest";
 import { Rail } from "@src/shell/Rail";
 import { useUIStore } from "@src/stores/ui-store";
 
@@ -22,6 +22,14 @@ function makeWrapper(): {
   }
   return { Wrapper, client };
 }
+
+const ghost: ModuleSpec = {
+  id: "ghost",
+  path: "/ghost",
+  label: "Ghost",
+  icon: "g",
+  available: false,
+};
 
 let originalFetch: typeof globalThis.fetch;
 
@@ -42,24 +50,39 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   globalThis.fetch = originalFetch;
 });
 
 describe("Rail", () => {
-  test("renders rail buttons and settings", () => {
+  test("an available:false entry renders no rail button", () => {
     const { Wrapper } = makeWrapper();
-    const { getByTitle, getByText } = render(
+    const { container } = render(
+      <Wrapper>
+        <Rail activeModule="mission" onSelect={mock(() => {})} modules={[ghost, ...MODULES]} />
+      </Wrapper>,
+    );
+
+    expect(container.querySelectorAll('button[title="Ghost"]').length).toBe(0);
+    for (const m of MODULES.filter((module) => module.available)) {
+      expect(container.querySelector(`button[title="${m.label}"]`)).not.toBeNull();
+    }
+  });
+
+  test("no settings button is rendered", () => {
+    const { Wrapper } = makeWrapper();
+    const { container } = render(
       <Wrapper>
         <Rail activeModule="mission" onSelect={mock(() => {})} />
       </Wrapper>,
     );
 
-    for (const module of MODULES) {
-      expect(getByTitle(module.label)).toBeTruthy();
-      expect(getByText(module.icon)).toBeTruthy();
+    for (const module of MODULES.filter((m) => m.available)) {
+      const button = container.querySelector(`button[title="${module.label}"]`);
+      expect(button).not.toBeNull();
+      expect(button?.textContent ?? "").toContain(module.icon);
     }
-    expect(getByTitle("settings")).toBeTruthy();
-    expect(getByText("⚙")).toBeTruthy();
+    expect(container.querySelector('button[title="settings"]')).toBeNull();
   });
 
   test("marks the active module", () => {
@@ -73,15 +96,15 @@ describe("Rail", () => {
     const getButton = (title: string) => container.querySelector(`button[title="${title}"]`);
 
     expect(getButton("Mission control")?.className).toContain("active");
-    expect(getButton("Chains")?.className).not.toContain("active");
+    expect(getButton("Plans")?.className).not.toContain("active");
 
     rerender(
       <Wrapper>
-        <Rail activeModule="chains" onSelect={mock(() => {})} />
+        <Rail activeModule="registrar" onSelect={mock(() => {})} />
       </Wrapper>,
     );
 
-    expect(getButton("Chains")?.className).toContain("active");
+    expect(getButton("Plans")?.className).toContain("active");
     expect(getButton("Mission control")?.className).not.toContain("active");
   });
 
@@ -93,14 +116,14 @@ describe("Rail", () => {
         <Rail activeModule="mission" onSelect={onSelect} />
       </Wrapper>,
     );
-    const chains = container.querySelector('button[title="Chains"]');
+    const plans = container.querySelector('button[title="Plans"]');
 
-    expect(chains).not.toBeNull();
-    if (!chains) return;
-    fireEvent.click(chains);
+    expect(plans).not.toBeNull();
+    if (!plans) return;
+    fireEvent.click(plans);
 
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith("chains");
+    expect(onSelect).toHaveBeenCalledWith("registrar");
     expect(useUIStore.getState().activeModule).toBe("mission");
   });
 
@@ -128,13 +151,13 @@ describe("Rail", () => {
         </MemoryRouter>
       </Wrapper>,
     );
-    const chains = container.querySelector('button[title="Chains"]');
+    const plans = container.querySelector('button[title="Plans"]');
 
-    expect(chains).not.toBeNull();
-    if (!chains) return;
-    fireEvent.click(chains);
+    expect(plans).not.toBeNull();
+    if (!plans) return;
+    fireEvent.click(plans);
 
-    expect(useUIStore.getState().activeModule).toBe("chains");
-    expect(getByTestId("location").textContent).toBe("/chains");
+    expect(useUIStore.getState().activeModule).toBe("registrar");
+    expect(getByTestId("location").textContent).toBe("/registrar");
   });
 });
