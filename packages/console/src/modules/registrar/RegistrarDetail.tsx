@@ -1,14 +1,19 @@
+import type { RegistrarEvent } from "@penumbra/api-contract";
+
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { DaemonClient } from "@src/api/client";
+import { DaemonHttpError } from "@src/api/errors";
 import { fmtTs } from "@src/lib/format";
-import { registrarDetail } from "@src/lib/query-keys";
+import { registrarDetail, registrarEvents } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { Card, CardHead } from "@src/ui/Card";
+import { EmptyState } from "@src/ui/EmptyState";
 
+import { JournalComposer } from "./JournalComposer";
 import { JournalFeed } from "./JournalFeed";
 import { PhaseTimeline } from "./PhaseTimeline";
 
@@ -19,6 +24,41 @@ export interface RegistrarDetailProps {
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });
+}
+
+function isRegistrarDisabled(err: unknown): boolean {
+  return err instanceof DaemonHttpError && err.status === 404 && err.code === null;
+}
+
+interface JournalSectionProps {
+  registrarId: string;
+  client: DaemonClient;
+  events: RegistrarEvent[];
+  error: string | null;
+}
+
+function JournalSection({ registrarId, client, events, error }: JournalSectionProps): JSX.Element {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Card>
+        {error !== null ? (
+          <div
+            className="t-tertiary mono"
+            data-testid="registrar-journal-error"
+            style={{ padding: 12, color: "var(--color-err)" }}
+          >
+            Failed to load journal events: {error}
+          </div>
+        ) : (
+          <>
+            <CardHead title="Journal" id={`${events.length} events`} />
+            <JournalComposer registrarId={registrarId} client={client} />
+            <JournalFeed events={events} />
+          </>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 export function RegistrarDetail(props: RegistrarDetailProps = {}): JSX.Element {
@@ -32,7 +72,7 @@ export function RegistrarDetail(props: RegistrarDetailProps = {}): JSX.Element {
     enabled: registrarId !== undefined,
   });
   const events = useQuery({
-    queryKey: [...registrarDetail(registrarId ?? ""), "events"],
+    queryKey: registrarEvents(registrarId ?? ""),
     queryFn: () => client.listRegistrarEvents(registrarId ?? ""),
     refetchInterval: HEARTBEAT_MS,
     enabled: registrarId !== undefined,
@@ -40,6 +80,16 @@ export function RegistrarDetail(props: RegistrarDetailProps = {}): JSX.Element {
 
   if (registrarId === undefined) {
     return <div className="surface-stub">No initiative selected.</div>;
+  }
+
+  if (isRegistrarDisabled(detail.error)) {
+    return (
+      <EmptyState
+        testId="registrar-disabled"
+        title="registrar disabled"
+        body="The daemon is running with PENUMBRA_REGISTRAR=0."
+      />
+    );
   }
 
   if (detail.isError) {
@@ -112,24 +162,12 @@ export function RegistrarDetail(props: RegistrarDetailProps = {}): JSX.Element {
         <CardHead title="Phase timeline" id={`${phases.length} phases`} />
         <PhaseTimeline phases={phases} />
       </Card>
-      <div style={{ marginTop: 16 }}>
-        <Card>
-          {journalError ? (
-            <div
-              className="t-tertiary mono"
-              data-testid="registrar-journal-error"
-              style={{ padding: 12, color: "var(--color-err)" }}
-            >
-              Failed to load journal events: {journalError}
-            </div>
-          ) : (
-            <>
-              <CardHead title="Journal" id={`${journalEvents.length} events`} />
-              <JournalFeed events={journalEvents} />
-            </>
-          )}
-        </Card>
-      </div>
+      <JournalSection
+        registrarId={registrarId}
+        client={client}
+        events={journalEvents}
+        error={journalError}
+      />
     </>
   );
 }

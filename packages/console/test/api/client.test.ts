@@ -1,4 +1,4 @@
-import type { ApprovePermissionRequest } from "@penumbra/api-contract";
+import type { ApprovePermissionRequest, RegistrarEventInput } from "@penumbra/api-contract";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -439,5 +439,37 @@ describe("DaemonClient", () => {
     const body = parseBody(calls[0]!.init);
     expect(body.actor).toBe("operator");
     expect(body.kind).toBe("progress");
+  });
+
+  test("registrar.appendEvent rejects an over-length body and an unknown key before any fetch", async () => {
+    const client = makeClient();
+    let errA: unknown;
+    try {
+      await client.registrar.appendEvent("reg-1", {
+        kind: "progress",
+        actor: "operator",
+        body: "a".repeat(4097),
+      });
+    } catch (e) {
+      errA = e;
+    }
+    expect(errA).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+
+    let errB: unknown;
+    try {
+      await client.registrar.appendEvent("reg-1", {
+        kind: "progress",
+        actor: "operator",
+        body: "x",
+        bogus: "nope",
+      } as unknown as RegistrarEventInput);
+    } catch (e) {
+      errB = e;
+    }
+    expect(errB).toBeInstanceOf(DaemonContractError);
+    const contractErr = errB as DaemonContractError;
+    expect(contractErr.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(true);
+    expect(calls.length).toBe(0);
   });
 });

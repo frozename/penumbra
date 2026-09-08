@@ -3,6 +3,7 @@ import {
   RegistrarDetailSchema,
   type RegistrarEvent,
   type RegistrarEventInput,
+  RegistrarEventInputSchema,
   RegistrarEventSchema,
   type RegistrarEventsListResponse,
   RegistrarEventsListResponseSchema,
@@ -13,6 +14,7 @@ import { z } from "zod";
 
 import type { DaemonTransport } from "../transport.js";
 
+import { DaemonContractError } from "../errors.js";
 import { fillPath } from "../paths.js";
 
 export const PATHS = {
@@ -44,11 +46,19 @@ export function registrarSlice(t: DaemonTransport): RegistrarSlice {
         schema: RegistrarEventsListResponseSchema,
       });
     },
-    appendEvent(id: string, input: RegistrarEventInput): Promise<{ event: RegistrarEvent }> {
-      return t.request({
+    async appendEvent(id: string, input: RegistrarEventInput): Promise<{ event: RegistrarEvent }> {
+      const parsed = RegistrarEventInputSchema.safeParse(input);
+      if (!parsed.success) {
+        throw new DaemonContractError({
+          url: fillPath(PATHS.events, { id }),
+          issues: parsed.error.issues,
+          rawBody: input,
+        });
+      }
+      return await t.request({
         method: "POST",
         path: fillPath(PATHS.events, { id }),
-        body: input,
+        body: parsed.data,
         schema: RegistrarEventAppendResponseSchema,
       });
     },
