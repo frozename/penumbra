@@ -90,21 +90,23 @@ const [stdout, stderr, result] = await Promise.all([
 ]);
 
 const code = result.code ?? 1;
-if (result.code === 0) {
-  process.exitCode = 0;
-} else {
-  const report = parseBunTestReport(stdout + stderr);
+const report = parseBunTestReport(stdout + stderr);
+const signalText = result.signal ? ` signal=${result.signal}` : "";
+const failureLine = `bun-test-gate: failing (exit ${String(code)}${signalText}; fails=${String(report.fails)} errors=${String(report.errors)} reachedSummary=${String(report.reachedSummary)} knownPanic=${String(report.knownPanic)}).`;
 
-  if (isKnownBunTeardownPanicPass(report)) {
-    console.error(
-      `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
-    );
+if (result.code === 0) {
+  if (report.reachedSummary) {
     process.exitCode = 0;
   } else {
-    const signalText = result.signal ? ` signal=${result.signal}` : "";
-    console.error(
-      `bun-test-gate: failing (exit ${String(code)}${signalText}; fails=${String(report.fails)} errors=${String(report.errors)} reachedSummary=${String(report.reachedSummary)} knownPanic=${String(report.knownPanic)}).`,
-    );
-    process.exitCode = code;
+    console.error(failureLine);
+    process.exitCode = 1;
   }
+} else if (isKnownBunTeardownPanicPass(report)) {
+  console.error(
+    `::warning:: bun test exited ${String(code)} via the known NAPI-teardown panic, but reported 0 failures / 0 errors across all suites — treating as pass. See scripts/bun-test-gate.ts.`,
+  );
+  process.exitCode = 0;
+} else {
+  console.error(failureLine);
+  process.exitCode = code;
 }
