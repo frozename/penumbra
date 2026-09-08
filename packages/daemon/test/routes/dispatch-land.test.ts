@@ -43,6 +43,10 @@ type ListPrsByHead = NonNullable<DispatchLandDeps["gh"]["listOpenPullRequestsByH
 type GhPullRequestLite = Awaited<ReturnType<ListPrsByHead>>[number];
 type ClosePullRequest = NonNullable<DispatchLandDeps["gh"]["closePullRequest"]>;
 type GhClosePullRequestInput = Parameters<ClosePullRequest>[0];
+type MergePullRequest = NonNullable<DispatchLandDeps["gh"]["mergePullRequest"]>;
+type GhMergePullRequestInput = Parameters<MergePullRequest>[0];
+type GetPullRequest = NonNullable<DispatchLandDeps["gh"]["getPullRequest"]>;
+type GhPullRequestView = Awaited<ReturnType<GetPullRequest>>;
 
 // File-local typed envelopes for the dispatch-land HTTP responses. The route
 // emits the shapes captured here; the assertions in this file only read these
@@ -55,6 +59,8 @@ interface LandResult {
   pr_closed?: boolean;
   worktree_torn_down?: boolean;
   already_landed?: boolean;
+  pr_merged?: boolean;
+  pr_number?: number;
 }
 interface LandError {
   code: string;
@@ -70,6 +76,12 @@ interface LandError {
   verdict_head_sha?: string;
   branch_head_sha?: string;
   verdict?: { tests?: string; typecheck?: string; head_sha?: string };
+  message?: string;
+  local_sha?: string;
+  remote_sha?: string;
+  branch?: string;
+  pr_number?: number;
+  pr_state?: string;
 }
 interface AcceptedBody {
   ok?: boolean;
@@ -101,11 +113,15 @@ async function readJsonAs<T>(res: Response): Promise<T> {
 type SyncRunGit = (args: string[], opts?: RunGitOpts) => RunGitResult;
 type SyncListPrs = (head: string) => GhPullRequestLite[];
 type SyncClosePr = (input: GhClosePullRequestInput) => void;
+type SyncMergePr = (input: GhMergePullRequestInput) => void;
+type SyncGetPr = (prNumber: number) => GhPullRequestView;
 interface LandDepsInput {
   runGit: SyncRunGit;
   gh?: {
     listOpenPullRequestsByHead?: SyncListPrs;
     closePullRequest?: SyncClosePr;
+    mergePullRequest?: SyncMergePr;
+    getPullRequest?: SyncGetPr;
   };
   now?: () => Date;
 }
@@ -115,12 +131,20 @@ function defaultListPrs(): GhPullRequestLite[] {
 function defaultClosePr(): void {
   /* no-op default */
 }
+function defaultMergePr(): void {
+  /* no-op default */
+}
+function defaultGetPr(): GhPullRequestView {
+  return { number: 0, state: "MERGED", mergeCommitOid: "default-merge-oid" };
+}
 function defaultNow(): Date {
   return new Date("2026-05-08T00:00:00.000Z");
 }
 function landDeps(input: LandDepsInput): DispatchLandDeps {
   const listPrs: SyncListPrs = input.gh?.listOpenPullRequestsByHead ?? defaultListPrs;
   const closePr: SyncClosePr = input.gh?.closePullRequest ?? defaultClosePr;
+  const mergePr: SyncMergePr = input.gh?.mergePullRequest ?? defaultMergePr;
+  const getPr: SyncGetPr = input.gh?.getPullRequest ?? defaultGetPr;
   return {
     runGit: (args, opts): Promise<RunGitResult> => Promise.resolve(input.runGit(args, opts)),
     gh: {
@@ -130,6 +154,11 @@ function landDeps(input: LandDepsInput): DispatchLandDeps {
         closePr(closeInput);
         return Promise.resolve();
       },
+      mergePullRequest: (mergeInput): Promise<void> => {
+        mergePr(mergeInput);
+        return Promise.resolve();
+      },
+      getPullRequest: (prNumber): Promise<GhPullRequestView> => Promise.resolve(getPr(prNumber)),
     },
     now: input.now ?? defaultNow,
   };
@@ -2864,6 +2893,644 @@ describe("dispatchLandRoute", () => {
     expect(body.status).toBe("done");
     expect(body.result.pr_closed).toBe(false);
     expect(closed).toEqual([]);
+  });
+
+  test("gh mode fails closed when no open PR exists for the branch", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-no-pr", "c-gh-no-pr");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-no-pr",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-no-pr",
+      conversationId: "c-gh-no-pr",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const merged: number[] = [];
+    const gitCalls: string[] = [];
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-no-pr",
+          commit_message: "feat: gh no pr",
+          mode: "gh",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          gitCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-no-pr")
+            return { code: 0, stdout: "local-sha\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-no-pr")
+            return { code: 0, stdout: "local-sha\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          mergePullRequest: (input: { number: number }) => {
+            merged.push(input.number);
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error!.code).toBe("no_open_pr_for_branch");
+    expect(body.error!.branch).toBe("agent/h-gh-no-pr");
+    expect(merged).toEqual([]);
+    expect(gitCalls).not.toContain("rev-parse main");
+  });
+
+  test("gh mode fails closed when local branch head != remote head", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-stale", "c-gh-stale");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-stale",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-stale",
+      conversationId: "c-gh-stale",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const merged: number[] = [];
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-stale",
+          commit_message: "feat: gh stale branch",
+          mode: "gh",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-stale")
+            return { code: 0, stdout: "9111b73d\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-stale")
+            return { code: 0, stdout: "4a114160\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 55 }],
+          mergePullRequest: (input: { number: number }) => {
+            merged.push(input.number);
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error!.code).toBe("branch_not_pushed");
+    expect(body.error!.local_sha).toBe("9111b73d");
+    expect(body.error!.remote_sha).toBe("4a114160");
+    expect(merged).toEqual([]);
+  });
+
+  test("gh mode happy path: merges PR, does NOT close it, stamps performance, tears down worktree", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-ok", "c-gh-ok");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-ok",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-ok",
+      conversationId: "c-gh-ok",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: "perf-gh-ok",
+      ts: "2026-05-08T00:01:30.000Z",
+      handoffId: "h-gh-ok",
+      conversationId: "c-gh-ok",
+      projectId: null,
+      agentName: "codex",
+      taskType: "implement_small",
+      outcome: "no_changes",
+    });
+
+    const merged: GhMergePullRequestInput[] = [];
+    const closed: number[] = [];
+    let mainRevParseCount = 0;
+    const getPrCalls: number[] = [];
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-ok",
+          commit_message: "feat(core): gh merge happy path",
+          mode: "gh",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-ok")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-ok")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            mainRevParseCount += 1;
+            return { code: 0, stdout: "stale-local-main-sha\n", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 123 }],
+          closePullRequest: (input: { number: number }) => {
+            closed.push(input.number);
+          },
+          mergePullRequest: (input: GhMergePullRequestInput) => {
+            merged.push(input);
+          },
+          getPullRequest: (prNumber: number): GhPullRequestView => {
+            getPrCalls.push(prNumber);
+            return { number: prNumber, state: "MERGED", mergeCommitOid: "gh-merge-oid-abc123" };
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result).toMatchObject({
+      ok: true,
+      commit_sha: "gh-merge-oid-abc123",
+      message_subject: "feat(core): gh merge happy path",
+      branch_deleted: true,
+      worktree_torn_down: true,
+      pr_closed: false,
+      pr_merged: true,
+      pr_number: 123,
+    });
+    expect(merged).toEqual([
+      {
+        number: 123,
+        method: "squash",
+        subject: "feat(core): gh merge happy path",
+        body: "feat(core): gh merge happy path",
+        deleteBranch: false,
+      },
+    ]);
+    expect(closed).toEqual([]);
+    expect(mainRevParseCount).toBe(0);
+    expect(getPrCalls).toEqual([123]);
+
+    const perf = svc.db
+      .query<
+        { outcome: string; gate_outcome: string | null },
+        [string]
+      >(`SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-gh-ok");
+    expect(perf).toEqual({ outcome: "merged", gate_outcome: "passed" });
+
+    const landed = svc.db
+      .query<
+        { event_type: string; payload_json: string },
+        []
+      >(`SELECT event_type, payload_json FROM t0_events WHERE event_type='dispatch.landed' ORDER BY ts DESC LIMIT 1`)
+      .get();
+    expect(landed?.event_type).toBe("dispatch.landed");
+    const payload = JSON.parse(landed?.payload_json ?? "{}") as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      handoff_id: "h-gh-ok",
+      mode: "gh",
+      commit_sha: "gh-merge-oid-abc123",
+    });
+  });
+
+  test("gh mode fails closed when PR reads back state OPEN (merge-queue case): no performance stamp, no worktree teardown", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-queued", "c-gh-queued");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-queued",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-queued",
+      conversationId: "c-gh-queued",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: "perf-gh-queued",
+      ts: "2026-05-08T00:01:30.000Z",
+      handoffId: "h-gh-queued",
+      conversationId: "c-gh-queued",
+      projectId: null,
+      agentName: "codex",
+      taskType: "implement_small",
+      outcome: "no_changes",
+    });
+
+    let teardownCalled = false;
+    stubTeardownWorktree(svc, () => {
+      teardownCalled = true;
+      return Promise.resolve({ worktreeRemoved: true, branchDeleted: true });
+    });
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-queued",
+          commit_message: "feat(core): gh merge queued",
+          mode: "gh",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-queued")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-queued")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 200 }],
+          mergePullRequest: () => {
+            /* gh pr merge exits 0 but PR is enqueued, not merged */
+          },
+          getPullRequest: (prNumber: number): GhPullRequestView => ({
+            number: prNumber,
+            state: "OPEN",
+            mergeCommitOid: null,
+          }),
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error!.code).toBe("gh_pr_not_merged");
+    expect(body.error!.pr_number).toBe(200);
+    expect(body.error!.pr_state).toBe("OPEN");
+    expect(teardownCalled).toBe(false);
+
+    const perf = svc.db
+      .query<
+        { outcome: string },
+        [string]
+      >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("h-gh-queued");
+    expect(perf?.outcome).toBe("no_changes");
+
+    const landedCount = svc.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type='dispatch.landed'`)
+      .get();
+    expect(landedCount?.count).toBe(0);
+  });
+
+  test("gh mode fails closed when PR is MERGED but mergeCommit oid is null", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-null-oid", "c-gh-null-oid");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-null-oid",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-null-oid",
+      conversationId: "c-gh-null-oid",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    let teardownCalled = false;
+    stubTeardownWorktree(svc, () => {
+      teardownCalled = true;
+      return Promise.resolve({ worktreeRemoved: true, branchDeleted: true });
+    });
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-null-oid",
+          commit_message: "feat(core): gh null oid",
+          mode: "gh",
+          delete_branch: true,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-null-oid")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-null-oid")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 201 }],
+          mergePullRequest: () => {
+            /* no-op */
+          },
+          getPullRequest: (prNumber: number): GhPullRequestView => ({
+            number: prNumber,
+            state: "MERGED",
+            mergeCommitOid: null,
+          }),
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("failed");
+    expect(body.error!.code).toBe("gh_pr_not_merged");
+    expect(body.error!.pr_state).toBe("MERGED");
+    expect(teardownCalled).toBe(false);
+  });
+
+  test("gh mode returns the GitHub mergeCommit oid as commit_sha, NOT the stale local main sha", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-oid-vs-main", "c-gh-oid-vs-main");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-oid-vs-main",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-oid-vs-main",
+      conversationId: "c-gh-oid-vs-main",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-oid-vs-main",
+          commit_message: "feat(core): oid not main",
+          mode: "gh",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-oid-vs-main")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-oid-vs-main")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          // Local main sha is deliberately DIFFERENT from the GitHub merge oid.
+          if (args[0] === "rev-parse" && args[1] === "main")
+            return { code: 0, stdout: "stale-local-main-sha\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 300 }],
+          mergePullRequest: () => {
+            /* no-op */
+          },
+          getPullRequest: (prNumber: number): GhPullRequestView => ({
+            number: prNumber,
+            state: "MERGED",
+            mergeCommitOid: "authoritative-gh-merge-oid",
+          }),
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result!.commit_sha).toBe("authoritative-gh-merge-oid");
+    expect(body.result!.commit_sha).not.toBe("stale-local-main-sha");
+  });
+
+  test("gh mode already_landed resolves to the correct merge commit oid from GitHub", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-gh-already", "c-gh-already");
+    writeVerdictEvent(svc, {
+      eventId: "v-gh-already",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-gh-already",
+      conversationId: "c-gh-already",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+    const res = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-gh-already",
+          commit_message: "feat(core): already merged",
+          mode: "gh",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "agent/h-gh-already")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          if (args[0] === "fetch" && args[1] === "origin")
+            return { code: 0, stdout: "", stderr: "" };
+          if (args[0] === "rev-parse" && args[1] === "origin/agent/h-gh-already")
+            return { code: 0, stdout: "branch-head\n", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [{ number: 301 }],
+          mergePullRequest: () => {
+            throw new Error("Pull request already been merged");
+          },
+          getPullRequest: (prNumber: number): GhPullRequestView => ({
+            number: prNumber,
+            state: "MERGED",
+            mergeCommitOid: "already-merged-oid-999",
+          }),
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(res);
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe("done");
+    expect(body.result).toMatchObject({
+      ok: true,
+      commit_sha: "already-merged-oid-999",
+      already_landed: true,
+      pr_merged: false,
+      pr_number: 301,
+    });
+
+    const landedCount = svc.db
+      .query<
+        { count: number },
+        []
+      >(`SELECT COUNT(*) AS count FROM t0_events WHERE event_type='dispatch.landed'`)
+      .get();
+    expect(landedCount?.count).toBe(0);
+  });
+
+  test("gh mode squash and ff modes are unchanged (regression guard)", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-regress-squash", "c-regress-squash");
+    seedHandoff(svc, "h-regress-ff", "c-regress-ff");
+    writeVerdictEvent(svc, {
+      eventId: "v-regress-squash",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-regress-squash",
+      conversationId: "c-regress-squash",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    writeVerdictEvent(svc, {
+      eventId: "v-regress-ff",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-regress-ff",
+      conversationId: "c-regress-ff",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
+    );
+
+    const squashCalls: string[] = [];
+    let squashRevParse = 0;
+    const squashRes = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-regress-squash",
+          commit_message: "feat: regression squash",
+          mode: "squash",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          squashCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            squashRevParse += 1;
+            return {
+              code: 0,
+              stdout: squashRevParse === 1 ? "sq-before\n" : "sq-after\n",
+              stderr: "",
+            };
+          }
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet")
+            return { code: 1, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+    const squashAccepted = await readJsonAs<AcceptedBody>(squashRes);
+    const squashBody = await waitForLandTask(svc, squashAccepted.task_id);
+    expect(squashBody.status).toBe("done");
+    expect(squashBody.result!.commit_sha).toBe("sq-after");
+    expect(squashBody.result!.pr_merged).toBeUndefined();
+    expect(squashCalls).toEqual([
+      "rev-parse main",
+      "status --porcelain --untracked-files=no",
+      "checkout main",
+      "merge --squash agent/h-regress-squash",
+      "diff --cached --quiet",
+      "commit -F -",
+      "rev-parse main",
+    ]);
+
+    const ffCalls: string[] = [];
+    let ffRevParse = 0;
+    const ffRes = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-regress-ff",
+          commit_message: "feat: regression ff",
+          mode: "ff",
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          ffCalls.push(args.join(" "));
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            ffRevParse += 1;
+            return {
+              code: 0,
+              stdout: ffRevParse === 1 ? "ff-before\n" : "ff-after\n",
+              stderr: "",
+            };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+    const ffAccepted = await readJsonAs<AcceptedBody>(ffRes);
+    const ffBody = await waitForLandTask(svc, ffAccepted.task_id);
+    expect(ffBody.status).toBe("done");
+    expect(ffBody.result!.commit_sha).toBe("ff-after");
+    expect(ffBody.result!.pr_merged).toBeUndefined();
+    expect(ffCalls).toEqual([
+      "rev-parse main",
+      "status --porcelain --untracked-files=no",
+      "checkout main",
+      "merge --ff-only agent/h-regress-ff",
+      "rev-parse main",
+    ]);
   });
 });
 

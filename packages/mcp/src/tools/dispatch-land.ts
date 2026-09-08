@@ -9,10 +9,12 @@ export const DispatchLandInputShape = {
     .describe("The handoff_id whose recorded branch_name should be landed."),
   commit_message: z.string().min(1).describe("Curated commit message used for squash commits."),
   mode: z
-    .enum(["squash", "ff"])
+    .enum(["squash", "ff", "gh"])
     .optional()
     .default("squash")
-    .describe("Landing mode: squash (default) or ff-only."),
+    .describe(
+      "Landing mode: squash (default), ff-only, or gh (merge the branch's open GitHub PR via gh pr merge; requires the branch to be pushed and to have an open PR).",
+    ),
   delete_branch: z
     .boolean()
     .optional()
@@ -49,7 +51,7 @@ interface DispatchLandResult {
 interface DispatchLandInput {
   handoff_id: string;
   commit_message: string;
-  mode?: "squash" | "ff";
+  mode?: "squash" | "ff" | "gh";
   delete_branch?: boolean;
   force?: boolean;
   reject_if_held?: boolean;
