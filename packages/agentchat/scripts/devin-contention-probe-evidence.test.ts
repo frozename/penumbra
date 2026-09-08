@@ -220,4 +220,42 @@ describe("devin-contention-probe evidence", () => {
     expect(result.classifications).toContain("sqlite_busy");
     expect(result.classifications).not.toContain("serialized_dispatch");
   });
+
+  test("flags a baseline that exceeds even the applied hold", () => {
+    const controlProcess = processResult(0, 1000, 1500);
+    const lockedProcess = processResult(0, 1000, 1900);
+    const lockControl: LockControlEvidence = {
+      lockAcquiredAt: 1000,
+      lockAcquiredWallMs: 1000,
+      lockReleasedAt: 1900,
+      lockReleasedWallMs: 1900,
+    };
+    const lockFreeControl: LockFreeControlEvidence = {
+      classifications: [],
+      fixtureEvents: [
+        fixtureEvent(0, "session_new_received", 1000),
+        fixtureEvent(0, "session_new_responding", 1400),
+      ],
+      maxSendSkewMs: 0,
+      processes: [controlProcess],
+      round: 0,
+    };
+    const round = baseRound({
+      fixtureEvents: [],
+      lockControl,
+      lockFreeControl,
+      maxSendSkewMs: 0,
+      processes: [lockedProcess],
+    });
+    const options = baseOptions({ minOverlap: 1, sqliteLockControlMs: 150 });
+
+    // Baseline latency is 500ms - above the configured 150 AND above the applied
+    // 400 - so the guard must still fire. This is the true-positive counterpart to
+    // "uses applied hold when checking baseline latency in lock window"; without it
+    // the baselineExceededHold branch can be disabled with the suite staying green.
+    const result = evaluateRound(round, options, lockFreeControl, 400);
+
+    expect(result.lockWindow.baselineExceededHold).toBe(true);
+    expect(result.lockWindow.satisfied).toBe(false);
+  });
 });
