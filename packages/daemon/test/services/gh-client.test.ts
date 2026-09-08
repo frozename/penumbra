@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -514,15 +514,20 @@ describe("createGhCliClient", () => {
   test("default exec runs gh with repoDir as cwd", async () => {
     const binDir = mkdtempSync(join(tmpdir(), "gh-client-repodir-"));
     const ghPath = join(binDir, "gh");
-    writeFileSync(ghPath, "#!/usr/bin/env bun\nconsole.log(process.cwd());\n");
+    // /bin/sh + the `pwd` builtin so the shim needs nothing else on PATH, and
+    // PATH is set to binDir ALONE so a real installed `gh` cannot win the
+    // lookup and answer with the actual authenticated login instead.
+    writeFileSync(ghPath, "#!/bin/sh\npwd\n");
     chmodSync(ghPath, 0o755);
     const originalPath = process.env.PATH;
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    process.env.PATH = binDir;
     try {
       const client = createGhCliClient({ repoDir: binDir });
       if (!client.getAuthenticatedLogin) throw new Error("missing getAuthenticatedLogin");
       const cwdOutput = await client.getAuthenticatedLogin();
-      expect(cwdOutput).toBe(binDir);
+      // `pwd` reports the physical path; on macOS mkdtemp hands back the
+      // /var -> /private/var symlink, so compare resolved paths.
+      expect(realpathSync(cwdOutput ?? "")).toBe(realpathSync(binDir));
     } finally {
       process.env.PATH = originalPath;
       rmSync(binDir, { recursive: true, force: true });

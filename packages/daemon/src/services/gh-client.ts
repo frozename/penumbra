@@ -121,6 +121,9 @@ async function defaultExec(
   const proc = Bun.spawn({
     cmd: ["gh", ...args],
     cwd,
+    // Pass env explicitly: without it Bun resolves `gh` against the environment
+    // captured at process start, so a PATH set after boot is ignored.
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
   });
