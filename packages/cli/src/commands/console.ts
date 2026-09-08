@@ -64,7 +64,7 @@ const STRIPPED_REQUEST_HEADERS = new Set(["authorization", "content-length", "co
 // The x-penumbra-* namespace carries server-side provenance (e.g. origin).
 // Browsers must never set it; strip by prefix so future headers in the
 // namespace cannot be forged through the proxy.
-const PENUMBRA_HEADER_PREFIX = "x-penumbra-";
+const PROVENANCE_HEADER_PREFIX = "x-penumbra-";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
@@ -244,7 +244,7 @@ function makeUpstreamRequestInit(
   for (const [key, value] of req.headers.entries()) {
     const lk = key.toLowerCase();
     if (HOP_BY_HOP.has(lk) || STRIPPED_REQUEST_HEADERS.has(lk)) continue;
-    if (lk.startsWith(PENUMBRA_HEADER_PREFIX)) continue;
+    if (lk.startsWith(PROVENANCE_HEADER_PREFIX)) continue;
     fwdHeaders.set(key, value);
   }
   fwdHeaders.set("Authorization", `Bearer ${token}`);
