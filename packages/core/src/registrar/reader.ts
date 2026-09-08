@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { type RegistrarPhaseProgress, RegistrarPhaseProgressSchema } from "@penumbra/api-contract";
+
 import {
   type RegistrarEntry,
   RegistrarEntrySchema,
@@ -53,7 +55,11 @@ export class RegistrarReader {
           )
           .all();
     const entries = rows.map((row) => RegistrarEntrySchema.parse(row));
-    return entries.map((entry) => ({ ...entry, rollup: this.getRollup(entry.registrar_id) }));
+    return entries.map((entry) => ({
+      ...entry,
+      rollup: this.getRollup(entry.registrar_id),
+      phase_progress: this.getPhaseProgress(entry.registrar_id),
+    }));
   }
 
   listPhases(registrar_id: string): RegistrarPhase[] {
@@ -105,6 +111,22 @@ export class RegistrarReader {
     return RegistrarRollupSchema.parse({
       open_blockers: row?.open_blockers ?? 0,
       open_follow_ups: row?.open_follow_ups ?? 0,
+    });
+  }
+
+  getPhaseProgress(registrar_id: string): RegistrarPhaseProgress {
+    const row = this.db
+      .query<{ complete: number | null; total: number }, [string]>(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS complete
+         FROM registrar_phases
+         WHERE registrar_id = ?`,
+      )
+      .get(registrar_id);
+    return RegistrarPhaseProgressSchema.parse({
+      complete: row?.complete ?? 0,
+      total: row?.total ?? 0,
     });
   }
 }
