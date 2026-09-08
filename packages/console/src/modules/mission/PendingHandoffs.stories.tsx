@@ -2,6 +2,8 @@ import type { HandoffRow } from "@penumbra/api-contract";
 import type { Meta, StoryObj } from "@storybook/react";
 
 import { handoffsPending } from "@src/lib/query-keys";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 import { PendingHandoffs } from "./PendingHandoffs";
 
@@ -42,14 +44,26 @@ function makeHandoff(id: string, overrides: Partial<HandoffRow> = {}): HandoffRo
 }
 
 export const Empty: Story = {
-  render: () => <PendingHandoffs />,
+  render: () => (
+    <ToastProvider>
+      <ConfirmDialogProvider>
+        <PendingHandoffs />
+      </ConfirmDialogProvider>
+    </ToastProvider>
+  ),
   parameters: {
     queryCache: [{ key: handoffsPending(), data: { handoffs: [] } }],
   },
 };
 
 export const TwoRows: Story = {
-  render: () => <PendingHandoffs />,
+  render: () => (
+    <ToastProvider>
+      <ConfirmDialogProvider>
+        <PendingHandoffs />
+      </ConfirmDialogProvider>
+    </ToastProvider>
+  ),
   parameters: {
     queryCache: [
       {

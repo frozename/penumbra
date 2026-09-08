@@ -41,10 +41,10 @@ test("deny with reason mutates state and decrements badge", async ({ page }: { p
   await expect(railBadge).toHaveText("1");
 
   await row.getByRole("button", { name: /deny/i }).click();
-  const reasonInput = row.locator('input[name="deny-reason"]');
-  await expect(reasonInput).toBeVisible();
-  await reasonInput.fill("not needed");
-  await row.getByRole("button", { name: /submit deny/i }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await page.getByLabel("Reason").fill("not needed");
+  await page.getByRole("button", { name: "Confirm" }).click();
 
   await expect(row).toBeHidden({ timeout: 5_000 });
   await expect(railBadge).toBeHidden({ timeout: 5_000 });
@@ -57,7 +57,7 @@ test("deny with reason mutates state and decrements badge", async ({ page }: { p
   expect(denyCall!.body).toMatchObject({ reject: true, reason: "not needed" });
 });
 
-test("approve failure surfaces an error chip without losing the row", async ({
+test("approve failure surfaces a toast and keeps the row visible", async ({
   page,
 }: {
   page: Page;
@@ -70,7 +70,9 @@ test("approve failure surfaces an error chip without losing the row", async ({
   fixture.harness.injectError("/handoffs/e2e-handoff-1/approve", 500);
 
   await row.getByRole("button", { name: /approve/i }).click();
-  await expect(row.locator('[data-testid="ph-row-error"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("Approve handoff failed: injected error")).toBeVisible({
+    timeout: 5_000,
+  });
   await expect(row).toBeVisible();
 
   const railBadge = page.locator(".rail-btn .pip.warn").first();
