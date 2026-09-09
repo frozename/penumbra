@@ -219,10 +219,15 @@ export class DaemonClient {
     return await this.get(qs ? `/memory/efficacy/jobs?${qs}` : "/memory/efficacy/jobs");
   }
 
-  async qualityStatus(req: { window_hours?: number; min_samples?: number }): Promise<unknown> {
+  async qualityStatus(req: {
+    window_hours?: number;
+    min_samples?: number;
+    workflow_name?: string;
+  }): Promise<unknown> {
     const params = new URLSearchParams();
     if (req.window_hours !== undefined) params.set("window_hours", String(req.window_hours));
     if (req.min_samples !== undefined) params.set("min_samples", String(req.min_samples));
+    if (req.workflow_name !== undefined) params.set("workflow_name", req.workflow_name);
     const qs = params.toString();
     return await this.get(qs ? `/quality/status?${qs}` : "/quality/status");
   }

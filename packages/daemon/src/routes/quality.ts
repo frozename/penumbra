@@ -8,6 +8,7 @@ const QuerySchema = z.object({
   window_hours: z.coerce.number().int().min(1).max(168).default(24),
   min_samples: z.coerce.number().int().min(1).default(3),
   task_type: z.string().default("implement_substantial"),
+  workflow_name: z.string().min(1).default("adversarial-review"),
 });
 
 export function qualityStatusRoute(req: Request, services: Services): Response {
@@ -16,6 +17,7 @@ export function qualityStatusRoute(req: Request, services: Services): Response {
     window_hours: url.searchParams.get("window_hours") ?? undefined,
     min_samples: url.searchParams.get("min_samples") ?? undefined,
     task_type: url.searchParams.get("task_type") ?? undefined,
+    workflow_name: url.searchParams.get("workflow_name") ?? undefined,
   });
   if (!parsed.success) {
     return json(

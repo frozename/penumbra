@@ -5,6 +5,7 @@ import {
   routeAgent,
   type RouteAgentInput,
 } from "../services/agent-routing.js";
+import { FAILURE_OUTCOMES, isExecuteOutcome } from "../workflows/outcomes.js";
 import { getMemoryEfficacyRecent } from "./memory-efficacy.js";
 import { type PressureResult, readSubscriptionPressure } from "./subscription-pressure.js";
 
@@ -12,6 +13,7 @@ export interface QualityStatusInput {
   window_hours?: number;
   min_samples?: number;
   task_type?: string;
+  workflow_name?: string;
   now?: Date;
 }
 
@@ -38,6 +40,7 @@ export interface QualityStatusSnapshot {
     runs_window: number;
     success_window: number;
     failure_window: number;
+    unknown_outcome_window: number;
     avg_latency_ms_window: number | null;
     last_run_at: string | null;
   } | null;
@@ -89,7 +92,12 @@ function readLanes(db: Database, cutoff: string): LanesSnapshot {
   };
 }
 
-function readAdversarial(db: Database, cutoff: string, windowHours: number): AdversarialSnapshot {
+function readAdversarial(
+  db: Database,
+  cutoff: string,
+  windowHours: number,
+  workflowName: string,
+): AdversarialSnapshot {
   const rows = db
     .query<
       {
@@ -97,7 +105,7 @@ function readAdversarial(db: Database, cutoff: string, windowHours: number): Adv
         payload_latency: number | null;
         outcome: string | null;
       },
-      [string]
+      [string, string]
     >(
       `SELECT ts,
               CAST(json_extract(payload_json, '$.latency_ms') AS INTEGER) AS payload_latency,
@@ -105,20 +113,27 @@ function readAdversarial(db: Database, cutoff: string, windowHours: number): Adv
        FROM t0_events
        WHERE event_type = 'workflow.outcome'
          AND ts >= ?
-         AND json_extract(payload_json, '$.workflow_name') = 'adversarial-review'
+         AND json_extract(payload_json, '$.workflow_name') = ?
        ORDER BY ts DESC`,
     )
-    .all(cutoff);
+    .all(cutoff, workflowName);
 
   let success = 0;
   let failure = 0;
+  let unknownOutcome = 0;
   let latencyTotal = 0;
   let latencyCount = 0;
   let lastRunAt: string | null = null;
 
   for (const row of rows) {
     if (row.outcome === "success") success += 1;
-    else if (row.outcome === "failure" || row.outcome === "failed") failure += 1;
+    else if (
+      row.outcome !== null &&
+      isExecuteOutcome(row.outcome) &&
+      FAILURE_OUTCOMES.has(row.outcome)
+    )
+      failure += 1;
+    else unknownOutcome += 1;
     if (row.payload_latency !== null) {
       latencyTotal += row.payload_latency;
       latencyCount += 1;
@@ -131,6 +146,7 @@ function readAdversarial(db: Database, cutoff: string, windowHours: number): Adv
     runs_window: rows.length,
     success_window: success,
     failure_window: failure,
+    unknown_outcome_window: unknownOutcome,
     avg_latency_ms_window: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
     last_run_at: lastRunAt,
   };
@@ -170,6 +186,7 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
   const windowHours = input.window_hours ?? 24;
   const minSamples = input.min_samples ?? 3;
   const taskType = input.task_type ?? "implement_substantial";
+  const workflowName = input.workflow_name ?? "adversarial-review";
   const now = input.now ?? new Date();
   const generatedAt = now.toISOString();
   const cutoff = new Date(now.getTime() - windowHours * 60 * 60 * 1000).toISOString();
@@ -179,7 +196,7 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     generated_at: generatedAt,
     lanes: safeCall(() => readLanes(db, cutoff), errors, "lanes_failed"),
     adversarial: safeCall(
-      () => readAdversarial(db, cutoff, windowHours),
+      () => readAdversarial(db, cutoff, windowHours, workflowName),
       errors,
       "adversarial_failed",
     ),

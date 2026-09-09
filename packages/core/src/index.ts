@@ -595,6 +595,7 @@ export {
 export { type Clock, systemClock } from "./utils/clock.js";
 export { safeParseJSON } from "./utils/json.js";
 export { systemUuid, type Uuid } from "./utils/uuid.js";
+export { EXECUTE_OUTCOMES, type ExecuteOutcome, FAILURE_OUTCOMES } from "./workflows/outcomes.js";
 export type {
   BuildRegistryOpts,
   RegistryEntry,

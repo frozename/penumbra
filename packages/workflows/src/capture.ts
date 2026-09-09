@@ -1,11 +1,11 @@
 import type { Database } from "bun:sqlite";
 
+import { FAILURE_OUTCOMES } from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 
 import type { ExecuteOutcome } from "./exec.js";
 
 const QUARANTINE_THRESHOLD = 3;
-const FAILURE_OUTCOMES = new Set<ExecuteOutcome>(["render_error", "run_error", "gated_failure"]);
 
 export type CaptureInput = {
   db: Database;

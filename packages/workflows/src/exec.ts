@@ -1,3 +1,5 @@
+import type { ExecuteOutcome } from "@penumbra/core";
+
 import type { WorkflowCtx } from "./ctx.js";
 import type { RecallBundle } from "./recall.js";
 import type { WorkflowSpec } from "./schema.js";
@@ -14,7 +16,7 @@ import {
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 import { renderTemplate } from "./template.js";
 
-export type ExecuteOutcome = "success" | "render_error" | "run_error" | "gated_failure";
+export type { ExecuteOutcome };
 
 export type ExecuteResult = {
   outcome: ExecuteOutcome;
@@ -341,7 +343,13 @@ async function finalizeAndCapture(
   outcome: ExecuteOutcome,
   rest?: Partial<Omit<ExecuteResult, "outcome" | "artifacts" | "warnings" | "latencyMs">>,
 ): Promise<ExecuteResult> {
-  const result: ExecuteResult = { outcome, artifacts, warnings, latencyMs: Date.now() - start, ...rest };
+  const result: ExecuteResult = {
+    outcome,
+    artifacts,
+    warnings,
+    latencyMs: Date.now() - start,
+    ...rest,
+  };
   await runCapture(opts, result, recallSourceNames, itemCount);
   return result;
 }
@@ -351,7 +359,9 @@ function preRunFailureReason(spec: WorkflowSpec, bundle: RecallBundle): string |
   if (badGates.length > 0) {
     return `spec lists process_gates the executor cannot satisfy: ${badGates.join(", ")}`;
   }
-  const badOutputs = spec.output.map((o) => o.kind).filter((k) => !EXECUTOR_SATISFIABLE_OUTPUT_KINDS.has(k));
+  const badOutputs = spec.output
+    .map((o) => o.kind)
+    .filter((k) => !EXECUTOR_SATISFIABLE_OUTPUT_KINDS.has(k));
   if (badOutputs.length > 0) {
     return `spec lists output kinds the executor cannot satisfy: ${badOutputs.join(", ")}`;
   }

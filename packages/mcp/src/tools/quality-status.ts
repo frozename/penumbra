@@ -9,6 +9,10 @@ export const QualityStatusInputShape = {
     .number()
     .optional()
     .describe("Minimum samples to include in recommendation summaries (default 3)"),
+  workflow_name: z
+    .string()
+    .optional()
+    .describe("Workflow name for the outcome window (default adversarial-review)"),
 };
 
 const QualityStatusSchema = z.object(QualityStatusInputShape).strict();
