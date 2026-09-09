@@ -1,4 +1,4 @@
-import type { HandoffStatus, PermissionStatus } from "@penumbra/api-contract";
+import type { HandoffStatus } from "@penumbra/api-contract";
 
 /**
  * Centralized TanStack Query key registry.
@@ -52,13 +52,6 @@ export function registrarDetail(registrarId: string): readonly ["registrar", "de
   return ["registrar", "detail", registrarId] as const;
 }
 
-/** Permissions list, scoped by status filter. */
-export function permissionsByStatus(
-  status: PermissionStatus,
-): readonly ["permissions", PermissionStatus] {
-  return ["permissions", status] as const;
-}
-
 /** Registrar events journal, scoped by registrar id. */
 export function registrarEvents(id: string): readonly ["registrar", "events", string] {
   return ["registrar", "events", id] as const;
@@ -69,7 +62,7 @@ export function approvalsHandoffs(): readonly ["approvals", "handoffs"] {
   return ["approvals", "handoffs"] as const;
 }
 
-/** Approvals inbox permissions queue (ApprovalItem[] shape, distinct from permissionsByStatus). */
+/** Approvals inbox permissions queue (ApprovalItem[] shape). */
 export function approvalsPermissions(): readonly ["approvals", "permissions"] {
   return ["approvals", "permissions"] as const;
 }
@@ -96,16 +89,6 @@ export function sessionNoteDrafts(): readonly ["sessions", "note-drafts"] {
  */
 export function handoffsPendingInvalidations(): readonly (readonly string[])[] {
   return [handoffsPending(), approvalsHandoffs()];
-}
-
-/**
- * Invalidation helper for the permissions resource — returns BOTH the
- * permissionsByStatus key and the approvals-permissions key.
- */
-export function permissionsByStatusInvalidations(
-  status: PermissionStatus,
-): readonly (readonly string[])[] {
-  return [permissionsByStatus(status), approvalsPermissions()];
 }
 
 /**

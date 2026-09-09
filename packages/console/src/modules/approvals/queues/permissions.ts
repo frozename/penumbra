@@ -1,7 +1,7 @@
 import type { PermissionRequestRow } from "@penumbra/api-contract";
 
 import type { DaemonActionSpec } from "@src/hooks/useDaemonAction";
-import { approvalsPermissions, permissionsByStatusInvalidations } from "@src/lib/query-keys";
+import { approvalsPermissions } from "@src/lib/query-keys";
 
 import type { ApprovalItem, ErasedQueue } from "./types";
 
@@ -19,7 +19,7 @@ const approve: DaemonActionSpec<ApprovalItem, unknown> = {
   tier: "safe",
   label: "Approve",
   run: (client, args) => client.permissions.decide(args.id, { decision: "approve" }),
-  invalidate: () => [...permissionsByStatusInvalidations("pending")],
+  invalidate: () => [approvalsPermissions()],
 };
 
 const reject: DaemonActionSpec<ApprovalItem, unknown> = {
@@ -28,7 +28,7 @@ const reject: DaemonActionSpec<ApprovalItem, unknown> = {
   label: "Reject",
   run: (client, args, ctx) =>
     client.permissions.decide(args.id, { decision: "reject", reason: ctx.reason }),
-  invalidate: () => [...permissionsByStatusInvalidations("pending")],
+  invalidate: () => [approvalsPermissions()],
 };
 
 export const permissionsQueue: ErasedQueue = {

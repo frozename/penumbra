@@ -16,7 +16,7 @@ import type { DaemonClient } from "@src/api/client";
 import { DaemonHttpError } from "@src/api/errors";
 import type { EventSourceLike, ShimOpts } from "@src/api/event-source-shim";
 import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
-import { approvalsHandoffs } from "@src/lib/query-keys";
+import { approvalsHandoffs, approvalsPermissions } from "@src/lib/query-keys";
 import { ApprovalsView } from "@src/modules/approvals";
 import { ApprovalsInbox } from "@src/modules/approvals/ApprovalsInbox";
 import { useDaemonStore } from "@src/stores/daemon-store";
@@ -218,7 +218,7 @@ describe("ApprovalsInbox", () => {
     view.unmount();
   });
 
-  test("Approve on a permission row calls permissions.decide(id,{decision:'approve'}) and invalidates permissionsByStatus('pending')", async () => {
+  test("Approve on a permission row calls permissions.decide(id,{decision:'approve'}) and invalidates the approvals permissions queue", async () => {
     const mocks = makeClient({
       handoffs: [],
       permissions: [makePermission()],
@@ -252,7 +252,7 @@ describe("ApprovalsInbox", () => {
     const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
     expect(
       invalidatedKeys.some(
-        (k) => JSON.stringify(k) === JSON.stringify({ queryKey: ["permissions", "pending"] }),
+        (k) => JSON.stringify(k) === JSON.stringify({ queryKey: approvalsPermissions() }),
       ),
     ).toBe(true);
 
