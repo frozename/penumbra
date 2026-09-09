@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 import { MODULES, type ModuleSpec } from "@src/modules/manifest";
 
-type EntityKind = "handoff" | "task" | "conversation" | "lane";
+export type EntityKind = "handoff" | "task" | "conversation" | "lane";
 
 const MODULE_FOR_KIND: Record<EntityKind, string | undefined> = {
   conversation: "chains",
@@ -20,21 +20,23 @@ export interface EntityLinkProps {
 export function EntityLink(props: EntityLinkProps): JSX.Element {
   const { id, kind, modules = MODULES } = props;
   const moduleId = MODULE_FOR_KIND[kind];
-  const module = moduleId ? (modules ?? MODULES).find((m) => m.id === moduleId) : undefined;
+  const module = moduleId ? modules.find((m) => m.id === moduleId) : undefined;
+  const copyLabel = `Copy ${kind} id ${id}`;
 
   if (module?.available) {
     return (
-      <Link to={`${module.path}/${id}`}>
-        <code>{id}</code>
+      <Link className="entity-link entity-link-linked" to={`${module.path}/${id}`}>
+        <code className="entity-link-id">{id}</code>
       </Link>
     );
   }
 
   return (
-    <>
-      <code>{id}</code>
+    <span className="entity-link entity-link-unlinked">
+      <code className="entity-link-id">{id}</code>{" "}
       <button
-        aria-label="Copy id"
+        aria-label={copyLabel}
+        className="btn btn-ghost entity-link-copy"
         type="button"
         onClick={() => {
           if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -44,6 +46,6 @@ export function EntityLink(props: EntityLinkProps): JSX.Element {
       >
         Copy
       </button>
-    </>
+    </span>
   );
 }
