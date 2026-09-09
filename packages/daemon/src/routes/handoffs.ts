@@ -669,6 +669,7 @@ function handoffsListPendingWithStatus(
   projectIdParam: string | null,
   projectScopeParam: string | null,
   services: DaemonServices,
+  agentParam: string | null,
 ): Response {
   const resolved = resolveProjectIdFromParams(projectIdParam, projectScopeParam, services);
   if (resolved.error) return resolved.error;
@@ -699,6 +700,7 @@ function handoffsListPendingWithStatus(
       statuses: statuses as HandoffStatus[],
       conversation_id: conv,
       project_id,
+      to_agent: agentParam ?? undefined,
     })
     .map(coerceHandoffBooleans);
   return json({ handoffs });
@@ -711,8 +713,13 @@ export function handoffsListPendingRoute(req: Request, services: DaemonServices)
   const sinceParam = url.searchParams.get("since");
   const projectIdParam = url.searchParams.get("project_id");
   const projectScopeParam = url.searchParams.get("project_scope");
+  const agentParam = url.searchParams.get("agent");
   const scopeError = validateProjectScopeQuery(projectIdParam, projectScopeParam);
   if (scopeError) return scopeError;
+
+  if (agentParam === "") {
+    return json({ error: { code: "validation_error", message: "agent must be non-empty" } }, 400);
+  }
 
   const principal = getPrincipal(req);
   const authz =
@@ -727,13 +734,14 @@ export function handoffsListPendingRoute(req: Request, services: DaemonServices)
       projectIdParam,
       projectScopeParam,
       services,
+      agentParam,
     );
   }
 
   // No status param: back-compat — pending only
-  const handoffs = services.handoffReader
-    .listPending(conv ? { conversation_id: conv } : undefined)
-    .map(coerceHandoffBooleans);
+  const pendingOpts =
+    conv || agentParam ? { conversation_id: conv, to_agent: agentParam ?? undefined } : undefined;
+  const handoffs = services.handoffReader.listPending(pendingOpts).map(coerceHandoffBooleans);
   return json({ handoffs });
 }
 

@@ -44,7 +44,20 @@ export class HandoffReader {
     this.db = opts.db;
   }
 
-  listPending(opts?: { conversation_id?: string }): HandoffRow[] {
+  listPending(opts?: { conversation_id?: string; to_agent?: string }): HandoffRow[] {
+    const conditions = [`h.status='pending'`];
+    const params: string[] = [];
+
+    if (opts?.conversation_id) {
+      conditions.push("h.conversation_id=?");
+      params.push(opts.conversation_id);
+    }
+
+    if (opts?.to_agent) {
+      conditions.push("h.to_agent=?");
+      params.push(opts.to_agent);
+    }
+
     const orderByFairRootLoad = `ORDER BY (
       SELECT COUNT(*) FROM handoffs h2
       WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
@@ -52,21 +65,10 @@ export class HandoffReader {
     h.ts ASC`;
     // Correlated COUNT(*) keeps the claim queue fair while SQLite still uses
     // idx_handoffs_root_status for the dispatched-row lookup in EXPLAIN.
-    if (opts?.conversation_id) {
-      return this.db
-        .query<
-          HandoffRow,
-          [string]
-        >(`SELECT h.* FROM handoffs h WHERE h.status='pending' AND h.conversation_id=? ${orderByFairRootLoad}`)
-        .all(opts.conversation_id)
-        .map(normalizeHandoffRow);
-    }
+    const sql = `SELECT h.* FROM handoffs h WHERE ${conditions.join(" AND ")} ${orderByFairRootLoad}`;
     return this.db
-      .query<
-        HandoffRow,
-        []
-      >(`SELECT h.* FROM handoffs h WHERE h.status='pending' ${orderByFairRootLoad}`)
-      .all()
+      .query<HandoffRow, string[]>(sql)
+      .all(...params)
       .map(normalizeHandoffRow);
   }
 
@@ -74,6 +76,7 @@ export class HandoffReader {
     statuses: HandoffStatus[];
     conversation_id?: string;
     project_id?: string | null;
+    to_agent?: string;
   }): HandoffRow[] {
     if (opts.statuses.length === 0) {
       throw new Error("listByStatus: statuses must not be empty");
@@ -92,6 +95,11 @@ export class HandoffReader {
     } else if (typeof opts.project_id === "string") {
       conditions.push("h.project_id=?");
       params.push(opts.project_id);
+    }
+
+    if (opts.to_agent) {
+      conditions.push("h.to_agent=?");
+      params.push(opts.to_agent);
     }
 
     const sql = `SELECT h.* FROM handoffs h WHERE ${conditions.join(" AND ")} ORDER BY (

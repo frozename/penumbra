@@ -53,6 +53,9 @@ export const HandoffsListQuerySchema = z
     conversation_id: z.string().min(1).optional(),
     status: z.string().min(1).optional(),
     since: z.iso.datetime().optional(),
+    agent: z.string().min(1).optional(),
+    project_id: z.string().min(1).optional(),
+    project_scope: z.enum(["global"]).optional(),
   })
   .strict();
 
