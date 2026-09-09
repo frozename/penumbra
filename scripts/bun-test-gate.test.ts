@@ -126,3 +126,29 @@ test("fails", () => {
     rmSync(dir, { force: true, recursive: true });
   }
 });
+
+test("bun-test-gate fails a shard that exits 0 without reaching a summary", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bun-test-gate-no-summary-"));
+  try {
+    const testPath = join(dir, "no-summary.test.ts");
+    writeFileSync(
+      testPath,
+      `
+import { test } from "bun:test";
+
+console.log("early module exit");
+process.exit(0);
+
+test("never runs", () => {});
+`,
+    );
+
+    const result = await runGate(testPath);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output).toContain("bun-test-gate: failing");
+    expect(result.output).toContain("reachedSummary=false");
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
