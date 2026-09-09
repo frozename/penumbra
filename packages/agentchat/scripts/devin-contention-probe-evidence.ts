@@ -231,18 +231,22 @@ function lockWindowPairs(round: PendingRoundResult): LockWindowPair[] {
 function buildLockWindowEvidence(
   round: PendingRoundResult,
   options: ProbeRunOptions,
+  appliedHoldMs?: number,
 ): LockWindowEvidence {
   if (options.sqliteLockControlMs <= 0) {
     return { baselineExceededHold: false, overlapCount: 0, pairsEvaluated: 0, satisfied: true };
   }
   let baselineExceededHold = false;
   let overlapCount = 0;
+  const holdThresholdMs = appliedHoldMs ?? options.sqliteLockControlMs;
   const pairs = lockWindowPairs(round);
   for (const { baselineLatency, lockedLatency } of pairs) {
-    if (baselineLatency >= options.sqliteLockControlMs) {
+    if (baselineLatency >= holdThresholdMs) {
       baselineExceededHold = true;
       continue;
     }
+    // Deliberately use the configured hold for overlap; the applied hold is only
+    // for deciding whether the baseline itself exceeded the actual lock window.
     if (lockedLatency - baselineLatency >= options.sqliteLockControlMs - MAX_SEND_SKEW_MS) {
       overlapCount++;
     }
@@ -369,6 +373,19 @@ export function controlEvidenceFor(round: ProbeRoundResult): LockFreeControlEvid
   };
 }
 
+function inheritedControlClassifications(
+  control: LockFreeControlEvidence | null,
+): FailureClassification[] {
+  if (control === null) {
+    return [];
+  }
+  // `serialized_dispatch` describes receipt-serialization and coexistence
+  // failure observed ONLY in the lock-free round, so it must not propagate.
+  // Responding-skew detection is not lost: the locked round still computes it
+  // from control.fixtureEvents in buildSerializedDispatchEvidence.
+  return control.classifications.filter((c) => c !== "serialized_dispatch");
+}
+
 function classifyRound(
   round: PendingRoundResult,
   options: ProbeRunOptions,
@@ -377,10 +394,8 @@ function classifyRound(
   lockWindow: LockWindowEvidence,
 ): FailureClassification[] {
   const classes = classifyErrors(round.processes);
-  if (control !== null) {
-    for (const classification of control.classifications) {
-      classes.add(classification);
-    }
+  for (const classification of inheritedControlClassifications(control)) {
+    classes.add(classification);
   }
   const sessionIds = round.processes.flatMap((result) =>
     result.sessionId === null ? [] : [result.sessionId],
@@ -417,9 +432,10 @@ export function evaluateRound(
   partial: PendingRoundResult,
   options: ProbeRunOptions,
   control: LockFreeControlEvidence | null,
+  appliedHoldMs?: number,
 ): ProbeRoundResult {
   const serializedDispatch = buildSerializedDispatchEvidence(partial, options, control);
-  const lockWindow = buildLockWindowEvidence(partial, options);
+  const lockWindow = buildLockWindowEvidence(partial, options, appliedHoldMs);
   const classifications = classifyRound(partial, options, control, serializedDispatch, lockWindow);
   return { ...partial, classifications, lockWindow, serializedDispatch };
 }
