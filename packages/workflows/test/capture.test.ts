@@ -256,3 +256,63 @@ test("resets consecutive_failures on success after failures", () => {
   expect(row.consecutive_failures).toBe(0);
   expect(row.quarantined).toBe(0);
 });
+
+type T0CaptureRow = {
+  event_type: string;
+  provider: null | string;
+  model: null | string;
+  tokens_in: null | number;
+  tokens_out: null | number;
+  cost_usd: null | number;
+  latency_ms: null | number;
+  request_id: null | string;
+  payload_json: string;
+};
+
+test("stamps workflow_run_id into run and outcome payloads and writes latency_ms to the row", () => {
+  const db = freshDb();
+  const workflowRunId = "wfrun-capture-1";
+  captureWorkflowOutcome({
+    db,
+    workflowName: "demo",
+    outcome: "success",
+    latencyMs: 123,
+    workflowRunId,
+    artifacts: ["/tmp/x.md"],
+    warnings: ["w"],
+    recallSummary: { sources: ["memory.search"], itemCount: 4 },
+    project: "test",
+    sessionId: "s1",
+    userId: "u",
+    machineId: "m",
+    now: (): Date => new Date("2026-05-04T15:00:00Z"),
+  });
+
+  const rows = db
+    .query(
+      `SELECT event_type, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id, payload_json
+         FROM t0_events
+        WHERE event_type IN ('workflow.run', 'workflow.outcome')
+        ORDER BY ts`,
+    )
+    .all() as T0CaptureRow[];
+
+  expect(rows).toHaveLength(2);
+  expect(rows[0].event_type).toBe("workflow.run");
+  expect(rows[1].event_type).toBe("workflow.outcome");
+
+  for (const row of rows) {
+    expect(row.latency_ms).toBe(123);
+    expect(row.provider).toBeNull();
+    expect(row.model).toBeNull();
+    expect(row.tokens_in).toBeNull();
+    expect(row.tokens_out).toBeNull();
+    expect(row.cost_usd).toBeNull();
+    expect(row.request_id).toBeNull();
+    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    expect(payload.workflow_run_id).toBe(workflowRunId);
+  }
+
+  const outcomePayload = JSON.parse(rows[1].payload_json) as Record<string, unknown>;
+  expect(outcomePayload.latency_ms).toBe(123);
+});

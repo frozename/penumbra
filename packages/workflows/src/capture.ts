@@ -23,6 +23,7 @@ export type CaptureInput = {
   machineId: string;
   now: () => Date;
   kind?: "refresh" | "intentional";
+  workflowRunId?: string | null;
 };
 
 function insertT0(
@@ -36,8 +37,14 @@ function insertT0(
     machineId: string;
     event_type: string;
     payload: Record<string, unknown>;
+    latency_ms: number;
   },
 ): void {
+  // provider, model, tokens_in, tokens_out, cost_usd, request_id and
+  // payload_summary stay NULL: a workflow row is a container and spends nothing;
+  // its dispatched handoffs spend, and that spend is already summed into
+  // agent_performance by aggregateHandoffUsage. workflow_run_id is the durable
+  // join key and is written into payload_json, not request_id.
   db.prepare(
     `
     INSERT INTO t0_events (
@@ -45,7 +52,7 @@ function insertT0(
       user_id, machine_id, session_id, event_type, lane,
       provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
       request_id, payload_json, payload_summary
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, NULL)
   `,
   ).run(
     args.event_id,
@@ -59,6 +66,7 @@ function insertT0(
     args.sessionId,
     args.event_type,
     "local",
+    args.latency_ms,
     JSON.stringify(args.payload),
   );
 }
@@ -84,19 +92,24 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
   // together, or none at all. A throwing stats upsert (e.g. SQLITE_FULL inside
   // an FTS5 trigger) would otherwise leave half-written t0 rows and a
   // permanently undercounted stats row.
+  const workflowRunIdPayload =
+    input.workflowRunId !== undefined ? { workflow_run_id: input.workflowRunId } : {};
+
   input.db.transaction(() => {
     insertT0(input.db, {
       ...base,
       ts: eventTs(0),
       event_id: randomUUID(),
       event_type: "workflow.run",
-      payload: { workflow_name: input.workflowName, started_at: ts },
+      latency_ms: input.latencyMs,
+      payload: { workflow_name: input.workflowName, started_at: ts, ...workflowRunIdPayload },
     });
     insertT0(input.db, {
       ...base,
       ts: eventTs(1),
       event_id: randomUUID(),
       event_type: "workflow.recall",
+      latency_ms: input.latencyMs,
       payload: {
         workflow_name: input.workflowName,
         sources: input.recallSummary.sources,
@@ -109,6 +122,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
       ts: eventTs(2),
       event_id: randomUUID(),
       event_type: "workflow.outcome",
+      latency_ms: input.latencyMs,
       payload: {
         workflow_name: input.workflowName,
         outcome: input.outcome,
@@ -116,6 +130,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
         artifacts: input.artifacts,
         error_message: input.errorMessage ?? null,
         gate_evidence: input.gateEvidence ?? null,
+        ...workflowRunIdPayload,
       },
     });
 

@@ -41,6 +41,7 @@ export type ExecuteOpts = {
     userId: string;
     machineId: string;
     now?: () => Date;
+    workflowRunId?: string | null;
   };
   captureKind?: "refresh" | "intentional";
   observationCtx?: {
@@ -511,5 +512,6 @@ async function runCapture(
     machineId: opts.captureCtx.machineId,
     now: opts.captureCtx.now ?? ((): Date => new Date()),
     kind: opts.captureKind ?? "intentional",
+    workflowRunId: opts.captureCtx.workflowRunId,
   });
 }

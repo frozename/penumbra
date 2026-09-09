@@ -785,6 +785,7 @@ function startWorkflowExecution(
       sessionId,
       userId: "penumbra",
       machineId: process.env.HOSTNAME ?? "unknown",
+      workflowRunId,
     },
     repoRoot,
     observationCtx,
