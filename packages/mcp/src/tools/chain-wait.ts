@@ -68,7 +68,9 @@ export const chainWaitHandler =
 
     while (Date.now() - start < timeout) {
       try {
-        const { handoff } = await daemon.getLatestHandoff(args.conversation_id);
+        const { handoff } = await daemon.getLatestHandoff(args.conversation_id, {
+          timeoutMs: Math.max(1, timeout - (Date.now() - start)),
+        });
         lastHandoffId = handoff.handoff_id;
         if (
           handoff.status === "completed" ||

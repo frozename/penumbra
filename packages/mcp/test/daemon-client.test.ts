@@ -382,3 +382,47 @@ test("mcpCall POSTs to /long-lived/mcp/call with the request body", async () => 
   });
   expect(result).toEqual({ action_status: "executed", result: { ok: true } });
 });
+
+test("getLatestHandoff attaches an AbortSignal deadline when the caller passes timeoutMs", async () => {
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const controller = new AbortController();
+  const timeoutCalls: number[] = [];
+  AbortSignal.timeout = (ms: number): AbortSignal => {
+    timeoutCalls.push(ms);
+    return controller.signal;
+  };
+  let seenSignal: AbortSignal | undefined;
+  try {
+    mockFetch(((_input: FetchInput, init?: FetchInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return Promise.resolve(
+        Response.json({
+          handoff: { handoff_id: "h1", status: "running", conversation_id: "c1" },
+        }),
+      );
+    }) as typeof fetch);
+    const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+    await c.getLatestHandoff("conv-1", { timeoutMs: 5000 });
+    expect(seenSignal).toBe(controller.signal);
+    expect(timeoutCalls).toEqual([5000]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+});
+
+// Fail-closed tripwire: this one is GREEN before and after the change. POST
+// /workflows/wait long-polls for up to 1_800_000 ms and owns its own budget;
+// an unconditional default deadline on the shared `post()` would sever it.
+test("workflowWait sends no AbortSignal so long-poll routes keep owning their own budget", async () => {
+  let called = false;
+  let seenSignal: AbortSignal | undefined;
+  mockFetch(((_input: FetchInput, init?: FetchInit) => {
+    called = true;
+    seenSignal = init?.signal ?? undefined;
+    return Promise.resolve(Response.json({ status: "completed" }));
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  await c.workflowWait({ workflow_run_id: "r1", timeout_ms: 1_800_000 });
+  expect(called).toBe(true);
+  expect(seenSignal).toBeUndefined();
+});

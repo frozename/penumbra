@@ -3,7 +3,11 @@ import { TaskClassSchema } from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import type { DaemonClient } from "../daemon-client.js";
+import {
+  type DaemonClient,
+  daemonRequestSignal,
+  DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+} from "../daemon-client.js";
 
 export const LaneOpenInputShape = {
   implementer_handoff_id: z.string().min(1),
@@ -39,6 +43,7 @@ async function postToDaemon(daemon: DaemonClient, path: string, body: unknown): 
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: daemonRequestSignal(DEFAULT_DAEMON_REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw await daemonHttpError(path, res);
   return await res.json();
