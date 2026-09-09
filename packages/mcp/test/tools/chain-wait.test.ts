@@ -169,3 +169,26 @@ test("chainWaitHandler keeps polling on transient non-HTTP errors", async () => 
   const text = textOf(res);
   expect(text).toContain('"status": "completed"');
 });
+
+test("chainWaitHandler passes the remaining budget as the per-request deadline", async () => {
+  const seen: (number | undefined)[] = [];
+  const getLatestHandoff: GetLatestHandoffFn = (
+    _conversation_id: string,
+    opts?: { timeoutMs?: number },
+  ) => {
+    seen.push(opts?.timeoutMs);
+    return Promise.resolve({
+      handoff: { handoff_id: "h1", status: "completed", conversation_id: "conv1" },
+    });
+  };
+  const daemon = fakeDaemon({ getLatestHandoff });
+
+  const handler = chainWaitHandler(daemon);
+  await handler({ conversation_id: "conv1", timeout_ms: 5000 });
+
+  expect(seen).toHaveLength(1);
+  const first = seen[0];
+  expect(typeof first).toBe("number");
+  expect(first ?? 0).toBeGreaterThan(0);
+  expect(first ?? 0).toBeLessThanOrEqual(5000);
+});
