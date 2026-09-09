@@ -23,21 +23,40 @@ export const PermissionRequestRowSchema = z.object({
 });
 export type PermissionRequestRow = z.infer<typeof PermissionRequestRowSchema>;
 
-export const CreatePermissionRequestSchema = z.object({
-  permission_id: z.string().min(1),
-  parent_handoff_id: z.string().min(1),
-  conversation_id: z.string().min(1),
-  agent_name: z.string().min(1),
-  tool_name: z.string().min(1),
-  raw_input: z.unknown(),
-  ttl_seconds: z.number().int().positive().optional(),
-});
+export const CreatePermissionRequestSchema = z
+  .object({
+    permission_id: z.string().min(1),
+    parent_handoff_id: z.string().min(1),
+    conversation_id: z.string().min(1),
+    agent_name: z.string().min(1),
+    tool_name: z.string().min(1),
+    raw_input: z.unknown(),
+    ttl_seconds: z.number().int().positive().optional(),
+  })
+  .strict();
 export type CreatePermissionRequest = z.infer<typeof CreatePermissionRequestSchema>;
 
-export const ApprovePermissionRequestSchema = z.object({
-  decision: z.enum(["approve", "reject"]),
-  remember: PermissionRememberSchema.optional(),
-  reason: z.string().optional(),
-  resolved_by: z.string().min(1).optional(),
-});
+export const ApprovePermissionRequestSchema = z
+  .object({
+    decision: z.enum(["approve", "reject"]),
+    remember: PermissionRememberSchema.optional(),
+    reason: z.string().optional(),
+    resolved_by: z.string().min(1).optional(),
+  })
+  .strict();
 export type ApprovePermissionRequest = z.infer<typeof ApprovePermissionRequestSchema>;
+
+export const PermissionsListResponseSchema = z
+  .object({ permissions: z.array(PermissionRequestRowSchema) })
+  .loose();
+export type PermissionsListResponse = z.infer<typeof PermissionsListResponseSchema>;
+
+export const PermissionGetResponseSchema = z
+  .object({ permission: PermissionRequestRowSchema })
+  .loose();
+export type PermissionGetResponse = z.infer<typeof PermissionGetResponseSchema>;
+
+export const PermissionDecideResponseSchema = z
+  .object({ permission_id: z.string(), status: PermissionStatusSchema, decided_at: z.string() })
+  .loose();
+export type PermissionDecideResponse = z.infer<typeof PermissionDecideResponseSchema>;

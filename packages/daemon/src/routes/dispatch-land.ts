@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
-import { createGhCliClient, type GhClient } from "../services/gh-client.js";
+import { createGhCliClient, type GhClient, type GhPullRequestView } from "../services/gh-client.js";
 import { json } from "./_helpers.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
@@ -16,7 +16,7 @@ import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
 const DispatchLandInputSchema = z.object({
   handoff_id: z.string().min(1),
   commit_message: z.string().min(1).optional(),
-  mode: z.enum(["squash", "ff"]).optional().default("squash"),
+  mode: z.enum(["squash", "ff", "gh"]).optional().default("squash"),
   delete_branch: z.boolean().optional().default(true),
   force: z.boolean().optional().default(false),
   reject_if_held: z.boolean().optional().default(false),
@@ -48,6 +48,8 @@ interface DispatchLandSuccess {
   pr_closed: boolean;
   worktree_torn_down: boolean;
   already_landed?: boolean;
+  pr_merged?: boolean;
+  pr_number?: number;
 }
 
 interface DispatchLandFailure {
@@ -68,7 +70,10 @@ interface DispatchLandTaskRecord {
 
 export interface DispatchLandDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
-  gh: Pick<GhClient, "listOpenPullRequestsByHead" | "closePullRequest">;
+  gh: Pick<
+    GhClient,
+    "listOpenPullRequestsByHead" | "closePullRequest" | "mergePullRequest" | "getPullRequest"
+  >;
   now: () => Date;
 }
 
@@ -261,7 +266,7 @@ function createDefaultDeps(services: Services, repoDir: string): DispatchLandDep
           });
         });
       }),
-    gh: createGhCliClient(),
+    gh: createGhCliClient({ repoDir }),
     now: services.clock,
   };
 }
@@ -911,14 +916,264 @@ async function verifyLandedFfMove(
 interface PerformLandGitOpsResult {
   commit_sha: string;
   already_landed: boolean;
+  pr_number?: number;
+}
+
+type LandMode = "squash" | "ff" | "gh";
+
+async function resolveRemoteBranchSha(
+  deps: DispatchLandDeps,
+  branch: string,
+): Promise<{ sha: string } | DispatchLandFailure> {
+  const fetchResult = await deps.runGit(["fetch", "origin"]);
+  if (fetchResult.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "fetch_origin_for_branch_check",
+        stderr: fetchResult.stderr.trim() || undefined,
+      },
+    };
+  }
+  const result = await deps.runGit(["rev-parse", `origin/${branch}`]);
+  if (result.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "rev_parse_remote_branch",
+        stderr: result.stderr.trim() || undefined,
+      },
+    };
+  }
+  return { sha: result.stdout.trim() };
+}
+
+async function resolveLocalBranchSha(
+  deps: DispatchLandDeps,
+  branch: string,
+): Promise<{ sha: string } | DispatchLandFailure> {
+  const result = await deps.runGit(["rev-parse", branch]);
+  if (result.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "rev_parse_local_branch",
+        stderr: result.stderr.trim() || undefined,
+      },
+    };
+  }
+  return { sha: result.stdout.trim() };
+}
+
+interface VerifiedGhDeps {
+  listOpenPullRequestsByHead: NonNullable<DispatchLandDeps["gh"]["listOpenPullRequestsByHead"]>;
+  mergePullRequest: NonNullable<DispatchLandDeps["gh"]["mergePullRequest"]>;
+  getPullRequest: NonNullable<DispatchLandDeps["gh"]["getPullRequest"]>;
+}
+
+function verifyGhCapabilities(deps: DispatchLandDeps): VerifiedGhDeps | DispatchLandFailure {
+  const { mergePullRequest, listOpenPullRequestsByHead, getPullRequest } = deps.gh;
+  if (typeof mergePullRequest !== "function") {
+    return {
+      status: 500,
+      error: {
+        code: "gh_merge_unavailable",
+        message: "gh client does not support mergePullRequest; cannot use gh mode",
+      },
+    };
+  }
+  if (typeof listOpenPullRequestsByHead !== "function") {
+    return {
+      status: 500,
+      error: {
+        code: "gh_merge_unavailable",
+        message: "gh client does not support listOpenPullRequestsByHead; cannot use gh mode",
+      },
+    };
+  }
+  if (typeof getPullRequest !== "function") {
+    return {
+      status: 500,
+      error: {
+        code: "gh_merge_unavailable",
+        message: "gh client does not support getPullRequest; cannot use gh mode",
+      },
+    };
+  }
+  return { listOpenPullRequestsByHead, mergePullRequest, getPullRequest };
+}
+
+async function verifyBranchPushed(
+  deps: DispatchLandDeps,
+  branch: string,
+): Promise<DispatchLandFailure | null> {
+  const localShaResult = await resolveLocalBranchSha(deps, branch);
+  if ("error" in localShaResult) return localShaResult;
+  const remoteShaResult = await resolveRemoteBranchSha(deps, branch);
+  if ("error" in remoteShaResult) return remoteShaResult;
+  if (localShaResult.sha !== remoteShaResult.sha) {
+    return {
+      status: 409,
+      error: {
+        code: "branch_not_pushed",
+        message: "local branch head does not match remote; push the branch before using gh mode",
+        local_sha: localShaResult.sha,
+        remote_sha: remoteShaResult.sha,
+      },
+    };
+  }
+  return null;
+}
+
+function noOpenPrFailure(branch: string): DispatchLandFailure {
+  return {
+    status: 409,
+    error: {
+      code: "no_open_pr_for_branch",
+      message: `no open PR found for branch ${branch}; open a PR or use mode squash/ff`,
+      branch,
+    },
+  };
+}
+
+function ghPrNotMergedFailure(prNumber: number, prState: string): DispatchLandFailure {
+  return {
+    status: 409,
+    error: {
+      code: "gh_pr_not_merged",
+      message: `PR ${String(prNumber)} state is ${prState}, not MERGED; the merge may have been enqueued or rejected`,
+      pr_number: prNumber,
+      pr_state: prState,
+    },
+  };
+}
+
+async function verifyGhPrMerged(
+  getPullRequest: VerifiedGhDeps["getPullRequest"],
+  prNumber: number,
+): Promise<{ merge_commit_oid: string } | DispatchLandFailure> {
+  const prView: GhPullRequestView = await getPullRequest(prNumber);
+  if (prView.state !== "MERGED") return ghPrNotMergedFailure(prNumber, prView.state);
+  if (!prView.mergeCommitOid) return ghPrNotMergedFailure(prNumber, prView.state);
+  return { merge_commit_oid: prView.mergeCommitOid };
+}
+
+async function mergePrWithAlreadyLandedRecovery(
+  mergePullRequest: VerifiedGhDeps["mergePullRequest"],
+  prNumber: number,
+  resolvedCommitMessage: string,
+): Promise<{ already_landed: boolean; pr_number: number } | DispatchLandFailure> {
+  const subject = subjectFromCommitMessage(resolvedCommitMessage);
+  try {
+    await mergePullRequest({
+      number: prNumber,
+      method: "squash",
+      subject,
+      body: resolvedCommitMessage,
+      deleteBranch: false,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("already been merged") || msg.includes("No merge required")) {
+      return { already_landed: true, pr_number: prNumber };
+    }
+    return {
+      status: 500,
+      error: {
+        code: "gh_pr_merge_failed",
+        message: msg,
+        pr_number: prNumber,
+      },
+    };
+  }
+  return { already_landed: false, pr_number: prNumber };
+}
+
+async function performLandGhFlow(
+  deps: DispatchLandDeps,
+  branch: string,
+  resolvedCommitMessage: string,
+): Promise<
+  { already_landed: boolean; pr_number: number; merge_commit_oid: string } | DispatchLandFailure
+> {
+  const verified = verifyGhCapabilities(deps);
+  if ("error" in verified) return verified;
+
+  const prs = await verified.listOpenPullRequestsByHead(branch);
+  const pr = prs[0];
+
+  const branchFailure = await verifyBranchPushed(deps, branch);
+  if (branchFailure) return branchFailure;
+
+  if (!pr) return noOpenPrFailure(branch);
+
+  const mergeResult = await mergePrWithAlreadyLandedRecovery(
+    verified.mergePullRequest,
+    pr.number,
+    resolvedCommitMessage,
+  );
+  if ("error" in mergeResult) return mergeResult;
+
+  // Read the PR back from GitHub to verify the merge actually landed and
+  // obtain the authoritative merge commit oid. git fetch origin updates
+  // refs/remotes/origin/* but NOT refs/heads/main, so readMainSha would
+  // return the pre-merge local main sha. A merge queue or branch protection
+  // can make `gh pr merge` exit 0 without merging — fail closed unless the
+  // PR state is MERGED with a mergeCommit oid.
+  const verifiedMerge = await verifyGhPrMerged(verified.getPullRequest, pr.number);
+  if ("error" in verifiedMerge) return verifiedMerge;
+
+  return {
+    already_landed: mergeResult.already_landed,
+    pr_number: pr.number,
+    merge_commit_oid: verifiedMerge.merge_commit_oid,
+  };
+}
+
+async function performLandGhGitOps(
+  deps: DispatchLandDeps,
+  branch: string,
+  resolvedCommitMessage: string,
+): Promise<PerformLandGitOpsResult | DispatchLandFailure> {
+  const ghResult = await performLandGhFlow(deps, branch, resolvedCommitMessage);
+  if ("error" in ghResult) return ghResult;
+
+  // Keep git fetch origin so the local checkout learns about the new commits,
+  // but do NOT derive commit_sha from local main — the merge commit oid from
+  // GitHub is authoritative (git fetch updates refs/remotes/origin/*, not
+  // refs/heads/main).
+  const fetchResult = await deps.runGit(["fetch", "origin"]);
+  if (fetchResult.code !== 0) {
+    return {
+      status: 500,
+      error: {
+        code: "git_failed",
+        step: "fetch_origin_after_gh_merge",
+        stderr: fetchResult.stderr.trim() || undefined,
+      },
+    };
+  }
+
+  return {
+    commit_sha: ghResult.merge_commit_oid,
+    already_landed: ghResult.already_landed,
+    pr_number: ghResult.pr_number,
+  };
 }
 
 async function performLandGitOps(
   deps: DispatchLandDeps,
   branch: string,
-  mode: "squash" | "ff",
+  mode: LandMode,
   resolvedCommitMessage: string,
 ): Promise<PerformLandGitOpsResult | DispatchLandFailure> {
+  if (mode === "gh") {
+    return await performLandGhGitOps(deps, branch, resolvedCommitMessage);
+  }
+
   const before = await readMainSha(deps, "rev_parse_main_before");
   if ("error" in before) return before;
 
@@ -990,7 +1245,7 @@ function writeDispatchLandedEvent(
     branch: string;
     commit_sha: string;
     message_subject: string;
-    mode: "squash" | "ff";
+    mode: "squash" | "ff" | "gh";
     landed_at: string;
   },
 ): void {
@@ -1106,7 +1361,7 @@ async function executeLand(input: {
   handoff: ReturnType<Services["handoffReader"]["get"]>;
   handoff_id: string;
   commit_message?: string;
-  mode: "squash" | "ff";
+  mode: "squash" | "ff" | "gh";
   delete_branch: boolean;
   stampPassedGateOutcome: boolean;
 }): Promise<DispatchLandSuccess | DispatchLandFailure> {
@@ -1150,7 +1405,7 @@ async function executeLand(input: {
   }
 
   if ("error" in gitOpsOutcome) return gitOpsOutcome;
-  const { commit_sha, already_landed } = gitOpsOutcome;
+  const { commit_sha, already_landed, pr_number } = gitOpsOutcome;
 
   const landed_at = now().toISOString();
   if (!already_landed) {
@@ -1164,9 +1419,12 @@ async function executeLand(input: {
     });
   }
 
-  const pr_closed = already_landed
+  const isGhMode = mode === "gh";
+  const pr_closed = isGhMode
     ? false
-    : await closeOpenPrIfAny(deps.gh, branch, commit_sha).catch(() => false);
+    : already_landed
+      ? false
+      : await closeOpenPrIfAny(deps.gh, branch, commit_sha).catch(() => false);
 
   const { worktree_torn_down, branch_deleted } = await teardownLandWorktree(
     services,
@@ -1188,5 +1446,6 @@ async function executeLand(input: {
     pr_closed,
     worktree_torn_down,
     ...(already_landed ? { already_landed: true } : {}),
+    ...(isGhMode ? { pr_merged: !already_landed, pr_number } : {}),
   };
 }

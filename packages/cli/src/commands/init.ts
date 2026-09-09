@@ -1,9 +1,16 @@
 import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from "@penumbra/core";
 import { resolveStorageDbPath } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import { AGENTCHAT_TEMPLATE } from "./init-agentchat-template.js";
 
@@ -16,11 +23,44 @@ export interface RunInitOpts {
   workflowsSourceDir?: string;
 }
 
-function resolveDefaultWorkflowsSourceDir(fromDir: string): string {
+// A `.claude/worktrees/<id>` checkout carries its own tracked `.claude/workflows`.
+// Seeding the global mirror from there publishes unlanded work, and three mirror
+// entries are symlinks back into the main checkout — so the copy would land in
+// main's tracked source. Skip any candidate under a worktree and keep climbing.
+const WORKTREE_SEGMENT = `${sep}.claude${sep}worktrees${sep}`;
+
+// Path shape alone cannot fence this: fleet worktrees live at
+// `<root>-worktrees/<uuid>`, outside `.claude/worktrees/`. The structural signal is
+// that a linked checkout — a `git worktree` of any layout, a submodule, any
+// `.git`-file setup — has `.git` as a FILE containing a `gitdir:` pointer at its
+// root, while a main checkout has `.git` as a DIRECTORY. Find the nearest enclosing
+// `.git` and fail closed: non-directory or unreadable means linked — skip.
+function isLinkedCheckout(dir: string): boolean {
+  let current = dir;
+  for (;;) {
+    try {
+      const gitEntry = lstatSync(join(current, ".git"), { throwIfNoEntry: false });
+      if (gitEntry !== undefined) return !gitEntry.isDirectory();
+    } catch {
+      return true;
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+export function resolveDefaultWorkflowsSourceDir(fromDir: string): string {
   let current = fromDir;
   for (;;) {
     const candidate = join(current, ".claude/workflows");
-    if (existsSync(candidate)) return candidate;
+    if (
+      existsSync(candidate) &&
+      !`${candidate}${sep}`.includes(WORKTREE_SEGMENT) &&
+      !isLinkedCheckout(current)
+    ) {
+      return candidate;
+    }
     const parent = dirname(current);
     if (parent === current) return join(fromDir, ".claude/workflows");
     current = parent;
@@ -58,14 +98,30 @@ function installBundledWorkflows(workflowsSourceDir: string, claudeUserDir: stri
     return;
   }
   mkdirSync(workflowsTargetDir, { recursive: true });
+  let copied = 0;
+  let linked = 0;
   for (const name of workflowFiles) {
     const sourcePath = join(workflowsSourceDir, name);
     const targetPath = join(workflowsTargetDir, name);
+    // lstat, not existsSync: existsSync is false for a DANGLING symlink, and
+    // copyFileSync onto a dangling link creates the link's target — outside this
+    // directory. Fail closed on any symlink, live or dangling.
+    const targetStat = lstatSync(targetPath, { throwIfNoEntry: false });
+    if (targetStat?.isSymbolicLink()) {
+      linked++;
+      process.stdout.write(
+        `penumbra: left Claude workflow ${name} in place; ${targetPath} is a symlink and is already live\n`,
+      );
+      continue;
+    }
     copyFileSync(sourcePath, targetPath);
+    copied++;
     process.stdout.write(`penumbra: installed Claude workflow ${name} to ${targetPath}\n`);
   }
   process.stdout.write(
-    `penumbra: installed ${String(workflowFiles.length)} bundled workflow file(s) to ${workflowsTargetDir}\n`,
+    `penumbra: installed ${String(copied)} bundled workflow file(s) to ${workflowsTargetDir}${
+      linked > 0 ? `; ${String(linked)} symlinked entries left in place` : ""
+    }\n`,
   );
 }
 

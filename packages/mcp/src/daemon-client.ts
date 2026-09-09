@@ -586,7 +586,7 @@ export class DaemonClient {
   async dispatchLand(input: {
     handoff_id: string;
     commit_message: string;
-    mode?: "squash" | "ff";
+    mode?: "squash" | "ff" | "gh";
     delete_branch?: boolean;
     force?: boolean;
     reject_if_held?: boolean;

@@ -172,6 +172,12 @@ export const RegistrarRollupSchema = z.object({
 });
 export type RegistrarRollup = z.infer<typeof RegistrarRollupSchema>;
 
+export const RegistrarPhaseProgressSchema = z.object({
+  complete: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type RegistrarPhaseProgress = z.infer<typeof RegistrarPhaseProgressSchema>;
+
 export const RegistrarEntrySchema = z.object({
   registrar_id: z.string(),
   slug: z.string(),
@@ -182,6 +188,7 @@ export const RegistrarEntrySchema = z.object({
   created_at: z.number().int(),
   updated_at: z.number().int(),
   rollup: RegistrarRollupSchema.optional(),
+  phase_progress: RegistrarPhaseProgressSchema.optional(),
 });
 export type RegistrarEntry = z.infer<typeof RegistrarEntrySchema>;
 

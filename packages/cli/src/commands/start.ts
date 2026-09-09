@@ -83,6 +83,29 @@ async function buildWorkflowRegistrySafe(workflowDirs: {
   }
 }
 
+// buildRegistry catches per-file load failures and keeps going
+// (packages/workflows/src/registry.ts:58-69), so buildWorkflowRegistrySafe's
+// catch never fires for a broken workflow. Without this, a workflow that fails
+// Bun.build is indistinguishable at runtime from one that was never deployed.
+export function logWorkflowRegistryErrors(
+  log: { error: (obj: Record<string, unknown>, msg: string) => void },
+  registry: { errors: { path: string; error: string }[] } | undefined,
+): number {
+  const errors = registry?.errors ?? [];
+  if (errors.length === 0) return 0;
+  for (const entry of errors) {
+    log.error(
+      { component: "workflow_registry", path: entry.path, err: entry.error },
+      "workflow failed to load",
+    );
+  }
+  log.error(
+    { component: "workflow_registry", failed_count: errors.length },
+    `workflow registry loaded with ${String(errors.length)} failed workflow(s)`,
+  );
+  return errors.length;
+}
+
 type RuntimeServicesExtras = {
   shellConfig?: ReturnType<typeof loadShellConfig>;
   shellSessionPool?: ShellSessionPool;
@@ -247,6 +270,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       projectRegistry,
     });
     activeLog = services.log;
+    logWorkflowRegistryErrors(services.log, workflowRegistry);
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;
       shellSessionPool?: ShellSessionPool;

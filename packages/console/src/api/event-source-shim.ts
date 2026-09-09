@@ -1,3 +1,12 @@
+export class SseConnectError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`SSE connect failed: ${String(status)}`);
+    this.name = "SseConnectError";
+    this.status = status;
+  }
+}
+
 export interface EventSourceLike {
   addEventListener: (
     event: string,
@@ -159,7 +168,7 @@ async function runSseConnection(
       credentials: "include",
     });
     if (!response.ok || !response.body) {
-      throw new Error(`SSE connect failed: ${String(response.status)}`);
+      throw new SseConnectError(response.status);
     }
     opts.onConnected?.();
     await readLoop({

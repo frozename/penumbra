@@ -95,7 +95,7 @@ export interface RunDispatchLandOpts {
   handoffId: string;
   storageRoot: string;
   message?: string;
-  mode?: "squash" | "ff";
+  mode?: "squash" | "ff" | "gh";
   deleteBranch?: boolean;
   force?: boolean;
   editor?: string;

@@ -17,6 +17,7 @@ import {
   type HandoffsSlice,
 } from "./domains/handoffs.js";
 import { daemonSlice, type DaemonSlice } from "./domains/health.js";
+import { permissionsSlice, type PermissionsSlice } from "./domains/permissions.js";
 import { registrarSlice, type RegistrarSlice } from "./domains/registrar.js";
 import {
   type SessionEventsListTolerantResponse,
@@ -75,6 +76,7 @@ export class DaemonClient {
   readonly registrar: RegistrarSlice;
   readonly sessionEvents: SessionEventsSlice;
   readonly sessionNotes: SessionNotesSlice;
+  readonly permissions: PermissionsSlice;
 
   constructor(private readonly deps: DaemonClientDeps) {
     this.daemon = daemonSlice(this.transport);
@@ -86,6 +88,7 @@ export class DaemonClient {
     this.registrar = registrarSlice(this.transport);
     this.sessionEvents = sessionEventsSlice(this.transport);
     this.sessionNotes = sessionNotesSlice(this.transport);
+    this.permissions = permissionsSlice(this.transport);
   }
 
   async health(): Promise<{ status: "ok" }> {

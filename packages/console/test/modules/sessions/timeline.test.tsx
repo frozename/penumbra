@@ -1,9 +1,10 @@
 import "../../setup";
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
 import type { SessionEvent } from "@penumbra/api-contract";
+import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import type { DaemonClient, SessionEventParseResult } from "@src/api/client";
 import { SessionTimeline } from "@src/modules/sessions";

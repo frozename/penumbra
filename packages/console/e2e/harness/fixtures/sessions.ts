@@ -25,4 +25,16 @@ export function register(router: FixtureRouter, state: HarnessState): void {
       : state.sessionNoteDrafts.slice();
     sendJson(ctx.response, { drafts: limit && limit > 0 ? drafts.slice(0, limit) : drafts });
   });
+
+  router.route("POST", "/session-notes/approve", (ctx) => {
+    const body = (ctx.body ?? {}) as { draft_id?: string };
+    const draft = state.sessionNoteDrafts.find((d) => d.draft_id === body.draft_id);
+    if (!draft) {
+      sendJson(ctx.response, { error: "not_found" }, 404);
+      return;
+    }
+    draft.status = "approved";
+    draft.reviewed_at = new Date().toISOString();
+    sendJson(ctx.response, { draft, event: null });
+  });
 }

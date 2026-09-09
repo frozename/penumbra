@@ -1,12 +1,14 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import type { ChainSummary } from "@penumbra/api-contract";
-import { Card, CardHead } from "@src/ui/Card";
-import { StatusBadge } from "@src/ui/StatusBadge";
+
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
 import { DaemonClient } from "@src/api/client";
-import { useDaemonStore } from "@src/stores/daemon-store";
 import { chainsByStatus } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { Card, CardHead } from "@src/ui/Card";
+import { StatusBadge } from "@src/ui/StatusBadge";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });

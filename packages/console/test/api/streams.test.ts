@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { EventSourceLike, ShimOpts } from "@src/api/event-source-shim.js";
+import { SseConnectError } from "@src/api/event-source-shim.js";
 import {
   __resetBrokerForTests,
   __setSchedulers,
+  __setSourceFactory,
   createStreamBroker,
   getStreamState,
   paramsKey,
@@ -497,6 +499,95 @@ describe("streams broker", () => {
     expect(getStreamState().ringSize).toBe(0);
 
     sub.unsubscribe();
+  });
+
+  test("a 401 on SSE connect sets sessionInvalid and schedules no reconnect", async () => {
+    let setTimeoutCalls = 0;
+    const clock = new FakeClock();
+    __setSchedulers(
+      ((fn: (...a: unknown[]) => void, delay: number) => {
+        setTimeoutCalls += 1;
+        return clock.setTimeout(fn, delay);
+      }) as typeof globalThis.setTimeout,
+      clock.clearTimeout,
+    );
+    __setSourceFactory((opts): EventSourceLike => {
+      opts.onTransportError?.(new SseConnectError(401));
+      return {
+        addEventListener: (): void => {
+          /* no-op */
+        },
+        close: (): void => {
+          /* no-op */
+        },
+      };
+    });
+
+    useDaemonStore.setState({
+      baseUrl: "http://127.0.0.1:51257",
+      token: "t",
+      health: "unknown",
+      lastHealthAt: null,
+      sessionInvalid: false,
+    });
+
+    const sub = subscribe("dispatch-events", noop());
+    await flushMicrotasks();
+
+    expect(useDaemonStore.getState().sessionInvalid).toBe(true);
+    expect(setTimeoutCalls).toBe(0);
+
+    sub.unsubscribe();
+    __setSourceFactory(null);
+    __setSchedulers(globalThis.setTimeout, globalThis.clearTimeout);
+  });
+
+  test("a 401 on SSE connect leaves broker state not-connected and notifies listeners", async () => {
+    const clock = new FakeClock();
+    const fake = createFakeSseFactory();
+    const broker = createStreamBroker({
+      getConfig: (): { baseUrl: string; token: string } => ({
+        baseUrl: "http://u.local:7777",
+        token: "t",
+      }),
+      scheduler: {
+        setTimeout: clock.setTimeout,
+        clearTimeout: clock.clearTimeout,
+      },
+      sourceFactory: fake.factory,
+    });
+
+    useDaemonStore.setState({
+      baseUrl: "http://u.local:7777",
+      token: "t",
+      health: "unknown",
+      lastHealthAt: null,
+      sessionInvalid: false,
+    });
+
+    let stateChangeCalls = 0;
+    const unsub = broker.onStreamStateChange(() => {
+      stateChangeCalls += 1;
+    });
+
+    const sub = broker.subscribe("dispatch-events", noop());
+    await flushMicrotasks();
+
+    // Connection is live → state is "connected".
+    expect(broker.getStreamState().state).toBe("connected");
+
+    // Now fire a 401 transport error on the live stream.
+    fake.sources[0]!.triggerError(new SseConnectError(401));
+    await flushMicrotasks();
+
+    // The broker must NOT report "connected" for a dead 401 stream.
+    expect(broker.getStreamState().state).not.toBe("connected");
+    // A state-change listener must have been notified.
+    expect(stateChangeCalls).toBeGreaterThan(0);
+
+    unsub();
+    sub.unsubscribe();
+    broker.reset();
   });
 });
 

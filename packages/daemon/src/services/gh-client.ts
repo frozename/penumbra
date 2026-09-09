@@ -14,6 +14,12 @@ export interface GhPullRequestLite {
   number: number;
 }
 
+export interface GhPullRequestView {
+  number: number;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  mergeCommitOid: string | null;
+}
+
 export interface GhOpenPullRequest {
   number: number;
   title?: string;
@@ -32,6 +38,14 @@ export interface GhLabelPullRequestInput {
   number: number;
   labels: string[];
   comment?: string;
+}
+
+export interface GhMergePullRequestInput {
+  number: number;
+  method: "squash" | "merge" | "rebase";
+  subject?: string;
+  body?: string;
+  deleteBranch?: boolean;
 }
 
 export interface GhCreateIssueInput {
@@ -66,6 +80,8 @@ export interface GhClient {
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
   labelPullRequest?(input: GhLabelPullRequestInput): Promise<void>;
+  mergePullRequest?(input: GhMergePullRequestInput): Promise<void>;
+  getPullRequest?(prNumber: number): Promise<GhPullRequestView>;
 }
 
 interface GhExecResult {
@@ -105,6 +121,9 @@ async function defaultExec(
   const proc = Bun.spawn({
     cmd: ["gh", ...args],
     cwd,
+    // Pass env explicitly: without it Bun resolves `gh` against the environment
+    // captured at process start, so a PATH set after boot is ignored.
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -373,6 +392,16 @@ export function createGhCliClient(
       await runOrThrow(exec, [...args]);
     },
 
+    async mergePullRequest(input: GhMergePullRequestInput): Promise<void> {
+      const args = ["pr", "merge", String(input.number), `--${input.method}`];
+      if (input.subject) args.push("--subject", input.subject);
+      if (input.body) args.push("--body", input.body);
+      if (input.deleteBranch) args.push("--delete-branch");
+      await runOrThrow(exec, [...args]);
+    },
+
+    getPullRequest: (prNumber) => ghGetPullRequest(exec, prNumber),
+
     labelPullRequest: (input) => ghLabelPullRequest(exec, input),
   };
 }
@@ -384,6 +413,25 @@ async function ghLabelPullRequest(exec: GhExec, input: GhLabelPullRequestInput):
   if (input.comment !== undefined && input.comment.length > 0) {
     await runOrThrow(exec, ["pr", "comment", String(input.number), "--body", input.comment]);
   }
+}
+
+async function ghGetPullRequest(exec: GhExec, prNumber: number): Promise<GhPullRequestView> {
+  const text = await runOrThrow(exec, [
+    "pr",
+    "view",
+    String(prNumber),
+    "--json",
+    "state,mergeCommit",
+  ]);
+  const p = JSON.parse(text) as { state: string; mergeCommit: { oid: string } | null };
+  const upper = p.state.toUpperCase();
+  const state: GhPullRequestView["state"] =
+    upper === "MERGED" ? "MERGED" : upper === "CLOSED" ? "CLOSED" : "OPEN";
+  return {
+    number: prNumber,
+    state,
+    mergeCommitOid: p.mergeCommit?.oid ?? null,
+  };
 }
 
 async function runCreateIssueWithLabelRetry(

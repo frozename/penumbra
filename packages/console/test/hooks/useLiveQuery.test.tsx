@@ -1,8 +1,9 @@
 import "../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import {
   __resetBrokerForTests,
@@ -102,7 +103,9 @@ describe("useLiveQuery", () => {
       { wrapper: Wrapper },
     );
 
-    await waitFor(() => expect(result.current.data).toBe(42));
+    await waitFor(() => {
+      expect(result.current.data).toBe(42);
+    });
     const callsBefore = invalidateSpy.mock.calls.length;
 
     act(() => {
@@ -111,7 +114,9 @@ describe("useLiveQuery", () => {
       harness.emit(resyncMsg());
     });
 
-    await waitFor(() => expect(invalidateSpy.mock.calls.length).toBe(callsBefore + 3));
+    await waitFor(() => {
+      expect(invalidateSpy.mock.calls.length).toBe(callsBefore + 3);
+    });
     for (const call of invalidateSpy.mock.calls.slice(callsBefore)) {
       expect(call[0]).toEqual({ queryKey: ["test"] });
     }
@@ -136,14 +141,18 @@ describe("useLiveQuery", () => {
       { wrapper: Wrapper },
     );
 
-    await waitFor(() => expect(result.current.data).toBe("ok"));
+    await waitFor(() => {
+      expect(result.current.data).toBe("ok");
+    });
     const callsBefore = invalidateSpy.mock.calls.length;
 
     act(() => {
       harness.emit(reconnectMsg());
     });
 
-    await waitFor(() => expect(invalidateSpy.mock.calls.length).toBe(callsBefore + 1));
+    await waitFor(() => {
+      expect(invalidateSpy.mock.calls.length).toBe(callsBefore + 1);
+    });
     expect(invalidateSpy.mock.calls[callsBefore]![0]).toEqual({ queryKey: ["recon"] });
   });
 
@@ -163,7 +172,9 @@ describe("useLiveQuery", () => {
       { wrapper: WrapperA },
     );
 
-    await waitFor(() => expect(queryFnA).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(queryFnA).toHaveBeenCalledTimes(1);
+    });
     expect(pollHarness.subscribeCalls()).toBe(0);
     const pollQuery = clientA.getQueryCache().find({ queryKey: ["poll"] });
     expect((pollQuery?.options as { refetchInterval?: unknown }).refetchInterval).toBe(50);
@@ -188,7 +199,9 @@ describe("useLiveQuery", () => {
       { wrapper: WrapperB },
     );
 
-    await waitFor(() => expect(resultB.current.data).toBe("val"));
+    await waitFor(() => {
+      expect(resultB.current.data).toBe("val");
+    });
     expect(topicHarness.subscribeCalls()).toBe(1);
     const topicQuery = clientB.getQueryCache().find({ queryKey: ["topic-poll"] });
     expect((topicQuery?.options as { refetchInterval?: unknown }).refetchInterval).toBe(false);
@@ -200,7 +213,9 @@ describe("useLiveQuery", () => {
     act(() => {
       topicHarness.emit(frameMsg({ x: 1 }));
     });
-    await waitFor(() => expect(queryFnB.mock.calls.length).toBeGreaterThan(callsAfterInitial));
+    await waitFor(() => {
+      expect(queryFnB.mock.calls.length).toBeGreaterThan(callsAfterInitial);
+    });
   });
 
   test("when activeModule ≠ owner it opens zero subscriptions and does not poll", async () => {

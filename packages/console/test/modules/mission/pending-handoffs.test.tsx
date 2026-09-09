@@ -1,11 +1,15 @@
 import "../../setup";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getByLabelText, getByRole } from "@testing-library/dom";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+
+import type { DaemonClient, HandoffsListResponse } from "@src/api/client";
 import { PendingHandoffs } from "@src/modules/mission/PendingHandoffs";
-import type { DaemonClient } from "@src/api/client";
-import type { HandoffsListResponse } from "@src/api/client";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 function makeWrapper(): {
   Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
@@ -17,7 +21,13 @@ function makeWrapper(): {
     },
   });
   function Wrapper({ children }: { children: ReactNode }): JSX.Element {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <ConfirmDialogProvider>{children}</ConfirmDialogProvider>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
   }
   return { Wrapper, client };
 }
@@ -52,7 +62,7 @@ function fakeRow(overrides: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-// Drive a controlled <input>'s React onChange under happy-dom.
+// Drive a controlled <input> or <textarea>'s React onChange under happy-dom.
 //
 // happy-dom 18 + React 18 do not fire React's controlled-input `onChange`
 // for a bare `fireEvent.change(input, { target: { value } })`: the value
@@ -62,7 +72,7 @@ function fakeRow(overrides: Record<string, unknown>): Record<string, unknown> {
 // Do not "simplify" this back to a single fireEvent.change — it silently
 // stops exercising the typed value and the assertion below would pass
 // against the "" fallback instead of the user's input.
-function typeIntoInput(input: HTMLInputElement, value: string): void {
+function typeIntoInput(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   fireEvent.focus(input);
   fireEvent.keyDown(input, { key: value.slice(-1) || "x" });
   fireEvent.input(input, { target: { value } });
@@ -77,7 +87,7 @@ describe("PendingHandoffs", () => {
   test("renders empty state when no handoffs are pending", async () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {
-      listHandoffs: mock(async () => ({ handoffs: [] }) as HandoffsListResponse),
+      listHandoffs: mock(async () => ({ handoffs: [] })),
       approveHandoff: mock(async () => ({
         handoff_id: "x",
         status: "approved",
@@ -161,7 +171,7 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const approveBtn = within(container).getByText("Approve") as HTMLButtonElement;
+    const approveBtn = within(container).getByText("Approve");
     fireEvent.click(approveBtn);
 
     await waitFor(() => {
@@ -179,7 +189,7 @@ describe("PendingHandoffs", () => {
     client.clear();
   });
 
-  test("Approve failure surfaces an error chip and keeps the row visible", async () => {
+  test("Approve failure leaves the row visible and renders no inline error chip", async () => {
     const { Wrapper, client } = makeWrapper();
     const listMock = mock(
       async () =>
@@ -205,15 +215,14 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const approveBtn = within(container).getByText("Approve") as HTMLButtonElement;
+    const approveBtn = within(container).getByText("Approve");
     fireEvent.click(approveBtn);
 
     await waitFor(() => {
-      const err = container.querySelector('[data-testid="ph-row-error"]');
-      if (!err) throw new Error("error chip not rendered");
-      expect(err.textContent).toContain("network down");
+      expect(approveMock).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="ph-row-error"]')).toBeNull();
+      expect(container.querySelector(".ph-row")).toBeTruthy();
     });
-    expect(container.querySelector(".ph-row")).toBeTruthy();
 
     unmount();
     client.clear();
@@ -314,18 +323,20 @@ describe("PendingHandoffs", () => {
       expect(container.querySelector(".ph-row")).toBeTruthy();
     });
 
-    const denyBtn = within(container).getByText("Deny") as HTMLButtonElement;
+    const denyBtn = within(container).getByText("Deny");
     fireEvent.click(denyBtn);
 
-    const input = (await waitFor(() => {
-      const found = container.querySelector('input[name="deny-reason"]') as HTMLInputElement | null;
-      if (!found) throw new Error("reason input not rendered");
-      return found;
-    })) as HTMLInputElement;
+    const dialog = await waitFor<HTMLElement>(() => {
+      const found = getByRole(document.body, "dialog");
+      if (!found) throw new Error("confirm dialog not rendered");
+      return found as HTMLElement;
+    });
 
-    typeIntoInput(input, "looks bad");
-    const submit = within(container).getByText("Submit deny") as HTMLButtonElement;
-    fireEvent.click(submit);
+    const reasonField = getByLabelText(document.body, "Reason") as HTMLTextAreaElement;
+    typeIntoInput(reasonField, "looks bad");
+
+    const confirmBtn = getByRole(dialog, "button", { name: "Confirm" }) as HTMLButtonElement;
+    fireEvent.click(confirmBtn);
 
     await waitFor(() => {
       expect(approveMock).toHaveBeenCalledTimes(1);
@@ -333,6 +344,108 @@ describe("PendingHandoffs", () => {
     const firstCall = approveMock.mock.calls[0] as unknown as [string, unknown];
     expect(firstCall?.[0]).toBe("handoff-id-2");
     expect(firstCall?.[1]).toEqual({ reject: true, reason: "looks bad" });
+
+    unmount();
+    client.clear();
+  });
+
+  test("Deny with an empty reason cannot submit: Confirm is disabled and approveHandoff is never called", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const listMock = mock(
+      async () =>
+        ({
+          handoffs: [fakeRow({ handoff_id: "handoff-id-2" })],
+        }) as HandoffsListResponse,
+    );
+    const approveMock = mock(async () => ({
+      handoff_id: "handoff-id-2",
+      status: "rejected",
+    }));
+    const stubClient = {
+      listHandoffs: listMock,
+      approveHandoff: approveMock,
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <PendingHandoffs client={stubClient} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ph-row")).toBeTruthy();
+    });
+
+    const denyBtn = within(container).getByText("Deny");
+    fireEvent.click(denyBtn);
+
+    const dialog = await waitFor<HTMLElement>(() => {
+      const found = getByRole(document.body, "dialog");
+      if (!found) throw new Error("confirm dialog not rendered");
+      return found as HTMLElement;
+    });
+
+    const confirmBtn = getByRole(dialog, "button", { name: "Confirm" }) as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(true);
+    fireEvent.click(confirmBtn);
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(approveMock).not.toHaveBeenCalled();
+
+    unmount();
+    client.clear();
+  });
+
+  test("while the Deny dialog is open both row buttons are disabled, and they re-enable after Cancel", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const listMock = mock(
+      async () =>
+        ({
+          handoffs: [fakeRow({ handoff_id: "handoff-id-3" })],
+        }) as HandoffsListResponse,
+    );
+    const approveMock = mock(async () => ({
+      handoff_id: "handoff-id-3",
+      status: "rejected",
+    }));
+    const stubClient = {
+      listHandoffs: listMock,
+      approveHandoff: approveMock,
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <PendingHandoffs client={stubClient} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ph-row")).toBeTruthy();
+    });
+
+    const row = container.querySelector(".ph-row") as HTMLElement;
+    const denyBtn = within(row).getByRole("button", { name: "Deny" }) as HTMLButtonElement;
+    const approveBtn = within(row).getByRole("button", { name: "Approve" }) as HTMLButtonElement;
+    fireEvent.click(denyBtn);
+
+    const dialog = await waitFor<HTMLElement>(() => {
+      const found = getByRole(document.body, "dialog");
+      if (!found) throw new Error("confirm dialog not rendered");
+      return found as HTMLElement;
+    });
+
+    expect(approveBtn.disabled).toBe(true);
+    expect(denyBtn.disabled).toBe(true);
+
+    const cancelBtn = getByRole(dialog, "button", { name: "Cancel" }) as HTMLButtonElement;
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() => {
+      expect(approveBtn.disabled).toBe(false);
+      expect(denyBtn.disabled).toBe(false);
+    });
+
+    expect(approveMock).not.toHaveBeenCalled();
 
     unmount();
     client.clear();

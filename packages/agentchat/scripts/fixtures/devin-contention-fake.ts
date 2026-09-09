@@ -153,11 +153,19 @@ async function createSession(
   receivedAtMs: number,
 ): Promise<string> {
   const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
+  // Stamp readiness BEFORE persisting. The writes below are the instrument, and their
+  // SQLite lock waits ride a busy-handler ladder whose rungs differ per platform: bun
+  // ships SQLite with ENABLE_SETLK_TIMEOUT on darwin (kernel-blocking waits that settle
+  // in a few ms), while the bundled Linux build polls on fixed rungs reaching 100 ms.
+  // Stamping afterwards reports the instrument's own contention as the target's
+  // responding skew. This is the symmetric completion of bf92f693d, which moved the
+  // received stamp off the same ladder.
+  const respondingAtMs = nowMs();
   await recordEvent(db, "session_new_received", round, sessionId, receivedAtMs);
   if (shouldInsert) {
     await insertSessionRow(db, sessionId);
   }
-  await recordEvent(db, "session_new_responding", round, sessionId);
+  await recordEvent(db, "session_new_responding", round, sessionId, respondingAtMs);
   return sessionId;
 }
 

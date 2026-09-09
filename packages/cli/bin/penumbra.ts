@@ -658,13 +658,22 @@ switch (cmd) {
           const handoffId = process.argv[4];
           if (!handoffId || handoffId.startsWith("-")) {
             console.error(
-              "usage: penumbra dispatch land <handoff_id> [--message <subject>] [--mode squash|ff] [--no-delete-branch] [--force]",
+              "usage: penumbra dispatch land <handoff_id> [--message <subject>] [--mode squash|ff|gh] [--no-delete-branch] [--force]",
             );
             process.exit(1);
           }
           const modeRaw = readOptionalFlagValue("--mode");
-          if (modeRaw !== undefined && modeRaw !== "squash" && modeRaw !== "ff") {
-            console.error(`penumbra dispatch land: --mode must be squash or ff (got: ${modeRaw})`);
+          // Keep in sync with DispatchLandInputSchema in
+          // packages/daemon/src/routes/dispatch-land.ts and RunDispatchLandOpts.
+          if (
+            modeRaw !== undefined &&
+            modeRaw !== "squash" &&
+            modeRaw !== "ff" &&
+            modeRaw !== "gh"
+          ) {
+            console.error(
+              `penumbra dispatch land: --mode must be squash, ff or gh (got: ${modeRaw})`,
+            );
             process.exit(1);
           }
           await runDispatchLand({

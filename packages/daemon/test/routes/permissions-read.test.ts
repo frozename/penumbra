@@ -1,3 +1,4 @@
+import { PermissionGetResponseSchema, PermissionsListResponseSchema } from "@penumbra/api-contract";
 import {
   loadSqliteVec,
   migrate,
@@ -164,4 +165,22 @@ test("GET /permissions returns 400 for unknown status", () => {
   const services = makeServices(db);
   const res = permissionsListRoute(new Request("http://x/permissions?status=cancelled"), services);
   expect(res.status).toBe(400);
+});
+
+test("GET /permissions and GET /permissions/:id bodies parse with the api-contract response schemas", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  await seed(services, "perm-1");
+  const listRes = permissionsListRoute(new Request("http://x/permissions"), services);
+  const listBody = await listRes.json();
+  expect(PermissionsListResponseSchema.safeParse(listBody).success).toBe(true);
+  const getRes = permissionsGetRoute(
+    new Request("http://x/permissions/perm-1"),
+    "perm-1",
+    services,
+  );
+  const getBody = await getRes.json();
+  expect(PermissionGetResponseSchema.safeParse(getBody).success).toBe(true);
 });

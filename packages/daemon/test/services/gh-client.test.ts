@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -388,5 +388,149 @@ describe("createGhCliClient", () => {
 
     expect(calls[0]).toEqual(["api", "user", "--jq", ".login"]);
     expect(login).toBe("penumbra-bot");
+  });
+
+  test("mergePullRequest builds squash argv with subject and body", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({
+      number: 42,
+      method: "squash",
+      subject: "feat(core): merge via gh",
+      body: "full body text",
+    });
+
+    expect(calls).toEqual([
+      [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--subject",
+        "feat(core): merge via gh",
+        "--body",
+        "full body text",
+      ],
+    ]);
+  });
+
+  test("mergePullRequest builds merge argv without subject/body", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({ number: 7, method: "merge" });
+
+    expect(calls).toEqual([["pr", "merge", "7", "--merge"]]);
+  });
+
+  test("mergePullRequest builds rebase argv with deleteBranch", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await client.mergePullRequest({ number: 99, method: "rebase", deleteBranch: true });
+
+    expect(calls).toEqual([["pr", "merge", "99", "--rebase", "--delete-branch"]]);
+  });
+
+  test("mergePullRequest propagates gh errors", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: "",
+        stderr: "GraphQL: merge conflict",
+        exitCode: 1,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.mergePullRequest) throw new Error("missing mergePullRequest");
+
+    await expectRejectsWithMessage(
+      client.mergePullRequest({ number: 1, method: "squash" }),
+      "gh pr merge 1 --squash failed: GraphQL: merge conflict",
+    );
+  });
+
+  test("getPullRequest parses state and mergeCommit oid from gh pr view", async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({
+        stdout: JSON.stringify({ state: "MERGED", mergeCommit: { oid: "abc123def456" } }),
+        stderr: "",
+        exitCode: 0,
+      });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(42);
+
+    expect(calls).toEqual([["pr", "view", "42", "--json", "state,mergeCommit"]]);
+    expect(pr).toEqual({ number: 42, state: "MERGED", mergeCommitOid: "abc123def456" });
+  });
+
+  test("getPullRequest returns null mergeCommitOid when mergeCommit is absent", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: JSON.stringify({ state: "OPEN", mergeCommit: null }),
+        stderr: "",
+        exitCode: 0,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(7);
+    expect(pr).toEqual({ number: 7, state: "OPEN", mergeCommitOid: null });
+  });
+
+  test("getPullRequest normalizes CLOSED state", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: JSON.stringify({ state: "closed", mergeCommit: null }),
+        stderr: "",
+        exitCode: 0,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.getPullRequest) throw new Error("missing getPullRequest");
+
+    const pr = await client.getPullRequest(9);
+    expect(pr.state).toBe("CLOSED");
+  });
+
+  test("default exec runs gh with repoDir as cwd", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), "gh-client-repodir-"));
+    const ghPath = join(binDir, "gh");
+    // /bin/sh + the `pwd` builtin so the shim needs nothing else on PATH, and
+    // PATH is set to binDir ALONE so a real installed `gh` cannot win the
+    // lookup and answer with the actual authenticated login instead.
+    writeFileSync(ghPath, "#!/bin/sh\npwd\n");
+    chmodSync(ghPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = binDir;
+    try {
+      const client = createGhCliClient({ repoDir: binDir });
+      if (!client.getAuthenticatedLogin) throw new Error("missing getAuthenticatedLogin");
+      const cwdOutput = await client.getAuthenticatedLogin();
+      // `pwd` reports the physical path; on macOS mkdtemp hands back the
+      // /var -> /private/var symlink, so compare resolved paths.
+      expect(realpathSync(cwdOutput ?? "")).toBe(realpathSync(binDir));
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(binDir, { recursive: true, force: true });
+    }
   });
 });

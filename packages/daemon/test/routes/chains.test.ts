@@ -148,6 +148,7 @@ type HandoffRawRow = {
   open_pr_on_review: number | null;
   branch_name: string | null;
   dispatch_kind: string | null;
+  workflow_run_id: string | null;
   long_lived_agent_id: string | null;
   long_lived_tick_id: string | null;
 };
@@ -947,6 +948,45 @@ test("POST /chains/start exempts workflow dispatches with a valid run id from th
     }),
     expect.any(String),
   );
+});
+
+test("POST /chains/start persists workflow_run_id on workflow dispatch handoffs", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  const workflowRunsMock: WorkflowRunsRegistry = {
+    verify: (workflowRunId: string) =>
+      workflowRunId === "wfrun-persist-1"
+        ? { workflow_name: "test-workflow", project_id: null, registered_at: 1715385600000 }
+        : null,
+    register: (): null => null,
+    unregister: (): undefined => undefined,
+    recordResult: (): Promise<void> => Promise.resolve(),
+    recordError: (): Promise<void> => Promise.resolve(),
+    getStatus: (): Promise<null> => Promise.resolve(null),
+    getStatusLight: (): Promise<null> => Promise.resolve(null),
+    waitForResult: (): Promise<null> => Promise.resolve(null),
+    setPersistenceStatus: (): void => undefined,
+    setExecutionRecord: (): void => undefined,
+  };
+  services.workflowRuns = workflowRunsMock;
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        dispatch_kind: "workflow",
+        workflow_run_id: "wfrun-persist-1",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.dispatch_kind).toBe("workflow");
+  expect(handoff.workflow_run_id).toBe("wfrun-persist-1");
 });
 
 test("POST /chains/start exempts thought_analyzer dispatches with missing project_id but rejects normal dispatches under strict mode", async () => {

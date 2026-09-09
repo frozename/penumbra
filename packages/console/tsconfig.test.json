@@ -9,7 +9,7 @@
     "test/**/*.ts",
     "test/**/*.tsx",
     "visual/**/*.ts",
-    "e2e/harness/router.ts"
+    "e2e/**/*.ts"
   ],
   "exclude": []
 }

@@ -440,7 +440,7 @@ async function runRound(
     round,
     runtime: readRuntimeStamp(),
   };
-  return evaluateRound(partial, options, control);
+  return evaluateRound(partial, options, control, holdMs);
 }
 
 export function effectiveHoldMs(configured: number, controlSpan: number): number {

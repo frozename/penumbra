@@ -15,28 +15,15 @@ test.beforeEach(() => {
   fixture.harness.reset();
 });
 
-test("rail click navigates between mission, plans, sessions, chains, and tasks", async ({
-  page,
-}) => {
+test("rail click navigates between mission, plans, and sessions", async ({ page }) => {
   await page.goto("/mission");
 
   const mission = page.locator('.rail-btn[title="Mission control"]');
   const plans = page.locator('.rail-btn[title="Plans"]');
   const sessions = page.locator('.rail-btn[title="Sessions"]');
-  const chains = page.locator('.rail-btn[title="Chains"]');
-  const tasks = page.locator('.rail-btn[title="Tasks"]');
 
   await expect(mission).toHaveClass(/active/);
   await expect(page.locator("h1", { hasText: "Mission Control" })).toBeVisible();
-
-  await chains.click();
-  await expect(page).toHaveURL(/\/chains$/);
-  await expect(chains).toHaveClass(/active/);
-  await expect(mission).not.toHaveClass(/active/);
-
-  await tasks.click();
-  await expect(page).toHaveURL(/\/tasks$/);
-  await expect(tasks).toHaveClass(/active/);
 
   await plans.click();
   await expect(page).toHaveURL(/\/registrar$/);
@@ -50,6 +37,24 @@ test("rail click navigates between mission, plans, sessions, chains, and tasks",
   await mission.click();
   await expect(page).toHaveURL(/\/mission$/);
   await expect(page.locator("h1", { hasText: "Mission Control" })).toBeVisible();
+});
+
+test("rail click navigates to approvals", async ({ page }) => {
+  await page.goto("/mission");
+
+  const approvals = page.locator('.rail-btn[title="Approvals"]');
+  await approvals.click();
+  await expect(page).toHaveURL(/\/approvals$/);
+  await expect(approvals).toHaveClass(/active/);
+});
+
+test("available:false modules render no rail button", async ({ page }) => {
+  await page.goto("/mission");
+
+  await expect(page.locator('.rail-btn[title="Chains"]')).toHaveCount(0);
+
+  await page.goto("/chains");
+  await expect(page.getByText("404 — no such view.")).toBeVisible();
 });
 
 test("root URL redirects to /mission", async ({ page }) => {

@@ -589,6 +589,73 @@ test("GET /registrar returns open_blockers/open_followups/phase progress matchin
   }
 });
 
+test("after one appended blocker event, GET /registrar entries[0].rollup is {open_blockers:1, open_follow_ups:0} and RegistrarListResponseSchema.safeParse(body).success", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const id = await createRegistrar(daemon);
+    daemon.services.registrarWriter.appendEvent(id, {
+      phase_no: 1,
+      kind: "blocker",
+      state: "opened",
+      actor: "maestro",
+      body: "x",
+    });
+
+    const res = await daemon.fetch("/registrar", { headers: authHeaders(daemon.token) });
+    expect(res.status).toBe(200);
+    const raw = (await res.json()) as { entries: { rollup?: unknown }[] };
+    expect(raw.entries[0]?.rollup).toEqual({ open_blockers: 1, open_follow_ups: 0 });
+    expect(RegistrarListResponseSchema.safeParse(raw).success).toBe(true);
+    expect(RegistrarListResponseSchema.parse(raw).entries[0]?.rollup).toEqual(
+      daemon.services.registrarReader.getRollup(id),
+    );
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("with two phases of which one is complete, GET /registrar entries[0].phase_progress is {complete:1, total:2} and the entry still parses", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const id = await createRegistrar(daemon);
+    const emptyId = daemon.services.registrarWriter.createEntry({
+      ...registrarCreateInput(),
+      slug: "empty-phases",
+      title: "Empty phases",
+    }).registrar_id;
+    daemon.services.db.run("DELETE FROM registrar_phases WHERE registrar_id = ?", [emptyId]);
+
+    daemon.services.registrarWriter.appendEvent(id, {
+      phase_no: 1,
+      kind: "phase_transition",
+      from_status: "active",
+      state: "complete",
+      actor: "maestro",
+      body: "Domain phase complete",
+    });
+
+    const res = await daemon.fetch("/registrar", { headers: authHeaders(daemon.token) });
+    expect(res.status).toBe(200);
+    const raw = (await res.json()) as {
+      entries: { registrar_id: string; phase_progress?: unknown }[];
+    };
+
+    const firstEntry = raw.entries.find((entry) => entry.registrar_id === id);
+    expect(firstEntry).toBeDefined();
+    expect(firstEntry?.phase_progress).toEqual({ complete: 1, total: 2 });
+    expect(RegistrarListResponseSchema.safeParse(raw).success).toBe(true);
+    expect(
+      RegistrarListResponseSchema.parse(raw).entries.find((entry) => entry.registrar_id === id)
+        ?.phase_progress,
+    ).toEqual(daemon.services.registrarReader.getPhaseProgress(id));
+
+    const emptyEntry = raw.entries.find((entry) => entry.registrar_id === emptyId);
+    expect(emptyEntry?.phase_progress).toEqual({ complete: 0, total: 0 });
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("with PENUMBRA_REGISTRAR=0 the routes are not mounted (404)", async () => {
   const previous = process.env.PENUMBRA_REGISTRAR;
   process.env.PENUMBRA_REGISTRAR = "0";

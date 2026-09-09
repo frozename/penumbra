@@ -18,6 +18,8 @@ import {
   type HarnessRow,
   type HarnessState,
   type PendingHandoffRow,
+  type PermissionEventPush,
+  type PermissionRow,
   type PressureWindow,
   type RegistrarEntryRow,
   type RegistrarEventRow,
@@ -28,6 +30,7 @@ import {
   createHarnessServer,
   createInitialState,
   resetState,
+  resolvePermissionSseWaiters,
   resolveSseWaiters,
 } from "./server";
 
@@ -38,6 +41,8 @@ export type {
   HarnessRow,
   HarnessState,
   PendingHandoffRow,
+  PermissionEventPush,
+  PermissionRow,
   PressureWindow,
   RegistrarEntryRow,
   RegistrarEventRow,
@@ -166,6 +171,16 @@ export async function startHarness(): Promise<E2EHarness> {
         }
       }
 
+      for (const client of Array.from(state.permissionSseClients)) {
+        try {
+          client.end();
+        } catch {
+          // ignore teardown races
+        } finally {
+          state.permissionSseClients.delete(client);
+        }
+      }
+
       if (!server.listening) return;
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -174,6 +189,11 @@ export async function startHarness(): Promise<E2EHarness> {
         clearTimeout(waiter.timer);
         state.sseWaiters.delete(waiter);
         waiter.reject(new Error("harness stopped before SSE client connected"));
+      }
+      for (const waiter of Array.from(state.permissionSseWaiters)) {
+        clearTimeout(waiter.timer);
+        state.permissionSseWaiters.delete(waiter);
+        waiter.reject(new Error("harness stopped before permission SSE client connected"));
       }
     },
     addChain(row: ChainRow) {
@@ -208,6 +228,24 @@ export async function startHarness(): Promise<E2EHarness> {
     },
     setSessionNoteDrafts(rows: SessionNoteDraftRow[]) {
       state.sessionNoteDrafts = rows.map((row) => ({ ...row }));
+    },
+    setPermissions(rows: PermissionRow[]) {
+      state.permissions = rows.map((row) => ({ ...row }));
+    },
+    addPermissionEvent(evt: PermissionEventPush) {
+      if (state.permissionSseClients.size === 0) {
+        throw new Error(
+          "no permission SSE clients connected; await waitForPermissionSseClient before addPermissionEvent",
+        );
+      }
+      const line = `event: ${evt.kind}\nid: ${evt.permission_id}:${String(evt.seq)}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
+      for (const client of Array.from(state.permissionSseClients)) {
+        try {
+          client.write(line);
+        } catch {
+          state.permissionSseClients.delete(client);
+        }
+      }
     },
     setQuotaStatus(data) {
       state.quotaStatus = {
@@ -257,6 +295,23 @@ export async function startHarness(): Promise<E2EHarness> {
         };
         state.sseWaiters.add(waiter);
         resolveSseWaiters(state);
+      });
+    },
+    waitForPermissionSseClient(opts) {
+      const timeoutMs = opts?.timeoutMs ?? 5_000;
+      if (state.permissionSseClients.size > 0) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        let waiter!: SseWaiter;
+        waiter = {
+          resolve,
+          reject,
+          timer: setTimeout(() => {
+            state.permissionSseWaiters.delete(waiter);
+            reject(new Error(`timed out waiting ${timeoutMs}ms for permission SSE client`));
+          }, timeoutMs),
+        };
+        state.permissionSseWaiters.add(waiter);
+        resolvePermissionSseWaiters(state);
       });
     },
     simulateReconnect() {

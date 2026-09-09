@@ -1,14 +1,18 @@
 import "../../setup";
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
 import type { DaemonClient } from "@src/api/client";
+import { DaemonHttpError } from "@src/api/errors";
 import { RegistrarDetail } from "@src/modules/registrar";
-import { PhaseTimeline } from "@src/modules/registrar/PhaseTimeline";
 import { JournalFeed } from "@src/modules/registrar/JournalFeed";
+import { PhaseTimeline } from "@src/modules/registrar/PhaseTimeline";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 const BASE_TS = 1_756_200_000_000;
 
@@ -81,11 +85,26 @@ function makeWrapper(initialEntries: string[]): {
   function Wrapper({ children }: { children: ReactNode }): JSX.Element {
     return (
       <MemoryRouter initialEntries={initialEntries}>
-        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        <QueryClientProvider client={client}>
+          <ToastProvider>
+            <ConfirmDialogProvider>{children}</ConfirmDialogProvider>
+          </ToastProvider>
+        </QueryClientProvider>
       </MemoryRouter>
     );
   }
   return { Wrapper, client };
+}
+
+// Drive a controlled <textarea>'s React onChange under happy-dom: a bare
+// fireEvent.change/input leaves React's ChangeEventPlugin unsynced, so the
+// component keeps reading the initial value. The keystroke envelope below is
+// the same pattern used for controlled <input>s elsewhere in this suite.
+function typeIntoField(field: HTMLTextAreaElement, value: string): void {
+  fireEvent.focus(field);
+  fireEvent.keyDown(field, { key: value.slice(-1) || "x" });
+  fireEvent.input(field, { target: { value } });
+  fireEvent.keyUp(field, { key: value.slice(-1) || "x" });
 }
 
 afterEach(() => {
@@ -137,12 +156,31 @@ describe("JournalFeed", () => {
   });
 });
 
+function makeAppendedEvent(): { event: Record<string, unknown> } {
+  return {
+    event: {
+      event_id: 9,
+      registrar_id: "reg-1",
+      phase_no: null,
+      kind: "progress",
+      state: null,
+      ref_event_id: null,
+      link_kind: null,
+      link_value: null,
+      actor: "operator",
+      body: "Kickoff done",
+      created_at: BASE_TS,
+    },
+  };
+}
+
 describe("RegistrarDetail", () => {
   test("renders phase timeline and journal from the API detail and events payloads", async () => {
     const detail = makeDetailFixture();
     const stubClient = {
       getRegistrarEntry: mock(async () => detail),
       listRegistrarEvents: mock(async () => ({ events: detail.events })),
+      registrar: { appendEvent: mock(async () => makeAppendedEvent()) },
     } as unknown as DaemonClient;
 
     const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
@@ -177,6 +215,7 @@ describe("RegistrarDetail", () => {
     const stubClient = {
       getRegistrarEntry: mock(async () => detail),
       listRegistrarEvents: mock(async () => ({ events: [] })),
+      registrar: { appendEvent: mock(async () => makeAppendedEvent()) },
     } as unknown as DaemonClient;
 
     const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
@@ -203,6 +242,7 @@ describe("RegistrarDetail", () => {
       listRegistrarEvents: mock(async () => {
         throw new Error("events fetch failed");
       }),
+      registrar: { appendEvent: mock(async () => makeAppendedEvent()) },
     } as unknown as DaemonClient;
 
     const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
@@ -219,6 +259,305 @@ describe("RegistrarDetail", () => {
       expect(error.textContent ?? "").toContain("events fetch failed");
     });
     expect(view.queryByTestId("journal-empty")).toBeNull();
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("Add journal entry posts RegistrarEventInput {actor:'operator'} and invalidates registrarEvents(id)", async () => {
+    const detail = makeDetailFixture();
+    detail.events = [];
+    const appendEvent = mock(async () => makeAppendedEvent());
+    const listRegistrarEvents = mock(async () => ({ events: [] }));
+    const stubClient = {
+      getRegistrarEntry: mock(async () => detail),
+      listRegistrarEvents,
+      registrar: { appendEvent },
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-body")).toBeTruthy();
+    });
+    expect(listRegistrarEvents).toHaveBeenCalledTimes(1);
+
+    typeIntoField(view.getByTestId("journal-composer-body") as HTMLTextAreaElement, "Kickoff done");
+    fireEvent.click(view.getByTestId("journal-composer-add"));
+
+    await waitFor(() => {
+      expect(appendEvent).toHaveBeenCalledWith("reg-1", {
+        kind: "progress",
+        body: "Kickoff done",
+        actor: "operator",
+      });
+    });
+    await waitFor(() => {
+      expect(listRegistrarEvents).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect((view.getByTestId("journal-composer-body") as HTMLTextAreaElement).value).toBe("");
+    });
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("the Add button stays disabled while the post-append refetch is in flight", async () => {
+    const detail = makeDetailFixture();
+    detail.events = [];
+    const appendEvent = mock(async () => makeAppendedEvent());
+    let listCall = 0;
+    const refetchGate: {
+      resolve: ((value: { events: Record<string, unknown>[] }) => void) | null;
+    } = { resolve: null };
+    const listRegistrarEvents = mock(async () => {
+      listCall += 1;
+      if (listCall === 1) {
+        return { events: [] };
+      }
+      return await new Promise<{ events: Record<string, unknown>[] }>((resolve) => {
+        refetchGate.resolve = resolve;
+      });
+    });
+    const stubClient = {
+      getRegistrarEntry: mock(async () => detail),
+      listRegistrarEvents,
+      registrar: { appendEvent },
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-body")).toBeTruthy();
+    });
+    expect(listRegistrarEvents).toHaveBeenCalledTimes(1);
+
+    typeIntoField(view.getByTestId("journal-composer-body") as HTMLTextAreaElement, "Kickoff done");
+    fireEvent.click(view.getByTestId("journal-composer-add"));
+
+    await waitFor(() => {
+      expect(listRegistrarEvents).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-add").hasAttribute("disabled")).toBe(true);
+    });
+
+    if (refetchGate.resolve === null) {
+      throw new Error("deferred refetch not captured");
+    }
+    refetchGate.resolve({ events: [] });
+    await waitFor(() => {
+      expect((view.getByTestId("journal-composer-body") as HTMLTextAreaElement).value).toBe("");
+    });
+    expect(appendEvent).toHaveBeenCalledTimes(1);
+    expect(listRegistrarEvents).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("a whitespace-only body leaves Add disabled and posts nothing", async () => {
+    const detail = makeDetailFixture();
+    detail.events = [];
+    const appendEvent = mock(async () => makeAppendedEvent());
+    const stubClient = {
+      getRegistrarEntry: mock(async () => detail),
+      listRegistrarEvents: mock(async () => ({ events: [] })),
+      registrar: { appendEvent },
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-body")).toBeTruthy();
+    });
+
+    typeIntoField(view.getByTestId("journal-composer-body") as HTMLTextAreaElement, " ");
+    const addButton = view.getByTestId("journal-composer-add");
+    await waitFor(() => {
+      expect(addButton.hasAttribute("disabled")).toBe(true);
+    });
+    fireEvent.click(addButton);
+    expect(appendEvent).toHaveBeenCalledTimes(0);
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("a failed append preserves the typed body and re-enables Add", async () => {
+    const detail = makeDetailFixture();
+    detail.events = [];
+    const appendEvent = mock(async () => {
+      throw new DaemonHttpError({
+        status: 500,
+        statusText: "Internal Server Error",
+        bodyText: "server error",
+        url: "http://127.0.0.1/registrar/reg-1/events",
+      });
+    });
+    const listRegistrarEvents = mock(async () => ({ events: [] }));
+    const stubClient = {
+      getRegistrarEntry: mock(async () => detail),
+      listRegistrarEvents,
+      registrar: { appendEvent },
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-body")).toBeTruthy();
+    });
+
+    typeIntoField(
+      view.getByTestId("journal-composer-body") as HTMLTextAreaElement,
+      "Keep this draft",
+    );
+    fireEvent.click(view.getByTestId("journal-composer-add"));
+
+    await waitFor(() => {
+      expect(appendEvent).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      const textarea = view.getByTestId("journal-composer-body") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("Keep this draft");
+      const button = view.getByTestId("journal-composer-add");
+      expect(button.hasAttribute("disabled")).toBe(false);
+    });
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("a body over 4096 bytes is blocked client-side with a counter and no request", async () => {
+    const detail = makeDetailFixture();
+    const appendEvent = mock(async () => makeAppendedEvent());
+    const stubClient = {
+      getRegistrarEntry: mock(async () => detail),
+      listRegistrarEvents: mock(async () => ({ events: [] })),
+      registrar: { appendEvent },
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-body")).toBeTruthy();
+    });
+    typeIntoField(
+      view.getByTestId("journal-composer-body") as HTMLTextAreaElement,
+      "a".repeat(4097),
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-bytes").textContent ?? "").toContain("4097");
+    });
+    const addButton = view.getByTestId("journal-composer-add");
+    expect(addButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(addButton);
+    await waitFor(() => {
+      expect(view.getByTestId("journal-composer-bytes").textContent ?? "").toContain("4097");
+    });
+    expect(appendEvent).toHaveBeenCalledTimes(0);
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("a 404 on /registrar renders 'registrar disabled', not an error toast", async () => {
+    const stubClient = {
+      getRegistrarEntry: mock(async () => {
+        throw new DaemonHttpError({
+          status: 404,
+          statusText: "Not Found",
+          bodyText: "not found",
+          url: "http://127.0.0.1/registrar/reg-1",
+        });
+      }),
+      listRegistrarEvents: mock(async () => ({ events: [] })),
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("registrar-disabled").textContent ?? "").toContain(
+        "registrar disabled",
+      );
+    });
+    expect(view.queryByTestId("registrar-detail-error")).toBeNull();
+    expect(view.container.querySelector(".toast")).toBeNull();
+
+    view.unmount();
+    client.clear();
+  });
+
+  test("a 404 with code registrar_not_found renders the error state, not 'registrar disabled'", async () => {
+    const stubClient = {
+      getRegistrarEntry: mock(async () => {
+        throw new DaemonHttpError({
+          status: 404,
+          statusText: "Not Found",
+          bodyText: JSON.stringify({ error: "registrar_not_found", registrar_id: "reg-1" }),
+          url: "http://127.0.0.1/registrar/reg-1",
+        });
+      }),
+      listRegistrarEvents: mock(async () => ({ events: [] })),
+    } as unknown as DaemonClient;
+
+    const { Wrapper, client } = makeWrapper(["/registrar/reg-1"]);
+    const view = render(
+      <Wrapper>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail client={stubClient} />} />
+        </Routes>
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("registrar-detail-error")).toBeTruthy();
+    });
+    expect(view.queryByTestId("registrar-disabled")).toBeNull();
 
     view.unmount();
     client.clear();

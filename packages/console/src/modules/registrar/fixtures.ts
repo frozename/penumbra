@@ -17,6 +17,8 @@ export function makeStoryEntry(overrides: Partial<RegistrarEntry> = {}): Registr
     status: "active",
     created_at: BASE_TS,
     updated_at: BASE_TS + 3_600_000,
+    rollup: { open_blockers: 0, open_follow_ups: 0 },
+    phase_progress: { complete: 1, total: 3 },
     ...overrides,
   };
 }

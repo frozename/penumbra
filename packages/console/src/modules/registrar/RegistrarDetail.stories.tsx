@@ -1,8 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react";
+
 import { Route, Routes } from "react-router-dom";
-import { registrarDetail } from "@src/lib/query-keys";
-import { RegistrarDetail } from "./RegistrarDetail";
+
+import { registrarDetail, registrarEvents } from "@src/lib/query-keys";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
+
 import { makeStoryDetail } from "./fixtures";
+import { RegistrarDetail } from "./RegistrarDetail";
 
 const meta: Meta<typeof RegistrarDetail> = {
   title: "Registrar/RegistrarDetail",
@@ -12,12 +17,20 @@ const meta: Meta<typeof RegistrarDetail> = {
 export default meta;
 type Story = StoryObj;
 
+function renderDetail(): JSX.Element {
+  return (
+    <ToastProvider>
+      <ConfirmDialogProvider>
+        <Routes>
+          <Route path="/registrar/:registrarId" element={<RegistrarDetail />} />
+        </Routes>
+      </ConfirmDialogProvider>
+    </ToastProvider>
+  );
+}
+
 export const EmptyJournal: Story = {
-  render: () => (
-    <Routes>
-      <Route path="/registrar/:registrarId" element={<RegistrarDetail />} />
-    </Routes>
-  ),
+  render: renderDetail,
   parameters: {
     initialRoute: "/registrar/reg-story-1",
     queryCache: [
@@ -26,7 +39,7 @@ export const EmptyJournal: Story = {
         data: makeStoryDetail({ events: [] }),
       },
       {
-        key: [...registrarDetail("reg-story-1"), "events"],
+        key: registrarEvents("reg-story-1"),
         data: { events: [] },
       },
     ],
@@ -34,11 +47,7 @@ export const EmptyJournal: Story = {
 };
 
 export const OneOpenBlocker: Story = {
-  render: () => (
-    <Routes>
-      <Route path="/registrar/:registrarId" element={<RegistrarDetail />} />
-    </Routes>
-  ),
+  render: renderDetail,
   parameters: {
     initialRoute: "/registrar/reg-story-1",
     queryCache: [
@@ -47,7 +56,7 @@ export const OneOpenBlocker: Story = {
         data: makeStoryDetail({ rollup: { open_blockers: 1, open_follow_ups: 1 } }),
       },
       {
-        key: [...registrarDetail("reg-story-1"), "events"],
+        key: registrarEvents("reg-story-1"),
         data: { events: makeStoryDetail({}).events },
       },
     ],
@@ -55,11 +64,7 @@ export const OneOpenBlocker: Story = {
 };
 
 export const AllPhasesComplete: Story = {
-  render: () => (
-    <Routes>
-      <Route path="/registrar/:registrarId" element={<RegistrarDetail />} />
-    </Routes>
-  ),
+  render: renderDetail,
   parameters: {
     initialRoute: "/registrar/reg-story-2",
     queryCache: [
@@ -73,7 +78,7 @@ export const AllPhasesComplete: Story = {
         }),
       },
       {
-        key: [...registrarDetail("reg-story-2"), "events"],
+        key: registrarEvents("reg-story-2"),
         data: { events: [] },
       },
     ],

@@ -15,26 +15,44 @@ function registrarRollupFor(
   state: HarnessState,
   registrarId: string,
 ): { open_blockers: number; open_follow_ups: number } {
-  const closed = new Set<number>();
+  const closed = new Set<string>();
   for (const event of state.registrarEvents) {
     if (event.registrar_id !== registrarId || event.ref_event_id === null) continue;
     if (event.state === "resolved" || event.state === "done" || event.state === "dropped") {
-      closed.add(event.ref_event_id);
+      closed.add(`${event.kind}:${String(event.ref_event_id)}`);
     }
   }
   let openBlockers = 0;
   let openFollowUps = 0;
   for (const event of state.registrarEvents) {
-    if (event.registrar_id !== registrarId || closed.has(event.event_id)) continue;
+    if (event.registrar_id !== registrarId) continue;
+    if (closed.has(`${event.kind}:${String(event.event_id)}`)) continue;
     if (event.kind === "blocker" && event.state === "opened") openBlockers += 1;
     if (event.kind === "follow_up" && event.state === "owed") openFollowUps += 1;
   }
   return { open_blockers: openBlockers, open_follow_ups: openFollowUps };
 }
 
+function registrarPhaseProgressFor(
+  state: HarnessState,
+  registrarId: string,
+): { complete: number; total: number } {
+  const phases = state.registrarPhases.filter((phase) => phase.registrar_id === registrarId);
+  return {
+    complete: phases.filter((phase) => phase.status === "complete").length,
+    total: phases.length,
+  };
+}
+
 export function register(router: FixtureRouter, state: HarnessState): void {
   router.route("GET", "/registrar", (ctx) => {
-    sendJson(ctx.response, { entries: state.registrarEntries });
+    sendJson(ctx.response, {
+      entries: state.registrarEntries.map((entry) => ({
+        ...entry,
+        rollup: registrarRollupFor(state, entry.registrar_id),
+        phase_progress: registrarPhaseProgressFor(state, entry.registrar_id),
+      })),
+    });
   });
 
   router.route("POST", "/registrar", (ctx) => {

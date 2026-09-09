@@ -1,3 +1,5 @@
+import type { ApprovePermissionRequest, RegistrarEventInput } from "@penumbra/api-contract";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DaemonClient, type UsageQuotaResponse } from "@src/api/client.js";
@@ -106,6 +108,22 @@ const minimalSessionDraftRow = {
   reviewed_at: null,
   composed_event_id: 1,
   review_event_id: null,
+};
+
+const minimalPermissionRow = {
+  permission_id: "p1",
+  parent_handoff_id: "h-1",
+  conversation_id: "c-1",
+  agent_name: "a",
+  tool_name: "t",
+  raw_input_json: "{}",
+  status: "pending",
+  remember_scope: null,
+  decision_reason: null,
+  decided_by: null,
+  ttl_at: "2026-09-01T10:05:00.000Z",
+  created_at: "2026-09-01T10:00:00.000Z",
+  decided_at: null,
 };
 
 describe("DaemonClient", () => {
@@ -323,5 +341,135 @@ describe("DaemonClient", () => {
     expect(url.searchParams.get("status")).toBe("awaiting_approval");
     expect(url.searchParams.get("limit")).toBe("20");
     expect(result.drafts[0]!.draft_id).toBe("draft-1");
+  });
+
+  test("permissions.list({status:'pending'}) GETs /permissions?status=pending", async () => {
+    handler = (): Response => jsonResponse({ permissions: [minimalPermissionRow] });
+    const client = makeClient();
+    const result = await client.permissions.list({ status: "pending" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/permissions?status=pending");
+    expect(result.permissions).toHaveLength(1);
+    expect(result.permissions[0]!.permission_id).toBe("p1");
+  });
+
+  test("permissions.decide(id,{decision:'approve'}) POSTs /permissions/<enc(id)>/decide and never sends resolved_by", async () => {
+    const decidedAt = "2026-09-01T10:01:00.000Z";
+    handler = (): Response =>
+      jsonResponse({ permission_id: "p/1", status: "approved", decided_at: decidedAt });
+    const client = makeClient();
+    const result = await client.permissions.decide("p/1", { decision: "approve" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/permissions/p%2F1/decide");
+    expect(calls[0]!.init?.method).toBe("POST");
+    const body = parseBody(calls[0]!.init);
+    expect(body).not.toHaveProperty("resolved_by");
+    expect(body).toEqual({ decision: "approve" });
+    expect(result).toEqual({ permission_id: "p/1", status: "approved", decided_at: decidedAt });
+  });
+
+  test("permissions.decide rejects a body carrying resolved_by before any fetch", async () => {
+    const client = makeClient();
+    const form: ApprovePermissionRequest = { decision: "approve", resolved_by: "someone" };
+    let err: unknown;
+    try {
+      await client.permissions.decide("p1", { ...form });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+  });
+
+  test("sessionNotes.approve({draft_id, approve:true}) POSTs the validated body to /session-notes/approve exactly once", async () => {
+    handler = (): Response => jsonResponse({ draft: minimalSessionDraftRow, event: null });
+    const client = makeClient();
+    const result = await client.sessionNotes.approve({ draft_id: "draft-1", approve: true });
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(calls[0]!.url).toMatch(/\/session-notes\/approve$/u);
+    expect(parseBody(calls[0]!.init)).toEqual({ draft_id: "draft-1", approve: true });
+    expect(result.draft.draft_id).toBe("draft-1");
+  });
+
+  test("sessionNotes.approve({draft_id, approve:true}) validates against SessionNoteApproveRequestSchema (strict, unknown key rejected)", async () => {
+    handler = (): Response => jsonResponse({ draft: minimalSessionDraftRow, event: null });
+    const client = makeClient();
+    const badBody = {
+      draft_id: "draft-1",
+      approve: true,
+      bogus: "nope",
+    } as unknown as Parameters<typeof client.sessionNotes.approve>[0];
+    let err: unknown;
+    try {
+      await client.sessionNotes.approve(badBody);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+    const contractErr = err as DaemonContractError;
+    expect(contractErr.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(true);
+    expect(JSON.stringify(contractErr.issues)).toContain('"bogus"');
+  });
+
+  test("registrar.appendEvent posts RegistrarEventInput with actor 'operator'", async () => {
+    handler = (): Response =>
+      jsonResponse({
+        event: {
+          event_id: 1,
+          registrar_id: "reg-1",
+          phase_no: null,
+          kind: "progress",
+          state: null,
+          ref_event_id: null,
+          link_kind: null,
+          link_value: null,
+          actor: "operator",
+          body: "did stuff",
+          created_at: Date.now(),
+        },
+      });
+    const client = makeClient();
+    await client.registrar.appendEvent("reg-1", {
+      kind: "progress",
+      actor: "operator",
+      body: "did stuff",
+    });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/registrar/reg-1/events");
+    expect(calls[0]!.init?.method).toBe("POST");
+    const body = parseBody(calls[0]!.init);
+    expect(body.actor).toBe("operator");
+    expect(body.kind).toBe("progress");
+  });
+
+  test("registrar.appendEvent rejects an over-length body and an unknown key before any fetch", async () => {
+    const client = makeClient();
+    let errA: unknown;
+    try {
+      await client.registrar.appendEvent("reg-1", {
+        kind: "progress",
+        actor: "operator",
+        body: "a".repeat(4097),
+      });
+    } catch (e) {
+      errA = e;
+    }
+    expect(errA).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+
+    let errB: unknown;
+    try {
+      await client.registrar.appendEvent("reg-1", {
+        kind: "progress",
+        actor: "operator",
+        body: "x",
+        bogus: "nope",
+      } as unknown as RegistrarEventInput);
+    } catch (e) {
+      errB = e;
+    }
+    expect(errB).toBeInstanceOf(DaemonContractError);
+    const contractErr = errB as DaemonContractError;
+    expect(contractErr.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(true);
+    expect(calls.length).toBe(0);
   });
 });

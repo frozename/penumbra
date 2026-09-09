@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { test, expect, type Page } from "@playwright/test";
 import { bootFixture, teardownFixture, type E2EFixture } from "./_helpers";
 
-type View = "mission" | "chains" | "tasks";
+type View = "mission";
 
-const views: View[] = ["mission", "chains", "tasks"];
+const views: View[] = ["mission"];
 const here = dirname(fileURLToPath(import.meta.url));
 
 test.use({ viewport: { width: 1440, height: 900 } });

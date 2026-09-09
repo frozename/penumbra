@@ -1,6 +1,7 @@
 import "../../setup";
-import { describe, expect, mock, test } from "bun:test";
 import { render, within } from "@testing-library/react";
+import { describe, expect, mock, test } from "bun:test";
+
 import { PressureGrid } from "@src/modules/mission/PressureGrid";
 
 describe("PressureGrid", () => {

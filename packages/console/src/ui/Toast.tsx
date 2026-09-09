@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export interface ToastEntry {
   id: number;
@@ -38,15 +46,19 @@ export function ToastProvider({
       const id = seqRef.current;
       setToasts((prev) => [...prev, { id, ...t }]);
       if (dismissMs !== undefined) {
-        const timer = setTimeout(() => dismiss(id), dismissMs);
+        const timer = setTimeout(() => {
+          dismiss(id);
+        }, dismissMs);
         timersRef.current.set(id, timer);
       }
     },
     [dismissMs, dismiss],
   );
 
+  const api = useMemo<ToastApi>(() => ({ push }), [push]);
+
   return (
-    <ToastContext.Provider value={{ push }}>
+    <ToastContext.Provider value={api}>
       {children}
       <div role="status" aria-live="polite" className="toast-region">
         {toasts.map((t) => (
@@ -56,7 +68,9 @@ export function ToastProvider({
               type="button"
               aria-label="Dismiss"
               className="toast-dismiss"
-              onClick={() => dismiss(t.id)}
+              onClick={() => {
+                dismiss(t.id);
+              }}
             >
               x
             </button>

@@ -53,6 +53,9 @@ export const HandoffsListQuerySchema = z
     conversation_id: z.string().min(1).optional(),
     status: z.string().min(1).optional(),
     since: z.iso.datetime().optional(),
+    agent: z.string().min(1).optional(),
+    project_id: z.string().min(1).optional(),
+    project_scope: z.enum(["global"]).optional(),
   })
   .strict();
 
@@ -75,6 +78,7 @@ export const ApproveHandoffRequestSchema = z
     reason: z.string().optional(),
     resolved_by: z.string().min(1).optional(),
   })
+  .strict()
   .refine((v) => !(v.redirect_to && v.reject === true), {
     message: "redirect_to and reject are mutually exclusive",
   });

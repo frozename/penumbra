@@ -54,10 +54,13 @@ const SOLO_TOOLS = new Set<string>([
 ]);
 
 // Real-dispatch tools — each one RESETS the streak to 0. A bare chain_start, a
-// workflow_run, or a CC Task/Skill dispatch all count.
+// workflow_run, a CC Workflow / Agent / Task / Skill dispatch, or an MCP dispatch
+// all count.
 const DISPATCH_TOOLS = new Set<string>([
   "Task",
   "Skill",
+  "Workflow",
+  "Agent",
   "mcp__penumbra__chain_start",
   "mcp__penumbra__chain_start_refined",
   "mcp__penumbra__chain_start_simple",
@@ -71,7 +74,7 @@ type Args = {
   session_id?: string;
 };
 
-type ToolRow = { tool: string | null; source_detail: string | null };
+type ToolRow = { tool: string | null; command: string | null; source_detail: string | null };
 
 const spec: WorkflowSpec = {
   name: "dispatch-drift-guard",
@@ -118,6 +121,110 @@ function toolNameOf(row: ToolRow): string | null {
   return null;
 }
 
+// Shell-execution tools whose payload carries an `input.command` string. A read-only
+// command on any of these must not increment the streak, or the guard is evaded by
+// routing reads through the MCP shell surface.
+function isShellRunner(name: string): boolean {
+  return (
+    name === "Bash" || name === "mcp__penumbra__shell_run" || name === "mcp__penumbra__fs_exec"
+  );
+}
+
+// Return true if this shell command should count as a solo implementation step.
+// Bias toward true (count it) when we cannot tell whether it writes, because
+// under-counting drift is the failure mode this guard exists to prevent;
+// over-counting is merely noise.
+function bashCommandLooksWritey(command: string): boolean {
+  const trimmed = command.trim();
+  if (trimmed.length === 0) return true;
+
+  // Any output redirection to a file means the call writes.
+  // Strip quoted strings first so a > inside a string literal is not mistaken.
+  const withoutStrings = trimmed.replaceAll(/(["'])(?:\\.|(?!\1).)*\1/g, "");
+  if (/(?:\s>{1,2}\s+\S|\S>{1,2}[^&\s=>])/.test(withoutStrings)) return true;
+
+  // Multi-stage chains and backgrounding are hard to classify. Split on the first
+  // stage and inspect it; if we still cannot tell, fall through to the conservative
+  // default.
+  const firstStage = (trimmed.split(/[|&;]+/)[0] ?? "").trim();
+  const parts = firstStage.split(/\s+/);
+  const bin = parts[0] ?? "";
+  const sub = parts[1] ?? "";
+
+  switch (bin) {
+    case "git": {
+      const readOnly = new Set(["log", "show", "diff", "status", "rev-parse"]);
+      return !readOnly.has(sub);
+    }
+    case "sed": {
+      // sed without -i / --in-place only writes to stdout; -i mutates files in place.
+      return /\s(-i|--in-place)\b/.test(trimmed);
+    }
+    case "sqlite3": {
+      const rest = firstStage.slice(firstStage.indexOf(" ") + 1).toUpperCase();
+      return /\b(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|ATTACH|PRAGMA\s+WRITE|VACUUM)\b/.test(rest);
+    }
+    case "python3":
+    case "python": {
+      const rest = firstStage.slice(bin.length).toUpperCase();
+      return (
+        /\bOPEN\s*\([^)]*['"]W/.test(rest) ||
+        /\.WRITE\s*\(/.test(rest) ||
+        /\bJSON\.DUMP/.test(rest) ||
+        />\s*\S/.test(rest)
+      );
+    }
+    case "curl": {
+      // -o/-O writes a file; -d/--data / -X are write side-effects to the remote.
+      return /\s(-[oO]|--output|--upload-file|--data|-d|--request|-X)\b/.test(trimmed);
+    }
+    default: {
+      // Unknown shell command: fall through to the read-only list or the conservative
+      // default at the end of the function.
+    }
+  }
+
+  const readOnlyBins = new Set([
+    "grep",
+    "rg",
+    "cat",
+    "head",
+    "tail",
+    "ls",
+    "find",
+    "wc",
+    "jq",
+    "awk",
+    "xargs",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "dirname",
+    "basename",
+    "readlink",
+    "which",
+    "file",
+    "stat",
+    "md5sum",
+    "sha256sum",
+    "date",
+    "whoami",
+    "pwd",
+    "uname",
+    "hostname",
+    "id",
+    "groups",
+    "env",
+    "printenv",
+    "tput",
+  ]);
+  if (readOnlyBins.has(bin)) return false;
+
+  // Unknown / multi-command / assignment / control flow: count it.
+  return true;
+}
+
 // Count the trailing run of consecutive SOLO tool-calls, stopping (resetting) at the
 // first real dispatch. Reads/greps and status polls are skipped (neither increment nor
 // reset). rows are newest-first.
@@ -127,7 +234,12 @@ function countTrailingSoloStreak(rows: ToolRow[]): number {
     const name = toolNameOf(row);
     if (!name) continue;
     if (DISPATCH_TOOLS.has(name)) break; // real dispatch resets the streak
-    if (SOLO_TOOLS.has(name)) streak += 1;
+    if (SOLO_TOOLS.has(name)) {
+      if (isShellRunner(name) && !bashCommandLooksWritey(row.command ?? "")) {
+        continue; // read-only shell call is inert
+      }
+      streak += 1;
+    }
     // anything else (reads, greps, status polls, other MCP reads) is inert
   }
   return streak;
@@ -168,7 +280,9 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
       // (per-subdirectory relpath suffix).
       const rows = db
         .query<ToolRow, [string, number]>(
-          `SELECT json_extract(payload_json, '$.tool') AS tool, source_detail
+          `SELECT json_extract(payload_json, '$.tool') AS tool,
+                  json_extract(payload_json, '$.input.command') AS command,
+                  source_detail
              FROM t0_events
             WHERE session_id = ?
               AND source = 'claude-code'

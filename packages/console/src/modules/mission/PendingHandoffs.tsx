@@ -1,12 +1,15 @@
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { HandoffRow } from "@penumbra/api-contract";
-import { Card, CardHead } from "@src/ui/Card";
-import { Button } from "@src/ui/Button";
-import { DaemonClient } from "@src/api/client";
-import { useDaemonStore } from "@src/stores/daemon-store";
-import { handoffsPending } from "@src/lib/query-keys";
+
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+
+import { type ApproveHandoffResponse, DaemonClient } from "@src/api/client";
+import { useDaemonAction } from "@src/hooks/useDaemonAction";
+import { handoffsPending, handoffsPendingInvalidations } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
+import { useDaemonStore } from "@src/stores/daemon-store";
+import { Button } from "@src/ui/Button";
+import { Card, CardHead } from "@src/ui/Card";
 
 export interface PendingHandoffsProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */
@@ -38,7 +41,6 @@ function previewMessage(message: string): string {
 
 export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
   const client = useMemo(() => props.client ?? makeDefaultClient(), [props.client]);
-  const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey: handoffsPending(),
@@ -58,12 +60,7 @@ export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
           </div>
         )}
         {rows.map((row) => (
-          <PendingHandoffRow
-            key={row.handoff_id}
-            row={row}
-            client={client}
-            queryClient={queryClient}
-          />
+          <PendingHandoffRow key={row.handoff_id} row={row} client={client} />
         ))}
       </div>
     </Card>
@@ -73,52 +70,39 @@ export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
 interface PendingHandoffRowProps {
   row: HandoffRow;
   client: DaemonClient;
-  queryClient: QueryClient;
 }
 
-function PendingHandoffRow({ row, client, queryClient }: PendingHandoffRowProps): JSX.Element {
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
-  const [denying, setDenying] = useState(false);
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
+function PendingHandoffRow({ row, client }: PendingHandoffRowProps): JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+  const approveHandoff = useDaemonAction<{ handoff_id: string }, ApproveHandoffResponse>(
+    {
+      id: "handoff.approve",
+      tier: "safe",
+      label: "Approve handoff",
+      run: (daemon, { handoff_id }) => daemon.approveHandoff(handoff_id),
+      invalidate: () => [...handoffsPendingInvalidations()],
+    },
+    { client },
+  );
 
-  const onApprove = async () => {
-    setBusy("approve");
-    setError(null);
-    try {
-      await client.approveHandoff(row.handoff_id);
-      await queryClient.invalidateQueries({ queryKey: handoffsPending() });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onSubmitDeny = async () => {
-    setBusy("deny");
-    setError(null);
-    let failed = false;
-    try {
-      await client.approveHandoff(row.handoff_id, {
-        reject: true,
-        reason: reason || "denied",
-      });
-      await queryClient.invalidateQueries({ queryKey: handoffsPending() });
-    } catch (e) {
-      failed = true;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-      if (!failed) {
-        setDenying(false);
-        setReason("");
-      }
-    }
-  };
+  const denyHandoff = useDaemonAction<{ handoff_id: string }, ApproveHandoffResponse>(
+    {
+      id: "handoff.deny",
+      tier: "guarded",
+      label: "Deny handoff",
+      confirm: { title: "Deny handoff" },
+      run: (daemon, { handoff_id }, ctx) =>
+        daemon.approveHandoff(handoff_id, {
+          reject: true,
+          reason: ctx.reason ?? "", // unreachable: ConfirmDialog gates Confirm on a non-blank reason
+        }),
+      invalidate: () => [...handoffsPendingInvalidations()],
+    },
+    { client },
+  );
 
   const filedAt = new Date(row.ts);
-  const disabled = busy !== null;
+  const disabled = confirming || approveHandoff.isPending || denyHandoff.isPending;
 
   return (
     <div
@@ -199,88 +183,34 @@ function PendingHandoffRow({ row, client, queryClient }: PendingHandoffRowProps)
             {row.conversation_id}
           </span>
         </div>
-
-        {error && (
-          <div
-            data-testid="ph-row-error"
-            className="t-tertiary mono"
-            style={{
-              fontSize: 10,
-              color: "var(--color-err)",
-              marginTop: 4,
-              padding: "2px 6px",
-              background: "var(--color-surface-2)",
-              borderRadius: 3,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {denying && (
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              marginTop: 8,
-              alignItems: "center",
-            }}
-          >
-            <input
-              name="deny-reason"
-              value={reason}
-              onChange={(e) => setReason(e.currentTarget.value)}
-              placeholder="reason (optional)"
-              style={{
-                flex: 1,
-                padding: "4px 8px",
-                fontSize: 12,
-                fontFamily: "var(--font-mono)",
-                background: "var(--color-surface-2)",
-                color: "var(--color-text)",
-                border: "1px solid var(--color-border-subtle)",
-                borderRadius: 4,
-              }}
-            />
-            <Button
-              variant="danger"
-              onClick={onSubmitDeny}
-              disabled={disabled}
-              style={{ fontSize: 11 }}
-            >
-              Submit deny
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setDenying(false);
-                setReason("");
-              }}
-              disabled={disabled}
-              style={{ fontSize: 11 }}
-            >
-              Cancel
-            </Button>
-          </div>
-        )}
       </div>
 
       {/* TODO: needs daemon-side defer route */}
-      {!denying && (
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <Button
-            variant="danger"
-            onClick={() => setDenying(true)}
-            disabled={disabled}
-            style={{ fontSize: 11 }}
-          >
-            Deny
-          </Button>
-          <Button variant="ok" onClick={onApprove} disabled={disabled} style={{ fontSize: 11 }}>
-            Approve
-          </Button>
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <Button
+          variant="danger"
+          onClick={() => {
+            setConfirming(true);
+            void denyHandoff.execute({ handoff_id: row.handoff_id }).finally(() => {
+              setConfirming(false);
+            });
+          }}
+          disabled={disabled}
+          style={{ fontSize: 11 }}
+        >
+          Deny
+        </Button>
+        <Button
+          variant="ok"
+          onClick={() => {
+            void approveHandoff.execute({ handoff_id: row.handoff_id });
+          }}
+          disabled={disabled}
+          style={{ fontSize: 11 }}
+        >
+          Approve
+        </Button>
+      </div>
     </div>
   );
 }
