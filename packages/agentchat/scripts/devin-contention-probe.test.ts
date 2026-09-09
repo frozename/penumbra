@@ -81,8 +81,16 @@ describe("devin-contention-probe", () => {
       sqliteLockControlMs: 250,
     });
 
-    expect(result.ok).toBe(true);
+    // Assert on the classification array, not just ok: a bare `ok === false` prints
+    // "Received: false" and discards which predicate fired, which is what made the
+    // 2026-09-09 CI red cost a full investigation to attribute.
+    expect(result.summary.classifications).toEqual([]);
     const round = requireRound(result);
+    // Readiness is stamped before the fixture persists its rows, so a healthy round's
+    // responding skew is scheduler noise rather than SQLite lock waits. If this creeps
+    // back toward MAX_RECEIVE_SKEW_MS (100) the instrument is measuring itself again,
+    // and the next slow runner turns it into a red CI.
+    expect(round.serializedDispatch.respondingSkew.measurement ?? 0).toBeLessThanOrEqual(5);
     expect(round.maxSendSkewMs).toBeLessThanOrEqual(25);
     expect(round.postDb.integrityCheck).toBe("ok");
     expect(round.postDb.sessionsRowCount).toBe(8);
@@ -251,7 +259,7 @@ describe("devin-contention-probe", () => {
     expect(round.serializedDispatch.respondingSkew.measurement).toBeGreaterThan(100);
   });
 
-  test("reads responding skew from control events when the lock masks serialization", async () => {
+  test("reads responding skew from control events under a long hold", async () => {
     const root = await freshTempRoot();
     const dbPath = join(root, "sessions.sqlite");
 
@@ -274,7 +282,13 @@ describe("devin-contention-probe", () => {
       .filter((event) => event.kind === "session_new_responding")
       .map((event) => event.atMs);
     expect(lockedResponding).toHaveLength(3);
-    expect(Math.max(...lockedResponding) - Math.min(...lockedResponding)).toBeLessThanOrEqual(100);
+    // Readiness is now stamped before the fixture persists its events, so the locked
+    // round reports the serialized fixture's own per-index stagger (0/200/400 ms)
+    // instead of the instant each child cleared the released lock. The previous
+    // `<= 100` here pinned that artefact: every child's stamp was dragged to the
+    // release moment by the instrument's own blocked writes. The spread is ~400 ms;
+    // 100 keeps 4x margin rather than re-introducing a tight timing bound.
+    expect(Math.max(...lockedResponding) - Math.min(...lockedResponding)).toBeGreaterThan(100);
 
     expect(round.serializedDispatch.respondingSkew.fired).toBe(true);
     expect(round.serializedDispatch.respondingSkew.measurement).toBeGreaterThan(100);
