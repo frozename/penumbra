@@ -34,7 +34,7 @@ function makeDb(): Database {
 // Seed an agent-tool-use row exactly as the PreToolUse hook writes it
 // (event_type='agent-tool-use', source='claude-code', payload_json.tool=NAME,
 // source_detail='tool:NAME'). seq drives a monotonic ts so ORDER BY ts DESC is stable.
-function seedTool(sessionId: string, toolName: string): void {
+function seedTool(sessionId: string, toolName: string, input: Record<string, unknown> = {}): void {
   seq += 1;
   const idx = String(seq).padStart(2, "0");
   const ts = `2026-06-15T00:00:${idx}Z`;
@@ -50,7 +50,7 @@ function seedTool(sessionId: string, toolName: string): void {
     ts,
     `tool:${toolName}`,
     sessionId,
-    JSON.stringify({ tool: toolName, input: {} }),
+    JSON.stringify({ tool: toolName, input }),
     `${toolName}(...)`,
   );
 }
@@ -185,6 +185,50 @@ test("mcp workflow_run and CC Task both reset the streak", async () => {
   seedTool(MAESTRO_SESSION, "Task"); // dispatch -> reset
   for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
   // trailing streak is 2 (< 8) -> silent
+  expect(await run({ session_id: MAESTRO_SESSION })).toBe("");
+});
+
+// CC Workflow and Agent are real dispatch tools too.
+test("Workflow tool row resets the streak", async () => {
+  process.env.PENUMBRA_SOLO_DRIFT_THRESHOLD = "3";
+  for (let i = 0; i < 5; i++) seedTool(MAESTRO_SESSION, "Edit");
+  seedTool(MAESTRO_SESSION, "Workflow");
+  for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
+  // Reset means trailing streak is 2 (< 3), so silent.
+  expect(await run({ session_id: MAESTRO_SESSION })).toBe("");
+});
+
+test("Agent tool row resets the streak", async () => {
+  process.env.PENUMBRA_SOLO_DRIFT_THRESHOLD = "3";
+  for (let i = 0; i < 5; i++) seedTool(MAESTRO_SESSION, "Edit");
+  seedTool(MAESTRO_SESSION, "Agent");
+  for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
+  // Reset means trailing streak is 2 (< 3), so silent.
+  expect(await run({ session_id: MAESTRO_SESSION })).toBe("");
+});
+
+// Bash must only count as solo when the command writes.
+test("read-only Bash row does not increment the streak", async () => {
+  process.env.PENUMBRA_SOLO_DRIFT_THRESHOLD = "3";
+  // Bash is the oldest; the two trailing Edits would make the streak 2 if the
+  // Bash is correctly skipped as a read-only command.
+  seedTool(MAESTRO_SESSION, "Bash", { command: "git log --oneline" });
+  for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
+  expect(await run({ session_id: MAESTRO_SESSION })).toBe("");
+});
+
+test("writing Bash row still increments the streak", async () => {
+  process.env.PENUMBRA_SOLO_DRIFT_THRESHOLD = "3";
+  seedTool(MAESTRO_SESSION, "Bash", { command: "echo x > /tmp/out" });
+  for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
+  expect(await run({ session_id: MAESTRO_SESSION })).toContain("dispatch-drift:");
+});
+
+test("Skill tool row still resets the streak", async () => {
+  process.env.PENUMBRA_SOLO_DRIFT_THRESHOLD = "3";
+  for (let i = 0; i < 5; i++) seedTool(MAESTRO_SESSION, "Edit");
+  seedTool(MAESTRO_SESSION, "Skill");
+  for (let i = 0; i < 2; i++) seedTool(MAESTRO_SESSION, "Edit");
   expect(await run({ session_id: MAESTRO_SESSION })).toBe("");
 });
 
