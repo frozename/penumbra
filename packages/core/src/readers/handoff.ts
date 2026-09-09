@@ -44,7 +44,11 @@ export class HandoffReader {
     this.db = opts.db;
   }
 
-  listPending(opts?: { conversation_id?: string; to_agent?: string }): HandoffRow[] {
+  listPending(opts?: {
+    conversation_id?: string;
+    to_agent?: string;
+    project_id?: string | null;
+  }): HandoffRow[] {
     const conditions = [`h.status='pending'`];
     const params: string[] = [];
 
@@ -56,6 +60,13 @@ export class HandoffReader {
     if (opts?.to_agent) {
       conditions.push("h.to_agent=?");
       params.push(opts.to_agent);
+    }
+
+    if (opts?.project_id === null) {
+      conditions.push("h.project_id IS NULL");
+    } else if (typeof opts?.project_id === "string") {
+      conditions.push("h.project_id=?");
+      params.push(opts.project_id);
     }
 
     const orderByFairRootLoad = `ORDER BY (
@@ -158,28 +169,34 @@ export class HandoffReader {
       .map(normalizeHandoffRow);
   }
 
-  countCompletedSince(opts: { since: string; conversation_id?: string }): number {
+  countCompletedSince(opts: {
+    since: string;
+    conversation_id?: string;
+    project_id?: string | null;
+    to_agent?: string;
+  }): number {
+    const conditions = [`status='completed'`, `COALESCE(resolved_at, ts) >= ?`];
+    const params: string[] = [opts.since];
+
     if (opts.conversation_id) {
-      const row = this.db
-        .query<{ count: number }, [string, string]>(
-          `SELECT COUNT(*) AS count
-             FROM handoffs
-            WHERE status='completed'
-              AND COALESCE(resolved_at, ts) >= ?
-              AND conversation_id=?`,
-        )
-        .get(opts.since, opts.conversation_id);
-      return row?.count ?? 0;
+      conditions.push("conversation_id=?");
+      params.push(opts.conversation_id);
     }
 
-    const row = this.db
-      .query<{ count: number }, [string]>(
-        `SELECT COUNT(*) AS count
-           FROM handoffs
-          WHERE status='completed'
-            AND COALESCE(resolved_at, ts) >= ?`,
-      )
-      .get(opts.since);
+    if (opts.project_id === null) {
+      conditions.push("project_id IS NULL");
+    } else if (typeof opts.project_id === "string") {
+      conditions.push("project_id=?");
+      params.push(opts.project_id);
+    }
+
+    if (opts.to_agent) {
+      conditions.push("to_agent=?");
+      params.push(opts.to_agent);
+    }
+
+    const sql = `SELECT COUNT(*) AS count FROM handoffs WHERE ${conditions.join(" AND ")}`;
+    const row = this.db.query<{ count: number }, string[]>(sql).get(...params);
     return row?.count ?? 0;
   }
 

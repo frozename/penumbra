@@ -665,18 +665,10 @@ function handoffsListPendingWithStatus(
   statusParam: string,
   sinceParam: string | null,
   conv: string | undefined,
-  authz: WorkerAuthz | undefined,
-  projectIdParam: string | null,
-  projectScopeParam: string | null,
+  project_id: string | null | undefined,
   services: DaemonServices,
   agentParam: string | null,
 ): Response {
-  const resolved = resolveProjectIdFromParams(projectIdParam, projectScopeParam, services);
-  if (resolved.error) return resolved.error;
-  const scoped = applyAuthzProjectScope(resolved.project_id, authz);
-  if (scoped.error) return scoped.error;
-  const project_id = scoped.project_id;
-
   const parsed = parseStatusListParam(statusParam);
   if (parsed.error) return parsed.error;
   const statuses = parsed.statuses ?? [];
@@ -692,6 +684,8 @@ function handoffsListPendingWithStatus(
     const done = services.handoffReader.countCompletedSince({
       since: sinceUtc,
       conversation_id: conv,
+      project_id,
+      to_agent: agentParam ?? undefined,
     });
     return json({ done });
   }
@@ -725,22 +719,33 @@ export function handoffsListPendingRoute(req: Request, services: DaemonServices)
   const authz =
     principal?.kind === "worker" ? services.workerAuthz?.get(principal.worker_id) : undefined;
 
+  const resolvedProject = resolveProjectIdFromParams(projectIdParam, projectScopeParam, services);
+  if (resolvedProject.error) return resolvedProject.error;
+  const scopedProject = applyAuthzProjectScope(resolvedProject.project_id, authz);
+  if (scopedProject.error) return scopedProject.error;
+  const project_id = scopedProject.project_id;
+
   if (statusParam !== null) {
     return handoffsListPendingWithStatus(
       statusParam,
       sinceParam,
       conv,
-      authz,
-      projectIdParam,
-      projectScopeParam,
+      project_id,
       services,
       agentParam,
     );
   }
 
   // No status param: back-compat — pending only
-  const pendingOpts =
-    conv || agentParam ? { conversation_id: conv, to_agent: agentParam ?? undefined } : undefined;
+  const pendingOpts: {
+    conversation_id?: string;
+    to_agent?: string;
+    project_id?: string | null;
+  } = {
+    conversation_id: conv,
+    to_agent: agentParam ?? undefined,
+    project_id,
+  };
   const handoffs = services.handoffReader.listPending(pendingOpts).map(coerceHandoffBooleans);
   return json({ handoffs });
 }
