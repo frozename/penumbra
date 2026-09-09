@@ -2649,7 +2649,13 @@ test("POST /workflows/run threads workflow_run_id and latency_ms into t0 capture
     expect(rows).toHaveLength(2);
 
     for (const row of rows) {
-      expect(row.latency_ms).toBeGreaterThan(0);
+      // The defect was a hard-coded NULL, so the invariant is "the column now holds
+      // a number" — NOT "> 0". A trivial workflow completes in under a millisecond
+      // and legitimately rounds to 0; asserting > 0 encodes a wall-clock assumption
+      // that passes locally and fails on a slower-but-emptier CI runner.
+      expect(row.latency_ms).not.toBeNull();
+      expect(typeof row.latency_ms).toBe("number");
+      expect(row.latency_ms).toBeGreaterThanOrEqual(0);
       const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
       expect(payload.workflow_run_id).toBe("wfrun-capture-route");
     }
