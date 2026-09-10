@@ -1,0 +1,282 @@
+{
+  "releaseReferences": {
+    "hooks": "https://learn.chatgpt.com/docs/hooks",
+    "cliHelp": "codex-cli 0.153.4 --version observed 2026-09-10"
+  },
+  "report": {
+    "surface": "cli",
+    "build": "0.153.4",
+    "cases": [
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "mcp_configuration",
+          "state": "supported",
+          "evidence": {
+            "kind": "live",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.258Z",
+            "probeId": "isolated-cli-mcp_configuration-command"
+          }
+        },
+        "reason": null
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "plugin_command_surface",
+          "state": "supported",
+          "evidence": {
+            "kind": "live",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": "isolated-cli-plugin_command_surface-command"
+          }
+        },
+        "reason": null
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "plugin_management",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "plugin_installation_not_observed"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SessionStart",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "startup"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SessionStart",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "resume"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SessionStart",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "compact"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "UserPromptSubmit",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "user_prompt_input_contract_not_validated",
+        "scenario": "prompt"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "PreToolUse",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "bash"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "PreToolUse",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "apply_patch"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "PreToolUse",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "mcp"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "PostToolUse",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "deferred_completion_correlation_not_validated",
+        "scenario": "deferred_bash_completion"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "PreCompact",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "compact"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "Stop",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "stop"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SessionEnd",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "session_end"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SubagentStart",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "child_start"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
+          "capability": "SubagentStop",
+          "state": "unknown",
+          "evidence": {
+            "kind": "contract",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-10T15:20:33.260Z",
+            "probeId": null
+          }
+        },
+        "reason": "probe_timeout",
+        "scenario": "child_stop"
+      }
+    ],
+    "cleanupComplete": true
+  }
+}
