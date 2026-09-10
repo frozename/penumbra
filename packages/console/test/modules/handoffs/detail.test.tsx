@@ -280,7 +280,7 @@ describe("HandoffDetail", () => {
     view.unmount();
   });
 
-  test("no Land and no Fail control is rendered", async () => {
+  test("Land and Fail controls are rendered; no Complete control", async () => {
     const mocks = makeClient();
 
     const { Wrapper } = makeWrapper("/handoffs/h-abc12345");
@@ -292,8 +292,8 @@ describe("HandoffDetail", () => {
 
     const buttons = view.container.querySelectorAll("button");
     const buttonLabels = Array.from(buttons).map((b) => b.textContent ?? "");
-    expect(buttonLabels).not.toContain("Land");
-    expect(buttonLabels).not.toContain("Fail");
+    expect(buttonLabels).toContain("Land");
+    expect(buttonLabels).toContain("Fail");
     expect(buttonLabels).not.toContain("Complete");
 
     view.unmount();

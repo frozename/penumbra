@@ -3,9 +3,12 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { Route, Routes } from "react-router-dom";
 
 import { dispatchAudit, dispatchEvents, handoffDetail } from "@src/lib/query-keys";
+import { ConfirmDialogProvider } from "@src/ui/ConfirmDialog";
+import { ToastProvider } from "@src/ui/Toast";
 
 import { makeDispatchAuditResponse, makeDispatchEvent, makeHandoffDetail } from "./fixtures";
 import { HandoffDetail } from "./HandoffDetail";
+import { useHandoffStoryClient } from "./story-client";
 
 const meta: Meta<typeof HandoffDetail> = {
   component: HandoffDetail,
@@ -18,11 +21,20 @@ type Story = StoryObj;
 
 const TS = "2026-09-07T10:00:00.000Z";
 
+function DetailStory(): JSX.Element {
+  const client = useHandoffStoryClient();
+  return <HandoffDetail client={client} />;
+}
+
 export const Complete: Story = {
   render: () => (
-    <Routes>
-      <Route path="/handoffs/:handoffId" element={<HandoffDetail />} />
-    </Routes>
+    <ToastProvider>
+      <ConfirmDialogProvider>
+        <Routes>
+          <Route path="/handoffs/:handoffId" element={<DetailStory />} />
+        </Routes>
+      </ConfirmDialogProvider>
+    </ToastProvider>
   ),
   parameters: {
     initialRoute: "/handoffs/h-abc12345",
@@ -61,9 +73,13 @@ export const Complete: Story = {
 
 export const Stale: Story = {
   render: () => (
-    <Routes>
-      <Route path="/handoffs/:handoffId" element={<HandoffDetail />} />
-    </Routes>
+    <ToastProvider>
+      <ConfirmDialogProvider>
+        <Routes>
+          <Route path="/handoffs/:handoffId" element={<DetailStory />} />
+        </Routes>
+      </ConfirmDialogProvider>
+    </ToastProvider>
   ),
   parameters: {
     initialRoute: "/handoffs/h-stale1234",

@@ -13,6 +13,7 @@ import { EntityLink } from "@src/ui/EntityLink";
 import { StatusBadge } from "@src/ui/StatusBadge";
 
 import { DispatchTimeline } from "./DispatchTimeline";
+import { LandPanel } from "./LandPanel";
 import { ReliabilityChip } from "./ReliabilityChip";
 
 export interface HandoffDetailProps {
@@ -103,94 +104,99 @@ export function HandoffDetail(props: HandoffDetailProps = {}): JSX.Element {
             : ""}
         </p>
       </header>
-      <Card>
-        <CardHead title="Details" />
-        <div style={{ padding: 12, display: "grid", gap: 6 }}>
-          <div
-            data-testid="handoff-message"
-            style={{
-              fontSize: 13,
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              maxHeight: 320,
-              overflow: "auto",
-            }}
-          >
-            {handoff.message}
-          </div>
-          <div className="t-tertiary mono" style={{ fontSize: 11 }}>
-            to_agent: {handoff.to_agent}
-          </div>
-          {typeof handoff.branch_name === "string" && handoff.branch_name && (
-            <div className="t-tertiary mono" style={{ fontSize: 11 }}>
-              branch: {handoff.branch_name}
+      <div className="surface-body">
+        <Card>
+          <CardHead title="Details" />
+          <div style={{ padding: 12, display: "grid", gap: 6 }}>
+            <div
+              data-testid="handoff-message"
+              style={{
+                fontSize: 13,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                maxHeight: 320,
+                overflow: "auto",
+              }}
+            >
+              {handoff.message}
             </div>
-          )}
-          {typeof handoff.branch_base === "string" && handoff.branch_base && (
             <div className="t-tertiary mono" style={{ fontSize: 11 }}>
-              branch_base: {handoff.branch_base}
+              to_agent: {handoff.to_agent}
             </div>
-          )}
-          <div className="t-tertiary mono" style={{ fontSize: 11 }}>
-            use_worktree: {handoff.use_worktree === null ? "—" : String(handoff.use_worktree)}
+            {typeof handoff.branch_name === "string" && handoff.branch_name && (
+              <div className="t-tertiary mono" style={{ fontSize: 11 }}>
+                branch: {handoff.branch_name}
+              </div>
+            )}
+            {typeof handoff.branch_base === "string" && handoff.branch_base && (
+              <div className="t-tertiary mono" style={{ fontSize: 11 }}>
+                branch_base: {handoff.branch_base}
+              </div>
+            )}
+            <div className="t-tertiary mono" style={{ fontSize: 11 }}>
+              use_worktree: {handoff.use_worktree === null ? "—" : String(handoff.use_worktree)}
+            </div>
+            <div className="t-tertiary mono" style={{ fontSize: 11 }}>
+              conversation: <EntityLink id={handoff.conversation_id} kind="conversation" />
+            </div>
           </div>
-          <div className="t-tertiary mono" style={{ fontSize: 11 }}>
-            conversation: <EntityLink id={handoff.conversation_id} kind="conversation" />
-          </div>
+        </Card>
+        <div style={{ marginTop: 16 }}>
+          <Card>
+            <CardHead title="Dispatch timeline" id={`${eventList.length} events`} />
+            {events.isError ? (
+              <div
+                className="t-tertiary mono"
+                data-testid="dispatch-timeline-error"
+                style={{ padding: 12, color: "var(--color-err)" }}
+              >
+                Failed to load dispatch events:{" "}
+                {events.error instanceof Error ? events.error.message : String(events.error)}
+              </div>
+            ) : events.isLoading ? (
+              <div className="t-tertiary mono" style={{ padding: 12 }}>
+                Loading dispatch events…
+              </div>
+            ) : eventList.length === 0 ? (
+              <EmptyState testId="dispatch-timeline-empty" title="No dispatch events." />
+            ) : (
+              <DispatchTimeline events={eventList} />
+            )}
+          </Card>
         </div>
-      </Card>
-      <div style={{ marginTop: 16 }}>
-        <Card>
-          <CardHead title="Dispatch timeline" id={`${eventList.length} events`} />
-          {events.isError ? (
-            <div
-              className="t-tertiary mono"
-              data-testid="dispatch-timeline-error"
-              style={{ padding: 12, color: "var(--color-err)" }}
-            >
-              Failed to load dispatch events:{" "}
-              {events.error instanceof Error ? events.error.message : String(events.error)}
-            </div>
-          ) : events.isLoading ? (
-            <div className="t-tertiary mono" style={{ padding: 12 }}>
-              Loading dispatch events…
-            </div>
-          ) : eventList.length === 0 ? (
-            <EmptyState testId="dispatch-timeline-empty" title="No dispatch events." />
-          ) : (
-            <DispatchTimeline events={eventList} />
-          )}
-        </Card>
-      </div>
-      <div style={{ marginTop: 16 }}>
-        <Card>
-          <CardHead title="Reliability" />
-          {audit.isError ? (
-            <div
-              className="t-tertiary mono"
-              data-testid="reliability-error"
-              style={{ padding: 12, color: "var(--color-err)" }}
-            >
-              Failed to load reliability report:{" "}
-              {audit.error instanceof Error ? audit.error.message : String(audit.error)}
-            </div>
-          ) : report ? (
-            <div style={{ padding: 12, display: "flex", gap: 8, alignItems: "center" }}>
-              <ReliabilityChip report={report} />
-              <span className="t-tertiary mono" style={{ fontSize: 11 }}>
-                {report.summary}
-              </span>
-            </div>
-          ) : (
-            <div
-              className="t-tertiary mono"
-              data-testid="reliability-loading"
-              style={{ padding: 12 }}
-            >
-              Loading reliability…
-            </div>
-          )}
-        </Card>
+        <div style={{ marginTop: 16 }}>
+          <Card>
+            <CardHead title="Reliability" />
+            {audit.isError ? (
+              <div
+                className="t-tertiary mono"
+                data-testid="reliability-error"
+                style={{ padding: 12, color: "var(--color-err)" }}
+              >
+                Failed to load reliability report:{" "}
+                {audit.error instanceof Error ? audit.error.message : String(audit.error)}
+              </div>
+            ) : report ? (
+              <div style={{ padding: 12, display: "flex", gap: 8, alignItems: "center" }}>
+                <ReliabilityChip report={report} />
+                <span className="t-tertiary mono" style={{ fontSize: 11 }}>
+                  {report.summary}
+                </span>
+              </div>
+            ) : (
+              <div
+                className="t-tertiary mono"
+                data-testid="reliability-loading"
+                style={{ padding: 12 }}
+              >
+                Loading reliability…
+              </div>
+            )}
+          </Card>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <LandPanel key={handoffId} handoffId={handoffId} client={client} />
+        </div>
       </div>
     </>
   );
