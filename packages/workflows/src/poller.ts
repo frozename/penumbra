@@ -51,7 +51,7 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
     | undefined;
   const lastSessionHandoff = db
     .query(
-      "SELECT ts FROM t0_events WHERE event_type = 'workflow.outcome' AND json_extract(payload_json, '$.workflow_name') = 'session-handoff' ORDER BY ts DESC LIMIT 1",
+      "SELECT ts FROM t0_events WHERE event_type = 'workflow.outcome' AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END = 'session-handoff' ORDER BY ts DESC LIMIT 1",
     )
     .get() as { ts: string } | undefined;
 

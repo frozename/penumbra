@@ -78,6 +78,13 @@ const SCHEMA_DDL_BLOCK_01 = `
           'task_draft_stale','task_draft_duplicate','task_draft_escalation'
         );
 
+      CREATE INDEX IF NOT EXISTS t0_events_workflow_outcome_lookup
+        ON t0_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END,
+          ts
+        )
+        WHERE event_type = 'workflow.outcome';
+
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,
         project_id              TEXT,
@@ -1186,6 +1193,9 @@ function applyHandoffsMigration(db: Database): void {
   );
   db.run(
     `CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS handoffs_workflow_run_id ON handoffs(workflow_run_id) WHERE workflow_run_id IS NOT NULL;`,
   );
   backfillHandoffRoots(db);
   dedupeOpenLaneLedgerRowsOnce(db);

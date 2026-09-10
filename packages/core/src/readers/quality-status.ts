@@ -113,7 +113,7 @@ function readAdversarial(
        FROM t0_events
        WHERE event_type = 'workflow.outcome'
          AND ts >= ?
-         AND json_extract(payload_json, '$.workflow_name') = ?
+         AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END = ?
        ORDER BY ts DESC`,
     )
     .all(cutoff, workflowName);

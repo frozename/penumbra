@@ -1529,7 +1529,7 @@ export function workflowsHistoryRoute(req: Request, services: Services): Promise
       | undefined) ?? null;
   const recent = db
     .query(
-      `SELECT ts, event_type, payload_json FROM t0_events WHERE event_type = 'workflow.outcome' AND json_extract(payload_json, '$.workflow_name') = ? ORDER BY ts DESC LIMIT 20`,
+      `SELECT ts, event_type, payload_json FROM t0_events WHERE event_type = 'workflow.outcome' AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END = ? ORDER BY ts DESC LIMIT 20`,
     )
     .all(name) as WorkflowOutcomeRow[];
   return Promise.resolve(json({ stats, recent }));
