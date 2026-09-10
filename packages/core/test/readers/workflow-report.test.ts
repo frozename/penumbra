@@ -350,6 +350,45 @@ describe("workflowReport", () => {
     expect(rows[1]).toMatchObject({ workflow_name: "(unnamed)", cost_usd: 2, dispatches: 1 });
   });
 
+  test("excludes outcomes after the report end time", () => {
+    const db = freshDb();
+    event(db, {
+      id: "future",
+      ts: "2026-05-08T12:00:00.001Z",
+      workflow_name: "future",
+      workflow_run_id: "future-run",
+      outcome: "success",
+    });
+    handoff(db, { id: "future-handoff", workflow_run_id: "future-run" });
+    performance(db, { handoff_id: "future-handoff", cost_usd: 99 });
+    expect(workflowReport(db, { window_hours: 24, now: NOW }).rows).toEqual([]);
+    db.close();
+  });
+
+  test("counts dispatches with no performance record without inventing measurements", () => {
+    const db = freshDb();
+    event(db, {
+      id: "pending-spend",
+      ts: "2026-05-08T11:00:00.000Z",
+      workflow_name: "pending-spend",
+      workflow_run_id: "pending-spend-run",
+      outcome: "success",
+    });
+    handoff(db, { id: "unmeasured", workflow_run_id: "pending-spend-run" });
+    const rows = workflowReport(db, { window_hours: 24, now: NOW }).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      runs: 1,
+      dispatches: 1,
+      cost_usd: null,
+      tokens: null,
+      framework_overhead_ms: null,
+      reliability_complete_pct: null,
+      dispatches_missing_cost: 0,
+    });
+    db.close();
+  });
+
   test("validates report window hours", () => {
     const db = freshDb();
     for (const window_hours of [0, -1, 2161, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {

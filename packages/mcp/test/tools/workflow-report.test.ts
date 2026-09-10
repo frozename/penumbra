@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { ZodError } from "zod";
 
 import type { DaemonClient } from "@src/daemon-client.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import { workflowReportHandler } from "@src/tools/workflow-report.js";
 
 import { fakeDaemon } from "../helpers.js";
@@ -52,6 +53,26 @@ test("rejects empty project ids and non-integer windows before daemon call", asy
   expect(await captureRejection(handler({ window_hours: 1.5 }))).toBeInstanceOf(ZodError);
   expect(await captureRejection(handler({ window_hours: 2161 }))).toBeInstanceOf(ZodError);
   expect(workflowReport).not.toHaveBeenCalled();
+});
+
+test("registered report tool validates strict input and forwards default and boundary windows", async () => {
+  const workflowReport = mock<WorkflowReportFn>(() => Promise.resolve({ window: {}, rows: [] }));
+  const entry = TOOL_REGISTRY.workflow_report;
+  if (!entry) throw new Error("workflow_report must be registered");
+  expect(entry.readOnly).toBe(true);
+  const handler = entry.makeHandler(fakeDaemon({ workflowReport }));
+  for (const input of [{ unexpected: true }, { window_hours: 0 }, { window_hours: Number.NaN }]) {
+    expect(await captureRejection(handler(input))).toBeInstanceOf(ZodError);
+  }
+  expect(workflowReport).not.toHaveBeenCalled();
+  await handler({});
+  await handler({ window_hours: 1 });
+  await handler({ window_hours: 2160 });
+  expect(workflowReport.mock.calls).toEqual([
+    [{}],
+    [{ window_hours: 1 }],
+    [{ window_hours: 2160 }],
+  ]);
 });
 
 test("transport failures follow sibling handler behavior", async () => {

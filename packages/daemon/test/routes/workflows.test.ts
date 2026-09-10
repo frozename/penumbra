@@ -2252,6 +2252,21 @@ test("GET /workflows/report runs the real reader with filters", async () => {
   expect(body.rows[0]).toMatchObject({ workflow_name: "demo", runs: 1 });
 });
 
+test("GET /workflows/report preserves database failures for server error handling", async () => {
+  const db = freshDb();
+  db.close();
+  let caught: unknown;
+  try {
+    await workflowsReportRoute(
+      new Request("http://localhost/workflows/report"),
+      mockServices({ db }),
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+});
+
 test("GET /workflows/report rejects invalid windows and empty project ids", async () => {
   const db = freshDb();
   const services = mockServices({ db });

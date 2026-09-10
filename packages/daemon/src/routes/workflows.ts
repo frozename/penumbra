@@ -1563,19 +1563,16 @@ export function workflowsReportRoute(req: Request, services: Services): Promise<
       ),
     );
   }
+  let windowHours: number | undefined;
   try {
-    return Promise.resolve(
-      json(
-        workflowReport(services.db, {
-          window_hours: parseWorkflowReportWindow(url.searchParams.get("window_hours")),
-          project_id: projectId,
-        }),
-      ),
-    );
+    windowHours = parseWorkflowReportWindow(url.searchParams.get("window_hours"));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Promise.resolve(json({ error: { code: "validation_error", message } }, 400));
   }
+  return Promise.resolve(
+    json(workflowReport(services.db, { window_hours: windowHours, project_id: projectId })),
+  );
 }
 
 export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {
