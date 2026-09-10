@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, type RouteObject } from "react-router-dom";
 
 import { ApprovalsView } from "./modules/approvals";
+import { HandoffDetail, HandoffsView } from "./modules/handoffs";
 import { MODULES, type ModuleSpec } from "./modules/manifest";
 import { MissionControl } from "./modules/mission";
 import { RegistrarDetail, RegistrarList } from "./modules/registrar";
@@ -30,6 +31,12 @@ function moduleRoutes(m: ModuleSpec): RouteObject[] {
     return [
       { path: m.id, element: <RegistrarList /> },
       { path: `${m.id}/:registrarId`, element: <RegistrarDetail /> },
+    ];
+  }
+  if (m.id === "handoffs") {
+    return [
+      { path: m.id, element: <HandoffsView /> },
+      { path: `${m.id}/:handoffId`, element: <HandoffDetail /> },
     ];
   }
   return [{ path: m.id, element: moduleElement(m) }];

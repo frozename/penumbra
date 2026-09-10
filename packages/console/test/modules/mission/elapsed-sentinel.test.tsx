@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, waitFor } from "@testing-library/react/pure";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MemoryRouter } from "react-router-dom";
 
 import type { EventSourceLike } from "@src/api/event-source-shim";
 import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
@@ -26,7 +27,11 @@ function makeWrapper(): {
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   });
   function Wrapper({ children }: { children: ReactNode }): JSX.Element {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/mission"]}>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
   }
   return { Wrapper, client };
 }

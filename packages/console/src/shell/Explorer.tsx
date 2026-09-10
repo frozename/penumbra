@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { DaemonClient } from "../api/client";
 import { useSession } from "../hooks/useSession";
@@ -15,6 +15,7 @@ function makeDefaultClient(): DaemonClient {
 
 function MissionSidebar(): JSX.Element {
   const client = useMemo(() => makeDefaultClient(), []);
+  const navigate = useNavigate();
   const session = useSession({ client });
   const pendingHandoffs = useQuery({
     queryKey: handoffsPending(),
@@ -49,10 +50,25 @@ function MissionSidebar(): JSX.Element {
           PENDING <span className="count">{pending.length}</span>
         </h2>
         {pending.map((handoff) => (
-          <div key={handoff.handoff_id} className="exp-row" onClick={() => {}}>
+          <button
+            key={handoff.handoff_id}
+            type="button"
+            className="exp-row"
+            style={{
+              width: "100%",
+              background: "none",
+              border: 0,
+              color: "inherit",
+              font: "inherit",
+              textAlign: "left",
+            }}
+            onClick={() => {
+              navigate(`/handoffs/${handoff.handoff_id}`);
+            }}
+          >
             <span className="dot dot-warn dot-live" style={{ flexShrink: 0 }} />
             <span className="lbl">{summarizeWords(handoff.message, 5)}</span>
-          </div>
+          </button>
         ))}
       </div>
       <div className="exp-section">

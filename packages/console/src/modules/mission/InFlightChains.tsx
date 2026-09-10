@@ -8,6 +8,7 @@ import { chainsByStatus } from "@src/lib/query-keys";
 import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { Card, CardHead } from "@src/ui/Card";
+import { EntityLink } from "@src/ui/EntityLink";
 import { StatusBadge } from "@src/ui/StatusBadge";
 
 function makeDefaultClient(): DaemonClient {
@@ -15,7 +16,6 @@ function makeDefaultClient(): DaemonClient {
 }
 
 function LiveChainCard({ chain }: { chain: ChainSummary }): JSX.Element {
-  const rootId = chain.root_handoff_id?.slice(0, 9) ?? chain.conversation_id.slice(0, 9);
   const worktreeRaw = chain.worktree_path ?? chain.worktree_root;
   const worktree = typeof worktreeRaw === "string" ? worktreeRaw : null;
 
@@ -25,7 +25,13 @@ function LiveChainCard({ chain }: { chain: ChainSummary }): JSX.Element {
         <span
           className={`dot ${chain.latest_status === "dispatched" ? "dot-brand dot-live" : "dot-warn"}`}
         />
-        <span className="chain-card-title mono">{rootId}</span>
+        <span className="chain-card-title mono">
+          {chain.root_handoff_id ? (
+            <EntityLink id={chain.root_handoff_id} kind="handoff" />
+          ) : (
+            <EntityLink id={chain.conversation_id} kind="conversation" />
+          )}
+        </span>
         <span className="chain-card-hops">{chain.handoff_count} hops</span>
         <StatusBadge status={chain.latest_status} monoLabel={chain.latest_status} />
       </div>
@@ -36,7 +42,7 @@ function LiveChainCard({ chain }: { chain: ChainSummary }): JSX.Element {
           </div>
         ) : null}
         <div className="t-tertiary" style={{ fontSize: 11 }}>
-          conversation: {chain.conversation_id}
+          conversation: <EntityLink id={chain.conversation_id} kind="conversation" />
         </div>
         <div
           className="progress-bar"
