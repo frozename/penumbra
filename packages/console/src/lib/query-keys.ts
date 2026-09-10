@@ -32,6 +32,38 @@ export function chainsByStatus(
     : (["chains", status] as const);
 }
 
+/** Handoffs list scoped by status (and optionally agent). */
+export function handoffsByStatus(status: HandoffStatus, agent?: string): readonly unknown[] {
+  return agent !== undefined
+    ? (["handoffs", "by-status", status, agent] as const)
+    : (["handoffs", "by-status", status] as const);
+}
+
+/** Single handoff detail, scoped by handoff id. */
+export function handoffDetail(id: string): readonly ["handoffs", "detail", string] {
+  return ["handoffs", "detail", id] as const;
+}
+
+/** Single handoff status (reliability projection), scoped by handoff id. */
+export function handoffStatus(id: string): readonly ["handoffs", "status", string] {
+  return ["handoffs", "status", id] as const;
+}
+
+/** Dispatch events for a handoff, scoped by handoff id. */
+export function dispatchEvents(id: string): readonly ["dispatch", "events", string] {
+  return ["dispatch", "events", id] as const;
+}
+
+/** Dispatch audit report for a handoff, scoped by handoff id. */
+export function dispatchAudit(id: string): readonly ["dispatch", "audit", string] {
+  return ["dispatch", "audit", id] as const;
+}
+
+/** Dispatch land task, scoped by task id. */
+export function dispatchLandTask(taskId: string): readonly ["dispatch", "land", "task", string] {
+  return ["dispatch", "land", "task", taskId] as const;
+}
+
 /** Usage quota status. */
 export function usageQuotaStatus(): readonly ["usage", "quota_status"] {
   return ["usage", "quota_status"] as const;

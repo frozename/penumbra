@@ -16,11 +16,20 @@ export function register(router: FixtureRouter, state: HarnessState): void {
 
   router.route("GET", "/handoffs", (ctx) => {
     const status = ctx.query.get("status");
-    if (status !== "pending") {
-      sendJson(ctx.response, { handoffs: [] });
-      return;
+    const agent = ctx.query.get("agent");
+    const projectId = ctx.query.get("project_id");
+
+    let filtered = state.pending;
+    if (status) {
+      filtered = filtered.filter((r) => r.status === status);
     }
-    sendJson(ctx.response, { handoffs: state.pending });
+    if (agent) {
+      filtered = filtered.filter((r) => r.to_agent === agent);
+    }
+    if (projectId) {
+      filtered = filtered.filter((r) => r.project_id === projectId);
+    }
+    sendJson(ctx.response, { handoffs: filtered });
   });
 
   router.route("POST", /^\/handoffs\/(?<id>[^/]+)\/approve$/, (ctx) => {

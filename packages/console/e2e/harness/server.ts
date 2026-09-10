@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
+import type { HandoffStatus } from "@penumbra/api-contract";
+
 import type { FixtureRouter } from "./router";
 
 export interface PendingHandoffRow {
@@ -121,6 +123,37 @@ export interface PermissionEventPush {
   payload: unknown;
 }
 
+export interface DispatchEventRow {
+  handoff_id: string;
+  worker_id: string | null;
+  source: "worker" | "daemon";
+  kind: string;
+  ts: string;
+  meta: unknown | null;
+}
+
+export interface AuditReportRow {
+  handoff_id: string;
+  status: string;
+  terminal: boolean;
+  trustworthy: boolean;
+  summary: string;
+  missing_events: string[];
+  evidence: Record<string, unknown>;
+  recommended_action: string;
+}
+
+export interface LandTaskRow {
+  task_id: string;
+  handoff_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  result: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
+}
+
 export interface E2EHarness {
   port: number;
   token: string;
@@ -145,6 +178,10 @@ export interface E2EHarness {
   setPermissions: (rows: PermissionRow[]) => void;
   addPermissionEvent: (evt: PermissionEventPush) => void;
   waitForPermissionSseClient: (opts?: { timeoutMs?: number }) => Promise<void>;
+  setHandoffs: (rows: HarnessRow[]) => void;
+  setDispatchEvents: (handoffId: string, rows: DispatchEventRow[]) => void;
+  setAudit: (handoffId: string, report: AuditReportRow) => void;
+  startLandTask: (taskId: string) => void;
   setQuotaStatus: (data: {
     dispatched_count: number;
     cap: number;
@@ -178,7 +215,8 @@ export interface SseWaiter {
   timer: ReturnType<typeof setTimeout>;
 }
 
-export interface HarnessRow extends PendingHandoffRow {
+export interface HarnessRow extends Omit<PendingHandoffRow, "status"> {
+  status: HandoffStatus;
   project_id: string | null;
   conversation_id: string;
   to_role: string | null;
@@ -228,6 +266,9 @@ export interface HarnessState {
   errors: Map<string, number>;
   sseClients: Set<ServerResponse<IncomingMessage>>;
   sseWaiters: Set<SseWaiter>;
+  dispatchEvents: Map<string, DispatchEventRow[]>;
+  auditReports: Map<string, AuditReportRow>;
+  landTasks: Map<string, LandTaskRow>;
 }
 
 export function createInitialState(): HarnessState {
@@ -258,6 +299,9 @@ export function createInitialState(): HarnessState {
     errors: new Map(),
     sseClients: new Set(),
     sseWaiters: new Set(),
+    dispatchEvents: new Map(),
+    auditReports: new Map(),
+    landTasks: new Map(),
   };
 }
 
@@ -290,6 +334,9 @@ export function resetState(state: HarnessState): void {
   };
   state.calls = [];
   state.errors.clear();
+  state.dispatchEvents.clear();
+  state.auditReports.clear();
+  state.landTasks.clear();
 }
 
 export function resolveSseWaiters(state: HarnessState): void {

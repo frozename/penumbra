@@ -27,6 +27,9 @@ import {
   type SessionEventRow,
   type SessionNoteDraftRow,
   type SseWaiter,
+  type AuditReportRow,
+  type DispatchEventRow,
+  type LandTaskRow,
   createHarnessServer,
   createInitialState,
   resetState,
@@ -50,6 +53,9 @@ export type {
   SessionEventRow,
   SessionNoteDraftRow,
   SseWaiter,
+  AuditReportRow,
+  DispatchEventRow,
+  LandTaskRow,
 };
 
 function toHarnessRow(row: Omit<PendingHandoffRow, "status">): HarnessRow {
@@ -330,6 +336,31 @@ export async function startHarness(): Promise<E2EHarness> {
     },
     clearErrors() {
       state.errors.clear();
+    },
+    setHandoffs(rows: HarnessRow[]) {
+      state.pending = rows.map((row) => ({ ...toHarnessRow(row), ...row }));
+    },
+    setDispatchEvents(handoffId: string, rows: DispatchEventRow[]) {
+      state.dispatchEvents.set(
+        handoffId,
+        rows.map((r) => ({ ...r })),
+      );
+    },
+    setAudit(handoffId: string, report: AuditReportRow) {
+      state.auditReports.set(handoffId, { ...report });
+    },
+    startLandTask(taskId: string) {
+      if (state.landTasks.has(taskId)) return;
+      state.landTasks.set(taskId, {
+        task_id: taskId,
+        handoff_id: "h1",
+        status: "queued",
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+        result: null,
+        error: null,
+      });
     },
   };
 }

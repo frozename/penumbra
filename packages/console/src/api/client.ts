@@ -10,6 +10,9 @@ import {
 } from "@penumbra/api-contract";
 
 import { type ChainsListResponse, chainsSlice, type ChainsSlice } from "./domains/chains.js";
+import { dispatchAuditSlice, type DispatchAuditSlice } from "./domains/dispatch-audit.js";
+import { dispatchEventsSlice, type DispatchEventsSlice } from "./domains/dispatch-events.js";
+import { dispatchLandSlice, type DispatchLandSlice } from "./domains/dispatch-land.js";
 import {
   type ApproveHandoffOpts,
   type HandoffsListResponse,
@@ -77,6 +80,9 @@ export class DaemonClient {
   readonly sessionEvents: SessionEventsSlice;
   readonly sessionNotes: SessionNotesSlice;
   readonly permissions: PermissionsSlice;
+  readonly dispatchLand: DispatchLandSlice;
+  readonly dispatchAudit: DispatchAuditSlice;
+  readonly dispatchEvents: DispatchEventsSlice;
 
   constructor(private readonly deps: DaemonClientDeps) {
     this.daemon = daemonSlice(this.transport);
@@ -89,6 +95,9 @@ export class DaemonClient {
     this.sessionEvents = sessionEventsSlice(this.transport);
     this.sessionNotes = sessionNotesSlice(this.transport);
     this.permissions = permissionsSlice(this.transport);
+    this.dispatchLand = dispatchLandSlice(this.transport);
+    this.dispatchAudit = dispatchAuditSlice(this.transport);
+    this.dispatchEvents = dispatchEventsSlice(this.transport);
   }
 
   async health(): Promise<{ status: "ok" }> {

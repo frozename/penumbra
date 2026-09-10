@@ -472,4 +472,266 @@ describe("DaemonClient", () => {
     expect(contractErr.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(true);
     expect(calls.length).toBe(0);
   });
+
+  test("handoffs.list forwards status, agent, projectId as status, agent, project_id", async () => {
+    handler = (): Response => jsonResponse({ handoffs: [] });
+    const client = makeClient();
+    await client.handoffs.list({ status: "pending", agent: "claude", projectId: "p-1" });
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/handoffs");
+    expect(url.searchParams.get("status")).toBe("pending");
+    expect(url.searchParams.get("agent")).toBe("claude");
+    expect(url.searchParams.get("project_id")).toBe("p-1");
+  });
+
+  test("handoffs.get(id) GETs /handoffs/<enc(id)> and parses handoff detail", async () => {
+    handler = (): Response => jsonResponse({ handoff: minimalHandoffRow });
+    const client = makeClient();
+    const result = await client.handoffs.get("h/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs/h%2F1");
+    expect(calls[0]!.init?.method).toBe("GET");
+    expect(result.handoff.handoff_id).toBe("h1");
+  });
+
+  test("handoffs.get rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.handoffs.get("h1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("handoffs.status(id) GETs /handoffs/<enc(id)>/status and parses status response", async () => {
+    const statusBody = {
+      handoff_id: "h1",
+      status: "dispatched",
+      error_summary: null,
+      branch_name: null,
+      worker_id: null,
+      started_at: "2026-05-08T00:00:00Z",
+      resolved_at: null,
+      latency_seconds: null,
+      reliability: {
+        status: "complete",
+        trustworthy: true,
+        recommended_action: "accept",
+        summary: "ok",
+      },
+    };
+    handler = (): Response => jsonResponse(statusBody);
+    const client = makeClient();
+    const result = await client.handoffs.status("h/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs/h%2F1/status");
+    expect(calls[0]!.init?.method).toBe("GET");
+    expect(result.handoff_id).toBe("h1");
+    expect(result.reliability.status).toBe("complete");
+  });
+
+  test("handoffs.status rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.handoffs.status("h1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("handoffs.fail(id, {reason}) POSTs HandoffFailRequest and parses {handoff_id, status:'failed'}", async () => {
+    handler = (): Response => jsonResponse({ handoff_id: "h1", status: "failed" });
+    const client = makeClient();
+    const result = await client.handoffs.fail("h/1", { reason: "broken" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs/h%2F1/fail");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(parseBody(calls[0]!.init)).toEqual({ reason: "broken" });
+    expect(result).toEqual({ handoff_id: "h1", status: "failed" });
+  });
+
+  test("handoffs.fail(id, {reason, worker_id}) sends worker_id in body", async () => {
+    handler = (): Response => jsonResponse({ handoff_id: "h1", status: "failed" });
+    const client = makeClient();
+    await client.handoffs.fail("h1", { reason: "broken", worker_id: "w1" });
+    expect(parseBody(calls[0]!.init)).toEqual({ reason: "broken", worker_id: "w1" });
+  });
+
+  test("dispatchLand.land(body) POSTs /dispatch/land and parses accepted body without handoff_id", async () => {
+    handler = (): Response => jsonResponse({ ok: true, task_id: "t1", status: "queued" }, 202);
+    const client = makeClient();
+    const result = await client.dispatchLand.land({ handoff_id: "h1" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/dispatch/land");
+    expect(calls[0]!.init?.method).toBe("POST");
+    const body = parseBody(calls[0]!.init);
+    expect(body.handoff_id).toBe("h1");
+    expect(body).not.toHaveProperty("ok");
+    expect(body).not.toHaveProperty("task_id");
+    expect(body).not.toHaveProperty("status");
+    expect(result).toEqual({ ok: true, task_id: "t1", status: "queued" });
+  });
+
+  test("dispatchLand.land sends defaulted booleans and mode when provided", async () => {
+    handler = (): Response => jsonResponse({ ok: true, task_id: "t1", status: "queued" }, 202);
+    const client = makeClient();
+    await client.dispatchLand.land({
+      handoff_id: "h1",
+      commit_message: "msg",
+      mode: "gh",
+      delete_branch: false,
+      force: true,
+      reject_if_held: true,
+    });
+    const body = parseBody(calls[0]!.init);
+    expect(body).toEqual({
+      handoff_id: "h1",
+      commit_message: "msg",
+      mode: "gh",
+      delete_branch: false,
+      force: true,
+      reject_if_held: true,
+    });
+  });
+
+  test("dispatchLand.land allows omitted default booleans/mode", async () => {
+    handler = (): Response => jsonResponse({ ok: true, task_id: "t1", status: "queued" }, 202);
+    const client = makeClient();
+    await client.dispatchLand.land({ handoff_id: "h1" });
+    const body = parseBody(calls[0]!.init);
+    expect(body).toEqual({ handoff_id: "h1" });
+  });
+
+  test("dispatchLand.land rejects malformed accepted body", async () => {
+    handler = (): Response => jsonResponse({ ok: false, task_id: "t1", status: "queued" }, 202);
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchLand.land({ handoff_id: "h1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("dispatchLand.task(taskId) GETs /dispatch/land/<enc(taskId)> and parses task schema", async () => {
+    const taskBody = {
+      task_id: "t1",
+      handoff_id: "h1",
+      status: "done",
+      created_at: "2026-05-08T00:00:00Z",
+      started_at: "2026-05-08T00:01:00Z",
+      finished_at: "2026-05-08T00:02:00Z",
+      result: {
+        ok: true,
+        commit_sha: "abc123",
+        message_subject: "test",
+        branch_deleted: true,
+        pr_closed: false,
+        worktree_torn_down: true,
+      },
+      error: null,
+    };
+    handler = (): Response => jsonResponse(taskBody);
+    const client = makeClient();
+    const result = await client.dispatchLand.task("t/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/dispatch/land/t%2F1");
+    expect(calls[0]!.init?.method).toBe("GET");
+    expect(result.task_id).toBe("t1");
+    expect(result.status).toBe("done");
+    expect(result.result?.commit_sha).toBe("abc123");
+    expect(result.error).toBeNull();
+  });
+
+  test("dispatchLand.task rejects malformed task body", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchLand.task("t1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("dispatchAudit.audit(handoffId) GETs /dispatch/audit?handoff_id=<enc(id)> and parses report", async () => {
+    const auditBody = {
+      report: {
+        handoff_id: "h1",
+        status: "complete",
+        terminal: true,
+        trustworthy: true,
+        summary: "ok",
+        missing_events: [],
+        evidence: {
+          handoff_status: "completed",
+          event_count: 5,
+          response_count: 1,
+          worktree_changed: true,
+          dispatch_end_committed: true,
+          reconciled: null,
+          watchdog_failed: false,
+          cancel_requested: false,
+          adapter_streaming: null,
+        },
+        recommended_action: "accept",
+      },
+    };
+    handler = (): Response => jsonResponse(auditBody);
+    const client = makeClient();
+    const result = await client.dispatchAudit.audit("h/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/dispatch/audit?handoff_id=h%2F1");
+    expect(calls[0]!.init?.method).toBe("GET");
+    expect(result.report.status).toBe("complete");
+    expect(result.report.recommended_action).toBe("accept");
+  });
+
+  test("dispatchAudit.audit rejects malformed report", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchAudit.audit("h1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("dispatchEvents.list(handoffId) GETs /dispatch/events?handoff_id=<enc(id)> and parses events", async () => {
+    const eventsBody = {
+      events: [
+        {
+          handoff_id: "h1",
+          worker_id: "w1",
+          source: "worker",
+          kind: "dispatch.start",
+          ts: "2026-05-08T00:00:00Z",
+          meta: null,
+        },
+      ],
+    };
+    handler = (): Response => jsonResponse(eventsBody);
+    const client = makeClient();
+    const result = await client.dispatchEvents.list("h/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/dispatch/events?handoff_id=h%2F1");
+    expect(calls[0]!.init?.method).toBe("GET");
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.kind).toBe("dispatch.start");
+  });
+
+  test("dispatchEvents.list rejects malformed events body", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchEvents.list("h1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
 });
