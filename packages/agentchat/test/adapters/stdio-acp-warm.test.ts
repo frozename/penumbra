@@ -13,6 +13,7 @@ import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
 import type { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 import { AcpSessionEvictedError, StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
+import type { DispatchInput } from "@src/sdk/adapter.js";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -28,14 +29,14 @@ interface TestHandle extends StdioAcpHandle {
   kill: ReturnType<typeof vi.fn>;
 }
 
-function createHandle(): TestHandle {
+function createHandle(killExitCode: number | null = 0): TestHandle {
   const exited = deferred<number | null>();
   const handle: TestHandle = {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
     pid: Math.floor(Math.random() * 10_000),
     kill: vi.fn(() => {
-      exited.resolve(0);
+      exited.resolve(killExitCode);
     }),
     exited: exited.promise,
     exitCode: null,
@@ -60,6 +61,7 @@ interface ClientFixture {
   calls: RecordedCall[];
   client: ClientStub;
   firstPromptStarted: Promise<undefined>;
+  secondPromptStarted: Promise<undefined>;
 }
 
 // Single documented launder: StdioAcpClient is a nominal class with private
@@ -67,15 +69,19 @@ interface ClientFixture {
 // accepted by the adapter's deps slot.
 const asAcpClient = (stub: ClientStub): StdioAcpClient => stub as unknown as StdioAcpClient;
 
-function createClient(opts: { hangFirstPrompt?: boolean } = {}): ClientFixture {
+function createClient(
+  opts: { hangFirstPrompt?: boolean; hangSecondPrompt?: boolean } = {},
+): ClientFixture {
   const calls: RecordedCall[] = [];
   let updateHandler: ((params: unknown) => void) | undefined;
   let promptCount = 0;
   const firstPrompt = deferred<unknown>();
   const firstPromptStarted = deferred<undefined>();
+  const secondPromptStarted = deferred<undefined>();
   return {
     calls,
     firstPromptStarted: firstPromptStarted.promise,
+    secondPromptStarted: secondPromptStarted.promise,
     client: {
       onRequest: vi.fn(),
       on: vi.fn((method: string, handler: (params: unknown) => void) => {
@@ -92,7 +98,12 @@ function createClient(opts: { hangFirstPrompt?: boolean } = {}): ClientFixture {
         if (method === "session/prompt") {
           promptCount++;
           if (promptCount === 1) firstPromptStarted.resolve(undefined);
-          if (opts.hangFirstPrompt && promptCount === 1) return firstPrompt.promise;
+          if (promptCount === 2) secondPromptStarted.resolve(undefined);
+          if (
+            (opts.hangFirstPrompt && promptCount === 1) ||
+            (opts.hangSecondPrompt && promptCount === 2)
+          )
+            return firstPrompt.promise;
           updateHandler?.({
             update: {
               sessionUpdate: "agent_message_chunk",
@@ -401,7 +412,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
 
   test("aborted warm prompt exit evicts without cold-starting a replacement", async () => {
     const pool = createAcpWarmPool();
-    const warmHandle = createHandle();
+    const warmHandle = createHandle(null);
     const warmClient = createClient({ hangFirstPrompt: true });
     pool.deposit("codex-acp-fast\0/repo", {
       handle: warmHandle,
@@ -448,7 +459,7 @@ describe("StdioAcpAdapter warm pool reuse", () => {
 
   test("aborted initially cold prompt exit removes its deposit without cold recovery", async () => {
     const pool = createAcpWarmPool();
-    const depositedHandle = createHandle();
+    const depositedHandle = createHandle(null);
     const depositedClient = createClient({ hangFirstPrompt: true });
     const recoveryHandle = createHandle();
     const recoveryClient = createClient();
@@ -489,5 +500,167 @@ describe("StdioAcpAdapter warm pool reuse", () => {
     expect(pool.size()).toBe(0);
     expect(depositedHandle.kill).toHaveBeenCalledTimes(1);
     expect(recoveryHandle.kill).not.toHaveBeenCalled();
+  });
+
+  test("only the current dispatch can cancel a reused process", async () => {
+    const pool = createAcpWarmPool();
+    const handle = createHandle(null);
+    const client = createClient({ hangSecondPrompt: true });
+    const startServer = vi.fn((opts: { signal?: AbortSignal }) => {
+      opts.signal?.addEventListener(
+        "abort",
+        (): void => {
+          handle.kill();
+        },
+        { once: true },
+      );
+      return Promise.resolve(handle);
+    });
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
+      { startServer, createClient: (): StdioAcpClient => asAcpClient(client.client), pool },
+    );
+    const previous = new AbortController();
+    const current = new AbortController();
+    const input = (signal: AbortSignal): DispatchInput => ({
+      prompt: "hello",
+      conversation: { id: "ownership", project_id: null },
+      config: {},
+      signal,
+    });
+    await adapter.dispatch(input(previous.signal));
+    const pending = adapter.dispatch(input(current.signal)).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    try {
+      await client.secondPromptStarted;
+      previous.abort();
+      expect(handle.kill).not.toHaveBeenCalled();
+      current.abort();
+      expect(handle.kill).toHaveBeenCalledTimes(1);
+      expect(await pending).toBeInstanceOf(AcpSessionEvictedError);
+      expect(startServer).toHaveBeenCalledTimes(1);
+      expect(pool.size()).toBe(0);
+    } finally {
+      current.abort();
+      pool.shutdown();
+      await pending;
+    }
+  });
+
+  test("current cancellation stops an acquired warm process without injecting its exit", async () => {
+    const pool = createAcpWarmPool();
+    const handle = createHandle(null);
+    const client = createClient({ hangFirstPrompt: true });
+    pool.deposit("codex-acp-fast\0/repo", {
+      handle,
+      client: asAcpClient(client.client),
+      sessionId: "old",
+      specHash: JSON.stringify({ binary: "mock-acp", args: [], model: "codex-acp-fast" }),
+    });
+    const startServer = vi.fn().mockResolvedValue(createHandle());
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
+      { startServer, createClient: (): StdioAcpClient => asAcpClient(client.client), pool },
+    );
+    const controller = new AbortController();
+    const pending = adapter
+      .dispatch({
+        prompt: "hello",
+        conversation: { id: "current-owner", project_id: null },
+        config: {},
+        signal: controller.signal,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    try {
+      await client.firstPromptStarted;
+      controller.abort();
+      expect(handle.kill).toHaveBeenCalledTimes(1);
+      expect(await pending).toBeInstanceOf(AcpSessionEvictedError);
+      expect(startServer).not.toHaveBeenCalled();
+      expect(pool.size()).toBe(0);
+    } finally {
+      pool.shutdown();
+      await pending;
+    }
+  });
+  test("pre-aborted dispatch leaves an idle warm process untouched", async () => {
+    const pool = createAcpWarmPool();
+    const handle = createHandle(null);
+    const client = createClient();
+    pool.deposit("codex-acp-fast\0/repo", {
+      handle,
+      client: asAcpClient(client.client),
+      sessionId: "old",
+      specHash: JSON.stringify({ binary: "mock-acp", args: [], model: "codex-acp-fast" }),
+    });
+    const startServer = vi.fn().mockResolvedValue(handle);
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
+      { startServer, createClient: (): StdioAcpClient => asAcpClient(client.client), pool },
+    );
+    const controller = new AbortController();
+    const reason = new Error("already cancelled");
+    controller.abort(reason);
+    try {
+      const error = await adapter
+        .dispatch({
+          prompt: "hello",
+          conversation: { id: "pre-aborted", project_id: null },
+          config: {},
+          signal: controller.signal,
+        })
+        .then(
+          () => null,
+          (caught: unknown) => caught,
+        );
+      expect(error).toBe(reason);
+      expect(handle.kill).not.toHaveBeenCalled();
+      expect(startServer).not.toHaveBeenCalled();
+      expect(client.calls).toEqual([]);
+      expect(pool.size()).toBe(1);
+    } finally {
+      pool.shutdown();
+    }
+  });
+
+  test("cancellation while spawn resolves stops the handle before initialization", async () => {
+    const pool = createAcpWarmPool();
+    const handle = createHandle(null);
+    const client = createClient();
+    const controller = new AbortController();
+    const reason = new Error("cancelled during spawn");
+    const startServer = vi.fn(() => {
+      controller.abort(reason);
+      return Promise.resolve(handle);
+    });
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp", cwd: "/repo", model: "codex-acp-fast", warmPool: true },
+      { startServer, createClient: (): StdioAcpClient => asAcpClient(client.client), pool },
+    );
+    try {
+      const error = await adapter
+        .dispatch({
+          prompt: "hello",
+          conversation: { id: "spawn-aborted", project_id: null },
+          config: {},
+          signal: controller.signal,
+        })
+        .then(
+          () => null,
+          (caught: unknown) => caught,
+        );
+      expect(error).toBe(reason);
+      expect(startServer).toHaveBeenCalledTimes(1);
+      expect(handle.kill).toHaveBeenCalled();
+      expect(client.calls).toEqual([]);
+      expect(pool.size()).toBe(0);
+    } finally {
+      pool.shutdown();
+    }
   });
 });

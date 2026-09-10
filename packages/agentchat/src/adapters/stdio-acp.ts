@@ -1577,55 +1577,6 @@ export class StdioAcpAdapter implements Adapter {
     return { entry, missReason, poolKeys };
   }
 
-  private async acquireOrSpawn(args: {
-    poolKey: string;
-    specHash: string;
-    holderId: string;
-    cwd: string;
-    mergedEnv: Record<string, string>;
-    input: DispatchInput;
-    dispatchStartTs: number;
-  }): Promise<AcquireOrSpawnResult> {
-    const { entry, missReason, poolKeys } = this.acquireWarm(
-      args.poolKey,
-      args.specHash,
-      args.holderId,
-    );
-    if (entry) {
-      emitLifecycle(args.input, "acp.session.reuse", {
-        adapter: this.kind,
-        pool_key: args.poolKey,
-        framework_overhead_ms: Date.now() - args.dispatchStartTs,
-      });
-      return {
-        server: entry.handle,
-        client: entry.client,
-        pooledEntry: entry,
-        reusedSession: true,
-      };
-    }
-    const spawned = await this.spawnAcpServer(args.cwd, args.mergedEnv, args.input.signal);
-    const warmPoolEnabled = this.opts.warmPool === true && this.deps.pool !== undefined;
-    emitLifecycle(args.input, "acp.server.start", {
-      adapter: this.kind,
-      binary: this.opts.binary,
-      pid: spawned.server.pid,
-      ...(warmPoolEnabled
-        ? {
-            pool_key: args.poolKey,
-            warm_miss: missReason ?? "unknown",
-            pool_keys: poolKeys ?? [],
-          }
-        : {}),
-    });
-    return {
-      server: spawned.server,
-      client: spawned.client,
-      pooledEntry: null,
-      reusedSession: false,
-    };
-  }
-
   private async createSession(
     server: StdioAcpHandle,
     client: StdioAcpClient,
@@ -1846,20 +1797,44 @@ export class StdioAcpAdapter implements Adapter {
     throw err;
   }
 
+  private bindPooledDispatchAbort(
+    signal: AbortSignal,
+    state: DispatchState,
+    poolKey: string,
+    enabled: boolean,
+  ): (() => void) | undefined {
+    if (!enabled) return undefined;
+    const abort = (): void => {
+      if (state.pooledEntry && this.deps.pool) {
+        this.deps.pool.evict(poolKey, state.pooledEntry);
+      } else {
+        state.server?.kill();
+      }
+    };
+    // A pooled process outlives its spawning dispatch; bind only its current owner.
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    return (): void => {
+      signal.removeEventListener("abort", abort);
+    };
+  }
+
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
-    const setup = computeDispatchConstants(this.opts, this.deps.pool, input);
     const { dispatchStartTs, cwd, requestTimeoutMs, warmPoolEnabled, poolKey, specHash, holderId } =
-      setup;
+      computeDispatchConstants(this.opts, this.deps.pool, input);
     const state = createDispatchState();
+    let detachAbort: (() => void) | undefined;
     try {
+      input.signal.throwIfAborted();
       const mergedEnv = this.buildMergedEnv();
       const bootDeadline = this.createBootDeadline();
 
       const warm = this.acquireWarm(poolKey, specHash, holderId);
+      const signal = warmPoolEnabled ? undefined : input.signal;
       const acquired: AcquireOrSpawnResult = warm.entry
         ? acquireReuseResult(warm.entry, input, this.kind, poolKey, dispatchStartTs)
         : buildSpawnResult({
-            spawned: await this.spawnAcpServer(cwd, mergedEnv, input.signal),
+            spawned: await this.spawnAcpServer(cwd, mergedEnv, signal),
             input,
             adapterKind: this.kind,
             binary: this.opts.binary,
@@ -1871,6 +1846,8 @@ export class StdioAcpAdapter implements Adapter {
       const { client, server } = { client: acquired.client, server: acquired.server };
       state.server = server;
       state.pooledEntry = acquired.pooledEntry;
+      detachAbort = this.bindPooledDispatchAbort(input.signal, state, poolKey, warmPoolEnabled);
+      input.signal.throwIfAborted();
       let authMethods = acquired.pooledEntry?.authMethods ?? [];
 
       const armPromptTimeout = (): void => {
@@ -1885,9 +1862,6 @@ export class StdioAcpAdapter implements Adapter {
         thoughtCapture: this.deps.thoughtCapture,
         armPromptTimeout,
       });
-      registerFsHandlers(turnCtx, this.opts);
-      registerTerminalHandlers(turnCtx, this.opts);
-      registerPermissionHandler(turnCtx, this.opts);
 
       if (!acquired.reusedSession) {
         const initResponse = await this.requestWithBootDeadline<AcpInitializeResponse>(
@@ -1961,6 +1935,7 @@ export class StdioAcpAdapter implements Adapter {
     } catch (err) {
       yield* this.handleDispatchCatch(err, state, warmPoolEnabled, poolKey, input);
     } finally {
+      detachAbort?.();
       if (input.handoff_id !== undefined) unregisterSession(input.handoff_id);
       this.cleanupConnection({
         server: state.server,
@@ -1968,7 +1943,7 @@ export class StdioAcpAdapter implements Adapter {
         poolKey,
         holderId,
         warmPoolEnabled,
-        errorThrown: state.errorThrown,
+        errorThrown: state.errorThrown || input.signal.aborted,
         warmupTimedOut: state.warmupTimedOut,
       });
     }
@@ -1999,7 +1974,7 @@ interface InlineTurnContextArgs {
 
 function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContext {
   const { cwd, client, input, state, opts, thoughtCapture, armPromptTimeout } = args;
-  return {
+  const context: DispatchTurnContext = {
     cwd,
     client,
     input,
@@ -2018,6 +1993,10 @@ function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContex
     },
     toolNames: new Map<string, string>(),
   };
+  registerFsHandlers(context, args.opts);
+  registerTerminalHandlers(context, args.opts);
+  registerPermissionHandler(context, args.opts);
+  return context;
 }
 
 function clearPromptTimer(state: DispatchState): void {
