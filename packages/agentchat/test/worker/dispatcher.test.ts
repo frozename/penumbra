@@ -881,7 +881,7 @@ test("real retry helper and worker finalize cancellation once without another tu
   const d = deps({
     dispatch: (handoff, _onChunk, signal) =>
       dispatchHandoff({
-        handoff,
+        handoff: { ...handoff, from_agent: "planner", message: "m" },
         config: { agents: [], default_roles: {} },
         conversation: { id: handoff.conversation_id, project_id: null },
         transcript: [],
