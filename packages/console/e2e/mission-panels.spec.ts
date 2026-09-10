@@ -103,10 +103,15 @@ test("in-flight chains panel shows hop count + status badge", async ({ page }: {
   await expect(chainCards).toHaveCount(2, { timeout: 10_000 });
 
   await expect(chainCards.nth(0).locator(".chain-card-hops")).toHaveText("5 hops");
-  await expect(chainCards.nth(0).locator(".chain-card-title")).toHaveText("root-h1-a");
+  const firstTitle = chainCards.nth(0).locator(".chain-card-title a");
+  await expect(firstTitle).toHaveText("root-h1-abcdef01");
+  await expect(firstTitle).toHaveAttribute("href", "/handoffs/root-h1-abcdef01");
   await expect(chainCards.nth(0).locator(".badge")).toBeVisible();
 
   await expect(chainCards.nth(1).locator(".chain-card-hops")).toHaveText("2 hops");
+  const secondTitle = chainCards.nth(1).locator(".chain-card-title a");
+  await expect(secondTitle).toHaveText("root-h2-12345678");
+  await expect(secondTitle).toHaveAttribute("href", "/handoffs/root-h2-12345678");
   await expect(chainCards.nth(1).locator(".badge")).toBeVisible();
 });
 

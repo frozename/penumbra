@@ -48,6 +48,15 @@ test("rail click navigates to approvals", async ({ page }) => {
   await expect(approvals).toHaveClass(/active/);
 });
 
+test("rail click navigates to handoffs", async ({ page }) => {
+  await page.goto("/mission");
+
+  const handoffs = page.locator('.rail-btn[title="Handoffs"]');
+  await handoffs.click();
+  await expect(page).toHaveURL(/\/handoffs$/);
+  await expect(handoffs).toHaveClass(/active/);
+});
+
 test("available:false modules render no rail button", async ({ page }) => {
   await page.goto("/mission");
 
