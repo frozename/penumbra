@@ -1,16 +1,7 @@
+import { type AgentTaskType, AgentTaskTypeSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
-export const AgentTaskTypeSchema = z.enum([
-  "plan_refine",
-  "implement_small",
-  "implement_substantial",
-  "review_adversarial",
-  "docs_mechanical",
-  "debug_diagnose",
-  "smoke_test",
-  "health_check",
-  "unknown",
-]);
+export { type AgentTaskType, AgentTaskTypeSchema };
 
 export const NON_MUTATING_TASK_TYPES = [
   "review_adversarial",
@@ -47,7 +38,6 @@ export const AgentPerformanceSourceSchema = z.enum([
 export const AgentKindSchema = z.enum(["coding", "long_lived"]);
 export const DEFAULT_AGENT_KIND: AgentKind = "coding";
 
-export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;
 export type AgentSmokePass = z.infer<typeof AgentSmokePassSchema>;
 export type AgentEvidenceFlag = z.infer<typeof AgentEvidenceFlagSchema>;

@@ -1,5 +1,6 @@
 export const API_CONTRACT_VERSION = "0.1.0" as const;
 
+export * from "./agent-performance.js";
 export * from "./chains.js";
 export * from "./dispatch-audit.js";
 export * from "./dispatch-events.js";
@@ -10,6 +11,7 @@ export * from "./handoffs.js";
 export * from "./health.js";
 export * from "./lanes.js";
 export * from "./permissions.js";
+export * from "./project-id.js";
 export * from "./registrar.js";
 export * from "./session-events.js";
 export * from "./session-note-drafts.js";

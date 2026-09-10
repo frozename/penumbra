@@ -1,3 +1,8 @@
+import {
+  AgentTaskTypeSchema as ApiAgentTaskTypeSchema,
+  ChainStartRequestSchema as ApiChainStartRequestSchema,
+  SafeProjectIdSchema as ApiSafeProjectIdSchema,
+} from "@penumbra/api-contract";
 import { expect, test } from "bun:test";
 
 import { ChainStartRequestSchema } from "@src/schemas/chain.js";
@@ -62,4 +67,17 @@ test("ChainStartRequestSchema rejects non-boolean tool_free", () => {
   });
 
   expect(parsed.success).toBe(false);
+});
+
+test("ChainStartRequestSchema is the same object as the API contract schema", () => {
+  expect(Object.is(ChainStartRequestSchema, ApiChainStartRequestSchema)).toBe(true);
+});
+
+test("ChainStartRequestSchema uses the same lifted helper schemas", () => {
+  expect(
+    Object.is(ChainStartRequestSchema.shape.project_id.unwrap().unwrap(), ApiSafeProjectIdSchema),
+  ).toBe(true);
+  expect(Object.is(ChainStartRequestSchema.shape.task_type.unwrap(), ApiAgentTaskTypeSchema)).toBe(
+    true,
+  );
 });
