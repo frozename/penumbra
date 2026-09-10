@@ -23,6 +23,7 @@ import {
   MAX_DRAFTS_PER_SESSION,
   workflowsHistoryRoute,
   workflowsListRoute,
+  workflowsReportRoute,
   workflowsRunRoute,
   workflowsStatusRoute,
   workflowsSuggestRoute,
@@ -2219,6 +2220,60 @@ test("GET /workflows/history returns workflow_stats row", async () => {
   expect(body.stats.samples).toBe(5);
 });
 
+test("GET /workflows/report runs the real reader with filters", async () => {
+  const db = freshDb();
+  const ts = new Date().toISOString();
+  db.run(
+    `INSERT INTO t0_events (
+       event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane,
+       payload_json
+     ) VALUES (?, ?, ?, 'test', 'proj/a b', 'u', 'm', 'workflow.outcome', 'unknown', ?)`,
+    [
+      "evt-report",
+      ts,
+      ts,
+      JSON.stringify({
+        workflow_name: "demo",
+        workflow_run_id: "run-report",
+        outcome: "success",
+        latency_ms: 200,
+      }),
+    ],
+  );
+  const services = mockServices({ db });
+  const req = new Request(
+    "http://localhost/workflows/report?window_hours=24&project_id=proj%2Fa+b",
+  );
+  const res = await workflowsReportRoute(req, services);
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { rows: { workflow_name: string; runs: number }[] };
+  expect(body.rows).toHaveLength(1);
+  expect(body.rows[0]).toMatchObject({ workflow_name: "demo", runs: 1 });
+});
+
+test("GET /workflows/report rejects invalid windows and empty project ids", async () => {
+  const db = freshDb();
+  const services = mockServices({ db });
+  for (const query of [
+    "window_hours=",
+    "window_hours=1.5",
+    "window_hours=Infinity",
+    "window_hours=NaN",
+    "window_hours=0",
+    "window_hours=2161",
+    "project_id=",
+  ]) {
+    const res = await workflowsReportRoute(
+      new Request(`http://localhost/workflows/report?${query}`),
+      services,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("validation_error");
+  }
+});
+
 test("session-summarize stop hook calls the stumble extractor and files returned drafts", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-session-summarize-"));
   try {
@@ -2642,10 +2697,10 @@ test("POST /workflows/run threads workflow_run_id and latency_ms into t0 capture
           ORDER BY ts`,
       )
       .all() as {
-        event_type: string;
-        latency_ms: number | null;
-        payload_json: string;
-      }[];
+      event_type: string;
+      latency_ms: number | null;
+      payload_json: string;
+    }[];
     expect(rows).toHaveLength(2);
 
     for (const row of rows) {

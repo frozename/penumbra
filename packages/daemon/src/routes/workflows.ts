@@ -15,6 +15,7 @@ import {
   type Services,
   type SessionEventKind,
   TaskDraftPayloadSchema,
+  workflowReport,
 } from "@penumbra/core";
 import {
   buildWorkflowCtx,
@@ -1532,6 +1533,49 @@ export function workflowsHistoryRoute(req: Request, services: Services): Promise
     )
     .all(name) as WorkflowOutcomeRow[];
   return Promise.resolve(json({ stats, recent }));
+}
+
+function parseWorkflowReportWindow(raw: string | null): number | undefined {
+  if (raw === null) return undefined;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error("window_hours must be an integer from 1 to 2160");
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2160) {
+    throw new Error("window_hours must be an integer from 1 to 2160");
+  }
+  return value;
+}
+
+export function workflowsReportRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const projectId = url.searchParams.get("project_id");
+  if (projectId !== null && projectId.length === 0) {
+    return Promise.resolve(
+      json(
+        {
+          error: {
+            code: "validation_error",
+            message: "project_id must be nonempty when provided",
+          },
+        },
+        400,
+      ),
+    );
+  }
+  try {
+    return Promise.resolve(
+      json(
+        workflowReport(services.db, {
+          window_hours: parseWorkflowReportWindow(url.searchParams.get("window_hours")),
+          project_id: projectId,
+        }),
+      ),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return Promise.resolve(json({ error: { code: "validation_error", message } }, 400));
+  }
 }
 
 export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {

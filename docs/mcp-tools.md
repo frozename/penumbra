@@ -146,6 +146,7 @@ Run registered workflows (the codified, schema-validated multi-step flows) by na
 | `workflow_wait` | Block until an async run reaches a terminal state or times out. On truncation, returns a bounded preview plus `result_handle_id`/`error_handle_id` resolvable via `read_handle`. |
 | `workflow_suggest` | Suggest workflows matching current state thresholds. |
 | `workflow_history` | Past run stats and recent outcomes for a named workflow. |
+| `workflow_report` | Read workflow outcome aggregates and workflow-dispatch spend/reliability for a recent window. Cost/tokens/overhead stay `null` when no measured data exists; `dispatches_missing_cost` counts only dispatches with an `agent_performance` row and null cost, not missing performance rows; `reliability_complete_pct` is a 0..1 ratio rounded to three decimals. |
 | `brainstorm` | Run the brainstorm workflow with a topic and optional constraints. |
 
 ### Plans

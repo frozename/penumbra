@@ -157,6 +157,22 @@ test("listChainAgents GETs /chains/agents and returns ordered names", async () =
   expect(r).toEqual({ agents: [{ name: "planner" }, { name: "executor" }] });
 });
 
+test("workflowReport GETs /workflows/report with encoded filters", async () => {
+  const received: { path: string; search: string }[] = [];
+  mockFetch(((input: FetchInput) => {
+    const url = new URL(readUrl(input));
+    received.push({ path: url.pathname, search: url.search });
+    return Promise.resolve(Response.json({ window: {}, rows: [] }));
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  const result = await c.workflowReport({ window_hours: 24, project_id: "proj/a b" });
+
+  expect(received).toEqual([
+    { path: "/workflows/report", search: "?window_hours=24&project_id=proj%2Fa+b" },
+  ]);
+  expect(result).toEqual({ window: {}, rows: [] });
+});
+
 test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () => {
   let received: { path: string; body: unknown } | null = null;
   mockFetch(

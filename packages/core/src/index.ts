@@ -252,6 +252,13 @@ export {
   TaskDraftReader,
 } from "./readers/task-draft.js";
 export { timeline } from "./readers/timeline.js";
+export {
+  workflowReport,
+  type WorkflowReportInput,
+  type WorkflowReportOutput,
+  type WorkflowReportRow,
+  type WorkflowReportWindow,
+} from "./readers/workflow-report.js";
 export { stripPrivacyTags } from "./redaction/privacy-tags.js";
 export { DEFAULT_REDACTION_RULES, type RedactionRule, RegexRedactor } from "./redaction/regex.js";
 export {

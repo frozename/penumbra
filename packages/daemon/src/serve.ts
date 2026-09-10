@@ -258,6 +258,7 @@ import { workerRegisterRoute } from "./routes/worker-register.js";
 import {
   workflowsHistoryRoute,
   workflowsListRoute,
+  workflowsReportRoute,
   workflowsRunRoute,
   workflowsStatusRoute,
   workflowsSuggestRoute,
@@ -956,6 +957,7 @@ const ROUTES: Route[] = [
   staticRoute("POST", "/workflows/wait", (req, ctx) => workflowsWaitRoute(req, ctx.services)),
   staticRoute("POST", "/workflows/trigger", (req, ctx) => workflowsTriggerRoute(req, ctx.services)),
   staticRoute("GET", "/workflows/history", (req, ctx) => workflowsHistoryRoute(req, ctx.services)),
+  staticRoute("GET", "/workflows/report", (req, ctx) => workflowsReportRoute(req, ctx.services)),
   staticRoute("POST", "/workflows/suggest", (req, ctx) => workflowsSuggestRoute(req, ctx.services)),
   // workspace / worktrees
   staticRoute("GET", "/workspace", (req, ctx) => workspaceRoute(req, ctx.services)),
@@ -1865,6 +1867,7 @@ interface RecoverySweepers {
   prOrphanSweeper: ReturnType<typeof installPrOrphanSweeper>;
 }
 
+// eslint-disable-next-line max-lines-per-function -- Existing startup wiring is intentionally grouped; route additions should not force unrelated decomposition.
 function setupRecoverySweepers(args: {
   opts: ServeOpts;
   daemonServices: DaemonServices;
@@ -1922,11 +1925,18 @@ function setupRecoverySweepers(args: {
     { sweep_interval_ms: PROVIDER_REOFFER_SWEEP_INTERVAL_MS },
     "provider-capacity-reoffer: started",
   );
-  const stopProviderCapacityReoffer = (): void => { providerCapacityReoffer.stop(); };
+  const stopProviderCapacityReoffer = (): void => {
+    providerCapacityReoffer.stop();
+  };
   const claimSpreadReoffer = createClaimSpreadReoffer({ services: opts.services });
   claimSpreadReoffer.start();
-  opts.services.log.info({ sweep_interval_ms: CLAIM_SPREAD_REOFFER_SWEEP_INTERVAL_MS }, "claim-spread-reoffer: started");
-  const stopClaimSpreadReoffer = (): void => { claimSpreadReoffer.stop(); };
+  opts.services.log.info(
+    { sweep_interval_ms: CLAIM_SPREAD_REOFFER_SWEEP_INTERVAL_MS },
+    "claim-spread-reoffer: started",
+  );
+  const stopClaimSpreadReoffer = (): void => {
+    claimSpreadReoffer.stop();
+  };
   const workerHealthProbe = new WorkerHealthProbe({
     services: daemonServices,
     intervalMs: Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS ?? "15000") || 15_000,

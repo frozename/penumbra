@@ -1,3 +1,4 @@
+import { toTextContent } from "@novaproto/mcp-shared";
 import {
   defaultProjectRegistryPath,
   findProjectIdByCwd,
@@ -5,6 +6,7 @@ import {
 } from "@penumbra/core";
 import { statSync } from "node:fs";
 import { dirname } from "node:path";
+import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
 import type { HandleStore } from "../handle-store.js";
@@ -443,6 +445,13 @@ function logWarn(event: string, data: Record<string, unknown>): void {
   console.warn({ event, ...data });
 }
 
+const WorkflowReportInputShape = {
+  window_hours: z.number().int().min(1).max(2160).optional(),
+  project_id: z.string().min(1).optional(),
+};
+
+const WorkflowReportSchema = z.object(WorkflowReportInputShape).strict();
+
 const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   memory_observe: {
     descriptor: {
@@ -659,6 +668,16 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: WorkflowHistoryInputShape,
     },
     makeHandler: workflowHistoryHandler,
+    readOnly: true,
+  },
+  workflow_report: {
+    descriptor: {
+      description:
+        "Read workflow outcome aggregates and workflow-dispatch spend/reliability for a recent window.",
+      inputSchema: WorkflowReportInputShape,
+    },
+    makeHandler: (daemon) => async (input) =>
+      toTextContent(await daemon.workflowReport(WorkflowReportSchema.parse(input))),
     readOnly: true,
   },
   brainstorm: {

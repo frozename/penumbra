@@ -267,6 +267,14 @@ export class DaemonClient {
     return await this.get(`/workflows/history?name=${encodeURIComponent(input.name)}`);
   }
 
+  async workflowReport(input: { window_hours?: number; project_id?: string }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (input.window_hours !== undefined) params.set("window_hours", String(input.window_hours));
+    if (input.project_id !== undefined) params.set("project_id", input.project_id);
+    const qs = params.toString();
+    return await this.get(qs ? `/workflows/report?${qs}` : "/workflows/report");
+  }
+
   async planStart(req: { file_path: string }): Promise<{ plan_id: string; status: string }> {
     return await this.post("/plans", req);
   }
