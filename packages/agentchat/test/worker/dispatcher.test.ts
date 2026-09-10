@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnCliAdapter, spawnCliAdapterStream } from "@src/adapters/cli-spawn.js";
+import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import type { ChatTurnInput, ChatTurnResult } from "@src/cli/loop.js";
 import { PenumbraClient, PenumbraHttpError } from "@src/penumbra-client.js";
 import type { DispatchEvent } from "@src/sdk/adapter.js";
 import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
@@ -844,6 +846,80 @@ test("cancelled terminal result emits chain-end cancellation and is marked faile
   );
   expect(d.complete).not.toHaveBeenCalled();
   expect(d.markFailed).toHaveBeenCalledWith("h-cancelled-result", "cancelled");
+});
+
+test("real retry helper and worker finalize cancellation once without another turn", async () => {
+  const started = Promise.withResolvers<undefined>();
+  const runChatTurn = mock<(input: ChatTurnInput) => Promise<ChatTurnResult>>(
+    async ({ signal }) => {
+      started.resolve(undefined);
+      if (!signal?.aborted) {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              resolve();
+            },
+            { once: true },
+          );
+        });
+      }
+      return {
+        text: "",
+        prompt_event_id: "p-cancel",
+        response_event_id: "r-cancel",
+        next_mention: null,
+        mentions: [],
+        error: { message: "adapter aborted" },
+      };
+    },
+  );
+  const innerMarkFailed = mock().mockResolvedValue(undefined);
+  const createHandoff = mock().mockRejectedValue(new Error("unexpected continuation"));
+  const approve = mock().mockResolvedValue(undefined);
+  const delay = mock<(ms: number) => Promise<void>>().mockResolvedValue(undefined);
+  const d = deps({
+    dispatch: (handoff, _onChunk, signal) =>
+      dispatchHandoff({
+        handoff,
+        config: { agents: [], default_roles: {} },
+        conversation: { id: handoff.conversation_id, project_id: null },
+        transcript: [],
+        transcriptBudget: 1000,
+        hopsSoFar: 0,
+        maxHops: 1,
+        trustMode: "all",
+        signal,
+        observe: () => Promise.resolve({ event_id: "cancel-observation" }),
+        createHandoff,
+        approve,
+        runChatTurn,
+        markFailed: innerMarkFailed,
+        delay,
+      }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff("h-real-cancel", "c-real-cancel"));
+  await started.promise;
+  dispatcher.cancel("c-real-cancel", "h-real-cancel");
+  await dispatcher.idle();
+
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(innerMarkFailed).not.toHaveBeenCalled();
+  expect(createHandoff).not.toHaveBeenCalled();
+  expect(approve).not.toHaveBeenCalled();
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledTimes(1);
+  expect(d.markFailed).toHaveBeenCalledWith("h-real-cancel", "cancelled");
+  expect(d.postProgress).toHaveBeenCalledWith(
+    "h-real-cancel",
+    expect.objectContaining({
+      type: "chain-end",
+      chain_id: "c-real-cancel",
+      reason: "cancelled",
+    }),
+  );
 });
 
 test("missing cli binary fails only the handoff and does not surface an unhandled rejection", async () => {
