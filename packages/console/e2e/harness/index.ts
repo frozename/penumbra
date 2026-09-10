@@ -1,3 +1,4 @@
+import type { LaneRow } from "@penumbra/api-contract";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -336,6 +337,9 @@ export async function startHarness(): Promise<E2EHarness> {
     },
     clearErrors() {
       state.errors.clear();
+    },
+    setLanes(rows: LaneRow[]) {
+      state.lanes = structuredClone(rows);
     },
     setHandoffs(rows: HarnessRow[]) {
       state.pending = rows.map((row) => ({ ...toHarnessRow(row), ...row }));

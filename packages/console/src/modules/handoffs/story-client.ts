@@ -2,13 +2,14 @@ import type {
   DispatchAuditResponse,
   DispatchLandTask,
   HandoffDetailResponse,
+  LanesRecentResponse,
 } from "@penumbra/api-contract";
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import type { DaemonClient } from "@src/api/client";
-import { dispatchAudit, dispatchEvents, handoffDetail } from "@src/lib/query-keys";
+import { dispatchAudit, dispatchEvents, handoffDetail, lanesRecent } from "@src/lib/query-keys";
 
 import { makeDispatchAuditResponse, makeHandoffDetail } from "./fixtures";
 
@@ -62,7 +63,26 @@ export function useHandoffStoryClient(): DaemonClient {
       );
     const list: DaemonClient["dispatchEvents"]["list"] = (id) =>
       Promise.resolve(cache.getQueryData(dispatchEvents(id)) ?? { events: [] });
+    const recent: DaemonClient["lanes"]["recent"] = () =>
+      Promise.resolve(cache.getQueryData<LanesRecentResponse>(lanesRecent()) ?? { lanes: [] });
+    const close: DaemonClient["lanes"]["close"] = async (body) => {
+      const data = await recent();
+      const row = data.lanes.find((row) => row.lane_id === body.lane_id);
+      if (!row) throw new Error("Unknown story lane");
+      const result = {
+        ...row,
+        gate_status: body.gate_status,
+        reviewer_handoff: body.reviewer_handoff ?? row.reviewer_handoff,
+        metadata_json: body.metadata ? JSON.stringify(body.metadata) : row.metadata_json,
+        ts_closed: "2026-09-10T11:00:00Z",
+      };
+      cache.setQueryData(lanesRecent(), {
+        lanes: data.lanes.map((lane) => (lane.lane_id === body.lane_id ? result : lane)),
+      });
+      return result;
+    };
     return {
+      lanes: { recent, close },
       handoffs: { get, fail },
       dispatchLand: { land, task },
       dispatchAudit: { audit },

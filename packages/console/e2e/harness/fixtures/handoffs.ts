@@ -1,9 +1,57 @@
+import { CloseLaneRequestSchema, RecentLaneQuerySchema } from "@penumbra/api-contract";
 import { randomUUID } from "node:crypto";
 
 import type { FixtureRouter } from "../router";
 import { type HarnessState, type LandTaskRow, sendJson, serveWithError } from "../server";
 
 export function register(router: FixtureRouter, state: HarnessState): void {
+  router.route("GET", "/lanes/recent", (ctx) => {
+    serveWithError(state, ctx.path, ctx.response, () => {
+      const parsed = RecentLaneQuerySchema.safeParse(Object.fromEntries(ctx.query));
+      if (
+        !parsed.success ||
+        (parsed.data.since !== undefined && Number.isNaN(Date.parse(parsed.data.since)))
+      ) {
+        sendJson(ctx.response, { error: { code: "validation_error" } }, 400);
+        return;
+      }
+      const { status, task_class, since, limit } = parsed.data;
+      const lanes = state.lanes
+        .filter(
+          (row) =>
+            (!status || row.gate_status === status) &&
+            (!task_class || row.task_class === task_class) &&
+            (!since || Date.parse(row.ts_opened) >= Date.parse(since)),
+        )
+        .sort((a, b) => b.ts_opened.localeCompare(a.ts_opened))
+        .slice(0, limit);
+      sendJson(ctx.response, { lanes });
+    });
+  });
+  router.route("POST", "/lanes/close", (ctx) => {
+    serveWithError(state, ctx.path, ctx.response, () => {
+      const parsed = CloseLaneRequestSchema.safeParse(ctx.body);
+      if (!parsed.success) {
+        sendJson(ctx.response, { error: { code: "validation_error" } }, 400);
+        return;
+      }
+      const body = parsed.data;
+      const row = state.lanes.find((row) => row.lane_id === body.lane_id);
+      if (!row) {
+        sendJson(ctx.response, { error: { code: "not_found" } }, 404);
+        return;
+      }
+      if (row.gate_status !== "open") {
+        sendJson(ctx.response, { error: { code: "lane_already_closed" } }, 409);
+        return;
+      }
+      row.gate_status = body.gate_status;
+      row.ts_closed = new Date().toISOString();
+      row.reviewer_handoff = body.reviewer_handoff ?? row.reviewer_handoff;
+      if (body.metadata) row.metadata_json = JSON.stringify(body.metadata);
+      sendJson(ctx.response, row);
+    });
+  });
   router.route("GET", /^\/handoffs\/(?<id>[^/]+)$/, (ctx) => {
     const handoffId = decodeURIComponent(ctx.params.id ?? "");
     serveWithError(state, ctx.path, ctx.response, () => {

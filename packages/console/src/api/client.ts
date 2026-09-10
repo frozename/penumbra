@@ -20,6 +20,7 @@ import {
   type HandoffsSlice,
 } from "./domains/handoffs.js";
 import { daemonSlice, type DaemonSlice } from "./domains/health.js";
+import { lanesSlice, type LanesSlice } from "./domains/lanes.js";
 import { permissionsSlice, type PermissionsSlice } from "./domains/permissions.js";
 import { registrarSlice, type RegistrarSlice } from "./domains/registrar.js";
 import {
@@ -83,6 +84,7 @@ export class DaemonClient {
   readonly dispatchLand: DispatchLandSlice;
   readonly dispatchAudit: DispatchAuditSlice;
   readonly dispatchEvents: DispatchEventsSlice;
+  readonly lanes: LanesSlice;
 
   constructor(private readonly deps: DaemonClientDeps) {
     this.daemon = daemonSlice(this.transport);
@@ -98,6 +100,7 @@ export class DaemonClient {
     this.dispatchLand = dispatchLandSlice(this.transport);
     this.dispatchAudit = dispatchAuditSlice(this.transport);
     this.dispatchEvents = dispatchEventsSlice(this.transport);
+    this.lanes = lanesSlice(this.transport);
   }
 
   async health(): Promise<{ status: "ok" }> {

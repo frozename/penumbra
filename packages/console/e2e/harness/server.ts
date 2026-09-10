@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import type { HandoffStatus } from "@penumbra/api-contract";
+import type { HandoffStatus, LaneRow } from "@penumbra/api-contract";
 
 import type { FixtureRouter } from "./router";
 
@@ -155,6 +155,7 @@ export interface LandTaskRow {
 }
 
 export interface E2EHarness {
+  setLanes: (rows: LaneRow[]) => void;
   port: number;
   token: string;
   baseUrl: string;
@@ -236,6 +237,7 @@ export interface HarnessRow extends Omit<PendingHandoffRow, "status"> {
 }
 
 export interface HarnessState {
+  lanes: LaneRow[];
   pending: HarnessRow[];
   chains: ChainRow[];
   pressure: PressureWindow[];
@@ -273,6 +275,7 @@ export interface HarnessState {
 
 export function createInitialState(): HarnessState {
   return {
+    lanes: [],
     pending: [],
     chains: [],
     pressure: [],
@@ -306,6 +309,7 @@ export function createInitialState(): HarnessState {
 }
 
 export function resetState(state: HarnessState): void {
+  state.lanes = [];
   state.pending = [];
   state.chains = [];
   state.pressure = [];

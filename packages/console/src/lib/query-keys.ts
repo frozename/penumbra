@@ -74,6 +74,11 @@ export function usageSubscriptionPressure(): readonly ["usage", "subscription_pr
   return ["usage", "subscription_pressure"] as const;
 }
 
+/** Lanes list (Handoffs module). */
+export function lanesRecent(): readonly ["handoffs", "lanes", "recent"] {
+  return ["handoffs", "lanes", "recent"] as const;
+}
+
 /** Registrar initiative list (Plans module). */
 export function registrarList(): readonly ["registrar", "list"] {
   return ["registrar", "list"] as const;

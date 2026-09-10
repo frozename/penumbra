@@ -4,6 +4,7 @@ import type {
   DispatchReliabilityReport,
   HandoffDetailResponse,
   HandoffRow,
+  LaneRow,
 } from "@penumbra/api-contract";
 
 const TS_BASE = "2026-09-07T10:00:00.000Z";
@@ -82,4 +83,21 @@ export function makeDispatchAuditResponse(
   overrides: Partial<DispatchReliabilityReport> = {},
 ): DispatchAuditResponse {
   return { report: makeReliabilityReport(overrides) };
+}
+
+export function makeLaneRow(overrides: Partial<LaneRow> = {}): LaneRow {
+  return {
+    lane_id: "lane-abc12345",
+    ts_opened: TS_BASE,
+    ts_closed: null,
+    task_class: "STANDARD",
+    implementer_handoff: "h-implementer-full-id",
+    reviewer_handoff: null,
+    gate_status: "open",
+    recalled_memory_ids: [],
+    recalled_query: null,
+    override_reason: null,
+    metadata_json: "{}",
+    ...overrides,
+  };
 }
