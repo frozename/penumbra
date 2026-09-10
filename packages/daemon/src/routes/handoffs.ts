@@ -1,3 +1,4 @@
+import { HandoffFailRequestSchema } from "@penumbra/api-contract";
 import {
   ApproveHandoffRequestSchema,
   classifyDispatchReliability,
@@ -1283,9 +1284,7 @@ export async function handoffsFailRoute(
       400,
     );
 
-  const body = z
-    .object({ reason: z.string().min(1), worker_id: z.string().optional() })
-    .safeParse(raw);
+  const body = HandoffFailRequestSchema.safeParse(raw);
   if (!body.success) {
     return json(
       {

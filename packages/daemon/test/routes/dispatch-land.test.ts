@@ -1,3 +1,4 @@
+import { DispatchLandAcceptedSchema, DispatchLandTaskSchema } from "@penumbra/api-contract";
 import {
   buildServices,
   closeLane,
@@ -3697,4 +3698,119 @@ describe("dispatchLandTasks eviction", () => {
     expect(__dispatchLandInternalsForTest.tasks.size).toBe(before);
     for (const id of ids) expect(__dispatchLandInternalsForTest.tasks.has(id)).toBe(true);
   });
+});
+
+describe("dispatchLandRoute response schema pins", () => {
+  test("202 accepted response safeParses DispatchLandAcceptedSchema", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-schema-202", "c-schema-202");
+    writeVerdictEvent(svc, {
+      eventId: "v-schema-202",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-schema-202",
+      conversationId: "c-schema-202",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const post = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-schema-202",
+          commit_message: "feat(core): schema pin",
+          mode: "ff",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "main")
+            return { code: 0, stdout: "m\n", stderr: "" };
+          if (args[0] === "merge" && args[1] === "--ff-only")
+            return { code: 0, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+    expect(post.status).toBe(202);
+    const body = await post.json();
+    expect(DispatchLandAcceptedSchema.safeParse(body).success).toBe(true);
+  });
+
+  test("task GET response safeParses DispatchLandTaskSchema", async () => {
+    const svc = services();
+    seedHandoff(svc, "h-schema-task", "c-schema-task");
+    writeVerdictEvent(svc, {
+      eventId: "v-schema-task",
+      ts: "2026-05-08T00:01:00.000Z",
+      handoffId: "h-schema-task",
+      conversationId: "c-schema-task",
+      typecheck: "pass",
+      tests: "pass",
+    });
+
+    const post = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-schema-task",
+          commit_message: "feat(core): task schema pin",
+          mode: "ff",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        runGit: (args: string[]) => {
+          if (args[0] === "rev-parse" && args[1] === "main") {
+            return { code: 0, stdout: "m\n", stderr: "" };
+          }
+          if (args[0] === "merge" && args[1] === "--ff-only")
+            return { code: 0, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        gh: {
+          listOpenPullRequestsByHead: () => [],
+          closePullRequest: () => {
+            /* no-op */
+          },
+        },
+        now: () => new Date("2026-05-08T00:04:00.000Z"),
+      }),
+    );
+    expect(post.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(post);
+    await waitForLandTask(svc, accepted.task_id);
+
+    const taskRes = dispatchLandTaskRoute(
+      new Request(`http://x/dispatch/land/${accepted.task_id}`),
+      svc,
+      accepted.task_id,
+    );
+    expect(taskRes.status).toBe(200);
+    const taskBody = await taskRes.json();
+    expect(DispatchLandTaskSchema.safeParse(taskBody).success).toBe(true);
+  });
+});
+
+test("POST /dispatch/land rejects rebase with invalid_params", async () => {
+  const response = await dispatchLandRoute(
+    landReq("http://x/dispatch/land", {
+      method: "POST",
+      body: JSON.stringify({ handoff_id: "h-invalid-mode", mode: "rebase" }),
+    }),
+    services(),
+  );
+  expect(response.status).toBe(400);
+  const body = await readJsonAs<{ error: { code: string } }>(response);
+  expect(body.error.code).toBe("invalid_params");
 });

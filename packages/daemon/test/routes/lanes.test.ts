@@ -1,3 +1,4 @@
+import { LanesRecentResponseSchema } from "@penumbra/api-contract";
 import {
   buildServices,
   loadSqliteVec,
@@ -1539,6 +1540,49 @@ test("GET /lanes/recent?since= returns same lanes for UTC and offset-equivalent 
 
     expect(utcBody.lanes).toHaveLength(1);
     expect(offsetBody.lanes).toHaveLength(utcBody.lanes.length);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("GET /lanes/recent response safeParses LanesRecentResponseSchema", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const opened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-schema-pin",
+      implementer_handoff: "h-schema-pin",
+      task_class: "STANDARD",
+    });
+
+    const res = await daemon.fetch("/lanes/recent", { headers: authHeaders(daemon.token) });
+    expect(res.status).toBe(200);
+    expect(opened.status).toBe(200);
+    const body = await res.json();
+    const parsed = LanesRecentResponseSchema.parse(body);
+    expect(parsed.lanes).toHaveLength(1);
+    expect(parsed.lanes[0]?.lane_id).toBe("lane-schema-pin");
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("POST /lanes/close rejects gate_status maybe with validation_error", async () => {
+  const daemon = startTestDaemon();
+  try {
+    const opened = await postJson(daemon, "/lanes/open", {
+      lane_id: "lane-invalid-status",
+      implementer_handoff: "h-invalid-status",
+      task_class: "STANDARD",
+    });
+    expect(opened.status).toBe(200);
+    const response = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-invalid-status",
+      gate_status: "maybe",
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "validation_error",
+    );
   } finally {
     daemon.stop();
   }

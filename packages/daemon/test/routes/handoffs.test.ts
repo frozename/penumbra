@@ -1,3 +1,4 @@
+import { HandoffDetailResponseSchema, HandoffStatusResponseSchema } from "@penumbra/api-contract";
 import {
   AgentPerformanceWriter,
   buildServices,
@@ -24,6 +25,7 @@ import {
   handoffsGetRoute,
   handoffsLatestRoute,
   handoffsListPendingRoute,
+  handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
 
@@ -2576,4 +2578,64 @@ test("GET /handoffs?status=completed&since= returns same count for UTC and offse
 
   expect(utcBody.done).toBe(1);
   expect(offsetBody.done).toBe(utcBody.done);
+});
+
+test("GET /handoffs/<id> response safeParses HandoffDetailResponseSchema", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const create = await readJsonAs<CreateBody>(
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    ),
+  );
+
+  const res = handoffsGetRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}`),
+    create.handoff_id,
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(HandoffDetailResponseSchema.safeParse(body).success).toBe(true);
+});
+
+test("GET /handoffs/<id>/status response safeParses HandoffStatusResponseSchema", async () => {
+  const { services } = buildClaimTestServices();
+  const create = await readJsonAs<CreateBody>(
+    await handoffsCreateRoute(
+      new Request("http://x/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message: "m",
+          conversation_id: "c1",
+          triggered_by_event_id: "e1",
+        }),
+      }),
+      services,
+    ),
+  );
+
+  const res = handoffsStatusRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}/status`),
+    create.handoff_id,
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const parsed = HandoffStatusResponseSchema.safeParse(body);
+  expect(parsed.success).toBe(true);
 });

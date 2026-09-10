@@ -1,4 +1,9 @@
 import {
+  CloseLaneRequestSchema as CloseLaneBodySchema,
+  OpenLaneRequestSchema as OpenLaneBodySchema,
+  RecentLaneQuerySchema,
+} from "@penumbra/api-contract";
+import {
   closeLane,
   getClosedLaneRoundCountForHandoffLineage,
   getHandoffToAgent,
@@ -6,13 +11,11 @@ import {
   getOpenLaneForImplementer,
   insertLane,
   LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
-  LaneCloseMetadataSchema,
   RecallRequestSchema,
   type RecallResult,
   recentLanes,
   type Services,
   type TaskClass,
-  TaskClassSchema,
 } from "@penumbra/core";
 import { z } from "zod";
 
@@ -20,26 +23,6 @@ import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
 import { json } from "./_helpers.js";
 
 const closeLaneWithLog = closeLane;
-const OpenLaneBodySchema = z.object({
-  lane_id: z.string().min(1),
-  implementer_handoff: z.string().min(1),
-  task_class: TaskClassSchema,
-});
-
-const CloseLaneBodySchema = z.object({
-  lane_id: z.string().min(1),
-  gate_status: z.enum(["passed", "failed", "skipped", "review_debt"]),
-  reviewer_handoff: z.string().min(1).optional(),
-  override_reason: z.string().min(1).optional(),
-  metadata: LaneCloseMetadataSchema.optional(),
-});
-
-const RecentLaneQuerySchema = z.object({
-  status: z.enum(["open", "passed", "failed", "skipped", "review_debt"]).optional(),
-  task_class: TaskClassSchema.optional(),
-  since: z.string().optional(),
-  limit: z.coerce.number().int().min(1).default(50),
-});
 
 function validationError(error: z.ZodError): Response {
   return json(

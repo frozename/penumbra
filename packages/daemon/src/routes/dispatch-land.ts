@@ -1,10 +1,10 @@
+import { DispatchLandRequestSchema as DispatchLandInputSchema } from "@penumbra/api-contract";
 import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
 import {
   resolveHandoffBranchName,
   stampAgentPerformanceGateOutcomeForHandoff,
 } from "@penumbra/core";
 import { spawn } from "node:child_process";
-import { z } from "zod";
 
 import { getPrincipal } from "../auth.js";
 import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
@@ -12,15 +12,6 @@ import { createGhCliClient, type GhClient, type GhPullRequestView } from "../ser
 import { json } from "./_helpers.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
-
-const DispatchLandInputSchema = z.object({
-  handoff_id: z.string().min(1),
-  commit_message: z.string().min(1).optional(),
-  mode: z.enum(["squash", "ff", "gh"]).optional().default("squash"),
-  delete_branch: z.boolean().optional().default(true),
-  force: z.boolean().optional().default(false),
-  reject_if_held: z.boolean().optional().default(false),
-});
 
 interface GitExecResult {
   code: number;

@@ -1,3 +1,4 @@
+import { DispatchAuditResponseSchema } from "@penumbra/api-contract";
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
@@ -174,5 +175,24 @@ describe("dispatchAuditRoute", () => {
     expect(((await res.json()) as { report: { handoff_id: string } }).report.handoff_id).toBe(
       "h-serve",
     );
+  });
+
+  test("audit response safeParses DispatchAuditResponseSchema", async () => {
+    const svc = services();
+    createCompletedHandoff(svc);
+    const incomplete = dispatchAuditRoute(
+      new Request("http://x/dispatch/audit?handoff_id=h-1"),
+      svc,
+    );
+    expect(incomplete.status).toBe(200);
+    const incompleteBody = DispatchAuditResponseSchema.parse(await incomplete.json());
+    expect(incompleteBody.report.status).not.toBe("complete");
+    recordCompleteTimeline(svc);
+    writeAgentResponse(svc, "c-1", "DONE");
+
+    const res = dispatchAuditRoute(new Request("http://x/dispatch/audit?handoff_id=h-1"), svc);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(DispatchAuditResponseSchema.safeParse(body).success).toBe(true);
   });
 });

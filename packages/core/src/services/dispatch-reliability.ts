@@ -1,25 +1,11 @@
-export type DispatchReliabilityStatus =
-  | "complete"
-  | "missing_dispatch_start"
-  | "missing_adapter_lifecycle"
-  | "missing_dispatch_end"
-  | "non_terminal_stale"
-  | "cancel_completed"
-  | "watchdog_only"
-  | "no_agent_output"
-  | "no_worktree_activity"
-  | "tool_failure_with_end_turn"
-  | "reconcile_missing"
-  | "agent_declared_done_unverified"
-  | "timeline_inconsistent";
+import type {
+  DispatchRecommendedAction as DispatchRecommendedActionAlias,
+  DispatchReliabilityStatus as DispatchReliabilityStatusAlias,
+} from "@penumbra/api-contract";
 
-export type DispatchRecommendedAction =
-  | "wait"
-  | "inspect_worktree"
-  | "cancel"
-  | "retry"
-  | "review_manually"
-  | "accept";
+export type DispatchReliabilityStatus = DispatchReliabilityStatusAlias;
+
+export type DispatchRecommendedAction = DispatchRecommendedActionAlias;
 
 export interface DispatchReliabilityEvent {
   kind: string;

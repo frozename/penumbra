@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  DispatchRecommendedActionSchema,
+  DispatchReliabilityStatusSchema,
+} from "./dispatch-audit.js";
+
 export const HandoffStatusSchema = z.enum([
   "pending",
   "approved",
@@ -92,3 +97,40 @@ export const ApproveHandoffResponseSchema = z
   })
   .loose();
 export type ApproveHandoffResponse = z.infer<typeof ApproveHandoffResponseSchema>;
+
+export const HandoffFailRequestSchema = z.object({
+  reason: z.string().min(1),
+  worker_id: z.string().optional(),
+});
+export type HandoffFailRequest = z.infer<typeof HandoffFailRequestSchema>;
+
+export const HandoffDetailResponseSchema = z
+  .object({
+    handoff: HandoffRowSchema,
+  })
+  .loose();
+export type HandoffDetailResponse = z.infer<typeof HandoffDetailResponseSchema>;
+
+const HandoffStatusReliabilitySchema = z
+  .object({
+    status: DispatchReliabilityStatusSchema,
+    trustworthy: z.boolean(),
+    recommended_action: DispatchRecommendedActionSchema,
+    summary: z.string(),
+  })
+  .loose();
+
+export const HandoffStatusResponseSchema = z
+  .object({
+    handoff_id: z.string(),
+    status: HandoffStatusSchema,
+    error_summary: z.string().nullable(),
+    branch_name: z.string().nullable(),
+    worker_id: z.string().nullable(),
+    started_at: z.string(),
+    resolved_at: z.string().nullable(),
+    latency_seconds: z.number().nullable(),
+    reliability: HandoffStatusReliabilitySchema,
+  })
+  .loose();
+export type HandoffStatusResponse = z.infer<typeof HandoffStatusResponseSchema>;
