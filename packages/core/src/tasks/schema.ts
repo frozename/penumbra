@@ -1,16 +1,56 @@
+import {
+  type BoundsInput,
+  BoundsInputSchema,
+  type CancelTaskInput,
+  CancelTaskInputSchema,
+  type CompleteTaskInput,
+  CompleteTaskInputSchema,
+  type CompleteWithoutLeaseInput,
+  CompleteWithoutLeaseInputSchema,
+  type Eligibility,
+  EligibilitySchema,
+  type ExpectedArtifact,
+  ExpectedArtifactSchema,
+  type FailTaskInput,
+  FailTaskInputSchema,
+  type FileTaskInput,
+  FileTaskInputSchema,
+  type ReviewVerdict,
+  ReviewVerdictSchema,
+  type TaskPriority,
+  TaskPrioritySchema,
+  type Tier,
+  TIER_ORDER,
+} from "@penumbra/api-contract";
 import { z } from "zod";
+
+export {
+  type BoundsInput,
+  BoundsInputSchema,
+  type CancelTaskInput,
+  CancelTaskInputSchema,
+  type CompleteTaskInput,
+  CompleteTaskInputSchema,
+  type CompleteWithoutLeaseInput,
+  CompleteWithoutLeaseInputSchema,
+  type Eligibility,
+  EligibilitySchema,
+  type ExpectedArtifact,
+  ExpectedArtifactSchema,
+  type FailTaskInput,
+  FailTaskInputSchema,
+  type FileTaskInput,
+  FileTaskInputSchema,
+  type ReviewVerdict,
+  ReviewVerdictSchema,
+  type TaskPriority,
+  TaskPrioritySchema,
+  type Tier,
+  TIER_ORDER,
+};
 
 export const TaskKindSchema = z.enum(["work", "review", "orchestrate"]);
 export type TaskKind = z.infer<typeof TaskKindSchema>;
-
-export const BoundsInputSchema = z
-  .object({
-    wall_clock_ms: z.number().int().positive().optional(),
-    cost_cents: z.number().int().nonnegative().optional(),
-    max_sub_dispatches: z.number().int().positive().optional(),
-  })
-  .strict();
-export type BoundsInput = z.infer<typeof BoundsInputSchema>;
 
 export const OrchestrateTaskInputSchema = z
   .object({
@@ -18,9 +58,6 @@ export const OrchestrateTaskInputSchema = z
   })
   .strict();
 export type OrchestrateTaskInput = z.infer<typeof OrchestrateTaskInputSchema>;
-
-export const TaskPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
-export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
 
 export const TaskStatusSchema = z.enum([
   "pending",
@@ -53,70 +90,6 @@ export const TaskEventKindSchema = z.enum([
 ]);
 export type TaskEventKind = z.infer<typeof TaskEventKindSchema>;
 
-export const TIER_ORDER = ["economy", "standard", "premium"] as const;
-export type Tier = (typeof TIER_ORDER)[number];
-
-export const EligibilitySchema = z
-  .object({
-    required_tags: z.array(z.string()).optional(),
-    min_tier: z.enum([...TIER_ORDER]).optional(),
-    max_cost_cents: z.number().nonnegative().optional(),
-    deny_agents: z.array(z.string()).optional(),
-    allow_agents: z.array(z.string()).optional(),
-    heartbeat_ttl_ms: z.number().int().positive().optional(),
-    preference_window_ms: z.number().int().nonnegative().optional(),
-    max_attempts: z.number().int().positive().optional(),
-  })
-  .strict();
-export type Eligibility = z.infer<typeof EligibilitySchema>;
-
-export const ExpectedArtifactSchema = z
-  .object({
-    type: z.enum(["commit", "file", "pr", "memory", "spec", "review_verdict"]),
-    ref: z.string().max(4096).optional(),
-  })
-  .strict();
-export type ExpectedArtifact = z.infer<typeof ExpectedArtifactSchema>;
-
-export const ReviewVerdictSchema = z
-  .object({
-    passed: z.boolean(),
-    notes: z.string(),
-  })
-  .strict();
-export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
-
-export const FileTaskInputSchema = z
-  .object({
-    prompt: z.string().min(1),
-    project_id: z.string().min(1).optional(),
-    acceptance_criteria: z.string().optional(),
-    gh_create: z
-      .object({
-        repo: z.string().min(1).optional(),
-        title: z.string().min(1).optional(),
-        body: z.string().optional(),
-        labels: z.array(z.string()).optional(),
-        assignees: z.array(z.string()).optional(),
-      })
-      .strict()
-      .optional(),
-    expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
-    eligibility: EligibilitySchema.optional(),
-    bounds: BoundsInputSchema.optional(),
-    branch_base: z.string().min(1).optional(),
-    review_eligibility: EligibilitySchema.optional(),
-    priority: TaskPrioritySchema.optional(),
-    kind: TaskKindSchema.optional(),
-    requires_review: z.boolean().optional(),
-    parent_task_id: z.string().optional(),
-    origin: z.string().optional(),
-    created_by_kind: z.enum(["human", "workflow", "agent"]),
-    created_by_id: z.string(),
-  })
-  .strict();
-export type FileTaskInput = z.infer<typeof FileTaskInputSchema>;
-
 export const LeaseTaskInputSchema = z
   .object({
     task_id: z.string(),
@@ -133,40 +106,6 @@ export const HeartbeatTaskInputSchema = z
   })
   .strict();
 export type HeartbeatTaskInput = z.infer<typeof HeartbeatTaskInputSchema>;
-
-export const CompleteTaskInputSchema = z
-  .object({
-    task_id: z.string(),
-    lease_id: z.string(),
-    result_summary: z.string().max(16_000),
-    result_artifacts: z.array(ExpectedArtifactSchema).max(50).optional(),
-    chain_id: z.string().optional(),
-    review_verdict: ReviewVerdictSchema.optional(),
-  })
-  .strict();
-export type CompleteTaskInput = z.infer<typeof CompleteTaskInputSchema>;
-
-export const CompleteWithoutLeaseInputSchema = CompleteTaskInputSchema.omit({
-  lease_id: true,
-}).strict();
-export type CompleteWithoutLeaseInput = z.infer<typeof CompleteWithoutLeaseInputSchema>;
-
-export const FailTaskInputSchema = z
-  .object({
-    task_id: z.string(),
-    lease_id: z.string(),
-    reason: z.string().min(1),
-  })
-  .strict();
-export type FailTaskInput = z.infer<typeof FailTaskInputSchema>;
-
-export const CancelTaskInputSchema = z
-  .object({
-    task_id: z.string(),
-    reason: z.string().optional(),
-  })
-  .strict();
-export type CancelTaskInput = z.infer<typeof CancelTaskInputSchema>;
 
 export const TaskRecordSchema = z
   .object({
