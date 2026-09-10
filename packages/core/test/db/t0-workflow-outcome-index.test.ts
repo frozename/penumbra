@@ -43,7 +43,7 @@ test("workflow history seeks the workflow name and timestamp index", () => {
       `SELECT ts, event_type, payload_json FROM t0_events WHERE event_type = 'workflow.outcome' AND ${NAME_EXPR} = ? ORDER BY ts DESC LIMIT 20`,
       "adversarial-review",
     ),
-  ).toContain("t0_events_workflow_outcome_lookup");
+  ).toContain("SEARCH t0_events USING INDEX t0_events_workflow_outcome_lookup (<expr>=?");
 });
 
 test("the poller session-handoff probe uses the workflow name index", () => {
@@ -52,7 +52,7 @@ test("the poller session-handoff probe uses the workflow name index", () => {
       freshDb(),
       `SELECT ts FROM t0_events WHERE event_type = 'workflow.outcome' AND ${NAME_EXPR} = 'session-handoff' ORDER BY ts DESC LIMIT 1`,
     ),
-  ).toContain("t0_events_workflow_outcome_lookup");
+  ).toContain("SEARCH t0_events USING INDEX t0_events_workflow_outcome_lookup (<expr>=?");
 });
 
 test("quality status uses the workflow name index with its time bound", () => {
@@ -63,7 +63,7 @@ test("quality status uses the workflow name index with its time bound", () => {
       "2026-09-01T00:00:00.000Z",
       "adversarial-review",
     ),
-  ).toContain("t0_events_workflow_outcome_lookup");
+  ).toContain("SEARCH t0_events USING INDEX t0_events_workflow_outcome_lookup (<expr>=?");
 });
 
 test("bare json_extract cannot seek the guarded expression index", () => {
@@ -83,7 +83,7 @@ test("the workflow report handoff lookup uses the run id index", () => {
       "SELECT handoff_id FROM handoffs WHERE workflow_run_id = ? AND dispatch_kind = 'workflow'",
       "run-1",
     ),
-  ).toContain("handoffs_workflow_run_id");
+  ).toContain("SEARCH handoffs USING INDEX handoffs_workflow_run_id (workflow_run_id=?)");
 });
 
 test("existing stores gain both indexes after additive handoff columns", () => {
@@ -103,7 +103,7 @@ test("existing stores gain both indexes after additive handoff columns", () => {
       `SELECT ts FROM t0_events WHERE event_type = 'workflow.outcome' AND ${NAME_EXPR} = ?`,
       "demo",
     ),
-  ).toContain("t0_events_workflow_outcome_lookup");
+  ).toContain("SEARCH t0_events USING INDEX t0_events_workflow_outcome_lookup (<expr>=?");
 });
 
 test("building the workflow index tolerates existing malformed JSON", () => {
