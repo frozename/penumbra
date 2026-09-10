@@ -1,3 +1,5 @@
+import type { ChainRoutingAdvisory } from "@penumbra/api-contract";
+
 const DIM_OPEN = "\x1b[2m";
 const DIM_CLOSE = "\x1b[0m";
 
@@ -77,11 +79,7 @@ export interface ChainStartResult {
     suggested_project_id?: string;
     hint: string;
   };
-  routing_advisory?: {
-    code: "project_registry_unavailable" | "unknown_project_id_dropped";
-    project_id?: string;
-    known_project_ids?: string[];
-  };
+  routing_advisory?: ChainRoutingAdvisory;
 }
 export function formatChainStart(r: ChainStartResult): string {
   const id = dimColor(`h-${truncateId(r.handoff_id.replaceAll("-", ""), 7)}`);

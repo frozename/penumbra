@@ -1033,7 +1033,7 @@ function guardUnknownProjectId(
         project_id: projectId,
         known_project_ids: knownProjectIds,
       },
-      "chain-start unknown_project_id rejected",
+      "chain-start unknown_project_id; rejecting",
     );
     return {
       response: json(
@@ -1042,6 +1042,7 @@ function guardUnknownProjectId(
             code: "unknown_project",
             project_id: projectId,
             known_project_ids: knownProjectIds,
+            hint: "pass a project_id present in the project registry",
           },
         },
         400,
@@ -1055,7 +1056,7 @@ function guardUnknownProjectId(
       project_id: projectId,
       known_project_ids: knownProjectIds,
     },
-    "chain-start unknown_project_id dropped for internal dispatch",
+    "chain-start unknown_project_id; dropping and continuing",
   );
   (input as { project_id?: string }).project_id = undefined;
   return {
@@ -1659,10 +1660,6 @@ export async function chainStartInternal(
   const { routingWarning, projectRegistryEntries } = guardOutcome;
   let routingAdvisory = guardOutcome.routingAdvisory;
 
-  const unknownProjectId = guardUnknownProjectId(input, services, projectRegistryEntries);
-  if (unknownProjectId.response) return unknownProjectId.response;
-  routingAdvisory = unknownProjectId.routingAdvisory ?? routingAdvisory;
-
   let routing: RoutingResolution;
   try {
     routing = resolveRoutingWithFallbacks(input, services, applyMaestroBudgetGate);
@@ -1725,6 +1722,10 @@ export async function chainStartInternal(
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
+
+  const unknownProjectId = guardUnknownProjectId(input, services, projectRegistryEntries);
+  if (unknownProjectId.response) return unknownProjectId.response;
+  routingAdvisory = unknownProjectId.routingAdvisory ?? routingAdvisory;
 
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();

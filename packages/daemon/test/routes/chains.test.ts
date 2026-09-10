@@ -1451,6 +1451,7 @@ test("chain-start rejects unknown explicit project_id from external callers with
   services.projectRegistry = new ProjectRegistry(
     new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
   );
+  const recallSpy = spyOn(services.recallReader, "recall");
   const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
 
   const req = new Request("http://t/chains/start", {
@@ -1468,18 +1469,45 @@ test("chain-start rejects unknown explicit project_id from external callers with
     code: "unknown_project",
     project_id: "not-in-registry",
     known_project_ids: ["penumbra"],
+    hint: "pass a project_id present in the project registry",
   });
   const handoffCount =
     services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0;
   expect(handoffCount).toBe(0);
+  expect(
+    services.db.query("SELECT event_type FROM t0_events WHERE event_type = 'user-prompt'").all(),
+  ).toEqual([]);
+  expect(recallSpy).not.toHaveBeenCalled();
   expect(warnSpy).toHaveBeenCalledWith(
     expect.objectContaining({
       event: "chain_start.unknown_project_id_rejected",
       project_id: "not-in-registry",
       known_project_ids: ["penumbra"],
     }),
-    "chain-start unknown_project_id rejected",
+    "chain-start unknown_project_id; rejecting",
   );
+});
+
+test("chain-start preserves routing errors before unknown project_id rejection", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+  const res = await chainsStartRoute(
+    new Request("http://t/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "missing-agent",
+        message: "hi",
+        project_id: "not-in-registry",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(400);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("unknown_agent");
+  expect(services.db.query("SELECT handoff_id FROM handoffs").all()).toEqual([]);
 });
 
 test("chain-start drops unknown project_id for valid internal workflow dispatches and returns an advisory", async () => {
@@ -1532,7 +1560,7 @@ test("chain-start drops unknown project_id for valid internal workflow dispatche
       project_id: "not-in-registry",
       known_project_ids: ["penumbra"],
     }),
-    "chain-start unknown_project_id dropped for internal dispatch",
+    "chain-start unknown_project_id; dropping and continuing",
   );
 });
 
