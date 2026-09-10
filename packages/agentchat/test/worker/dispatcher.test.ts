@@ -770,6 +770,65 @@ test("aborted dispatch is failed, not completed (shutdown must not mask an in-fl
   expect(reason).toBe("cancelled");
 });
 
+test("cancelled terminal result emits chain-end cancellation and is marked failed by worker", async () => {
+  const events: DispatchEventInput[] = [];
+  const started = Promise.withResolvers<undefined>();
+  const d = deps({
+    onEvent: (event) => events.push(event),
+    markFailed: mock().mockResolvedValue(undefined),
+    dispatch: mock().mockImplementation(
+      async (_h: unknown, _onChunk: unknown, signal: AbortSignal) => {
+        started.resolve(undefined);
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        return {
+          next: null,
+          terminatedReason: "cancelled" as const,
+          text: "",
+          agent: "executor",
+        };
+      },
+    ),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-cancelled-result", "c-cancelled-result"));
+  await started.promise;
+  dispatcher.cancel("c-cancelled-result", "h-cancelled-result");
+  await dispatcher.idle();
+
+  const progressCalls = mockCalls<[string, Record<string, unknown>]>(d.postProgress).map(
+    (call) => call[1],
+  );
+  const hopEndPayload = progressCalls.find((payload) => payload.type === "hop-end");
+  const chainEndPayload = progressCalls.find((payload) => payload.type === "chain-end");
+  expect(hopEndPayload).toMatchObject({
+    type: "hop-end",
+    next_handoff_id: null,
+    error: null,
+  });
+  expect(chainEndPayload).toMatchObject({
+    type: "chain-end",
+    reason: "cancelled",
+  });
+  expect(ConversationChainEndEventSchema.safeParse(chainEndPayload).success).toBe(true);
+  expect(events).toContainEqual(
+    eventMatcher<DispatchEventInput>({
+      kind: "dispatch.end",
+      meta: expect.objectContaining({ status: "aborted" }) as DispatchEventInput["meta"],
+    }),
+  );
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledWith("h-cancelled-result", "cancelled");
+});
+
 test("missing cli binary fails only the handoff and does not surface an unhandled rejection", async () => {
   const events: DispatchEventInput[] = [];
   const unhandled: unknown[] = [];

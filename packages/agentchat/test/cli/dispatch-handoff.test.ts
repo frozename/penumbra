@@ -619,6 +619,242 @@ test("runChatTurn error exhausts retries → markFailed then throws", async () =
   expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
 });
 
+test("pre-aborted signal returns cancelled without calling runChatTurn", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const runChatTurn = mock<ChatTurnMockFn>();
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("cancelled");
+  expect(res.next).toBeNull();
+  expect(runChatTurn).not.toHaveBeenCalled();
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("aborted failed returned turn stops without backoff or markFailed", async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock<ChatTurnMockFn>().mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve({
+      text: "partial failure @executor",
+      prompt_event_id: "p",
+      response_event_id: "r",
+      next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+      mentions: [],
+      error: { message: "adapter aborted after cancel" },
+    });
+  });
+  const createHandoff = mock();
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff,
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("cancelled");
+  expect(res.next).toBeNull();
+  expect(createHandoff).not.toHaveBeenCalled();
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("thrown abort stops retry loop without markFailed", async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock<ChatTurnMockFn>().mockImplementation(() => {
+    controller.abort();
+    return Promise.reject(new Error("adapter aborted"));
+  });
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("cancelled");
+  expect(res.next).toBeNull();
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("abort during retry backoff prevents the next runChatTurn call", async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+    error: { message: "adapter failed before cancel" },
+  });
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve();
+  });
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("cancelled");
+  expect(res.next).toBeNull();
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay.mock.calls.map((c) => c[0])).toEqual([200]);
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("successful in-flight turn is honored when abort fires during it", async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock<ChatTurnMockFn>().mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve({
+      text: "ping @executor",
+      prompt_event_id: "p",
+      response_event_id: "r1",
+      next_mention: { target: "executor", resolution: { kind: "name", agent_name: "executor" } },
+      mentions: [],
+    });
+  });
+  const createHandoff = mock().mockResolvedValue({ handoff_id: "h-next", status: "pending" });
+  const approve = mock();
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff,
+    approve,
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBeUndefined();
+  expect(res.next?.handoff_id).toBe("h-next");
+  expect(createHandoff).toHaveBeenCalledTimes(1);
+  expect(approve).toHaveBeenCalledWith("h-next", { resolved_by: "auto" });
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("non-aborted error text containing aborted still retries", async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce({
+      text: "",
+      prompt_event_id: "p1",
+      response_event_id: "r1",
+      next_mention: null,
+      mentions: [],
+      error: { message: "adapter said aborted but signal is still live" },
+    })
+    .mockResolvedValueOnce({
+      text: "done",
+      prompt_event_id: "p2",
+      response_event_id: "r2",
+      next_mention: null,
+      mentions: [],
+    });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    signal: controller.signal,
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed: mock(),
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(delay.mock.calls.map((c) => c[0])).toEqual([200]);
+});
+
 test("projectContext is threaded through to buildNextPrompt for continuation hops", async () => {
   const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "ok",

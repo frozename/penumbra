@@ -100,7 +100,13 @@ export interface DispatchHandoffResult {
     response_event_id: string;
   } | null;
   /** Set when this hop was the last. Absent if next is non-null. */
-  terminatedReason?: "no_mention" | "untrusted" | "max_hops" | "error" | "handoff_creation_failed";
+  terminatedReason?:
+    | "no_mention"
+    | "untrusted"
+    | "max_hops"
+    | "error"
+    | "handoff_creation_failed"
+    | "cancelled";
   /** The handoff id that was created but not approved (untrusted | max_hops), or the handoff id that failed (error). */
   cappedHandoffId?: string;
   /** Final accumulated reply text from this hop (for transcript building by the caller). */
@@ -127,6 +133,15 @@ interface TurnAttempt {
   errMsg: string | null;
   errMeta?: ChatTurnResult["meta"];
 }
+
+interface RetryState {
+  lastErrMsg: string;
+  lastErrMeta: ChatTurnResult["meta"] | undefined;
+}
+
+type RunTurnRetryResult =
+  | { ok: true; turn: ChatTurnResult }
+  | { ok: false; result: DispatchHandoffResult };
 
 async function runTurnOnce(
   opts: DispatchHandoffOpts,
@@ -189,28 +204,65 @@ async function handleRetryExhaustion(
   }
 }
 
+function cancelledRetryResult(
+  targetAgent: string,
+  errMeta: ChatTurnResult["meta"] | undefined,
+): DispatchHandoffResult {
+  return {
+    next: null,
+    terminatedReason: "cancelled",
+    text: "",
+    agent: targetAgent,
+    ...(errMeta ? { meta: errMeta } : {}),
+  };
+}
+
+async function runTurnAttemptWithCancellation(
+  opts: DispatchHandoffOpts,
+  targetAgent: string,
+  promptText: string | undefined,
+  state: RetryState,
+): Promise<RunTurnRetryResult | null> {
+  if (opts.signal?.aborted) {
+    return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
+  }
+  const result = await runTurnOnce(opts, targetAgent, promptText);
+  if (result.errMeta) state.lastErrMeta = result.errMeta;
+  if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
+  state.lastErrMsg = result.errMsg ?? state.lastErrMsg;
+  if (opts.signal?.aborted) {
+    return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
+  }
+  return null;
+}
+
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
   promptText: string | undefined,
-): Promise<{ ok: true; turn: ChatTurnResult } | { ok: false; result: DispatchHandoffResult }> {
+): Promise<RunTurnRetryResult> {
   const delay = opts.delay ?? defaultDelay;
-  let lastErrMsg = "adapter dispatch failed";
-  let lastErrMeta: ChatTurnResult["meta"] | undefined;
+  const state: RetryState = {
+    lastErrMsg: "adapter dispatch failed",
+    lastErrMeta: undefined,
+  };
 
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    const result = await runTurnOnce(opts, targetAgent, promptText);
-    if (result.errMeta) lastErrMeta = result.errMeta;
-    if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
-    lastErrMsg = result.errMsg ?? lastErrMsg;
+    const result = await runTurnAttemptWithCancellation(opts, targetAgent, promptText, state);
+    if (result) return result;
     const backoff = RETRY_BACKOFF_MS[attempt];
     if (backoff === undefined) break;
     await delay(backoff);
   }
 
-  const failed = await handleRetryExhaustion(opts, targetAgent, lastErrMsg, lastErrMeta);
+  const failed = await handleRetryExhaustion(
+    opts,
+    targetAgent,
+    state.lastErrMsg,
+    state.lastErrMeta,
+  );
   if (failed) return { ok: false, result: failed };
-  throw new Error(lastErrMsg);
+  throw new Error(state.lastErrMsg);
 }
 
 function resolveNextHop(turn: ChatTurnResult): { nextTo: string; nextRole: string | null } | null {

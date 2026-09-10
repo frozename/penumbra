@@ -723,6 +723,7 @@ function reasonForTerminated(terminatedReason: string | undefined): string {
     no_mention: "completed",
     max_hops: "max_hops",
     untrusted: "cancelled",
+    cancelled: "cancelled",
     error: "error",
     handoff_creation_failed: "handoff_creation_failed",
   };
@@ -888,6 +889,10 @@ function classifyResult(
   result: DispatchHandoffResult,
 ): void {
   if (ctx.abort.signal.aborted) {
+    ctx.outcome.status = "aborted";
+    return;
+  }
+  if (result.terminatedReason === "cancelled") {
     ctx.outcome.status = "aborted";
     return;
   }
