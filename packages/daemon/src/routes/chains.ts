@@ -1,4 +1,8 @@
-import { type ChainRoutingAdvisory, ChainStartResponseSchema } from "@penumbra/api-contract";
+import {
+  type ChainRoutingAdvisory,
+  type ChainRoutingWarning,
+  ChainStartResponseSchema,
+} from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
 import {
   type AgentRecommendation,
@@ -114,14 +118,7 @@ interface LongLivedPromptTickRow {
 
 const MAX_SUB_DISPATCH_FALLBACKS = 2;
 
-type RoutingWarningPayload = {
-  code: "prompt_project_mismatch";
-  project_id: string;
-  mentioned_paths: string[];
-  missing_in_project: string[];
-  suggested_project_id?: string;
-  hint: string;
-};
+type RoutingWarningPayload = ChainRoutingWarning;
 
 type RoutingAdvisoryPayload = ChainRoutingAdvisory;
 
@@ -1384,18 +1381,28 @@ function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
     ...(args.routingWarning !== undefined ? { routing_warning: args.routingWarning } : {}),
     ...(args.routingAdvisory !== undefined ? { routing_advisory: args.routingAdvisory } : {}),
   };
-  try {
-    return json(ChainStartResponseSchema.parse(body));
-  } catch (err) {
-    args.services.log.error(
-      {
-        event: "chain_start.response_schema_parse_failed",
-        error: err instanceof Error ? err.message : String(err),
+  const parsed = ChainStartResponseSchema.safeParse(body);
+  if (parsed.success) return json(parsed.data);
+  args.services.log.error(
+    {
+      event: "chain_start.response_schema_parse_failed",
+      handoff_id: args.handoff_id,
+      conversation_id: args.conversation_id,
+      error: parsed.error.message,
+    },
+    "chain-start response schema parse failed; failing closed",
+  );
+  return json(
+    {
+      error: {
+        code: "response_contract_violation",
+        message: "chain-start built a response that violates ChainStartResponseSchema",
+        handoff_id: args.handoff_id,
+        conversation_id: args.conversation_id,
       },
-      "chain-start response schema parse failed; returning unparsed body",
-    );
-    return json(body);
-  }
+    },
+    500,
+  );
 }
 
 interface RoutingResolution {

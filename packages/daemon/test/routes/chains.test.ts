@@ -12,6 +12,7 @@ import {
   migrate,
   ProjectRegistry,
   readRoutingDecisions,
+  type RecallResult,
   type Services,
   setRoutingBias,
   type Watchdog,
@@ -83,6 +84,8 @@ type ChainResponseBody = {
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     message?: string;
+    handoff_id?: string;
+    conversation_id?: string;
     reasons?: { route_id: string; reasons: string[] }[];
   };
 };
@@ -226,16 +229,19 @@ let previousDaemonRequireExplicitProjectId: string | undefined;
 let previousRequirePromptProjectMatch: string | undefined;
 let previousIsolatedInstallAuto: string | undefined;
 let previousIsolatedInstallAutoBoundary: string | undefined;
+let previousAutoRecallEnabled: string | undefined;
 
 beforeEach(() => {
   previousDaemonRequireExplicitProjectId = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   previousRequirePromptProjectMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
   previousIsolatedInstallAuto = process.env.PENUMBRA_ISOLATED_INSTALL_AUTO;
   previousIsolatedInstallAutoBoundary = process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
+  previousAutoRecallEnabled = process.env.PENUMBRA_AUTO_RECALL_ENABLED;
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
   delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO;
   delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
+  delete process.env.PENUMBRA_AUTO_RECALL_ENABLED;
 });
 
 afterEach(() => {
@@ -259,6 +265,11 @@ afterEach(() => {
     delete process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY;
   } else {
     process.env.PENUMBRA_ISOLATED_INSTALL_AUTO_BOUNDARY = previousIsolatedInstallAutoBoundary;
+  }
+  if (previousAutoRecallEnabled === undefined) {
+    delete process.env.PENUMBRA_AUTO_RECALL_ENABLED;
+  } else {
+    process.env.PENUMBRA_AUTO_RECALL_ENABLED = previousAutoRecallEnabled;
   }
 });
 
@@ -2411,6 +2422,60 @@ test("POST /chains/start success response parses against ChainStartResponseSchem
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainResponseBody>(res);
   expect(() => ChainStartResponseSchema.parse(body)).not.toThrow();
+});
+
+test("POST /chains/start fails closed when the response violates ChainStartResponseSchema", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  const errorSpy = spyOn(services.log, "error").mockImplementation(noopLog);
+  services.recallReader.recall = (): Promise<RecallResult[]> =>
+    Promise.resolve([
+      {
+        id: "m1",
+        tier: "t2",
+        score: 1,
+        fusedScore: 1,
+        sources: ["t2"],
+        title: "memo",
+        body: null as unknown as string,
+        project_id: "penumbra",
+        source_session_ids: [],
+        created_at: "2026-04-26T00:00:00Z",
+        ts: "2026-04-26T00:00:00Z",
+      },
+    ]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "hi",
+        project_id: "penumbra",
+        task_class: "STANDARD",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(500);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("response_contract_violation");
+  expect(body.error?.message).toBe(
+    "chain-start built a response that violates ChainStartResponseSchema",
+  );
+  expect(body.error?.handoff_id).toBeTruthy();
+  expect(body.error?.conversation_id).toBeTruthy();
+  const handoff = selectHandoff(services, body.error!.handoff_id!);
+  expect(body.error?.handoff_id).toBe(handoff.handoff_id);
+  expect(body.error?.conversation_id).toBe(handoff.conversation_id);
+  expect(errorSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chain_start.response_schema_parse_failed",
+      handoff_id: handoff.handoff_id,
+      conversation_id: handoff.conversation_id,
+    }),
+    "chain-start response schema parse failed; failing closed",
+  );
 });
 
 test("chain-start skips the routing guard when no project registry is available", async () => {
