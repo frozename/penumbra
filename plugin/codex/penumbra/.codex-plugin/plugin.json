@@ -1,0 +1,16 @@
+{
+  "name": "penumbra",
+  "version": "0.1.0",
+  "description": "Penumbra memory, planning and fleet workflow entry points for Codex",
+  "author": { "name": "Alexandre Cordeiro" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Penumbra",
+    "shortDescription": "Memory and fleet workflow entry points",
+    "longDescription": "Use Penumbra memory, planning, review and dispatch evidence from Codex.",
+    "developerName": "Alexandre Cordeiro",
+    "category": "Developer tools",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": ["Inspect the Penumbra workflows available for this project."]
+  }
+}
