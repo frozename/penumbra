@@ -99,6 +99,36 @@ async function waitForCaptureReservation(path: string): Promise<boolean> {
   return false;
 }
 
+function isProcessTerminated(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+    throw error;
+  }
+  if (process.platform !== "linux") return false;
+  try {
+    const stat = readFileSync(`/proc/${pid.toString()}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(") ");
+    if (commandEnd === -1 || stat.length <= commandEnd + 2) {
+      throw new Error(`invalid process stat for pid ${pid.toString()}`);
+    }
+    return stat[commandEnd + 2] === "Z";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+async function waitForProcessTermination(pid: number, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!isProcessTerminated(pid)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`pid ${pid.toString()} is still running`);
+    await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(10, remaining)));
+  }
+}
+
 async function invokeGeneratedHookWithPendingInput(
   command: string,
   input: string,
@@ -778,6 +808,29 @@ test("a throwing adapter removes every directory created for its profile", async
   expect(readdirSync(root)).toEqual([]);
 });
 
+test("the process termination wait rejects a live process and accepts its exit", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 20)"], {
+    stdio: "ignore",
+  });
+  const exited = new Promise<void>((resolveExit) => child.once("close", () => resolveExit()));
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once("spawn", resolveSpawn);
+    child.once("error", rejectSpawn);
+  });
+  const pid = child.pid;
+  if (pid === undefined) throw new Error("test child has no pid");
+
+  try {
+    await expect(waitForProcessTermination(pid, 50)).rejects.toThrow(
+      `pid ${pid.toString()} is still running`,
+    );
+  } finally {
+    child.kill("SIGKILL");
+    await exited;
+  }
+  await expect(waitForProcessTermination(pid, 50)).resolves.toBeUndefined();
+});
+
 test("the real adapter drains heavy output and bounds owned process shutdown", async () => {
   const root = createRoot();
   const binary = join(root, "fake-codex");
@@ -811,7 +864,19 @@ test("the real adapter drains heavy output and bounds owned process shutdown", a
   await expect(invoke("descendant")).rejects.toThrow("probe_timeout");
   const pid = Number(readFileSync(childPid, "utf8"));
   expect(Number.isInteger(pid)).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
+  let terminated = false;
+  try {
+    await waitForProcessTermination(pid);
+    terminated = true;
+  } finally {
+    if (!terminated) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+  }
 });
 
 test("the committed host report contains only parser-valid sanitized fixtures", () => {
