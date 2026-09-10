@@ -1,4 +1,4 @@
-import { ChainStartResponseSchema } from "@penumbra/api-contract";
+import { type ChainRoutingAdvisory, ChainStartResponseSchema } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
 import {
   type AgentRecommendation,
@@ -123,9 +123,7 @@ type RoutingWarningPayload = {
   hint: string;
 };
 
-type RoutingAdvisoryPayload = {
-  code: "project_registry_unavailable";
-};
+type RoutingAdvisoryPayload = ChainRoutingAdvisory;
 
 function collectSyntheticCaps(
   services: Services,
@@ -1010,28 +1008,64 @@ export function enforceRecursionDepthGuard(
   );
 }
 
-function dropUnknownProjectId(
+function guardUnknownProjectId(
   input: ChainStartRequestWithLongLived,
   services: Services,
   projectRegistryEntries: { project_id: string; root_path: string }[] | undefined,
-): void {
+): { response: Response | null; routingAdvisory: RoutingAdvisoryPayload | undefined } {
   if (
     input.project_id === null ||
     input.project_id === undefined ||
     projectRegistryEntries === undefined ||
     projectRegistryEntries.length === 0
   ) {
-    return;
+    return { response: null, routingAdvisory: undefined };
   }
-  if (projectRegistryEntries.some((entry) => entry.project_id === input.project_id)) return;
+  if (projectRegistryEntries.some((entry) => entry.project_id === input.project_id)) {
+    return { response: null, routingAdvisory: undefined };
+  }
+  const projectId = input.project_id;
+  const knownProjectIds = projectRegistryEntries.map((p) => p.project_id);
+  if (!canBypassExplicitProjectIdGate(input, services)) {
+    services.log.warn(
+      {
+        event: "chain_start.unknown_project_id_rejected",
+        project_id: projectId,
+        known_project_ids: knownProjectIds,
+      },
+      "chain-start unknown_project_id rejected",
+    );
+    return {
+      response: json(
+        {
+          error: {
+            code: "unknown_project",
+            project_id: projectId,
+            known_project_ids: knownProjectIds,
+          },
+        },
+        400,
+      ),
+      routingAdvisory: undefined,
+    };
+  }
   services.log.warn(
     {
-      project_id: input.project_id,
-      known_project_ids: projectRegistryEntries.map((p) => p.project_id),
+      event: "chain_start.unknown_project_id_dropped",
+      project_id: projectId,
+      known_project_ids: knownProjectIds,
     },
-    "chain-start unknown_project_id; dropping and continuing",
+    "chain-start unknown_project_id dropped for internal dispatch",
   );
   (input as { project_id?: string }).project_id = undefined;
+  return {
+    response: null,
+    routingAdvisory: {
+      code: "unknown_project_id_dropped",
+      project_id: projectId,
+      known_project_ids: knownProjectIds,
+    },
+  };
 }
 
 function resolveIsolatedInstall(
@@ -1622,7 +1656,12 @@ export async function chainStartInternal(
 
   const guardOutcome = runProjectRegistryGuard(input, services);
   if (guardOutcome.response) return guardOutcome.response;
-  const { routingWarning, routingAdvisory, projectRegistryEntries } = guardOutcome;
+  const { routingWarning, projectRegistryEntries } = guardOutcome;
+  let routingAdvisory = guardOutcome.routingAdvisory;
+
+  const unknownProjectId = guardUnknownProjectId(input, services, projectRegistryEntries);
+  if (unknownProjectId.response) return unknownProjectId.response;
+  routingAdvisory = unknownProjectId.routingAdvisory ?? routingAdvisory;
 
   let routing: RoutingResolution;
   try {
@@ -1686,8 +1725,6 @@ export async function chainStartInternal(
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
-
-  dropUnknownProjectId(input, services, projectRegistryEntries);
 
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();

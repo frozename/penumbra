@@ -78,7 +78,9 @@ export interface ChainStartResult {
     hint: string;
   };
   routing_advisory?: {
-    code: "project_registry_unavailable";
+    code: "project_registry_unavailable" | "unknown_project_id_dropped";
+    project_id?: string;
+    known_project_ids?: string[];
   };
 }
 export function formatChainStart(r: ChainStartResult): string {

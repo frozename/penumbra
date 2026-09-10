@@ -70,7 +70,7 @@ type ChainResponseBody = {
     missing_in_project?: string[];
     hint?: string;
   };
-  routing_advisory?: { code: string };
+  routing_advisory?: { code: string; project_id?: string; known_project_ids?: string[] };
   error?: {
     code?: string;
     agent?: string;
@@ -78,6 +78,8 @@ type ChainResponseBody = {
     did_you_mean?: string[];
     workers?: { worker_id: string; last_seen_age_ms: number }[];
     field_errors?: { path: string[]; message: string }[];
+    project_id?: string;
+    known_project_ids?: string[];
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     message?: string;
@@ -1444,7 +1446,7 @@ test("POST /chains/start falls back to default role agent when no alternate need
   expect(handoff.to_role).toBe("executor");
 });
 
-test("chain-start drops unknown project_id and continues when registry has entries", async () => {
+test("chain-start rejects unknown explicit project_id from external callers without persisting a handoff", async () => {
   const services = tempServices({ agentRegistry: ["planner"] });
   services.projectRegistry = new ProjectRegistry(
     new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
@@ -1460,16 +1462,202 @@ test("chain-start drops unknown project_id and continues when registry has entri
     }),
   });
   const res = await chainsStartRoute(req, services);
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(400);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error).toBeUndefined();
+  expect(body.error).toEqual({
+    code: "unknown_project",
+    project_id: "not-in-registry",
+    known_project_ids: ["penumbra"],
+  });
+  const handoffCount =
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0;
+  expect(handoffCount).toBe(0);
   expect(warnSpy).toHaveBeenCalledWith(
     expect.objectContaining({
+      event: "chain_start.unknown_project_id_rejected",
       project_id: "not-in-registry",
       known_project_ids: ["penumbra"],
     }),
-    "chain-start unknown_project_id; dropping and continuing",
+    "chain-start unknown_project_id rejected",
   );
+});
+
+test("chain-start drops unknown project_id for valid internal workflow dispatches and returns an advisory", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+  const workflowRunsMock: WorkflowRunsRegistry = {
+    verify: (workflowRunId: string) =>
+      workflowRunId === "workflow-42"
+        ? { workflow_name: "home-mgmt", project_id: null, registered_at: 1715385600000 }
+        : null,
+    register: (): null => null,
+    unregister: (): undefined => undefined,
+    recordResult: (): Promise<void> => Promise.resolve(),
+    recordError: (): Promise<void> => Promise.resolve(),
+    getStatus: (): Promise<null> => Promise.resolve(null),
+    getStatusLight: (): Promise<null> => Promise.resolve(null),
+    waitForResult: (): Promise<null> => Promise.resolve(null),
+    setPersistenceStatus: (): void => undefined,
+    setExecutionRecord: (): void => undefined,
+  };
+  services.workflowRuns = workflowRunsMock;
+  const warnSpy = spyOn(services.log, "warn").mockImplementation(noopLog);
+
+  const req = new Request("http://t/chains/start", {
+    method: "POST",
+    body: JSON.stringify({
+      initial_agent: "planner",
+      message: "hi",
+      project_id: "not-in-registry",
+      dispatch_kind: "workflow",
+      workflow_run_id: "workflow-42",
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routing_advisory).toEqual({
+    code: "unknown_project_id_dropped",
+    project_id: "not-in-registry",
+    known_project_ids: ["penumbra"],
+  });
+  expect(() => ChainStartResponseSchema.parse(body)).not.toThrow();
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.project_id).toBeNull();
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: "chain_start.unknown_project_id_dropped",
+      project_id: "not-in-registry",
+      known_project_ids: ["penumbra"],
+    }),
+    "chain-start unknown_project_id dropped for internal dispatch",
+  );
+});
+
+test("chain-start drops unknown project_id for thought_analyzer dispatches and returns an advisory", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+
+  const req = new Request("http://t/chains/start", {
+    method: "POST",
+    body: JSON.stringify({
+      initial_agent: "planner",
+      message: "hi",
+      project_id: "not-in-registry",
+      dispatch_kind: "thought_analyzer",
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routing_advisory).toEqual({
+    code: "unknown_project_id_dropped",
+    project_id: "not-in-registry",
+    known_project_ids: ["penumbra"],
+  });
+  expect(() => ChainStartResponseSchema.parse(body)).not.toThrow();
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.project_id).toBeNull();
+});
+
+test("chain-start drops unknown project_id for valid long-lived dispatches and returns an advisory", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+  services.db
+    .query(
+      `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "agent-42",
+      "Home Assistant",
+      JSON.stringify({
+        version: 1,
+        updated_at: 1715385600000,
+        pending_goals: [],
+        open_threads: [],
+        watches: [],
+        recent_decisions: [],
+      }),
+      "Keep home automations healthy",
+      1715385600000,
+      1715385600000,
+    );
+  services.db
+    .query(
+      `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+    )
+    .run("tick-42", "agent-42", "manual", 1715385600000);
+
+  const req = new Request("http://t/chains/start", {
+    method: "POST",
+    body: JSON.stringify({
+      initial_agent: "planner",
+      message: "hi",
+      project_id: "not-in-registry",
+      dispatch_kind: "long_lived_tick",
+      long_lived_agent_id: "agent-42",
+      long_lived_tick_id: "tick-42",
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routing_advisory).toEqual({
+    code: "unknown_project_id_dropped",
+    project_id: "not-in-registry",
+    known_project_ids: ["penumbra"],
+  });
+  expect(() => ChainStartResponseSchema.parse(body)).not.toThrow();
+  const handoff = selectHandoff(services, body.handoff_id!);
+  expect(handoff.project_id).toBeNull();
+});
+
+test("chain-start treats forged workflow metadata as external for unknown project_id rejection", async () => {
+  const services = tempServices({ agentRegistry: ["planner"] });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
+  );
+  const workflowRunsMock: WorkflowRunsRegistry = {
+    verify: (): null => null,
+    register: (): null => null,
+    unregister: (): undefined => undefined,
+    recordResult: (): Promise<void> => Promise.resolve(),
+    recordError: (): Promise<void> => Promise.resolve(),
+    getStatus: (): Promise<null> => Promise.resolve(null),
+    getStatusLight: (): Promise<null> => Promise.resolve(null),
+    waitForResult: (): Promise<null> => Promise.resolve(null),
+    setPersistenceStatus: (): void => undefined,
+    setExecutionRecord: (): void => undefined,
+  };
+  services.workflowRuns = workflowRunsMock;
+
+  const req = new Request("http://t/chains/start", {
+    method: "POST",
+    body: JSON.stringify({
+      initial_agent: "planner",
+      message: "hi",
+      project_id: "not-in-registry",
+      dispatch_kind: "workflow",
+      workflow_run_id: "not-real",
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("unknown_project");
+  const handoffCount =
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0;
+  expect(handoffCount).toBe(0);
 });
 
 test("chain-start accepts a project_id present in the registry", async () => {

@@ -75,11 +75,20 @@ export const ChainRoutingWarningSchema = z
   .strict();
 export type ChainRoutingWarning = z.infer<typeof ChainRoutingWarningSchema>;
 
-export const ChainRoutingAdvisorySchema = z
-  .object({
-    code: z.literal("project_registry_unavailable"),
-  })
-  .strict();
+export const ChainRoutingAdvisorySchema = z.discriminatedUnion("code", [
+  z
+    .object({
+      code: z.literal("project_registry_unavailable"),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("unknown_project_id_dropped"),
+      project_id: z.string(),
+      known_project_ids: z.array(z.string()),
+    })
+    .strict(),
+]);
 export type ChainRoutingAdvisory = z.infer<typeof ChainRoutingAdvisorySchema>;
 
 export const ChainStartRequestSchema = z
