@@ -770,6 +770,23 @@ test("aborted dispatch is failed, not completed (shutdown must not mask an in-fl
   expect(reason).toBe("cancelled");
 });
 
+test("cancelled dispatch result cannot complete without a local abort signal", async () => {
+  const d = deps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "cancelled",
+      text: "",
+      agent: "executor",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff("h-explicit-cancelled"));
+  await dispatcher.idle();
+
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).toHaveBeenCalledWith("h-explicit-cancelled", "cancelled");
+});
+
 test("cancelled terminal result emits chain-end cancellation and is marked failed by worker", async () => {
   const events: DispatchEventInput[] = [];
   const started = Promise.withResolvers<undefined>();

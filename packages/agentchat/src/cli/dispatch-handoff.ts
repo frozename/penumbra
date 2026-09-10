@@ -134,15 +134,6 @@ interface TurnAttempt {
   errMeta?: ChatTurnResult["meta"];
 }
 
-interface RetryState {
-  lastErrMsg: string;
-  lastErrMeta: ChatTurnResult["meta"] | undefined;
-}
-
-type RunTurnRetryResult =
-  | { ok: true; turn: ChatTurnResult }
-  | { ok: false; result: DispatchHandoffResult };
-
 async function runTurnOnce(
   opts: DispatchHandoffOpts,
   targetAgent: string,
@@ -217,52 +208,32 @@ function cancelledRetryResult(
   };
 }
 
-async function runTurnAttemptWithCancellation(
-  opts: DispatchHandoffOpts,
-  targetAgent: string,
-  promptText: string | undefined,
-  state: RetryState,
-): Promise<RunTurnRetryResult | null> {
-  if (opts.signal?.aborted) {
-    return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-  }
-  const result = await runTurnOnce(opts, targetAgent, promptText);
-  if (result.errMeta) state.lastErrMeta = result.errMeta;
-  if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
-  state.lastErrMsg = result.errMsg ?? state.lastErrMsg;
-  if (opts.signal?.aborted) {
-    return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-  }
-  return null;
-}
-
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
   promptText: string | undefined,
-): Promise<RunTurnRetryResult> {
+): Promise<{ ok: true; turn: ChatTurnResult } | { ok: false; result: DispatchHandoffResult }> {
   const delay = opts.delay ?? defaultDelay;
-  const state: RetryState = {
-    lastErrMsg: "adapter dispatch failed",
-    lastErrMeta: undefined,
-  };
+  let lastErrMsg = "adapter dispatch failed";
+  let lastErrMeta: ChatTurnResult["meta"] | undefined;
 
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    const result = await runTurnAttemptWithCancellation(opts, targetAgent, promptText, state);
-    if (result) return result;
+    if (opts.signal?.aborted)
+      return { ok: false, result: cancelledRetryResult(targetAgent, lastErrMeta) };
+    const result = await runTurnOnce(opts, targetAgent, promptText);
+    lastErrMeta = result.errMeta ?? lastErrMeta;
+    if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
+    if (opts.signal?.aborted)
+      return { ok: false, result: cancelledRetryResult(targetAgent, lastErrMeta) };
+    lastErrMsg = result.errMsg ?? lastErrMsg;
     const backoff = RETRY_BACKOFF_MS[attempt];
     if (backoff === undefined) break;
     await delay(backoff);
   }
 
-  const failed = await handleRetryExhaustion(
-    opts,
-    targetAgent,
-    state.lastErrMsg,
-    state.lastErrMeta,
-  );
+  const failed = await handleRetryExhaustion(opts, targetAgent, lastErrMsg, lastErrMeta);
   if (failed) return { ok: false, result: failed };
-  throw new Error(state.lastErrMsg);
+  throw new Error(lastErrMsg);
 }
 
 function resolveNextHop(turn: ChatTurnResult): { nextTo: string; nextRole: string | null } | null {
