@@ -1,7 +1,12 @@
 import { type TaskClass, TaskClassSchema } from "@penumbra/core";
 
 export interface AutoRecallDeps {
-  memoryRecall: (args: { query: string; top_k: number; project_id?: string }) => Promise<{
+  memoryRecall: (args: {
+    query: string;
+    top_k: number;
+    project_id?: string;
+    signal?: AbortSignal;
+  }) => Promise<{
     hits: {
       id: string;
       title: string;
@@ -17,6 +22,7 @@ export interface AutoRecallInput {
   prompt: string;
   task_class: TaskClass;
   project_id?: string;
+  signal?: AbortSignal;
 }
 
 export interface AutoRecallResult {
@@ -30,6 +36,14 @@ export interface AutoRecallResult {
   recalled_query: string;
   injected_text: string | null;
 }
+
+type RecallArgs = {
+  query: string;
+  top_k: number;
+  project_id?: string;
+  signal?: AbortSignal;
+};
+type MemoryRecallResult = Awaited<ReturnType<AutoRecallDeps["memoryRecall"]>>;
 
 const TOP_K_BY_TASK_CLASS: Record<TaskClass, number> = {
   STANDARD: 5,
@@ -46,22 +60,21 @@ export async function autoRecallForDispatch(
   const top_k = TOP_K_BY_TASK_CLASS[taskClass];
 
   try {
-    const recallArgs: { query: string; top_k: number; project_id?: string } = {
-      query: recalled_query,
-      top_k,
-    };
-    if (input.project_id !== undefined) recallArgs.project_id = input.project_id;
-    let result = await deps.memoryRecall(recallArgs);
-    if (Array.isArray(result.hits) && result.hits.length === 0 && input.project_id !== undefined) {
-      const fallbackArgs: { query: string; top_k: number } = { query: recalled_query, top_k };
-      const fallback = await deps.memoryRecall(fallbackArgs);
-      if (Array.isArray(fallback.hits) && fallback.hits.length > 0) {
-        result = fallback;
-        deps.logger?.("debug", "auto-recall used cross-project fallback", {
-          task_class: taskClass,
-        });
-      }
+    let result = await deps.memoryRecall(
+      buildRecallArgs(recalled_query, top_k, input.project_id, input.signal),
+    );
+    if (input.signal?.aborted === true) {
+      deps.logger?.("debug", "auto-recall aborted after deadline", { task_class: taskClass });
+      return emptyAutoRecallResult(recalled_query);
     }
+    result = await maybeUseCrossProjectFallback(
+      result,
+      input,
+      deps,
+      taskClass,
+      recalled_query,
+      top_k,
+    );
     if (!Array.isArray(result.hits)) {
       throw new Error("memoryRecall returned invalid hits");
     }
@@ -93,13 +106,52 @@ export async function autoRecallForDispatch(
       error: String(err),
       task_class: taskClass,
     });
-    return {
-      recalled_memory_ids: [],
-      recalled_memories: [],
-      recalled_query,
-      injected_text: null,
-    };
+    return emptyAutoRecallResult(recalled_query);
   }
+}
+
+function buildRecallArgs(
+  recalled_query: string,
+  top_k: number,
+  project_id: string | undefined,
+  signal: AbortSignal | undefined,
+): RecallArgs {
+  const recallArgs: RecallArgs = { query: recalled_query, top_k };
+  if (project_id !== undefined) recallArgs.project_id = project_id;
+  if (signal !== undefined) recallArgs.signal = signal;
+  return recallArgs;
+}
+
+async function maybeUseCrossProjectFallback(
+  result: MemoryRecallResult,
+  input: AutoRecallInput,
+  deps: AutoRecallDeps,
+  taskClass: TaskClass,
+  recalled_query: string,
+  top_k: number,
+): Promise<MemoryRecallResult> {
+  if (!Array.isArray(result.hits) || result.hits.length > 0 || input.project_id === undefined) {
+    return result;
+  }
+  const fallback = await deps.memoryRecall(
+    buildRecallArgs(recalled_query, top_k, undefined, input.signal),
+  );
+  if (Array.isArray(fallback.hits) && fallback.hits.length > 0) {
+    deps.logger?.("debug", "auto-recall used cross-project fallback", {
+      task_class: taskClass,
+    });
+    return fallback;
+  }
+  return result;
+}
+
+function emptyAutoRecallResult(recalled_query: string): AutoRecallResult {
+  return {
+    recalled_memory_ids: [],
+    recalled_memories: [],
+    recalled_query,
+    injected_text: null,
+  };
 }
 
 function renderInjectedText(hits: { id: string; title: string; snippet?: string }[]): string {

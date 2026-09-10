@@ -28,7 +28,8 @@ export class RecallReader {
    * Each tier is queried with limit, filtered by min_score, and then fused
    * using Reciprocal Rank Fusion (RRF).
    */
-  async recall(req: RecallRequest): Promise<RecallResult[]> {
+  async recall(req: RecallRequest, opts?: { signal?: AbortSignal }): Promise<RecallResult[]> {
+    if (isSignalAborted(opts?.signal)) return [];
     if (req.strategy_hint === "hybrid") {
       return await runHybridRecall(this.db, this.embedder, req);
     }
@@ -37,6 +38,10 @@ export class RecallReader {
 
     const needsVector = requestedSources.includes("t1") || requestedSources.includes("t2");
     const qvec = needsVector ? (await this.embedder.embed([req.query]))[0] : undefined;
+
+    // Embedder.embed and sqlite-vec scans do not accept AbortSignal; this is
+    // the last cheap exit before synchronous tier scans can block the event loop.
+    if (isSignalAborted(opts?.signal)) return [];
 
     const t0Results = requestedSources.includes("t0")
       ? collectT0Results(this.db, req, perTierLimit)
@@ -69,6 +74,10 @@ export class RecallReader {
       };
     });
   }
+}
+
+function isSignalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 async function runHybridRecall(

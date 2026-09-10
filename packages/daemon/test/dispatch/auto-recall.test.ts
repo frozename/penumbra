@@ -2,7 +2,7 @@ import { expect, mock, test } from "bun:test";
 
 import { autoRecallForDispatch } from "@src/dispatch/auto-recall.js";
 
-type RecallArgs = { query: string; top_k: number; project_id?: string };
+type RecallArgs = { query: string; top_k: number; project_id?: string; signal?: AbortSignal };
 type RecallHit = { id: string; title: string; snippet?: string };
 type RecallResult = { hits: RecallHit[] };
 
@@ -195,6 +195,56 @@ test("falls back to cross-project recall when project-scoped returns zero hits",
   expect(calls).toHaveLength(2);
   expect(calls[0].project_id).toBe("penumbra");
   expect(calls[1].project_id).toBeUndefined();
+});
+
+test("cross-project fallback forwards the recall signal", async () => {
+  const controller = new AbortController();
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
+    calls.push(args);
+    if (args.project_id === "penumbra") return Promise.resolve({ hits: [] });
+    return Promise.resolve({ hits: [{ id: "cross-1", title: "global" }] });
+  };
+
+  const result = await autoRecallForDispatch(
+    {
+      prompt: "q",
+      task_class: "STANDARD",
+      project_id: "penumbra",
+      signal: controller.signal,
+    },
+    {
+      memoryRecall,
+      logger: (): void => {
+        return;
+      },
+    },
+  );
+
+  expect(result.recalled_memory_ids).toEqual(["cross-1"]);
+  expect(calls).toHaveLength(2);
+  expect(calls[0]!.signal).toBe(controller.signal);
+  expect(calls[1]!.signal).toBe(controller.signal);
+});
+
+test("aborted signal is forwarded and skips the cross-project fallback recall", async () => {
+  const controller = new AbortController();
+  const calls: RecallArgs[] = [];
+  const memoryRecall = (args: RecallArgs): Promise<RecallResult> => {
+    calls.push(args);
+    controller.abort();
+    return Promise.resolve({ hits: [] });
+  };
+
+  const result = await autoRecallForDispatch(
+    { prompt: "p", task_class: "STANDARD", project_id: "penumbra", signal: controller.signal },
+    { memoryRecall },
+  );
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.signal).toBe(controller.signal);
+  expect(result.recalled_memory_ids).toEqual([]);
+  expect(result.injected_text).toBeNull();
 });
 
 test("does NOT cross-project fallback when project-scoped returns hits", async () => {

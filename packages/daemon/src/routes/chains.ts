@@ -1150,6 +1150,7 @@ async function maybeRunAutoRecall(
   if (!readAutoRecallEnabled(services)) return empty;
 
   const AUTO_RECALL_TIMEOUT_MS = 1500;
+  const autoRecallController = new AbortController();
   const injectedSections: string[] = [];
   const projectBriefInjection = maybeLoadProjectBriefInjection(services, input.project_id);
   if (projectBriefInjection) injectedSections.push(projectBriefInjection);
@@ -1158,6 +1159,7 @@ async function maybeRunAutoRecall(
       prompt: input.message,
       task_class: taskClass,
       project_id: input.project_id,
+      signal: autoRecallController.signal,
     },
     {
       memoryRecall: async (args) => {
@@ -1166,7 +1168,9 @@ async function maybeRunAutoRecall(
           limit: args.top_k,
           project_id: args.project_id ?? null,
         });
-        const results: RecallResult[] = await services.recallReader.recall(recallReq);
+        const results: RecallResult[] = await services.recallReader.recall(recallReq, {
+          signal: args.signal,
+        });
         return {
           hits: results.map((r) => ({
             id: r.id,
@@ -1184,6 +1188,8 @@ async function maybeRunAutoRecall(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<null>((resolve) => {
     const handle = setTimeout(() => {
+      // Bound post-deadline recall work, not only the caller's wait.
+      autoRecallController.abort();
       resolve(null);
     }, AUTO_RECALL_TIMEOUT_MS);
     handle.unref();
