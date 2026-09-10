@@ -1832,7 +1832,9 @@ export class StdioAcpAdapter implements Adapter {
     poolKey: string,
     input: DispatchInput,
   ): AsyncIterable<DispatchEvent> {
-    const coldAdapter = this.prepareColdRetry(err, state, warmPoolEnabled, poolKey);
+    const coldAdapter = input.signal.aborted
+      ? null
+      : this.prepareColdRetry(err, state, warmPoolEnabled, poolKey);
     if (coldAdapter) {
       for await (const event of coldAdapter.dispatchStream(input)) {
         yield event;

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { startStdioAcpServer } from "@src/adapters/stdio-acp-server.js";
 
@@ -16,6 +19,37 @@ afterEach(() => {
 });
 
 describe("startStdioAcpServer", () => {
+  test("rejects an already-aborted start before executing the child", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "stdio-acp-aborted-"));
+    const sentinelPath = join(fixtureDir, "spawned");
+    const controller = new AbortController();
+    const cancelReason = new Error("cancelled before server start");
+    controller.abort(cancelReason);
+    let handle: Awaited<ReturnType<typeof startStdioAcpServer>> | null = null;
+    let caught: unknown;
+
+    try {
+      try {
+        handle = await startStdioAcpServer({
+          binary: "sh",
+          args: ["-c", 'printf spawned > "$1"', "sh", sentinelPath],
+          signal: controller.signal,
+        });
+        if (handle.pid) cleanupPids.add(handle.pid);
+        await handle.exited;
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(existsSync(sentinelPath)).toBe(false);
+      expect(handle).toBeNull();
+      expect(caught).toBe(cancelReason);
+    } finally {
+      if (handle?.pid) cleanupPids.delete(handle.pid);
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
   test("getStderrTail captures child stderr output", async () => {
     const handle = await startStdioAcpServer({
       binary: "sh",

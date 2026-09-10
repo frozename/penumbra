@@ -43,6 +43,11 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     signal,
     stderrTailBytes = 8192,
   } = opts;
+  if (signal?.aborted === true) {
+    return Promise.reject(
+      signal.reason instanceof Error ? signal.reason : new Error("stdio-acp-server: start aborted"),
+    );
+  }
 
   const child = spawn(binary, args, {
     cwd,
