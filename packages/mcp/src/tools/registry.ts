@@ -12,7 +12,11 @@ import type { HandleStore } from "../handle-store.js";
 import { agentRankHandler, AgentRankInputShape } from "./agent-rank.js";
 import { agentRecommendHandler, AgentRecommendInputShape } from "./agent-recommend.js";
 import { agentRouteForHandler, AgentRouteForInputShape } from "./agent-route-for.js";
-import { brainstormHandler, BrainstormInputShape } from "./brainstorm.js";
+import {
+  brainstormHandler,
+  type BrainstormHandlerOpts,
+  BrainstormInputShape,
+} from "./brainstorm.js";
 import { chainCancelHandler, ChainCancelInputShape } from "./chain-cancel.js";
 import { chainGetMessagesHandler, ChainGetMessagesInputShape } from "./chain-get-messages.js";
 import { chainGetResponseHandler, ChainGetResponseInputShape } from "./chain-get-response.js";
@@ -673,10 +677,12 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   brainstorm: {
     descriptor: {
-      description: "Run the brainstorm workflow with topic and optional constraints.",
+      description:
+        "Run the brainstorm workflow with topic, optional constraints, and optional absolute caller repo cwd; omitting cwd falls back to the MCP subprocess cwd.",
       inputSchema: BrainstormInputShape,
     },
-    makeHandler: brainstormHandler,
+    makeHandler: brainstormHandler as unknown as ToolDef["makeHandler"],
+    handlerOpts: (_ctx) => ({ resolveCwd: () => process.cwd() }) satisfies BrainstormHandlerOpts,
     readOnly: false,
   },
   plan_open: {
