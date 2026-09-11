@@ -35,6 +35,9 @@ import {
   type AuditReportRow,
   type DispatchEventRow,
   type LandTaskRow,
+  type TaskDraftEscalationRow,
+  type TaskDraftFixtureRow,
+  type TaskFixtureRow,
   createHarnessServer,
   createInitialState,
   resetState,
@@ -66,6 +69,9 @@ export type {
   AuditReportRow,
   DispatchEventRow,
   LandTaskRow,
+  TaskDraftEscalationRow,
+  TaskDraftFixtureRow,
+  TaskFixtureRow,
 };
 
 function toHarnessRow(row: Omit<PendingHandoffRow, "status">): HarnessRow {
@@ -218,6 +224,16 @@ export async function startHarness(): Promise<E2EHarness> {
         }
       }
       state.conversationSseWaiters.clear();
+
+      for (const client of Array.from(state.taskSseClients)) {
+        try {
+          client.end();
+        } catch {
+          // ignore teardown races
+        } finally {
+          state.taskSseClients.delete(client);
+        }
+      }
 
       if (!server.listening) return;
       await new Promise<void>((resolve) => {
@@ -456,6 +472,15 @@ export async function startHarness(): Promise<E2EHarness> {
         waiters.add(waiter);
         resolveConversationSseWaiters(state, conversationId);
       });
+    },
+    setTasks(rows: TaskFixtureRow[]) {
+      state.tasks = rows.map((row) => ({ ...row }));
+    },
+    setTaskDrafts(rows: TaskDraftFixtureRow[]) {
+      state.taskDrafts = rows.map((row) => ({ ...row }));
+    },
+    setTaskDraftEscalations(rows: TaskDraftEscalationRow[]) {
+      state.taskDraftEscalations = rows.map((row) => ({ ...row }));
     },
   };
 }

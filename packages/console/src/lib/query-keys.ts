@@ -1,4 +1,4 @@
-import type { HandoffStatus } from "@penumbra/api-contract";
+import type { HandoffStatus, TasksListQuery } from "@penumbra/api-contract";
 
 /**
  * Centralized TanStack Query key registry.
@@ -149,4 +149,21 @@ export function handoffsPendingInvalidations(): readonly (readonly string[])[] {
  */
 export function sessionNoteDraftsInvalidations(): readonly (readonly string[])[] {
   return [sessionNoteDrafts(), approvalsDrafts()];
+}
+
+/** Tasks list, scoped by query filters. */
+export function tasksList(query: TasksListQuery): readonly ["tasks", "list", TasksListQuery] {
+  return ["tasks", "list", query] as const;
+}
+
+/** Single task detail, scoped by task id. */
+export function taskDetail(id: string): readonly ["tasks", "detail", string] {
+  return ["tasks", "detail", id] as const;
+}
+
+/** Task-draft escalations, scoped by project id (daemon requires project_id). */
+export function taskDraftEscalations(
+  projectId: string,
+): readonly ["task-drafts", "escalations", string] {
+  return ["task-drafts", "escalations", projectId] as const;
 }

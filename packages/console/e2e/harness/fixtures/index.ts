@@ -6,6 +6,7 @@ import { register as registerMission } from "./mission";
 import { register as registerPermissions } from "./permissions";
 import { register as registerRegistrar } from "./registrar";
 import { register as registerSessions } from "./sessions";
+import { register as registerTasks } from "./tasks";
 
 export const FIXTURES = [
   registerMission,
@@ -14,6 +15,7 @@ export const FIXTURES = [
   registerPermissions,
   registerHandoffs,
   registerChains,
+  registerTasks,
 ] as const;
 
 export type FixtureRegistrar = (router: FixtureRouter, state: HarnessState) => void;

@@ -27,6 +27,7 @@ export const TasksListQuerySchema = z
     offset: z.coerce.number().int().nonnegative().optional(),
   })
   .strict();
+export type TasksListQuery = z.infer<typeof TasksListQuerySchema>;
 
 // Server-side TaskRow shape evolves quickly; treat as loose snapshot.
 export const TaskRowSchema = z
@@ -45,6 +46,7 @@ export type TaskRow = z.infer<typeof TaskRowSchema>;
 export const TasksListResponseSchema = z.object({
   tasks: z.array(TaskRowSchema),
 });
+export type TasksListResponse = z.infer<typeof TasksListResponseSchema>;
 
 export const TIER_ORDER = ["economy", "standard", "premium"] as const;
 export type Tier = (typeof TIER_ORDER)[number];
@@ -155,3 +157,37 @@ export const CancelTaskInputSchema = z
   })
   .strict();
 export type CancelTaskInput = z.infer<typeof CancelTaskInputSchema>;
+
+export const TaskCreateResponseSchema = z.object({ task_id: z.string() }).loose();
+export type TaskCreateResponse = z.infer<typeof TaskCreateResponseSchema>;
+
+export const TaskCancelResponseSchema = z.object({ status: z.literal("cancelled") }).loose();
+export type TaskCancelResponse = z.infer<typeof TaskCancelResponseSchema>;
+
+export const TaskFailResponseSchema = z.object({ status: z.literal("failed") }).loose();
+export type TaskFailResponse = z.infer<typeof TaskFailResponseSchema>;
+
+export const TaskDraftsPendingResponseSchema = z.object({ drafts: z.array(z.unknown()) }).loose();
+export type TaskDraftsPendingResponse = z.infer<typeof TaskDraftsPendingResponseSchema>;
+
+export const TaskDraftEscalationsResponseSchema = z
+  .object({ escalations: z.array(z.unknown()) })
+  .loose();
+export type TaskDraftEscalationsResponse = z.infer<typeof TaskDraftEscalationsResponseSchema>;
+
+export const TaskDraftsPendingQuerySchema = z
+  .object({
+    latest_event_type: z.enum(["task_draft", "task_draft_escalation"]),
+    project_id: z.string().min(1),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+export type TaskDraftsPendingQuery = z.infer<typeof TaskDraftsPendingQuerySchema>;
+
+export const TaskDraftEscalationsQuerySchema = z
+  .object({
+    project_id: z.string().min(1),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+export type TaskDraftEscalationsQuery = z.infer<typeof TaskDraftEscalationsQuerySchema>;

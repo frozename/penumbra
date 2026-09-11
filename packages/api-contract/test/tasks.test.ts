@@ -1,5 +1,14 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
+import {
+  TaskCancelResponseSchema,
+  TaskCreateResponseSchema,
+  TaskDraftEscalationsQuerySchema,
+  TaskDraftEscalationsResponseSchema,
+  TaskDraftsPendingQuerySchema,
+  TaskDraftsPendingResponseSchema,
+  TaskFailResponseSchema,
+} from "../src/index.js";
 import * as Tasks from "../src/tasks.js";
 
 const fullFileTask = {
@@ -231,4 +240,42 @@ test("FailTaskInputSchema preserves requirements", () => {
       reason: "",
     }).success,
   ).toBe(false);
+});
+
+describe("task response schemas parse the daemon envelopes", () => {
+  test("TaskCreateResponseSchema accepts { task_id }", () => {
+    expect(TaskCreateResponseSchema.safeParse({ task_id: "t" }).success).toBe(true);
+  });
+
+  test("TaskCancelResponseSchema accepts 'cancelled' and rejects 'canceled'", () => {
+    expect(TaskCancelResponseSchema.safeParse({ status: "cancelled" }).success).toBe(true);
+    expect(TaskCancelResponseSchema.safeParse({ status: "canceled" }).success).toBe(false);
+  });
+
+  test("TaskFailResponseSchema accepts 'failed'", () => {
+    expect(TaskFailResponseSchema.safeParse({ status: "failed" }).success).toBe(true);
+  });
+
+  test("TaskDraftsPendingResponseSchema accepts { drafts: [] }", () => {
+    expect(TaskDraftsPendingResponseSchema.safeParse({ drafts: [] }).success).toBe(true);
+  });
+
+  test("TaskDraftEscalationsResponseSchema accepts { escalations: [] }", () => {
+    expect(TaskDraftEscalationsResponseSchema.safeParse({ escalations: [] }).success).toBe(true);
+  });
+
+  test("TaskDraftsPendingQuerySchema accepts valid query and rejects empty", () => {
+    expect(
+      TaskDraftsPendingQuerySchema.safeParse({
+        latest_event_type: "task_draft",
+        project_id: "p",
+      }).success,
+    ).toBe(true);
+    expect(TaskDraftsPendingQuerySchema.safeParse({}).success).toBe(false);
+  });
+
+  test("TaskDraftEscalationsQuerySchema accepts valid query and rejects empty", () => {
+    expect(TaskDraftEscalationsQuerySchema.safeParse({ project_id: "p" }).success).toBe(true);
+    expect(TaskDraftEscalationsQuerySchema.safeParse({}).success).toBe(false);
+  });
 });

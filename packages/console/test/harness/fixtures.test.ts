@@ -1,4 +1,4 @@
-import { DispatchLandTaskSchema } from "@penumbra/api-contract";
+import { DispatchLandTaskSchema, TasksListResponseSchema } from "@penumbra/api-contract";
 import { describe, expect, test } from "bun:test";
 
 // eslint-disable-next-line no-restricted-imports -- e2e harness lives outside src/
@@ -1448,6 +1448,79 @@ describe("chains fixture", () => {
       const body = (await res.json()) as { history: { reason: string }[] };
       expect(body.history).toHaveLength(1);
       expect(body.history[0]!.reason).toBe("second");
+    } finally {
+      await h.stop();
+    }
+  });
+});
+
+describe("tasks fixture", () => {
+  test("the tasks fixture serves list/get/create and the escalations list", async () => {
+    const h = await startHarness();
+    try {
+      const listRes = await Bun.fetch(`${h.baseUrl}/tasks`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(listRes.status).toBe(200);
+      const listBody: unknown = await listRes.json();
+      expect(TasksListResponseSchema.safeParse(listBody).success).toBe(true);
+
+      h.setTasks([
+        {
+          task_id: "t1",
+          kind: "work",
+          status: "pending",
+          prompt: "do thing",
+          origin: null,
+          parent_task_id: null,
+          created_at: "2026-09-11T00:00:00Z",
+        },
+      ]);
+      h.setTaskDraftEscalations([
+        { task_id: "t2", project_id: "p1", kind: "task_draft_escalation", at: 1 },
+      ]);
+
+      const seededListRes = await Bun.fetch(`${h.baseUrl}/tasks`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const seededListBody = (await seededListRes.json()) as { tasks: { task_id: string }[] };
+      expect(seededListBody.tasks).toHaveLength(1);
+      expect(seededListBody.tasks[0]!.task_id).toBe("t1");
+
+      const getRes = await Bun.fetch(`${h.baseUrl}/tasks/t1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(getRes.status).toBe(200);
+      const getBody = (await getRes.json()) as { task_id: string };
+      expect(getBody.task_id).toBe("t1");
+
+      const createRes = await Bun.fetch(`${h.baseUrl}/tasks`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "new task",
+          created_by_kind: "human",
+          created_by_id: "cli",
+        }),
+      });
+      expect(createRes.status).toBe(200);
+      const createBody = (await createRes.json()) as { task_id: string };
+      expect(createBody.task_id).toBeTruthy();
+
+      const escRes = await Bun.fetch(`${h.baseUrl}/task-drafts/pending-escalations?project_id=p1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(escRes.status).toBe(200);
+      const escBody = (await escRes.json()) as { escalations: { task_id: string }[] };
+      expect(escBody.escalations).toHaveLength(1);
+      expect(escBody.escalations[0]!.task_id).toBe("t2");
+
+      const noProjRes = await Bun.fetch(`${h.baseUrl}/task-drafts/pending-escalations`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(noProjRes.status).toBe(400);
+      const noProjBody = (await noProjRes.json()) as { error: { code: string } };
+      expect(noProjBody.error.code).toBe("validation_error");
     } finally {
       await h.stop();
     }

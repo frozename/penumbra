@@ -32,6 +32,8 @@ import {
 } from "./domains/session-events.js";
 import { sessionNotesSlice, type SessionNotesSlice } from "./domains/session-notes.js";
 import { sessionsSlice, type SessionsSlice } from "./domains/sessions.js";
+import { taskDraftsSlice, type TaskDraftsSlice } from "./domains/task-drafts.js";
+import { tasksSlice, type TasksSlice } from "./domains/tasks.js";
 import {
   type UsageQuotaResponse,
   type UsageRecentResponse,
@@ -89,6 +91,8 @@ export class DaemonClient {
   readonly dispatchAudit: DispatchAuditSlice;
   readonly dispatchEvents: DispatchEventsSlice;
   readonly lanes: LanesSlice;
+  readonly tasks: TasksSlice;
+  readonly taskDrafts: TaskDraftsSlice;
 
   constructor(private readonly deps: DaemonClientDeps) {
     this.daemon = daemonSlice(this.transport);
@@ -107,6 +111,8 @@ export class DaemonClient {
     this.dispatchAudit = dispatchAuditSlice(this.transport);
     this.dispatchEvents = dispatchEventsSlice(this.transport);
     this.lanes = lanesSlice(this.transport);
+    this.tasks = tasksSlice(this.transport);
+    this.taskDrafts = taskDraftsSlice(this.transport);
   }
 
   async health(): Promise<{ status: "ok" }> {

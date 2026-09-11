@@ -2,6 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import type { HandoffStatus, LaneRow } from "@penumbra/api-contract";
 
+import type { TaskDraftEscalationRow, TaskDraftFixtureRow, TaskFixtureRow } from "./fixtures/tasks";
+
+export type { TaskDraftEscalationRow, TaskDraftFixtureRow, TaskFixtureRow } from "./fixtures/tasks";
+
 import type { FixtureRouter } from "./router";
 
 export interface PendingHandoffRow {
@@ -241,6 +245,9 @@ export interface E2EHarness {
   simulateReconnect: () => void;
   injectError: (path: string, status: number) => void;
   clearErrors: () => void;
+  setTasks: (rows: TaskFixtureRow[]) => void;
+  setTaskDrafts: (rows: TaskDraftFixtureRow[]) => void;
+  setTaskDraftEscalations: (rows: TaskDraftEscalationRow[]) => void;
 }
 
 export interface Call {
@@ -316,6 +323,10 @@ export interface HarnessState {
   chainHistory: Map<string, ChainHistoryRow[]>;
   conversationSseClients: Map<string, Set<ServerResponse<IncomingMessage>>>;
   conversationSseWaiters: Map<string, Set<SseWaiter>>;
+  tasks: TaskFixtureRow[];
+  taskDrafts: TaskDraftFixtureRow[];
+  taskDraftEscalations: TaskDraftEscalationRow[];
+  taskSseClients: Set<ServerResponse<IncomingMessage>>;
 }
 
 export function createInitialState(): HarnessState {
@@ -356,6 +367,10 @@ export function createInitialState(): HarnessState {
     chainHistory: new Map(),
     conversationSseClients: new Map(),
     conversationSseWaiters: new Map(),
+    tasks: [],
+    taskDrafts: [],
+    taskDraftEscalations: [],
+    taskSseClients: new Set(),
   };
 }
 
@@ -414,6 +429,17 @@ export function resetState(state: HarnessState): void {
     }
   }
   state.conversationSseWaiters.clear();
+  state.tasks = [];
+  state.taskDrafts = [];
+  state.taskDraftEscalations = [];
+  for (const client of Array.from(state.taskSseClients)) {
+    try {
+      client.end();
+    } catch {
+      // ignore teardown races
+    }
+  }
+  state.taskSseClients.clear();
 }
 
 export function resolveSseWaiters(state: HarnessState): void {
