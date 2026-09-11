@@ -280,7 +280,13 @@ export class DaemonClient {
     if (input.window_hours !== undefined) params.set("window_hours", String(input.window_hours));
     if (input.project_id !== undefined) params.set("project_id", input.project_id);
     const qs = params.toString();
-    return await this.get(qs ? `/workflows/report?${qs}` : "/workflows/report");
+    return await this.get(
+      qs ? `/workflows/report?${qs}` : "/workflows/report",
+      {},
+      {
+        timeoutMs: DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+      },
+    );
   }
 
   async planStart(req: { file_path: string }): Promise<{ plan_id: string; status: string }> {

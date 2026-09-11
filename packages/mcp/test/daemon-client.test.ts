@@ -1,6 +1,10 @@
 import { afterEach, expect, mock, test } from "bun:test";
 
-import { DaemonClient, DaemonHttpError } from "../src/daemon-client.js";
+import {
+  DaemonClient,
+  DaemonHttpError,
+  DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+} from "../src/daemon-client.js";
 
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
@@ -171,6 +175,98 @@ test("workflowReport GETs /workflows/report with encoded filters", async () => {
     { path: "/workflows/report", search: "?window_hours=24&project_id=proj%2Fa+b" },
   ]);
   expect(result).toEqual({ window: {}, rows: [] });
+});
+
+test("workflowReport applies the default daemon deadline to filtered and unfiltered GETs", async () => {
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const originalFetchForTest = globalThis.fetch;
+  const controller = new AbortController();
+  const timeoutCalls: number[] = [];
+  const requests: { path: string; search: string; signal: AbortSignal | undefined }[] = [];
+  AbortSignal.timeout = (ms: number): AbortSignal => {
+    timeoutCalls.push(ms);
+    return controller.signal;
+  };
+
+  try {
+    globalThis.fetch = ((input: FetchInput, init?: FetchInit) => {
+      const url = new URL(readUrl(input));
+      requests.push({
+        path: url.pathname,
+        search: url.search,
+        signal: init?.signal ?? undefined,
+      });
+      return Promise.resolve(Response.json({ window: {}, rows: [] }));
+    }) as typeof fetch;
+    const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+
+    await c.workflowReport({ window_hours: 24, project_id: "proj/a b" });
+    await c.workflowReport({});
+
+    expect(timeoutCalls).toEqual([
+      DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+      DEFAULT_DAEMON_REQUEST_TIMEOUT_MS,
+    ]);
+    expect(requests).toEqual([
+      {
+        path: "/workflows/report",
+        search: "?window_hours=24&project_id=proj%2Fa+b",
+        signal: controller.signal,
+      },
+      { path: "/workflows/report", search: "", signal: controller.signal },
+    ]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    globalThis.fetch = originalFetchForTest;
+  }
+});
+
+test("workflowReport propagates the exact TimeoutError from an aborted request", async () => {
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const originalFetchForTest = globalThis.fetch;
+  const controller = new AbortController();
+  const timeoutError = new DOMException("workflow report request timed out", "TimeoutError");
+  let timeoutMs: number | undefined;
+  let seenSignal: AbortSignal | undefined;
+  AbortSignal.timeout = (ms: number): AbortSignal => {
+    timeoutMs = ms;
+    return controller.signal;
+  };
+
+  try {
+    globalThis.fetch = ((_input: FetchInput, init?: FetchInit) => {
+      const signal = init?.signal ?? undefined;
+      seenSignal = signal;
+      if (signal === undefined) {
+        return Promise.reject(new Error("workflowReport fetch received no AbortSignal"));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            reject(signal.reason as Error);
+          },
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+    const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+    const outcome = c.workflowReport({}).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    controller.abort(timeoutError);
+    const thrown = await outcome;
+
+    expect(timeoutMs).toBe(DEFAULT_DAEMON_REQUEST_TIMEOUT_MS);
+    expect(seenSignal).toBe(controller.signal);
+    expect(thrown).toBe(timeoutError);
+    expect((thrown as Error).name).toBe("TimeoutError");
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    globalThis.fetch = originalFetchForTest;
+  }
 });
 
 test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () => {
