@@ -139,6 +139,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: true,
     description: "Enable automatic memory recall on chain_start dispatches.",
   },
+  PENUMBRA_WORKFLOW_RUN_WAIT_DEADLINE_MS: {
+    schema: OptStr,
+    description:
+      "Workflow execution wait deadline after recall composition, in milliseconds. Defaults to and is capped at 240000, so numeric overrides can only lower it; blank, non-finite, or values below 1 fall back to 240000.",
+  },
   PENUMBRA_STORAGE_ROOT: {
     schema: OptStr,
     description: "Root directory for penumbra storage.",
