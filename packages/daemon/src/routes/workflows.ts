@@ -602,8 +602,8 @@ type WorkflowExecOpts = {
 
 type WorkflowExecutionResult = Awaited<ReturnType<typeof executeWorkflow>>;
 
-// Bun.serve is configured with idleTimeout: 255 (packages/daemon/src/serve.ts:1499).
-// Keep wait:true below that so the fallback handle reaches the caller.
+// Leave room below Bun.serve's 255s idle timeout for the fallback handle.
+// This bounds the execution wait, after recall composition.
 const WORKFLOW_RUN_WAIT_DEADLINE_MS = 240_000;
 const WORKFLOW_RUN_WAIT_TIMED_OUT = Symbol("workflow_run_wait_deadline");
 
