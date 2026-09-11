@@ -102,7 +102,8 @@ function makeCreateClientWithStandardRequest(): (h: StdioAcpHandle) => StdioAcpC
 }
 
 interface RequestPermissionPayload {
-  toolCall: { title?: string; name?: string; rawInput: unknown };
+  sessionId?: string;
+  toolCall: { toolCallId?: string; title?: string; name?: string; rawInput: unknown };
   options: { kind: string; optionId: string }[];
 }
 
@@ -204,11 +205,27 @@ function createPermissionHarness(
   startServer.mockResolvedValue(handle);
 
   let requestHandler: SessionPermissionHandler | undefined;
+  let updateHandler: ((params: unknown) => void) | undefined;
   let lastOutcome: unknown = null;
   const mockClientRequest = makeStandardClientRequest({
     onSessionPrompt: async (): Promise<unknown> => {
       if (!requestHandler) throw new Error("missing request handler");
-      const outcome: unknown = await requestHandler(permissionPayload);
+      const toolCallId = permissionPayload.toolCall.toolCallId ?? "permission-tool-call";
+      updateHandler?.({
+        sessionId: "session-123",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: permissionPayload.toolCall.title,
+          name: permissionPayload.toolCall.name,
+          input: permissionPayload.toolCall.rawInput,
+        },
+      });
+      const outcome: unknown = await requestHandler({
+        sessionId: "session-123",
+        ...permissionPayload,
+        toolCall: { toolCallId, ...permissionPayload.toolCall },
+      });
       lastOutcome = outcome;
       return { stopReason: "end_turn" };
     },
@@ -225,7 +242,9 @@ function createPermissionHarness(
               requestHandler = handler;
             }
           },
-          on: vi.fn<StdioAcpClient["on"]>(),
+          on: (method: string, handler: (params: unknown) => void): void => {
+            if (method === "session/update") updateHandler = handler;
+          },
           request: mockClientRequest,
         }),
     },
@@ -576,7 +595,7 @@ describe("StdioAcpAdapter", () => {
     else delete process.env.CLAUDE_PLUGIN_DATA;
   }
 
-  it("calls requestPermission with the tool call context and selects allow_always on approve", async () => {
+  it("calls requestPermission with the tool call context and selects allow_once on approve", async () => {
     const requestPermission = vi.fn().mockResolvedValue("approve" as const);
     const { adapter, getOutcome } = createPermissionHarness();
 
@@ -592,7 +611,7 @@ describe("StdioAcpAdapter", () => {
       dispatchId: expect.any(String) as unknown,
     });
 
-    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
+    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
   });
 
   it("registers permission handling for standalone fs.write capability", async () => {
@@ -606,7 +625,7 @@ describe("StdioAcpAdapter", () => {
     });
 
     expect(requestPermission).toHaveBeenCalled();
-    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
+    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
   });
 
   it("registers permission handling for standalone terminal capability", async () => {
@@ -620,10 +639,10 @@ describe("StdioAcpAdapter", () => {
     });
 
     expect(requestPermission).toHaveBeenCalled();
-    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
+    expect(getOutcome()).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
   });
 
-  it("without trust_mode 'all', absent requestPermission keeps the original allow_always tie-break", async () => {
+  it("without trust_mode 'all', absent requestPermission remains cancelled", async () => {
     const devinOptions = [
       { kind: "allow_once", optionId: "allow_once" },
       { kind: "allow_always", optionId: "switch_accept_edits" },
@@ -643,9 +662,7 @@ describe("StdioAcpAdapter", () => {
       signal: new AbortController().signal,
     });
 
-    expect(harness.getOutcome()).toEqual({
-      outcome: { outcome: "selected", optionId: "switch_accept_edits" },
-    });
+    expect(harness.getOutcome()).toEqual({ outcome: { outcome: "cancelled" } });
   });
 
   it("under trust_mode 'all', handlePermissionRequest prefers an exact bypass allow_always option over another allow_always option", async () => {
@@ -777,49 +794,23 @@ describe("StdioAcpAdapter", () => {
     expect(matchingLog).not.toContain("SUPERSECRET123");
   });
 
-  it("returns cancelled when requestPermission rejects the tool call", async () => {
+  it("selects reject_once when requestPermission rejects the tool call", async () => {
     const requestPermission = vi.fn().mockResolvedValue("reject" as const);
-    const handle = makeMockAcpHandle();
-    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
-    startServer.mockResolvedValue(handle);
-
-    let requestHandler: SessionPermissionHandler | undefined;
-    let lastOutcome: unknown = null;
-    const mockClientRequest = makeStandardClientRequest({
-      onSessionPrompt: async (): Promise<unknown> => {
-        if (!requestHandler) throw new Error("missing request handler");
-        lastOutcome = await requestHandler({
-          toolCall: {
-            title: "mcp__penumbra__chain.list_agents",
-            rawInput: { args: ["--all"] },
-          },
-          options: [{ kind: "allow_always", optionId: "allow-always" }],
-        });
-        return { stopReason: "end_turn" };
-      },
-    });
-
-    const adapter = new StdioAcpAdapter(
+    const harness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
       {
-        binary: "mock-acp",
-        mcpServers: [makePenumbraMcpServer()],
-      },
-      {
-        startServer,
-        createClient: (): StdioAcpClient =>
-          makeMockAcpClient({
-            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
-              if (method === "session/request_permission") {
-                requestHandler = handler;
-              }
-            },
-            on: vi.fn<StdioAcpClient["on"]>(),
-            request: mockClientRequest,
-          }),
+        toolCall: {
+          title: "mcp__penumbra__chain.list_agents",
+          rawInput: { args: ["--all"] },
+        },
+        options: [
+          { kind: "allow_always", optionId: "allow-always" },
+          { kind: "reject_once", optionId: "reject-once" },
+        ],
       },
     );
 
-    await dispatch(adapter, {
+    await dispatch(harness.adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
@@ -831,114 +822,46 @@ describe("StdioAcpAdapter", () => {
       dispatchId: expect.any(String) as unknown,
     });
 
-    expect(lastOutcome).toEqual({ outcome: { outcome: "cancelled" } });
-    expect(handle.kill).toHaveBeenCalled();
+    expect(harness.getOutcome()).toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+    expect(harness.mockKill).toHaveBeenCalled();
   });
 
   it("returns cancelled locally without invoking requestPermission when tool title and name are both missing", async () => {
     const requestPermission = vi.fn().mockResolvedValue("approve");
-    const handle = makeMockAcpHandle();
-    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
-    startServer.mockResolvedValue(handle);
-
-    let requestHandler: SessionPermissionHandler | undefined;
-    let lastOutcome: unknown = null;
-    const mockClientRequest = makeStandardClientRequest({
-      onSessionPrompt: async (): Promise<unknown> => {
-        if (!requestHandler) throw new Error("missing request handler");
-        lastOutcome = await requestHandler({
-          toolCall: {
-            rawInput: { whatever: 1 },
-          },
-          options: [
-            { kind: "allow_always", optionId: "allow-always" },
-            { kind: "allow_once", optionId: "allow-once" },
-            { kind: "reject_once", optionId: "reject-once" },
-          ],
-        });
-        return { stopReason: "end_turn" };
-      },
-    });
-
-    const adapter = new StdioAcpAdapter(
+    const harness = createPermissionHarness(
+      { mcpServers: [makePenumbraMcpServer()] },
       {
-        binary: "mock-acp",
-        mcpServers: [makePenumbraMcpServer()],
-      },
-      {
-        startServer,
-        createClient: (): StdioAcpClient =>
-          makeMockAcpClient({
-            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
-              if (method === "session/request_permission") {
-                requestHandler = handler;
-              }
-            },
-            on: vi.fn<StdioAcpClient["on"]>(),
-            request: mockClientRequest,
-          }),
+        toolCall: { rawInput: { whatever: 1 } },
+        options: [
+          { kind: "allow_always", optionId: "allow-always" },
+          { kind: "allow_once", optionId: "allow-once" },
+          { kind: "reject_once", optionId: "reject-once" },
+        ],
       },
     );
 
-    await dispatch(adapter, {
+    await dispatch(harness.adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
       requestPermission,
     });
 
     expect(requestPermission).not.toHaveBeenCalled();
-    expect(lastOutcome).toEqual({ outcome: { outcome: "cancelled" } });
-    expect(handle.kill).toHaveBeenCalled();
+    expect(harness.getOutcome()).toEqual({ outcome: { outcome: "cancelled" } });
+    expect(harness.mockKill).toHaveBeenCalled();
   });
 
-  it("keeps the Phase 1a auto-allow stub when requestPermission is absent", async () => {
-    const handle = makeMockAcpHandle();
-    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
-    startServer.mockResolvedValue(handle);
-
-    let requestHandler: SessionPermissionHandler | undefined;
-    let lastOutcome: unknown = null;
-    const mockClientRequest = makeStandardClientRequest({
-      onSessionPrompt: async (): Promise<unknown> => {
-        if (!requestHandler) throw new Error("missing request handler");
-        lastOutcome = await requestHandler({
-          toolCall: {
-            title: "mcp__penumbra__chain.list_agents",
-            rawInput: { args: ["--all"] },
-          },
-          options: [{ kind: "allow_always", optionId: "allow-always" }],
-        });
-        return { stopReason: "end_turn" };
-      },
-    });
-
-    const adapter = new StdioAcpAdapter(
-      {
-        binary: "mock-acp",
-        mcpServers: [makePenumbraMcpServer()],
-      },
-      {
-        startServer,
-        createClient: (): StdioAcpClient =>
-          makeMockAcpClient({
-            onRequest: (method: string, handler: (params: unknown) => unknown): void => {
-              if (method === "session/request_permission") {
-                requestHandler = handler;
-              }
-            },
-            on: vi.fn<StdioAcpClient["on"]>(),
-            request: mockClientRequest,
-          }),
-      },
-    );
-
-    await dispatch(adapter, {
+  it("keeps config mode cancelled when requestPermission is absent", async () => {
+    const harness = createPermissionHarness();
+    await dispatch(harness.adapter, {
       prompt: "hello",
       signal: new AbortController().signal,
     });
 
-    expect(lastOutcome).toEqual({ outcome: { outcome: "selected", optionId: "allow-always" } });
-    expect(handle.kill).toHaveBeenCalled();
+    expect(harness.getOutcome()).toEqual({ outcome: { outcome: "cancelled" } });
+    expect(harness.mockKill).toHaveBeenCalled();
   });
 
   it("happy path: accumulates text from session/update notifications", async () => {

@@ -24,6 +24,11 @@ import {
 } from "./acp-warm-pool.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
 import {
+  type AcpPermissionRequest,
+  handleStdioAcpPermissionRequest,
+  StdioAcpPermissionContext,
+} from "./stdio-acp-permission.js";
+import {
   startStdioAcpServer,
   type StartStdioAcpServerOptions,
   type StdioAcpHandle,
@@ -580,22 +585,6 @@ interface AcpTerminalIdParams {
   terminalId?: string;
 }
 
-interface AcpPermissionOption {
-  optionId?: string;
-  kind?: string;
-}
-
-interface AcpPermissionToolCall {
-  title?: string;
-  name?: string;
-  rawInput?: unknown;
-}
-
-interface AcpRequestPermissionParams {
-  options?: AcpPermissionOption[];
-  toolCall?: AcpPermissionToolCall;
-}
-
 interface AcpTextContent {
   type?: string;
   text?: string;
@@ -604,6 +593,8 @@ interface AcpTextContent {
 interface AcpSessionUpdate {
   sessionUpdate: string;
   content?: AcpTextContent;
+  name?: unknown;
+  rawInput?: unknown;
   toolCallId?: string;
   title?: string;
   kind?: string;
@@ -617,6 +608,7 @@ interface AcpSessionUpdate {
 }
 
 interface AcpSessionUpdateParams {
+  sessionId?: unknown;
   update?: AcpSessionUpdate;
 }
 
@@ -830,6 +822,7 @@ interface DispatchTurnContext {
   arm: () => void;
   markUpdate: () => void;
   accumulate: (text: string) => void;
+  permissionContext: StdioAcpPermissionContext;
   toolNames: Map<string, string>;
 }
 
@@ -1049,113 +1042,14 @@ function registerTerminalHandlers(ctx: DispatchTurnContext, opts: StdioAcpOption
   });
 }
 
-type PermissionOptionPredicate = (o: AcpPermissionOption) => boolean;
-
-function pickPermissionOption(
-  options: AcpPermissionOption[],
-  predicates: PermissionOptionPredicate[],
-): AcpPermissionOption | undefined {
-  for (const predicate of predicates) {
-    const found = options.find((o) => predicate(o));
-    if (found) return found;
-  }
-  return undefined;
-}
-
-interface PermissionResultCancelled {
-  outcome: { outcome: "cancelled" };
-}
-interface PermissionResultSelected {
-  outcome: { outcome: "selected"; optionId: string };
-}
-type PermissionResult = PermissionResultCancelled | PermissionResultSelected;
-
-function cancelledOutcome(): PermissionResultCancelled {
-  return { outcome: { outcome: "cancelled" } };
-}
-
-function isBypassOptionId(optionId: unknown): boolean {
-  // eslint-disable-next-line regexp/no-unused-capturing-group -- Preserve the established bypass-option expression.
-  return typeof optionId === "string" && /^(switch_)?bypass$/i.test(optionId);
-}
-
-function isBypassLikeOptionId(optionId: unknown): boolean {
-  return typeof optionId === "string" && /bypass/i.test(optionId);
-}
-
-// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve permission negotiation while grandfathering its pre-existing complexity.
-async function handlePermissionRequest(
-  ctx: DispatchTurnContext,
-  params: AcpRequestPermissionParams,
-): Promise<PermissionResult> {
-  const options = Array.isArray(params.options) ? params.options : [];
-  // Trust-all + no callback → pick the most permissive offered option.
-  // Trust-all + callback present → still skip the round-trip: the callback is
-  // a constant `() => "approve"` in fleet operation, so consulting it is pure
-  // overhead and adds a stall point on every nested exec/shell tool call. The
-  // shape mirrors the "no callback" branch below.
-  if (!ctx.input.requestPermission || ctx.input.trust_mode === "all") {
-    const autoAllowPredicates: PermissionOptionPredicate[] = [
-      (o: AcpPermissionOption): boolean => o.kind === "allow_always",
-      (o: AcpPermissionOption): boolean => o.kind === "allow_once",
-      (): boolean => true,
-    ];
-    const predicates =
-      ctx.input.trust_mode === "all"
-        ? [
-            (o: AcpPermissionOption): boolean =>
-              o.kind === "allow_always" && isBypassOptionId(o.optionId),
-            (o: AcpPermissionOption): boolean =>
-              o.kind === "allow_always" && !isBypassLikeOptionId(o.optionId),
-            ...autoAllowPredicates,
-          ]
-        : autoAllowPredicates;
-    const chosen = pickPermissionOption(options, predicates);
-    if (chosen?.optionId === undefined) return cancelledOutcome();
-    return { outcome: { outcome: "selected", optionId: chosen.optionId } };
-  }
-  const allowOption = pickPermissionOption(options, [
-    (o: AcpPermissionOption): boolean => o.kind === "allow_always",
-    (o: AcpPermissionOption): boolean => o.kind === "allow_once",
-    (o: AcpPermissionOption): boolean => o.optionId !== undefined,
-  ]);
-  const rejectOption = pickPermissionOption(options, [
-    (o: AcpPermissionOption): boolean => o.kind === "reject_always",
-    (o: AcpPermissionOption): boolean => o.kind === "reject_once",
-  ]);
-  const toolName: string | null =
-    (typeof params.toolCall?.title === "string" && params.toolCall.title) ||
-    (typeof params.toolCall?.name === "string" && params.toolCall.name) ||
-    null;
-  if (toolName === null) return cancelledOutcome();
-  let decision: "approve" | "reject" = "approve";
-  try {
-    decision = await ctx.input.requestPermission({
-      toolName,
-      rawInput: params.toolCall?.rawInput ?? params.toolCall ?? null,
-      dispatchId: ctx.input.handoff_id ?? ctx.input.conversation.id,
-    });
-  } catch (err) {
-    console.warn("stdio-acp: permission request failed; rejecting", { toolName, err: String(err) });
-    decision = "reject";
-  }
-  if (decision === "approve" && allowOption?.optionId !== undefined) {
-    return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
-  }
-  if (decision === "reject" && rejectOption?.optionId !== undefined) {
-    return { outcome: { outcome: "selected", optionId: rejectOption.optionId } };
-  }
-  return cancelledOutcome();
-}
-
 function registerPermissionHandler(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (!supportsClientCapability(opts)) return;
   ctx.client.onRequest(
     "session/request_permission",
-    typedRequest<AcpRequestPermissionParams>(async (params) => {
+    typedRequest<AcpPermissionRequest>(async (params) => {
       ctx.arm();
       try {
-        return await handlePermissionRequest(ctx, params);
+        return await handleStdioAcpPermissionRequest(ctx.input, ctx.permissionContext, params);
       } finally {
         ctx.arm();
       }
@@ -1681,30 +1575,31 @@ export class StdioAcpAdapter implements Adapter {
     return params;
   }
 
-  private cleanupConnection(args: {
-    server: StdioAcpHandle | null;
-    pooledEntry: AcpWarmPoolEntry | null;
-    poolKey: string;
-    holderId: string;
-    warmPoolEnabled: boolean;
-    errorThrown: boolean;
-    warmupTimedOut: boolean;
-  }): void {
+  private cleanupConnection(
+    state: DispatchState,
+    args: {
+      errorThrown: boolean;
+      poolKey: string;
+      holderId: string;
+      warmPoolEnabled: boolean;
+    },
+  ): void {
+    state.permissionContext?.deactivate();
     if (
       args.warmPoolEnabled &&
-      args.pooledEntry &&
+      state.pooledEntry &&
       !args.errorThrown &&
-      !args.warmupTimedOut &&
+      !state.warmupTimedOut &&
       this.deps.pool
     ) {
       this.deps.pool.release(args.holderId, args.poolKey);
       return;
     }
-    if (args.warmPoolEnabled && args.pooledEntry && this.deps.pool) {
-      this.deps.pool.evict(args.poolKey, args.pooledEntry);
+    if (args.warmPoolEnabled && state.pooledEntry && this.deps.pool) {
+      this.deps.pool.evict(args.poolKey, state.pooledEntry);
     }
-    if (args.server && args.pooledEntry?.tornDown !== true) {
-      args.server.kill();
+    if (state.server && state.pooledEntry?.tornDown !== true) {
+      state.server.kill();
     }
   }
 
@@ -1905,8 +1800,7 @@ export class StdioAcpAdapter implements Adapter {
         state,
         dispatchStartTs,
       });
-
-      const lifecycleHandles = setupServerLifecycleHandles(server, state, turnCtx);
+      const lifecycleHandles = setupServerLifecycleHandles(server, state, turnCtx, sessionId);
       const sessionUpdateHandler = typedNotify<AcpSessionUpdateParams>(
         buildSessionUpdateHandler(turnCtx, state, armPromptTimeout),
       );
@@ -1937,14 +1831,11 @@ export class StdioAcpAdapter implements Adapter {
     } finally {
       detachAbort?.();
       if (input.handoff_id !== undefined) unregisterSession(input.handoff_id);
-      this.cleanupConnection({
-        server: state.server,
-        pooledEntry: state.pooledEntry,
+      this.cleanupConnection(state, {
+        errorThrown: state.errorThrown || input.signal.aborted,
         poolKey,
         holderId,
         warmPoolEnabled,
-        errorThrown: state.errorThrown || input.signal.aborted,
-        warmupTimedOut: state.warmupTimedOut,
       });
     }
   }
@@ -1959,6 +1850,7 @@ interface DispatchState {
   warmupTimedOut: boolean;
   promptTimer: ReturnType<typeof setTimeout> | null;
   promptTimeoutRejector: ((err: Error) => void) | null;
+  permissionContext: StdioAcpPermissionContext | null;
   lastSessionUpdateTs: number;
 }
 
@@ -1974,6 +1866,8 @@ interface InlineTurnContextArgs {
 
 function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContext {
   const { cwd, client, input, state, opts, thoughtCapture, armPromptTimeout } = args;
+  const permissionContext = new StdioAcpPermissionContext();
+  state.permissionContext = permissionContext;
   const context: DispatchTurnContext = {
     cwd,
     client,
@@ -1991,6 +1885,7 @@ function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContex
     accumulate: (text: string): void => {
       state.accumulatedText += text;
     },
+    permissionContext,
     toolNames: new Map<string, string>(),
   };
   registerFsHandlers(context, args.opts);
@@ -2125,6 +2020,7 @@ function createDispatchState(): DispatchState {
     warmupTimedOut: false,
     promptTimer: null,
     promptTimeoutRejector: null,
+    permissionContext: null,
     lastSessionUpdateTs: Date.now(),
   };
 }
@@ -2222,7 +2118,9 @@ function setupServerLifecycleHandles(
   server: StdioAcpHandle,
   state: DispatchState,
   turnCtx: DispatchTurnContext,
+  sessionId: string,
 ): ServerLifecycleHandles {
+  turnCtx.permissionContext.activate(sessionId);
   const registry = getOrCreateServerExitRegistry(server);
   const toolUseRejection = createRejectablePromise<never>();
   turnCtx.toolUseRejectorRef.current = toolUseRejection.reject;
@@ -2252,6 +2150,7 @@ function buildSessionUpdateHandler(
     if (!update || typeof update !== "object") return;
     armPromptTimeout();
     state.lastSessionUpdateTs = Date.now();
+    turnCtx.permissionContext.observe(params.sessionId, update);
     dispatchSessionUpdate(turnCtx, update);
   };
 }
