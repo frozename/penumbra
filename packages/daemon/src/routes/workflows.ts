@@ -551,7 +551,7 @@ function prepareWorkflowRun(
           error: {
             code: "cwd_required",
             message: "cwd required",
-            hint: "pass an explicit absolute cwd; the daemon's cwd is its own repo, not yours",
+            hint: "cwd must be a non-empty string; pass an absolute cwd for the intended repo",
           },
         },
         400,
