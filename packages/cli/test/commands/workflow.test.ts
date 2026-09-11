@@ -41,7 +41,11 @@ test("runWorkflowRun forwards --session-id in the request body", async () => {
   });
   expect(captured).toHaveLength(1);
   expect(captured[0]?.path).toBe("/workflows/run");
-  expect(captured[0]?.body).toEqual({ name: "session-handoff", session_id: "sess-123" });
+  expect(captured[0]?.body).toEqual({
+    name: "session-handoff",
+    cwd: process.cwd(),
+    session_id: "sess-123",
+  });
 });
 
 test("runWorkflowRun omits session_id when not provided", async () => {
@@ -58,5 +62,23 @@ test("runWorkflowRun omits session_id when not provided", async () => {
     name: "wf",
     post,
   });
-  expect(captured[0]?.body).toEqual({ name: "wf" });
+  expect(captured[0]?.body).toEqual({ name: "wf", cwd: process.cwd() });
+});
+
+test("runWorkflowRun forwards cwd as the current working directory", async () => {
+  const captured: { body: unknown }[] = [];
+  await runWorkflowRun({
+    out: () => {
+      /* discard */
+    },
+    storageRoot: "/tmp",
+    name: "wf",
+    post: (_path, body) => {
+      captured.push({ body });
+      return Promise.resolve({});
+    },
+  });
+  const body = captured[0]?.body as { cwd?: unknown };
+  expect(typeof body.cwd).toBe("string");
+  expect(body.cwd).toBe(process.cwd());
 });

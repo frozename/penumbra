@@ -156,7 +156,11 @@ describe("dispatchWorkflowSubcommand", () => {
     expect(code).toBe(0);
     expect(seen[0]?.method).toBe("POST");
     expect(seen[0]?.path).toBe("/workflows/run");
-    expect(seen[0]?.body).toEqual({ name: "demo", session_id: "sess-42" });
+    expect(seen[0]?.body).toEqual({
+      name: "demo",
+      cwd: process.cwd(),
+      session_id: "sess-42",
+    });
     expect(stdoutLines.join("")).toContain('"outcome": "success"');
   });
 

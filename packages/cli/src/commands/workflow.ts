@@ -66,7 +66,10 @@ export async function runWorkflowRun(opts: {
     opts.out(`(dry-run) would run ${opts.name}`);
     return;
   }
-  const body: { name: string; session_id?: string } = { name: opts.name };
+  const body: { name: string; cwd: string; session_id?: string } = {
+    name: opts.name,
+    cwd: process.cwd(),
+  };
   if (opts.sessionId) body.session_id = opts.sessionId;
   const post = opts.post ?? daemonPost;
   const result = await post("/workflows/run", body, opts.storageRoot);
