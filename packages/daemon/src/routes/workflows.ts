@@ -602,6 +602,37 @@ type WorkflowExecOpts = {
 
 type WorkflowExecutionResult = Awaited<ReturnType<typeof executeWorkflow>>;
 
+// Bun.serve is configured with idleTimeout: 255 (packages/daemon/src/serve.ts:1499).
+// Keep wait:true below that so the fallback handle reaches the caller.
+const WORKFLOW_RUN_WAIT_DEADLINE_MS = 240_000;
+const WORKFLOW_RUN_WAIT_TIMED_OUT = Symbol("workflow_run_wait_deadline");
+
+function resolveWorkflowRunWaitDeadlineMs(): number {
+  const raw = process.env.PENUMBRA_WORKFLOW_RUN_WAIT_DEADLINE_MS;
+  const parsed = raw === undefined || raw.trim() === "" ? Number.NaN : Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return WORKFLOW_RUN_WAIT_DEADLINE_MS;
+  return Math.min(Math.floor(parsed), WORKFLOW_RUN_WAIT_DEADLINE_MS);
+}
+
+async function raceWorkflowRunDeadline(
+  runPromise: Promise<WorkflowExecutionResult>,
+  deadlineMs: number,
+): Promise<WorkflowExecutionResult | typeof WORKFLOW_RUN_WAIT_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      runPromise,
+      new Promise<typeof WORKFLOW_RUN_WAIT_TIMED_OUT>((resolveTimedOut) => {
+        timer = setTimeout(() => {
+          resolveTimedOut(WORKFLOW_RUN_WAIT_TIMED_OUT);
+        }, deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function buildWorkflowRunTemplateCtx(opts: {
   services: Services;
   sessionId: string | null;
@@ -859,10 +890,35 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
       entry,
     });
     if (shouldWait) {
-      const result = await runPromise;
-      recordOnSuccess(result);
-      await persistWaitedWorkflowRun({ workflowRuns, workflowRunId, start, services, result });
-      return json(result);
+      const raced = await raceWorkflowRunDeadline(runPromise, resolveWorkflowRunWaitDeadlineMs());
+      if (raced === WORKFLOW_RUN_WAIT_TIMED_OUT) {
+        attachRunPersistHandlers(
+          runPromise,
+          workflowRuns,
+          workflowRunId,
+          start,
+          services,
+          recordOnSuccess,
+        );
+        return json(
+          {
+            workflow_run_id: workflowRunId,
+            started_at: start,
+            status: "running",
+            wait_deadline_exceeded: true,
+          },
+          202,
+        );
+      }
+      recordOnSuccess(raced);
+      await persistWaitedWorkflowRun({
+        workflowRuns,
+        workflowRunId,
+        start,
+        services,
+        result: raced,
+      });
+      return json({ ...raced, workflow_run_id: workflowRunId });
     }
     attachRunPersistHandlers(
       runPromise,
