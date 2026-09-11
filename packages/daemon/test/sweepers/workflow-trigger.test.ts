@@ -427,6 +427,36 @@ test("durable lastFired reader keeps newest valid rows and ignores malformed val
   db.close();
 });
 
+test("durable lastFired reader accepts only JSON string names", () => {
+  const db = new Database(":memory:");
+  try {
+    db.run("CREATE TABLE t0_events (ts TEXT, event_type TEXT, payload_json TEXT)");
+    const insert = db.query(
+      "INSERT INTO t0_events (ts, event_type, payload_json) VALUES (?1, ?2, ?3)",
+    );
+    const names = ["alpha", "[]", '{"x":1}'];
+    for (const name of names) {
+      insert.run(
+        "2026-05-04T12:00:00Z",
+        "workflow.outcome",
+        JSON.stringify({ workflow_name: name }),
+      );
+    }
+    for (const name of [[], { x: 1 }, null, 42, true]) {
+      insert.run(
+        "2026-05-04T13:00:00Z",
+        "workflow.outcome",
+        JSON.stringify({ workflow_name: name }),
+      );
+    }
+    expect(readWorkflowLastFired(db)).toEqual(
+      new Map(names.map((name) => [name, Date.parse("2026-05-04T12:00:00Z")])),
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("durable lastFired reader returns an empty map when the table is unavailable", () => {
   const db = new Database(":memory:");
   expect(readWorkflowLastFired(db)).toEqual(new Map());

@@ -56,7 +56,10 @@ export function readWorkflowLastFired(db: Database): Map<string, number> {
   try {
     const rows = db
       .query<{ name: unknown; ts: unknown }, []>(
-        `SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END AS name,
+        `SELECT CASE WHEN json_valid(payload_json) THEN
+                  CASE WHEN json_type(payload_json, '$.workflow_name') = 'text'
+                    THEN json_extract(payload_json, '$.workflow_name') END
+                END AS name,
                 ts
            FROM t0_events
           WHERE event_type = 'workflow.outcome'`,
