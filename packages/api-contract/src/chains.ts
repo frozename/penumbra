@@ -47,10 +47,56 @@ export const ChainResponseEventSchema = z
     error: z.object({ message: z.string() }).optional(),
   })
   .loose();
+export type ChainResponseEvent = z.infer<typeof ChainResponseEventSchema>;
 
 export const ChainResponsesPayloadSchema = z.object({
   responses: z.array(ChainResponseEventSchema),
 });
+export type ChainResponsesPayload = z.infer<typeof ChainResponsesPayloadSchema>;
+
+export const ChainMessageEventSchema = z
+  .object({
+    event_id: z.string(),
+    ts: z.string(),
+    event_type: z.string(),
+    source: z.string(),
+    source_detail: z.string().nullable(),
+    user_id: z.string().nullable(),
+    payload: z.unknown(),
+  })
+  .loose();
+export type ChainMessageEvent = z.infer<typeof ChainMessageEventSchema>;
+
+export const ChainMessagesResponseSchema = z
+  .object({
+    events: z.array(ChainMessageEventSchema),
+  })
+  .loose();
+export type ChainMessagesResponse = z.infer<typeof ChainMessagesResponseSchema>;
+
+export const ChainAgentSchema = z.object({ name: z.string() }).loose();
+export type ChainAgent = z.infer<typeof ChainAgentSchema>;
+
+export const ChainAgentsResponseSchema = z.object({
+  agents: z.array(ChainAgentSchema),
+});
+export type ChainAgentsResponse = z.infer<typeof ChainAgentsResponseSchema>;
+
+export const ChainSendMessageRequestSchema = z.object({
+  content: z.string().min(1),
+});
+export type ChainSendMessageRequest = z.infer<typeof ChainSendMessageRequestSchema>;
+
+export const ChainSendMessageResponseSchema = z.object({ ok: z.literal(true) }).loose();
+export type ChainSendMessageResponse = z.infer<typeof ChainSendMessageResponseSchema>;
+
+export const DispatchRefineRequestSchema = z.object({
+  message: z.string().min(1),
+});
+export type DispatchRefineRequest = z.infer<typeof DispatchRefineRequestSchema>;
+
+export const DispatchRefineResponseSchema = z.object({ refined: z.string() }).loose();
+export type DispatchRefineResponse = z.infer<typeof DispatchRefineResponseSchema>;
 
 export const ChainTerminatedEventSchema = z
   .object({

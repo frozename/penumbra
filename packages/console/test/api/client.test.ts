@@ -734,4 +734,341 @@ describe("DaemonClient", () => {
     }
     expect(err).toBeInstanceOf(DaemonContractError);
   });
+
+  test("chains.history(conversationId) GETs /chains/history?conversation_id=<id>&limit=<n>", async () => {
+    handler = (): Response =>
+      jsonResponse({
+        history: [
+          {
+            ts: "2026-09-11T00:00:00Z",
+            reason: "completed",
+            hop_count: 3,
+            terminal_handoff_id: "h1",
+            conversation_id: "c1",
+          },
+        ],
+      });
+    const client = makeClient();
+    const result = await client.chains.history({ conversationId: "c1", limit: 10 });
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/chains/history");
+    expect(url.searchParams.get("conversation_id")).toBe("c1");
+    expect(url.searchParams.get("limit")).toBe("10");
+    expect(result.history).toHaveLength(1);
+    expect(result.history[0]!.conversation_id).toBe("c1");
+  });
+
+  test("chains.messages(conversationId, {limit}) GETs /chains/messages?conversation_id=&limit=", async () => {
+    handler = (): Response =>
+      jsonResponse({
+        events: [
+          {
+            event_id: "e1",
+            ts: "2026-09-11T00:00:00Z",
+            event_type: "agent.thought",
+            source: "claude",
+            source_detail: null,
+            user_id: null,
+            payload: {},
+          },
+        ],
+      });
+    const client = makeClient();
+    const result = await client.chains.messages("c1", { limit: 50 });
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/chains/messages");
+    expect(url.searchParams.get("conversation_id")).toBe("c1");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.event_id).toBe("e1");
+  });
+
+  test("chains.messages rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.messages("c1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("chains.responses(conversationId, 'all') GETs /chains/responses?conversation_id=&which=all", async () => {
+    handler = (): Response =>
+      jsonResponse({
+        responses: [{ agent: "claude", text: "done", ts: "2026-09-11T00:00:00Z" }],
+      });
+    const client = makeClient();
+    const result = await client.chains.responses("c1", "all");
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/chains/responses");
+    expect(url.searchParams.get("conversation_id")).toBe("c1");
+    expect(url.searchParams.get("which")).toBe("all");
+    expect(result.responses).toHaveLength(1);
+    expect(result.responses[0]!.agent).toBe("claude");
+  });
+
+  test("chains.responses(conversationId, 'final') sends which=final", async () => {
+    handler = (): Response => jsonResponse({ responses: [] });
+    const client = makeClient();
+    await client.chains.responses("c1", "final");
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("which")).toBe("final");
+  });
+
+  test("chains.responses rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.responses("c1", "all");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("chains.agents() GETs /chains/agents and parses {agents:[{name}]}", async () => {
+    handler = (): Response => jsonResponse({ agents: [{ name: "claude" }, { name: "gemini" }] });
+    const client = makeClient();
+    const result = await client.chains.agents();
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/chains/agents");
+    expect(result.agents).toHaveLength(2);
+    expect(result.agents[0]!.name).toBe("claude");
+  });
+
+  test("chains.agents rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.agents();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("chains.start(body) POSTs /chains/start with validated body and parses response", async () => {
+    handler = (): Response => jsonResponse({ conversation_id: "c1", handoff_id: "h1" });
+    const client = makeClient();
+    const result = await client.chains.start({
+      initial_agent: "claude",
+      message: "do it",
+      project_id: "abcdef0123456789:packages/x",
+    });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/chains/start");
+    expect(calls[0]!.init?.method).toBe("POST");
+    const body = parseBody(calls[0]!.init);
+    expect(body.initial_agent).toBe("claude");
+    expect(body.message).toBe("do it");
+    expect(body.project_id).toBe("abcdef0123456789:packages/x");
+    expect(result.conversation_id).toBe("c1");
+    expect(result.handoff_id).toBe("h1");
+  });
+
+  test("chains.start rejects an invalid body before fetch", async () => {
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.start({ initial_agent: "", message: "x" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+  });
+
+  test("chains.send(handoffId,{content}) POSTs /chains/<enc(handoffId)>/messages", async () => {
+    handler = (): Response => jsonResponse({ ok: true });
+    const client = makeClient();
+    const result = await client.chains.send("h/1", { content: "hello" });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/chains/h%2F1/messages");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(parseBody(calls[0]!.init)).toEqual({ content: "hello" });
+    expect(result.ok).toBe(true);
+  });
+
+  test("chains.send rejects empty content before fetch", async () => {
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.send("h1", { content: "" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+  });
+
+  test("conversations.cancel POSTs /conversations/<id>/cancel", async () => {
+    handler = (): Response => jsonResponse({ ok: true, changed: 1 });
+    const client = makeClient();
+    const result = await client.conversations.cancel("c/1");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/conversations/c%2F1/cancel");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(1);
+  });
+
+  test("conversations.cancel rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.conversations.cancel("c1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
+
+  test("chains.history rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.history({ conversationId: "c1" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    const contractErr = err as DaemonContractError;
+    expect(contractErr.url).toBe("http://127.0.0.1:51257/chains/history?conversation_id=c1");
+  });
+
+  test("chains.start rejects malformed successful response envelope", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.start({
+        initial_agent: "claude",
+        message: "do it",
+        project_id: "abcdef0123456789:packages/x",
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    const contractErr = err as DaemonContractError;
+    expect(contractErr.url).toBe("http://127.0.0.1:51257/chains/start");
+  });
+
+  test("chains.send rejects malformed successful response envelope", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.send("h1", { content: "hello" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    const contractErr = err as DaemonContractError;
+    expect(contractErr.url).toBe("http://127.0.0.1:51257/chains/h1/messages");
+  });
+
+  test("chains.start throws DaemonHttpError on 400 project_id_required", async () => {
+    handler = (): Response => jsonResponse({ error: "project_id_required" }, 400);
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.start({
+        initial_agent: "claude",
+        message: "do it",
+        project_id: "abcdef0123456789:packages/x",
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonHttpError);
+    const httpErr = err as DaemonHttpError;
+    expect(httpErr.status).toBe(400);
+    expect(httpErr.code).toBe("project_id_required");
+  });
+
+  test("chains.send throws DaemonHttpError on 404 not_found", async () => {
+    handler = (): Response =>
+      jsonResponse({ error: { code: "not_found", message: "handoff h1 not found" } }, 404);
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.send("h1", { content: "hello" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonHttpError);
+    const httpErr = err as DaemonHttpError;
+    expect(httpErr.status).toBe(404);
+    expect(httpErr.code).toBe("not_found");
+  });
+
+  test("chains.send throws DaemonHttpError on 410 gone", async () => {
+    handler = (): Response =>
+      jsonResponse({ error: { code: "gone", message: "handoff h1 is no longer running" } }, 410);
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.chains.send("h1", { content: "hello" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonHttpError);
+    const httpErr = err as DaemonHttpError;
+    expect(httpErr.status).toBe(410);
+    expect(httpErr.code).toBe("gone");
+  });
+
+  test("conversations.cancel throws DaemonHttpError on 409", async () => {
+    handler = (): Response =>
+      jsonResponse({ error: { code: "conflict", message: "already cancelled" } }, 409);
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.conversations.cancel("c1");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonHttpError);
+    const httpErr = err as DaemonHttpError;
+    expect(httpErr.status).toBe(409);
+    expect(httpErr.code).toBe("conflict");
+  });
+
+  test("dispatchRefine.refine posts {message} and parses {refined}", async () => {
+    handler = (): Response => jsonResponse({ refined: "refined prompt" });
+    const client = makeClient();
+    const result = await client.dispatchRefine.refine("do stuff");
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/dispatch/refine");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(parseBody(calls[0]!.init)).toEqual({ message: "do stuff" });
+    expect(result.refined).toBe("refined prompt");
+  });
+
+  test("dispatchRefine.refine rejects empty message before fetch", async () => {
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchRefine.refine("");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+    expect(calls.length).toBe(0);
+  });
+
+  test("dispatchRefine.refine rejects malformed response", async () => {
+    handler = (): Response => jsonResponse({ wrong: "shape" });
+    const client = makeClient();
+    let err: unknown;
+    try {
+      await client.dispatchRefine.refine("msg");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DaemonContractError);
+  });
 });

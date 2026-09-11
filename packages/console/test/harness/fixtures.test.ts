@@ -891,3 +891,565 @@ describe("seeder replacement and reset", () => {
     }
   });
 });
+
+describe("chains fixture", () => {
+  test("GET /chains/messages returns seeded events for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainMessages("c1", [
+        {
+          event_id: "e1",
+          ts: "2026-09-11T00:00:00Z",
+          event_type: "agent.thought",
+          source: "claude",
+          source_detail: null,
+          user_id: null,
+          payload: { text: "hi" },
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/messages?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { events: { event_id: string }[] };
+      expect(body.events).toHaveLength(1);
+      expect(body.events[0]!.event_id).toBe("e1");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("GET /chains/messages without conversation_id returns 400", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/chains/messages`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("GET /chains/responses returns seeded responses for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainResponses("c1", [{ agent: "claude", text: "done", ts: "2026-09-11T00:00:00Z" }]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/responses?conversation_id=c1&which=all`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { responses: { agent: string }[] };
+      expect(body.responses).toHaveLength(1);
+      expect(body.responses[0]!.agent).toBe("claude");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("GET /chains/agents returns seeded agent names", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainAgents(["claude", "gemini"]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/agents`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { agents: { name: string }[] };
+      expect(body.agents).toHaveLength(2);
+      expect(body.agents[0]!.name).toBe("claude");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("GET /chains/history returns seeded history for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainHistory("c1", [
+        {
+          ts: "2026-09-11T00:00:00Z",
+          reason: "completed",
+          hop_count: 3,
+          terminal_handoff_id: "h1",
+          conversation_id: "c1",
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/history?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { history: { conversation_id: string }[] };
+      expect(body.history).toHaveLength(1);
+      expect(body.history[0]!.conversation_id).toBe("c1");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("POST /chains/start rejects missing project_id", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/chains/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ initial_agent: "claude", message: "do it" }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("project_id_required");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("POST /chains/start with project_id returns conversation_id and handoff_id", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/chains/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initial_agent: "claude",
+          message: "do it",
+          project_id: "abcdef0123456789:packages/x",
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { conversation_id: string; handoff_id: string };
+      expect(body.conversation_id).toBeTruthy();
+      expect(body.handoff_id).toBeTruthy();
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("POST /chains/:id/messages returns {ok:true}", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/chains/h1/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "hello" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean };
+      expect(body.ok).toBe(true);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("POST /conversations/:id/cancel returns {ok:true,changed:1}", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/conversations/c1/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; changed: number };
+      expect(body.ok).toBe(true);
+      expect(body.changed).toBe(1);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("POST /dispatch/refine returns {refined}", async () => {
+    const h = await startHarness();
+    try {
+      const res = await Bun.fetch(`${h.baseUrl}/dispatch/refine`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "do stuff" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { refined: string };
+      expect(body.refined).toBe("refined prompt");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("conversation stream serves event: progress per conversation", async () => {
+    const h = await startHarness();
+    try {
+      const sseRes = await Bun.fetch(`${h.baseUrl}/conversations/c1/stream`, {
+        headers: { Authorization: `Bearer ${h.token}`, Accept: "text/event-stream" },
+      });
+      expect(sseRes.status).toBe(200);
+      expect(sseRes.body).not.toBeNull();
+      const reader = sseRes.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+      let receivedEvent = false;
+
+      const readPromise = (async (): Promise<void> => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          if (accumulated.includes("event: progress\n")) {
+            receivedEvent = true;
+            break;
+          }
+        }
+      })();
+
+      await h.waitForConversationSseClient("c1");
+
+      h.pushConversationEvent("c1", { text: "hello" });
+
+      await Promise.race([
+        readPromise,
+        new Promise<void>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("SSE timeout"));
+          }, 5_000);
+        }),
+      ]);
+
+      expect(receivedEvent).toBe(true);
+      expect(accumulated).toContain("event: progress\n");
+      reader.cancel().catch(() => {
+        // ignore cancel errors during teardown
+      });
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("pushConversationEvent throws when no subscribers for that conversation", async () => {
+    const h = await startHarness();
+    try {
+      expect(() => {
+        h.pushConversationEvent("c-no-subs", { text: "hello" });
+      }).toThrow(/no conversation SSE clients/i);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("cross-conversation SSE isolation: event for c1 is not delivered to c2", async () => {
+    const h = await startHarness();
+    try {
+      const sse1Res = await Bun.fetch(`${h.baseUrl}/conversations/c1/stream`, {
+        headers: { Authorization: `Bearer ${h.token}`, Accept: "text/event-stream" },
+      });
+      const sse2Res = await Bun.fetch(`${h.baseUrl}/conversations/c2/stream`, {
+        headers: { Authorization: `Bearer ${h.token}`, Accept: "text/event-stream" },
+      });
+      const reader1 = sse1Res.body!.getReader();
+      const reader2 = sse2Res.body!.getReader();
+      const decoder = new TextDecoder();
+
+      const readInitial = async (
+        reader: ReadableStreamDefaultReader<Uint8Array>,
+      ): Promise<string> => {
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return buf;
+          buf += decoder.decode(value, { stream: true });
+          if (buf.includes(": ok")) return buf;
+        }
+      };
+      await readInitial(reader1);
+      await readInitial(reader2);
+
+      await h.waitForConversationSseClient("c1");
+      await h.waitForConversationSseClient("c2");
+
+      h.pushConversationEvent("c1", { text: "for c1 only" });
+      h.pushConversationEvent("c2", { text: "c2-sentinel" });
+
+      let c2Accumulated = "";
+      const c2Result = await Promise.race([
+        (async (): Promise<string> => {
+          for (;;) {
+            const { done, value } = await reader2.read();
+            if (done) break;
+            c2Accumulated += decoder.decode(value, { stream: true });
+            if (c2Accumulated.includes("c2-sentinel")) return c2Accumulated;
+          }
+          return c2Accumulated;
+        })(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("SSE timeout"));
+          }, 5_000);
+        }),
+      ]);
+
+      expect(c2Result).toContain("c2-sentinel");
+      expect(c2Result).not.toContain("for c1 only");
+      reader1.cancel().catch(() => {
+        // ignore cancel errors during teardown
+      });
+      reader2.cancel().catch(() => {
+        // ignore cancel errors during teardown
+      });
+    } finally {
+      await h.stop();
+    }
+  });
+  test("setChainMessages replaces existing messages for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainMessages("c1", [
+        {
+          event_id: "old",
+          ts: "2026-09-11T00:00:00Z",
+          event_type: "agent.thought",
+          source: "claude",
+          source_detail: null,
+          user_id: null,
+          payload: {},
+        },
+      ]);
+      h.setChainMessages("c1", [
+        {
+          event_id: "new",
+          ts: "2026-09-11T00:01:00Z",
+          event_type: "agent.thought",
+          source: "gemini",
+          source_detail: null,
+          user_id: null,
+          payload: {},
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/messages?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { events: { event_id: string }[] };
+      expect(body.events).toHaveLength(1);
+      expect(body.events[0]!.event_id).toBe("new");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("setChainResponses replaces existing responses for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainResponses("c1", [{ agent: "claude", text: "old", ts: "2026-09-11T00:00:00Z" }]);
+      h.setChainResponses("c1", [{ agent: "gemini", text: "new", ts: "2026-09-11T00:01:00Z" }]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/responses?conversation_id=c1&which=all`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { responses: { agent: string }[] };
+      expect(body.responses).toHaveLength(1);
+      expect(body.responses[0]!.agent).toBe("gemini");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("setChainAgents replaces existing agent names", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainAgents(["claude", "gemini"]);
+      h.setChainAgents(["codex", "opencode"]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/agents`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { agents: { name: string }[] };
+      expect(body.agents).toHaveLength(2);
+      expect(body.agents[0]!.name).toBe("codex");
+      expect(body.agents[1]!.name).toBe("opencode");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("setChainHistory replaces existing history for a conversation", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainHistory("c1", [
+        {
+          ts: "2026-09-11T00:00:00Z",
+          reason: "old",
+          hop_count: 1,
+          terminal_handoff_id: "h-old",
+          conversation_id: "c1",
+        },
+      ]);
+      h.setChainHistory("c1", [
+        {
+          ts: "2026-09-11T00:01:00Z",
+          reason: "new",
+          hop_count: 2,
+          terminal_handoff_id: "h-new",
+          conversation_id: "c1",
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/history?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { history: { reason: string }[] };
+      expect(body.history).toHaveLength(1);
+      expect(body.history[0]!.reason).toBe("new");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("reset clears all chain state (messages, responses, agents, history)", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainMessages("c1", [
+        {
+          event_id: "e1",
+          ts: "2026-09-11T00:00:00Z",
+          event_type: "agent.thought",
+          source: "claude",
+          source_detail: null,
+          user_id: null,
+          payload: {},
+        },
+      ]);
+      h.setChainResponses("c1", [{ agent: "claude", text: "done", ts: "2026-09-11T00:00:00Z" }]);
+      h.setChainAgents(["claude"]);
+      h.setChainHistory("c1", [
+        {
+          ts: "2026-09-11T00:00:00Z",
+          reason: "completed",
+          hop_count: 1,
+          terminal_handoff_id: "h1",
+          conversation_id: "c1",
+        },
+      ]);
+
+      h.reset();
+
+      const msgRes = await Bun.fetch(`${h.baseUrl}/chains/messages?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const msgBody = (await msgRes.json()) as { events: unknown[] };
+      expect(msgBody.events).toHaveLength(0);
+
+      const resRes = await Bun.fetch(`${h.baseUrl}/chains/responses?conversation_id=c1&which=all`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const resBody = (await resRes.json()) as { responses: unknown[] };
+      expect(resBody.responses).toHaveLength(0);
+
+      const agentsRes = await Bun.fetch(`${h.baseUrl}/chains/agents`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const agentsBody = (await agentsRes.json()) as { agents: unknown[] };
+      expect(agentsBody.agents).toHaveLength(0);
+
+      const histRes = await Bun.fetch(`${h.baseUrl}/chains/history?conversation_id=c1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const histBody = (await histRes.json()) as { history: unknown[] };
+      expect(histBody.history).toHaveLength(0);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("chains/messages respects limit parameter", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainMessages("c1", [
+        {
+          event_id: "e1",
+          ts: "2026-09-11T00:00:00Z",
+          event_type: "agent.thought",
+          source: "claude",
+          source_detail: null,
+          user_id: null,
+          payload: {},
+        },
+        {
+          event_id: "e2",
+          ts: "2026-09-11T00:01:00Z",
+          event_type: "agent.thought",
+          source: "gemini",
+          source_detail: null,
+          user_id: null,
+          payload: {},
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/messages?conversation_id=c1&limit=1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { events: { event_id: string }[] };
+      expect(body.events).toHaveLength(1);
+      expect(body.events[0]!.event_id).toBe("e1");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("chains/responses which=final returns only latest response", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainResponses("c1", [
+        { agent: "claude", text: "first", ts: "2026-09-11T00:00:00Z" },
+        { agent: "gemini", text: "second", ts: "2026-09-11T00:01:00Z" },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/responses?conversation_id=c1&which=final`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { responses: { agent: string; text: string }[] };
+      expect(body.responses).toHaveLength(1);
+      expect(body.responses[0]!.text).toBe("second");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("chains/responses which=all returns all responses", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainResponses("c1", [
+        { agent: "claude", text: "first", ts: "2026-09-11T00:00:00Z" },
+        { agent: "gemini", text: "second", ts: "2026-09-11T00:01:00Z" },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/responses?conversation_id=c1&which=all`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { responses: { agent: string; text: string }[] };
+      expect(body.responses).toHaveLength(2);
+      expect(body.responses[0]!.text).toBe("first");
+      expect(body.responses[1]!.text).toBe("second");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("chains/history respects limit parameter", async () => {
+    const h = await startHarness();
+    try {
+      h.setChainHistory("c1", [
+        {
+          ts: "2026-09-11T00:00:00Z",
+          reason: "first",
+          hop_count: 1,
+          terminal_handoff_id: "h1",
+          conversation_id: "c1",
+        },
+        {
+          ts: "2026-09-11T00:01:00Z",
+          reason: "second",
+          hop_count: 2,
+          terminal_handoff_id: "h2",
+          conversation_id: "c1",
+        },
+      ]);
+      const res = await Bun.fetch(`${h.baseUrl}/chains/history?conversation_id=c1&limit=1`, {
+        headers: { Authorization: `Bearer ${h.token}` },
+      });
+      const body = (await res.json()) as { history: { reason: string }[] };
+      expect(body.history).toHaveLength(1);
+      expect(body.history[0]!.reason).toBe("second");
+    } finally {
+      await h.stop();
+    }
+  });
+});

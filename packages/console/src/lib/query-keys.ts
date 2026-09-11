@@ -109,6 +109,21 @@ export function approvalsDrafts(): readonly ["approvals", "drafts"] {
   return ["approvals", "drafts"] as const;
 }
 
+/** Chain messages for a conversation, scoped by conversation id. */
+export function chainMessages(conversationId: string): readonly ["chains", "messages", string] {
+  return ["chains", "messages", conversationId] as const;
+}
+
+/** Chain responses for a conversation, scoped by conversation id. */
+export function chainResponses(conversationId: string): readonly ["chains", "responses", string] {
+  return ["chains", "responses", conversationId] as const;
+}
+
+/** Chain agents list. */
+export function chainAgents(): readonly ["chains", "agents"] {
+  return ["chains", "agents"] as const;
+}
+
 /** Session event timeline (Sessions module). */
 export function sessionEvents(): readonly ["sessions", "events"] {
   return ["sessions", "events"] as const;

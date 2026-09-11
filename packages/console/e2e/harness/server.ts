@@ -132,6 +132,36 @@ export interface DispatchEventRow {
   meta: unknown | null;
 }
 
+export interface ChainMessageEventRow {
+  event_id: string;
+  ts: string;
+  event_type: string;
+  source: string;
+  source_detail: string | null;
+  user_id: string | null;
+  payload: unknown;
+}
+
+export interface ChainResponseRow {
+  agent: string;
+  text: string;
+  ts: string;
+  handoff_id?: string | null;
+  error?: { message: string };
+}
+
+export interface ChainAgentRow {
+  name: string;
+}
+
+export interface ChainHistoryRow {
+  ts: string;
+  reason: string | null;
+  hop_count: number | null;
+  terminal_handoff_id?: string | null;
+  conversation_id: string;
+}
+
 export interface AuditReportRow {
   handoff_id: string;
   status: string;
@@ -183,6 +213,15 @@ export interface E2EHarness {
   setDispatchEvents: (handoffId: string, rows: DispatchEventRow[]) => void;
   setAudit: (handoffId: string, report: AuditReportRow) => void;
   startLandTask: (taskId: string) => void;
+  setChainMessages: (conversationId: string, rows: ChainMessageEventRow[]) => void;
+  setChainResponses: (conversationId: string, rows: ChainResponseRow[]) => void;
+  setChainAgents: (names: string[]) => void;
+  setChainHistory: (conversationId: string, rows: ChainHistoryRow[]) => void;
+  pushConversationEvent: (conversationId: string, data: unknown) => void;
+  waitForConversationSseClient: (
+    conversationId: string,
+    opts?: { timeoutMs?: number },
+  ) => Promise<void>;
   setQuotaStatus: (data: {
     dispatched_count: number;
     cap: number;
@@ -271,6 +310,12 @@ export interface HarnessState {
   dispatchEvents: Map<string, DispatchEventRow[]>;
   auditReports: Map<string, AuditReportRow>;
   landTasks: Map<string, LandTaskRow>;
+  chainMessages: Map<string, ChainMessageEventRow[]>;
+  chainResponses: Map<string, ChainResponseRow[]>;
+  chainAgents: ChainAgentRow[];
+  chainHistory: Map<string, ChainHistoryRow[]>;
+  conversationSseClients: Map<string, Set<ServerResponse<IncomingMessage>>>;
+  conversationSseWaiters: Map<string, Set<SseWaiter>>;
 }
 
 export function createInitialState(): HarnessState {
@@ -305,6 +350,12 @@ export function createInitialState(): HarnessState {
     dispatchEvents: new Map(),
     auditReports: new Map(),
     landTasks: new Map(),
+    chainMessages: new Map(),
+    chainResponses: new Map(),
+    chainAgents: [],
+    chainHistory: new Map(),
+    conversationSseClients: new Map(),
+    conversationSseWaiters: new Map(),
   };
 }
 
@@ -341,6 +392,28 @@ export function resetState(state: HarnessState): void {
   state.dispatchEvents.clear();
   state.auditReports.clear();
   state.landTasks.clear();
+  state.chainMessages.clear();
+  state.chainResponses.clear();
+  state.chainAgents = [];
+  state.chainHistory.clear();
+  for (const clients of state.conversationSseClients.values()) {
+    for (const client of Array.from(clients)) {
+      try {
+        client.end();
+      } catch {
+        // ignore teardown races
+      }
+    }
+    clients.clear();
+  }
+  state.conversationSseClients.clear();
+  for (const waiters of state.conversationSseWaiters.values()) {
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("harness reset"));
+    }
+  }
+  state.conversationSseWaiters.clear();
 }
 
 export function resolveSseWaiters(state: HarnessState): void {
@@ -357,6 +430,18 @@ export function resolvePermissionSseWaiters(state: HarnessState): void {
   for (const waiter of Array.from(state.permissionSseWaiters)) {
     clearTimeout(waiter.timer);
     state.permissionSseWaiters.delete(waiter);
+    waiter.resolve();
+  }
+}
+
+export function resolveConversationSseWaiters(state: HarnessState, conversationId: string): void {
+  const clients = state.conversationSseClients.get(conversationId);
+  if (!clients || clients.size === 0) return;
+  const waiters = state.conversationSseWaiters.get(conversationId);
+  if (!waiters) return;
+  for (const waiter of Array.from(waiters)) {
+    clearTimeout(waiter.timer);
+    waiters.delete(waiter);
     waiter.resolve();
   }
 }

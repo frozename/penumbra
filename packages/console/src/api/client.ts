@@ -10,9 +10,11 @@ import {
 } from "@penumbra/api-contract";
 
 import { type ChainsListResponse, chainsSlice, type ChainsSlice } from "./domains/chains.js";
+import { conversationsSlice, type ConversationsSlice } from "./domains/conversations.js";
 import { dispatchAuditSlice, type DispatchAuditSlice } from "./domains/dispatch-audit.js";
 import { dispatchEventsSlice, type DispatchEventsSlice } from "./domains/dispatch-events.js";
 import { dispatchLandSlice, type DispatchLandSlice } from "./domains/dispatch-land.js";
+import { dispatchRefineSlice, type DispatchRefineSlice } from "./domains/dispatch-refine.js";
 import {
   type ApproveHandoffOpts,
   type HandoffsListResponse,
@@ -74,6 +76,8 @@ export class DaemonClient {
   readonly daemon: DaemonSlice;
   readonly handoffs: HandoffsSlice;
   readonly chains: ChainsSlice;
+  readonly conversations: ConversationsSlice;
+  readonly dispatchRefine: DispatchRefineSlice;
   readonly usage: UsageSlice;
   readonly session: SessionsSlice;
   readonly workspace: WorkspaceSlice;
@@ -90,6 +94,8 @@ export class DaemonClient {
     this.daemon = daemonSlice(this.transport);
     this.handoffs = handoffsSlice(this.transport);
     this.chains = chainsSlice(this.transport);
+    this.conversations = conversationsSlice(this.transport);
+    this.dispatchRefine = dispatchRefineSlice(this.transport);
     this.usage = usageSlice(this.transport);
     this.session = sessionsSlice(this.transport);
     this.workspace = workspaceSlice(this.transport);

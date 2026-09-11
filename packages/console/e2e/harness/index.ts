@@ -14,6 +14,10 @@ import { nextRegistrarEventId } from "./fixtures/registrar";
 import { FixtureRouter } from "./router";
 import {
   type Call,
+  type ChainAgentRow,
+  type ChainHistoryRow,
+  type ChainMessageEventRow,
+  type ChainResponseRow,
   type ChainRow,
   type E2EHarness,
   type HarnessRow,
@@ -34,12 +38,17 @@ import {
   createHarnessServer,
   createInitialState,
   resetState,
+  resolveConversationSseWaiters,
   resolvePermissionSseWaiters,
   resolveSseWaiters,
 } from "./server";
 
 export type {
   Call,
+  ChainAgentRow,
+  ChainHistoryRow,
+  ChainMessageEventRow,
+  ChainResponseRow,
   ChainRow,
   E2EHarness,
   HarnessRow,
@@ -187,6 +196,28 @@ export async function startHarness(): Promise<E2EHarness> {
           state.permissionSseClients.delete(client);
         }
       }
+
+      for (const clients of Array.from(state.conversationSseClients.values())) {
+        for (const client of Array.from(clients)) {
+          try {
+            client.end();
+          } catch {
+            // ignore teardown races
+          } finally {
+            clients.delete(client);
+          }
+        }
+      }
+      state.conversationSseClients.clear();
+
+      for (const waiters of Array.from(state.conversationSseWaiters.values())) {
+        for (const waiter of Array.from(waiters)) {
+          clearTimeout(waiter.timer);
+          waiters.delete(waiter);
+          waiter.reject(new Error("harness stopped before conversation SSE client connected"));
+        }
+      }
+      state.conversationSseWaiters.clear();
 
       if (!server.listening) return;
       await new Promise<void>((resolve) => {
@@ -364,6 +395,66 @@ export async function startHarness(): Promise<E2EHarness> {
         finished_at: null,
         result: null,
         error: null,
+      });
+    },
+    setChainMessages(conversationId: string, rows: ChainMessageEventRow[]) {
+      state.chainMessages.set(
+        conversationId,
+        rows.map((r) => ({ ...r })),
+      );
+    },
+    setChainResponses(conversationId: string, rows: ChainResponseRow[]) {
+      state.chainResponses.set(
+        conversationId,
+        rows.map((r) => ({ ...r })),
+      );
+    },
+    setChainAgents(names: string[]) {
+      state.chainAgents = names.map((name) => ({ name }));
+    },
+    setChainHistory(conversationId: string, rows: ChainHistoryRow[]) {
+      state.chainHistory.set(
+        conversationId,
+        rows.map((r) => ({ ...r })),
+      );
+    },
+    pushConversationEvent(conversationId: string, data: unknown) {
+      const clients = state.conversationSseClients.get(conversationId);
+      if (!clients || clients.size === 0) {
+        throw new Error(
+          `no conversation SSE clients connected for ${conversationId}; await waitForConversationSseClient before pushConversationEvent`,
+        );
+      }
+      const line = `event: progress\ndata: ${JSON.stringify(data)}\n\n`;
+      for (const client of Array.from(clients)) {
+        try {
+          client.write(line);
+        } catch {
+          clients.delete(client);
+        }
+      }
+    },
+    waitForConversationSseClient(conversationId: string, opts?: { timeoutMs?: number }) {
+      const timeoutMs = opts?.timeoutMs ?? 5_000;
+      const existing = state.conversationSseClients.get(conversationId);
+      if (existing && existing.size > 0) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        let waiters = state.conversationSseWaiters.get(conversationId);
+        if (!waiters) {
+          waiters = new Set();
+          state.conversationSseWaiters.set(conversationId, waiters);
+        }
+        let waiter!: SseWaiter;
+        waiter = {
+          resolve,
+          reject,
+          timer: setTimeout(() => {
+            waiters!.delete(waiter);
+            reject(new Error(`timed out waiting ${timeoutMs}ms for conversation SSE client`));
+          }, timeoutMs),
+        };
+        waiters.add(waiter);
+        resolveConversationSseWaiters(state, conversationId);
       });
     },
   };

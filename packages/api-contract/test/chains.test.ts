@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 
-import { ChainStartRequestSchema } from "../src/chains.js";
+import {
+  ChainAgentsResponseSchema,
+  ChainMessageEventSchema,
+  ChainMessagesResponseSchema,
+  ChainSendMessageRequestSchema,
+  ChainStartRequestSchema,
+  DispatchRefineRequestSchema,
+  DispatchRefineResponseSchema,
+} from "../src/chains.js";
 
 const minimal = {
   initial_agent: "codex",
@@ -135,4 +143,69 @@ test("ChainStartRequestSchema accepts branch_type and reserves 'agent'", () => {
   expect(ChainStartRequestSchema.safeParse({ ...minimal, branch_type: "agent" }).success).toBe(
     false,
   );
+});
+
+test("ChainMessagesResponseSchema parses a message event with a null user_id", () => {
+  const parsed = ChainMessagesResponseSchema.safeParse({
+    events: [
+      {
+        event_id: "evt-1",
+        ts: "2026-09-11T00:00:00Z",
+        event_type: "agent.thought",
+        source: "claude",
+        source_detail: null,
+        user_id: null,
+        payload: { text: "hello" },
+      },
+    ],
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.events).toHaveLength(1);
+  expect(parsed.data.events[0]!.event_id).toBe("evt-1");
+  expect(parsed.data.events[0]!.user_id).toBeNull();
+  expect(parsed.data.events[0]!.source_detail).toBeNull();
+});
+
+test("ChainMessageEventSchema accepts extra keys via loose", () => {
+  const parsed = ChainMessageEventSchema.safeParse({
+    event_id: "evt-2",
+    ts: "2026-09-11T00:00:01Z",
+    event_type: "dispatch.start",
+    source: "daemon",
+    source_detail: "worker-1",
+    user_id: "u-1",
+    payload: {},
+    extra_field: "allowed",
+  });
+  expect(parsed.success).toBe(true);
+});
+
+test("ChainAgentsResponseSchema parses {agents:[{name}]}", () => {
+  const parsed = ChainAgentsResponseSchema.safeParse({
+    agents: [{ name: "claude" }, { name: "gemini" }],
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.agents).toHaveLength(2);
+  expect(parsed.data.agents[0]!.name).toBe("claude");
+});
+
+test("ChainSendMessageRequestSchema requires non-empty content", () => {
+  expect(ChainSendMessageRequestSchema.safeParse({ content: "hello" }).success).toBe(true);
+  expect(ChainSendMessageRequestSchema.safeParse({ content: "" }).success).toBe(false);
+  expect(ChainSendMessageRequestSchema.safeParse({}).success).toBe(false);
+});
+
+test("DispatchRefineRequestSchema requires a message string", () => {
+  expect(DispatchRefineRequestSchema.safeParse({ message: "do stuff" }).success).toBe(true);
+  expect(DispatchRefineRequestSchema.safeParse({ message: "" }).success).toBe(false);
+  expect(DispatchRefineRequestSchema.safeParse({}).success).toBe(false);
+});
+
+test("DispatchRefineResponseSchema parses {refined}", () => {
+  const parsed = DispatchRefineResponseSchema.safeParse({ refined: "refined prompt" });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.refined).toBe("refined prompt");
 });
