@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "unavailable",
+  "surface": "cli",
+  "build": "0.153.4",
+  "observedAt": "2026-09-11",
+  "capture": {
+    "origin": "fresh disposable CODEX_HOME and temporary Git repository",
+    "commandSurface": "codex exec",
+    "authenticationCopied": false,
+    "trustBypassUsed": false,
+    "completed": false,
+    "failureReason": "network_unavailable_before_assistant_response",
+    "rawSha256": "e6546994f505700ff38fdf9a44347ff08dff5df78bc5d5de6b853c4b79d348a6",
+    "rawBytes": 37304,
+    "rawLines": 10,
+    "rawCommitted": false
+  },
+  "observedRecordShapes": [
+    "session_meta.payload.{session_id,id,cwd,originator,cli_version,source}",
+    "response_item.payload.{type:message,role:user,content:[{type:input_text,text}]}",
+    "event_msg.payload.{type:item_completed,item:{type:UserMessage,content:[{type:text,text}]}}"
+  ],
+  "observedMessageRoles": ["developer", "user"],
+  "assistantMessageObserved": false,
+  "sanitization": {
+    "status": "not_committed",
+    "reason": "capture lacked an assistant response and cannot qualify a two-role reader",
+    "userWorkSessionsRead": false,
+    "syntheticRowsAdded": false
+  },
+  "format": {
+    "fingerprint": "penumbra-codex-rollout-fixture-v1",
+    "status": "unsupported",
+    "enabled": false,
+    "reason": "no complete disposable two-role capture"
+  },
+  "coverage": {
+    "cli": "partial disposable capture",
+    "desktop": "unverified"
+  }
+}
