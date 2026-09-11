@@ -281,6 +281,24 @@ test("dispatchLand throws DaemonHttpError when the async task reports status=fai
   expect(httpErr.body).toEqual({ code: "lifecycle_busy", message: "another land in flight" });
 });
 
+test("dispatchLand returns the completed async task result", async () => {
+  const expected = { commit_sha: "abc123", branch_deleted: true, pr_closed: false };
+  mockFetch(((input: FetchInput, init?: FetchInit) => {
+    const url = new URL(readUrl(input));
+    if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+      return Promise.resolve(Response.json({ task_id: "task-complete-1" }, { status: 202 }));
+    }
+    if (url.pathname === "/dispatch/land/task-complete-1") {
+      return Promise.resolve(Response.json({ status: "done", result: expected }));
+    }
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  expect(
+    await c.dispatchLand({ handoff_id: "h-complete", commit_message: "feat: complete" }),
+  ).toEqual(expected);
+});
+
 test("dispatchLand surfaces the failing verdict check and compared head SHAs on HTTP 409", async () => {
   mockFetch(
     mock(() =>
@@ -347,6 +365,82 @@ test("dispatchLand resolves { status: 'still_running', task_id } instead of thro
   });
   expect(pollCount).toBeGreaterThanOrEqual(2);
   expect(elapsed).toBeLessThan(5_000);
+});
+
+test("dispatchLand bounds slow polling by the elapsed timeout", async () => {
+  mockFetch((async (input: FetchInput, init?: FetchInit) => {
+    const url = new URL(readUrl(input));
+    if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+      return Response.json({ task_id: "task-slow-polls" }, { status: 202 });
+    }
+    if (url.pathname === "/dispatch/land/task-slow-polls") {
+      await Bun.sleep(400);
+      return Response.json({ status: "running" });
+    }
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  const started = Date.now();
+  const out = await c.dispatchLand({
+    handoff_id: "h-slow-polls",
+    commit_message: "feat: slow polls",
+    timeout_ms: 1_000,
+  });
+  const elapsed = Date.now() - started;
+  expect(out).toEqual({
+    status: "still_running",
+    task_id: "task-slow-polls",
+    resume_url: "/dispatch/land/task-slow-polls",
+  });
+  expect(elapsed).toBeLessThan(1_800);
+});
+
+test("dispatchLand resolves still_running when a poll reaches its request deadline", async () => {
+  mockFetch(((input: FetchInput, init?: FetchInit) => {
+    const url = new URL(readUrl(input));
+    if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+      return Promise.resolve(Response.json({ task_id: "task-poll-timeout" }, { status: 202 }));
+    }
+    if (url.pathname === "/dispatch/land/task-poll-timeout") {
+      const error = new Error("poll timed out");
+      error.name = "TimeoutError";
+      return Promise.reject(error);
+    }
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  const out = await c.dispatchLand({
+    handoff_id: "h-poll-timeout",
+    commit_message: "feat: poll timeout",
+    timeout_ms: 1_000,
+  });
+  expect(out).toEqual({
+    status: "still_running",
+    task_id: "task-poll-timeout",
+    resume_url: "/dispatch/land/task-poll-timeout",
+  });
+});
+
+test("dispatchLand propagates non-timeout poll transport errors", async () => {
+  const expected = new TypeError("connection reset");
+  mockFetch(((input: FetchInput, init?: FetchInit) => {
+    const url = new URL(readUrl(input));
+    if (init?.method === "POST" && url.pathname === "/dispatch/land") {
+      return Promise.resolve(Response.json({ task_id: "task-network-error" }, { status: 202 }));
+    }
+    if (url.pathname === "/dispatch/land/task-network-error") {
+      return Promise.reject(expected);
+    }
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  }) as typeof fetch);
+  const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
+  let thrown: unknown = null;
+  try {
+    await c.dispatchLand({ handoff_id: "h-network-error", commit_message: "feat: network error" });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBe(expected);
 });
 
 test("dispatchLand does not forward timeout_ms in the daemon POST body", async () => {

@@ -86,6 +86,14 @@ export function daemonRequestSignal(timeoutMs: number | undefined): AbortSignal 
   return AbortSignal.timeout(timeoutMs);
 }
 
+type DispatchLandPollBody = {
+  status?: string;
+  result?: unknown;
+  error?: unknown;
+};
+
+type DispatchLandPollOutcome = { status: "continue" } | { status: "done"; result: unknown };
+
 export class DaemonClient {
   private readonly resolve: () => { baseUrl: string; token: string };
 
@@ -635,36 +643,50 @@ export class DaemonClient {
     taskId: string,
     timeoutMs: number,
   ): Promise<unknown> {
-    const pollIntervalMs = 200;
-    const maxIterations = Math.max(1, Math.ceil(timeoutMs / pollIntervalMs));
-    for (let i = 0; i < maxIterations; i += 1) {
-      await Bun.sleep(pollIntervalMs);
-      const taskRes = await fetch(`${baseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
-        headers: this.authHeaders(token),
-        signal: daemonRequestSignal(timeoutMs),
-      });
-      if (!taskRes.ok)
-        throw await daemonHttpError(`/dispatch/land/${encodeURIComponent(taskId)}`, taskRes);
-      const body = (await taskRes.json()) as {
-        status?: string;
-        result?: unknown;
-        error?: unknown;
-      };
-      if (body.status === "done") return body.result;
-      if (body.status === "failed") {
-        const errorBody = body.error ?? { code: "unknown" };
-        throw new DaemonHttpError(
-          `daemon /dispatch/land task failed: ${taskId} (${extractErrorCode(errorBody)})`,
-          500,
-          errorBody,
-        );
-      }
-    }
+    let pollIntervalMs = 200;
+    const deadline = Date.now() + timeoutMs;
+    do {
+      const remainingMs = Math.max(0, deadline - Date.now());
+      await Bun.sleep(Math.min(pollIntervalMs, remainingMs));
+      // A poll started at the deadline gets a 2s floor; the loop exits after it,
+      // so only that bounded in-flight request may overrun the caller's budget.
+      const requestTimeoutMs = Math.max(2_000, deadline - Date.now());
+      const outcome = await this.pollDispatchLandOnce(baseUrl, token, taskId, requestTimeoutMs);
+      if (outcome === null) break;
+      if (outcome.status === "done") return outcome.result;
+      pollIntervalMs = Math.min(2_000, pollIntervalMs * 1.5);
+    } while (Date.now() < deadline);
     return {
       status: "still_running",
       task_id: taskId,
       resume_url: `/dispatch/land/${taskId}`,
     };
+  }
+
+  private async pollDispatchLandOnce(
+    baseUrl: string,
+    token: string,
+    taskId: string,
+    timeoutMs: number,
+  ): Promise<DispatchLandPollOutcome | null> {
+    const path = `/dispatch/land/${encodeURIComponent(taskId)}`;
+    let taskRes: Response;
+    try {
+      taskRes = await fetch(`${baseUrl}${path}`, {
+        headers: this.authHeaders(token),
+        signal: daemonRequestSignal(timeoutMs),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.name === "TimeoutError")
+      ) {
+        return null;
+      }
+      throw error;
+    }
+    if (!taskRes.ok) throw await daemonHttpError(path, taskRes);
+    return classifyDispatchLandPoll(taskId, (await taskRes.json()) as DispatchLandPollBody);
   }
 
   async getHandoffStatus(
@@ -1279,6 +1301,22 @@ function extractErrorCode(errorBody: unknown): string {
     return String(errorBody.code);
   }
   return "unknown";
+}
+
+function classifyDispatchLandPoll(
+  taskId: string,
+  body: DispatchLandPollBody,
+): DispatchLandPollOutcome {
+  if (body.status === "done") return { status: "done", result: body.result };
+  if (body.status === "failed") {
+    const errorBody = body.error ?? { code: "unknown" };
+    throw new DaemonHttpError(
+      `daemon /dispatch/land task failed: ${taskId} (${extractErrorCode(errorBody)})`,
+      500,
+      errorBody,
+    );
+  }
+  return { status: "continue" };
 }
 
 function daemonErrorDetails(body: unknown): string {
