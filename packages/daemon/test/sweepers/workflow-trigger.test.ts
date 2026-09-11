@@ -1,8 +1,12 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import {
+  readWorkflowLastFired,
   runWorkflowTriggerSweep,
+  startWorkflowTriggerSweeper,
   type WorkflowTriggerSweeperOpts,
+  type WorkflowTriggerSweepState,
 } from "@src/sweepers/workflow-trigger.js";
 
 type Trigger = {
@@ -12,6 +16,7 @@ type Trigger = {
     | "time-since-last-handoff-min"
     | "pending-handoffs"
     | "commits-since-last-handoff"
+    | "context-window-percent"
     | "pending-review-lanes";
   op: ">" | "<";
   value: number;
@@ -57,8 +62,17 @@ const ZERO_METRICS = {
   "time-since-last-handoff-min": 0,
   "pending-handoffs": 0,
   "commits-since-last-handoff": 0,
+  "context-window-percent": 0,
   "pending-review-lanes": 0,
 };
+
+async function waitFor(predicate: () => boolean, timeoutMs = 250): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
+    await Bun.sleep(1);
+  }
+}
 
 function makeOpts(
   overrides: Partial<WorkflowTriggerSweeperOpts> & {
@@ -147,7 +161,7 @@ test("cooldown holds → second call matches but does not fire", async () => {
   expect(calls).toEqual(["always"]);
 });
 
-test("cooldown elapses → fires again", async () => {
+test("re-arm interval elapses while still crossed → fires again", async () => {
   const calls: string[] = [];
   const opts: WorkflowTriggerSweeperOpts = {
     registry: fakeRegistry([
@@ -159,12 +173,15 @@ test("cooldown elapses → fires again", async () => {
       return Promise.resolve();
     },
   };
-  const state = { lastFired: new Map<string, number>() };
+  const state: WorkflowTriggerSweepState = { lastFired: new Map<string, number>() };
 
   await runWorkflowTriggerSweep(opts, state, () => new Date("2026-05-04T12:00:00Z"));
   expect(calls).toEqual(["always"]);
-  // 6 minutes later, cooldown (default 5 min) has elapsed
+  // 6 minutes later the debounce has elapsed but the threshold never uncrossed.
   await runWorkflowTriggerSweep(opts, state, () => new Date("2026-05-04T12:06:00Z"));
+  expect(calls).toEqual(["always"]);
+  // Past the 6 h re-arm the workflow is allowed to fire again.
+  await runWorkflowTriggerSweep(opts, state, () => new Date("2026-05-04T18:01:00Z"));
   expect(calls).toEqual(["always", "always"]);
 });
 
@@ -238,4 +255,180 @@ test("pending-review-lanes fires once and respects cooldown", async () => {
   expect(second.matched).toEqual(["review-backlog"]);
   expect(second.fired).toEqual([]);
   expect(calls).toEqual(["review-backlog"]);
+});
+
+test("threshold that stays crossed fires once, not once per cooldown", async () => {
+  const calls: string[] = [];
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("session-handoff", {
+        kind: "state-threshold",
+        metric: "time-since-last-handoff-min",
+        op: ">",
+        value: 25,
+      }),
+    ]),
+    computeMetrics: () => ({ ...ZERO_METRICS, "time-since-last-handoff-min": 90 }),
+    runWorkflow: (name: string): Promise<void> => {
+      calls.push(name);
+      return Promise.resolve();
+    },
+  };
+  const state: WorkflowTriggerSweepState = { lastFired: new Map<string, number>() };
+  const base = Date.parse("2026-05-04T12:00:00Z");
+  for (let i = 0; i < 10; i++) {
+    await runWorkflowTriggerSweep(opts, state, () => new Date(base + i * 6 * 60_000));
+  }
+  expect(calls).toEqual(["session-handoff"]);
+});
+
+test("threshold that uncrosses and re-crosses fires again", async () => {
+  const calls: string[] = [];
+  let idle = 90;
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("session-handoff", {
+        kind: "state-threshold",
+        metric: "time-since-last-handoff-min",
+        op: ">",
+        value: 25,
+      }),
+    ]),
+    computeMetrics: () => ({ ...ZERO_METRICS, "time-since-last-handoff-min": idle }),
+    runWorkflow: (name: string): Promise<void> => {
+      calls.push(name);
+      return Promise.resolve();
+    },
+  };
+  const state: WorkflowTriggerSweepState = { lastFired: new Map<string, number>() };
+  const at =
+    (min: number): (() => Date) =>
+    (): Date =>
+      new Date(Date.parse("2026-05-04T12:00:00Z") + min * 60_000);
+
+  await runWorkflowTriggerSweep(opts, state, at(0));
+  idle = 0;
+  await runWorkflowTriggerSweep(opts, state, at(6));
+  idle = 90;
+  await runWorkflowTriggerSweep(opts, state, at(12));
+  expect(calls).toEqual(["session-handoff", "session-handoff"]);
+});
+
+test("sweeper seeds lastFired from durable state so a restart does not re-fire inside the cooldown", async () => {
+  const calls: string[] = [];
+  const firedAt = Date.parse("2026-05-04T12:00:00Z");
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("session-handoff", {
+        kind: "state-threshold",
+        metric: "time-since-last-handoff-min",
+        op: ">",
+        value: 25,
+      }),
+    ]),
+    computeMetrics: () => ({ ...ZERO_METRICS, "time-since-last-handoff-min": 90 }),
+    runWorkflow: (name: string): Promise<void> => {
+      calls.push(name);
+      return Promise.resolve();
+    },
+    seedLastFired: (): Map<string, number> => new Map([["session-handoff", firedAt]]),
+  };
+  const stop = startWorkflowTriggerSweeper(opts, 5, () => new Date(firedAt + 500));
+  await Bun.sleep(40);
+  stop();
+  expect(calls).toEqual([]);
+});
+
+test("a tick is skipped while the previous sweep is still running", async () => {
+  let metricsCalls = 0;
+  let release: (() => void) | undefined;
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("slow", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
+    ]),
+    computeMetrics: () => {
+      metricsCalls++;
+      return ZERO_METRICS;
+    },
+    runWorkflow: (): Promise<void> =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  };
+  const stop = startWorkflowTriggerSweeper(opts, 5);
+  await Bun.sleep(60);
+  expect(metricsCalls).toBe(1);
+  release?.();
+  stop();
+});
+
+test("in-flight fence releases after the sweep resolves", async () => {
+  let metricsCalls = 0;
+  let release: (() => void) | undefined;
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([
+      spec("slow", { kind: "state-threshold", metric: "pending-handoffs", op: ">", value: -1 }),
+    ]),
+    computeMetrics: () => {
+      metricsCalls++;
+      return ZERO_METRICS;
+    },
+    runWorkflow: () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  };
+  const stop = startWorkflowTriggerSweeper(opts, 5);
+  await waitFor(() => release !== undefined);
+  release?.();
+  await waitFor(() => metricsCalls >= 2);
+  stop();
+  expect(metricsCalls).toBeGreaterThanOrEqual(2);
+});
+
+test("in-flight fence releases after the sweep rejects", async () => {
+  let metricsCalls = 0;
+  const opts: WorkflowTriggerSweeperOpts = {
+    registry: fakeRegistry([]),
+    computeMetrics: () => {
+      metricsCalls++;
+      if (metricsCalls === 1) throw new Error("expected rejection");
+      return ZERO_METRICS;
+    },
+    runWorkflow: (): Promise<void> => Promise.resolve(),
+  };
+  const stop = startWorkflowTriggerSweeper(opts, 5);
+  await waitFor(() => metricsCalls >= 2);
+  stop();
+  expect(metricsCalls).toBeGreaterThanOrEqual(2);
+});
+
+test("durable lastFired reader keeps newest valid rows and ignores malformed values", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE t0_events (ts TEXT, event_type TEXT, payload_json TEXT)");
+  const insert = db.query(
+    "INSERT INTO t0_events (ts, event_type, payload_json) VALUES (?1, ?2, ?3)",
+  );
+  insert.run("2026-05-04T12:00:00Z", "workflow.outcome", '{"workflow_name":"alpha"}');
+  insert.run("2026-05-04T13:00:00Z", "workflow.outcome", '{"workflow_name":"alpha"}');
+  insert.run("not-a-date", "workflow.outcome", '{"workflow_name":"alpha"}');
+  insert.run("2026-05-04T14:00:00Z", "workflow.outcome", '{"workflow_name":"beta"}');
+  insert.run("2026-05-04T15:00:00Z", "workflow.outcome", "{");
+  insert.run("2026-05-04T15:00:00Z", "workflow.outcome", '{"workflow_name":42}');
+  insert.run("2026-05-04T15:00:00Z", "workflow.outcome", '{"workflow_name":""}');
+  insert.run("2026-05-04T16:00:00Z", "other.event", '{"workflow_name":"ignored"}');
+
+  expect(readWorkflowLastFired(db)).toEqual(
+    new Map([
+      ["alpha", Date.parse("2026-05-04T13:00:00Z")],
+      ["beta", Date.parse("2026-05-04T14:00:00Z")],
+    ]),
+  );
+  db.close();
+});
+
+test("durable lastFired reader returns an empty map when the table is unavailable", () => {
+  const db = new Database(":memory:");
+  expect(readWorkflowLastFired(db)).toEqual(new Map());
+  db.close();
 });

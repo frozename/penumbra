@@ -319,7 +319,7 @@ import { resolveStaleAfterMs } from "./sweepers/stale-handoff-thresholds.js";
 import { startStaleHandoffSweeper } from "./sweepers/stale-handoff.js";
 import { startStaleWorkerTokensSweeper } from "./sweepers/stale-worker-tokens.js";
 import { createTaskLeaseSweeper } from "./sweepers/task-leases.js";
-import { startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
+import { readWorkflowLastFired, startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
 import { startWorktreeGcSweeper } from "./sweepers/worktree-gc.js";
 import { type ExtraWorkerConfig, loadExtraWorkersConfig } from "./workers/config.js";
 import { createDispatchEventsRetentionWorker } from "./workers/dispatch-events-retention.js";
@@ -2131,6 +2131,7 @@ function startLateSweepers(args: {
     return startWorkflowTriggerSweeper({
       registry: reg,
       computeMetrics: (now: () => Date) => computeStateMetrics({ db: opts.services.db, now }),
+      seedLastFired: (): Map<string, number> => readWorkflowLastFired(opts.services.db),
       runWorkflow: async (name: string): Promise<void> => {
         await runWorkflowTriggerEntry(opts, name, cwd, project);
       },

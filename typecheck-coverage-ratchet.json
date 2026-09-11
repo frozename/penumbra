@@ -23,7 +23,7 @@
       "errorCount": 287
     },
     "packages/daemon": {
-      "errorCount": 668
+      "errorCount": 660
     },
     "packages/e2e": {
       "errorCount": 313
@@ -41,5 +41,5 @@
       "errorCount": 14
     }
   },
-  "total": 1629
+  "total": 1621
 }

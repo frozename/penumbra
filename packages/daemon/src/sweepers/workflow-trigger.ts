@@ -1,4 +1,5 @@
 import type { Registry, StateMetrics } from "@penumbra/workflows";
+import type { Database } from "bun:sqlite";
 
 import { evaluateStateThresholds } from "@penumbra/workflows";
 
@@ -20,9 +21,18 @@ export interface WorkflowTriggerSweeperOpts {
   registry: WorkflowRegistryLike;
   computeMetrics: (now: () => Date) => StateMetrics;
   runWorkflow: (name: string) => Promise<void>;
-  /** Cooldown per workflow_name to prevent re-firing while threshold stays crossed. Default 5 min. */
+  /** Debounce applied to a fresh crossing. Default 5 min. */
   cooldownMs?: number;
+  /** Re-arm interval for a threshold that never uncrosses. Default 6 h. */
+  rearmMs?: number;
+  /** Durable seed for lastFired, read once when the sweeper starts. */
+  seedLastFired?: () => Map<string, number>;
   log?: { warn?: (obj: unknown, msg?: string) => void };
+}
+
+export interface WorkflowTriggerSweepState {
+  lastFired: Map<string, number>;
+  wasMatched?: Set<string>;
 }
 
 export interface SweepTickResult {
@@ -31,39 +41,69 @@ export interface SweepTickResult {
 }
 
 const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
+const DEFAULT_REARM_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_STALE_LAST_FIRED_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 60_000;
 
+function evictStaleLastFired(lastFired: Map<string, number>, staleBefore: number): void {
+  for (const [name, last] of lastFired) {
+    if (last <= staleBefore) lastFired.delete(name);
+  }
+}
+
+export function readWorkflowLastFired(db: Database): Map<string, number> {
+  const seed = new Map<string, number>();
+  try {
+    const rows = db
+      .query<{ name: unknown; ts: unknown }, []>(
+        `SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.workflow_name') END AS name,
+                ts
+           FROM t0_events
+          WHERE event_type = 'workflow.outcome'`,
+      )
+      .all();
+    for (const row of rows) {
+      if (typeof row.name !== "string" || row.name.trim().length === 0) continue;
+      if (typeof row.ts !== "string") continue;
+      const timestamp = Date.parse(row.ts);
+      if (!Number.isFinite(timestamp)) continue;
+      const previous = seed.get(row.name);
+      if (previous === undefined || timestamp > previous) seed.set(row.name, timestamp);
+    }
+  } catch {
+    return new Map<string, number>();
+  }
+  return seed;
+}
+
 /**
  * Runs one tick: compute metrics, find matched workflows via the trigger evaluator,
- * fire any whose cooldown has elapsed. Idempotent across concurrent calls thanks to
- * the in-memory cooldown map. Exposed for tests.
+ * and fire on a fresh crossing or after a continuous-crossing re-arm interval.
  */
 export async function runWorkflowTriggerSweep(
   opts: WorkflowTriggerSweeperOpts,
-  state: { lastFired: Map<string, number> },
+  state: WorkflowTriggerSweepState,
   now: () => Date,
 ): Promise<SweepTickResult> {
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  const rearmMs = opts.rearmMs ?? DEFAULT_REARM_MS;
   const metrics = opts.computeMetrics(now);
   const matchedSpecs = evaluateStateThresholds(opts.registry as unknown as Registry, metrics);
   const matched = matchedSpecs.map((s) => s.name);
 
   const nowMs = now().getTime();
-  const staleBefore = nowMs - DEFAULT_STALE_LAST_FIRED_MS;
-  for (const [name, last] of state.lastFired) {
-    if (last <= staleBefore) {
-      state.lastFired.delete(name);
-    }
-  }
+  evictStaleLastFired(state.lastFired, nowMs - DEFAULT_STALE_LAST_FIRED_MS);
 
+  const wasMatched = (state.wasMatched ??= new Set<string>());
   const fired: string[] = [];
   for (const name of matched) {
     const last = state.lastFired.get(name);
     if (last !== undefined && nowMs - last <= cooldownMs) continue;
+    if (wasMatched.has(name) && last !== undefined && nowMs - last <= rearmMs) continue;
     state.lastFired.set(name, nowMs);
     fired.push(name);
   }
+  state.wasMatched = new Set(matched);
 
   for (const name of fired) {
     try {
@@ -82,11 +122,27 @@ export function startWorkflowTriggerSweeper(
   intervalMs = DEFAULT_INTERVAL_MS,
   now: () => Date = () => new Date(),
 ): () => void {
-  const state = { lastFired: new Map<string, number>() };
+  const state: WorkflowTriggerSweepState = {
+    lastFired: opts.seedLastFired?.() ?? new Map<string, number>(),
+    wasMatched: new Set<string>(),
+  };
+  let inFlight = false;
   const timer = setInterval(() => {
-    runWorkflowTriggerSweep(opts, state, now).catch((err: unknown) => {
-      opts.log?.warn?.({ err: String(err) }, "workflow-trigger sweep tick failed");
-    });
+    if (inFlight) {
+      opts.log?.warn?.(
+        { event: "workflow_trigger.tick_skipped" },
+        "workflow-trigger sweep still running; skipping tick",
+      );
+      return;
+    }
+    inFlight = true;
+    void runWorkflowTriggerSweep(opts, state, now)
+      .catch((err: unknown) => {
+        opts.log?.warn?.({ err: String(err) }, "workflow-trigger sweep tick failed");
+      })
+      .finally(() => {
+        inFlight = false;
+      });
   }, intervalMs);
   maybeUnref(timer);
   return () => {
