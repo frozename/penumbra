@@ -542,6 +542,21 @@ function prepareWorkflowRun(
       ok: false,
       response: json({ error: { code: "not_found", message: `workflow ${name} not found` } }, 404),
     };
+  const cwd = body.cwd;
+  if (typeof cwd !== "string" || cwd.trim().length === 0)
+    return {
+      ok: false,
+      response: json(
+        {
+          error: {
+            code: "cwd_required",
+            message: "cwd required",
+            hint: "pass an explicit absolute cwd; the daemon's cwd is its own repo, not yours",
+          },
+        },
+        400,
+      ),
+    };
   const rawArgs = body.args ?? {};
   const argsResult = validateWorkflowArgs(entry, rawArgs);
   if (!argsResult.ok) return { ok: false, response: argsResult.response };
@@ -549,7 +564,7 @@ function prepareWorkflowRun(
     ...argsResult.args,
     ...(body.session_id ? { session_id: body.session_id } : {}),
   };
-  return { ok: true, entry, name, args, cwd: body.cwd ?? process.cwd(), body };
+  return { ok: true, entry, name, args, cwd, body };
 }
 
 function attachRunPersistHandlers(

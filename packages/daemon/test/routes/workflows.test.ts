@@ -126,8 +126,10 @@ test("buildServices tolerates a seeded worktree root over the route test DB", ()
   }
 });
 
-async function setupReg(): Promise<{ reg: Registry; root: string }> {
-  const root = mkdtempSync(join(tmpdir(), "wfd-"));
+async function setupReg(root = mkdtempSync(join(tmpdir(), "wfd-"))): Promise<{
+  reg: Registry;
+  root: string;
+}> {
   markTrustedRoot(root);
   mkdirSync(join(root, "playbooks/x"), { recursive: true });
   mkdirSync(join(root, "workflows"), { recursive: true });
@@ -177,7 +179,7 @@ test("POST /workflows/run executes a registered workflow", async () => {
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "x", wait: true }),
+      body: JSON.stringify({ name: "x", cwd: root, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
@@ -186,6 +188,90 @@ test("POST /workflows/run executes a registered workflow", async () => {
     expect(body.composedPrompt).toContain("body");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/run requires an explicit cwd", async () => {
+  const { reg, root } = await setupReg();
+  try {
+    const services = mockServices({ workflowRegistry: reg });
+    const req = new Request("http://localhost/workflows/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string; hint: string };
+    };
+    expect(body.error.code).toBe("cwd_required");
+    expect(body.error.message).toBe("cwd required");
+    expect(body.error.hint).toContain("absolute cwd");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/run rejects non-string and empty cwd", async () => {
+  const { reg, root } = await setupReg();
+  try {
+    const services = mockServices({ workflowRegistry: reg });
+    for (const cwd of [42, ""]) {
+      const req = new Request("http://localhost/workflows/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "x", cwd }),
+      });
+      const res = await workflowsRunRoute(req, services);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("cwd_required");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/run rejects whitespace-only cwd", async () => {
+  const { reg, root } = await setupReg();
+  try {
+    const services = mockServices({ workflowRegistry: reg });
+    const req = new Request("http://localhost/workflows/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "x", cwd: " \t\n" }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("cwd_required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /workflows/run preserves a nonblank cwd ending in a space", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "wfd-space-"));
+  const root = join(parent, "repo ");
+  mkdirSync(root);
+  const { reg } = await setupReg(root);
+  try {
+    const services = mockServices({
+      workflowRegistry: reg,
+      db: freshDb(),
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    });
+    const req = new Request("http://localhost/workflows/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "x", cwd: root, wait: true }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
   }
 });
 
@@ -1756,7 +1842,7 @@ test("fileSessionSummarizeStumbles forwards the active project to the extractor"
   expect(seenInput?.default_project).toBe("project-x");
 });
 
-test("POST /workflows/run unknown name → 404", async () => {
+test("POST /workflows/run returns 404 for an unknown name without cwd", async () => {
   const { reg, root } = await setupReg();
   try {
     const services = mockServices({
@@ -1772,6 +1858,8 @@ test("POST /workflows/run unknown name → 404", async () => {
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_found");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2699,7 +2787,7 @@ test("POST /workflows/run threads workflow_run_id and latency_ms into t0 capture
     const req = new Request("http://localhost/workflows/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "x", wait: true }),
+      body: JSON.stringify({ name: "x", cwd: root, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
