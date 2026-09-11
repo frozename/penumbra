@@ -4,13 +4,14 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ModuleId } from "../modules/manifest.js";
 
 import {
   getStreamState,
   onStreamStateChange,
+  paramsKey,
   type StreamState,
   type StreamTopic,
   subscribe,
@@ -23,6 +24,7 @@ export interface UseLiveQueryOpts<T> {
   queryFn: () => Promise<T>;
   owner: ModuleId;
   topic?: StreamTopic;
+  params?: Record<string, string>;
   pollMs?: number;
   enabled?: boolean;
 }
@@ -30,6 +32,18 @@ export interface UseLiveQueryOpts<T> {
 interface InternalUseLiveQueryOpts {
   /** @internal */
   subscribeImpl?: typeof subscribe;
+}
+
+export function useQueryInvalidator(): (keys: readonly (readonly unknown[])[]) => void {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (keys: readonly (readonly unknown[])[]): void => {
+      for (const key of keys) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
+    [queryClient],
+  );
 }
 
 export function useLiveQuery<T>(
@@ -42,22 +56,28 @@ export function useLiveQuery<T>(
 
   const activeModule = useUIStore((s) => s.activeModule);
   const active = activeModule === o.owner && o.enabled !== false;
-  const queryClient = useQueryClient();
+  const invalidate = useQueryInvalidator();
   const subscribeImpl = internal?.subscribeImpl ?? subscribe;
 
   const queryKeyRef = useRef(o.queryKey);
   queryKeyRef.current = o.queryKey;
 
+  const pkey = useMemo(() => paramsKey(o.params), [o.params]);
+
   useEffect((): (() => void) | undefined => {
     if (!active || !o.topic) return;
     const topic = o.topic;
-    const sub = subscribeImpl(topic, () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeyRef.current });
-    });
+    const sub = subscribeImpl(
+      topic,
+      () => {
+        invalidate([queryKeyRef.current]);
+      },
+      { params: o.params },
+    );
     return (): void => {
       sub.unsubscribe();
     };
-  }, [active, o.topic, subscribeImpl, queryClient]);
+  }, [active, o.topic, pkey, subscribeImpl, invalidate]);
 
   const refetchInterval = active ? (o.topic ? false : (o.pollMs ?? HEARTBEAT_MS)) : false;
 

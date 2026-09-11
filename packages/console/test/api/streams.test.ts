@@ -601,6 +601,80 @@ describe("paramsKey", () => {
   });
 });
 
+describe("conversation topic (parameterised)", () => {
+  test("resolves path with consumed id param", async () => {
+    const sub = subscribe("conversation", noop(), { params: { id: "c1" } });
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/conversations/c1/stream");
+    sub.unsubscribe();
+  });
+
+  test("id does not leak into query params; remaining params do", async () => {
+    const sub = subscribe("conversation", noop(), {
+      params: { id: "c1", extra: "val" },
+    });
+    await flushMicrotasks();
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/conversations/c1/stream?extra=val");
+    sub.unsubscribe();
+  });
+
+  test("special characters in id are encoded once", async () => {
+    const sub = subscribe("conversation", noop(), { params: { id: "a/b" } });
+    await flushMicrotasks();
+    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/conversations/a%2Fb/stream");
+    sub.unsubscribe();
+  });
+
+  test("same id shares one source", async () => {
+    const sub1 = subscribe("conversation", noop(), { params: { id: "c1" } });
+    const sub2 = subscribe("conversation", noop(), { params: { id: "c1" } });
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(1);
+    sub1.unsubscribe();
+    sub2.unsubscribe();
+  });
+
+  test("different ids open separate sources", async () => {
+    const sub1 = subscribe("conversation", noop(), { params: { id: "c1" } });
+    const sub2 = subscribe("conversation", noop(), { params: { id: "c2" } });
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]!.url).toContain("/conversations/c1/stream");
+    expect(sessions[1]!.url).toContain("/conversations/c2/stream");
+    sub1.unsubscribe();
+    sub2.unsubscribe();
+  });
+
+  test("missing id throws before opening network", () => {
+    expect(() => subscribe("conversation", noop())).toThrow(/requires param "id"/);
+    expect(sessions).toHaveLength(0);
+  });
+
+  test.each([{ id: null }, { id: 0 }, { id: false }, { id: {} }, { id: [] }])(
+    "non-string id %p throws before opening network",
+    ({ id }) => {
+      expect(() =>
+        subscribe("conversation", noop(), { params: { id } as unknown as Record<string, string> }),
+      ).toThrow(/requires param "id"/);
+      expect(sessions).toHaveLength(0);
+    },
+  );
+
+  test("empty id throws before opening network", () => {
+    expect(() => subscribe("conversation", noop(), { params: { id: "" } })).toThrow(
+      /requires param "id"/,
+    );
+    expect(sessions).toHaveLength(0);
+  });
+});
+
+describe("no long-lived topic", () => {
+  test("TOPIC_PATHS does not include a long-lived topic (stub)", () => {
+    expect("long-lived" in TOPIC_PATHS).toBe(false);
+  });
+});
+
 // ---- Per-broker harness for direct broker-instance tests --------------------
 //
 // The test cases above drive the default broker singleton through the global

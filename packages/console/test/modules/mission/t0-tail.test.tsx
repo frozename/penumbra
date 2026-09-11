@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { __resetBrokerForTests, __setSourceFactory } from "@src/api/streams";
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
@@ -19,11 +19,14 @@ type SubscribeImpl = <T>(
 interface Harness {
   emit: (msg: StreamMessage<unknown>) => void;
   subscribeImpl: SubscribeImpl;
+  subscribeCalls: () => number;
 }
 
 function makeHarness(): Harness {
   let emitter: ((msg: StreamMessage<unknown>) => void) | null = null;
+  let calls = 0;
   const subscribeImpl = ((..._args: unknown[]) => {
+    calls += 1;
     emitter = _args[1] as (msg: StreamMessage<unknown>) => void;
     return {
       tail: () => [],
@@ -37,6 +40,7 @@ function makeHarness(): Harness {
       if (emitter) emitter(msg);
     },
     subscribeImpl,
+    subscribeCalls: () => calls,
   };
 }
 
@@ -588,6 +592,120 @@ describe("T0Tail", () => {
       fireEvent.click(findButton());
     });
     expect(useMissionStore.getState().pausedTail).toBe(false);
+
+    unmount();
+    client.clear();
+  });
+
+  test("reconnect invalidates chainsByStatus(dispatched) and handoffsPendingInvalidations keys", async () => {
+    const { emit, subscribeImpl } = makeHarness();
+    const { Wrapper, client } = makeWrapper();
+
+    const origInvalidate = client.invalidateQueries.bind(client);
+    const invalidateSpy = mock((...args: any[]) => origInvalidate(...args));
+    client.invalidateQueries = invalidateSpy as typeof client.invalidateQueries;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <T0Tail subscribeImpl={subscribeImpl} />
+      </Wrapper>,
+    );
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    act(() => {
+      emit({
+        event: "__reconnect__",
+        data: { reconnect: true },
+        raw: { reconnect: true },
+      });
+    });
+
+    await waitFor(() => {
+      const invalidatedKeys = invalidateSpy.mock.calls.map(
+        (c: readonly { queryKey?: unknown }[]) => c[0]?.queryKey,
+      );
+      expect(invalidatedKeys).toContainEqual(["chains", "dispatched"]);
+      expect(invalidatedKeys).toContainEqual(["handoffs", "pending"]);
+      expect(invalidatedKeys).toContainEqual(["approvals", "handoffs"]);
+    });
+
+    unmount();
+    client.clear();
+  });
+
+  test("ordinary frame does not cause extra query invalidations", async () => {
+    const { emit, subscribeImpl } = makeHarness();
+    const { Wrapper, client } = makeWrapper();
+
+    const origInvalidate = client.invalidateQueries.bind(client);
+    const invalidateSpy = mock((...args: any[]) => origInvalidate(...args));
+    client.invalidateQueries = invalidateSpy as typeof client.invalidateQueries;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <T0Tail subscribeImpl={subscribeImpl} />
+      </Wrapper>,
+    );
+    const scroll = container.querySelector(".t0-tail-scroll")!;
+    scroll.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      left: 0,
+      right: 600,
+      bottom: 280,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const callsBefore = invalidateSpy.mock.calls.length;
+
+    act(() => {
+      emit({
+        event: "agent.thought",
+        data: {
+          kind: "agent.thought",
+          handoff_id: "h1",
+          source: "worker",
+          ts: new Date().toISOString(),
+          worker_id: null,
+          meta: null,
+        },
+        raw: rawMsg(),
+      });
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(invalidateSpy.mock.calls.length).toBe(callsBefore);
+
+    unmount();
+    client.clear();
+  });
+
+  test("uses exactly one subscription", async () => {
+    const { subscribeImpl, subscribeCalls } = makeHarness();
+    const { Wrapper, client } = makeWrapper();
+
+    const { unmount } = render(
+      <Wrapper>
+        <T0Tail subscribeImpl={subscribeImpl} />
+      </Wrapper>,
+    );
+
+    expect(subscribeCalls()).toBe(1);
 
     unmount();
     client.clear();

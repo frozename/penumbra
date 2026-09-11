@@ -7,12 +7,26 @@ import {
   SseConnectError,
 } from "./event-source-shim.js";
 
+export type TopicSpec =
+  | string
+  | {
+      path: (p: Record<string, string>) => string;
+      consumes: readonly string[];
+      sample: Record<string, string>;
+    };
+
 export const TOPIC_PATHS = {
   "dispatch-events": "/dispatch/events/stream",
   "permission-events": "/permissions/events",
   "handoff-events": "/handoffs/events",
   "task-events": "/tasks/events",
-} as const;
+  conversation: {
+    path: (p: Record<string, string>): string =>
+      `/conversations/${encodeURIComponent(p.id ?? "")}/stream`,
+    consumes: ["id"],
+    sample: { id: "c1" },
+  },
+} as const satisfies Record<string, TopicSpec>;
 
 export type StreamTopic = keyof typeof TOPIC_PATHS;
 
@@ -132,12 +146,40 @@ function notifyStateChange(ctx: BrokerCtx): void {
   }
 }
 
-function topicPath(topic: StreamTopic): string {
-  return TOPIC_PATHS[topic];
+function resolveTopicUrl(
+  baseUrl: string,
+  topic: StreamTopic,
+  params?: Record<string, string>,
+): string {
+  const spec = TOPIC_PATHS[topic];
+  if (typeof spec === "string") {
+    return buildRequestUrl(baseUrl, spec, params);
+  }
+  const consumed: Record<string, string> = {};
+  for (const key of spec.consumes) {
+    consumed[key] = params?.[key] ?? "";
+  }
+  const path = spec.path(consumed);
+  const remaining: Record<string, string> = {};
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (!spec.consumes.some((c) => c === k)) {
+        remaining[k] = v;
+      }
+    }
+  }
+  return buildRequestUrl(baseUrl, path, Object.keys(remaining).length > 0 ? remaining : undefined);
 }
 
-function buildUrl(baseUrl: string, topic: StreamTopic, params?: Record<string, string>): string {
-  return buildRequestUrl(baseUrl, topicPath(topic), params);
+function validateConsumedParams(topic: StreamTopic, params?: Record<string, string>): void {
+  const spec = TOPIC_PATHS[topic];
+  if (typeof spec === "string") return;
+  for (const key of spec.consumes) {
+    const val = params?.[key];
+    if (typeof val !== "string" || val === "") {
+      throw new Error(`stream topic "${topic as string}" requires param "${key}"`);
+    }
+  }
 }
 
 function pushToRing(entry: BrokerEntry, msg: StreamMessage<unknown>): void {
@@ -197,7 +239,7 @@ function handleMessage(
 
 function openSource(ctx: BrokerCtx, entry: BrokerEntry): void {
   const { token } = ctx.getConfig();
-  const url = buildUrl(entry.baseUrl, entry.topic, entry.params);
+  const url = resolveTopicUrl(entry.baseUrl, entry.topic, entry.params);
   const headers: Record<string, string> = {};
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
@@ -352,6 +394,7 @@ function subscribeOn<T>(
   if (!(topic in TOPIC_PATHS)) {
     throw new Error(`unknown stream topic: ${topic as string}`);
   }
+  validateConsumedParams(topic, opts?.params);
   const { baseUrl } = ctx.getConfig();
   const pkey = paramsKey(opts?.params);
   const key = `${baseUrl}|${topic}|${pkey}`;

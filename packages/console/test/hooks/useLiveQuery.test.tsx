@@ -24,17 +24,24 @@ interface Harness {
   emit: (msg: StreamMessage<unknown>) => void;
   subscribeImpl: SubscribeImpl;
   subscribeCalls: () => number;
+  lastParams: () => Record<string, string> | undefined;
+  unsubCalls: () => number;
 }
 
 function makeHarness(): Harness {
   let emitter: ((msg: StreamMessage<unknown>) => void) | null = null;
   let calls = 0;
+  let lastP: Record<string, string> | undefined;
+  let unsubs = 0;
   const subscribeImpl = ((...args: any[]) => {
     calls += 1;
     emitter = args[1] as (msg: StreamMessage<unknown>) => void;
+    const opts = args[2] as { params?: Record<string, string> } | undefined;
+    lastP = opts?.params;
     return {
       tail: () => [],
       unsubscribe: () => {
+        unsubs += 1;
         emitter = null;
       },
     } satisfies Subscription;
@@ -45,6 +52,8 @@ function makeHarness(): Harness {
     },
     subscribeImpl,
     subscribeCalls: () => calls,
+    lastParams: () => lastP,
+    unsubCalls: () => unsubs,
   };
 }
 
@@ -263,5 +272,73 @@ describe("useLiveQuery", () => {
         { wrapper: Wrapper },
       ),
     ).toThrow("useLiveQuery: patch mode is not supported");
+  });
+
+  test("forwards params into subscribe", async () => {
+    const harness = makeHarness();
+    const { Wrapper } = makeWrapper();
+    const queryFn = mock(async () => 42);
+
+    renderHook(
+      () =>
+        useLiveQuery<number>(
+          {
+            queryKey: ["params-test"],
+            queryFn,
+            owner: "mission",
+            topic: "dispatch-events",
+            params: { kind: "a" },
+          },
+          { subscribeImpl: harness.subscribeImpl },
+        ),
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => {
+      expect(harness.subscribeCalls()).toBe(1);
+    });
+    expect(harness.lastParams()).toEqual({ kind: "a" });
+  });
+
+  test("changed params resubscribe; equal params (new object) do not", async () => {
+    const harness = makeHarness();
+    const { Wrapper } = makeWrapper();
+    const queryFn = mock(async () => 42);
+
+    const { rerender } = renderHook(
+      ({ params }) =>
+        useLiveQuery<number>(
+          {
+            queryKey: ["params-change"],
+            queryFn,
+            owner: "mission",
+            topic: "dispatch-events",
+            params,
+          },
+          { subscribeImpl: harness.subscribeImpl },
+        ),
+      { wrapper: Wrapper, initialProps: { params: { kind: "a" } } },
+    );
+
+    await waitFor(() => {
+      expect(harness.subscribeCalls()).toBe(1);
+    });
+
+    // Changed params → resubscribe
+    act(() => {
+      rerender({ params: { kind: "b" } });
+    });
+    await waitFor(() => {
+      expect(harness.subscribeCalls()).toBe(2);
+    });
+    expect(harness.unsubCalls()).toBe(1);
+    expect(harness.lastParams()).toEqual({ kind: "b" });
+
+    // Equal params (new object, same values) → no resubscribe
+    act(() => {
+      rerender({ params: { kind: "b" } });
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(harness.subscribeCalls()).toBe(2);
   });
 });

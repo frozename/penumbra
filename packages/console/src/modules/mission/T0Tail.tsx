@@ -1,10 +1,10 @@
 import type { DispatchEvent } from "@penumbra/api-contract";
 
-import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
+import { useQueryInvalidator } from "@src/hooks/useLiveQuery";
 import { useStream } from "@src/hooks/useStream";
 import { chainsByStatus, handoffsPendingInvalidations } from "@src/lib/query-keys";
 import { Button } from "@src/ui/Button";
@@ -69,7 +69,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     props.subscribeImpl ? { subscribeImpl: props.subscribeImpl } : undefined,
   );
 
-  const queryClient = useQueryClient();
+  const invalidate = useQueryInvalidator();
   const lastReconnectSeen = useRef(0);
   const [showReconnected, setShowReconnected] = useState(false);
   const frozenRef = useRef<readonly StreamMessage<DispatchEvent>[] | null>(null);
@@ -84,10 +84,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
       // frozen view instead of falling through to the live buffer.
       frozenRef.current = pausedTail ? stream.messages : null;
       postResumeStartRef.current = null;
-      void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
-      for (const key of handoffsPendingInvalidations()) {
-        void queryClient.invalidateQueries({ queryKey: key });
-      }
+      invalidate([chainsByStatus("dispatched"), ...handoffsPendingInvalidations()]);
       const handle = setTimeout(() => {
         setShowReconnected(false);
       }, RECONNECTED_BANNER_MS);
@@ -98,7 +95,7 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     return undefined;
     // Intentionally read the latest `pausedTail` and `stream.messages` from
     // the render that bumped reconnectCount, not from later renders.
-  }, [stream.reconnectCount, queryClient]);
+  }, [stream.reconnectCount, invalidate]);
 
   // Frozen snapshot when paused: capture once at the moment pause flips on.
   useEffect(() => {
