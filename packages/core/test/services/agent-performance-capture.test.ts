@@ -723,7 +723,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
         [string]
       >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
       .get("h1");
-    expect(stored?.reliability_status).toBe("no_worktree_activity");
+    expect(stored?.reliability_status).toBe("complete");
   });
 
   it("keeps missing_dispatch_end fail-closed when dispatch_end_emitted is absent", () => {

@@ -1,6 +1,7 @@
-import type {
-  DispatchRecommendedAction as DispatchRecommendedActionAlias,
-  DispatchReliabilityStatus as DispatchReliabilityStatusAlias,
+import {
+  AgentTaskTypeSchema,
+  type DispatchRecommendedAction as DispatchRecommendedActionAlias,
+  type DispatchReliabilityStatus as DispatchReliabilityStatusAlias,
 } from "@penumbra/api-contract";
 
 export type DispatchReliabilityStatus = DispatchReliabilityStatusAlias;
@@ -309,11 +310,14 @@ function isStale(input: DispatchReliabilityInput): boolean {
   return nowMs - lastActivityMs > activityIdleMs;
 }
 
+const IMPLEMENTING_TASK_TYPES = new Set<string>(["implement_small", "implement_substantial"]);
+const KNOWN_TASK_TYPES = new Set<string>(AgentTaskTypeSchema.options);
+
 function isImplementationTask(handoff: DispatchReliabilityHandoff): boolean {
   const taskType = handoff.chain_task_type ?? "";
-  return (
-    taskType === "implement_small" || taskType === "implement_substantial" || usesWorktree(handoff)
-  );
+  if (IMPLEMENTING_TASK_TYPES.has(taskType)) return true;
+  if (KNOWN_TASK_TYPES.has(taskType) && taskType !== "unknown") return false;
+  return usesWorktree(handoff);
 }
 
 function usesWorktree(handoff: DispatchReliabilityHandoff): boolean {
