@@ -1,12 +1,4 @@
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  readSync,
-  statSync,
-} from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -22,9 +14,11 @@ export type FindTranscriptOpts = {
   claudeProjectsRoot?: string;
   now?: Date;
   staleAfterMin?: number;
+  dirScanTtlMs?: number;
 };
 
 const TOKENS_PER_CHAR = 0.25;
+const DEFAULT_DIR_SCAN_TTL_MS = 5 * 60_000;
 
 function dirNameForCwd(cwd: string): string {
   return cwd.replaceAll("/", "-");
@@ -60,6 +54,7 @@ function estimateTokensFromJsonlLine(line: string): number {
 }
 
 function pickNewestJsonl(subdir: string): { path: string; mtimeMs: number } | null {
+  directoryScans++;
   let entries: string[];
   try {
     entries = readdirSync(subdir);
@@ -93,10 +88,47 @@ type TranscriptCacheEntry = {
   mtimeMs: number;
 };
 
+type DirectoryScanCacheEntry = {
+  dirMtimeMs: number;
+  scannedAtMs: number;
+  newest: { path: string; mtimeMs: number } | null;
+};
+
 const transcriptCache = new Map<string, TranscriptCacheEntry>();
+const directoryScanCache = new Map<string, DirectoryScanCacheEntry>();
+let directoryScans = 0;
+
+export function transcriptReaderStats(): { directoryScans: number } {
+  return { directoryScans };
+}
 
 export function resetTranscriptReaderCache(): void {
   transcriptCache.clear();
+  directoryScanCache.clear();
+  directoryScans = 0;
+}
+
+function findNewestJsonl(
+  subdir: string,
+  dirMtimeMs: number,
+  ttlMs: number,
+): { path: string; mtimeMs: number } | null {
+  const wallNowMs = Date.now();
+  const cached = directoryScanCache.get(subdir);
+  if (cached?.dirMtimeMs === dirMtimeMs && wallNowMs - cached.scannedAtMs <= ttlMs) {
+    if (!cached.newest) return null;
+    try {
+      const newest = { path: cached.newest.path, mtimeMs: statSync(cached.newest.path).mtimeMs };
+      directoryScanCache.set(subdir, { ...cached, newest });
+      return newest;
+    } catch {
+      directoryScanCache.delete(subdir);
+    }
+  }
+
+  const newest = pickNewestJsonl(subdir);
+  directoryScanCache.set(subdir, { dirMtimeMs, scannedAtMs: wallNowMs, newest });
+  return newest;
 }
 
 function tokenizeCompleteLines(
@@ -183,10 +215,15 @@ function readTranscriptTokens(path: string, mtimeMs: number): number {
 
 export function findActiveTranscriptForCwd(opts: FindTranscriptOpts): TranscriptInfo | null {
   const root = opts.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
-  if (!existsSync(root)) return null;
   const subdir = join(root, dirNameForCwd(opts.cwd));
-  if (!existsSync(subdir)) return null;
-  const newest = pickNewestJsonl(subdir);
+  let dirMtimeMs: number;
+  try {
+    dirMtimeMs = statSync(subdir).mtimeMs;
+  } catch {
+    directoryScanCache.delete(subdir);
+    return null;
+  }
+  const newest = findNewestJsonl(subdir, dirMtimeMs, opts.dirScanTtlMs ?? DEFAULT_DIR_SCAN_TTL_MS);
   if (!newest) return null;
   const bestPath = newest.path;
   const bestMtime = newest.mtimeMs;

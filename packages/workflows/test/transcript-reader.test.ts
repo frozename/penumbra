@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, truncate, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, truncate, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   findActiveTranscriptForCwd,
   resetTranscriptReaderCache,
+  transcriptReaderStats,
 } from "../src/transcript-reader.js";
 
 const CWD = "/Volumes/WorkSSD/repos/test-project";
@@ -97,6 +98,243 @@ test("returns the most-recently-modified jsonl when multiple exist", async () =>
   const result = findActiveTranscriptForCwd({ cwd: CWD, claudeProjectsRoot: root });
   expect(result).not.toBeNull();
   expect(result!.sessionId).toBe("newer");
+});
+
+test("reuses an unchanged directory scan", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+  await writeFile(path, "");
+  const transcriptTime = new Date("2026-05-04T12:00:00Z");
+  const directoryTime = new Date("2026-05-04T12:01:00Z");
+  await utimes(path, transcriptTime, transcriptTime);
+  await utimes(sub, directoryTime, directoryTime);
+
+  resetTranscriptReaderCache();
+  const opts = {
+    cwd: CWD,
+    claudeProjectsRoot: root,
+    now: new Date("2026-05-04T12:02:00Z"),
+  };
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("session");
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("session");
+  expect(transcriptReaderStats().directoryScans).toBe(1);
+});
+
+test("rescans when a new file changes the directory mtime", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const olderPath = join(sub, "older.jsonl");
+  const newerPath = join(sub, "newer.jsonl");
+  const olderTime = new Date("2026-05-04T12:00:00Z");
+  const newerTime = new Date("2026-05-04T12:05:00Z");
+  await writeFile(olderPath, "");
+  await utimes(olderPath, olderTime, olderTime);
+  await utimes(sub, new Date("2026-05-04T12:01:00Z"), new Date("2026-05-04T12:01:00Z"));
+
+  resetTranscriptReaderCache();
+  const opts = {
+    cwd: CWD,
+    claudeProjectsRoot: root,
+    now: new Date("2026-05-04T12:06:00Z"),
+  };
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("older");
+
+  await writeFile(newerPath, "");
+  await utimes(olderPath, olderTime, olderTime);
+  await utimes(newerPath, newerTime, newerTime);
+  await utimes(sub, new Date("2026-05-04T12:02:00Z"), new Date("2026-05-04T12:02:00Z"));
+
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("newer");
+  expect(transcriptReaderStats().directoryScans).toBe(2);
+});
+
+test("appends update selected transcript tokens without rescanning the directory", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+  const lineA =
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "aaaa" }] },
+    }) + "\n";
+  const lineB =
+    JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "bb" }] },
+    }) + "\n";
+  const firstTime = new Date("2026-05-04T12:00:00Z");
+  const secondTime = new Date("2026-05-04T12:01:00Z");
+  const directoryTime = new Date("2026-05-04T12:02:00Z");
+  await writeFile(path, lineA);
+  await utimes(path, firstTime, firstTime);
+  await utimes(sub, directoryTime, directoryTime);
+
+  resetTranscriptReaderCache();
+  const opts = {
+    cwd: CWD,
+    claudeProjectsRoot: root,
+    now: new Date("2026-05-04T12:03:00Z"),
+  };
+  expect(findActiveTranscriptForCwd(opts)?.estimatedTokens).toBe(1);
+
+  await appendFile(path, lineB);
+  await utimes(path, secondTime, secondTime);
+  await utimes(sub, directoryTime, directoryTime);
+
+  expect(findActiveTranscriptForCwd(opts)?.estimatedTokens).toBe(2);
+  expect(transcriptReaderStats().directoryScans).toBe(1);
+});
+
+test("TTL rescan discovers a newly active existing transcript", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const selectedPath = join(sub, "selected.jsonl");
+  const latentPath = join(sub, "latent.jsonl");
+  const directoryTime = new Date("2026-05-04T12:06:00Z");
+  await writeFile(selectedPath, "");
+  await writeFile(latentPath, "");
+  await utimes(selectedPath, new Date("2026-05-04T12:00:00Z"), new Date("2026-05-04T12:00:00Z"));
+  await utimes(latentPath, new Date("2026-05-04T11:59:00Z"), new Date("2026-05-04T11:59:00Z"));
+  await utimes(sub, directoryTime, directoryTime);
+
+  const originalDateNow = Date.now;
+  let wallNowMs = 1_000;
+  Date.now = (): number => wallNowMs;
+  try {
+    resetTranscriptReaderCache();
+    const opts = {
+      cwd: CWD,
+      claudeProjectsRoot: root,
+      now: new Date("2026-05-04T12:10:00Z"),
+      dirScanTtlMs: 1_000,
+    };
+    expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("selected");
+
+    await appendFile(latentPath, "\n");
+    await utimes(latentPath, new Date("2026-05-04T12:05:00Z"), new Date("2026-05-04T12:05:00Z"));
+    await utimes(sub, directoryTime, directoryTime);
+
+    expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("selected");
+    wallNowMs += 1_001;
+    expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("latent");
+    expect(transcriptReaderStats().directoryScans).toBe(2);
+  } finally {
+    Date.now = originalDateNow;
+    resetTranscriptReaderCache();
+  }
+});
+
+test("opts.now cannot freeze the directory scan TTL", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+  await writeFile(path, "");
+  const transcriptTime = new Date("2026-05-04T12:00:00Z");
+  const directoryTime = new Date("2026-05-04T12:01:00Z");
+  await utimes(path, transcriptTime, transcriptTime);
+  await utimes(sub, directoryTime, directoryTime);
+
+  const originalDateNow = Date.now;
+  let wallNowMs = 10_000;
+  Date.now = (): number => wallNowMs;
+  try {
+    resetTranscriptReaderCache();
+    const opts = {
+      cwd: CWD,
+      claudeProjectsRoot: root,
+      now: new Date("2026-05-04T12:02:00Z"),
+      dirScanTtlMs: 1_000,
+    };
+    expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("session");
+    wallNowMs += 1_001;
+    expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("session");
+    expect(transcriptReaderStats().directoryScans).toBe(2);
+  } finally {
+    Date.now = originalDateNow;
+    resetTranscriptReaderCache();
+  }
+});
+
+test("deleting the cached winner forces a rescan when directory mtime is restored", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const fallbackPath = join(sub, "fallback.jsonl");
+  const winnerPath = join(sub, "winner.jsonl");
+  const directoryTime = new Date("2026-05-04T12:03:00Z");
+  await writeFile(fallbackPath, "");
+  await writeFile(winnerPath, "");
+  await utimes(fallbackPath, new Date("2026-05-04T12:00:00Z"), new Date("2026-05-04T12:00:00Z"));
+  await utimes(winnerPath, new Date("2026-05-04T12:01:00Z"), new Date("2026-05-04T12:01:00Z"));
+  await utimes(sub, directoryTime, directoryTime);
+
+  resetTranscriptReaderCache();
+  const opts = {
+    cwd: CWD,
+    claudeProjectsRoot: root,
+    now: new Date("2026-05-04T12:04:00Z"),
+  };
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("winner");
+
+  await unlink(winnerPath);
+  await utimes(sub, directoryTime, directoryTime);
+
+  expect(findActiveTranscriptForCwd(opts)?.sessionId).toBe("fallback");
+  expect(transcriptReaderStats().directoryScans).toBe(2);
+});
+
+test("caches empty directory scans and reset clears all reader state", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const directoryTime = new Date("2026-05-04T12:00:00Z");
+  await utimes(sub, directoryTime, directoryTime);
+  const opts = { cwd: CWD, claudeProjectsRoot: root };
+
+  resetTranscriptReaderCache();
+  expect(findActiveTranscriptForCwd(opts)).toBeNull();
+  expect(findActiveTranscriptForCwd(opts)).toBeNull();
+  expect(transcriptReaderStats().directoryScans).toBe(1);
+
+  resetTranscriptReaderCache();
+  expect(transcriptReaderStats().directoryScans).toBe(0);
+  expect(findActiveTranscriptForCwd(opts)).toBeNull();
+  expect(transcriptReaderStats().directoryScans).toBe(1);
+});
+
+test("refreshes a cached stale transcript without rescanning the directory", async () => {
+  const root = await makeRoot();
+  const sub = join(root, CWD_DIR);
+  await mkdir(sub, { recursive: true });
+  const path = join(sub, "session.jsonl");
+  const directoryTime = new Date("2026-05-04T13:01:00Z");
+  await writeFile(path, "");
+  await utimes(path, new Date("2026-05-04T12:00:00Z"), new Date("2026-05-04T12:00:00Z"));
+  await utimes(sub, directoryTime, directoryTime);
+
+  resetTranscriptReaderCache();
+  const opts = {
+    cwd: CWD,
+    claudeProjectsRoot: root,
+    now: new Date("2026-05-04T13:00:00Z"),
+    staleAfterMin: 30,
+  };
+  expect(findActiveTranscriptForCwd(opts)).toBeNull();
+
+  const refreshedTime = new Date("2026-05-04T12:55:00Z");
+  await utimes(path, refreshedTime, refreshedTime);
+  await utimes(sub, directoryTime, directoryTime);
+
+  const refreshed = findActiveTranscriptForCwd(opts);
+  expect(refreshed?.sessionId).toBe("session");
+  expect(refreshed?.modifiedAt).toEqual(refreshedTime);
+  expect(transcriptReaderStats().directoryScans).toBe(1);
 });
 
 test("incremental cache: appended lines add to previous total without re-parsing", async () => {
