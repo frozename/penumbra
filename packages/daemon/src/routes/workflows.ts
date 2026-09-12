@@ -646,6 +646,13 @@ type WorkflowExecOpts = {
   agentRegistry: { listAgents: () => { name: string }[] } | undefined;
   workflowRunId: string | null;
   sessionId: string;
+  progressIdentity: {
+    project: string;
+    sessionId: string | null;
+    userId: string;
+    machineId: string;
+    workflowRunId: string | null;
+  };
   observationCtx?: { sessionId?: string | null; projectId?: string | null };
 };
 
@@ -736,6 +743,13 @@ function buildWorkflowRunExecOpts(opts: {
     agentRegistry: opts.agentRegistry,
     workflowRunId: opts.workflowRunId,
     sessionId: "daemon-direct",
+    progressIdentity: {
+      project: opts.project,
+      sessionId: "daemon-direct",
+      userId: "penumbra",
+      machineId: process.env.HOSTNAME ?? "unknown",
+      workflowRunId: opts.workflowRunId,
+    },
   };
 }
 
@@ -797,6 +811,7 @@ function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
     agentchatConfig: asAgentChatConfigLike(opts.services.agentchatConfig),
     args: opts.args,
     workflowRunId: opts.workflowRunId,
+    progressIdentity: opts.progressIdentity,
     chainStart,
     chainCancel: async (conversationId) => {
       const response = conversationsCancelRoute(
@@ -1586,6 +1601,13 @@ async function executeMatchedTriggerSpec(opts: {
       agentRegistry,
       workflowRunId,
       sessionId: "hook-trigger",
+      progressIdentity: {
+        project,
+        sessionId: "hook-trigger",
+        userId: "penumbra",
+        machineId: process.env.HOSTNAME ?? "unknown",
+        workflowRunId,
+      },
       observationCtx: {
         sessionId: sessionIdFromBody,
         projectId: project !== "unknown" ? project : null,

@@ -1,6 +1,7 @@
 import type { ChainStartRequest, Services, TaskClass } from "@penumbra/core";
 
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -36,6 +37,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   cancel(conversationId: string): Promise<void>;
   fileWrite(relativePath: string, body: string): Promise<string>;
   db?: () => Database;
+  progress?(message: string, meta?: Record<string, unknown>): void;
   config: AgentChatConfigLike;
   cwd: string;
   storageRoot: string;
@@ -65,6 +67,13 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   args?: TArgs;
   parentHandoffId?: string;
   workflowRunId?: string | null;
+  progressIdentity?: {
+    project: string;
+    sessionId: string | null;
+    userId: string;
+    machineId: string;
+    workflowRunId: string | null;
+  };
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
   chainCancel?: (conversationId: string) => Promise<void> | void;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
@@ -346,6 +355,92 @@ async function fileWriteImpl(
   return path;
 }
 
+function safeProgressMeta(meta: Record<string, unknown> | undefined): unknown {
+  if (meta === undefined) return null;
+  try {
+    JSON.stringify(meta);
+    return meta;
+  } catch {
+    return null;
+  }
+}
+
+function recordProgress<TArgs = Record<string, unknown>>(
+  message: string,
+  meta: Record<string, unknown> | undefined,
+  deps: BuildWorkflowCtxDeps<TArgs>,
+): void {
+  const runId = deps.progressIdentity?.workflowRunId ?? deps.workflowRunId;
+  if (!runId) return;
+
+  const identity = deps.progressIdentity ?? {
+    project: deps.project,
+    sessionId: null,
+    userId: "penumbra",
+    machineId: "unknown",
+    workflowRunId: runId,
+  };
+
+  const db = (deps.services as { db?: Database }).db;
+  if (!db) return;
+
+  try {
+    const now = deps.now ?? ((): number => Date.now());
+    const ts = new Date(now()).toISOString();
+    const payload = {
+      workflow_run_id: runId,
+      message,
+      meta: safeProgressMeta(meta),
+    };
+    const eventId =
+      typeof (deps.services as { uuid?: () => string }).uuid === "function"
+        ? (deps.services as { uuid: () => string }).uuid()
+        : randomUUID();
+    db.prepare(
+      `
+      INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, source_detail, project_id,
+        user_id, machine_id, session_id, event_type, lane,
+        provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+        request_id, payload_json, payload_summary, origin
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?
+      )
+    `,
+    ).run(
+      eventId,
+      ts,
+      ts,
+      "agentchat",
+      "workflows",
+      identity.project,
+      identity.userId,
+      identity.machineId,
+      identity.sessionId,
+      "workflow.progress",
+      "local",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      JSON.stringify(payload),
+      message,
+      null,
+    );
+  } catch (err) {
+    (deps.services.log as { warn?: (...args: unknown[]) => void } | undefined)?.warn?.(
+      { err, workflow_run_id: runId },
+      "workflow progress event write failed",
+    );
+  }
+}
+
 export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
   deps: BuildWorkflowCtxDeps<TArgs>,
 ): DisposableWorkflowCtx<TArgs> {
@@ -384,6 +479,9 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     db: (): Database => {
       workflowDb ??= new Database(join(deps.storageRoot, "db.sqlite"), { readonly: true });
       return workflowDb;
+    },
+    progress: (message: string, meta?: Record<string, unknown>): void => {
+      recordProgress(message, meta, deps);
     },
     config: deps.agentchatConfig,
     cwd: deps.cwd,
