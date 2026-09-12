@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { runChainSendMessage } from "../src/commands/chain.js";
 import { loadCodexHookCapabilities } from "../src/commands/codex-hook-capabilities.js";
+import { runCodexSafetyHook } from "../src/commands/codex-safety-hook.js";
 import {
   type CodexSetupAction,
   type CodexSetupMode,
@@ -823,6 +824,44 @@ switch (cmd) {
       // Designed for use in ~/.claude/settings.json hooks (PreToolUse, PostToolUse,
       // UserPromptSubmit). Best-effort — never blocks the hook on observation failures.
       const subtype = process.argv[3];
+      if (subtype === "codex-safety") {
+        const args = process.argv.slice(4);
+        let guardPath: string | null = null;
+        let sentinelPath: string | null = null;
+        let valid = args.length === 4;
+        for (let index = 0; valid && index < args.length; index += 2) {
+          const flag = args[index];
+          const value = args[index + 1];
+          if (!value || value.startsWith("-")) {
+            valid = false;
+          } else if (flag === "--guard-path" && guardPath === null) {
+            guardPath = value;
+          } else if (flag === "--sentinel-path" && sentinelPath === null) {
+            sentinelPath = value;
+          } else {
+            valid = false;
+          }
+        }
+        if (
+          !valid ||
+          !guardPath ||
+          !sentinelPath ||
+          !isAbsolute(guardPath) ||
+          !isAbsolute(sentinelPath)
+        ) {
+          console.error("usage: penumbra hook codex-safety --guard-path ABS --sentinel-path ABS");
+          process.exit(1);
+        }
+        const rawEvent = (await readBoundedStdin(256 * 1024)) ?? "";
+        process.exit(
+          await runCodexSafetyHook({
+            rawEvent,
+            guardPath,
+            sentinelPath,
+            storageRoot: resolveLiveRoot(),
+          }),
+        );
+      }
       if (subtype !== "claude-code" && subtype !== "codex") {
         console.error("usage: penumbra hook <claude-code|codex> [--project <id>] [--session <id>]");
         process.exit(1);
