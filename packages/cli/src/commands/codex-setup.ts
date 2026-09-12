@@ -16,6 +16,7 @@ import {
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import * as codexSafety from "./codex-safety-setup.js";
 import * as codexHooks from "./codex-setup-hooks.js";
 
 /* eslint-disable sonarjs/cognitive-complexity -- Ownership preflight intentionally evaluates all conflict branches before mutation. */
@@ -39,7 +40,7 @@ interface ArtifactRecord { path: string; hash: string }
 // prettier-ignore
 interface SkillRecord { name: string; destination: string; artifacts: ArtifactRecord[]; conflictPaths?: string[] }
 // prettier-ignore
-interface InstallationManifest { schemaVersion: 1; mode: CodexSetupMode; codexDir: string; skillsDir: string; packageDir: string; storageRoot: string; mcpEntrypoint: string; mcp?: { configPath: string; blockHash: string; separator: string }; skills: SkillRecord[]; hooks?: codexHooks.CodexHookOwnership; plugin?: { identifier: string } }
+interface InstallationManifest { schemaVersion: 1; mode: CodexSetupMode; codexDir: string; skillsDir: string; packageDir: string; storageRoot: string; mcpEntrypoint: string; mcp?: { configPath: string; blockHash: string; separator: string }; skills: SkillRecord[]; hooks?: codexHooks.CodexHookOwnership; safety?: codexSafety.CodexSafetyOwnership; plugin?: { identifier: string } }
 // prettier-ignore
 interface SourceArtifact extends ArtifactRecord { source: string }
 // prettier-ignore
@@ -244,16 +245,10 @@ function validateManifest(candidate: InstallationManifest, opts: CodexSetupOptio
       "ownership record destinations do not match the requested Codex profile",
     );
   }
-  if (
-    candidate.mcp &&
-    (candidate.mcp.configPath !== join(opts.codexDir, "config.toml") ||
-      !/^[a-f0-9]{64}$/.test(candidate.mcp.blockHash) ||
-      !["", "\n", "\n\n"].includes(candidate.mcp.separator))
-  ) {
-    throw new SetupFailure("ownership record contains an invalid MCP destination", "mcp");
-  }
-  if (!codexHooks.isValidCodexHookOwnershipForSetup(candidate.hooks, opts))
-    throw new SetupFailure("ownership record contains invalid Codex hooks", "hooks");
+  // prettier-ignore
+  if (candidate.mcp && (candidate.mcp.configPath !== join(opts.codexDir, "config.toml") || !/^[a-f0-9]{64}$/.test(candidate.mcp.blockHash) || !["", "\n", "\n\n"].includes(candidate.mcp.separator))) throw new SetupFailure("ownership record contains an invalid MCP destination", "mcp")
+  // prettier-ignore
+  if (!codexHooks.isValidCodexHookOwnershipForSetup(candidate.hooks, opts, CLI_ENTRYPOINT) || (candidate.safety !== undefined && !codexSafety.isValidCodexSafetyOwnership(candidate.safety, opts))) throw new SetupFailure("ownership record contains invalid Codex hooks", "hooks")
   const names = new Set<string>();
   for (const skill of candidate.skills) {
     if (
@@ -476,12 +471,13 @@ function prepareMcp(
 }
 
 // prettier-ignore
-function desiredManifest(opts: CodexSetupOptions, mcp: { block: string; separator: string }, skills: SourceSkill[], hooks: codexHooks.CodexHookOwnership | undefined, pluginIdentifier?: string): InstallationManifest { return {
+function desiredManifest(opts: CodexSetupOptions, mcp: { block: string; separator: string }, skills: SourceSkill[], hooks: codexHooks.CodexHookOwnership | undefined, safety: codexSafety.CodexSafetyOwnership | undefined, pluginIdentifier?: string): InstallationManifest { return {
   schemaVersion: 1, mode: opts.mode, codexDir: opts.codexDir, skillsDir: opts.skillsDir,
   packageDir: realpathSync(opts.packageDir), storageRoot: opts.storageRoot, mcpEntrypoint: realpathSync(opts.mcpEntrypoint),
   mcp: { configPath: join(opts.codexDir, "config.toml"), blockHash: hash(mcp.block), separator: mcp.separator },
   skills: skills.map((skill) => ({ name: skill.name, destination: skill.destination, artifacts: skill.artifacts.map(({ path, hash: artifactHash }) => ({ path, hash: artifactHash })) })),
   ...(hooks ? { hooks } : {}),
+  ...(safety ? { safety } : {}),
   ...(pluginIdentifier ? { plugin: { identifier: pluginIdentifier } } : {}),
 } }
 
@@ -566,7 +562,7 @@ async function status(opts: CodexSetupOptions, manifestPath: string): Promise<Co
         components.skills = result.ok && result.installed === true ? component("installed", result.detail ?? "owned plugin is installed") : component(result.ok && result.installed === false ? "absent" : "unknown", result.detail ?? "plugin status is unavailable")
       }
     }
-    const hooks = codexHooks.inspectCodexHooksForSetup(opts, CLI_ENTRYPOINT, previous?.hooks); components.hooks = component(hooks.state, hooks.detail)
+    const safetySource = codexSafety.readCodexSafetySource(opts); const hooks = codexHooks.inspectCodexHooksForSetup(opts, CLI_ENTRYPOINT, previous?.hooks, safetySource); const safety = codexSafety.inspectCodexSafetySetup(opts, safetySource, previous?.safety, hooks.safetyEnabled); components.hooks = safety.state === "conflict" || safety.state === "absent" ? component(safety.state, safety.detail) : component(hooks.state, hooks.detail)
     const ok = components.mcp.state !== "conflict" && components.skills.state !== "conflict" && components.hooks.state !== "conflict"
     return { ok, changed: false, ...(ok ? {} : { reason: "installation has ownership conflicts" }), mode: opts.mode, components }
   } catch (error) { return failureResult(opts, error) }
@@ -574,17 +570,18 @@ async function status(opts: CodexSetupOptions, manifestPath: string): Promise<Co
 
 // prettier-ignore
 async function installOrRepair(opts: CodexSetupOptions, manifestPath: string): Promise<CodexSetupResult> {
-  let changed = false; let preparedHooks: codexHooks.PreparedCodexHooks | undefined; let hooksWritten = false; try {
+  let changed = false; let preparedHooks: codexHooks.PreparedCodexHooks | undefined; let preparedSafety: codexSafety.PreparedCodexSafetySetup | undefined; let hooksWritten = false; let safetyWritten = false; try {
     const previous = readManifest(manifestPath, opts)
     if (previous && previous.mode !== opts.mode) throw new SetupFailure(`installed mode is ${previous.mode}; uninstall it before selecting ${opts.mode}`)
     const adapter = opts.mode === "plugin" ? requirePlugin(opts) : undefined
     const desiredSkills = opts.mode === "standalone" ? sourceInventory(opts) : []
     if (opts.mode === "plugin") { assertNoSymlinkPath(opts.packageDir, true); assertRegularFile(join(opts.packageDir, ".codex-plugin", "plugin.json"), "Codex package manifest"); assertRegularFile(opts.mcpEntrypoint, "MCP entrypoint") }
     preflightSkills(opts, previous, desiredSkills); const mcp = prepareMcp(opts, previous)
-    try { preparedHooks = codexHooks.prepareCodexHooksForSetup(opts, CLI_ENTRYPOINT, previous?.hooks) } catch (error) { throw new SetupFailure(error instanceof Error ? error.message : String(error), "hooks") }
+    try { const safetySource = codexSafety.readCodexSafetySource(opts); if (previous?.safety && !safetySource) throw new Error("packaged safety guard is absent"); preparedHooks = codexHooks.prepareCodexHooksForSetup(opts, CLI_ENTRYPOINT, previous?.hooks, safetySource); preparedSafety = codexSafety.prepareCodexSafetySetup(opts, safetySource, previous?.safety, preparedHooks.safetyEnabled) } catch (error) { throw new SetupFailure(error instanceof Error ? error.message : String(error), "hooks") }
     assertWritableTarget(join(opts.codexDir, "config.toml")); assertWritableTarget(manifestPath)
     if (opts.mode === "standalone") assertWritableTarget(opts.skillsDir)
     if (preparedHooks.current !== preparedHooks.next) assertWritableTarget(join(opts.codexDir, "hooks.json"))
+    const safetyGuardPath = preparedSafety.ownership?.guardPath ?? previous?.safety?.guardPath; if (safetyGuardPath) assertWritableTarget(safetyGuardPath)
 
     let pluginIdentifier: string | undefined
     if (adapter) {
@@ -597,16 +594,17 @@ async function installOrRepair(opts: CodexSetupOptions, manifestPath: string): P
     }
 
     if (mcp.current !== mcp.next) { atomicWrite(join(opts.codexDir, "config.toml"), mcp.next); changed = true }
+    safetyWritten = codexSafety.applyCodexSafetySetup(opts, preparedSafety); changed ||= safetyWritten
     if (preparedHooks.current !== preparedHooks.next && preparedHooks.next !== null) { codexHooks.writeCodexHooksForSetup(opts, preparedHooks.next); hooksWritten = true }
     if (opts.mode === "standalone") changed = applySkills(opts, previous, desiredSkills) || changed
-    const nextManifest = desiredManifest(opts, mcp, desiredSkills, preparedHooks.ownership, pluginIdentifier)
+    const nextManifest = desiredManifest(opts, mcp, desiredSkills, preparedHooks.ownership, preparedSafety.ownership, pluginIdentifier)
     const nextManifestJson = manifestJson(nextManifest); const currentManifestJson = existsSync(manifestPath) ? readFileSync(manifestPath, "utf8") : ""
     if (currentManifestJson !== nextManifestJson) { atomicWrite(manifestPath, nextManifestJson, 0o600); changed = true }
     const components = baseComponents(opts); components.mcp = component("installed", "owned Penumbra MCP configuration is installed")
     const detail = opts.mode === "standalone" ? `${String(desiredSkills.length)} ownership-tracked Penumbra skills are installed` : `host-managed plugin ${pluginIdentifier ?? "unknown"} is installed`
     components.skills = component("installed", detail); components.hooks = component(preparedHooks.state, preparedHooks.detail)
     return { ok: true, changed: changed || hooksWritten, mode: opts.mode, components }
-  } catch (error) { if (hooksWritten && preparedHooks) { try { codexHooks.restoreCodexHooksForSetup(opts, preparedHooks) } catch (rollbackError) { return failureResult(opts, rollbackError, true) } } return failureResult(opts, error, changed) }
+  } catch (error) { let rollbackError: unknown; if (hooksWritten && preparedHooks) { try { codexHooks.restoreCodexHooksForSetup(opts, preparedHooks) } catch (caught) { rollbackError = caught } } if (safetyWritten && preparedSafety) { try { codexSafety.restoreCodexSafetySetup(opts, preparedSafety) } catch (caught) { rollbackError ??= caught } } return failureResult(opts, rollbackError ?? error, changed || hooksWritten || safetyWritten) }
 }
 
 function removeOwnedMcp(previous: InstallationManifest): { changed: boolean; conflict: boolean } {
@@ -687,6 +685,7 @@ function uninstallSkills(
   return { changed, residual };
 }
 
+// prettier-ignore
 async function uninstall(opts: CodexSetupOptions, manifestPath: string): Promise<CodexSetupResult> {
   try {
     const previous = readManifest(manifestPath, opts);
@@ -700,6 +699,7 @@ async function uninstall(opts: CodexSetupOptions, manifestPath: string): Promise
     const hookRemoval = codexHooks.removeCodexHooksForSetup(opts, previous.hooks);
     if (hookRemoval.state === "conflict") throw new SetupFailure(hookRemoval.detail, "hooks");
     if (hookRemoval.changed) assertWritableTarget(join(opts.codexDir, "hooks.json"));
+    let safetyRemoval: codexSafety.PreparedCodexSafetySetup | undefined; if (previous.safety) { try { safetyRemoval = codexSafety.prepareCodexSafetySetup(opts, undefined, previous.safety, false); assertWritableTarget(previous.safety.guardPath) } catch (error) { throw new SetupFailure(error instanceof Error ? error.message : String(error), "hooks") } }
     let pluginConflict = false;
     let pluginChanged = false;
     if (previous.plugin) {
@@ -724,15 +724,16 @@ async function uninstall(opts: CodexSetupOptions, manifestPath: string): Promise
         ? uninstallSkills(opts, previous)
         : { changed: false, residual: [] as SkillRecord[] };
     if (hookRemoval.changed) codexHooks.writeCodexHooksForSetup(opts, hookRemoval.next);
+    const safetyChanged = safetyRemoval ? codexSafety.applyCodexSafetySetup(opts, safetyRemoval) : false;
     const hasConflict = mcpResult.conflict || skillResult.residual.length > 0 || pluginConflict;
-    const changed =
-      mcpResult.changed || skillResult.changed || pluginChanged || hookRemoval.changed;
+    const changed = mcpResult.changed || skillResult.changed || pluginChanged || hookRemoval.changed || safetyChanged;
     if (hasConflict) {
       const residual: InstallationManifest = {
         ...previous,
         ...(mcpResult.conflict ? {} : { mcp: undefined }),
         skills: skillResult.residual,
         hooks: undefined,
+        safety: undefined,
         ...(pluginConflict ? {} : { plugin: undefined }),
       };
       atomicWrite(manifestPath, manifestJson(residual), 0o600);

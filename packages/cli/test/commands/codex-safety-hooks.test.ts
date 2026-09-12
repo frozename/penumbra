@@ -525,6 +525,31 @@ test("unexpected guard exits are normalized to runner failure with the original 
   }
 });
 
+test("a whitespace-only denial stderr does not hide the guard stdout reason", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex safety denial reason "));
+  try {
+    const guardPath = writeProcessGuard(root, "stdout-denial.sh", [
+      "cat >/dev/null",
+      'printf "guard stdout explains the denial\\n"',
+      'printf "  \\n" >&2',
+      "exit 2",
+    ]);
+    const result = await runCli({
+      rawEvent: rawPreToolUse("Bash", { command: "git branch -D unlanded" }, root),
+      guardPath,
+      sentinelPath: join(root, "sentinel"),
+    });
+
+    expect(result.exit).toBe(2);
+    expect(parsedOutput(result)).toEqual({
+      decision: "block",
+      reason: "guard stdout explains the denial",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the runner deadline is not extended by a descendant holding guard pipes", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex safety held pipes "));
   const pidPath = join(root, "fixture-pids");

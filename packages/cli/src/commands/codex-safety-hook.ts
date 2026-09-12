@@ -124,6 +124,10 @@ function boundedDiagnostic(value: string, fallback: string): string {
   return trimmed.slice(0, MAX_GUARD_OUTPUT_BYTES);
 }
 
+function denialDiagnostic(stderr: string, stdout: string): string {
+  return stderr.trim().length > 0 ? stderr : stdout;
+}
+
 function guardEnvironment(opts: RunCodexSafetyHookOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -196,7 +200,7 @@ export async function runCodexSafetyHook(opts: RunCodexSafetyHookOptions): Promi
       }
       if (exitCode === 2) {
         const reason = boundedDiagnostic(
-          stderrText || stdoutText,
+          denialDiagnostic(stderrText, stdoutText),
           "Penumbra safety guard denied this command.",
         );
         emit({ decision: "block", reason });

@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { dirname, join, parse, resolve, sep } from "node:path";
 
+import type { CodexSafetySource } from "./codex-safety-setup.js";
+
 import { qualifyCodexHookReport } from "./codex-hook-capabilities.js";
 
 export type CodexHookCapabilityState = "supported" | "unavailable" | "unknown";
@@ -32,11 +34,13 @@ export interface CodexHookPlan {
   state: "installed" | "unavailable";
   detail: string;
   hooks: CodexHookMap;
+  safetyEnabled: boolean;
 }
 
 export interface CodexHookOwnership {
   configPath: string;
   commandPrefix: string;
+  commandPrefixes?: string[];
   entries: { event: string; hash: string }[];
 }
 
@@ -48,6 +52,17 @@ export function isValidCodexHookOwnership(value: unknown, configPath: string): b
     !Array.isArray(value.entries)
   )
     return false;
+  const commandPrefixes = value.commandPrefixes;
+  if (
+    commandPrefixes !== undefined &&
+    (!Array.isArray(commandPrefixes) ||
+      commandPrefixes.length === 0 ||
+      new Set(commandPrefixes).size !== commandPrefixes.length ||
+      !commandPrefixes.includes(value.commandPrefix) ||
+      !commandPrefixes.every(nonBlank))
+  ) {
+    return false;
+  }
   return value.entries.every(
     (entry) =>
       isRecord(entry) &&
@@ -62,6 +77,7 @@ export interface PreparedCodexHooks {
   detail: string;
   current: string | null;
   next: string | null;
+  safetyEnabled: boolean;
   ownership?: CodexHookOwnership;
 }
 
@@ -76,8 +92,30 @@ export interface CodexHookSetupContext {
 export function isValidCodexHookOwnershipForSetup(
   value: unknown,
   opts: CodexHookSetupContext,
+  cliEntrypoint: string,
 ): boolean {
-  return value === undefined || isValidCodexHookOwnership(value, setupConfigPath(opts));
+  if (value === undefined) return true;
+  if (!isValidCodexHookOwnership(value, setupConfigPath(opts))) return false;
+  const ownership = value as CodexHookOwnership;
+  const command = codexHookCommand({
+    runtimePath: realpathSync(process.execPath),
+    cliEntrypoint: realpathSync(cliEntrypoint),
+    storageRoot: opts.storageRoot,
+  });
+  if (ownership.commandPrefix !== command) return false;
+  if (!ownership.commandPrefixes) return true;
+  const safetyCommand = codexSafetyHookCommand({
+    runtimePath: realpathSync(process.execPath),
+    cliEntrypoint: realpathSync(cliEntrypoint),
+    storageRoot: opts.storageRoot,
+    guardPath: join(opts.codexDir, "penumbra", "hooks", "penumbra-agent-gc-guard.sh"),
+    sentinelPath: join(opts.codexDir, "penumbra", "allow-agent-gc"),
+  });
+  return (
+    ownership.commandPrefixes.length === 2 &&
+    ownership.commandPrefixes[0] === command &&
+    ownership.commandPrefixes[1] === codexSafetyHookCommandPrefix(safetyCommand)
+  );
 }
 
 type HookConfig = { hooks: Record<string, unknown[]>; [key: string]: unknown };
@@ -97,6 +135,7 @@ function hash(value: unknown): string {
 export function buildCodexHookPlan(opts: {
   manifest: unknown;
   command: string;
+  safetyCommand?: string;
   observedBuild?: string;
 }): CodexHookPlan {
   if (opts.manifest === undefined || opts.manifest === null) {
@@ -104,19 +143,29 @@ export function buildCodexHookPlan(opts: {
       state: "unavailable",
       detail: "no probe-qualified CLI hook events are available",
       hooks: {},
+      safetyEnabled: false,
     };
   }
   const qualification = qualifyCodexHookReport(opts.manifest, opts.observedBuild);
   const hooks: CodexHookMap = {};
+  let safetyEnabled = false;
   for (const qualified of qualification.hooks) {
     const current = hooks[qualified.event] ?? [];
-    hooks[qualified.event] = [
-      ...current,
-      {
-        ...(qualified.matcher ? { matcher: qualified.matcher } : {}),
-        hooks: [{ type: "command", command: opts.command, timeout: 2 }],
-      },
-    ];
+    const advisory: CodexHookGroup = {
+      ...(qualified.matcher ? { matcher: qualified.matcher } : {}),
+      hooks: [{ type: "command", command: opts.command, timeout: 2 }],
+    };
+    const safety =
+      opts.safetyCommand &&
+      qualified.event === "PreToolUse" &&
+      (qualified.matcher === "^Bash$" || qualified.matcher === "^exec_command$")
+        ? {
+            matcher: qualified.matcher,
+            hooks: [{ type: "command" as const, command: opts.safetyCommand, timeout: 12 }],
+          }
+        : undefined;
+    safetyEnabled ||= safety !== undefined;
+    hooks[qualified.event] = [...current, advisory, ...(safety ? [safety] : [])];
   }
   const count = Object.values(hooks).reduce((total, groups) => total + groups.length, 0);
   return count === 0
@@ -124,11 +173,13 @@ export function buildCodexHookPlan(opts: {
         state: "unavailable",
         detail: qualification.detail,
         hooks,
+        safetyEnabled,
       }
     : {
         state: "installed",
         detail: qualification.detail,
         hooks,
+        safetyEnabled,
       };
 }
 
@@ -151,9 +202,34 @@ export function codexHookCommand(opts: {
   ].join(" ");
 }
 
+export function codexSafetyHookCommand(opts: {
+  runtimePath: string;
+  cliEntrypoint: string;
+  storageRoot: string;
+  guardPath: string;
+  sentinelPath: string;
+}): string {
+  return [
+    `PENUMBRA_STORAGE_ROOT=${shellQuote(opts.storageRoot)}`,
+    shellQuote(opts.runtimePath),
+    shellQuote(opts.cliEntrypoint),
+    "hook",
+    "codex-safety",
+    "--guard-path",
+    shellQuote(opts.guardPath),
+    "--sentinel-path",
+    shellQuote(opts.sentinelPath),
+  ].join(" ");
+}
+
+function codexSafetyHookCommandPrefix(command: string): string {
+  return command.slice(0, command.indexOf("--guard-path "));
+}
+
 export function readCodexHookPlan(opts: {
   manifest: unknown;
   command: string;
+  safetyCommand?: string;
   observedBuild?: string;
 }): CodexHookPlan {
   return buildCodexHookPlan(opts);
@@ -197,10 +273,15 @@ function previousHash(previous: CodexHookOwnership, event: string, value: unknow
 
 function assertNoChangedOwnedGroups(config: HookConfig, previous?: CodexHookOwnership): void {
   if (!previous) return;
+  const prefixes = previous.commandPrefixes ?? [previous.commandPrefix];
   for (const [event, groups] of Object.entries(config.hooks)) {
     for (const group of groups) {
       const command = groupCommand(group);
-      if (command?.startsWith(previous.commandPrefix) && !previousHash(previous, event, group)) {
+      if (
+        command &&
+        prefixes.some((prefix) => command.startsWith(prefix)) &&
+        !previousHash(previous, event, group)
+      ) {
         throw new Error(`owned Codex hook was modified: ${event}`);
       }
     }
@@ -230,12 +311,20 @@ function appendPlan(config: HookConfig, plan: CodexHookPlan): HookConfig {
 function ownershipFor(
   configPath: string,
   command: string,
+  commandPrefixes: string[],
   plan: CodexHookPlan,
 ): CodexHookOwnership | undefined {
   const entries = Object.entries(plan.hooks).flatMap(([event, groups]) =>
     groups.map((group) => ({ event, hash: hash(group) })),
   );
-  return entries.length === 0 ? undefined : { configPath, commandPrefix: command, entries };
+  return entries.length === 0
+    ? undefined
+    : {
+        configPath,
+        commandPrefix: command,
+        ...(commandPrefixes.length > 1 ? { commandPrefixes } : {}),
+        entries,
+      };
 }
 
 export function prepareCodexHooks(opts: {
@@ -244,6 +333,7 @@ export function prepareCodexHooks(opts: {
   previous?: CodexHookOwnership;
   plan: CodexHookPlan;
   command: string;
+  commandPrefixes?: string[];
 }): PreparedCodexHooks {
   if (opts.plan.state === "unavailable" && !opts.previous) {
     return {
@@ -251,6 +341,7 @@ export function prepareCodexHooks(opts: {
       detail: opts.plan.detail,
       current: opts.current,
       next: opts.current,
+      safetyEnabled: false,
     };
   }
   const parsed = parseConfig(opts.current);
@@ -262,8 +353,21 @@ export function prepareCodexHooks(opts: {
     detail: opts.plan.detail,
     current: opts.current,
     next,
-    ...(ownershipFor(opts.configPath, opts.command, opts.plan)
-      ? { ownership: ownershipFor(opts.configPath, opts.command, opts.plan) }
+    safetyEnabled: opts.plan.safetyEnabled,
+    ...(ownershipFor(
+      opts.configPath,
+      opts.command,
+      opts.commandPrefixes ?? [opts.command],
+      opts.plan,
+    )
+      ? {
+          ownership: ownershipFor(
+            opts.configPath,
+            opts.command,
+            opts.commandPrefixes ?? [opts.command],
+            opts.plan,
+          ),
+        }
       : {}),
   };
 }
@@ -382,6 +486,7 @@ function setupPlan(
   opts: CodexHookSetupContext,
   cliEntrypoint: string,
   required: boolean,
+  safetySource?: CodexSafetySource,
 ): CodexHookPlan {
   try {
     const sourcePath = join(opts.packageDir, "hooks", "hooks.json");
@@ -389,13 +494,24 @@ function setupPlan(
     if (!lstatSync(sourcePath).isFile()) {
       throw new Error(`Codex hook capability manifest is not a regular file: ${sourcePath}`);
     }
+    const command = codexHookCommand({
+      runtimePath: realpathSync(process.execPath),
+      cliEntrypoint: realpathSync(cliEntrypoint),
+      storageRoot: opts.storageRoot,
+    });
+    const safetyCommand = safetySource
+      ? codexSafetyHookCommand({
+          runtimePath: realpathSync(process.execPath),
+          cliEntrypoint: realpathSync(cliEntrypoint),
+          storageRoot: opts.storageRoot,
+          guardPath: safetySource.guardPath,
+          sentinelPath: safetySource.sentinelPath,
+        })
+      : undefined;
     return readCodexHookPlan({
       manifest: opts.hookCapabilities,
-      command: codexHookCommand({
-        runtimePath: realpathSync(process.execPath),
-        cliEntrypoint: realpathSync(cliEntrypoint),
-        storageRoot: opts.storageRoot,
-      }),
+      command,
+      ...(safetyCommand ? { safetyCommand } : {}),
       observedBuild: opts.observedCodexBuild,
     });
   } catch (error) {
@@ -404,6 +520,7 @@ function setupPlan(
       state: "unavailable",
       detail: "no probe-qualified CLI hook events are available",
       hooks: {},
+      safetyEnabled: false,
     };
   }
 }
@@ -412,19 +529,32 @@ export function prepareCodexHooksForSetup(
   opts: CodexHookSetupContext,
   cliEntrypoint: string,
   previous?: CodexHookOwnership,
+  safetySource?: CodexSafetySource,
 ): PreparedCodexHooks {
-  const plan = setupPlan(opts, cliEntrypoint, true);
+  const plan = setupPlan(opts, cliEntrypoint, true, safetySource);
   const command = codexHookCommand({
     runtimePath: realpathSync(process.execPath),
     cliEntrypoint: realpathSync(cliEntrypoint),
     storageRoot: opts.storageRoot,
   });
+  const safetyCommand = safetySource
+    ? codexSafetyHookCommand({
+        runtimePath: realpathSync(process.execPath),
+        cliEntrypoint: realpathSync(cliEntrypoint),
+        storageRoot: opts.storageRoot,
+        guardPath: safetySource.guardPath,
+        sentinelPath: safetySource.sentinelPath,
+      })
+    : undefined;
   return prepareCodexHooks({
     configPath: setupConfigPath(opts),
     current: readSetupConfig(opts),
     previous,
     plan,
     command,
+    ...(safetyCommand
+      ? { commandPrefixes: [command, codexSafetyHookCommandPrefix(safetyCommand)] }
+      : {}),
   });
 }
 
@@ -432,15 +562,24 @@ export function inspectCodexHooksForSetup(
   opts: CodexHookSetupContext,
   cliEntrypoint: string,
   previous?: CodexHookOwnership,
-): { state: CodexHookSetupState; detail: string } {
+  safetySource?: CodexSafetySource,
+): { state: CodexHookSetupState; detail: string; safetyEnabled: boolean } {
   try {
-    return inspectCodexHooks({
-      current: readSetupConfig(opts),
-      previous,
-      plan: setupPlan(opts, cliEntrypoint, false),
-    });
+    const plan = setupPlan(opts, cliEntrypoint, false, safetySource);
+    return {
+      ...inspectCodexHooks({
+        current: readSetupConfig(opts),
+        previous,
+        plan,
+      }),
+      safetyEnabled: plan.safetyEnabled,
+    };
   } catch (error) {
-    return { state: "conflict", detail: error instanceof Error ? error.message : String(error) };
+    return {
+      state: "conflict",
+      detail: error instanceof Error ? error.message : String(error),
+      safetyEnabled: false,
+    };
   }
 }
 
