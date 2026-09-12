@@ -280,6 +280,35 @@ export const inputSchema = {
 export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args, deadline: ctx.deadline() });
 `;
 
+const STRIPPING_DEADLINE_WORKFLOW = `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'stripping-deadline',
+  description: 'strips unknown args while preserving a daemon-owned run deadline',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const inputSchema = {
+  parse(input: unknown) {
+    const result = this.safeParse(input);
+    if (!result.success) throw new Error('invalid');
+    return result.data;
+  },
+  safeParse(input: unknown) {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    return {
+      success: true as const,
+      data: {
+        label: typeof raw.label === 'string' ? raw.label.trim().toUpperCase() : 'DEFAULT',
+      },
+    };
+  },
+};
+export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args, deadline: ctx.deadline() });
+`;
+
 async function setup(root: string): Promise<{
   services: Services;
   workflowRuns: WorkflowRunsRegistry;
@@ -292,6 +321,7 @@ async function setup(root: string): Promise<{
   mkdirSync(join(root, "workflows/raw-chainstart-after-expiry"), { recursive: true });
   mkdirSync(join(root, "workflows/strict-deadline"), { recursive: true });
   mkdirSync(join(root, "workflows/transforming-deadline"), { recursive: true });
+  mkdirSync(join(root, "workflows/stripping-deadline"), { recursive: true });
   writeFileSync(join(root, "workflows/controlled/workflow.ts"), CONTROLLED_WORKFLOW);
   writeFileSync(join(root, "workflows/immediate/workflow.ts"), IMMEDIATE_WORKFLOW);
   writeFileSync(join(root, "workflows/deadline-check/workflow.ts"), DEADLINE_CHECK_WORKFLOW);
@@ -303,6 +333,10 @@ async function setup(root: string): Promise<{
   writeFileSync(
     join(root, "workflows/transforming-deadline/workflow.ts"),
     TRANSFORMING_DEADLINE_WORKFLOW,
+  );
+  writeFileSync(
+    join(root, "workflows/stripping-deadline/workflow.ts"),
+    STRIPPING_DEADLINE_WORKFLOW,
   );
   const reg = await buildRegistry({
     playbooksDir: join(root, "playbooks"),
@@ -700,7 +734,7 @@ test("strict workflow args keep run_timeout_ms runtime-only and enforce the raw 
   }
 });
 
-test("stripping schema preserves defaults and transforms while keeping the runtime deadline active", async () => {
+test("strict schema defaults and transforms valid args while keeping the runtime deadline active", async () => {
   const root = mkdtempSync(join(tmpdir(), "wf-run-deadline-transform-"));
   try {
     const { services } = await setup(root);
@@ -722,6 +756,39 @@ test("stripping schema preserves defaults and transforms while keeping the runti
     expect(body.outcome).toBe("success");
     expect(body.runResult?.args).toEqual({ label: "ORDINARY", attempts: 4 });
     expect(body.runResult?.deadline?.remaining_ms).not.toBeNull();
+    expect(body.runResult?.deadline?.expired).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stripping schema omits ordinary unknown args while keeping the runtime deadline active", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wf-run-deadline-strip-"));
+  try {
+    const { services } = await setup(root);
+    const res = await runWorkflow({
+      services,
+      root,
+      name: "stripping-deadline",
+      wait: true,
+      args: { label: "  ordinary  ", ignored: "drop-me", run_timeout_ms: 5000 },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      outcome?: string;
+      runResult?: {
+        args?: Record<string, unknown>;
+        deadline?: { remaining_ms?: number | null; expired?: boolean };
+      };
+    };
+    expect(body.outcome).toBe("success");
+    expect(body.runResult?.args).toEqual({ label: "ORDINARY" });
+    expect(body.runResult?.args).not.toHaveProperty("ignored");
+    expect(body.runResult?.args).not.toHaveProperty("run_timeout_ms");
+    const remainingMs = body.runResult?.deadline?.remaining_ms;
+    expect(typeof remainingMs).toBe("number");
+    expect(remainingMs).toBeGreaterThan(0);
+    expect(remainingMs).toBeLessThanOrEqual(5000);
     expect(body.runResult?.deadline?.expired).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
