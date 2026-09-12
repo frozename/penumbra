@@ -1,11 +1,28 @@
-import type { ChainStartRequest, Services } from "@penumbra/core";
-
+import {
+  ChainReader,
+  type ChainStartRequest,
+  HandoffReader,
+  HandoffWriter,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  T0Writer,
+} from "@penumbra/core";
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { buildWorkflowCtx, type WorkflowCtx } from "../src/ctx.js";
+
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded in this process
+}
 
 function fakeServices(): Services {
   return {
@@ -17,6 +34,126 @@ function fakeServices(): Services {
       getResponses: () => [],
     },
   } as unknown as Services;
+}
+
+type RealChainFixture = {
+  db: Database;
+  services: Services;
+  handoffWriter: HandoffWriter;
+  t0Writer: T0Writer;
+};
+
+function realChainFixture(): RealChainFixture {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  return {
+    db,
+    services: {
+      handoffReader: new HandoffReader({ db }),
+      chainReader: new ChainReader(db),
+    } as unknown as Services,
+    handoffWriter: new HandoffWriter({ db }),
+    t0Writer: new T0Writer(db),
+  };
+}
+
+function createApprovedHandoff(
+  writer: HandoffWriter,
+  input: {
+    handoffId: string;
+    conversationId: string;
+    parentHandoffId?: string;
+    ts: string;
+  },
+): void {
+  writer.createApproved({
+    handoff_id: input.handoffId,
+    ts: input.ts,
+    project_id: "proj-1",
+    conversation_id: input.conversationId,
+    from: "user",
+    to: `agent-${input.handoffId}`,
+    to_role: null,
+    message: `message-${input.handoffId}`,
+    triggered_by_event_id: null,
+    resolved_by: "test",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: "implement_small",
+    use_worktree: false,
+    parent_handoff_id: input.parentHandoffId ?? null,
+  });
+}
+
+function completeHandoff(writer: HandoffWriter, handoffId: string): void {
+  expect(writer.claimDispatch(handoffId, `worker-${handoffId}`)).toBe(true);
+  expect(
+    writer.markCompleted(handoffId, {
+      ts: "2026-09-12T12:00:00.000Z",
+      expected_worker_id: `worker-${handoffId}`,
+    }),
+  ).toBe(true);
+}
+
+function writeAgentResponse(
+  writer: T0Writer,
+  input: {
+    eventId: string;
+    conversationId: string;
+    handoffId: string;
+    agent: string;
+    text: string;
+    ts: string;
+  },
+): void {
+  writer.write({
+    event_id: input.eventId,
+    ts: input.ts,
+    ingest_ts: input.ts,
+    source: "agentchat",
+    source_detail: input.agent,
+    project_id: "proj-1",
+    user_id: "test-user",
+    machine_id: "test-machine",
+    session_id: input.conversationId,
+    event_type: "agent-response",
+    lane: "cli-subscription",
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: {
+      response: input.text,
+      agent: input.agent,
+      handoff_id: input.handoffId,
+    },
+    payload_summary: input.text,
+    origin: "dispatch",
+  });
+}
+
+function realAwaitCtx(
+  fixture: RealChainFixture,
+  opts: {
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    pollIntervalMs?: number;
+  } = {},
+): ReturnType<typeof buildWorkflowCtx> {
+  return buildWorkflowCtx({
+    services: fixture.services,
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () => new Response(null, { status: 500 }),
+    ...opts,
+  });
 }
 
 test("dispatch returns ids from chain.start payload", async () => {
@@ -265,10 +402,12 @@ test("awaitChain returns failed when handoff completed but zero responses", asyn
     services: {
       handoffReader: {
         getRootForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
         getLatestForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
@@ -302,10 +441,12 @@ test("awaitChain waits for late agent-response stamped after handoff goes termin
     services: {
       handoffReader: {
         getRootForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
         getLatestForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
@@ -344,10 +485,12 @@ test("awaitChain returns completed when handoff completed and response is presen
     services: {
       handoffReader: {
         getRootForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
         getLatestForConversation: () => ({
+          handoff_id: "hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
@@ -380,10 +523,12 @@ test("awaitChain prefers terminal root handoff over later failed child handoff",
     services: {
       handoffReader: {
         getRootForConversation: () => ({
+          handoff_id: "root-hand-1",
           status: "completed",
           resolved_at: new Date().toISOString(),
         }),
         getLatestForConversation: () => ({
+          handoff_id: "child-hand-2",
           status: "failed",
           resolved_at: new Date().toISOString(),
         }),
@@ -409,6 +554,240 @@ test("awaitChain prefers terminal root handoff over later failed child handoff",
   expect(out.status).toBe("completed");
   expect(out.final_agent).toBe("claude");
   expect(out.response_text).toBe("authoritative root response");
+});
+
+test("awaitChain reads the terminal root response instead of a later child response", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-root-and-child";
+  const ctx = realAwaitCtx(fixture);
+  try {
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "root-real",
+      conversationId,
+      ts: "2026-09-12T10:00:00.000Z",
+    });
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "child-real",
+      conversationId,
+      parentHandoffId: "root-real",
+      ts: "2026-09-12T10:01:00.000Z",
+    });
+    completeHandoff(fixture.handoffWriter, "root-real");
+    completeHandoff(fixture.handoffWriter, "child-real");
+    writeAgentResponse(fixture.t0Writer, {
+      eventId: "response-root-real",
+      conversationId,
+      handoffId: "root-real",
+      agent: "root-agent",
+      text: "authoritative root result",
+      ts: "2026-09-12T10:02:00.000Z",
+    });
+    writeAgentResponse(fixture.t0Writer, {
+      eventId: "response-child-real",
+      conversationId,
+      handoffId: "child-real",
+      agent: "child-agent",
+      text: "later child result",
+      ts: "2026-09-12T10:03:00.000Z",
+    });
+
+    const out = await ctx.awaitChain(conversationId, { timeoutMs: 10 });
+
+    expect(out).toEqual({
+      status: "completed",
+      final_agent: "root-agent",
+      response_text: "authoritative root result",
+    });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain does not let a later child response satisfy a completed root", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-child-only";
+  const ctx = realAwaitCtx(fixture);
+  try {
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "root-without-response",
+      conversationId,
+      ts: "2026-09-12T11:00:00.000Z",
+    });
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "child-with-response",
+      conversationId,
+      parentHandoffId: "root-without-response",
+      ts: "2026-09-12T11:01:00.000Z",
+    });
+    completeHandoff(fixture.handoffWriter, "root-without-response");
+    completeHandoff(fixture.handoffWriter, "child-with-response");
+    writeAgentResponse(fixture.t0Writer, {
+      eventId: "response-child-only",
+      conversationId,
+      handoffId: "child-with-response",
+      agent: "child-agent",
+      text: "child-only result",
+      ts: "2026-09-12T11:02:00.000Z",
+    });
+
+    const out = await ctx.awaitChain(conversationId, {
+      timeoutMs: 10,
+      lateResponseGraceMs: 0,
+    });
+
+    expect(out).toEqual({ status: "failed", final_agent: null, response_text: null });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain observes a root response that arrives during late-response grace", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-late-root";
+  let nowMs = 0;
+  let wroteResponse = false;
+  const ctx = realAwaitCtx(fixture, {
+    now: () => nowMs,
+    pollIntervalMs: 10,
+    sleep: (ms) => {
+      nowMs += ms;
+      if (!wroteResponse) {
+        wroteResponse = true;
+        writeAgentResponse(fixture.t0Writer, {
+          eventId: "response-late-root",
+          conversationId,
+          handoffId: "root-late-response",
+          agent: "root-agent",
+          text: "late authoritative root result",
+          ts: "2026-09-12T12:02:00.000Z",
+        });
+      }
+      return Promise.resolve();
+    },
+  });
+  try {
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "root-late-response",
+      conversationId,
+      ts: "2026-09-12T12:00:00.000Z",
+    });
+    completeHandoff(fixture.handoffWriter, "root-late-response");
+
+    const out = await ctx.awaitChain(conversationId, {
+      timeoutMs: 100,
+      lateResponseGraceMs: 50,
+    });
+
+    expect(out).toEqual({
+      status: "completed",
+      final_agent: "root-agent",
+      response_text: "late authoritative root result",
+    });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain preserves failed root status and its stamped response", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-failed-root";
+  const ctx = realAwaitCtx(fixture);
+  try {
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "root-failed",
+      conversationId,
+      ts: "2026-09-12T13:00:00.000Z",
+    });
+    expect(
+      fixture.handoffWriter.markFailed("root-failed", {
+        reason: "worker failed",
+        ts: "2026-09-12T13:01:00.000Z",
+      }),
+    ).toBe(true);
+    writeAgentResponse(fixture.t0Writer, {
+      eventId: "response-failed-root",
+      conversationId,
+      handoffId: "root-failed",
+      agent: "root-agent",
+      text: "partial failure detail",
+      ts: "2026-09-12T13:02:00.000Z",
+    });
+
+    const out = await ctx.awaitChain(conversationId, { timeoutMs: 10 });
+
+    expect(out).toEqual({
+      status: "failed",
+      final_agent: "root-agent",
+      response_text: "partial failure detail",
+    });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain maps a rejected root to failed without borrowing conversation text", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-rejected-root";
+  const ctx = realAwaitCtx(fixture);
+  try {
+    fixture.handoffWriter.create({
+      handoff_id: "root-rejected",
+      ts: "2026-09-12T14:00:00.000Z",
+      project_id: "proj-1",
+      conversation_id: conversationId,
+      from: "user",
+      to: "root-agent",
+      to_role: null,
+      message: "cancel this dispatch",
+      triggered_by_event_id: null,
+      use_worktree: false,
+      isolated_install: false,
+      parent_handoff_id: null,
+      chain_task_type: "implement_small",
+      branch_base: null,
+      chain_max_hops: 3,
+      branch_name: null,
+    });
+    fixture.handoffWriter.reject("root-rejected", {
+      resolved_by: "test",
+      resolved_at: "2026-09-12T14:01:00.000Z",
+      reason: "cancelled",
+    });
+
+    const out = await ctx.awaitChain(conversationId, {
+      timeoutMs: 10,
+      lateResponseGraceMs: 0,
+    });
+
+    expect(out).toEqual({ status: "failed", final_agent: null, response_text: null });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain times out when real storage has no root handoff", async () => {
+  const fixture = realChainFixture();
+  let nowMs = 0;
+  const ctx = realAwaitCtx(fixture, {
+    now: () => nowMs,
+    pollIntervalMs: 1,
+    sleep: (ms) => {
+      nowMs += ms;
+      return Promise.resolve();
+    },
+  });
+  try {
+    const out = await ctx.awaitChain("conv-real-missing-root", { timeoutMs: 3 });
+    expect(out).toEqual({ status: "timeout", final_agent: null, response_text: null });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
 });
 
 test("fileWrite resolves storage-relative paths and returns written path", async () => {

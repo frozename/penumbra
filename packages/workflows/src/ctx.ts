@@ -136,7 +136,7 @@ async function readJsonBody(res: Response): Promise<unknown> {
   }
 }
 
-type HandoffLike = { status: string; resolved_at: string | null };
+type HandoffLike = { handoff_id: string; status: string; resolved_at: string | null };
 
 function snapshotFromHandoff(
   services: Services,
@@ -156,7 +156,9 @@ function snapshotFromHandoff(
     };
   }
 
-  const responses = services.chainReader.getResponses(conversationId, "final");
+  const responses = services.chainReader.getResponses(conversationId, "final", {
+    handoff_id: handoff.handoff_id,
+  });
   const final = responses[0] ?? null;
   const hasResponse = typeof final?.text === "string" && final.text.length > 0;
 

@@ -802,7 +802,11 @@ type DaemonWorkflowCtx = WorkflowCtx & {
 
 function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
   const chainStart = (input: ChainStartRequest): Promise<Response> | Response =>
-    chainStartFromInput(input, opts.services, { applyMaestroBudgetGate: true });
+    chainStartFromInput(
+      { ...input, workflow_run_id: opts.workflowRunId ?? undefined },
+      opts.services,
+      { applyMaestroBudgetGate: true },
+    );
   const base = buildWorkflowCtx({
     services: opts.services,
     cwd: opts.cwd,
