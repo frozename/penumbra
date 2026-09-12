@@ -79,6 +79,37 @@ current Bun executable, the absolute MCP entrypoint, and
 whose plugin-management capability and argv arrays were independently proven;
 unknown or unavailable plugin support does not fall back to standalone skills.
 
+### Explicit CLI setup
+
+Running `penumbra init` without a harness keeps the existing Claude Code setup.
+Select Codex explicitly to retain the shared token, database, and Agentchat
+bootstrap while installing Codex artifacts instead of Claude workflows, hooks,
+or `CLAUDE.md` guidance:
+
+```sh
+penumbra init --harness codex \
+  --codex-dir /absolute/path/to/.codex \
+  --skills-dir /absolute/path/to/.agents/skills \
+  --codex-mode standalone
+```
+
+Manage an existing Codex setup without running the shared initialization path:
+
+```sh
+penumbra codex-setup install --codex-dir /absolute/path/to/.codex --skills-dir /absolute/path/to/.agents/skills --mode standalone --json
+penumbra codex-setup status --codex-dir /absolute/path/to/.codex --skills-dir /absolute/path/to/.agents/skills --mode standalone --json
+penumbra codex-setup repair --codex-dir /absolute/path/to/.codex --skills-dir /absolute/path/to/.agents/skills --mode standalone --json
+penumbra codex-setup uninstall --codex-dir /absolute/path/to/.codex --skills-dir /absolute/path/to/.agents/skills --mode standalone --json
+```
+
+Explicit paths must be absolute. When omitted, the Codex directory follows
+`CODEX_HOME` or `~/.codex`, while standalone skills remain under
+`~/.agents/skills`. Mode selection is mandatory: plugin installation is not a
+verified default, and requesting unavailable plugin support exits nonzero
+without falling back to standalone writes. A readable status report exits zero
+even when components are absent or unknown; conflicts and failed mutating
+actions exit nonzero.
+
 Penumbra records only its own files, hashes, destinations, MCP block, and plugin
 identifier in `<codexDir>/penumbra/installation.json`. Status compares that
 record with every installed component. Install and repair stop before writes on
@@ -94,6 +125,7 @@ local ownership changes. Re-running repair for an installed plugin is idempotent
 
 An `installed` result means the files and configuration are present on disk. A
 running Codex host may still need to reload its profile before it observes the
-change. Task 2.2 does not install lifecycle hooks or telemetry; hooks remain
+change. Successful setup is not proof of reload or a live MCP call. Task 2.2
+does not install lifecycle hooks or telemetry; hooks remain
 `absent` until phase 3, and daemon connection files produce only a separate
 telemetry `absent` or `unknown` status rather than an invented endpoint.

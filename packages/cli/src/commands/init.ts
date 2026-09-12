@@ -10,8 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 
+import { type CodexSetupOptions, runCodexSetup } from "./codex-setup.js";
 import { AGENTCHAT_TEMPLATE } from "./init-agentchat-template.js";
 
 export interface RunInitOpts {
@@ -21,6 +22,8 @@ export interface RunInitOpts {
   forceAgentchat?: boolean;
   claudeUserDir?: string;
   workflowsSourceDir?: string;
+  harness?: "claude-code" | "codex";
+  codexSetup?: Omit<CodexSetupOptions, "action">;
 }
 
 // A `.claude/worktrees/<id>` checkout carries its own tracked `.claude/workflows`.
@@ -174,7 +177,38 @@ async function installClaudeMdBlock(
   }
 }
 
+function validateInitOptions(opts: RunInitOpts): string | undefined {
+  const harness: unknown = opts.harness ?? "claude-code";
+  if (harness !== "claude-code" && harness !== "codex") {
+    return `unsupported init harness: ${String(harness)}`;
+  }
+  if (harness === "claude-code") {
+    return opts.codexSetup ? "Codex setup options require harness codex" : undefined;
+  }
+  if (!opts.codexSetup) return "Codex init requires setup options";
+  const mode: unknown = opts.codexSetup.mode;
+  if (mode !== "standalone" && mode !== "plugin") {
+    return `unsupported Codex setup mode: ${String(mode)}`;
+  }
+  for (const [name, path] of Object.entries({
+    codexDir: opts.codexSetup.codexDir,
+    skillsDir: opts.codexSetup.skillsDir,
+    packageDir: opts.codexSetup.packageDir,
+    storageRoot: opts.codexSetup.storageRoot,
+    mcpEntrypoint: opts.codexSetup.mcpEntrypoint,
+  })) {
+    if (!isAbsolute(path)) return `${name} must be an absolute path: ${path}`;
+  }
+  return undefined;
+}
+
 export async function runInit(opts: RunInitOpts): Promise<number> {
+  const validationError = validateInitOptions(opts);
+  if (validationError) {
+    process.stderr.write(`penumbra init: ${validationError}\n`);
+    return 2;
+  }
+  const harness = opts.harness ?? "claude-code";
   const uuid = opts.uuid ?? systemUuid;
   mkdirSync(opts.storageRoot, { recursive: true });
 
@@ -194,6 +228,18 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
   }
 
   seedAgentchatConfig(opts.forceAgentchat);
+
+  const codexSetup = opts.codexSetup;
+  if (harness === "codex" && codexSetup) {
+    const result = await runCodexSetup({
+      ...codexSetup,
+      action: "install",
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.ok) return 1;
+    process.stdout.write(`penumbra: initialized at ${opts.storageRoot}\n`);
+    return 0;
+  }
 
   const claudeUserDir =
     opts.claudeUserDir ?? process.env.PENUMBRA_CLAUDE_USER_DIR ?? join(homedir(), ".claude");

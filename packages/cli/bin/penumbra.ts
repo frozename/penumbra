@@ -6,9 +6,17 @@ import {
   Branding,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runChainSendMessage } from "../src/commands/chain.js";
+import {
+  type CodexSetupAction,
+  type CodexSetupMode,
+  type CodexSetupOptions,
+  runCodexSetup,
+} from "../src/commands/codex-setup.js";
 import { runConsole } from "../src/commands/console.js";
 import { runDispatchAudit } from "../src/commands/dispatch-audit.js";
 import {
@@ -69,13 +77,56 @@ function resolveLiveRoot(): string {
 
 switch (cmd) {
   case "init":
-    process.exit(
-      await runInit({
-        storageRoot: bootstrapRoot,
-        forceAgentchat:
-          process.argv.includes("--force-agentchat") || process.argv.includes("--reset-agentchat"),
-      }),
-    );
+    {
+      const harnessRaw = readCommandFlagValue("penumbra init", "--harness");
+      if (harnessRaw !== undefined && harnessRaw !== "claude-code" && harnessRaw !== "codex") {
+        exitWithUsage("penumbra init", `unsupported harness: ${harnessRaw}`);
+      }
+      const harness = harnessRaw ?? "claude-code";
+      const hasCodexOptions = ["--codex-dir", "--skills-dir", "--codex-mode"].some((flag) =>
+        process.argv.includes(flag),
+      );
+      if (harness !== "codex" && hasCodexOptions) {
+        exitWithUsage("penumbra init", "Codex options require --harness codex");
+      }
+      const codexSetup =
+        harness === "codex"
+          ? codexSetupOptions("penumbra init", "--codex-mode", bootstrapRoot)
+          : undefined;
+      process.exit(
+        await runInit({
+          storageRoot: bootstrapRoot,
+          harness,
+          codexSetup,
+          forceAgentchat:
+            process.argv.includes("--force-agentchat") ||
+            process.argv.includes("--reset-agentchat"),
+        }),
+      );
+    }
+    break;
+  case "codex-setup":
+    {
+      const actionRaw = process.argv[3];
+      if (!isCodexSetupAction(actionRaw)) {
+        exitWithUsage(
+          "penumbra codex-setup",
+          `unknown action: ${actionRaw ?? "<missing>"}; expected install, status, repair, or uninstall`,
+        );
+      }
+      const result = await runCodexSetup({
+        action: actionRaw,
+        ...codexSetupOptions("penumbra codex-setup", "--mode", bootstrapRoot),
+      });
+      if (process.argv.includes("--json")) emit(JSON.stringify(result));
+      else {
+        emit(
+          `penumbra codex-setup: ${actionRaw} ${result.ok ? "complete" : "failed"} (${result.mode})`,
+        );
+        if (result.reason) console.error(result.reason);
+      }
+      process.exit(result.ok ? 0 : 1);
+    }
     break;
   case "start":
     {
@@ -1216,7 +1267,7 @@ switch (cmd) {
   case "-h":
   case undefined:
     emit(
-      "usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
+      "usage: penumbra <init|codex-setup|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
     );
     process.exit(0);
     break;
@@ -1238,6 +1289,65 @@ function readOptionalFlagValue(flag: string): string | undefined {
     process.exit(1);
   }
   return value;
+}
+
+function readCommandFlagValue(command: string, flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx < 0) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith("-")) exitWithUsage(command, `${flag} requires a value`);
+  return value;
+}
+
+function exitWithUsage(command: string, message: string): never {
+  console.error(`${command}: ${message}`);
+  console.error(`usage: ${command} [options]`);
+  process.exit(2);
+}
+
+function isCodexSetupAction(value: string | undefined): value is CodexSetupAction {
+  return value === "install" || value === "status" || value === "repair" || value === "uninstall";
+}
+
+function readCodexMode(command: string, flag: string): CodexSetupMode {
+  const value = readCommandFlagValue(command, flag);
+  if (value === undefined) {
+    exitWithUsage(
+      command,
+      `Codex plugin support is unavailable; pass ${flag} standalone explicitly`,
+    );
+  }
+  if (value !== "standalone" && value !== "plugin") {
+    exitWithUsage(command, `unsupported mode: ${value}; expected standalone or plugin`);
+  }
+  return value;
+}
+
+function readAbsolutePathFlag(command: string, flag: string, fallback: string): string {
+  const value = readCommandFlagValue(command, flag);
+  if (value !== undefined && !isAbsolute(value)) {
+    exitWithUsage(command, `${flag} must be an absolute path: ${value}`);
+  }
+  return value ?? fallback;
+}
+
+function codexSetupOptions(
+  command: string,
+  modeFlag: string,
+  storageRoot: string,
+): Omit<CodexSetupOptions, "action"> {
+  return {
+    mode: readCodexMode(command, modeFlag),
+    codexDir: readAbsolutePathFlag(
+      command,
+      "--codex-dir",
+      process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+    ),
+    skillsDir: readAbsolutePathFlag(command, "--skills-dir", join(homedir(), ".agents/skills")),
+    packageDir: fileURLToPath(new URL("../../../plugin/codex/penumbra", import.meta.url)),
+    storageRoot,
+    mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+  };
 }
 
 function formatHostForUrl(host: string): string {
