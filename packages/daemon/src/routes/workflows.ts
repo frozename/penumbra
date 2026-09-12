@@ -32,6 +32,15 @@ import {
   recordContinuitySessionEvents,
   sessionStampFromBodyPrefix,
 } from "../workflows/session-stamp.js";
+import {
+  acceptCodexDelivery,
+  admitCodexLifecycle,
+  claimCodexContinuity,
+  CodexIngressSchema,
+  type CodexIngress,
+  releaseCodexContinuity,
+  snapshotCodexIngress,
+} from "../workflows/hook-ingress.js";
 import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
 import { conversationsCancelRoute } from "./conversations.js";
@@ -1084,7 +1093,91 @@ type WorkflowTriggerBody = {
   session_id?: string | null;
   related_session_id?: string | null;
   ref_path?: string | null;
+  ingress?: CodexIngress;
 };
+
+type RawWorkflowTriggerBody = Omit<WorkflowTriggerBody, "ingress"> & { ingress?: unknown };
+
+function validateLegacyCodexControlArgs(
+  args: Record<string, unknown> | undefined,
+): Response | null {
+  if (!args) return null;
+  const issues: InputSchemaIssue[] = [];
+  if (Object.hasOwn(args, "ingress")) {
+    issues.push({ path: ["ingress"], message: "reserved for authenticated Codex ingress" });
+  }
+  if (args.harness === "codex") {
+    issues.push({ path: ["harness"], message: "reserved for authenticated Codex ingress" });
+  }
+  return issues.length > 0 ? invalidArgs(issues) : null;
+}
+
+function parseTriggerIngress(body: RawWorkflowTriggerBody):
+  | { ok: true; body: WorkflowTriggerBody; ingress: CodexIngress | null }
+  | {
+      ok: false;
+      response: Response;
+    } {
+  if (body.ingress === undefined) {
+    const argsError = validateLegacyCodexControlArgs(body.args);
+    if (argsError) return { ok: false, response: argsError };
+    const { ingress: _ingress, ...legacyBody } = body;
+    return { ok: true, body: legacyBody, ingress: null };
+  }
+  const parsed = CodexIngressSchema.safeParse(body.ingress);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: json(
+        {
+          error: {
+            code: "bad_request",
+            message: "ingress failed schema validation",
+            field_errors: parsed.error.issues.map((issue) => ({
+              path: ["ingress", ...issue.path],
+              message: issue.message,
+            })),
+          },
+        },
+        400,
+      ),
+    };
+  }
+  const ingress = snapshotCodexIngress(parsed.data);
+  return { ok: true, body: { ...body, ingress }, ingress };
+}
+
+function triggerEventIdentity(event: Trigger): string {
+  return event.kind === "lifecycle" ? event.event : event.kind;
+}
+
+function codexReservedArgs(opts: {
+  ingress: CodexIngress | null;
+  sessionId: string | null;
+  project: string;
+  transcriptPath: string | null;
+}): Record<string, unknown> {
+  if (!opts.ingress) return {};
+  return {
+    ingress: { ...opts.ingress },
+    harness: opts.ingress.harness,
+    role: opts.ingress.role,
+    lineage: opts.ingress.lineage,
+    provenance: opts.ingress.provenance,
+    is_child: opts.ingress.is_child,
+    parent_session_id: opts.ingress.parent_session_id,
+    agent_id: opts.ingress.agent_id,
+    agent_type: opts.ingress.agent_type,
+    source: opts.ingress.source,
+    turn_id: opts.ingress.turn_id,
+    tool_use_id: opts.ingress.tool_use_id,
+    delivery_id: opts.ingress.delivery_id,
+    session_id: opts.sessionId,
+    project_id: opts.project,
+    transcript_path: opts.transcriptPath,
+    transcript_format: opts.ingress.transcript_format,
+  };
+}
 
 function sessionEventKindForTrigger(event: Trigger): SessionEventKind | null {
   if (event.kind !== "lifecycle") return null;
@@ -1128,6 +1221,7 @@ function recordWorkflowTriggerSessionEvent(opts: {
       ts: opts.services.clock().toISOString(),
       meta: {
         hookContext: opts.body.hookContext ?? null,
+        ingress: opts.body.ingress ?? null,
       },
     });
   } catch (err) {
@@ -1374,6 +1468,8 @@ async function executeMatchedTriggerSpec(opts: {
   services: Services;
   additionalContextParts: string[];
   bootPickupRecorded: { value: boolean };
+  workflowRunId?: string | null;
+  retainRun?: boolean;
 }): Promise<Response | undefined> {
   const {
     spec,
@@ -1397,6 +1493,12 @@ async function executeMatchedTriggerSpec(opts: {
       ? { transcript_path: body.transcript_path }
       : {}),
     repo_root: repoRoot,
+    ...codexReservedArgs({
+      ingress: body.ingress ?? null,
+      sessionId: sessionIdFromBody,
+      project,
+      transcriptPath: body.transcript_path ?? null,
+    }),
   };
   const start = Date.now();
   const sessionStart = resolveSessionStart(services.db, sessionIdFromBody, start);
@@ -1418,9 +1520,12 @@ async function executeMatchedTriggerSpec(opts: {
     repoRoot,
   });
   const agentRegistry = buildAgentRegistryAdapter(services.agentRegistry);
-  const workflowRuns = services.workflowRuns;
-  const workflowRunId = workflowRuns?.register(spec.name, project) ?? null;
-  if (workflowRuns && workflowRunId === null) {
+  const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
+  const ownsRegistration = opts.workflowRunId === undefined;
+  const workflowRunId = ownsRegistration
+    ? (workflowRuns?.register(spec.name, project) ?? null)
+    : (opts.workflowRunId ?? null);
+  if (ownsRegistration && workflowRuns && workflowRunId === null) {
     return json(
       {
         error: {
@@ -1479,8 +1584,22 @@ async function executeMatchedTriggerSpec(opts: {
       runResult: result.runResult,
     });
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+    if (opts.retainRun && workflowRunId && workflowRuns) {
+      await persistRunResult(workflowRuns, workflowRunId, start, result);
+    }
+  } catch (error) {
+    if (!opts.retainRun || !workflowRunId || !workflowRuns) throw error;
+    await persistRunError(workflowRuns, workflowRunId, start, error);
+    services.log.error(
+      {
+        component: "workflow_hook_detached",
+        workflow_run_id: workflowRunId,
+        err: serializeError(error),
+      },
+      "detached hook workflow failed",
+    );
   } finally {
-    if (workflowRunId) workflowRuns?.unregister(workflowRunId);
+    if (!opts.retainRun && workflowRunId) workflowRuns?.unregister(workflowRunId);
   }
   return undefined;
 }
@@ -1534,31 +1653,167 @@ async function runAllMatchedTriggerSpecs(opts: {
   return undefined;
 }
 
+const CODEX_DETACHED_WORKFLOWS = new Set([
+  "session-handoff",
+  "session-handoff-draft",
+  "session-memory-sweep",
+]);
+
+function validateMatchedTriggerArgs(
+  reg: Registry,
+  matched: WorkflowSpec[],
+  body: WorkflowTriggerBody,
+): Response | null {
+  for (const spec of matched) {
+    const entry = reg.getEntry(spec.name);
+    if (!entry) continue;
+    const result = validateWorkflowArgs(entry, body.args ?? {});
+    if (!result.ok) return result.response;
+  }
+  return null;
+}
+
+function registerDetachedTriggerRuns(opts: {
+  specs: WorkflowSpec[];
+  project: string;
+  workflowRuns: WorkflowRunsRegistryWithLifecycle;
+}):
+  | { ok: true; runs: { spec: WorkflowSpec; workflowRunId: string }[] }
+  | {
+      ok: false;
+      response: Response;
+    } {
+  const runs: { spec: WorkflowSpec; workflowRunId: string }[] = [];
+  for (const spec of opts.specs) {
+    const workflowRunId = opts.workflowRuns.register(spec.name, opts.project);
+    if (workflowRunId !== null) {
+      runs.push({ spec, workflowRunId });
+      continue;
+    }
+    for (const run of runs) opts.workflowRuns.unregister(run.workflowRunId);
+    return {
+      ok: false,
+      response: json(
+        {
+          error: {
+            code: "capacity_exhausted",
+            message: "workflow run registry capacity exhausted",
+          },
+        },
+        503,
+      ),
+    };
+  }
+  return { ok: true, runs };
+}
+
+function launchDetachedTriggerRuns(opts: {
+  reg: Registry;
+  runs: { spec: WorkflowSpec; workflowRunId: string }[];
+  body: WorkflowTriggerBody;
+  sessionIdFromBody: string | null;
+  filePathFromBody: string | null;
+  cwd: string;
+  project: string;
+  repoRoot: string;
+  services: Services;
+  continuityKey: string | null;
+}): void {
+  const task = async (): Promise<void> => {
+    const bootPickupRecorded = { value: false };
+    try {
+      for (const run of opts.runs) {
+        const entry = opts.reg.getEntry(run.spec.name);
+        if (!entry) continue;
+        await executeMatchedTriggerSpec({
+          spec: run.spec,
+          entry,
+          body: opts.body,
+          sessionIdFromBody: opts.sessionIdFromBody,
+          filePathFromBody: opts.filePathFromBody,
+          cwd: opts.cwd,
+          project: opts.project,
+          repoRoot: opts.repoRoot,
+          services: opts.services,
+          additionalContextParts: [],
+          bootPickupRecorded,
+          workflowRunId: run.workflowRunId,
+          retainRun: true,
+        });
+      }
+    } finally {
+      if (opts.continuityKey) releaseCodexContinuity(opts.continuityKey);
+    }
+  };
+  void task().catch((error: unknown) => {
+    opts.services.log.error(
+      { component: "workflow_hook_detached", err: serializeError(error) },
+      "detached hook workflow sequence failed",
+    );
+  });
+}
+
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
   if (!reg) {
     warnRegistryUnavailable(services, "workflows/trigger");
     return json({ matched: [], additionalContext: null, registry_unavailable: true });
   }
-  const body = (await req.json().catch(() => null)) as WorkflowTriggerBody | null;
-  const sessionIdFromBody = body?.session_id ?? null;
-  const filePathFromBody =
-    typeof body?.hookContext?.file_path === "string" ? body.hookContext.file_path : null;
-  if (!body?.event) return json({ error: { code: "bad_request", message: "event required" } }, 400);
-
-  const cwd = body.cwd ?? process.cwd();
+  const rawBody = (await req.json().catch(() => null)) as RawWorkflowTriggerBody | null;
+  if (!rawBody?.event) {
+    return json({ error: { code: "bad_request", message: "event required" } }, 400);
+  }
+  const triggerEvent = rawBody.event;
+  const cwd = rawBody.cwd ?? process.cwd();
   const scope = resolveWorkflowScopeOrReject(cwd, services);
   if (!scope.ok) return scope.response;
   const { project, repoRoot } = scope;
+  const parsedIngress = parseTriggerIngress(rawBody);
+  if (!parsedIngress.ok) return parsedIngress.response;
+  const { body, ingress } = parsedIngress;
+  const sessionIdFromBody = body.session_id ?? null;
+  const filePathFromBody =
+    typeof body.hookContext?.file_path === "string" ? body.hookContext.file_path : null;
+
+  if (
+    ingress &&
+    !acceptCodexDelivery({
+      ingress,
+      sessionId: sessionIdFromBody,
+      event: triggerEventIdentity(triggerEvent),
+      now: services.clock().getTime(),
+    })
+  ) {
+    return json({ matched: [], additionalContext: null, duplicate: true });
+  }
   recordWorkflowTriggerSessionEvent({ services, body, cwd, project });
 
-  const matched = selectMatchedSpecs(reg, body.event, body.hookContext);
+  let matched = selectMatchedSpecs(reg, triggerEvent, body.hookContext);
+  if (
+    ingress &&
+    (!admitCodexLifecycle(ingress) ||
+      (triggerEvent.kind === "lifecycle" && triggerEvent.event === "session-end"))
+  ) {
+    matched = [];
+  }
+  const argsError = validateMatchedTriggerArgs(reg, matched, body);
+  if (argsError) return argsError;
+
+  const detached = ingress
+    ? matched
+        .filter((spec) => CODEX_DETACHED_WORKFLOWS.has(spec.name))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : [];
+  const inline =
+    detached.length > 0
+      ? matched.filter((spec) => !CODEX_DETACHED_WORKFLOWS.has(spec.name))
+      : matched;
 
   const additionalContextParts: string[] = [];
   const bootPickupRecorded = { value: false };
   const earlyResponse = await runAllMatchedTriggerSpecs({
     reg,
-    matched,
+    matched: inline,
     body,
     sessionIdFromBody,
     filePathFromBody,
@@ -1571,7 +1826,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   });
   if (earlyResponse) return earlyResponse;
 
-  if (matched.some((spec) => spec.name === "session-summarize") && sessionIdFromBody) {
+  if (inline.some((spec) => spec.name === "session-summarize") && sessionIdFromBody) {
     await fileSessionSummarizeStumbles({
       services,
       sessionId: sessionIdFromBody,
@@ -1579,10 +1834,60 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     });
   }
 
+  let coalesced = false;
+  let workflowRunIds: string[] = [];
+  if (ingress && detached.length > 0) {
+    const continuity = claimCodexContinuity(ingress, sessionIdFromBody);
+    if (!continuity.claimed) {
+      coalesced = true;
+    } else {
+      const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
+      if (!workflowRuns) {
+        if (continuity.key) releaseCodexContinuity(continuity.key);
+        return json(
+          {
+            error: {
+              code: "workflow_run_registry_unavailable",
+              message: "detached hook workflows require the workflow run registry",
+            },
+          },
+          503,
+        );
+      }
+      const registered = registerDetachedTriggerRuns({
+        specs: detached,
+        project,
+        workflowRuns,
+      });
+      if (!registered.ok) {
+        if (continuity.key) releaseCodexContinuity(continuity.key);
+        return registered.response;
+      }
+      workflowRunIds = registered.runs.map((run) => run.workflowRunId);
+      launchDetachedTriggerRuns({
+        reg,
+        runs: registered.runs,
+        body,
+        sessionIdFromBody,
+        filePathFromBody,
+        cwd,
+        project,
+        repoRoot,
+        services,
+        continuityKey: continuity.key,
+      });
+    }
+  }
+
   const additionalContext = additionalContextParts.length
     ? additionalContextParts.join("\n\n")
     : null;
-  return json({ matched: matched.map((s) => s.name), additionalContext });
+  return json({
+    matched: matched.map((s) => s.name),
+    additionalContext,
+    ...(workflowRunIds.length > 0 ? { workflow_run_ids: workflowRunIds } : {}),
+    ...(coalesced ? { coalesced: true } : {}),
+  });
 }
 
 type WorkflowStatsRow = { workflow_name: string; [key: string]: unknown };
