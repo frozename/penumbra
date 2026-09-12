@@ -61,11 +61,149 @@ interface TestManifest {
   mode: string;
   codexDir: string;
   plugin?: { identifier: string };
+  hooks?: {
+    configPath: string;
+    commandPrefix: string;
+    entries: { event: string; hash: string }[];
+  };
   skills: {
     name: string;
     destination: string;
     artifacts: { path: string; hash: string }[];
   }[];
+}
+
+const QUALIFIED_HOOK_EVENTS = [
+  "SessionStart",
+  "PreToolUse",
+  "PostToolUse",
+  "PreCompact",
+  "Stop",
+  "SessionEnd",
+  "SubagentStart",
+  "SubagentStop",
+] as const;
+const HOOK_SCENARIOS: Record<(typeof QUALIFIED_HOOK_EVENTS)[number], string[]> = {
+  SessionStart: ["startup"],
+  PreToolUse: ["bash"],
+  PostToolUse: ["apply_patch"],
+  PreCompact: ["compact"],
+  Stop: ["stop"],
+  SessionEnd: ["session_end"],
+  SubagentStart: ["child_start"],
+  SubagentStop: ["child_stop"],
+};
+
+function hookInput(capability: (typeof QUALIFIED_HOOK_EVENTS)[number]): Record<string, unknown> {
+  const common = {
+    session_id: "probe-root",
+    transcript_path: null,
+    cwd: "/private/tmp/probe-project",
+    hook_event_name: capability,
+    model: "gpt-5.6-sol",
+  };
+  switch (capability) {
+    case "SessionStart":
+      return { ...common, permission_mode: "default", source: "startup" };
+    case "PreToolUse":
+      return {
+        ...common,
+        permission_mode: "default",
+        turn_id: "turn-pre",
+        tool_name: "Bash",
+        tool_use_id: "tool-pre",
+        tool_input: { command: "printf ok" },
+      };
+    case "PostToolUse":
+      return {
+        ...common,
+        permission_mode: "default",
+        turn_id: "turn-post",
+        tool_name: "apply_patch",
+        tool_use_id: "tool-post",
+        tool_input: { patch: "test" },
+        tool_response: { ok: true },
+      };
+    case "PreCompact":
+      return { ...common, turn_id: "turn-compact", trigger: "manual" };
+    case "Stop":
+      return {
+        ...common,
+        permission_mode: "default",
+        turn_id: "turn-stop",
+        stop_hook_active: false,
+      };
+    case "SessionEnd":
+      return { ...common, reason: "other" };
+    case "SubagentStart":
+      return {
+        ...common,
+        permission_mode: "default",
+        turn_id: "turn-child-start",
+        agent_id: "agent-child",
+        agent_type: "worker",
+      };
+    case "SubagentStop":
+      return {
+        ...common,
+        permission_mode: "default",
+        turn_id: "turn-child-stop",
+        agent_id: "agent-child",
+        agent_type: "worker",
+        stop_hook_active: false,
+      };
+  }
+}
+
+function hookCapabilityManifest(qualified: boolean): unknown {
+  return {
+    surface: "cli",
+    build: qualified ? "0.153.4" : null,
+    cases: QUALIFIED_HOOK_EVENTS.flatMap((capability) =>
+      HOOK_SCENARIOS[capability].map((scenario) => {
+        const input = hookInput(capability);
+        const child = capability === "SubagentStart" || capability === "SubagentStop";
+        return {
+          fixture: {
+            surface: "cli",
+            build: qualified ? "0.153.4" : null,
+            capability,
+            state: qualified ? "supported" : "unknown",
+            evidence: {
+              kind: qualified ? "live" : "contract",
+              surface: "cli",
+              source: "isolated-codex-capability-probe",
+              observedAt: "2026-09-12T12:00:00.000Z",
+              probeId: qualified ? `isolated-cli-${capability}-${scenario}` : null,
+            },
+            ...(qualified
+              ? {
+                  input,
+                  identity: {
+                    role: child ? "child" : "root",
+                    sessionId: input.session_id,
+                    projectCwd: input.cwd,
+                    agentId: child ? input.agent_id : null,
+                  },
+                }
+              : {}),
+          },
+          reason: qualified ? null : "unobserved",
+          scenario,
+        };
+      }),
+    ),
+    cleanupComplete: true,
+  };
+}
+
+function writeHookSource(packageDir: string): void {
+  const hooksDir = join(packageDir, "hooks");
+  mkdirSync(hooksDir, { recursive: true });
+  writeFileSync(
+    join(hooksDir, "hooks.json"),
+    `${JSON.stringify({ description: "Penumbra Codex lifecycle hooks", hooks: {} }, null, 2)}\n`,
+  );
 }
 
 interface ParsedConfig {
@@ -99,6 +237,7 @@ function makeFixture(prefix = "codex-setup-"): Fixture {
     JSON.stringify({ name: "penumbra", version: "0.1.0", skills: "./skills/" }),
   );
   for (const name of SKILL_NAMES) writeSkill(packageDir, name);
+  writeHookSource(packageDir);
   writeFileSync(mcpEntrypoint, "// disposable MCP entrypoint\n");
   return {
     root,
@@ -115,6 +254,8 @@ function makeFixture(prefix = "codex-setup-"): Fixture {
       packageDir,
       storageRoot,
       mcpEntrypoint,
+      hookCapabilities: hookCapabilityManifest(false),
+      observedCodexBuild: "0.153.4",
     },
   };
 }
@@ -206,7 +347,7 @@ test("standalone install round-trips through Bun's TOML consumer and preserves u
     expect(readFileSync(join(fixture.skillsDir, "unrelated", "SKILL.md"), "utf8")).toBe(
       beforeUnrelated,
     );
-    expect(result.components.hooks.state).toBe("absent");
+    expect(result.components.hooks.state).toBe("unavailable");
     expect(result.components.telemetry.state).toBe("absent");
     expect(config).not.toContain("/v1/logs");
     const owned = manifest(fixture);
@@ -830,6 +971,212 @@ test("source package symlinks and invalid or duplicate skill names abort before 
       expect(walkSnapshot(fixture.root)).toEqual(before);
       expect(existsSync(fixture.skillsDir)).toBe(false);
       expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
+    } finally {
+      cleanup(fixture);
+    }
+  }
+});
+
+type HookGroup = {
+  matcher?: string;
+  hooks: { type: string; command: string; timeout?: number }[];
+};
+
+type HooksConfig = {
+  description?: string;
+  hooks: Record<string, HookGroup[]>;
+};
+
+function readHooks(fixture: Fixture): HooksConfig {
+  return JSON.parse(readFileSync(join(fixture.codexDir, "hooks.json"), "utf8")) as HooksConfig;
+}
+
+function writeHooks(fixture: Fixture, hooks: HooksConfig): void {
+  writeFileSync(join(fixture.codexDir, "hooks.json"), `${JSON.stringify(hooks, null, 2)}\n`);
+}
+
+function ownedHookGroups(config: HooksConfig): { event: string; group: HookGroup }[] {
+  return Object.entries(config.hooks).flatMap(([event, groups]) =>
+    groups
+      .filter((group) => group.hooks.some((handler) => handler.command.includes(" hook codex")))
+      .map((group) => ({ event, group })),
+  );
+}
+
+test("qualified hooks install one owned command path and round-trip reinstall, status, repair, and uninstall", async () => {
+  const fixture = makeFixture("codex-setup-hook-lifecycle-");
+  try {
+    fixture.opts.hookCapabilities = hookCapabilityManifest(true);
+    mkdirSync(fixture.codexDir, { recursive: true });
+    const userGroup: HookGroup = {
+      matcher: "^user-tool$",
+      hooks: [{ type: "command", command: "'/usr/bin/printf' user" }],
+    };
+    writeHooks(fixture, {
+      description: "keep user metadata",
+      hooks: { PreToolUse: [userGroup] },
+    });
+
+    const installed = await runCodexSetup(fixture.opts);
+    expect(installed.ok).toBe(true);
+    expect(installed.components.hooks.state).toBe("installed");
+    const installedConfig = readHooks(fixture);
+    expect(installedConfig.description).toBe("keep user metadata");
+    expect(installedConfig.hooks.PreToolUse).toContainEqual(userGroup);
+    const owned = ownedHookGroups(installedConfig);
+    expect(owned).toHaveLength(8);
+    expect(new Set(owned.map(({ group }) => group.hooks[0]?.command)).size).toBe(1);
+    expect(manifest(fixture).hooks?.entries).toHaveLength(8);
+
+    const second = await runCodexSetup(fixture.opts);
+    expect(second.ok).toBe(true);
+    expect(second.changed).toBe(false);
+    expect(ownedHookGroups(readHooks(fixture))).toHaveLength(8);
+
+    const status = await runCodexSetup({ ...fixture.opts, action: "status" });
+    expect(status.ok).toBe(true);
+    expect(status.components.hooks.state).toBe("installed");
+
+    const missing = readHooks(fixture);
+    missing.hooks.SessionStart = [];
+    writeHooks(fixture, missing);
+    const missingStatus = await runCodexSetup({ ...fixture.opts, action: "status" });
+    expect(missingStatus.ok).toBe(true);
+    expect(missingStatus.components.hooks.state).toBe("absent");
+
+    const repaired = await runCodexSetup({ ...fixture.opts, action: "repair" });
+    expect(repaired.ok).toBe(true);
+    expect(repaired.changed).toBe(true);
+    expect(ownedHookGroups(readHooks(fixture))).toHaveLength(8);
+
+    const removed = await runCodexSetup({ ...fixture.opts, action: "uninstall" });
+    expect(removed.ok).toBe(true);
+    expect(removed.components.hooks.state).toBe("absent");
+    const remaining = readHooks(fixture);
+    expect(remaining.description).toBe("keep user metadata");
+    expect(remaining.hooks.PreToolUse).toEqual([userGroup]);
+    expect(ownedHookGroups(remaining)).toHaveLength(0);
+    expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("modified owned hooks conflict without overwriting user or hook bytes", async () => {
+  const fixture = makeFixture("codex-setup-hook-conflict-");
+  try {
+    fixture.opts.hookCapabilities = hookCapabilityManifest(true);
+    await runCodexSetup(fixture.opts);
+    const changed = readHooks(fixture);
+    const owned = ownedHookGroups(changed);
+    const target = owned.find(({ event }) => event === "PreCompact")?.group.hooks[0];
+    if (!target) throw new Error("owned PreCompact hook missing");
+    target.command = `${target.command} --user-edited`;
+    writeHooks(fixture, changed);
+    const before = readFileSync(join(fixture.codexDir, "hooks.json"), "utf8");
+
+    for (const action of ["status", "repair", "uninstall"] as const) {
+      const result = await runCodexSetup({ ...fixture.opts, action });
+      expect(result.ok).toBe(false);
+      expect(result.changed).toBe(false);
+      expect(result.components.hooks.state).toBe("conflict");
+      expect(readFileSync(join(fixture.codexDir, "hooks.json"), "utf8")).toBe(before);
+    }
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("an installed command survives spaces and executes the real hook CLI", async () => {
+  const fixture = makeFixture("codex setup hook spaces-");
+  try {
+    fixture.opts.hookCapabilities = hookCapabilityManifest(true);
+    const installed = await runCodexSetup(fixture.opts);
+    expect(installed.ok).toBe(true);
+    const group = readHooks(fixture).hooks.SessionStart?.[0];
+    const command = group?.hooks[0]?.command;
+    if (!command) throw new Error("installed SessionStart command missing");
+    expect(command).toContain(`'${fixture.storageRoot.replaceAll("'", "'\"'\"'")}'`);
+
+    const child = Bun.spawn(["/bin/sh", "-c", command], {
+      env: { PATH: process.env.PATH ?? "", PENUMBRA_MCP_ORIGIN: "maestro" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await child.stdin.write(
+      JSON.stringify({
+        hook_event_name: "Stop",
+        session_id: "opaque-installed-root",
+        cwd: fixture.root,
+        transcript_path: null,
+        model: "gpt-5.6-sol",
+        permission_mode: "default",
+        turn_id: "turn-installed",
+        stop_hook_active: false,
+      }),
+    );
+    await child.stdin.end();
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({});
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("a real failure after hook activation restores prior bytes and an originally absent config", async () => {
+  for (const seeded of [false, true]) {
+    const fixture = makeFixture(`codex-hook-rollback-${seeded ? "seeded" : "absent"}-`);
+    try {
+      mkdirSync(fixture.codexDir, { recursive: true });
+      const hooksPath = join(fixture.codexDir, "hooks.json");
+      const prior = seeded
+        ? `${JSON.stringify({
+            description: "user hooks",
+            hooks: {
+              PreToolUse: [
+                {
+                  matcher: "^user$",
+                  hooks: [{ type: "command", command: "/usr/bin/printf user" }],
+                },
+              ],
+            },
+          })}\n`
+        : null;
+      if (prior !== null) writeFileSync(hooksPath, prior);
+      const report = hookCapabilityManifest(true) as Record<string, unknown>;
+      const host: CodexSetupHost = {
+        plugin: {
+          state: "supported",
+          identifier: "penumbra@verified",
+          installArgv: ["codex", "plugin", "install", "penumbra@verified"],
+          statusArgv: ["codex", "plugin", "status", "penumbra@verified"],
+          uninstallArgv: ["codex", "plugin", "uninstall", "penumbra@verified"],
+        },
+        invoke: () => {
+          writeFileSync(join(fixture.codexDir, "penumbra"), "blocks manifest directory\n");
+          return Promise.resolve({ ok: true, installed: true });
+        },
+      };
+
+      const result = await runCodexSetup({
+        ...fixture.opts,
+        mode: "plugin",
+        host,
+        hookCapabilities: report,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.changed).toBe(true);
+      expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
+      expect(existsSync(hooksPath)).toBe(seeded);
+      if (prior !== null) expect(readFileSync(hooksPath, "utf8")).toBe(prior);
     } finally {
       cleanup(fixture);
     }

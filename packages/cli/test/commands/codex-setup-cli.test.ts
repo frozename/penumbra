@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -37,6 +38,7 @@ interface SetupJson {
   components: {
     mcp: { state: string };
     skills: { state: string };
+    hooks: { state: string };
   };
 }
 
@@ -58,7 +60,7 @@ function makeFixture(prefix = "codex-setup-cli-"): CliFixture {
 async function runCli(fixture: CliFixture, args: string[]): Promise<CliResult> {
   const child = Bun.spawn([process.execPath, CLI_PATH, ...args], {
     env: {
-      PATH: process.env.PATH ?? "",
+      PATH: `${join(fixture.root, "bin")}:${process.env.PATH ?? ""}`,
       HOME: fixture.home,
       CODEX_HOME: fixture.codexDir,
       AGENTCHAT_CONFIG: fixture.agentchatConfig,
@@ -75,6 +77,69 @@ async function runCli(fixture: CliFixture, args: string[]): Promise<CliResult> {
   const exit = await child.exited;
   const [stdout, stderr] = await streams;
   return { exit, stdout, stderr };
+}
+
+function writeCapabilityInputs(
+  fixture: CliFixture,
+  observedAt = "2026-09-12T12:00:00.000Z",
+): string {
+  const binDir = join(fixture.root, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const codex = join(binDir, "codex");
+  writeFileSync(
+    codex,
+    '#!/bin/sh\n[ "$1" = "--version" ] || exit 2\nprintf "codex-cli 0.153.4\\n"\n',
+  );
+  chmodSync(codex, 0o700);
+  const reportPath = join(fixture.root, "capability report.json");
+  const input = {
+    session_id: "probe-root",
+    transcript_path: null,
+    cwd: join(fixture.root, "probe project"),
+    hook_event_name: "SessionStart",
+    model: "gpt-5.6-sol",
+    permission_mode: "default",
+    source: "startup",
+  };
+  writeFileSync(
+    reportPath,
+    `${JSON.stringify({
+      surface: "cli",
+      build: "0.153.4",
+      cases: [
+        {
+          fixture: {
+            surface: "cli",
+            build: "0.153.4",
+            capability: "SessionStart",
+            state: "supported",
+            evidence: {
+              kind: "live",
+              surface: "cli",
+              source: "isolated-codex-capability-probe",
+              observedAt,
+              probeId: "isolated-cli-SessionStart-startup",
+            },
+            input,
+            identity: {
+              role: "root",
+              sessionId: input.session_id,
+              projectCwd: input.cwd,
+              agentId: null,
+            },
+          },
+          reason: null,
+          scenario: "startup",
+        },
+      ],
+      cleanupComplete: true,
+    })}\n`,
+  );
+  return reportPath;
+}
+
+function capabilityArgs(reportPath: string): string[] {
+  return ["--capability-report", reportPath];
 }
 
 function setupArgs(
@@ -161,6 +226,81 @@ test("explicit Codex standalone init keeps shared bootstrap and skips Claude int
     expect(existsSync(join(fixture.claudeDir, "CLAUDE.md"))).toBe(false);
     expect(existsSync(join(fixture.claudeDir, "workflows"))).toBe(false);
     expect(existsSync(join(fixture.claudeDir, "settings.json"))).toBe(false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("codex-setup consumes the bare producer report and binds it to the observed CLI build", async () => {
+  const fixture = makeFixture("codex setup report spaces ");
+  try {
+    const reportPath = writeCapabilityInputs(fixture);
+    const result = await runCli(fixture, [
+      ...setupArgs(fixture, "install"),
+      ...capabilityArgs(reportPath),
+    ]);
+
+    expect(result.exit).toBe(0);
+    expect(parseSetupJson(result).components.hooks.state).toBe("installed");
+    const hooks = JSON.parse(readFileSync(join(fixture.codexDir, "hooks.json"), "utf8")) as {
+      hooks: { SessionStart: { matcher: string }[] };
+    };
+    expect(hooks.hooks.SessionStart.map(({ matcher }) => matcher)).toEqual(["^startup$"]);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Codex init consumes the bare producer report through the same bounded build observation", async () => {
+  const fixture = makeFixture("codex init report spaces ");
+  try {
+    const reportPath = writeCapabilityInputs(fixture);
+    const result = await runCli(fixture, [
+      "init",
+      "--harness",
+      "codex",
+      "--codex-dir",
+      fixture.codexDir,
+      "--skills-dir",
+      fixture.skillsDir,
+      "--codex-mode",
+      "standalone",
+      ...capabilityArgs(reportPath),
+    ]);
+
+    expect(result.exit).toBe(0);
+    const setup = JSON.parse(
+      result.stdout.split("\n").find((line) => line.startsWith("{")) ?? "",
+    ) as SetupJson | undefined;
+    expect(setup?.components.hooks.state).toBe("installed");
+    expect(existsSync(join(fixture.codexDir, "hooks.json"))).toBe(true);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("malformed capability evidence is rejected before Codex init bootstrap writes", async () => {
+  const fixture = makeFixture("codex-init-malformed-report-");
+  try {
+    const reportPath = writeCapabilityInputs(fixture, "not-a-date");
+    const result = await runCli(fixture, [
+      "init",
+      "--harness",
+      "codex",
+      "--codex-dir",
+      fixture.codexDir,
+      "--skills-dir",
+      fixture.skillsDir,
+      "--codex-mode",
+      "standalone",
+      ...capabilityArgs(reportPath),
+    ]);
+
+    expect(result.exit).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("observedAt");
+    expectNoSharedState(fixture);
+    expect(existsSync(fixture.codexDir)).toBe(false);
+    expect(existsSync(fixture.skillsDir)).toBe(false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -11,6 +11,7 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChainSendMessage } from "../src/commands/chain.js";
+import { loadCodexHookCapabilities } from "../src/commands/codex-hook-capabilities.js";
 import {
   type CodexSetupAction,
   type CodexSetupMode,
@@ -25,6 +26,7 @@ import {
   runDispatchTimeline,
 } from "../src/commands/dispatch.js";
 import { runExport } from "../src/commands/export.js";
+import { runCodexHook } from "../src/commands/hook-codex.js";
 import { runHook } from "../src/commands/hook.js";
 import { runImport } from "../src/commands/import.js";
 import { runInit } from "../src/commands/init.js";
@@ -83,15 +85,18 @@ switch (cmd) {
         exitWithUsage("penumbra init", `unsupported harness: ${harnessRaw}`);
       }
       const harness = harnessRaw ?? "claude-code";
-      const hasCodexOptions = ["--codex-dir", "--skills-dir", "--codex-mode"].some((flag) =>
-        process.argv.includes(flag),
-      );
+      const hasCodexOptions = [
+        "--codex-dir",
+        "--skills-dir",
+        "--codex-mode",
+        "--capability-report",
+      ].some((flag) => process.argv.includes(flag));
       if (harness !== "codex" && hasCodexOptions) {
         exitWithUsage("penumbra init", "Codex options require --harness codex");
       }
       const codexSetup =
         harness === "codex"
-          ? codexSetupOptions("penumbra init", "--codex-mode", bootstrapRoot)
+          ? await codexSetupOptions("penumbra init", "--codex-mode", bootstrapRoot)
           : undefined;
       process.exit(
         await runInit({
@@ -116,7 +121,7 @@ switch (cmd) {
       }
       const result = await runCodexSetup({
         action: actionRaw,
-        ...codexSetupOptions("penumbra codex-setup", "--mode", bootstrapRoot),
+        ...(await codexSetupOptions("penumbra codex-setup", "--mode", bootstrapRoot)),
       });
       if (process.argv.includes("--json")) emit(JSON.stringify(result));
       else {
@@ -818,14 +823,47 @@ switch (cmd) {
       // Designed for use in ~/.claude/settings.json hooks (PreToolUse, PostToolUse,
       // UserPromptSubmit). Best-effort — never blocks the hook on observation failures.
       const subtype = process.argv[3];
-      if (subtype !== "claude-code") {
-        console.error("usage: penumbra hook claude-code [--project <id>] [--session <id>]");
+      if (subtype !== "claude-code" && subtype !== "codex") {
+        console.error("usage: penumbra hook <claude-code|codex> [--project <id>] [--session <id>]");
         process.exit(1);
       }
       const projectFlagIdx = process.argv.indexOf("--project");
       const project = projectFlagIdx >= 0 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
       const sessionFlagIdx = process.argv.indexOf("--session");
       const sessionId = sessionFlagIdx >= 0 ? (process.argv[sessionFlagIdx + 1] ?? null) : null;
+      if (subtype === "codex") {
+        const storageFlagIdx = process.argv.indexOf("--storage-root");
+        const storageRoot =
+          storageFlagIdx >= 0
+            ? (process.argv[storageFlagIdx + 1] ?? bootstrapRoot)
+            : resolveLiveRoot();
+        let emitted = false;
+        const write = (value: string): void => {
+          if (emitted) return;
+          emitted = true;
+          process.stdout.write(value);
+        };
+        try {
+          const rawEvent = (await readBoundedStdin(256 * 1024)) ?? "";
+          process.exit(
+            await runCodexHook({
+              storageRoot,
+              rawEvent,
+              project,
+              sessionId,
+              env: process.env,
+              write,
+            }),
+          );
+        } catch {
+          try {
+            await runCodexHook({ storageRoot, rawEvent: "", write });
+          } catch {
+            // The hook is best-effort even when stdout is unavailable.
+          }
+          process.exit(0);
+        }
+      }
       const rawEvent = await Bun.stdin.text();
       try {
         const root = resolveLiveRoot();
@@ -1280,6 +1318,28 @@ function emit(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+async function readBoundedStdin(maxBytes: number): Promise<string | null> {
+  const reader = Bun.stdin.stream().getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) return new TextDecoder().decode(Buffer.concat(chunks));
+      size += next.value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function readOptionalFlagValue(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   if (idx < 0) return undefined;
@@ -1331,11 +1391,27 @@ function readAbsolutePathFlag(command: string, flag: string, fallback: string): 
   return value ?? fallback;
 }
 
-function codexSetupOptions(
+async function codexSetupOptions(
   command: string,
   modeFlag: string,
   storageRoot: string,
-): Omit<CodexSetupOptions, "action"> {
+): Promise<Omit<CodexSetupOptions, "action">> {
+  const reportPath = readCommandFlagValue(command, "--capability-report");
+  if (reportPath !== undefined && !isAbsolute(reportPath)) {
+    exitWithUsage(command, `--capability-report must be an absolute path: ${reportPath}`);
+  }
+  let capabilities: Pick<CodexSetupOptions, "hookCapabilities" | "observedCodexBuild"> = {};
+  if (reportPath !== undefined) {
+    try {
+      const loaded = await loadCodexHookCapabilities({ reportPath });
+      capabilities = {
+        hookCapabilities: loaded.report,
+        observedCodexBuild: loaded.observedBuild,
+      };
+    } catch (error) {
+      exitWithUsage(command, error instanceof Error ? error.message : String(error));
+    }
+  }
   return {
     mode: readCodexMode(command, modeFlag),
     codexDir: readAbsolutePathFlag(
@@ -1347,6 +1423,7 @@ function codexSetupOptions(
     packageDir: fileURLToPath(new URL("../../../plugin/codex/penumbra", import.meta.url)),
     storageRoot,
     mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+    ...capabilities,
   };
 }
 
