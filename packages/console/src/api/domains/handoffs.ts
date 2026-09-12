@@ -5,6 +5,7 @@ import {
   HandoffDetailResponseSchema,
   type HandoffFailRequest,
   HandoffFailRequestSchema,
+  HandoffsListQuerySchema,
   HandoffsListResponseSchema,
   type HandoffStatus,
   type HandoffStatusResponse,
@@ -19,6 +20,7 @@ import { fillPath } from "../paths.js";
 
 export const PATHS = {
   list: "/handoffs",
+  latest: "/handoffs/latest",
   get: "/handoffs/:id",
   status: "/handoffs/:id/status",
   fail: "/handoffs/:id/fail",
@@ -42,12 +44,18 @@ export interface ApproveHandoffOpts {
   resolvedBy?: string;
 }
 
+const ConversationIdQuerySchema = HandoffsListQuerySchema.pick({
+  conversation_id: true,
+}).required();
+
 export interface HandoffsSlice {
   list(opts?: {
     status?: HandoffStatus;
     agent?: string;
     projectId?: string;
+    conversationId?: string;
   }): Promise<HandoffsListResponse>;
+  latest(conversationId: string): Promise<HandoffDetailResponse>;
   get(id: string): Promise<HandoffDetailResponse>;
   status(id: string): Promise<HandoffStatusResponse>;
   fail(id: string, body: HandoffFailRequest): Promise<HandoffFailResponse>;
@@ -60,15 +68,54 @@ export function handoffsSlice(t: DaemonTransport): HandoffsSlice {
       status?: HandoffStatus;
       agent?: string;
       projectId?: string;
+      conversationId?: string;
     }): Promise<HandoffsListResponse> {
+      const query: Record<string, string | undefined> = {
+        status: opts?.status,
+        agent: opts?.agent,
+        project_id: opts?.projectId,
+      };
+
+      if (opts?.conversationId !== undefined) {
+        const parsed = ConversationIdQuerySchema.safeParse({
+          conversation_id: opts.conversationId,
+        });
+        if (!parsed.success) {
+          return Promise.reject(
+            new DaemonContractError({
+              url: fillPath(PATHS.list),
+              issues: parsed.error.issues,
+              rawBody: { conversation_id: opts.conversationId },
+            }),
+          );
+        }
+        query.conversation_id = parsed.data.conversation_id;
+      }
+
       return t.request({
         path: fillPath(PATHS.list),
-        query: {
-          status: opts?.status,
-          agent: opts?.agent,
-          project_id: opts?.projectId,
-        },
+        query,
         schema: HandoffsListResponseSchema,
+      });
+    },
+    latest(conversationId: string): Promise<HandoffDetailResponse> {
+      const parsed = ConversationIdQuerySchema.safeParse({
+        conversation_id: conversationId,
+      });
+      if (!parsed.success) {
+        return Promise.reject(
+          new DaemonContractError({
+            url: fillPath(PATHS.latest),
+            issues: parsed.error.issues,
+            rawBody: { conversation_id: conversationId },
+          }),
+        );
+      }
+
+      return t.request({
+        path: fillPath(PATHS.latest),
+        query: { conversation_id: parsed.data.conversation_id },
+        schema: HandoffDetailResponseSchema,
       });
     },
     get(id: string): Promise<HandoffDetailResponse> {

@@ -52,6 +52,48 @@ export function register(router: FixtureRouter, state: HarnessState): void {
       sendJson(ctx.response, row);
     });
   });
+  router.route("GET", "/handoffs/latest", (ctx) => {
+    serveWithError(state, ctx.path, ctx.response, () => {
+      const conversationId = ctx.query.get("conversation_id");
+      if (!conversationId) {
+        sendJson(
+          ctx.response,
+          {
+            error: {
+              code: "missing_param",
+              message: "conversation_id query parameter is required",
+            },
+          },
+          400,
+        );
+        return;
+      }
+
+      const matches = state.pending
+        .filter((row) => row.conversation_id === conversationId)
+        .slice()
+        .sort((a, b) => {
+          if (a.ts === b.ts) return 0;
+          return a.ts < b.ts ? 1 : -1;
+        });
+      const row = matches[0];
+      if (!row) {
+        sendJson(
+          ctx.response,
+          {
+            error: {
+              code: "not_found",
+              message: "no handoffs found for conversation",
+            },
+          },
+          404,
+        );
+        return;
+      }
+      sendJson(ctx.response, { handoff: row });
+    });
+  });
+
   router.route("GET", /^\/handoffs\/(?<id>[^/]+)$/, (ctx) => {
     const handoffId = decodeURIComponent(ctx.params.id ?? "");
     serveWithError(state, ctx.path, ctx.response, () => {

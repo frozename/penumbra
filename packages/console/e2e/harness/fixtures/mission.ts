@@ -18,6 +18,7 @@ export function register(router: FixtureRouter, state: HarnessState): void {
     const status = ctx.query.get("status");
     const agent = ctx.query.get("agent");
     const projectId = ctx.query.get("project_id");
+    const conversationId = ctx.query.get("conversation_id");
 
     let filtered = state.pending;
     if (status) {
@@ -28,6 +29,9 @@ export function register(router: FixtureRouter, state: HarnessState): void {
     }
     if (projectId) {
       filtered = filtered.filter((r) => r.project_id === projectId);
+    }
+    if (conversationId) {
+      filtered = filtered.filter((r) => r.conversation_id === conversationId);
     }
     sendJson(ctx.response, { handoffs: filtered });
   });

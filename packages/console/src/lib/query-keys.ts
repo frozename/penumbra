@@ -167,3 +167,16 @@ export function taskDraftEscalations(
 ): readonly ["task-drafts", "escalations", string] {
   return ["task-drafts", "escalations", projectId] as const;
 }
+
+/** Latest handoff for a conversation. */
+export function latestHandoffForConversation(id: string): readonly ["handoffs", "latest", string] {
+  return ["handoffs", "latest", id] as const;
+}
+
+/** Handoffs list for a conversation, scoped by status. */
+export function handoffsForConversation(
+  id: string,
+  status: HandoffStatus,
+): readonly ["handoffs", "conversation", string, HandoffStatus] {
+  return ["handoffs", "conversation", id, status] as const;
+}
