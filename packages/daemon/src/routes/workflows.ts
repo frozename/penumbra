@@ -206,6 +206,21 @@ function validateWorkflowArgs(
   return { ok: true, args: parsed.data as Record<string, unknown> };
 }
 
+function resolveRunTimeoutMs(args: Record<string, unknown>): number | undefined {
+  const raw = args.run_timeout_ms;
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw <= 0) return undefined;
+  return raw;
+}
+
+function extractWorkflowRunRuntimeControls(rawArgs: Record<string, unknown>): {
+  args: Record<string, unknown>;
+  runTimeoutMs: number | undefined;
+} {
+  const args = { ...rawArgs };
+  delete args.run_timeout_ms;
+  return { args, runTimeoutMs: resolveRunTimeoutMs(rawArgs) };
+}
+
 type WorkflowRunsRegistryWithLifecycle = NonNullable<Services["workflowRuns"]> & {
   setPersistenceStatus(
     workflowRunId: string,
@@ -531,6 +546,7 @@ type WorkflowRunPrepared = {
   entry: NonNullable<ReturnType<Registry["getEntry"]>>;
   name: string;
   args: Record<string, unknown>;
+  runTimeoutMs: number | undefined;
   cwd: string;
   body: WorkflowRunBody;
 };
@@ -566,14 +582,22 @@ function prepareWorkflowRun(
         400,
       ),
     };
-  const rawArgs = body.args ?? {};
-  const argsResult = validateWorkflowArgs(entry, rawArgs);
+  const runtimeControls = extractWorkflowRunRuntimeControls(body.args ?? {});
+  const argsResult = validateWorkflowArgs(entry, runtimeControls.args);
   if (!argsResult.ok) return { ok: false, response: argsResult.response };
   const args = {
     ...argsResult.args,
     ...(body.session_id ? { session_id: body.session_id } : {}),
   };
-  return { ok: true, entry, name, args, cwd, body };
+  return {
+    ok: true,
+    entry,
+    name,
+    args,
+    runTimeoutMs: runtimeControls.runTimeoutMs,
+    cwd,
+    body,
+  };
 }
 
 function attachRunPersistHandlers(
@@ -617,6 +641,7 @@ type WorkflowExecOpts = {
   project: string;
   repoRoot: string;
   args: Record<string, unknown>;
+  runTimeoutMs: number | undefined;
   templateCtx: TemplateVarContext;
   agentRegistry: { listAgents: () => { name: string }[] } | undefined;
   workflowRunId: string | null;
@@ -706,6 +731,7 @@ function buildWorkflowRunExecOpts(opts: {
     project: opts.project,
     repoRoot: opts.repoRoot,
     args: opts.prepared.args,
+    runTimeoutMs: opts.prepared.runTimeoutMs,
     templateCtx: opts.templateCtx,
     agentRegistry: opts.agentRegistry,
     workflowRunId: opts.workflowRunId,
@@ -785,11 +811,22 @@ function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
         throw new Error(`conversation cancel failed (${String(response.status)}): ${body}`);
       }
     },
+    runTimeoutMs: opts.runTimeoutMs,
   });
   return {
     ...base,
     db: () => opts.services.db,
-    chainStart,
+    chainStart: (input: ChainStartRequest): Promise<Response> | Response => {
+      if (base.deadline().expired) {
+        return new Response(
+          JSON.stringify({
+            error: { code: "run_deadline_expired", message: "workflow run deadline expired" },
+          }),
+          { status: 408, headers: { "content-type": "application/json" } },
+        );
+      }
+      return chainStart(input);
+    },
   };
 }
 
@@ -1544,6 +1581,7 @@ async function executeMatchedTriggerSpec(opts: {
       project,
       repoRoot,
       args,
+      runTimeoutMs: resolveRunTimeoutMs(args),
       templateCtx,
       agentRegistry,
       workflowRunId,

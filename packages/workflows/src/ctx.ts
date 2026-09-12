@@ -41,9 +41,11 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   storageRoot: string;
   project: string;
   args: TArgs;
+  deadline?(): { remaining_ms: number | null; expired: boolean };
 };
 
 type DisposableWorkflowCtx<TArgs = Record<string, unknown>> = WorkflowCtx<TArgs> & {
+  deadline(): { remaining_ms: number | null; expired: boolean };
   dispose: () => void;
 };
 
@@ -69,6 +71,7 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   pollIntervalMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  runTimeoutMs?: number;
 };
 
 function resolveWritePath(inputPath: string, cwd: string, storageRoot: string): string {
@@ -266,6 +269,7 @@ type AwaitChainDeps = {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   pollIntervalMs: number;
+  deadline: () => { remaining_ms: number | null; expired: boolean };
 };
 
 async function awaitChainImpl(
@@ -276,11 +280,18 @@ async function awaitChainImpl(
   const timeoutMs = opts?.timeoutMs ?? 120000;
   const lateResponseGraceMs = opts?.lateResponseGraceMs ?? 90000;
   const start = ac.now();
+  const dl = ac.deadline();
+  const remaining = dl.remaining_ms;
+  const bounded = remaining !== null;
+  const effectiveTimeout = bounded ? Math.min(timeoutMs, remaining) : timeoutMs;
+  if (effectiveTimeout <= 0) {
+    return { status: "timeout", final_agent: null, response_text: null };
+  }
   let intervalMs = ac.pollIntervalMs;
   let firstTerminalAt: number | null = null;
   let lastTerminalSnapshot: ChainTerminalSnapshot | null = null;
 
-  while (ac.now() - start < timeoutMs) {
+  while (ac.now() - start < effectiveTimeout) {
     const status = await ac.readChainStatus(conversationId);
     if (status.terminal) {
       const hasResponse = status.response_text !== null && status.response_text.length > 0;
@@ -301,7 +312,10 @@ async function awaitChainImpl(
         };
       }
     }
-    await ac.sleep(intervalMs);
+    const remainingCall = effectiveTimeout - (ac.now() - start);
+    if (remainingCall <= 0) break;
+    const sleepMs = bounded ? Math.min(intervalMs, remainingCall) : intervalMs;
+    await ac.sleep(sleepMs);
     intervalMs = Math.min(intervalMs * 1.5, 2000);
   }
 
@@ -334,7 +348,7 @@ async function fileWriteImpl(
 
 export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
   deps: BuildWorkflowCtxDeps<TArgs>,
-): WorkflowCtx<TArgs> {
+): DisposableWorkflowCtx<TArgs> {
   const sleep =
     deps.sleep ??
     ((ms: number): Promise<void> =>
@@ -345,11 +359,23 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     deps.readChainStatus ??
     ((conversationId: string): Promise<ChainTerminalSnapshot> =>
       defaultReadChainStatus(deps.services, conversationId));
+  const runTimeoutMs = deps.runTimeoutMs;
+  const runStart = now();
+  const deadline = (): { remaining_ms: number | null; expired: boolean } => {
+    if (runTimeoutMs === undefined) return { remaining_ms: null, expired: false };
+    const remaining = runTimeoutMs - (now() - runStart);
+    return { remaining_ms: remaining > 0 ? remaining : 0, expired: remaining <= 0 };
+  };
   let workflowDb: Database | null = null;
-  const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs };
+  const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs, deadline };
 
   const ctx: DisposableWorkflowCtx<TArgs> = {
-    dispatch: (input): Promise<DispatchResult> => dispatchImpl(input, deps),
+    dispatch: async (input): Promise<DispatchResult> => {
+      if (deadline().expired) {
+        throw new Error("workflow run deadline expired; dispatch rejected");
+      }
+      return await dispatchImpl(input, deps);
+    },
     awaitChain: (conversationId, opts): Promise<AwaitChainResult> =>
       awaitChainImpl(conversationId, opts, ac),
     cancel: (conversationId): Promise<CancelResult> => cancelImpl(conversationId, deps),
@@ -364,6 +390,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     storageRoot: deps.storageRoot,
     project: deps.project,
     args: deps.args ?? ({} as TArgs),
+    deadline,
     dispose: (): void => {
       workflowDb?.close();
       workflowDb = null;

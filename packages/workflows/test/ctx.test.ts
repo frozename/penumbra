@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { buildWorkflowCtx } from "../src/ctx.js";
+import { buildWorkflowCtx, type WorkflowCtx } from "../src/ctx.js";
 
 function fakeServices(): Services {
   return {
@@ -529,7 +529,7 @@ test("fileWrite rejects absolute paths outside allowed roots", async () => {
   }
 });
 
-test("ctx exposes args passed to buildWorkflowCtx", () => {
+test("ctx exposes args while the public type remains assignable without deadline", () => {
   const args = { base_ref: "main", target_ref: "HEAD", timeout_ms: 1234 };
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
@@ -547,5 +547,351 @@ test("ctx exposes args passed to buildWorkflowCtx", () => {
       ),
   });
 
-  expect(ctx.args).toEqual(args);
+  const publicCtx: WorkflowCtx<typeof args> = {
+    dispatch: (input) => ctx.dispatch(input),
+    awaitChain: (conversationId, opts) => ctx.awaitChain(conversationId, opts),
+    cancel: (conversationId) => ctx.cancel(conversationId),
+    fileWrite: (relativePath, body) => ctx.fileWrite(relativePath, body),
+    db: ctx.db,
+    config: ctx.config,
+    cwd: ctx.cwd,
+    storageRoot: ctx.storageRoot,
+    project: ctx.project,
+    args: ctx.args,
+  };
+
+  expect(publicCtx.args).toEqual(args);
+});
+
+// ---------------------------------------------------------------------------
+// Run-level deadline (Task 10.1)
+// ---------------------------------------------------------------------------
+
+function notTerminal(): Promise<{
+  terminal: false;
+  status: "failed";
+  final_agent: null;
+  response_text: null;
+}> {
+  return Promise.resolve({
+    terminal: false,
+    status: "failed" as const,
+    final_agent: null,
+    response_text: null,
+  });
+}
+
+function okChainStart(): (input: ChainStartRequest) => Promise<Response> {
+  return () =>
+    Promise.resolve(
+      new Response(JSON.stringify({ conversation_id: "conv-d", handoff_id: "hand-d" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+}
+
+test("deadline returns null remaining_ms when runTimeoutMs is absent (unbounded)", () => {
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    now: (): number => nowMs,
+  });
+  expect(ctx.deadline()).toEqual({ remaining_ms: null, expired: false });
+  nowMs = 999_999;
+  expect(ctx.deadline()).toEqual({ remaining_ms: null, expired: false });
+});
+
+test("deadline returns positive remaining_ms and expired=false within budget", () => {
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    runTimeoutMs: 1000,
+    now: (): number => nowMs,
+  });
+  nowMs = 400;
+  const dl = ctx.deadline();
+  expect(dl.remaining_ms).toBe(600);
+  expect(dl.expired).toBe(false);
+});
+
+test("deadline returns remaining_ms 0 and expired=true when budget exhausted", () => {
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    runTimeoutMs: 1000,
+    now: (): number => nowMs,
+  });
+  nowMs = 1000;
+  expect(ctx.deadline()).toEqual({ remaining_ms: 0, expired: true });
+  nowMs = 1500;
+  expect(ctx.deadline()).toEqual({ remaining_ms: 0, expired: true });
+});
+
+test("awaitChain clamps per-call timeout to remaining run budget (partial budget)", async () => {
+  const sleepCalls: number[] = [];
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    runTimeoutMs: 1000,
+    readChainStatus: notTerminal,
+    pollIntervalMs: 200,
+    sleep: (ms: number) => {
+      sleepCalls.push(ms);
+      nowMs += ms;
+      return Promise.resolve();
+    },
+    now: (): number => nowMs,
+  });
+  // Consume 800ms of the 1000ms budget, leaving 200ms.
+  nowMs = 800;
+  // Request a 5000ms wait — should be clamped to the 200ms remaining.
+  const out = await ctx.awaitChain("conv-1", { timeoutMs: 5000 });
+  expect(out.status).toBe("timeout");
+  const totalSleep = sleepCalls.reduce((a, b) => a + b, 0);
+  expect(totalSleep).toBe(200);
+});
+
+test("second awaitChain never re-arms the run budget", async () => {
+  const sleepCallsA: number[] = [];
+  const sleepCallsB: number[] = [];
+  let nowMs = 0;
+  let sleepTarget = sleepCallsA;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    runTimeoutMs: 1000,
+    readChainStatus: notTerminal,
+    pollIntervalMs: 200,
+    sleep: (ms: number) => {
+      sleepTarget.push(ms);
+      nowMs += ms;
+      return Promise.resolve();
+    },
+    now: (): number => nowMs,
+  });
+  // First call: 600ms requested, 1000ms budget → effective 600ms.
+  await ctx.awaitChain("conv-1", { timeoutMs: 600 });
+  const totalA = sleepCallsA.reduce((a, b) => a + b, 0);
+  expect(totalA).toBe(600);
+  // 400ms of run budget remains.
+  // Second call: 600ms requested, but only 400ms remains → effective 400ms.
+  sleepTarget = sleepCallsB;
+  const out = await ctx.awaitChain("conv-1", { timeoutMs: 600 });
+  expect(out.status).toBe("timeout");
+  const totalB = sleepCallsB.reduce((a, b) => a + b, 0);
+  expect(totalB).toBe(400);
+});
+
+test("awaitChain returns timeout immediately when run budget exhausted (no status poll)", async () => {
+  let statusCalls = 0;
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    runTimeoutMs: 100,
+    readChainStatus: () => {
+      statusCalls += 1;
+      return notTerminal();
+    },
+    pollIntervalMs: 200,
+    sleep: (ms: number) => {
+      nowMs += ms;
+      return Promise.resolve();
+    },
+    now: (): number => nowMs,
+  });
+  nowMs = 101;
+  const out = await ctx.awaitChain("conv-1", { timeoutMs: 5000 });
+  expect(out.status).toBe("timeout");
+  expect(out.final_agent).toBeNull();
+  expect(out.response_text).toBeNull();
+  expect(statusCalls).toBe(0);
+});
+
+test("dispatch is rejected after run deadline expiry without chainStart side effect", async () => {
+  let chainStartCalls = 0;
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () => {
+      chainStartCalls += 1;
+      return okChainStart()({} as ChainStartRequest);
+    },
+    runTimeoutMs: 100,
+    now: (): number => nowMs,
+  });
+  nowMs = 101;
+  let caught: unknown;
+  try {
+    await ctx.dispatch({ agent: "codex", message: "too late" });
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(chainStartCalls).toBe(0);
+});
+
+test("dispatch succeeds before run deadline expiry", async () => {
+  let chainStartCalls = 0;
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () => {
+      chainStartCalls += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "conv-ok", handoff_id: "hand-ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    },
+    runTimeoutMs: 1000,
+    now: (): number => nowMs,
+  });
+  nowMs = 500;
+  const out = await ctx.dispatch({ agent: "codex", message: "in time" });
+  expect(out).toEqual({ conversation_id: "conv-ok", handoff_id: "hand-ok" });
+  expect(chainStartCalls).toBe(1);
+});
+
+test("different ctx instances have independent run clocks", async () => {
+  let nowMs = 0;
+  let callsA = 0;
+  let callsB = 0;
+  const ctxA = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () => {
+      callsA += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "ca", handoff_id: "ha" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    },
+    runTimeoutMs: 100,
+    now: (): number => nowMs,
+  });
+  const ctxB = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () => {
+      callsB += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "cb", handoff_id: "hb" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    },
+    now: (): number => nowMs,
+  });
+  nowMs = 101;
+  // ctxA expired, ctxB unbounded.
+  let caughtA: unknown;
+  try {
+    await ctxA.dispatch({ agent: "codex", message: "expired" });
+  } catch (err) {
+    caughtA = err;
+  }
+  expect(caughtA).toBeInstanceOf(Error);
+  expect(callsA).toBe(0);
+  const outB = await ctxB.dispatch({ agent: "codex", message: "fine" });
+  expect(outB).toEqual({ conversation_id: "cb", handoff_id: "hb" });
+  expect(callsB).toBe(1);
+});
+
+test("cancel is still usable after run deadline expiry", async () => {
+  let cancelCalled = false;
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    chainCancel: () => {
+      cancelCalled = true;
+      return Promise.resolve();
+    },
+    runTimeoutMs: 100,
+    now: (): number => nowMs,
+  });
+  nowMs = 101;
+  expect(ctx.deadline().expired).toBe(true);
+  await ctx.cancel("conv-1");
+  expect(cancelCalled).toBe(true);
+});
+
+test("unbounded awaitChain backoff sequence is unchanged with no runTimeoutMs", async () => {
+  const sleepCalls: number[] = [];
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+    readChainStatus: notTerminal,
+    sleep: (ms: number) => {
+      sleepCalls.push(ms);
+      nowMs += ms;
+      return Promise.resolve();
+    },
+    now: (): number => nowMs,
+  });
+  await ctx.awaitChain("conv-1", { timeoutMs: 10000 });
+  expect(sleepCalls.length).toBeGreaterThan(8);
+  expect(sleepCalls[0]).toBe(200);
+  expect(sleepCalls[1]).toBe(300);
+  expect(sleepCalls[2]).toBe(450);
+  expect(sleepCalls[3]).toBe(675);
+  expect(sleepCalls[4]).toBeCloseTo(1012.5, 5);
+  expect(sleepCalls[sleepCalls.length - 1]).toBe(2000);
 });
