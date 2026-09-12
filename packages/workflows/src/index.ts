@@ -28,5 +28,12 @@ export { writeSlashCommands } from "./slash-bridge.js";
 export { resolveTemplateVars } from "./template-vars.js";
 export type { TemplateVarContext } from "./template-vars.js";
 export { renderTemplate } from "./template.js";
+export { resolveSessionTranscript } from "./transcripts/resolve.js";
+export type {
+  ResolveSessionTranscriptInput,
+  ResolveSessionTranscriptResult,
+  TranscriptMessage,
+  TranscriptReadResult,
+} from "./transcripts/types.js";
 export { evaluateStateThresholds, evaluateTriggerEvent } from "./triggers.js";
 export type { StateMetrics } from "./triggers.js";

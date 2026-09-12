@@ -143,7 +143,10 @@ function processContentLine(line: string, state: ParseState, maxEvents: number):
   state.messages.push(extracted);
 }
 
-function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
+function sameIdentity(
+  left: Pick<BigIntStats, "dev" | "ino">,
+  right: Pick<BigIntStats, "dev" | "ino">,
+): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
@@ -199,21 +202,44 @@ function consumeChunk(
   state: ParseState,
   options: ReadCodexTranscriptOptions,
   maxEvents: number,
-): void {
+): TranscriptReadResult | null {
   let chunkOffset = 0;
   while (chunkOffset < chunk.length) {
     const newline = chunk.indexOf(0x0a, chunkOffset);
     const end = newline === -1 ? chunk.length : newline;
     appendSegment(accumulator, chunk.subarray(chunkOffset, end));
-    if (!state.identity && accumulator.bytes > IDENTITY_HEADER_MAX_BYTES) {
-      state.failure = unsupported("Codex transcript identity header exceeds 64 KiB");
-      return;
-    }
-    if (newline === -1) return;
+    if (newline === -1) return null;
     finishLine(accumulator, state, options, maxEvents);
-    if (state.failure) return;
+    if (state.failure) return state.failure;
     chunkOffset = newline + 1;
   }
+  return null;
+}
+
+async function readIdentityHeader(
+  handle: FileHandle,
+  state: ParseState,
+  accumulator: LineAccumulator,
+  options: ReadCodexTranscriptOptions,
+  maxBytes: number,
+  maxEvents: number,
+): Promise<number> {
+  let position = 0;
+  while (position < maxBytes && !state.identity && !state.failure) {
+    const byte = Buffer.allocUnsafe(1);
+    const { bytesRead } = await handle.read(byte, 0, 1, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    if (byte[0] === 0x0a) {
+      finishLine(accumulator, state, options, maxEvents);
+      break;
+    }
+    appendSegment(accumulator, byte);
+    if (accumulator.bytes > IDENTITY_HEADER_MAX_BYTES) {
+      state.failure = unsupported("Codex transcript identity header exceeds 64 KiB");
+    }
+  }
+  return position;
 }
 
 async function readBoundedTranscript(
@@ -230,10 +256,15 @@ async function readBoundedTranscript(
     eventTruncated: false,
     failure: null,
   };
-  let position = 0;
   const accumulator: LineAccumulator = { chunks: [], bytes: 0 };
+  let position = await readIdentityHeader(handle, state, accumulator, options, maxBytes, maxEvents);
 
-  while (position < maxBytes && !state.failure) {
+  if (state.failure) return state.failure;
+  if (!state.identity) {
+    return unsupported("Incomplete Codex transcript identity header");
+  }
+
+  while (position < maxBytes) {
     const requested = Math.min(READ_CHUNK_BYTES, maxBytes - position);
     const buffer = Buffer.allocUnsafe(requested);
     const { bytesRead } = await handle.read(buffer, 0, requested, position);
@@ -241,12 +272,8 @@ async function readBoundedTranscript(
     position += bytesRead;
 
     const chunk = buffer.subarray(0, bytesRead);
-    consumeChunk(chunk, accumulator, state, options, maxEvents);
-  }
-
-  if (state.failure) return state.failure;
-  if (!state.identity) {
-    return unsupported("Incomplete Codex transcript identity header");
+    const failure = consumeChunk(chunk, accumulator, state, options, maxEvents);
+    if (failure) return failure;
   }
 
   return {
@@ -282,11 +309,49 @@ function validateOptions(options: ReadCodexTranscriptOptions): TranscriptReadRes
     options.expectedSessionId.length === 0 ||
     typeof options.expectedCwd !== "string" ||
     !isAbsolute(options.expectedCwd) ||
-    resolve(options.expectedCwd) !== options.expectedCwd
+    resolve(options.expectedCwd) !== options.expectedCwd ||
+    typeof options.expectedFileIdentity.dev !== "bigint" ||
+    typeof options.expectedFileIdentity.ino !== "bigint"
   ) {
     return unsupported("Invalid Codex transcript reader options");
   }
   return null;
+}
+
+async function readAuthorizedTranscript(
+  handle: FileHandle,
+  options: ReadCodexTranscriptOptions,
+  maxBytes: number,
+  maxEvents: number,
+): Promise<TranscriptReadResult> {
+  const descriptorBefore = await handle.stat({ bigint: true });
+  if (!descriptorBefore.isFile()) {
+    return unavailable("Transcript path is not a regular file");
+  }
+  if (!sameIdentity(descriptorBefore, options.expectedFileIdentity)) {
+    return unavailable("Transcript descriptor identity does not match authorization");
+  }
+  const pathBefore = await pathSnapshot(options.path);
+  if (!pathBefore.isFile() || !sameSnapshot(descriptorBefore, pathBefore)) {
+    return unavailable("Transcript path identity changed before reading");
+  }
+
+  const result = await readBoundedTranscript(
+    handle,
+    descriptorBefore.size,
+    options,
+    maxBytes,
+    maxEvents,
+  );
+  const descriptorAfter = await handle.stat({ bigint: true });
+  const pathAfter = await pathSnapshot(options.path);
+  if (
+    !sameSnapshot(descriptorBefore, descriptorAfter) ||
+    !sameSnapshot(descriptorBefore, pathAfter)
+  ) {
+    return unavailable("Transcript changed while reading");
+  }
+  return result;
 }
 
 export async function readCodexTranscript(
@@ -309,31 +374,7 @@ export async function readCodexTranscript(
 
   let result: TranscriptReadResult;
   try {
-    const descriptorBefore = await handle.stat({ bigint: true });
-    if (!descriptorBefore.isFile()) {
-      result = unavailable("Transcript path is not a regular file");
-    } else {
-      const pathBefore = await pathSnapshot(options.path);
-      if (!pathBefore.isFile() || !sameSnapshot(descriptorBefore, pathBefore)) {
-        result = unavailable("Transcript path identity changed before reading");
-      } else {
-        result = await readBoundedTranscript(
-          handle,
-          descriptorBefore.size,
-          options,
-          maxBytes,
-          maxEvents,
-        );
-        const descriptorAfter = await handle.stat({ bigint: true });
-        const pathAfter = await pathSnapshot(options.path);
-        if (
-          !sameSnapshot(descriptorBefore, descriptorAfter) ||
-          !sameSnapshot(descriptorBefore, pathAfter)
-        ) {
-          result = unavailable("Transcript changed while reading");
-        }
-      }
-    }
+    result = await readAuthorizedTranscript(handle, options, maxBytes, maxEvents);
   } catch {
     result = unavailable();
   }

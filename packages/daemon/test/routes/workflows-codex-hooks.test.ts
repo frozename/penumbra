@@ -155,7 +155,7 @@ async function makeFixture(workflows: FixtureWorkflow[]): Promise<Fixture> {
           body: JSON.stringify(body),
         }),
       ),
-    close: () => {
+    close: (): void => {
       services.supervisor.stopAll();
       db.close();
       Reflect.deleteProperty(globalThis, key);
@@ -189,7 +189,7 @@ async function recordToolObservations(
   }
 }
 
-function ingress(overrides: Record<string, unknown> = {}) {
+function ingress(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     harness: "codex",
     role: "maestro",
@@ -214,7 +214,7 @@ function triggerBody(
   sessionId: string,
   hookIngress: Record<string, unknown>,
   extra: Record<string, unknown> = {},
-) {
+): Record<string, unknown> {
   return {
     event: { kind: "lifecycle", event },
     cwd: root,
@@ -556,6 +556,7 @@ test("Codex continuity generation is detached, coalesced, ordered and observable
         .filter((call) => call.args.session_id === "opaque-continuity")
         .map((call) => call.name),
     ).toEqual(["session-handoff", "session-handoff-draft"]);
+    const FORMAT = "penumbra-codex-rollout-fixture-v1";
     const draftArgs = fixture.state.calls.find(
       (call) =>
         call.name === "session-handoff-draft" && call.args.session_id === "opaque-continuity",
@@ -565,10 +566,12 @@ test("Codex continuity generation is detached, coalesced, ordered and observable
       session_id: "opaque-continuity",
       project_id: "codex-hook-project",
       transcript_path: "/tmp/codex-transcript.jsonl",
-      transcript_format: null,
+      transcript_format: "self-claimed-codex-jsonl",
       lineage: "root",
-      ingress: { transcript_format: null },
+      ingress: { transcript_format: "self-claimed-codex-jsonl" },
     });
+    expect(draftArgs).not.toMatchObject({ transcript_format: FORMAT });
+    expect(draftArgs).not.toMatchObject({ ingress: { transcript_format: FORMAT } });
 
     const beforeRelease = await Promise.all(
       (preCompactBody.workflow_run_ids ?? []).map(

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,11 +43,13 @@ async function makeRoot(): Promise<string> {
 }
 
 async function read(path: string, expectedCwd: string): Promise<TranscriptReadResult> {
+  const target = await stat(path, { bigint: true }).catch(() => ({ dev: 0n, ino: 0n }));
   return await readCodexTranscript({
     path,
     expectedSessionId: "wanted",
     expectedCwd,
     format: FORMAT,
+    expectedFileIdentity: { dev: target.dev, ino: target.ino },
   });
 }
 
@@ -62,12 +64,14 @@ async function runReaderInBoundedChild(
 }> {
   const source = [
     `import { readCodexTranscript } from ${JSON.stringify(READER_MODULE_URL)};`,
-    `const result = await readCodexTranscript(${JSON.stringify({
+    `import { stat } from "node:fs/promises";`,
+    `const target = await stat(${JSON.stringify(path)}, { bigint: true });`,
+    `const result = await readCodexTranscript({ ...${JSON.stringify({
       path,
       expectedSessionId: "wanted",
       expectedCwd,
       format: FORMAT,
-    })});`,
+    })}, expectedFileIdentity: { dev: target.dev, ino: target.ino } });`,
     "process.stdout.write(JSON.stringify(result));",
   ].join("\n");
   const child = Bun.spawn([process.execPath, "-e", source], {

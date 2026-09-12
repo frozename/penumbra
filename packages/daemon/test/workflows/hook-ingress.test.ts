@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 
-import { admitCodexLifecycle, CodexIngressSchema } from "@src/workflows/hook-ingress.js";
+import {
+  admitCodexLifecycle,
+  CodexIngressSchema,
+  snapshotCodexIngress,
+} from "@src/workflows/hook-ingress.js";
+
+const FORMAT = "penumbra-codex-rollout-fixture-v1";
 
 test("only explicit maestro roots reach root lifecycle selection", () => {
   const base = {
@@ -46,4 +52,35 @@ test("Codex ingress is strict and bounds metadata fields", () => {
   };
   expect(CodexIngressSchema.safeParse({ ...base, source: "x".repeat(129) }).success).toBe(false);
   expect(CodexIngressSchema.safeParse({ ...base, authority: "root" }).success).toBe(false);
+});
+
+test("qualified Codex ingress enriches only absent or null transcript formats", () => {
+  const base = {
+    harness: "codex" as const,
+    role: "maestro" as const,
+    lineage: "root" as const,
+    provenance: "verified-launch" as const,
+    is_child: false,
+    parent_session_id: null,
+    agent_id: null,
+    agent_type: null,
+    source: "startup",
+    turn_id: null,
+    tool_use_id: null,
+    delivery_id: null,
+  };
+
+  for (const transcriptFormat of [undefined, null]) {
+    const parsed = CodexIngressSchema.parse({
+      ...base,
+      ...(transcriptFormat === undefined ? {} : { transcript_format: transcriptFormat }),
+    });
+    expect(snapshotCodexIngress(parsed).transcript_format).toBe(FORMAT);
+  }
+
+  const unknown = CodexIngressSchema.parse({
+    ...base,
+    transcript_format: "self-claimed-codex-jsonl",
+  });
+  expect(snapshotCodexIngress(unknown).transcript_format).toBe("self-claimed-codex-jsonl");
 });

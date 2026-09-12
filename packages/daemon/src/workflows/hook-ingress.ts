@@ -3,6 +3,7 @@ import { z } from "zod";
 const BOUNDED_ID = z.string().max(128).nullable();
 const DELIVERY_TTL_MS = 5 * 60 * 1000;
 const DELIVERY_MAX_ENTRIES = 2_048;
+const QUALIFIED_CODEX_TRANSCRIPT_FORMAT = "penumbra-codex-rollout-fixture-v1";
 
 export const CodexIngressSchema = z
   .object({
@@ -18,7 +19,7 @@ export const CodexIngressSchema = z
     turn_id: BOUNDED_ID,
     tool_use_id: BOUNDED_ID,
     delivery_id: BOUNDED_ID,
-    transcript_format: z.string().max(128).nullable(),
+    transcript_format: z.string().max(128).nullish(),
   })
   .strict();
 
@@ -38,7 +39,10 @@ export function admitCodexLifecycle(ingress: CodexIngress): boolean {
 }
 
 export function snapshotCodexIngress(ingress: CodexIngress): CodexIngress {
-  return { ...ingress, transcript_format: null };
+  return {
+    ...ingress,
+    transcript_format: ingress.transcript_format ?? QUALIFIED_CODEX_TRANSCRIPT_FORMAT,
+  };
 }
 
 function pruneDeliveries(now: number): void {

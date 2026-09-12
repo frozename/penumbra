@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { appendFile, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,11 +67,13 @@ async function readSynthetic(
   expectedSessionId = "wanted",
   caps: { maxBytes?: number; maxEvents?: number } = {},
 ): Promise<TranscriptReadResult> {
+  const target = await stat(path, { bigint: true });
   return await readCodexTranscript({
     path,
     expectedSessionId,
     expectedCwd,
     format: FORMAT,
+    expectedFileIdentity: { dev: target.dev, ino: target.ino },
     ...caps,
   });
 }
@@ -83,6 +94,10 @@ test("reads the supplied disposable CLI capture without event_msg duplicates", a
       expectedSessionId: FIXTURE_SESSION_ID,
       expectedCwd: root,
       format: FORMAT,
+      expectedFileIdentity: await stat(path, { bigint: true }).then(({ dev, ino }) => ({
+        dev,
+        ino,
+      })),
     });
 
     expect(result).toEqual({
@@ -109,6 +124,7 @@ test("rejects an unknown or absent format before requiring a readable path", asy
     path: "/not/read/for/an/unsupported/format.jsonl",
     expectedSessionId: "wanted",
     expectedCwd: "/canonical/cwd",
+    expectedFileIdentity: { dev: 0n, ino: 0n },
   };
 
   expect((await readCodexTranscript({ ...base, format: "unknown-format" })).status).toBe(
@@ -130,6 +146,7 @@ test("rejects invalid byte and event caps deterministically before path I/O", as
     expectedSessionId: "wanted",
     expectedCwd: "/canonical/cwd",
     format: FORMAT,
+    expectedFileIdentity: { dev: 0n, ino: 0n },
   };
 
   for (const maxBytes of [
@@ -164,10 +181,38 @@ test("returns unavailable for an exact path that does not exist", async () => {
     expectedSessionId: "wanted",
     expectedCwd: "/canonical/cwd",
     format: FORMAT,
+    expectedFileIdentity: { dev: 0n, ino: 0n },
   });
 
   expect(result.status).toBe("unavailable");
   expect("messages" in result).toBe(false);
+});
+
+test("rejects an unexpected descriptor identity before parsing its header", async () => {
+  const root = await makeSyntheticRoot();
+  const path = join(root, "unexpected-identity.jsonl");
+  try {
+    await writeFile(
+      path,
+      jsonl([sessionMeta(root, "wrong-session"), message("user", "PRIVATE_SENTINEL")]),
+    );
+
+    const result = await readCodexTranscript({
+      path,
+      expectedSessionId: "wanted",
+      expectedCwd: root,
+      format: FORMAT,
+      expectedFileIdentity: { dev: 0n, ino: 0n },
+    });
+
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "Transcript descriptor identity does not match authorization",
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_SENTINEL");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("synthetic negative: rejects a neighboring session even when cwd matches", async () => {
