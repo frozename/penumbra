@@ -424,12 +424,8 @@ export {
   type RouteAgentOutput,
   type RoutingBiasEffectInput,
 } from "./services/agent-routing.js";
-export {
-  type DispatchEventInput,
-  type DispatchEventKind,
-  DispatchEventLog,
-  type DispatchEventRow,
-} from "./services/dispatch-event-log.js";
+export * from "./services/dispatch-audit-report.js";
+export * from "./services/dispatch-event-log.js";
 export {
   refineDispatchPrompt,
   type RefineDispatchPromptOpts,
