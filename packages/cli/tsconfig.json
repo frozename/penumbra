@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "paths": { "@src/*": ["./src/*"] },
+    "paths": {
+      "@harness-parity/*": ["../../test/harness-parity/*"],
+      "@src/*": ["./src/*"]
+    },
     "composite": true,
     "outDir": "./dist"
   },
