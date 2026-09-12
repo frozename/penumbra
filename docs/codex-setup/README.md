@@ -68,3 +68,32 @@ reason. The sanitized 2026-09-10 CLI report records `codex-cli 0.153.4`, MCP
 configuration and plugin command syntax only; no hook, plugin-installation, or
 desktop capability is inferred. Desktop status requires isolated manual
 interaction and cannot inherit CLI results.
+
+## Ownership-safe setup
+
+The Codex setup module supports explicit `standalone` and `plugin` modes. In
+standalone mode it installs the complete validated skill inventory from the
+dedicated Codex package and configures the `penumbra` stdio MCP server with the
+current Bun executable, the absolute MCP entrypoint, and
+`PENUMBRA_STORAGE_ROOT`. In plugin mode it uses only an injected host adapter
+whose plugin-management capability and argv arrays were independently proven;
+unknown or unavailable plugin support does not fall back to standalone skills.
+
+Penumbra records only its own files, hashes, destinations, MCP block, and plugin
+identifier in `<codexDir>/penumbra/installation.json`. Status compares that
+record with every installed component. Install and repair stop before writes on
+predictable ownership conflicts, while uninstall removes only unchanged owned
+content and preserves user edits and unrelated Codex configuration.
+
+Plugin installation is confirmed only when the adapter explicitly returns both
+`ok: true` and `installed: true`. Repair reinstalls a previously owned plugin
+only after a successful status check explicitly reports `installed: false`, then
+requires the same explicit confirmation from the install call. Missing or failed
+status results remain unknown and do not trigger speculative installation or
+local ownership changes. Re-running repair for an installed plugin is idempotent.
+
+An `installed` result means the files and configuration are present on disk. A
+running Codex host may still need to reload its profile before it observes the
+change. Task 2.2 does not install lifecycle hooks or telemetry; hooks remain
+`absent` until phase 3, and daemon connection files produce only a separate
+telemetry `absent` or `unknown` status rather than an invented endpoint.
