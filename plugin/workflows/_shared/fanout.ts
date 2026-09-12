@@ -136,11 +136,11 @@ function resolveTask(
   };
   setDefined(request, "task_name", task.task_name ?? task.label ?? defaults.task_name);
   setDefined(request, "branch_type", task.branch_type ?? defaults.branch_type);
-  setDefined(request, "task_class", task.task_class ?? defaults.task_class);
-  setDefined(request, "task_type", task.task_type ?? defaults.task_type);
-  setDefined(request, "trust_mode", task.trust_mode ?? defaults.trust_mode);
-  setDefined(request, "use_worktree", task.use_worktree ?? defaults.use_worktree);
-  setDefined(request, "max_hops", task.max_hops ?? defaults.max_hops);
+  setDefined(request, "task_class", task.task_class ?? defaults.task_class ?? "STANDARD");
+  setDefined(request, "task_type", task.task_type ?? defaults.task_type ?? "unknown");
+  setDefined(request, "trust_mode", task.trust_mode ?? defaults.trust_mode ?? "all");
+  setDefined(request, "use_worktree", task.use_worktree ?? defaults.use_worktree ?? true);
+  setDefined(request, "max_hops", task.max_hops ?? defaults.max_hops ?? 8);
   setDefined(request, "parent_handoff_id", task.parent_handoff_id ?? defaults.parent_handoff_id);
   setDefined(request, "branch_base", task.branch_base ?? defaults.branch_base);
   setDefined(request, "isolated_install", task.isolated_install ?? defaults.isolated_install);

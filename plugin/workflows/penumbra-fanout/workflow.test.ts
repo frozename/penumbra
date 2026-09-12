@@ -308,6 +308,31 @@ test("defaults routing to executor without consulting global configuration", asy
   expect(captured[0]?.project_id).toBe("penumbra");
 });
 
+test("forwards shared floor defaults when defaults are omitted", async () => {
+  const captured: ChainStartRequest[] = [];
+  const ctx = makeCtx({
+    args: { tasks: [{ message: "work" }] },
+    chainStart: async (input) => {
+      captured.push(input);
+      return chainStartForIndex(0, null);
+    },
+  });
+
+  await fn(ctx, emptyRecall());
+
+  expect(captured[0]).toMatchObject({
+    initial_agent: "executor",
+    task_name: "task-0",
+    task_class: "STANDARD",
+    task_type: "unknown",
+    trust_mode: "all",
+    use_worktree: true,
+    max_hops: 8,
+    project_id: "penumbra",
+    dispatch_kind: "workflow",
+  });
+});
+
 test("resolves label/name/title aliases for task_name", async () => {
   const captured: ChainStartRequest[] = [];
   const ctx = makeCtx({
