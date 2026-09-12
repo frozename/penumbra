@@ -2250,45 +2250,7 @@ export function chainsResponsesRoute(req: Request, services: Services): Response
   return json({ responses });
 }
 
-export function chainsMessagesRoute(req: Request, services: Services): Response {
-  const url = new URL(req.url);
-  const conversation_id = url.searchParams.get("conversation_id");
-  if (!conversation_id) {
-    return json(
-      { error: { code: "missing_param", message: "conversation_id query parameter is required" } },
-      400,
-    );
-  }
-  const typesParam = url.searchParams.get("types");
-  const types = typesParam
-    ? typesParam
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0)
-    : undefined;
-
-  const limitParam = url.searchParams.get("limit");
-  const offsetParam = url.searchParams.get("offset");
-  const beforeTsParam = url.searchParams.get("before_ts");
-  const parsedLimit = limitParam !== null ? Number.parseInt(limitParam, 10) : undefined;
-  const parsedOffset = offsetParam !== null ? Number.parseInt(offsetParam, 10) : undefined;
-  const limit =
-    parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? parsedLimit
-      : undefined;
-  const offset =
-    parsedOffset !== undefined && Number.isFinite(parsedOffset) && parsedOffset >= 0
-      ? parsedOffset
-      : undefined;
-  const before_ts = beforeTsParam !== null && beforeTsParam.length > 0 ? beforeTsParam : undefined;
-
-  const events = services.chainReader.getMessages(conversation_id, types, {
-    limit,
-    offset,
-    before_ts,
-  });
-  return json({ events });
-}
+export { chainsMessagesRoute } from "./chains-messages.js";
 
 export async function chainSendMessageRoute(
   req: Request,

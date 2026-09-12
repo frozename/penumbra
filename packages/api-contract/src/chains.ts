@@ -74,6 +74,16 @@ export const ChainMessagesResponseSchema = z
   .loose();
 export type ChainMessagesResponse = z.infer<typeof ChainMessagesResponseSchema>;
 
+export const ChainMessagesTailOptionsSchema = z
+  .object({
+    tail: z.literal(true),
+    limit: z.number().int().positive().max(500).default(500),
+    offset: z.literal(0).optional(),
+    before_ts: z.string().optional(),
+  })
+  .strict();
+export type ChainMessagesTailOptions = z.infer<typeof ChainMessagesTailOptionsSchema>;
+
 export const ChainAgentSchema = z.object({ name: z.string() }).loose();
 export type ChainAgent = z.infer<typeof ChainAgentSchema>;
 
