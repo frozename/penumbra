@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { runChainSendMessage } from "../src/commands/chain.js";
 import { loadCodexHookCapabilities } from "../src/commands/codex-hook-capabilities.js";
+import { createCodexPluginHost } from "../src/commands/codex-plugin-host.js";
 import { runCodexSafetyHook } from "../src/commands/codex-safety-hook.js";
 import {
   type CodexSetupAction,
@@ -1435,6 +1436,17 @@ async function codexSetupOptions(
   modeFlag: string,
   storageRoot: string,
 ): Promise<Omit<CodexSetupOptions, "action">> {
+  const mode = readCodexMode(command, modeFlag);
+  const codexDir = readAbsolutePathFlag(
+    command,
+    "--codex-dir",
+    process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  );
+  const skillsDir = readAbsolutePathFlag(
+    command,
+    "--skills-dir",
+    join(homedir(), ".agents/skills"),
+  );
   const reportPath = readCommandFlagValue(command, "--capability-report");
   if (reportPath !== undefined && !isAbsolute(reportPath)) {
     exitWithUsage(command, `--capability-report must be an absolute path: ${reportPath}`);
@@ -1451,17 +1463,20 @@ async function codexSetupOptions(
       exitWithUsage(command, error instanceof Error ? error.message : String(error));
     }
   }
+  const marketplaceRoot = fileURLToPath(new URL("../../../plugin/codex", import.meta.url));
+  const packageDir = join(marketplaceRoot, "penumbra");
+  const host =
+    mode === "plugin"
+      ? await createCodexPluginHost({ codexDir, marketplaceRoot, pluginRoot: packageDir })
+      : undefined;
   return {
-    mode: readCodexMode(command, modeFlag),
-    codexDir: readAbsolutePathFlag(
-      command,
-      "--codex-dir",
-      process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-    ),
-    skillsDir: readAbsolutePathFlag(command, "--skills-dir", join(homedir(), ".agents/skills")),
-    packageDir: fileURLToPath(new URL("../../../plugin/codex/penumbra", import.meta.url)),
+    mode,
+    codexDir,
+    skillsDir,
+    packageDir,
     storageRoot,
     mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+    ...(host ? { host } : {}),
     ...capabilities,
   };
 }

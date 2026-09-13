@@ -366,14 +366,29 @@ test("repair and uninstall delegate actions and preserve unrelated files", async
   }
 });
 
-test("unsupported plugin mode is unavailable without standalone writes", async () => {
+test("unqualified plugin command help is unknown without standalone writes", async () => {
   const fixture = makeFixture("codex-plugin-cli-");
   try {
+    const binDir = join(fixture.root, "bin");
+    const codex = join(binDir, "codex");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      codex,
+      `#!/bin/sh
+case "$*" in
+  "--version") printf "codex-cli 0.153.4\\n" ;;
+  "plugin --help") printf "Usage: codex plugin <add|list|remove|marketplace>\\n"; printf "unexpected help stderr\\n" >&2 ;;
+  "plugin marketplace --help") printf "Usage: codex plugin marketplace <add|list|remove>\\n" ;;
+  *) exit 2 ;;
+esac
+`,
+    );
+    chmodSync(codex, 0o700);
     const result = await runCli(fixture, setupArgs(fixture, "install", "plugin"));
     expect(result.exit).not.toBe(0);
     const report = parseSetupJson(result);
     expect(report.ok).toBe(false);
-    expect(report.components.skills.state).toBe("unavailable");
+    expect(report.components.skills.state).toBe("unknown");
     expect(existsSync(join(fixture.codexDir, "config.toml"))).toBe(false);
     expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
     expect(existsSync(fixture.skillsDir)).toBe(false);

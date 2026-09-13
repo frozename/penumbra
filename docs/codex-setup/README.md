@@ -88,9 +88,11 @@ The Codex setup module supports explicit `standalone` and `plugin` modes. In
 standalone mode it installs the complete validated skill inventory from the
 dedicated Codex package and configures the `penumbra` stdio MCP server with the
 current Bun executable, the absolute MCP entrypoint, and
-`PENUMBRA_STORAGE_ROOT`. In plugin mode it uses only an injected host adapter
-whose plugin-management capability and argv arrays were independently proven;
-unknown or unavailable plugin support does not fall back to standalone skills.
+`PENUMBRA_STORAGE_ROOT`. Plugin mode uses the bundled `penumbra-local`
+marketplace under `plugin/codex` and a bounded executable adapter pinned to the
+independently observed Codex CLI 0.153.4 command family. Unknown builds,
+unqualified help, malformed JSON, and unavailable plugin support do not fall
+back to standalone skills.
 
 ### Explicit CLI setup
 
@@ -115,26 +117,43 @@ penumbra codex-setup repair --codex-dir /absolute/path/to/.codex --skills-dir /a
 penumbra codex-setup uninstall --codex-dir /absolute/path/to/.codex --skills-dir /absolute/path/to/.agents/skills --mode standalone --json
 ```
 
+To use the bundled local plugin, select it explicitly:
+
+```sh
+penumbra codex-setup install --codex-dir /absolute/path/to/.codex --mode plugin --json
+penumbra codex-setup status --codex-dir /absolute/path/to/.codex --mode plugin --json
+penumbra codex-setup repair --codex-dir /absolute/path/to/.codex --mode plugin --json
+penumbra codex-setup uninstall --codex-dir /absolute/path/to/.codex --mode plugin --json
+```
+
 Explicit paths must be absolute. When omitted, the Codex directory follows
 `CODEX_HOME` or `~/.codex`, while standalone skills remain under
 `~/.agents/skills`. Mode selection is mandatory: plugin installation is not a
-verified default, and requesting unavailable plugin support exits nonzero
+default, and requesting unavailable plugin support exits nonzero
 without falling back to standalone writes. A readable status report exits zero
 even when components are absent or unknown; conflicts and failed mutating
 actions exit nonzero.
 
-Penumbra records only its own files, hashes, destinations, MCP block, and plugin
-identifier in `<codexDir>/penumbra/installation.json`. Status compares that
-record with every installed component. Install and repair stop before writes on
-predictable ownership conflicts, while uninstall removes only unchanged owned
-content and preserves user edits and unrelated Codex configuration.
+Penumbra records only its own files, hashes, destinations, MCP block, plugin
+identifier, and newly created local-marketplace ownership in
+`<codexDir>/penumbra/installation.json`. Status compares that record with every
+installed component. Install and repair stop before writes on predictable
+ownership conflicts, while uninstall removes only unchanged owned content and
+preserves user edits, unrelated Codex configuration, and unowned marketplace
+registrations.
 
 Plugin installation is confirmed only when the adapter explicitly returns both
 `ok: true` and `installed: true`. Repair reinstalls a previously owned plugin
 only after a successful status check explicitly reports `installed: false`, then
 requires the same explicit confirmation from the install call. Missing or failed
 status results remain unknown and do not trigger speculative installation or
-local ownership changes. Re-running repair for an installed plugin is idempotent.
+local ownership changes. A usable plugin must be installed and enabled with the
+exact `penumbra@penumbra-local` identity, bundled local source, marketplace
+root, and policies. Uninstall removes the owned marketplace only after the
+plugin is confirmed absent. Re-running repair for an installed plugin is
+idempotent. If state becomes ambiguous after Penumbra has atomically acquired
+the marketplace name, the manifest records only that proven marketplace
+ownership; it does not claim or remove an unconfirmed plugin.
 
 An `installed` result means the files and configuration are present on disk. A
 running Codex host may still need to reload its profile before it observes the

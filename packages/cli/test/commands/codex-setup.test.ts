@@ -60,7 +60,14 @@ interface TestManifest {
   schemaVersion: number;
   mode: string;
   codexDir: string;
-  plugin?: { identifier: string };
+  plugin?: {
+    identifier: string;
+    marketplaceName?: string;
+    marketplaceRoot?: string;
+    pluginRoot?: string;
+    marketplaceOwned?: true;
+    pluginOwned?: boolean;
+  };
   hooks?: {
     configPath: string;
     commandPrefix: string;
@@ -613,6 +620,234 @@ test("supported plugin adapter receives only its pinned argv arrays", async () =
     });
     expect(status.ok).toBe(true);
     expect(calls.at(-1)).toEqual(["codex", "plugin", "get", "penumbra@verified"]);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("plugin marketplace ownership round-trips into status and uninstall", async () => {
+  const fixture = makeFixture("codex-setup-plugin-ownership-");
+  const ownership = {
+    identifier: "penumbra@penumbra-local",
+    marketplaceName: "penumbra-local",
+    marketplaceRoot: fixture.root,
+    pluginRoot: fixture.packageDir,
+    marketplaceOwned: true as const,
+    pluginOwned: true as const,
+  };
+  const calls: { argv: string[]; ownership: unknown }[] = [];
+  const host: CodexSetupHost = {
+    plugin: {
+      state: "supported",
+      identifier: ownership.identifier,
+      installArgv: ["codex", "plugin", "add", ownership.identifier],
+      statusArgv: ["codex", "plugin", "list"],
+      uninstallArgv: ["codex", "plugin", "remove", ownership.identifier],
+    },
+    invoke: (argv, prior) => {
+      calls.push({ argv: [...argv], ownership: prior });
+      return Promise.resolve(
+        argv[2] === "remove"
+          ? { ok: true, installed: false }
+          : { ok: true, installed: true, ownership },
+      );
+    },
+  };
+  try {
+    const installed = await runCodexSetup({ ...fixture.opts, mode: "plugin", host });
+    expect(installed.ok).toBe(true);
+    expect(manifest(fixture).plugin).toEqual(ownership);
+
+    const status = await runCodexSetup({
+      ...fixture.opts,
+      action: "status",
+      mode: "plugin",
+      host,
+    });
+    expect(status.components.skills.state).toBe("installed");
+    expect(calls.at(-1)?.ownership).toEqual(ownership);
+
+    const removed = await runCodexSetup({
+      ...fixture.opts,
+      action: "uninstall",
+      mode: "plugin",
+      host,
+    });
+    expect(removed.ok).toBe(true);
+    expect(calls.at(-1)?.ownership).toEqual(ownership);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("an ambiguous fresh install persists only proven marketplace ownership for safe cleanup", async () => {
+  const fixture = makeFixture("codex-setup-plugin-residual-");
+  const partialOwnership = {
+    identifier: "penumbra@penumbra-local",
+    marketplaceName: "penumbra-local",
+    marketplaceRoot: fixture.root,
+    pluginRoot: fixture.packageDir,
+    marketplaceOwned: true as const,
+    pluginOwned: false as const,
+  };
+  const calls: unknown[] = [];
+  const host: CodexSetupHost = {
+    plugin: {
+      state: "supported",
+      identifier: partialOwnership.identifier,
+      installArgv: ["codex", "plugin", "add", partialOwnership.identifier],
+      statusArgv: ["codex", "plugin", "list"],
+      uninstallArgv: ["codex", "plugin", "remove", partialOwnership.identifier],
+    },
+    invoke: (argv, ownership) => {
+      calls.push({ argv: [...argv], ownership });
+      if (argv[2] === "add") {
+        return Promise.resolve({
+          ok: false,
+          detail: "plugin status became ambiguous",
+          ownership: partialOwnership as never,
+        });
+      }
+      return Promise.resolve({ ok: true, installed: false });
+    },
+  };
+  try {
+    const failed = await runCodexSetup({ ...fixture.opts, mode: "plugin", host });
+    expect(failed.ok).toBe(false);
+    expect(failed.changed).toBe(true);
+    expect(manifest(fixture).plugin).toEqual(partialOwnership);
+    expect(existsSync(join(fixture.codexDir, "config.toml"))).toBe(false);
+
+    const removed = await runCodexSetup({
+      ...fixture.opts,
+      action: "uninstall",
+      mode: "plugin",
+      host,
+    });
+    expect(removed.ok).toBe(true);
+    expect((calls.at(-1) as { ownership: unknown }).ownership).toEqual(partialOwnership);
+    expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("forged adapter ownership is rejected before local setup writes", async () => {
+  const fixture = makeFixture("codex-setup-plugin-forged-ownership-");
+  const host: CodexSetupHost = {
+    plugin: {
+      state: "supported",
+      identifier: "penumbra@penumbra-local",
+      installArgv: ["codex", "plugin", "add", "penumbra@penumbra-local"],
+      statusArgv: ["codex", "plugin", "list"],
+      uninstallArgv: ["codex", "plugin", "remove", "penumbra@penumbra-local"],
+    },
+    invoke: () =>
+      Promise.resolve({
+        ok: true,
+        installed: true,
+        ownership: {
+          identifier: "penumbra@penumbra-local",
+          marketplaceName: "penumbra-local",
+          marketplaceRoot: fixture.root,
+          pluginRoot: fixture.packageDir,
+          marketplaceOwned: false,
+          pluginOwned: true,
+        } as never,
+      }),
+  };
+  try {
+    seedUnrelated(fixture);
+    const before = walkSnapshot(fixture.root);
+    const result = await runCodexSetup({ ...fixture.opts, mode: "plugin", host });
+    expect(result.ok).toBe(false);
+    expect(result.changed).toBe(false);
+    expect(walkSnapshot(fixture.root)).toEqual(before);
+    expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("plugin uninstall requires explicit confirmed absence", async () => {
+  for (const installed of [undefined, true]) {
+    const fixture = makeFixture(`codex-setup-plugin-remove-${String(installed)}-`);
+    let removing = false;
+    const host: CodexSetupHost = {
+      plugin: {
+        state: "supported",
+        identifier: "penumbra@verified",
+        installArgv: ["codex", "plugin", "install", "penumbra@verified"],
+        statusArgv: ["codex", "plugin", "get", "penumbra@verified"],
+        uninstallArgv: ["codex", "plugin", "remove", "penumbra@verified"],
+      },
+      invoke: (argv) => {
+        if (argv[2] === "remove") removing = true;
+        return Promise.resolve(removing ? { ok: true, installed } : { ok: true, installed: true });
+      },
+    };
+    try {
+      expect((await runCodexSetup({ ...fixture.opts, mode: "plugin", host })).ok).toBe(true);
+      const before = walkSnapshot(fixture.root);
+      const removed = await runCodexSetup({
+        ...fixture.opts,
+        action: "uninstall",
+        mode: "plugin",
+        host,
+      });
+      expect(removed.ok).toBe(false);
+      expect(removed.changed).toBe(true);
+      expect(removed.components.skills.state).toBe("conflict");
+      expect(walkSnapshot(fixture.root)).not.toEqual(before);
+      expect(manifest(fixture).plugin?.identifier).toBe("penumbra@verified");
+    } finally {
+      cleanup(fixture);
+    }
+  }
+});
+
+test("a later local failure rolls back only a freshly owned plugin transaction", async () => {
+  const fixture = makeFixture("codex-setup-plugin-transaction-");
+  const ownership = {
+    identifier: "penumbra@penumbra-local",
+    marketplaceName: "penumbra-local",
+    marketplaceRoot: fixture.root,
+    pluginRoot: fixture.packageDir,
+    marketplaceOwned: true as const,
+    pluginOwned: true as const,
+  };
+  const marker = join(fixture.root, "plugin-installed");
+  const calls: string[][] = [];
+  const host: CodexSetupHost = {
+    plugin: {
+      state: "supported",
+      identifier: ownership.identifier,
+      installArgv: ["codex", "plugin", "add", ownership.identifier],
+      statusArgv: ["codex", "plugin", "list"],
+      uninstallArgv: ["codex", "plugin", "remove", ownership.identifier],
+    },
+    invoke: (argv, prior) => {
+      calls.push([...argv]);
+      if (argv[2] === "add") {
+        writeFileSync(marker, "owned\n");
+        writeFileSync(join(fixture.codexDir, "penumbra"), "blocks manifest directory\n");
+        return Promise.resolve({ ok: true, installed: true, ownership });
+      }
+      expect(prior).toEqual(ownership);
+      rmSync(marker);
+      return Promise.resolve({ ok: true, installed: false });
+    },
+  };
+  try {
+    mkdirSync(fixture.codexDir, { recursive: true });
+    const result = await runCodexSetup({ ...fixture.opts, mode: "plugin", host });
+    expect(result.ok).toBe(false);
+    expect(calls).toEqual([
+      ["codex", "plugin", "add", ownership.identifier],
+      ["codex", "plugin", "remove", ownership.identifier],
+    ]);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(join(fixture.codexDir, "penumbra", "installation.json"))).toBe(false);
   } finally {
     cleanup(fixture);
   }
