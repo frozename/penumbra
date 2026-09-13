@@ -1,16 +1,8 @@
 import { Services } from "@penumbra/core";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
 
 import { json } from "./_helpers.js";
-import { projectIdForHandoff, resolveWorktreeForHandoff } from "./worktree-resolve.js";
-const execFile = promisify(execFileCb);
-const WORKTREE_STATUS_PATHS = [
-  ".",
-  ":(exclude)node_modules",
-  ":(exclude)packages/*/node_modules",
-  ":(exclude).test-storage",
-] as const;
+import { inspectWorktreeForHandoff } from "./worktree-inspection.js";
+import { projectIdForHandoff } from "./worktree-resolve.js";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -22,54 +14,21 @@ export function worktreesListRoute(_req: Request, services: Services): Response 
 }
 
 export async function worktreesInspectRoute(
-  req: Request,
+  _req: Request,
   handoff_id: string,
   services: Services,
 ): Promise<Response> {
-  const wt = resolveWorktreeForHandoff(services, handoff_id);
-  if (!wt) {
+  const result = await inspectWorktreeForHandoff(services, handoff_id);
+  if (!result.ok && result.code === "not_found") {
     return json(
       { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
       404,
     );
   }
-
-  try {
-    const [diffRes, statusRes, logRes] = await Promise.all([
-      execFile("git", ["-C", wt.path, "diff", "main..HEAD"]).catch((err: unknown) => ({
-        stdout: `[diff error: ${errorMessage(err)}]`,
-      })),
-      execFile("git", [
-        "-C",
-        wt.path,
-        "status",
-        "--short",
-        "--untracked-files=all",
-        "--",
-        ...WORKTREE_STATUS_PATHS,
-      ]).catch((err: unknown) => ({ stdout: `[status error: ${errorMessage(err)}]` })),
-      execFile("git", ["-C", wt.path, "log", "--oneline", "main..HEAD"]).catch((err: unknown) => ({
-        stdout: `[log error: ${errorMessage(err)}]`,
-      })),
-    ]);
-
-    const parts = [diffRes.stdout];
-    if (statusRes.stdout.trim()) {
-      parts.push(`\n# git status --short\n${statusRes.stdout}`);
-    }
-    let diff_against_main = parts.join("");
-    if (diff_against_main.length > 10240) {
-      diff_against_main = diff_against_main.slice(0, 10240) + "\n... [truncated]";
-    }
-
-    return json({
-      worktree: wt,
-      diff_against_main,
-      branch_log: logRes.stdout,
-    });
-  } catch (err) {
-    return json({ error: { code: "internal_error", message: errorMessage(err) } }, 500);
+  if (!result.ok) {
+    return json({ error: { code: "internal_error", message: result.message } }, 500);
   }
+  return json(result.inspection);
 }
 
 export async function worktreesCleanupRoute(

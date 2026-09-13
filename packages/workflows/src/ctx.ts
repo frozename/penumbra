@@ -44,6 +44,28 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   project: string;
   args: TArgs;
   deadline?(): { remaining_ms: number | null; expired: boolean };
+  worktreeInspect?(handoffId: string): Promise<{
+    worktree: {
+      handoffId: string;
+      path: string;
+      branchName: string;
+      storageRoot: string;
+      createdAt: string;
+      status: "created" | "merged" | "failed" | "expired";
+      projectId?: string;
+      worktreeMode: "symlink_mirror" | "isolated_install";
+    };
+    diff_against_main: string;
+    branch_log: string;
+    head_sha: string;
+    branch_name: string;
+    dirty: boolean;
+    truncation: {
+      diff_against_main: boolean;
+      branch_log: boolean;
+      total: boolean;
+    };
+  } | null>;
 };
 
 type DisposableWorkflowCtx<TArgs = Record<string, unknown>> = WorkflowCtx<TArgs> & {

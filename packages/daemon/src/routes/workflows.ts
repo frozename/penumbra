@@ -45,6 +45,7 @@ import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
 import { conversationsCancelRoute } from "./conversations.js";
 import { lookupSessionStart } from "./sessions.js";
+import { inspectWorktreeForHandoff, type WorktreeInspection } from "./worktree-inspection.js";
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
 
 const MAX_EVENTS_SCANNED_DEFAULT = 500;
@@ -835,6 +836,13 @@ function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
   return {
     ...base,
     db: () => opts.services.db,
+    worktreeInspect: async (handoffId): Promise<WorktreeInspection | null> => {
+      const result = await inspectWorktreeForHandoff(opts.services, handoffId, {
+        expectedProjectId: opts.project,
+        deadline: base.deadline,
+      });
+      return result.ok ? result.inspection : null;
+    },
     chainStart: (input: ChainStartRequest): Promise<Response> | Response => {
       if (base.deadline().expired) {
         return new Response(

@@ -8,7 +8,6 @@ import {
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, spyOn, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +18,13 @@ import {
   worktreesInspectRoute,
   worktreesListRoute,
 } from "@src/routes/worktrees.js";
+
+import {
+  createInspectionWorktree,
+  createWorktreeInspectionHarness,
+  gitOutput,
+  seedInspectionHandoff,
+} from "../helpers/worktree-inspection.js";
 
 try {
   if (process.platform === "darwin")
@@ -40,6 +46,14 @@ interface WorktreeInspectBody {
   worktree?: WorktreeHandle;
   diff_against_main: string;
   branch_log: string;
+  head_sha: string;
+  branch_name: string;
+  dirty: boolean;
+  truncation: {
+    diff_against_main: boolean;
+    branch_log: boolean;
+    total: boolean;
+  };
 }
 
 interface WorktreeCleanupBody {
@@ -126,34 +140,49 @@ test("worktree.inspect returns 404 if not found", async () => {
   expect(typeof err === "object" ? err.code : err).toBe("not_found");
 });
 
-test("worktree.inspect includes relevant untracked files but filters framework symlinks", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "worktree-inspect-"));
+test("worktree.inspect returns a measured immutable candidate snapshot", async () => {
+  const harness = createWorktreeInspectionHarness();
   try {
-    execFileSync("git", ["init", "-b", "main"], { cwd: dir });
-    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
-    writeFileSync(join(dir, "tracked.txt"), "base\n");
-    execFileSync("git", ["add", "tracked.txt"], { cwd: dir });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: dir });
-    writeFileSync(join(dir, "acp-promotion-smoke.txt"), "ACP_WRITE_OK");
-    writeFileSync(join(dir, "node_modules"), "framework symlink placeholder");
+    const handle = await createInspectionWorktree(harness);
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    const head = gitOutput(handle.path, ["rev-parse", "HEAD"]).trim();
 
-    const services = tempServices();
-    const handle: WorktreeHandle = {
-      handoffId: "h-untracked",
-      path: dir,
-      branchName: "agent/h-untracked",
-      storageRoot: join(dir, ".test-storage"),
-      createdAt: "2026-04-26T00:00:00Z",
-      status: "created",
-      worktreeMode: "symlink_mirror",
-    };
-    spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
+    expect(body).toMatchObject({
+      worktree: handle,
+      head_sha: head,
+      branch_name: handle.branchName,
+      dirty: false,
+      truncation: {
+        diff_against_main: false,
+        branch_log: false,
+        total: false,
+      },
+    });
+    expect(body.head_sha).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+    expect(body.diff_against_main).toContain("candidate.txt");
+    expect(body.branch_log).toContain("candidate");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect includes relevant untracked files but filters framework symlinks", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness, { commit: false });
+    writeFileSync(join(handle.path, "acp-promotion-smoke.txt"), "ACP_WRITE_OK");
+    writeFileSync(join(handle.path, "node_modules"), "framework symlink placeholder");
 
     const res = await worktreesInspectRoute(
-      new Request("http://h/worktrees/h-untracked"),
-      "h-untracked",
-      services,
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
     );
     expect(res.status).toBe(200);
     const body = await readJson<WorktreeInspectBody>(res);
@@ -161,11 +190,11 @@ test("worktree.inspect includes relevant untracked files but filters framework s
     expect(body.diff_against_main).toContain("?? acp-promotion-smoke.txt");
     expect(body.diff_against_main).not.toContain("node_modules");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    harness.cleanup();
   }
 });
 
-test("worktree.inspect passes worktree paths literally to git", async () => {
+test("worktree.inspect rejects untrusted paths without shell interpretation", async () => {
   const services = tempServices();
   const dir = mkdtempSync(join(tmpdir(), "worktree-inspect-injection-"));
   const canarySemi = join(tmpdir(), `worktree-inspect-canary-semi-${String(Date.now())}`);
@@ -173,6 +202,11 @@ test("worktree.inspect passes worktree paths literally to git", async () => {
   const canaries: readonly string[] = [canarySemi, canarySubst];
 
   try {
+    seedInspectionHandoff(services, {
+      handoffId: "h-injection",
+      projectId: "project-a",
+      branchName: "agent/h-injection",
+    });
     const variants = [`worktree; touch ${canarySemi}`, `worktree-$(touch ${canarySubst})`];
 
     for (const variant of variants) {
@@ -183,6 +217,7 @@ test("worktree.inspect passes worktree paths literally to git", async () => {
         storageRoot: join(dir, ".test-storage"),
         createdAt: "2026-04-26T00:00:00Z",
         status: "created",
+        projectId: "project-a",
         worktreeMode: "symlink_mirror",
       };
       spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
@@ -192,10 +227,9 @@ test("worktree.inspect passes worktree paths literally to git", async () => {
         "h-injection",
         services,
       );
-      expect(res.status).toBe(200);
-      const body = await readJson<WorktreeInspectBody>(res);
-      expect(body.diff_against_main).toContain("[diff error:");
-      expect(body.branch_log).toContain("[log error:");
+      expect(res.status).toBe(500);
+      const body = await readJson<ErrorBody>(res);
+      expect(typeof body.error === "object" ? body.error.code : body.error).toBe("internal_error");
     }
 
     expect(canaries.every((file) => !existsSync(file))).toBe(true);
