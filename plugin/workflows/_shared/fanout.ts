@@ -76,6 +76,9 @@ export type FanoutTaskResult = {
   reliability_status: DispatchReliabilityStatus | null;
   reliability_trustworthy: boolean | null;
   reliability_action: DispatchRecommendedAction | null;
+  latest_reliability_status: DispatchReliabilityStatus | null;
+  latest_reliability_trustworthy: boolean | null;
+  latest_reliability_action: DispatchRecommendedAction | null;
   retry_count: number;
   error_code: string | null;
   error_summary: string | null;

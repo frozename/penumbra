@@ -63,7 +63,7 @@ function seedProbe(
     conversationId: string;
     handoffId: string;
     branchName: string | null;
-    reliability: "good" | "bad";
+    reliability: "good" | "missing-lifecycle";
   },
 ): void {
   const handoffs = new HandoffWriter({ db });
@@ -135,12 +135,6 @@ function seedProbe(
         source: "worker",
         kind: "dispatch.start",
         ts: "2026-09-12T10:00:01.000Z",
-      },
-      {
-        handoff_id: input.handoffId,
-        source: "worker",
-        kind: "proc.spawn",
-        ts: "2026-09-12T10:00:02.000Z",
       },
       {
         handoff_id: input.handoffId,
@@ -391,8 +385,16 @@ test("fails closed when a probe's reliability is not trustworthy", async () => {
       conversationId: "conversation-1",
       handoffId: "handoff-1",
       branchName: "smoke/probe-1",
-      reliability: "bad",
+      reliability: "missing-lifecycle",
     });
+    expect(
+      db
+        .query<{ kind: string }, [string]>(
+          "SELECT kind FROM dispatch_events WHERE handoff_id = ? ORDER BY ts",
+        )
+        .all("handoff-1")
+        .map((row) => row.kind),
+    ).toEqual(["dispatch.start", "dispatch.end"]);
 
     const ctx = makeCtx({
       db: () => db,

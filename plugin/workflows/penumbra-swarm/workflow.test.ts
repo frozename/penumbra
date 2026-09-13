@@ -462,6 +462,10 @@ test("fails closed when planner reliability is untrustworthy (zero implementatio
       branchName: null,
       reliability: "bad",
     });
+    db.query("DELETE FROM dispatch_events WHERE handoff_id = ? AND kind = ?").run(
+      "planner-h",
+      "proc.spawn",
+    );
     seedResponse(db, {
       conversationId: "planner-conv",
       handoffId: "planner-h",

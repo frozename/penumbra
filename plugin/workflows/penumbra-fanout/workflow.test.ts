@@ -66,6 +66,7 @@ function seedHandoff(
     message?: string;
     status?: "completed" | "failed";
     reliability?: "good" | "bad";
+    taskType?: "implement_small" | "review_adversarial";
     ts?: string;
   },
 ): void {
@@ -87,7 +88,7 @@ function seedHandoff(
     resolved_at: null,
     chain_max_hops: 4,
     chain_trust_mode: "all",
-    chain_task_type: "review_adversarial",
+    chain_task_type: input.taskType ?? "review_adversarial",
     use_worktree: true,
     dispatch_kind: "workflow",
     parent_handoff_id: input.parentHandoffId ?? null,
@@ -436,6 +437,7 @@ test("fails closed when reliability is untrustworthy", async () => {
       conversationId: "conversation-0",
       branchName: "feature/probe-0",
       reliability: "bad",
+      taskType: "implement_small",
     });
     seedResponse(db, {
       conversationId: "conversation-0",

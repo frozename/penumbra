@@ -478,6 +478,9 @@ describe("runFanout result isolation", () => {
       expect(result).toMatchObject({
         ok: false,
         reliability_trustworthy: null,
+        latest_reliability_status: null,
+        latest_reliability_trustworthy: null,
+        latest_reliability_action: null,
         hop_count: null,
         extra_hops: null,
         retry_prompt_count: null,
