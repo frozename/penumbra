@@ -29,6 +29,7 @@ const KNOWN_NON_PREFIX_SCRIPTS = [
   "land-and-close.js",
   "session-first-moves.js",
   "session-memory-sweep.js",
+  "penumbra.js",
 ];
 
 describe("workflow mirror guard breadth", () => {

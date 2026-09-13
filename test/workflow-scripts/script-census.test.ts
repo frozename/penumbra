@@ -27,9 +27,11 @@ const UNGUARDED: Record<string, string> = {
     "single token-opt migration with a real chain_start call; hardcoded param shape",
   "session-first-moves.js": "read-only session diagnostics, no dispatch",
   "session-memory-sweep.js": "t2 memory candidate collect/approve; no chain_start dispatch",
+  "penumbra.js":
+    "generic CC bridge to Penumbra workflow runtime via workflow_run/workflow_wait MCP proxy; no chain_start dispatch",
 };
 
-const UNGUARDED_EXPECTED_SIZE = 13;
+const UNGUARDED_EXPECTED_SIZE = 14;
 
 function readWorkflowsFixture(): string[] {
   const source = readFileSync(FIXTURE_PATH, "utf8");
