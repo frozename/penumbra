@@ -8,6 +8,23 @@ import type { Input } from "./workflow.js";
 import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
 import { fn, resolveRequestedPersonas } from "./workflow.js";
 
+const WELL_FORMED_SYNTHESIS = `Land as-is.
+
+## Shared concerns
+none - single persona
+
+## Contradictions
+none
+
+## Severity-ranked findings
+none
+
+## Recommended actions
+none
+
+## Skipped/failed personas
+none`;
+
 describe("resolveRequestedPersonas", () => {
   const available = ["security-paranoid", "performance-hawk", "ui-pragmatist"];
 
@@ -227,6 +244,187 @@ describe("adversarial-review workflow", () => {
       expect(synthesis).toContain("> Synthesizer failover: bad-synth -> good-synth");
       expect(synthesis).toContain("synthesizer_failover_from: bad-synth");
       expect(synthesis).toContain("synthesizer_failover_to: good-synth");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("emits severity metrics from parsed persona findings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-metrics-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["security", "performance"],
+              fan_out: 2,
+              synthesizer: "codex",
+            },
+          },
+          personas: {
+            security: {
+              bias: "security",
+              system_prompt: "Find security issues.",
+              preferred_agent: "security-agent",
+            },
+            performance: {
+              bias: "performance",
+              system_prompt: "Find performance issues.",
+              preferred_agent: "perf-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+        },
+        dispatch: async (input) => ({
+          conversation_id: input.agent,
+          handoff_id: input.agent,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "codex") {
+            return {
+              status: "completed" as const,
+              final_agent: "codex",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          if (conversationId === "security-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "security-agent",
+              response_text: `review for security\n\n\`\`\`json\n[{"persona":"security","severity":"high","category":"bug","file":"x.ts","line":1,"title":"h1","details":"d","suggestion":"s"},{"persona":"security","severity":"medium","category":"bug","file":"x.ts","line":2,"title":"m1","details":"d","suggestion":"s"}]\n\`\`\``,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "perf-agent",
+            response_text: `review for performance\n\n\`\`\`json\n[{"persona":"performance","severity":"low","category":"bug","file":"x.ts","line":1,"title":"l1","details":"d","suggestion":"s"},{"persona":"performance","severity":"info","category":"docs","file":"x.ts","line":2,"title":"i1","details":"d","suggestion":"s"}]\n\`\`\``,
+          };
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        high_count: number;
+        medium_count: number;
+        low_count: number;
+        severity_unparsed_personas: number;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.high_count).toBe(1);
+      expect(result.medium_count).toBe(1);
+      expect(result.low_count).toBe(1);
+      expect(result.severity_unparsed_personas).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("counts malformed and failed persona findings as unparsed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-unparsed-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["security", "performance", "simplicity"],
+              fan_out: 3,
+              synthesizer: "codex",
+            },
+          },
+          personas: {
+            security: {
+              bias: "security",
+              system_prompt: "Find security issues.",
+              preferred_agent: "security-agent",
+            },
+            performance: {
+              bias: "performance",
+              system_prompt: "Find performance issues.",
+              preferred_agent: "perf-agent",
+            },
+            simplicity: {
+              bias: "simplicity",
+              system_prompt: "Find simplicity issues.",
+              preferred_agent: "simplicity-agent",
+            },
+          },
+          review_min_personas_pass_pct: 50,
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+        },
+        dispatch: async (input) => ({
+          conversation_id: input.agent,
+          handoff_id: input.agent,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "codex") {
+            return {
+              status: "completed" as const,
+              final_agent: "codex",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          if (conversationId === "security-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "security-agent",
+              response_text: `review for security\n\n\`\`\`json\n[{"persona":"security","severity":"high","category":"bug","file":"x.ts","line":1,"title":"h1","details":"d","suggestion":"s"},{"persona":"security","severity":"critical","category":"bug","file":"x.ts","line":2,"title":"c1","details":"d","suggestion":"s"}]\n\`\`\``,
+            };
+          }
+          if (conversationId === "perf-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "perf-agent",
+              response_text: "No findings to report.",
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "simplicity-agent",
+            response_text: `review for simplicity\n\n\`\`\`json\n[{"persona":"simplicity","severity":"low","category":"bug","file":"x.ts","line":1,"title":"l1","details":"d","suggestion":"s"}]\n\`\`\``,
+          };
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        high_count: number;
+        medium_count: number;
+        low_count: number;
+        severity_unparsed_personas: number;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.high_count).toBe(1);
+      expect(result.medium_count).toBe(0);
+      expect(result.low_count).toBe(1);
+      expect(result.severity_unparsed_personas).toBe(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

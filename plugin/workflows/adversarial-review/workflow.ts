@@ -11,6 +11,7 @@ import {
   parseAgentField,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
+import { summarizeSeverityMetrics } from "./severity.js";
 import {
   REQUIRED_SYNTHESIS_SECTION_LABELS,
   SYNTHESIS_OUTPUT_SECTIONS,
@@ -999,6 +1000,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }),
   );
 
+  const severityMetrics = summarizeSeverityMetrics(personaResults);
+
   const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
   const { completedCount, failedCount, failedPersonas, outcome } =
     summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
@@ -1017,6 +1020,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   if (completedResults.length === 0) {
     return {
       ok: false,
+      ...severityMetrics,
       out_dir: absoluteOutDir,
       personas: personaResults.map((result) => ({
         name: result.persona,
@@ -1204,6 +1208,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   return {
     ok: finalOutcome !== "failed" && synthStatus === "completed",
     outcome: finalOutcome,
+    ...severityMetrics,
     ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
     failed_personas: failedPersonas,
     completed_personas: personaResults
