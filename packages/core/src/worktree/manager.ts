@@ -86,6 +86,11 @@ interface WorktreeManagerOpts {
   mainRepoDir?: string;
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
+  // Consulted per createWorktree call: when it returns false an unresolvable
+  // project_id falls through to the default root instead of throwing
+  // unknown_project_id. Lets a live-reloaded registry treat "zero entries" as
+  // "no project mapping configured" without uninstalling the resolver.
+  requireKnownProjectId?: () => boolean;
   resolveBranchName?: ResolveHandoffBranchNameById;
   onBranchNameDrift?: BranchNameDriftHandler;
   runner?: WorktreeCommandRunner;
@@ -224,6 +229,7 @@ export class WorktreeManager {
   #mainRepoDir: string;
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
+  private requireKnownProjectId?: () => boolean;
   private resolveBranchName?: ResolveHandoffBranchNameById;
   private onBranchNameDrift?: BranchNameDriftHandler;
   private runner: WorktreeCommandRunner;
@@ -234,6 +240,7 @@ export class WorktreeManager {
     this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
+    this.requireKnownProjectId = opts?.requireKnownProjectId;
     this.resolveBranchName = opts?.resolveBranchName;
     this.onBranchNameDrift = opts?.onBranchNameDrift;
     this.runner = opts?.runner ?? defaultRunner;
@@ -453,6 +460,7 @@ export class WorktreeManager {
     if (
       project_id &&
       this.resolveProjectRoot &&
+      (this.requireKnownProjectId?.() ?? true) &&
       this.resolveProjectRoot(project_id) === undefined
     ) {
       throw new Error(`unknown_project_id: ${project_id}`);
@@ -1649,12 +1657,7 @@ function globSegmentToRegExp(segment: string): RegExp {
 }
 
 function isValidGitIdentity(name: string, email: string): boolean {
-  return (
-    name.length > 0 &&
-    email.length > 0 &&
-    email.includes("@") &&
-    !email.endsWith(".local")
-  );
+  return name.length > 0 && email.length > 0 && email.includes("@") && !email.endsWith(".local");
 }
 
 function isMissingError(err: unknown): boolean {

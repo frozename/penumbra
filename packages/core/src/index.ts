@@ -157,6 +157,7 @@ export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
   defaultProjectRegistryPath,
   loadProjectRegistry,
+  loadProjectRegistryAsync,
   ProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,

@@ -3,12 +3,10 @@ import type { AgentOptions, AgentPool } from "@penumbra/config";
 
 import {
   createLogger,
-  defaultProjectRegistryPath,
   type DispatchEventInput,
   fetchServedModels,
   type HandoffRow,
   installGlobalCrashHandlers,
-  loadProjectRegistry,
   meaningfulOutput,
   SettingsDefaults,
   systemUuid,
@@ -72,6 +70,7 @@ import {
   shouldCheckWorkerCodeStaleness,
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
 } from "../src/worker/code-staleness.js";
+import { handleAgentchatReload } from "../src/worker/config-reload.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
 import { postToDiscord } from "../src/worker/discord-notifier.js";
@@ -102,6 +101,7 @@ import {
 import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
 import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
 import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
+import { WorkerProjectRegistry } from "../src/worker/project-registry.js";
 import { RecallEnricher } from "../src/worker/recall-enricher.js";
 import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
 import { createWorkerShutdown } from "../src/worker/shutdown.js";
@@ -462,9 +462,9 @@ const eventQueue = new DispatchEventQueue({
 });
 let config = loadConfigPathOrDir(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
-const projectRegistry = loadProjectRegistry(
-  process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
-);
+const projectRegistry = new WorkerProjectRegistry(undefined, (msg) => {
+  log.warn({ worker_id: workerId }, msg);
+});
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
@@ -973,6 +973,7 @@ function rememberHandoffBranchName(handoff: Pick<HandoffRow, "handoff_id" | "bra
 }
 
 const worktreeManager = createWorkerWorktreeManager({
+  projectRegistry,
   resolveBranchName: (handoffId) => handoffBranchNameCache.get(handoffId),
 });
 
@@ -1915,13 +1916,23 @@ void runWorkerControlListener({
   workerId,
   onEvent,
   onConfigReload: () => {
-    const previousConfig = config;
-    config = loadConfigPathOrDir(configPath);
-    invalidateChangedWarmPools(previousConfig.agents, config.agents, drainAgent);
-    // Recompute pre-warm targets against the new config: start the loop if an
-    // agent just opted in, stop it if the last one opted out, otherwise refresh.
-    refreshPrewarmLoop();
-    log.info({ agent_count: config.agents.length }, "agentchat-config-reloaded-from-control-bus");
+    handleAgentchatReload({
+      loadConfig: () => {
+        const previous = config;
+        config = loadConfigPathOrDir(configPath);
+        return { previous, next: config };
+      },
+      // Recompute pre-warm targets against the new config: start the loop if
+      // an agent just opted in, stop it if the last one opted out, else
+      // refresh. Deferred until the registry reload settles so the first pass
+      // resolves current roots.
+      invalidateWarmPools: (previous, next) => {
+        invalidateChangedWarmPools(previous.agents, next.agents, drainAgent);
+      },
+      refreshPrewarm: refreshPrewarmLoop,
+      projectRegistry,
+      log,
+    });
   },
 });
 
