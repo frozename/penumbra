@@ -30,7 +30,8 @@ import {
   type TaskClass,
   writeRoutingDecision,
 } from "@penumbra/core";
-import { execFileSync } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -1589,30 +1590,35 @@ function resolveRoutingWithFallbacks(
   };
 }
 
-function gitBranchExists(repoRoot: string, branchName: string): boolean {
+const execFile = promisify(execFileCb);
+
+async function gitBranchExists(repoRoot: string, branchName: string): Promise<boolean> {
   try {
-    execFileSync(
-      "git",
-      ["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
-      { stdio: "ignore" },
-    );
+    await execFile("git", [
+      "-C",
+      repoRoot,
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branchName}`,
+    ]);
     return true;
   } catch {
     return false;
   }
 }
 
-function availableBranchNameBestEffort(
+async function availableBranchNameBestEffort(
   repoRoot: string | undefined,
   requestedName: string,
-): string {
+): Promise<string> {
   if (repoRoot === undefined) return requestedName;
   try {
-    execFileSync("git", ["-C", repoRoot, "rev-parse", "--git-dir"], { stdio: "ignore" });
-    if (!gitBranchExists(repoRoot, requestedName)) return requestedName;
+    await execFile("git", ["-C", repoRoot, "rev-parse", "--git-dir"]);
+    if (!(await gitBranchExists(repoRoot, requestedName))) return requestedName;
     for (let suffix = 2; suffix <= 99; suffix += 1) {
       const candidate = `${requestedName}-${String(suffix)}`;
-      if (!gitBranchExists(repoRoot, candidate)) return candidate;
+      if (!(await gitBranchExists(repoRoot, candidate))) return candidate;
     }
   } catch {
     return requestedName;
@@ -1748,7 +1754,7 @@ export async function chainStartInternal(
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
   const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
-  const branchName = ((): string | null => {
+  const branchName = await (async (): Promise<string | null> => {
     if (input.use_worktree === false) return null;
     // input.message is the raw, pre-stamp/pre-recall message (stamped/handoffMessage
     // are computed later, below) — naming off those would bake stamped retry
@@ -1771,7 +1777,7 @@ export async function chainStartInternal(
         "chain-start derived branch name from dispatch message",
       );
     }
-    return availableBranchNameBestEffort(
+    return await availableBranchNameBestEffort(
       projectRootForBranchPrecheck(input, services, projectRegistryEntries),
       requestedName,
     );
