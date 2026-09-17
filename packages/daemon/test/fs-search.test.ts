@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -139,6 +140,33 @@ describe("executeGlob", () => {
 
     const r = await executeGlob({ pattern: "*.log" }, tmp);
     expect(r.results).toEqual(["important.log"]);
+  });
+
+  it("ignores files under a gitignored directory without descending into it", async () => {
+    fs.writeFileSync(path.join(tmp, ".gitignore"), "vendor/\n");
+    fs.mkdirSync(path.join(tmp, "vendor", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "vendor", "deep", "x.ts"), "x");
+    fs.writeFileSync(path.join(tmp, "kept.ts"), "y");
+
+    const spy = spyOn(fsp, "readdir");
+    try {
+      const r = await executeGlob({ pattern: "**/*.ts" }, tmp);
+      expect(r.results).toEqual(["kept.ts"]);
+      const visited = spy.mock.calls.map((call) => String(call[0]));
+      expect(visited.length).toBeGreaterThan(0);
+      expect(visited.some((d) => d.includes(path.join("vendor", "deep")))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("applies ancestor .gitignore rules when scoped to a subdirectory", async () => {
+    fs.writeFileSync(path.join(tmp, ".gitignore"), "*.log\n");
+    fs.mkdirSync(path.join(tmp, "sub"));
+    fs.writeFileSync(path.join(tmp, "sub", "kept.ts"), "x");
+    fs.writeFileSync(path.join(tmp, "sub", "ignored.log"), "y");
+    const r = await executeGlob({ pattern: "*", path: "sub" }, tmp);
+    expect(r.results).toEqual(["sub/kept.ts"]);
   });
 
   it("include_ignored=true overrides .gitignore", async () => {
