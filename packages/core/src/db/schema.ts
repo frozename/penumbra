@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
 
+// 45 = agent_performance conversation index.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 45;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -363,6 +364,8 @@ const SCHEMA_DDL_BLOCK_01 = `
         ON agent_performance(task_type, agent_name, ts DESC);
       CREATE INDEX IF NOT EXISTS agent_perf_by_ts
         ON agent_performance(ts DESC);
+      CREATE INDEX IF NOT EXISTS agent_perf_by_conversation
+        ON agent_performance(conversation_id);
 
       CREATE TABLE IF NOT EXISTS lane_ledger (
         lane_id              TEXT PRIMARY KEY,

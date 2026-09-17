@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 44,
+  "schemaVersion": 45,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -690,6 +690,7 @@
     ]
   },
   "indexes": [
+    "agent_perf_by_conversation",
     "agent_perf_by_task_agent",
     "agent_perf_by_ts",
     "claude_code_sessions_by_last_seen",
