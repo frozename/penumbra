@@ -47,16 +47,20 @@ function makeService(db: Database, writer: TaskWriter): GhTaskSyncService {
 }
 
 describe("gh-task-sync full-reconcile throttle (Phase 3.1)", () => {
-  test("syncAllLinkedTasks({fullReconcile:false}) skips listLinkedTasks but still drains the outbox", async () => {
+  test("syncAllLinkedTasks({fullReconcile:false}) skips listLinkedTasksForReconcile but still drains the outbox", async () => {
     const db = freshDb();
     const writer = new TaskWriter(db);
     const svc = makeService(db, writer);
 
     let listCalls = 0;
-    const origList = writer.listLinkedTasks.bind(writer);
-    (writer as unknown as { listLinkedTasks: () => unknown }).listLinkedTasks = (): unknown => {
+    const origList = writer.listLinkedTasksForReconcile.bind(writer);
+    (
+      writer as unknown as {
+        listLinkedTasksForReconcile: (o: { terminal_updated_since_ms: number }) => unknown;
+      }
+    ).listLinkedTasksForReconcile = (o): unknown => {
       listCalls++;
-      return origList();
+      return origList(o);
     };
 
     const outboxOnly = await svc.syncAllLinkedTasks({ fullReconcile: false });

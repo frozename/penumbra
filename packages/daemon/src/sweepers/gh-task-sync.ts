@@ -71,7 +71,7 @@ interface GhTaskSyncServiceOpts {
       task_id: string,
       opts: { repo: string; issue_number: number },
     ): { task_id: string; gh_issue_repo: string; gh_issue_number: number };
-    listLinkedTasks(): TaskRecordLike[];
+    listLinkedTasksForReconcile(opts: { terminal_updated_since_ms: number }): TaskRecordLike[];
     setGhLastCommentId(
       task_id: string,
       comment_id: string,
@@ -185,6 +185,7 @@ interface SyncDecision {
 
 const GH_TASK_SYNC_BATCH_SIZE = 6;
 const GH_OUTBOX_PROCESSING_STALE_MS_DEFAULT = 10 * 60 * 1000;
+const GH_TASK_SYNC_TERMINAL_REVISIT_MS = 7 * 24 * 60 * 60 * 1000;
 
 type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
 
@@ -964,7 +965,9 @@ async function syncAllLinkedTasks(
   if (options?.fullReconcile === false) {
     return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: false, results: [] };
   }
-  const linked = runtime.opts.taskWriter.listLinkedTasks();
+  const linked = runtime.opts.taskWriter.listLinkedTasksForReconcile({
+    terminal_updated_since_ms: runtime.opts.now().getTime() - GH_TASK_SYNC_TERMINAL_REVISIT_MS,
+  });
   const results = await runInBatches(
     linked,
     GH_TASK_SYNC_BATCH_SIZE,
@@ -1133,7 +1136,7 @@ export function createGhTaskSyncSweeper(opts: {
   service: GhTaskSyncService;
   intervalMs?: number;
   /**
-   * How often the heavy full reconcile (listLinkedTasks → per-task push/pull)
+   * How often the heavy full reconcile (listLinkedTasksForReconcile → per-task push/pull)
    * runs. Every tick still drains the gh_outbox so status pushes stay prompt;
    * only the GitHub→local reconcile (the drift/pull path) is throttled. Defaults
    * to 5 minutes. The first tick after construction always runs a full reconcile

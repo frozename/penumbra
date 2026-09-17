@@ -16,7 +16,7 @@ export const SettingsSchema = z.object({
   prOrphanSweeperIntervalMs: z.number().int().positive().default(21_600_000),
   laneOrphanSweeperGraceMinutes: z.number().int().positive().default(120),
   // gh-task-sync drains the gh_outbox every tick; the heavy full reconcile
-  // (listLinkedTasks → per-task GitHub pull/drift correction) only runs this
+  // (listLinkedTasksForReconcile → per-task GitHub pull/drift correction) only runs this
   // often. Default 5min: status pushes stay prompt via the outbox, pulls lag ≤5min.
   ghTaskSyncFullReconcileIntervalMs: z.number().int().positive().default(300_000),
   dreamModeStrategy: z.enum(["embersynth", "local", "skip"]).default("local"),

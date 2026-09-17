@@ -1211,6 +1211,9 @@ function applyTasksMigration(db: Database): void {
   db.run(
     `CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
   );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS tasks_by_status_gh ON tasks(status, gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`,
+  );
   addColumnIfMissing(db, "task_leases", "original_ttl_ms", "INTEGER");
 }
 
