@@ -88,7 +88,7 @@ export {
 } from "./events/permission-events.js";
 export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
 export { MachineId } from "./identity/machine-id.js";
-export { resolveProjectId } from "./identity/project-id.js";
+export { clearProjectIdCache, resolveProjectId } from "./identity/project-id.js";
 export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
 export { createLogger, type Logger } from "./logger.js";
 export {

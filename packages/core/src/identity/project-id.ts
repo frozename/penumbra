@@ -22,22 +22,28 @@ export interface ResolveOpts {
 }
 
 const DEFAULT_MARKER = ".penumbra-project";
+const gitResolutionCache = new Map<string, Extract<ProjectResolution, { kind: "git" }>>();
 
 export function resolveProjectId(opts: ResolveOpts): ProjectResolution {
   if (opts.declaredProjectId) return { kind: "declared", project_id: opts.declaredProjectId };
+
+  const cached = gitResolutionCache.get(opts.cwd);
+  if (cached) return cached;
 
   const git = tryGit(opts.cwd);
   if (git) {
     const hash = createHash("sha256").update(git.remote).digest("hex").slice(0, 16);
     const realCwd = realpathSync(opts.cwd);
     const rel = toPosix(relative(git.root, realCwd)) || ".";
-    return {
+    const result: Extract<ProjectResolution, { kind: "git" }> = {
       kind: "git",
       project_id: `${hash}:${rel}`,
       git_remote: git.remote,
       git_relpath_root: rel,
       repo_root: git.root,
     };
+    gitResolutionCache.set(opts.cwd, result);
+    return result;
   }
 
   const marker = tryMarker(opts.cwd, opts.markerFileName ?? DEFAULT_MARKER);
@@ -51,6 +57,10 @@ export function resolveProjectId(opts: ResolveOpts): ProjectResolution {
   }
 
   return { kind: "quarantine", project_id: null };
+}
+
+export function clearProjectIdCache(): void {
+  gitResolutionCache.clear();
 }
 
 function tryGit(cwd: string): { remote: string; root: string } | null {

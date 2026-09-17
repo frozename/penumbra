@@ -4,11 +4,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveProjectId } from "@src/identity/project-id.js";
+import { clearProjectIdCache, resolveProjectId } from "@src/identity/project-id.js";
 
 let dir = "";
 
 beforeEach(() => {
+  clearProjectIdCache();
   dir = mkdtempSync(join(tmpdir(), "penumbra-pid-git-"));
   spawnSync("git", ["init", "-q"], { cwd: dir });
   spawnSync("git", ["remote", "add", "origin", "https://example.com/foo/bar.git"], { cwd: dir });
@@ -39,4 +40,35 @@ test("two cwds in the same repo produce the same project-id prefix", () => {
   const b = resolveProjectId({ cwd: join(dir, "sub") });
   if (a.kind !== "git" || b.kind !== "git") throw new Error("expected git resolution");
   expect(a.project_id.split(":")[0]).toBe(b.project_id.split(":")[0]);
+});
+
+test("memoizes git resolution per cwd", () => {
+  const first = resolveProjectId({ cwd: dir });
+  spawnSync("git", ["remote", "set-url", "origin", "https://example.com/changed/repo.git"], {
+    cwd: dir,
+  });
+  const cached = resolveProjectId({ cwd: dir });
+  expect(cached).toEqual(first);
+
+  clearProjectIdCache();
+  const refreshed = resolveProjectId({ cwd: dir });
+  expect(refreshed.kind).toBe("git");
+  expect(refreshed.project_id).not.toBe(first.project_id);
+});
+
+test("does not cache non-git resolution", () => {
+  const nonGitDir = mkdtempSync(join(tmpdir(), "penumbra-pid-non-git-"));
+  try {
+    const quarantined = resolveProjectId({ cwd: nonGitDir });
+    expect(quarantined).toEqual({ kind: "quarantine", project_id: null });
+
+    spawnSync("git", ["init", "-q"], { cwd: nonGitDir });
+    spawnSync("git", ["remote", "add", "origin", "https://example.com/foo/bar.git"], {
+      cwd: nonGitDir,
+    });
+    const resolved = resolveProjectId({ cwd: nonGitDir });
+    expect(resolved.kind).toBe("git");
+  } finally {
+    rmSync(nonGitDir, { recursive: true, force: true });
+  }
 });
