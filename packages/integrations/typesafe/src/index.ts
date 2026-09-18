@@ -1,6 +1,9 @@
-/** Path of the TypeSafe evaluation endpoint, appended to the configured base URL. */
-export const TYPESAFE_SYSTEMONE_PATH = "/v1/systemone";
-
+export {
+  createTypesafeClient,
+  type TypesafeClient,
+  type TypesafeClientOptions,
+  type TypesafeFetch,
+} from "./client.js";
 export {
   resolveTypesafeSettings,
   type TypesafeDisabledReason,
@@ -8,3 +11,23 @@ export {
   type TypesafeJudgePromotionMode,
   type TypesafeSettings,
 } from "./config.js";
+export { choice, noul, score } from "./questions.js";
+export {
+  type AnswerOf,
+  type AnswersOf,
+  type ChoiceAnswer,
+  type ChoiceQuestion,
+  type NoulAnswer,
+  type NoulQuestion,
+  type ScoreAnswer,
+  type ScoreQuestion,
+  type SystemOneResponse,
+  SystemOneResponseSchema,
+  type SystemOneWireAnswer,
+  SystemOneWireAnswerSchema,
+  TYPESAFE_SYSTEMONE_PATH,
+  type TypesafeFailureKind,
+  type TypesafeQuestion,
+  type TypesafeResult,
+  type TypesafeState,
+} from "./types.js";
