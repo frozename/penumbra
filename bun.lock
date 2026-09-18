@@ -203,6 +203,14 @@
         "fastify": "^5.0.0",
       },
     },
+    "packages/integrations/typesafe": {
+      "name": "@penumbra/typesafe",
+      "version": "0.0.0",
+      "dependencies": {
+        "@penumbra/core": "workspace:*",
+        "zod": "^4.3.0",
+      },
+    },
     "packages/mcp": {
       "name": "@penumbra/mcp",
       "version": "0.0.0",
@@ -439,6 +447,8 @@
     "@penumbra/mcp": ["@penumbra/mcp@workspace:packages/mcp"],
 
     "@penumbra/sirius-middleware": ["@penumbra/sirius-middleware@workspace:packages/integrations/sirius-middleware"],
+
+    "@penumbra/typesafe": ["@penumbra/typesafe@workspace:packages/integrations/typesafe"],
 
     "@penumbra/workflows": ["@penumbra/workflows@workspace:packages/workflows"],
 

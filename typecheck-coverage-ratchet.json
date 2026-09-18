@@ -31,6 +31,9 @@
     "packages/integrations/sirius-middleware": {
       "errorCount": 8
     },
+    "packages/integrations/typesafe": {
+      "errorCount": 0
+    },
     "packages/mcp": {
       "errorCount": 182
     },
