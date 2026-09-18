@@ -95,6 +95,25 @@ describe("ENV_REGISTRY", () => {
     expect(ENV_REGISTRY.PENUMBRA_EMBEDDINGS_TOKEN?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_DISCORD_WEBHOOK_URL?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_JUDGE_TOKEN?.isSensitive).toBe(true);
+    expect(ENV_REGISTRY.PENUMBRA_TYPESAFE_API_KEY?.isSensitive).toBe(true);
+  });
+
+  test("typesafe defaults pin a versioned model, a total deadline and promotion off", () => {
+    const env = parseEnv({});
+    expect(env.PENUMBRA_TYPESAFE_BASE_URL).toBe("https://api.typesafe.ai");
+    expect(env.PENUMBRA_TYPESAFE_MODEL).toBe("jev-1.13.0");
+    expect(env.PENUMBRA_TYPESAFE_TIMEOUT_MS).toBe(10000);
+    expect(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("off");
+    expect(env.PENUMBRA_TYPESAFE_API_KEY).toBeUndefined();
+    expect(ENV_REGISTRY.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN?.isSensitive).toBeFalsy();
+  });
+
+  test("typesafe judge promotion is a closed off|shadow enum, not a boolean", () => {
+    expect(
+      parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "shadow" }).PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
+    ).toBe("shadow");
+    expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "on" })).toThrow();
+    expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "true" })).toThrow();
   });
 
   test("non-secret key does not have isSensitive", () => {

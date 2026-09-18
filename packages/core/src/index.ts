@@ -478,6 +478,8 @@ export {
   type LlmPurpose,
   type LlmRoutingBias,
   type LlmServingCandidate,
+  parseKeychainRef,
+  resolveAuthSecret,
   type ResolvedLlmCandidate,
   type ResolveKeychainSecret,
   resolveLlmAuthorization,

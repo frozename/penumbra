@@ -749,6 +749,41 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Bearer token for the judge LLM.",
     isSensitive: true,
   },
+
+  // ── typesafe (Jev judge) ──────────────────────────────────────────────
+  PENUMBRA_TYPESAFE_API_KEY: {
+    schema: OptStr,
+    description: "TypeSafe API key. Wins over the keychain ref when non-empty.",
+    isSensitive: true,
+  },
+  PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: {
+    schema: OptStr,
+    description:
+      "Keychain ref 'service/account' for the TypeSafe API key, e.g. llamactl/typesafe. Used only when PENUMBRA_TYPESAFE_API_KEY is empty.",
+  },
+  PENUMBRA_TYPESAFE_BASE_URL: {
+    schema: z.string(),
+    default: "https://api.typesafe.ai",
+    description: "TypeSafe API base URL. Must be https.",
+  },
+  PENUMBRA_TYPESAFE_MODEL: {
+    schema: z.string(),
+    default: "jev-1.13.0",
+    description:
+      "Pinned, versioned Jev model id. Aliases (jev-latest, jev-preview) move on release and are refused.",
+  },
+  PENUMBRA_TYPESAFE_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 10_000,
+    description:
+      "TOTAL deadline in ms for one TypeSafe evaluation, across every attempt and backoff. Not per attempt.",
+  },
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: {
+    schema: z.enum(["off", "shadow"]),
+    default: "off",
+    description:
+      "Judge-promotion mode: off | shadow. Any other value (including on/true) fails the whole config parse at boot.",
+  },
   PENUMBRA_EMBEDDING_MODEL_VERSION: {
     schema: z.string(),
     default: "v1",
