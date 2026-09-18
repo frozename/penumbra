@@ -852,4 +852,53 @@ describe("subsystem health", () => {
       }),
     ).toContain("llm.role_floor.memory-refiner.required_2.actual_0");
   });
+
+  test("alerts on a judge seat whose abstention run reaches the threshold inside the recency window", () => {
+    const db = setupDb();
+    for (let i = 0; i < 5; i++) {
+      recordSubsystemOutcome(db, {
+        subsystem: "dream.judge.local-granite",
+        tier: "primary",
+        ok: false,
+        ts: "2026-09-18T11:00:00.000Z",
+        seat: "local-granite",
+        reason: "http_502",
+        status: 502,
+      });
+    }
+    expect(computeSubsystemAlerts(db, { now: new Date("2026-09-18T12:00:00.000Z") })).toContain(
+      "dream.health.judge_abstaining.local-granite",
+    );
+  });
+
+  test("does not alert on a judge seat below the threshold, recovered, or stale", () => {
+    const db = setupDb();
+    const fail = (seat: string, ts: string): void => {
+      recordSubsystemOutcome(db, {
+        subsystem: `dream.judge.${seat}`,
+        tier: "primary",
+        ok: false,
+        ts,
+        seat,
+      });
+    };
+    for (let i = 0; i < 4; i++) {
+      fail("below", "2026-09-18T11:00:00.000Z");
+    }
+    for (let i = 0; i < 5; i++) {
+      fail("recovered", "2026-09-18T11:00:00.000Z");
+    }
+    recordSubsystemOutcome(db, {
+      subsystem: "dream.judge.recovered",
+      tier: "primary",
+      ok: true,
+      ts: "2026-09-18T11:30:00.000Z",
+      seat: "recovered",
+    });
+    for (let i = 0; i < 5; i++) {
+      fail("stale", "2026-09-18T05:00:00.000Z");
+    }
+    const alerts = computeSubsystemAlerts(db, { now: new Date("2026-09-18T12:00:00.000Z") });
+    expect(alerts.filter((a) => a.startsWith("dream.health.judge_abstaining."))).toEqual([]);
+  });
 });

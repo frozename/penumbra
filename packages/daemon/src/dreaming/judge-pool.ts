@@ -7,6 +7,12 @@ export interface JudgeVote {
   // True when the judge never produced a ballot (transport failure, throw).
   // Abstentions are excluded from the quorum numerator AND denominator.
   abstained?: boolean;
+  // Name of the seat that cast (or failed to cast) this ballot. Absent for
+  // pools that do not attribute ballots (stub and test pools).
+  seat?: string;
+  // Class of the failure behind an abstention (for example "http_502").
+  // Never an error message: messages can carry upstream response text.
+  error_class?: string;
 }
 
 export interface JudgePool {

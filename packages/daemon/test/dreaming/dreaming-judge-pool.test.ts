@@ -161,6 +161,51 @@ describe("DreamingJudgePool.judgeAll", () => {
     expect(realVote?.abstained ?? false).toBe(false);
     expect(realVote?.promote).toBe(true);
   });
+
+  it("tags every ballot with its seat and classifies an HTTP 502 as http_502", async () => {
+    const fakeFetch = ((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return Promise.resolve(
+        url.includes("1111")
+          ? makeVoteResponse(true, 0.95)
+          : new Response("upstream llama-server unreachable", { status: 502 }),
+      );
+    }) as unknown as typeof fetch;
+    const pool = createDreamingJudgePool(
+      [
+        { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+        { name: "j2", baseUrl: "http://localhost:9999/v1", apiKey: "", model: "local" },
+      ],
+      fakeFetch,
+    );
+    const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
+    expect(results.map((r) => r.seat)).toEqual(["j1", "j2"]);
+    expect(results[1]).toMatchObject({ abstained: true, error_class: "http_502" });
+    expect(results[0]?.error_class).toBeUndefined();
+  });
+
+  it("classifies a rejected fetch as transport_error and never carries the message", async () => {
+    const fakeFetch = ((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return url.includes("1111")
+        ? Promise.resolve(makeVoteResponse(true, 0.9))
+        : Promise.reject(new TypeError("fetch failed: connect ECONNREFUSED 127.0.0.1:9999"));
+    }) as unknown as typeof fetch;
+    const pool = createDreamingJudgePool(
+      [
+        { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+        { name: "j2", baseUrl: "http://localhost:9999/v1", apiKey: "", model: "local" },
+      ],
+      fakeFetch,
+    );
+    const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
+    expect(results[1]).toMatchObject({
+      seat: "j2",
+      abstained: true,
+      error_class: "transport_error",
+    });
+    expect(JSON.stringify(results)).not.toContain("ECONNREFUSED");
+  });
 });
 
 // --- pool: judge round-robins ---

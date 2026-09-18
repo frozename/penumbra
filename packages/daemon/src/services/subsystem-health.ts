@@ -4,6 +4,10 @@ import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "../dreaming/config.js"
 
 const PRIMARY_TIER = "primary";
 export const DREAM_QUERY_REWRITE_SUBSYSTEM = "dream.query_rewrite";
+export const DREAM_JUDGE_SUBSYSTEM_PREFIX = "dream.judge.";
+// 5 is half of the default P1 batch (p1BatchSize 10), so a dead seat alerts
+// within its first cycle.
+const JUDGE_ABSTAIN_CONSECUTIVE_ALERT_THRESHOLD = 5;
 const PERMANENT_FALLBACK_AFTER_MS = 6 * 60 * 60_000;
 const QUERY_REWRITE_FAILURE_RATE_ALERT_THRESHOLD = 0.9;
 // Post-rewrite unsearchable output is content degradation, not a seat-liveness failure.
@@ -83,6 +87,7 @@ export interface ComputeSubsystemAlertsOptions {
   queryRewriteUnsearchableRateAlertThreshold?: number;
   queryRewriteConsecutiveFailuresAlertThreshold?: number;
   queryRewriteMinSampleAlertThreshold?: number;
+  judgeAbstainConsecutiveAlertThreshold?: number;
   requiredLlmRoleFloors?: LlmRoleFloorSpec[];
   agentchatConfig?: LlmRoleAgentchatConfig | null;
 }
@@ -380,6 +385,38 @@ function hasPermanentFallbackAlert(input: {
   return false;
 }
 
+function judgeAbstainingAlerts(
+  db: Database,
+  opts: ComputeSubsystemAlertsOptions,
+  now: Date,
+  healthRecencyWindowMs: number,
+): string[] {
+  const threshold =
+    opts.judgeAbstainConsecutiveAlertThreshold ?? JUDGE_ABSTAIN_CONSECUTIVE_ALERT_THRESHOLD;
+  const windowStartMs = now.getTime() - healthRecencyWindowMs;
+  const rows = db
+    .query<
+      { subsystem: string; consecutive_failures: number; last_failure_ts: string | null },
+      [number, string]
+    >(
+      `SELECT subsystem, consecutive_failures, last_failure_ts
+         FROM subsystem_health
+        WHERE substr(subsystem, 1, ?) = ?
+        ORDER BY subsystem`,
+    )
+    .all(DREAM_JUDGE_SUBSYSTEM_PREFIX.length, DREAM_JUDGE_SUBSYSTEM_PREFIX);
+  return rows
+    .filter((row) => {
+      if (row.consecutive_failures < threshold || row.last_failure_ts === null) return false;
+      const lastFailureMs = Date.parse(row.last_failure_ts);
+      return Number.isFinite(lastFailureMs) && lastFailureMs >= windowStartMs;
+    })
+    .map(
+      (row) =>
+        `dream.health.judge_abstaining.${row.subsystem.slice(DREAM_JUDGE_SUBSYSTEM_PREFIX.length)}`,
+    );
+}
+
 export function computeSubsystemAlerts(
   db: Database,
   opts: ComputeSubsystemAlertsOptions = {},
@@ -445,6 +482,8 @@ export function computeSubsystemAlerts(
   if (hasPermanentFallbackAlert({ rewrite, now, permanentFallbackAfterMs })) {
     alerts.push("dream.health.rewrite_permanent_fallback");
   }
+
+  alerts.push(...judgeAbstainingAlerts(db, opts, now, healthRecencyWindowMs));
 
   if (opts.requiredLlmRoleFloors) {
     const evaluation = evaluateLlmRoleFloors({

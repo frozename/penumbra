@@ -6,10 +6,12 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "@src/dreaming/cycle.js";
-import { makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
+import { createDreamingJudgePool } from "@src/dreaming/dreaming-judge-pool.js";
+import { type JudgePool, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
 import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { hashQuery } from "@src/dreaming/research.js";
+import { readSubsystemHealth } from "@src/services/subsystem-health.js";
 
 try {
   if (process.platform === "darwin") {
@@ -541,6 +543,41 @@ function testP1Embed(): Promise<Float32Array> {
   return Promise.resolve(new Float32Array([0.1, 0.2, 0.3]));
 }
 
+function chatReply(content: string): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Routes each judge seat by the port in its baseUrl; every call gets a fresh Response.
+function seatFetch(replies: Record<string, () => Response>): typeof fetch {
+  return ((input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const port = Object.keys(replies).find((p) => url.includes(`:${p}/`));
+    const reply = port === undefined ? undefined : replies[port];
+    return Promise.resolve(reply ? reply() : new Response("no route", { status: 599 }));
+  }) as unknown as typeof fetch;
+}
+
+function threeSeatPool(fetchImpl: typeof fetch): JudgePool {
+  return createDreamingJudgePool(
+    [
+      { name: "j1", baseUrl: "http://127.0.0.1:1111/v1", apiKey: "", model: "m" },
+      { name: "j2", baseUrl: "http://127.0.0.1:2222/v1", apiKey: "", model: "m" },
+      { name: "j3", baseUrl: "http://127.0.0.1:3333/v1", apiKey: "", model: "m" },
+    ],
+    fetchImpl,
+  );
+}
+
+const upstream502 = (): Response =>
+  new Response("upstream llama-server unreachable", { status: 502 });
+const yesReply =
+  (confidence: number): (() => Response) =>
+  (): Response =>
+    chatReply(JSON.stringify({ promote: true, confidence, rationale: "durable" }));
+
 function seedNegativeResearchCache(
   db: Database,
   opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
@@ -1036,6 +1073,43 @@ it("P1 treats a throwing judge call as an abstention instead of crashing the cyc
     .prepare(`SELECT promotion_filtered_at FROM t1_rollups WHERE rollup_id=?`)
     .get(rollupId) as { promotion_filtered_at: string | null } | null;
   expect(row?.promotion_filtered_at).toBeNull();
+});
+
+it("P1 records a dream.judge.<seat> outcome per ballot and logs a failing seat once per cycle", async () => {
+  const db = openTestDb();
+  const bodyA =
+    "durable finding: a dead judge seat must leave a per-seat health trace every cycle.";
+  const bodyB = "durable convention: judge seat failures are logged by class, never by content.";
+  seedUnpromotedRollup(db, { body: bodyA });
+  seedUnpromotedRollup(db, { body: bodyB });
+  const warnCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+  const pool = threeSeatPool(
+    seatFetch({ "1111": upstream502, "2222": yesReply(0.9), "3333": yesReply(0.8) }),
+  );
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+    log: {
+      info: () => undefined,
+      warn: (fields: Record<string, unknown>, msg: string) => warnCalls.push({ fields, msg }),
+    } as unknown as Logger,
+  });
+
+  const dead = readSubsystemHealth(db, "dream.judge.j1");
+  expect(dead?.consecutive_failures).toBe(2);
+  expect(dead?.last_failure_reason).toBe("http_502");
+  expect(dead?.last_failure_status).toBe(502);
+  expect(dead?.seat).toBe("j1");
+  const healthy = readSubsystemHealth(db, "dream.judge.j2");
+  expect(healthy?.consecutive_failures).toBe(0);
+  expect(healthy?.last_success_ts).not.toBeNull();
+
+  const seatWarns = warnCalls.filter((c) => c.msg === "dream-cycle P1 judge seat abstained");
+  expect(seatWarns).toHaveLength(1);
+  expect(seatWarns[0]?.fields).toMatchObject({ seat: "j1", errorClass: "http_502" });
+  expect(JSON.stringify(seatWarns)).not.toContain(bodyA);
+  expect(JSON.stringify(seatWarns)).not.toContain(bodyB);
 });
 
 it("P1 excludes a rollup with a pending queued promote_t1 action from the claim batch", async () => {

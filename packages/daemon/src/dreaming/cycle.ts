@@ -24,7 +24,10 @@ import {
   type LlmInvokeResult,
   llmInvoke as realLlmInvoke,
 } from "../services/llm-invoke.js";
-import { recordSubsystemOutcome } from "../services/subsystem-health.js";
+import {
+  DREAM_JUDGE_SUBSYSTEM_PREFIX,
+  recordSubsystemOutcome,
+} from "../services/subsystem-health.js";
 import {
   DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES,
   type DreamConfig,
@@ -624,6 +627,7 @@ async function runCycleP1(
   });
 
   const claimedRollups = claimT1Rollups(db, ctx, config, longLivedFilter);
+  const abstainLoggedSeats = new Set<string>();
 
   for (const rollup of claimedRollups) {
     const body = rollup.first_prompt_excerpt;
@@ -647,6 +651,7 @@ async function runCycleP1(
     }
 
     const votes = await getPromoteVotes(ctx.judgePool, body);
+    recordJudgeSeatOutcomes(db, ctx, votes, abstainLoggedSeats);
     const countedVotes = votes.filter((v) => !v.abstained);
     if (countedVotes.length === 0 || countedVotes.length < autoPromoteMinJudges) {
       // Too few real ballots is a non-verdict, not a judged NO: defer with
@@ -834,6 +839,41 @@ async function getPromoteVotes(judgePool: JudgePool, body: string): Promise<Judg
     // A pool that throws outright is equivalent to every judge abstaining:
     // no verdict, retryable, never a permanent filter.
     return [{ promote: false, confidence: 0, rationale: "judge_error", abstained: true }];
+  }
+}
+
+function httpStatusFromErrorClass(errorClass: string | undefined): number | null {
+  const match = /^http_(\d{3})$/.exec(errorClass ?? "");
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+// One subsystem row per seat, so one seat's success never resets another's
+// failure run. The log fires once per seat per cycle and names only the
+// failure class, never the judged body or the prompt.
+function recordJudgeSeatOutcomes(
+  db: Database,
+  ctx: CycleCtx,
+  votes: JudgeVote[],
+  abstainLoggedSeats: Set<string>,
+): void {
+  for (const vote of votes) {
+    if (vote.seat === undefined) continue;
+    const abstained = vote.abstained === true;
+    const errorClass = vote.error_class ?? "abstained";
+    recordSubsystemOutcome(db, {
+      subsystem: `${DREAM_JUDGE_SUBSYSTEM_PREFIX}${vote.seat}`,
+      tier: "primary",
+      ok: !abstained,
+      seat: vote.seat,
+      reason: abstained ? errorClass : null,
+      status: abstained ? httpStatusFromErrorClass(vote.error_class) : null,
+    });
+    if (!abstained || abstainLoggedSeats.has(vote.seat)) continue;
+    abstainLoggedSeats.add(vote.seat);
+    ctx.log?.warn(
+      { phase: "P1", cycleId: ctx.cycleId, seat: vote.seat, errorClass },
+      "dream-cycle P1 judge seat abstained",
+    );
   }
 }
 

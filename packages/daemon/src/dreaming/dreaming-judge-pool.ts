@@ -65,6 +65,22 @@ export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
   }
 }
 
+export class DreamingJudgeHttpError extends Error {
+  readonly status: number;
+  constructor(judgeName: string, status: number, detail: string) {
+    super(`dreaming judge ${judgeName} returned ${String(status)}: ${detail}`);
+    this.name = "DreamingJudgeHttpError";
+    this.status = status;
+  }
+}
+
+// The loggable, persistable class of a judge failure: never the message.
+export function classifyDreamingJudgeError(err: unknown): string {
+  if (err instanceof DreamingJudgeHttpError) return `http_${String(err.status)}`;
+  if (err instanceof SyntaxError) return "invalid_response";
+  return "transport_error";
+}
+
 class DreamingJudgePoolImpl implements JudgePool {
   private readonly judges: DreamingJudgeState[];
   private readonly fetchImpl: typeof fetch;
@@ -108,9 +124,7 @@ class DreamingJudgePoolImpl implements JudgePool {
     if (judge.caPem) init.tls = { ca: judge.caPem };
     const res = await this.fetchImpl(url, init);
     if (!res.ok) {
-      throw new Error(
-        `dreaming judge ${judge.name} returned ${String(res.status)}: ${await res.text()}`,
-      );
+      throw new DreamingJudgeHttpError(judge.name, res.status, await res.text());
     }
     const json = (await res.json()) as ChatCompletionResponse;
     const content = json.choices?.[0]?.message?.content ?? "";
@@ -149,11 +163,23 @@ class DreamingJudgePoolImpl implements JudgePool {
       this.judges.map(async (judge): Promise<JudgeVote> => {
         try {
           const raw = await this.callJudge(judge, prompt);
-          return { promote: raw.promote, confidence: raw.confidence, rationale: raw.rationale };
-        } catch {
+          return {
+            promote: raw.promote,
+            confidence: raw.confidence,
+            rationale: raw.rationale,
+            seat: judge.name,
+          };
+        } catch (err) {
           // An unreachable judge abstains — it must not count as a NO vote
           // in the quorum denominator.
-          return { promote: false, confidence: 0, rationale: "judge_error", abstained: true };
+          return {
+            promote: false,
+            confidence: 0,
+            rationale: "judge_error",
+            abstained: true,
+            seat: judge.name,
+            error_class: classifyDreamingJudgeError(err),
+          };
         }
       }),
     );
