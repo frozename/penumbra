@@ -59,6 +59,24 @@ describe("parseEnv", () => {
     expect(positive.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS).toBe(60000);
   });
 
+  test("p1 jev shadow cost estimate registers with the P7 sibling's NonNegNum contract", () => {
+    const unset = parseEnv({});
+    expect(unset.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0.003);
+
+    const override = parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "0.01" });
+    expect(override.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0.01);
+
+    const zero = parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "0" });
+    expect(zero.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0);
+
+    expect(() => parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "-0.5" })).toThrow(
+      /PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD/,
+    );
+    expect(() => parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "" })).toThrow(
+      /PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD/,
+    );
+  });
+
   test("t2 embed recipe defaults to title_plus_concise", () => {
     const result = parseEnv({});
     expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");

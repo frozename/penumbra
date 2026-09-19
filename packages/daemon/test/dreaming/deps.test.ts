@@ -352,6 +352,53 @@ test("boot with a throwing settings resolution leaves no unhandled rejection and
   }
 });
 
+test("a rejected boot loader promise is logged once, class only, with no unhandled rejection", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  const warnCalls: [unknown, unknown][] = [];
+  // Force the lazy loader's own promise to reject: the only uncaught path out
+  // of loadTypesafeJudge is a log sink that throws on the disabled-reason warn.
+  const log = {
+    warn: (...args: unknown[]): void => {
+      if (args[1] === "typesafe shadow judge disabled") {
+        throw new Error("log sink exploded");
+      }
+      warnCalls.push([args[0], args[1]]);
+    },
+  } as unknown as Logger;
+  const db = openSchemaDb();
+  try {
+    const services = {
+      log,
+      loadTypesafeModule: (): Promise<TypesafeModuleLike> =>
+        Promise.reject(new Error("module missing; carries path details")),
+    };
+    const deps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    expect(deps.judgePool).toBeDefined();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    const loaderWarns = warnCalls.filter(
+      ([, msg]) => msg === "typesafe shadow judge loader rejected",
+    );
+    expect(loaderWarns).toEqual([
+      [{ reason: "loader_rejected" }, "typesafe shadow judge loader rejected"],
+    ]);
+    expect(JSON.stringify(warnCalls)).not.toContain("module missing");
+    expect(JSON.stringify(warnCalls)).not.toContain("log sink exploded");
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    db.close();
+  }
+});
+
 test("a malformed agents.yaml surfaces the judge-pool warn on services.log", () => {
   writeAgentsYaml("agents: [unclosed\n");
   const { log, warnCalls } = makeWarnLog();

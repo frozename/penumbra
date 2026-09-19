@@ -234,8 +234,12 @@ function wireTypesafeShadow(
       log: services.log,
     });
     TYPESAFE_JUDGE_LOADERS.set(services, loader);
-    // Resolve at boot so a disabled reason is logged once, at boot.
-    void loader().catch(() => undefined);
+    // Resolve at boot so a disabled reason is logged once, at boot. The error
+    // itself is never logged: settings (and so a thrown message) can carry the
+    // API key.
+    void loader().catch(() => {
+      services.log?.warn({ reason: "loader_rejected" }, "typesafe shadow judge loader rejected");
+    });
   }
   const incumbent = deps.judgePool;
   if (incumbent === undefined) return;

@@ -467,6 +467,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 0.005,
     description: "Estimated embedding USD per P7 re-embed call.",
   },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: {
+    schema: NonNegNum,
+    default: 0.003,
+    description: "Estimated USD per P1 Jev shadow ballot on the dream cost meter.",
+  },
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: {
     schema: NonNegNum,
     default: 0.75,
