@@ -12,6 +12,7 @@ export {
   type TypesafeSettings,
 } from "./config.js";
 export { choice, noul, score } from "./questions.js";
+export * from "./questions/promotion.js";
 export {
   type AnswerOf,
   type AnswersOf,
