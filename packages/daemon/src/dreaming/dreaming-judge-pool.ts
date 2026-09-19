@@ -45,6 +45,16 @@ Output ONLY valid JSON — no prose, no code fences, no wrapper tags:
 {"promote": <boolean>, "confidence": <number 0.0-1.0>, "rationale": "<one sentence>"}`.trim();
 }
 
+// Unreadable values stay 0 for now; a later task turns them into an
+// abstention together with the retry cap.
+function parseConfidence(value: unknown): number {
+  let numeric = Number.NaN;
+  if (typeof value === "number") numeric = value;
+  else if (typeof value === "string" && value.trim() !== "") numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.min(1, Math.max(0, numeric));
+}
+
 export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
   try {
     const stripped = content
@@ -57,7 +67,7 @@ export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
     return {
       promote: Boolean(parsed.promote),
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+      confidence: parseConfidence(parsed.confidence),
       rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
     };
   } catch {

@@ -15,6 +15,17 @@ export interface JudgeVote {
   error_class?: string;
 }
 
+// Persisted per-ballot shape in dream_actions.payload_json.votes. seat and
+// error_class are optional on purpose: rows written before per-ballot
+// attribution carry neither, and every reader must accept them.
+export interface SerializedJudgeVote {
+  seat?: string;
+  promote: boolean;
+  confidence: number;
+  abstained?: boolean;
+  error_class?: string;
+}
+
 export interface JudgePool {
   judge(args: { body: string; kind: "promote_t1" | "link" | "retire" | "rewrite" }): Promise<{
     confidence: number;

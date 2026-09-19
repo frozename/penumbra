@@ -578,6 +578,15 @@ const yesReply =
   (): Response =>
     chatReply(JSON.stringify({ promote: true, confidence, rationale: "durable" }));
 
+function readP1Payload(db: Database, rollupId: string): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { payload_json: string } | null;
+  return row?.payload_json;
+}
+
 function seedNegativeResearchCache(
   db: Database,
   opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
@@ -1110,6 +1119,83 @@ it("P1 records a dream.judge.<seat> outcome per ballot and logs a failing seat o
   expect(seatWarns[0]?.fields).toMatchObject({ seat: "j1", errorClass: "http_502" });
   expect(JSON.stringify(seatWarns)).not.toContain(bodyA);
   expect(JSON.stringify(seatWarns)).not.toContain(bodyB);
+});
+
+it("P1 persists seat and error_class per ballot in dream_actions.payload_json", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: every persisted ballot must name the seat that cast it.",
+  });
+  const pool = threeSeatPool(
+    seatFetch({ "1111": upstream502, "2222": yesReply(0.9), "3333": yesReply(0.8) }),
+  );
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const payload = JSON.parse(readP1Payload(db, rollupId) ?? "{}") as { votes?: unknown };
+  expect(payload.votes).toEqual([
+    { seat: "j1", promote: false, confidence: 0, abstained: true, error_class: "http_502" },
+    { seat: "j2", promote: true, confidence: 0.9 },
+    { seat: "j3", promote: true, confidence: 0.8 },
+  ]);
+});
+
+it("P1 serializes a seatless ballot with exactly the pre-attribution keys", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable convention: unattributed ballots keep the original persisted vote shape.",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.85, rationale: "r" },
+  ]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const raw = readP1Payload(db, rollupId) ?? "{}";
+  expect((JSON.parse(raw) as { votes?: unknown }).votes).toEqual([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.85 },
+  ]);
+  expect(raw).not.toContain("seat");
+  expect(raw).not.toContain("error_class");
+});
+
+it("P1 clamps a non-allowlisted judge error_class to 'unknown' at every sink", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable invariant: judge error classes carry a class label, never response text.",
+  });
+  const warnCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+  const pool = makeFakeJudgePool([
+    {
+      promote: false,
+      confidence: 0,
+      abstained: true,
+      seat: "j9",
+      error_class: "upstream said: secret body text",
+    },
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.8 },
+  ]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+    log: {
+      info: () => undefined,
+      warn: (fields: Record<string, unknown>, msg: string) => warnCalls.push({ fields, msg }),
+    } as unknown as Logger,
+  });
+
+  const dead = readSubsystemHealth(db, "dream.judge.j9");
+  expect(dead?.last_failure_reason).toBe("unknown");
+  expect(JSON.stringify(warnCalls)).not.toContain("secret body text");
+  const raw = readP1Payload(db, rollupId) ?? "{}";
+  const payload = JSON.parse(raw) as { votes?: { seat?: string; error_class?: string }[] };
+  expect(payload.votes?.[0]).toMatchObject({ seat: "j9", error_class: "unknown" });
+  expect(raw).not.toContain("secret body text");
 });
 
 it("P1 excludes a rollup with a pending queued promote_t1 action from the claim batch", async () => {

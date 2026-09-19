@@ -38,7 +38,12 @@ import { runPC1Phase } from "./curator/pc1-ephemera.js";
 import { runPC2Phase } from "./curator/pc2-cluster.js";
 import { REWRITE_RESPONSE_SCHEMA } from "./dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "./dream-rewriter-prompt.js";
-import { type JudgePool, type JudgeVote, StubJudgePool } from "./judge-pool.js";
+import {
+  type JudgePool,
+  type JudgeVote,
+  type SerializedJudgeVote,
+  StubJudgePool,
+} from "./judge-pool.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
@@ -741,13 +746,13 @@ function deferT1PromotionRetry(
   );
 }
 
-function serializeJudgeVotes(
-  votes: JudgeVote[],
-): { promote: boolean; confidence: number; abstained?: boolean }[] {
+function serializeJudgeVotes(votes: JudgeVote[]): SerializedJudgeVote[] {
   return votes.map((v) => ({
+    ...(v.seat === undefined ? {} : { seat: v.seat }),
     promote: v.promote,
     confidence: v.confidence,
     ...(v.abstained === true ? { abstained: true } : {}),
+    ...(v.error_class === undefined ? {} : { error_class: clampJudgeErrorClass(v.error_class) }),
   }));
 }
 
@@ -847,6 +852,16 @@ function httpStatusFromErrorClass(errorClass: string | undefined): number | null
   return match?.[1] === undefined ? null : Number(match[1]);
 }
 
+// Class allowlist, enforced at every sink (health row, serialized payload,
+// log): a pool that stuffs upstream response text into error_class is
+// normalized to "unknown", never persisted or logged verbatim.
+const JUDGE_ERROR_CLASS_PATTERN =
+  /^(?:http_\d{3}|transport_error|invalid_response|parse_error|abstained)$/;
+
+function clampJudgeErrorClass(errorClass: string): string {
+  return JUDGE_ERROR_CLASS_PATTERN.test(errorClass) ? errorClass : "unknown";
+}
+
 // One subsystem row per seat, so one seat's success never resets another's
 // failure run. The log fires once per seat per cycle and names only the
 // failure class, never the judged body or the prompt.
@@ -859,14 +874,14 @@ function recordJudgeSeatOutcomes(
   for (const vote of votes) {
     if (vote.seat === undefined) continue;
     const abstained = vote.abstained === true;
-    const errorClass = vote.error_class ?? "abstained";
+    const errorClass = clampJudgeErrorClass(vote.error_class ?? "abstained");
     recordSubsystemOutcome(db, {
       subsystem: `${DREAM_JUDGE_SUBSYSTEM_PREFIX}${vote.seat}`,
       tier: "primary",
       ok: !abstained,
       seat: vote.seat,
       reason: abstained ? errorClass : null,
-      status: abstained ? httpStatusFromErrorClass(vote.error_class) : null,
+      status: abstained ? httpStatusFromErrorClass(errorClass) : null,
     });
     if (!abstained || abstainLoggedSeats.has(vote.seat)) continue;
     abstainLoggedSeats.add(vote.seat);

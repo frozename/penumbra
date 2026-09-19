@@ -70,6 +70,21 @@ describe("parseDreamingJudgeResponse", () => {
     const result = parseDreamingJudgeResponse("");
     expect(result.rationale).toBe("parse_error");
   });
+
+  it("clamps confidence into [0, 1] and parses numeric strings", () => {
+    expect(
+      parseDreamingJudgeResponse('{"promote": true, "confidence": 85, "rationale": "x"}')
+        .confidence,
+    ).toBe(1);
+    expect(
+      parseDreamingJudgeResponse('{"promote": true, "confidence": -0.3, "rationale": "x"}')
+        .confidence,
+    ).toBe(0);
+    expect(
+      parseDreamingJudgeResponse('{"promote": true, "confidence": "0.9", "rationale": "x"}')
+        .confidence,
+    ).toBe(0.9);
+  });
 });
 
 // --- pool: judgeAll fans out to all judges ---
