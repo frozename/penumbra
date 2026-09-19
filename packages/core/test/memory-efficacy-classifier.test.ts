@@ -3,7 +3,10 @@ import { expect, test, vi } from "bun:test";
 import type { JudgeChatFn } from "../src/services/judge-chat.js";
 import type { Finding } from "../src/services/memory-efficacy-classifier.js";
 
-import { classifyFindings } from "../src/services/memory-efficacy-classifier.js";
+import {
+  classifyFindings,
+  MEMORY_EFFICACY_BUCKETS,
+} from "../src/services/memory-efficacy-classifier.js";
 
 test("classifyFindings includes the tight reason cap guidance in the prompt", async () => {
   const impl: JudgeChatFn = (opts) => {
@@ -109,5 +112,36 @@ test("classifyFindings handles malformed JSON, throws, and partial batch success
     "finding-5",
   ]);
   expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+test("MEMORY_EFFICACY_BUCKETS pins the four labels and an unknown classification drops the batch", async () => {
+  expect(MEMORY_EFFICACY_BUCKETS).toEqual([
+    "missed_registration",
+    "recall_miss",
+    "memory_ignored",
+    "not_memory_related",
+  ]);
+
+  const impl: JudgeChatFn = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { findingId: "finding-1", classification: "other_bucket", reason: "stubbed" },
+      ]),
+    );
+  const judgeChat = vi.fn(impl);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+    /* suppress noise */
+  });
+
+  const result = await classifyFindings(
+    [{ findingId: "finding-1", severity: "High", text: "Example finding", index: 1 }],
+    {
+      judgeChat,
+      model: "test-model",
+    },
+  );
+
+  expect(result).toEqual([]);
   warn.mockRestore();
 });

@@ -11,6 +11,13 @@ export {
   type TypesafeJudgePromotionMode,
   type TypesafeSettings,
 } from "./config.js";
+export {
+  createJevEfficacyClassifier,
+  type CreateJevEfficacyClassifierOptions,
+  JEV_EFFICACY_MODEL,
+  type JevEfficacyClassifier,
+  type JevEfficacyVerdict,
+} from "./memory-efficacy.js";
 export { choice, noul, score } from "./questions.js";
 export * from "./questions/promotion.js";
 export {

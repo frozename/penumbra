@@ -63,8 +63,7 @@ export {
 export { type DispatchEvent, DispatchEventBus } from "./dispatch/event-bus.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
 export type { Embedder } from "./embedder/interface.js";
-export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
-export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
+export { OpenAICompatEmbedder, type RemoteEmbedderOpts } from "./embedder/openai-compat.js";
 export { type EmbedderMode, resolveEmbedder } from "./embedder/resolve.js";
 export {
   ConversationStreamBus,
@@ -161,8 +160,7 @@ export {
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from "./projects/registry.js";
-export { getGithubRepo } from "./projects/schema.js";
-export type { ProjectEntry, ProjectRegistryFile } from "./projects/schema.js";
+export { getGithubRepo, type ProjectEntry, type ProjectRegistryFile } from "./projects/schema.js";
 export {
   type AgentResponseEvent,
   ChainReader,
@@ -493,6 +491,8 @@ export {
   type Classification,
   classifyFindings,
   type Finding,
+  MEMORY_EFFICACY_BUCKETS,
+  type MemoryEfficacyBucket,
 } from "./services/memory-efficacy-classifier.js";
 export {
   fetchServedModelEntries,

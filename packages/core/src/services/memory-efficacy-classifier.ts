@@ -16,14 +16,17 @@ export interface Classification {
   raw_response_json: string;
 }
 
+export const MEMORY_EFFICACY_BUCKETS = [
+  "missed_registration",
+  "recall_miss",
+  "memory_ignored",
+  "not_memory_related",
+] as const;
+export type MemoryEfficacyBucket = (typeof MEMORY_EFFICACY_BUCKETS)[number];
+
 const ClassificationSchema = z.object({
   findingId: z.string().min(1),
-  classification: z.enum([
-    "missed_registration",
-    "recall_miss",
-    "memory_ignored",
-    "not_memory_related",
-  ]),
+  classification: z.enum(MEMORY_EFFICACY_BUCKETS),
   reason: z.string(),
 });
 
