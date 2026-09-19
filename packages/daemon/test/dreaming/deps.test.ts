@@ -280,13 +280,13 @@ function vetoJudgementOutcome(shadowPromote: boolean): JevShadowOutcome {
   };
 }
 
-test("promotionVeto allows only an answered shadowPromote and fails closed on every other outcome", async () => {
+test("promotionVeto allows only an answered shadowPromote and reports why it blocked", async () => {
   writeAgentsYaml(TWO_JUDGE_SEATS);
   const db = openSchemaDb();
   const affordMeter = { canAfford: (): boolean => true, record: (): void => undefined };
   const build = (mod: TypesafeModuleLike): DreamCycleDeps =>
     buildDreamCycleDeps({ loadTypesafeModule: () => Promise.resolve(mod) }, db, vetoConfig());
-  const verdict = async (deps: DreamCycleDeps): Promise<string> =>
+  const verdict = async (deps: DreamCycleDeps): Promise<unknown> =>
     (await deps.promotionVeto?.({ rollupId: "r1", body: "a durable finding body" })) ?? "unset";
   try {
     const allowDeps = build({
@@ -294,21 +294,35 @@ test("promotionVeto allows only an answered shadowPromote and fails closed on ev
       judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
     });
     allowDeps.costMeter = affordMeter;
-    expect(await verdict(allowDeps)).toBe("allow");
+    expect(await verdict(allowDeps)).toEqual({ decision: "allow", reason: "jev_promote" });
 
     const holdDeps = build({
       ...enabledTypesafeModule(),
       judgePromotion: () => Promise.resolve(vetoJudgementOutcome(false)),
     });
     holdDeps.costMeter = affordMeter;
-    expect(await verdict(holdDeps)).toBe("block");
+    expect(await verdict(holdDeps)).toEqual({ decision: "block", reason: "jev_reject" });
 
-    const errorDeps = build({
+    const timeoutDeps = build({
       ...enabledTypesafeModule(),
       judgePromotion: () => Promise.resolve({ ok: false, reason: "timeout", status: null }),
     });
+    timeoutDeps.costMeter = affordMeter;
+    expect(await verdict(timeoutDeps)).toEqual({ decision: "block", reason: "timeout" });
+
+    const errorDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve({ ok: false, reason: "transport", status: null }),
+    });
     errorDeps.costMeter = affordMeter;
-    expect(await verdict(errorDeps)).toBe("block");
+    expect(await verdict(errorDeps)).toEqual({ decision: "block", reason: "judge_failed" });
+
+    const throwingDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.reject(new Error("jev exploded")),
+    });
+    throwingDeps.costMeter = affordMeter;
+    expect(await verdict(throwingDeps)).toEqual({ decision: "block", reason: "judge_failed" });
 
     const importFailDeps = buildDreamCycleDeps(
       { loadTypesafeModule: () => Promise.reject(new Error("typesafe module missing")) },
@@ -316,20 +330,49 @@ test("promotionVeto allows only an answered shadowPromote and fails closed on ev
       vetoConfig(),
     );
     importFailDeps.costMeter = affordMeter;
-    expect(await verdict(importFailDeps)).toBe("block");
+    expect(await verdict(importFailDeps)).toEqual({
+      decision: "block",
+      reason: "loader_unavailable",
+    });
+
+    const disabledDeps = build({
+      ...enabledTypesafeModule(),
+      resolveTypesafeSettings: () => ({
+        enabled: false,
+        reason: "no_key",
+        judgePromotion: "veto",
+      }),
+    });
+    disabledDeps.costMeter = affordMeter;
+    expect(await verdict(disabledDeps)).toEqual({
+      decision: "block",
+      reason: "loader_unavailable",
+    });
 
     const noMeterDeps = build({
       ...enabledTypesafeModule(),
       judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
     });
-    expect(await verdict(noMeterDeps)).toBe("block");
+    expect(await verdict(noMeterDeps)).toEqual({ decision: "block", reason: "cost_gate" });
 
     const refusedDeps = build({
       ...enabledTypesafeModule(),
       judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
     });
     refusedDeps.costMeter = { canAfford: (): boolean => false, record: (): void => undefined };
-    expect(await verdict(refusedDeps)).toBe("block");
+    expect(await verdict(refusedDeps)).toEqual({ decision: "block", reason: "cost_gate" });
+
+    const explodingDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    Object.defineProperty(explodingDeps, "costMeter", {
+      configurable: true,
+      get: (): never => {
+        throw new Error("meter exploded");
+      },
+    });
+    expect(await verdict(explodingDeps)).toEqual({ decision: "block", reason: "exception" });
   } finally {
     db.close();
   }

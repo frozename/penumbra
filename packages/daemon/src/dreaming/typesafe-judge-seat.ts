@@ -357,26 +357,37 @@ export interface PromotionVetoDeps {
   budgetMs?: number;
 }
 
+export type JevVetoReason =
+  | "jev_promote"
+  | "jev_reject"
+  | "loader_unavailable"
+  | "cost_gate"
+  | "timeout"
+  | "judge_failed"
+  | "exception";
+
 export type PromotionVeto = (input: {
   rollupId: string;
   body: string;
-}) => Promise<"allow" | "block">;
+}) => Promise<{ decision: "allow" | "block"; reason: JevVetoReason }>;
 
 // A fail-closed gate on the incumbent's P1 auto-promote: "allow" only on an
 // answered judgement whose shadowPromote cleared the promote threshold. Every
 // other outcome — disabled or failed loader, timeout, judge error, a refusing
-// or absent cost meter — blocks. It writes no decision row (the detached
-// shadow ballot still audits the same subject) and never throws into P1.
+// or absent cost meter — blocks, with a reason so a Jev outage is visible as
+// something other than a genuine disagreement. It writes no decision row (the
+// detached shadow ballot still audits the same subject) and never throws into
+// P1.
 export function createPromotionVeto(deps: PromotionVetoDeps): PromotionVeto {
   const budgetMs = deps.budgetMs ?? JEV_SHADOW_BUDGET_MS;
   const loaderRt = { deps: { db: deps.db, loadJudge: deps.loadJudge } };
   return async (input) => {
     try {
       const judge = await loadSeatJudge(loaderRt);
-      if (judge === null) return "block";
+      if (judge === null) return { decision: "block", reason: "loader_unavailable" };
       const meter = deps.getCostMeter();
       if (!meter?.canAfford(JEV_SHADOW_COST_PHASE, "llm", deps.estimateUsd)) {
-        return "block";
+        return { decision: "block", reason: "cost_gate" };
       }
       const outcome = await callJudgeWithinBudget(
         judge,
@@ -386,12 +397,17 @@ export function createPromotionVeto(deps: PromotionVetoDeps): PromotionVeto {
       if (!outcome.ok) {
         // The request may have been billed, so fail toward the cap at the estimate.
         meter.record(JEV_SHADOW_COST_PHASE, "llm", deps.estimateUsd);
-        return "block";
+        return {
+          decision: "block",
+          reason: outcome.reason === "timeout" ? "timeout" : "judge_failed",
+        };
       }
       meter.record(JEV_SHADOW_COST_PHASE, "llm", outcome.judgement.usd);
-      return outcome.judgement.shadowPromote ? "allow" : "block";
+      return outcome.judgement.shadowPromote
+        ? { decision: "allow", reason: "jev_promote" }
+        : { decision: "block", reason: "jev_reject" };
     } catch {
-      return "block";
+      return { decision: "block", reason: "exception" };
     }
   };
 }

@@ -1,7 +1,13 @@
 import type { TypesafeFetch } from "@penumbra/typesafe";
 
 import { reloadAgentChatConfig } from "@penumbra/config";
-import { applySchema, loadSqliteVec, readJudgeDecisions, writeJudgeDecision } from "@penumbra/core";
+import {
+  applySchema,
+  loadSqliteVec,
+  type Logger,
+  readJudgeDecisions,
+  writeJudgeDecision,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -462,6 +468,28 @@ interface VetoRunResult {
   db: Database;
   jevCalls: number;
   embedCalls: number;
+  logCalls: VetoLogCall[];
+}
+
+interface VetoLogCall {
+  level: "info" | "warn";
+  fields: Record<string, unknown>;
+  msg: unknown;
+}
+
+function captureVetoLog(logCalls: VetoLogCall[]): Logger {
+  return {
+    info: (fields: unknown, msg: unknown): void => {
+      logCalls.push({ level: "info", fields: fields as Record<string, unknown>, msg });
+    },
+    warn: (fields: unknown, msg: unknown): void => {
+      logCalls.push({ level: "warn", fields: fields as Record<string, unknown>, msg });
+    },
+  } as unknown as Logger;
+}
+
+function vetoLogCalls(logCalls: VetoLogCall[]): VetoLogCall[] {
+  return logCalls.filter((c) => "jev_veto" in c.fields);
 }
 
 function jevWireResponse(durable: number, strongestFilter: number): unknown {
@@ -482,6 +510,8 @@ async function runVetoCycle(opts: {
   seatVote: { promote: boolean; confidence: number };
   jev: VetoJev;
   rollupCount?: number;
+  configOverrides?: Partial<DreamConfig>;
+  seedTodayLlmSpendUsd?: number;
 }): Promise<VetoRunResult> {
   setSystemTime(FROZEN);
   const content = JSON.stringify({
@@ -503,6 +533,7 @@ async function runVetoCycle(opts: {
   const savedConfigDir = process.env.PENUMBRA_CONFIG_DIR;
   const db = openTestDb();
   const counters = { jevCalls: 0, embedCalls: 0 };
+  const logCalls: VetoLogCall[] = [];
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -562,6 +593,7 @@ async function runVetoCycle(opts: {
     };
     const services = {
       loadTypesafeModule,
+      log: captureVetoLog(logCalls),
       embedder: {
         embed: (bodies: string[]): Promise<Float32Array[]> => {
           counters.embedCalls += bodies.length;
@@ -570,14 +602,18 @@ async function runVetoCycle(opts: {
       },
     };
     seedRollups(db, opts.rollupCount ?? 1);
+    if (opts.seedTodayLlmSpendUsd !== undefined) {
+      seedSameDayLlmSpend(db, opts.seedTodayLlmSpendUsd);
+    }
     const config = testConfig({
       typesafeJudgePromotion: opts.mode,
       typesafeEnv: { ...SHADOW_ENV, PENUMBRA_TYPESAFE_JUDGE_PROMOTION: opts.mode },
+      ...opts.configOverrides,
     });
     const deps = buildDreamCycleDeps(services, db, config);
     await runDreamCycle(db, config, deps);
     await drainShadowJudgements(5_000);
-    return { db, ...counters };
+    return { db, ...counters, logCalls };
   } finally {
     void server.stop(true);
     if (savedConfigDir === undefined) {
@@ -624,7 +660,7 @@ function rollupPromotionStamps(
 
 describe("P1 Jev veto mode", () => {
   it("blocks the auto-promotion onto the queued path when Jev answers below the promote threshold", async () => {
-    const { db, jevCalls, embedCalls } = await runVetoCycle({
+    const { db, jevCalls, embedCalls, logCalls } = await runVetoCycle({
       mode: "veto",
       seatVote: { promote: true, confidence: 0.9 },
       jev: {
@@ -644,18 +680,28 @@ describe("P1 Jev veto mode", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]?.status).toBe("queued");
       expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("jev_reject");
       const rollup = rollupPromotionStamps(db, "r1");
       expect(rollup.promotion_filtered_at).not.toBeNull();
       expect(rollup.t2_promoted_at).toBeNull();
       // Veto mode keeps the shadow lane: the detached ballot still lands a row.
       expect(readJudgeDecisions(db, { site: P1_PROMOTION_JUDGE_SITE })).toHaveLength(1);
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("info");
+      expect(vetoLogs[0]?.fields).toEqual({
+        rollup_id: "r1",
+        jev_veto: "blocked",
+        jev_veto_reason: "jev_reject",
+      });
+      expect(JSON.stringify(vetoLogs[0]?.fields)).not.toContain("durable finding");
     } finally {
       db.close();
     }
   });
 
   it("mints the t2 row with jev_veto allowed when the real wire lands pPromote exactly on the 0.5 threshold", async () => {
-    const { db, jevCalls } = await runVetoCycle({
+    const { db, jevCalls, logCalls } = await runVetoCycle({
       mode: "veto",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "wire", response: jevWireResponse(0.5, 0) },
@@ -667,8 +713,17 @@ describe("P1 Jev veto mode", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]?.status).toBe("auto_applied");
       expect(actions[0]?.payload["jev_veto"]).toBe("allowed");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("jev_promote");
       expect(typeof actions[0]?.payload["t2_memory_id"]).toBe("string");
       expect(rollupPromotionStamps(db, "r1").t2_promoted_at).not.toBeNull();
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("info");
+      expect(vetoLogs[0]?.fields).toEqual({
+        rollup_id: "r1",
+        jev_veto: "allowed",
+        jev_veto_reason: "jev_promote",
+      });
     } finally {
       db.close();
     }
@@ -676,7 +731,7 @@ describe("P1 Jev veto mode", () => {
 
   it("blocks when the real wire lands pPromote just under the promote threshold", async () => {
     // 0.5 * (1 - 0.04) = 0.48 < 0.5
-    const { db, jevCalls } = await runVetoCycle({
+    const { db, jevCalls, logCalls } = await runVetoCycle({
       mode: "veto",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "wire", response: jevWireResponse(0.5, 0.04) },
@@ -687,13 +742,17 @@ describe("P1 Jev veto mode", () => {
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("queued");
       expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("jev_reject");
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("info");
     } finally {
       db.close();
     }
   });
 
   it("fails closed when the typesafe module cannot be loaded", async () => {
-    const { db, jevCalls, embedCalls } = await runVetoCycle({
+    const { db, jevCalls, embedCalls, logCalls } = await runVetoCycle({
       mode: "veto",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "import-fail" },
@@ -705,14 +764,129 @@ describe("P1 Jev veto mode", () => {
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("queued");
       expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("loader_unavailable");
       expect(readJudgeDecisions(db, {})).toHaveLength(0);
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("warn");
+      expect(vetoLogs[0]?.fields).toEqual({
+        rollup_id: "r1",
+        jev_veto: "blocked",
+        jev_veto_reason: "loader_unavailable",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks with reason exception and warns when the veto function itself throws", async () => {
+    setSystemTime(FROZEN);
+    const db = openTestDb();
+    const logCalls: VetoLogCall[] = [];
+    try {
+      seedRollups(db, 1);
+      const deps: DreamCycleDeps = {
+        judgePool: makeFakeJudgePool([
+          { promote: true, confidence: 0.9 },
+          { promote: true, confidence: 0.8 },
+        ]),
+        promotionVeto: () => Promise.reject(new Error("veto exploded")),
+        log: captureVetoLog(logCalls),
+      };
+      await runDreamCycle(db, testConfig(), deps);
+      const actions = p1PromoteActions(db);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("exception");
+      expect(promotedT2Count(db)).toBe(0);
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("warn");
+      expect(vetoLogs[0]?.fields).toEqual({
+        rollup_id: "r1",
+        jev_veto: "blocked",
+        jev_veto_reason: "exception",
+      });
+      expect(JSON.stringify(vetoLogs[0]?.fields)).not.toContain("durable finding");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks with reason timeout and warns when the Jev call times out", async () => {
+    const { db, logCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: false, reason: "timeout", status: null } },
+    });
+    try {
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("timeout");
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("warn");
+      expect(vetoLogs[0]?.fields).toEqual({
+        rollup_id: "r1",
+        jev_veto: "blocked",
+        jev_veto_reason: "timeout",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks with reason judge_failed and warns when the Jev call fails", async () => {
+    const { db, logCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: false, reason: "transport", status: null } },
+    });
+    try {
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("judge_failed");
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("warn");
+      expect(vetoLogs[0]?.fields["jev_veto_reason"]).toBe("judge_failed");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks with reason cost_gate and warns when the meter refuses the estimate", async () => {
+    const { db, jevCalls, logCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+      configOverrides: { dailyUsd: 1 },
+      seedTodayLlmSpendUsd: 0.299,
+    });
+    try {
+      // Both lanes refuse at the meter, so the judge is never invoked.
+      expect(jevCalls).toBe(0);
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(actions[0]?.payload["jev_veto_reason"]).toBe("cost_gate");
+      const vetoLogs = vetoLogCalls(logCalls);
+      expect(vetoLogs).toHaveLength(1);
+      expect(vetoLogs[0]?.level).toBe("warn");
+      expect(vetoLogs[0]?.fields["jev_veto_reason"]).toBe("cost_gate");
     } finally {
       db.close();
     }
   });
 
   it("never consults the veto when the incumbent does not auto-promote", async () => {
-    const { db, jevCalls } = await runVetoCycle({
+    const { db, jevCalls, logCalls } = await runVetoCycle({
       mode: "veto",
       seatVote: { promote: false, confidence: 0.8 },
       jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
@@ -723,14 +897,16 @@ describe("P1 Jev veto mode", () => {
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("queued");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto_reason");
       expect(promotedT2Count(db)).toBe(0);
+      expect(vetoLogCalls(logCalls)).toHaveLength(0);
     } finally {
       db.close();
     }
   });
 
   it("shadow mode auto-promotes without a jev_veto payload field", async () => {
-    const { db, jevCalls } = await runVetoCycle({
+    const { db, jevCalls, logCalls } = await runVetoCycle({
       mode: "shadow",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
@@ -741,13 +917,15 @@ describe("P1 Jev veto mode", () => {
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("auto_applied");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto_reason");
+      expect(vetoLogCalls(logCalls)).toHaveLength(0);
     } finally {
       db.close();
     }
   });
 
   it("off mode auto-promotes with no typesafe wiring and no jev_veto field", async () => {
-    const { db, jevCalls } = await runVetoCycle({
+    const { db, jevCalls, logCalls } = await runVetoCycle({
       mode: "off",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
@@ -758,7 +936,9 @@ describe("P1 Jev veto mode", () => {
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("auto_applied");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto_reason");
       expect(readJudgeDecisions(db, {})).toHaveLength(0);
+      expect(vetoLogCalls(logCalls)).toHaveLength(0);
     } finally {
       db.close();
     }

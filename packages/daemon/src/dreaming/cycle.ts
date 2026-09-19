@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
 import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { ResearchDeps } from "./research.js";
+import type { JevVetoReason, PromotionVeto } from "./typesafe-judge-seat.js";
 
 import {
   type LlmInvokeCandidateFailure,
@@ -193,7 +194,7 @@ export interface DreamCycleDeps {
   };
   costMeter?: DreamCostMeter;
   phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
-  promotionVeto?: (input: { rollupId: string; body: string }) => Promise<"allow" | "block">;
+  promotionVeto?: PromotionVeto;
 }
 
 interface CycleCtx {
@@ -674,14 +675,27 @@ async function runCycleP1(
     // Consulted only when the incumbent auto-promotes; it can remove a YES but
     // never turn a NO into a YES. A throw or a non-"allow" answer fails closed.
     let jevVeto: "allowed" | "blocked" | undefined;
+    let jevVetoReason: JevVetoReason | undefined;
     if (autoPromote && deps.promotionVeto !== undefined) {
       try {
-        jevVeto =
-          (await deps.promotionVeto({ rollupId: rollup.rollup_id, body })) === "allow"
-            ? "allowed"
-            : "blocked";
+        const verdict = await deps.promotionVeto({ rollupId: rollup.rollup_id, body });
+        jevVeto = verdict.decision === "allow" ? "allowed" : "blocked";
+        jevVetoReason = verdict.reason;
       } catch {
         jevVeto = "blocked";
+        jevVetoReason = "exception";
+      }
+      // One line per consultation; only ids and the verdict class, never the
+      // rollup body or any settings material.
+      const vetoLogFields = {
+        rollup_id: rollup.rollup_id,
+        jev_veto: jevVeto,
+        jev_veto_reason: jevVetoReason,
+      };
+      if (jevVetoReason === "jev_promote" || jevVetoReason === "jev_reject") {
+        ctx.log?.info(vetoLogFields, "dream-cycle P1 jev veto");
+      } else {
+        ctx.log?.warn(vetoLogFields, "dream-cycle P1 jev veto");
       }
     }
 
@@ -695,6 +709,7 @@ async function runCycleP1(
       votes,
       avgConfidence,
       jevVeto,
+      jevVetoReason,
     );
     if (result.skip) continue;
 
@@ -709,7 +724,7 @@ async function runCycleP1(
       rollupTargetIds,
       JSON.stringify({
         votes: serializeJudgeVotes(votes),
-        ...(jevVeto === undefined ? {} : { jev_veto: jevVeto }),
+        ...(jevVeto === undefined ? {} : { jev_veto: jevVeto, jev_veto_reason: jevVetoReason }),
         ...(result.mintedT2Id ? { t2_memory_id: result.mintedT2Id } : {}),
       }),
     );
@@ -982,6 +997,7 @@ async function maybeAutoPromoteT1(
   votes: JudgeVote[],
   avgConfidence: number,
   jevVeto?: "allowed" | "blocked",
+  jevVetoReason?: JevVetoReason,
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
   if (!autoPromote) return { skip: false, status: "queued" };
 
@@ -1012,7 +1028,7 @@ async function maybeAutoPromoteT1(
           votes: serializeJudgeVotes(votes),
           dedup_against: existing.memory_id,
           project_id: rollup.project_id,
-          ...(jevVeto === undefined ? {} : { jev_veto: jevVeto }),
+          ...(jevVeto === undefined ? {} : { jev_veto: jevVeto, jev_veto_reason: jevVetoReason }),
         }),
       );
       db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
