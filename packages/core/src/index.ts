@@ -1,5 +1,3 @@
-import { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
-
 export {
   type IssueArgs,
   type IssueResult,
@@ -85,6 +83,7 @@ export {
   type PermissionEventListener,
 } from "./events/permission-events.js";
 export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
+export { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
 export { MachineId } from "./identity/machine-id.js";
 export { resolveProjectId } from "./identity/project-id.js";
 export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
@@ -491,6 +490,7 @@ export {
   type Classification,
   classifyFindings,
   type Finding,
+  MEMORY_EFFICACY_BUCKET_DEFINITIONS,
   MEMORY_EFFICACY_BUCKETS,
   type MemoryEfficacyBucket,
 } from "./services/memory-efficacy-classifier.js";
@@ -615,7 +615,6 @@ export {
   isAncestorOf,
   isThreeDotDiffEmpty,
 } from "./worktree/branch-land-probe.js";
-export { FsPathError, resolveInsideWorktree };
 
 export {
   buildHandoffBranchName,
