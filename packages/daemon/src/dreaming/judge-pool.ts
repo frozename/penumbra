@@ -35,6 +35,7 @@ export interface JudgePool {
   judgeAll?(args: {
     body: string;
     kind: "promote_t1" | "link" | "retire" | "rewrite";
+    subjectId?: string;
   }): Promise<JudgeVote[]>;
 }
 

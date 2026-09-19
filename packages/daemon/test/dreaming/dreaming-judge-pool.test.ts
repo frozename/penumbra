@@ -533,6 +533,23 @@ describe("DreamingJudgePool request extras", () => {
     expect(bodies[0]?.["chat_template_kwargs"]).toEqual({ enable_thinking: false });
     expect(Object.keys(bodies[1] ?? {}).sort()).toEqual(CANONICAL_BODY_KEYS);
   });
+
+  it("REGRESSION PIN: a subjectId on judgeAll args never reaches the judge request body", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeFetch = ((_input: string | URL | Request, init: RequestInit | undefined) => {
+      bodies.push(readRequestBody(init));
+      return Promise.resolve(makeVoteResponse(true, 0.9));
+    }) as unknown as typeof fetch;
+    const pool = createDreamingJudgePool(
+      [{ name: "plain", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "m" }],
+      fakeFetch,
+    );
+    await pool.judgeAll!({ body: "candidate", kind: "promote_t1", subjectId: "r1" });
+    await pool.judgeAll!({ body: "candidate", kind: "promote_t1" });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(Object.keys(bodies[0] ?? {}).sort()).toEqual(CANONICAL_BODY_KEYS);
+  });
 });
 
 describe("createDreamingJudgePoolFromAgentchat request extras", () => {

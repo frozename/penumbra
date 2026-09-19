@@ -656,7 +656,7 @@ async function runCycleP1(
       continue;
     }
 
-    const votes = await getPromoteVotes(ctx.judgePool, body);
+    const votes = await getPromoteVotes(ctx.judgePool, body, rollup.rollup_id);
     recordJudgeSeatOutcomes(db, ctx, votes, abstainLoggedSeats);
     const countedVotes = votes.filter((v) => !v.abstained);
     if (countedVotes.length === 0 || countedVotes.length < autoPromoteMinJudges) {
@@ -886,10 +886,14 @@ function claimT1Rollups(
   return rows.map((r) => ({ ...r, project_id: null }));
 }
 
-async function getPromoteVotes(judgePool: JudgePool, body: string): Promise<JudgeVote[]> {
+async function getPromoteVotes(
+  judgePool: JudgePool,
+  body: string,
+  subjectId: string,
+): Promise<JudgeVote[]> {
   try {
     if (judgePool.judgeAll) {
-      return await judgePool.judgeAll({ body, kind: "promote_t1" });
+      return await judgePool.judgeAll({ body, kind: "promote_t1", subjectId });
     }
     const result = await judgePool.judge({ body, kind: "promote_t1" });
     return [
