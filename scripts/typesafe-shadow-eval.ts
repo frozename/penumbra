@@ -1,0 +1,607 @@
+import { Database } from "bun:sqlite";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import type {
+  TypesafeClient,
+  TypesafeEnvInput,
+  TypesafeFetch,
+  TypesafeSettings,
+} from "../packages/integrations/typesafe/src/index.js";
+import type { PromotionAnswers } from "../packages/integrations/typesafe/src/questions/promotion.js";
+
+import { getConfig } from "../packages/config/src/index.js";
+import { Branding, resolveStorageDbPath } from "../packages/core/src/index.js";
+import {
+  createTypesafeClient,
+  resolveTypesafeSettings,
+} from "../packages/integrations/typesafe/src/index.js";
+import { judgePromotion } from "../packages/integrations/typesafe/src/questions/promotion.js";
+
+export interface DegradedWindow {
+  from: string;
+  to: string;
+}
+
+export const DEFAULT_DEGRADED_WINDOW: DegradedWindow = {
+  from: "2026-09-11T22:29:42Z",
+  to: "2026-09-18T20:00:00Z",
+};
+
+export interface ShadowEvalArgs {
+  dbPath: string;
+  outPath: string;
+  limit: number;
+  since: string | null;
+  degradedWindow: DegradedWindow;
+  live: boolean;
+}
+
+interface ArgsDraft {
+  dbArg: string | null;
+  outArg: string | null;
+  limit: number;
+  since: string | null;
+  degradedFrom: string;
+  degradedTo: string;
+  live: boolean;
+}
+
+function parseIsoFlag(flag: string, value: string): string {
+  if (Number.isNaN(Date.parse(value))) {
+    throw new Error(`invalid ${flag}: ${value}`);
+  }
+  return value;
+}
+
+function applyFlag(draft: ArgsDraft, flag: string, value: string): void {
+  switch (flag) {
+    case "--db":
+      draft.dbArg = value;
+      return;
+    case "--out":
+      draft.outArg = value;
+      return;
+    case "--limit": {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`invalid --limit: ${value}`);
+      }
+      draft.limit = parsed;
+      return;
+    }
+    case "--since":
+      draft.since = parseIsoFlag("--since", value);
+      return;
+    case "--degraded-from":
+      draft.degradedFrom = parseIsoFlag("--degraded-from", value);
+      return;
+    case "--degraded-to":
+      draft.degradedTo = parseIsoFlag("--degraded-to", value);
+      return;
+    default:
+      throw new Error(`unknown flag: ${flag}`);
+  }
+}
+
+export function parseShadowEvalArgs(argv: string[]): ShadowEvalArgs {
+  const draft: ArgsDraft = {
+    dbArg: null,
+    outArg: null,
+    limit: 50,
+    since: null,
+    degradedFrom: DEFAULT_DEGRADED_WINDOW.from,
+    degradedTo: DEFAULT_DEGRADED_WINDOW.to,
+    live: false,
+  };
+
+  const rest = [...argv];
+  for (;;) {
+    const arg = rest.shift();
+    if (arg === undefined) break;
+    if (arg === "--live") {
+      draft.live = true;
+      continue;
+    }
+    const value = rest.shift();
+    if (value === undefined) {
+      throw new Error(`flag requires a value: ${arg}`);
+    }
+    applyFlag(draft, arg, value);
+  }
+
+  if (draft.outArg === null) {
+    throw new Error("--out is required");
+  }
+  const storageRoot = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
+  const dbPath = draft.dbArg !== null ? resolve(draft.dbArg) : resolveStorageDbPath(storageRoot);
+  return {
+    dbPath,
+    outPath: resolve(draft.outArg),
+    limit: draft.limit,
+    since: draft.since,
+    degradedWindow: { from: draft.degradedFrom, to: draft.degradedTo },
+    live: draft.live,
+  };
+}
+
+export function openReplayDb(path: string): Database {
+  return new Database(path, { readonly: true });
+}
+
+export interface LoadedJudgement {
+  rollupId: string;
+  body: string;
+  ballots: unknown;
+  storedConfidence: number | null;
+  judgedAtMs: number | null;
+}
+
+export interface LoadedReplay {
+  totalEligible: number;
+  unlabelled: number;
+  excludedDegraded: number;
+  rows: LoadedJudgement[];
+}
+
+interface ReplayRawRow {
+  rollup_id: string;
+  body: string;
+  payload_json: string | null;
+  stored_confidence: number | null;
+  judged_at_ms: number | null;
+}
+
+// LEFT JOIN mirrors cycle.ts: insufficient-vote rollups write no
+// dream_actions row at all, and json_array(target) is how P1 stores the
+// single-rollup target list.
+const REPLAY_QUERY = `
+  SELECT r.rollup_id            AS rollup_id,
+         r.first_prompt_excerpt AS body,
+         da.payload_json        AS payload_json,
+         da.confidence          AS stored_confidence,
+         dc.started_at          AS judged_at_ms
+    FROM t1_rollups r
+    LEFT JOIN dream_actions da
+      ON da.phase = 'P1'
+     AND da.action_type = 'promote_t1'
+     AND da.target_ids = json_array(r.rollup_id)
+    LEFT JOIN dream_cycles dc
+      ON dc.cycle_id = da.cycle_id
+   WHERE r.first_prompt_excerpt IS NOT NULL
+     AND length(trim(r.first_prompt_excerpt)) >= 40`;
+
+function extractBallots(payloadJson: string): unknown {
+  const parsed: unknown = JSON.parse(payloadJson);
+  if (typeof parsed !== "object" || parsed === null) {
+    return null;
+  }
+  return (parsed as Record<string, unknown>)["votes"];
+}
+
+function isLabelled(row: ReplayRawRow): row is ReplayRawRow & { payload_json: string } {
+  return row.payload_json !== null;
+}
+
+interface ReplayWindowOpts {
+  sinceMs: number | null;
+  degradedFromMs: number;
+  degradedToMs: number;
+}
+
+function judgementSurvives(
+  row: ReplayRawRow & { payload_json: string },
+  opts: ReplayWindowOpts,
+): boolean {
+  const ms = row.judged_at_ms;
+  if (ms !== null && ms >= opts.degradedFromMs && ms <= opts.degradedToMs) {
+    return false;
+  }
+  return opts.sinceMs === null || (ms !== null && ms >= opts.sinceMs);
+}
+
+type ReplayPick =
+  | { kind: "unlabelled" }
+  | { kind: "excluded" }
+  | { kind: "kept"; latest: ReplayRawRow & { payload_json: string } };
+
+function pickReplayJudgement(rows: readonly ReplayRawRow[], opts: ReplayWindowOpts): ReplayPick {
+  const labelled = rows.filter(isLabelled);
+  if (labelled.length === 0) {
+    return { kind: "unlabelled" };
+  }
+  const surviving = labelled.filter((row) => judgementSurvives(row, opts));
+  if (surviving.length === 0) {
+    return { kind: "excluded" };
+  }
+  surviving.sort((a, b) => (b.judged_at_ms ?? 0) - (a.judged_at_ms ?? 0));
+  const latest = surviving[0];
+  if (latest === undefined) {
+    return { kind: "excluded" };
+  }
+  return { kind: "kept", latest };
+}
+
+export function loadReplayRollups(
+  db: Database,
+  opts: {
+    sinceMs: number | null;
+    degradedFromMs: number;
+    degradedToMs: number;
+    limit: number;
+  },
+): LoadedReplay {
+  const rawRows = db.query<ReplayRawRow, []>(REPLAY_QUERY).all();
+  const groups = new Map<string, ReplayRawRow[]>();
+  for (const row of rawRows) {
+    const group = groups.get(row.rollup_id);
+    if (group === undefined) {
+      groups.set(row.rollup_id, [row]);
+    } else {
+      group.push(row);
+    }
+  }
+
+  let unlabelled = 0;
+  let excludedDegraded = 0;
+  const kept: LoadedJudgement[] = [];
+  for (const [rollupId, rows] of groups) {
+    const pick = pickReplayJudgement(rows, opts);
+    if (pick.kind === "unlabelled") {
+      unlabelled += 1;
+      continue;
+    }
+    if (pick.kind === "excluded") {
+      excludedDegraded += 1;
+      continue;
+    }
+    kept.push({
+      rollupId,
+      body: pick.latest.body,
+      ballots: extractBallots(pick.latest.payload_json),
+      storedConfidence: pick.latest.stored_confidence,
+      judgedAtMs: pick.latest.judged_at_ms,
+    });
+  }
+  kept.sort((a, b) => (b.judgedAtMs ?? 0) - (a.judgedAtMs ?? 0));
+
+  return {
+    totalEligible: groups.size,
+    unlabelled,
+    excludedDegraded,
+    rows: kept.slice(0, opts.limit),
+  };
+}
+
+export type IncumbentDecision = "promote" | "no_promote" | "insufficient";
+
+export interface IncumbentInput {
+  ballots: unknown;
+  // dream_actions.confidence — the stored YES/NO confidence average, not a
+  // promote probability. In scope so the ballot-only computation is auditable
+  // against it; deliberately never consulted for pYes.
+  storedConfidence: number | null;
+}
+
+export interface IncumbentVerdict {
+  ballots: unknown;
+  counted: number;
+  pYes: number | null;
+  decision: IncumbentDecision;
+}
+
+// Mirrors the P1 quorum floor in cycle.ts (autoPromoteMinJudges default
+// DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2, daemon config.ts:3).
+const INCUMBENT_MIN_COUNTED_BALLOTS = 2;
+
+export function incumbentFromBallots(input: IncumbentInput): IncumbentVerdict {
+  const list = Array.isArray(input.ballots) ? input.ballots : [];
+  let counted = 0;
+  let yes = 0;
+  for (const vote of list) {
+    if (typeof vote !== "object" || vote === null) {
+      continue;
+    }
+    const record = vote as Record<string, unknown>;
+    if (record["abstained"] === true) {
+      continue;
+    }
+    counted += 1;
+    if (record["promote"] === true) {
+      yes += 1;
+    }
+  }
+  const pYes = counted === 0 ? null : yes / counted;
+  const decision: IncumbentDecision =
+    counted < INCUMBENT_MIN_COUNTED_BALLOTS
+      ? "insufficient"
+      : yes >= Math.ceil((counted * 2) / 3)
+        ? "promote"
+        : "no_promote";
+  return { ballots: input.ballots, counted, pYes, decision };
+}
+
+export function makeLiveClient(deps: {
+  settings: TypesafeSettings;
+  fetch: TypesafeFetch;
+}): TypesafeClient {
+  return createTypesafeClient({ settings: deps.settings, fetch: deps.fetch });
+}
+
+export interface ShadowEvalRowResult {
+  incumbentDecision: IncumbentDecision;
+  incumbentPYes: number | null;
+  jev:
+    | { status: "skipped" }
+    | {
+        status: "answered";
+        pPromote: number;
+        shadowPromote: boolean;
+        inputTokens: number;
+        usd: number;
+      }
+    | { status: "failed" };
+}
+
+export interface ShadowReplayMeta {
+  dbPath: string;
+  degradedWindow: DegradedWindow;
+  since: string | null;
+  totalEligible: number;
+  unlabelled: number;
+  excludedDegraded: number;
+}
+
+export interface ShadowReplayReport {
+  db_path: string;
+  degraded_window: DegradedWindow;
+  since: string | null;
+  total_eligible: number;
+  unlabelled: number;
+  excluded_degraded: number;
+  judged: number;
+  jev_answered: number;
+  jev_failed: number;
+  incumbent_insufficient: number;
+  confusion: {
+    both_promote: number;
+    incumbent_only: number;
+    jev_only: number;
+    neither: number;
+  };
+  agreedCount: number;
+  disagreedCount: number;
+  agreementRate: number | null;
+  p_gap_mean: number | null;
+  total_input_tokens: number;
+  total_usd: number;
+}
+
+interface AgreementAccum {
+  jevAnswered: number;
+  jevFailed: number;
+  incumbentInsufficient: number;
+  confusion: { both_promote: number; incumbent_only: number; jev_only: number; neither: number };
+  agreedCount: number;
+  disagreedCount: number;
+  pGapSum: number;
+  pGapCount: number;
+  totalInputTokens: number;
+  totalUsd: number;
+}
+
+function recordRow(acc: AgreementAccum, row: ShadowEvalRowResult): void {
+  if (row.incumbentDecision === "insufficient") {
+    acc.incumbentInsufficient += 1;
+  }
+  if (row.jev.status === "failed") {
+    acc.jevFailed += 1;
+    return;
+  }
+  if (row.jev.status === "skipped") {
+    return;
+  }
+  acc.jevAnswered += 1;
+  acc.totalInputTokens += row.jev.inputTokens;
+  acc.totalUsd += row.jev.usd;
+  if (row.incumbentDecision === "insufficient") {
+    return;
+  }
+  const incumbentPromotes = row.incumbentDecision === "promote";
+  const confusionKey = incumbentPromotes
+    ? row.jev.shadowPromote
+      ? "both_promote"
+      : "incumbent_only"
+    : row.jev.shadowPromote
+      ? "jev_only"
+      : "neither";
+  acc.confusion[confusionKey] += 1;
+  if (incumbentPromotes === row.jev.shadowPromote) {
+    acc.agreedCount += 1;
+  } else {
+    acc.disagreedCount += 1;
+  }
+  if (row.incumbentPYes !== null) {
+    acc.pGapSum += Math.abs(row.incumbentPYes - row.jev.pPromote);
+    acc.pGapCount += 1;
+  }
+}
+
+export function summarizeAgreement(
+  meta: ShadowReplayMeta,
+  rows: readonly ShadowEvalRowResult[],
+): ShadowReplayReport {
+  const acc: AgreementAccum = {
+    jevAnswered: 0,
+    jevFailed: 0,
+    incumbentInsufficient: 0,
+    confusion: { both_promote: 0, incumbent_only: 0, jev_only: 0, neither: 0 },
+    agreedCount: 0,
+    disagreedCount: 0,
+    pGapSum: 0,
+    pGapCount: 0,
+    totalInputTokens: 0,
+    totalUsd: 0,
+  };
+  for (const row of rows) {
+    recordRow(acc, row);
+  }
+  const compared = acc.agreedCount + acc.disagreedCount;
+  return {
+    db_path: meta.dbPath,
+    degraded_window: meta.degradedWindow,
+    since: meta.since,
+    total_eligible: meta.totalEligible,
+    unlabelled: meta.unlabelled,
+    excluded_degraded: meta.excludedDegraded,
+    judged: rows.length,
+    jev_answered: acc.jevAnswered,
+    jev_failed: acc.jevFailed,
+    incumbent_insufficient: acc.incumbentInsufficient,
+    confusion: acc.confusion,
+    agreedCount: acc.agreedCount,
+    disagreedCount: acc.disagreedCount,
+    agreementRate: compared > 0 ? acc.agreedCount / compared : null,
+    p_gap_mean: acc.pGapCount > 0 ? acc.pGapSum / acc.pGapCount : null,
+    total_input_tokens: acc.totalInputTokens,
+    total_usd: acc.totalUsd,
+  };
+}
+
+export interface ShadowEvalDeps {
+  fetch: TypesafeFetch;
+  settings?: TypesafeSettings;
+}
+
+interface JevFields {
+  answers: PromotionAnswers | null;
+  model: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  outcome: ShadowEvalRowResult["jev"];
+}
+
+async function judgeCandidate(client: TypesafeClient | null, body: string): Promise<JevFields> {
+  if (client === null) {
+    return { answers: null, model: null, usage: null, outcome: { status: "skipped" } };
+  }
+  const outcome = await judgePromotion(
+    client,
+    { kind: "promote_t1", body },
+    AbortSignal.timeout(15_000),
+  );
+  if (!outcome.ok) {
+    return { answers: null, model: null, usage: null, outcome: { status: "failed" } };
+  }
+  const { judgement } = outcome;
+  return {
+    answers: judgement.answers,
+    model: judgement.model,
+    usage: judgement.usage,
+    outcome: {
+      status: "answered",
+      pPromote: judgement.pPromote,
+      shadowPromote: judgement.shadowPromote,
+      inputTokens: judgement.usage.inputTokens,
+      usd: judgement.usd,
+    },
+  };
+}
+
+function requireEnabledSettings(
+  settings: TypesafeSettings | undefined,
+): Extract<TypesafeSettings, { enabled: true }> {
+  if (!settings?.enabled) {
+    throw new Error("typesafe-shadow-eval: --live requires enabled TypeSafe settings");
+  }
+  return settings;
+}
+
+export async function runShadowEval(
+  args: ShadowEvalArgs,
+  deps: ShadowEvalDeps,
+): Promise<ShadowReplayReport> {
+  const db = openReplayDb(args.dbPath);
+  let loaded: LoadedReplay;
+  try {
+    loaded = loadReplayRollups(db, {
+      sinceMs: args.since === null ? null : Date.parse(args.since),
+      degradedFromMs: Date.parse(args.degradedWindow.from),
+      degradedToMs: Date.parse(args.degradedWindow.to),
+      limit: args.limit,
+    });
+  } finally {
+    db.close();
+  }
+
+  const client = args.live
+    ? makeLiveClient({ settings: requireEnabledSettings(deps.settings), fetch: deps.fetch })
+    : null;
+
+  const results: ShadowEvalRowResult[] = [];
+  const lines: string[] = [];
+  for (const candidate of loaded.rows) {
+    const incumbent = incumbentFromBallots({
+      ballots: candidate.ballots,
+      storedConfidence: candidate.storedConfidence,
+    });
+    const judged = await judgeCandidate(client, candidate.body);
+    lines.push(
+      `${JSON.stringify({
+        rollup_id: candidate.rollupId,
+        incumbent_ballots: incumbent.ballots,
+        incumbent_decision: incumbent.decision,
+        jev_answers: judged.answers,
+        model: judged.model,
+        usage: judged.usage,
+      })}\n`,
+    );
+    results.push({
+      incumbentDecision: incumbent.decision,
+      incumbentPYes: incumbent.pYes,
+      jev: judged.outcome,
+    });
+  }
+  writeFileSync(args.outPath, lines.join(""));
+
+  return summarizeAgreement(
+    {
+      dbPath: args.dbPath,
+      degradedWindow: args.degradedWindow,
+      since: args.since,
+      totalEligible: loaded.totalEligible,
+      unlabelled: loaded.unlabelled,
+      excludedDegraded: loaded.excludedDegraded,
+    },
+    results,
+  );
+}
+
+const liveFetch: TypesafeFetch = (url, init) => globalThis.fetch(url, init);
+
+async function main(): Promise<number> {
+  const args = parseShadowEvalArgs(process.argv.slice(2));
+  let settings: TypesafeSettings | undefined;
+  if (args.live) {
+    settings = resolveTypesafeSettings(getConfig(process.env).env as unknown as TypesafeEnvInput);
+    if (!settings.enabled) {
+      process.stderr.write(`${settings.reason}\n`);
+      return 2;
+    }
+  }
+  const deps: ShadowEvalDeps = { fetch: liveFetch };
+  if (settings !== undefined) {
+    deps.settings = settings;
+  }
+  const report = await runShadowEval(args, deps);
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+  return 0;
+}
+
+if (import.meta.main) {
+  try {
+    process.exitCode = await main();
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 2;
+  }
+}
