@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import type { DreamConfig } from "@src/dreaming/config.js";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "@src/dreaming/cycle.js";
 import { createDreamingJudgePool } from "@src/dreaming/dreaming-judge-pool.js";
-import { type JudgePool, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
+import { type JudgePool, type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
 import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { hashQuery } from "@src/dreaming/research.js";
@@ -1684,6 +1684,144 @@ it("P1 still defers normally below the deferral cap", async () => {
   expect(row?.promotion_retry_exhausted_at).toBeNull();
   expect(row?.promotion_retry_count).toBe(4);
   expect(row?.promotion_retry_after).toBeGreaterThan(Date.now());
+});
+
+// Queues a P1 promote_t1 review action for rollupId. The claim batch already
+// excludes rollups with a queued promote, so the deferT1PromotionRetry
+// "queued_action_pending" branch is only reachable when the action lands
+// after the claim but before the rollup's own queued check inside the cycle.
+function queueP1PromoteAction(db: Database, rollupId: string): void {
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P1', 'promote_t1', 0.5, 'queued', ?, '{}')`,
+  ).run(crypto.randomUUID(), JSON.stringify([rollupId]));
+}
+
+// A helper rollup seeded before the target is reached first by the claim loop
+// (claim RETURNING order follows rowid order, not started_at). Its judging
+// round is the intra-cycle window where the target's queued promote_t1 lands.
+// The helper abstains, so it accrues retryable non-verdicts of its own; the
+// test resets its count between cycles to keep it claimable.
+function midCycleQueuePool(db: Database, targetRollupId: string): JudgePool {
+  return {
+    judge: () => Promise.resolve({ confidence: 0.9, verdict: "no" }),
+    judgeAll: (): Promise<JudgeVote[]> => {
+      queueP1PromoteAction(db, targetRollupId);
+      return Promise.resolve([
+        { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+        { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+      ]);
+    },
+  };
+}
+
+it("P1 keeps a pending queued promote_t1 action out of the retry cap across cycles", async () => {
+  const db = openTestDb();
+  const helperId = seedUnpromotedRollup(db, {
+    body: "helper rollup judged first each cycle so the target's queued review action lands mid-cycle.",
+  });
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a promote action awaiting operator review is an outcome in flight, not a judge non-verdict.",
+  });
+  const config = testConfig({
+    autoPromoteMinJudges: 2,
+    skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+  });
+  const dayMs = 24 * 60 * 60_000;
+  const events: { kind: string; meta?: unknown }[] = [];
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Object.defineProperty(Date, "now", { value: () => nowMs, writable: true });
+  try {
+    for (let cycle = 0; cycle < 7; cycle++) {
+      if (cycle > 0) {
+        nowMs += dayMs + 60_000;
+        // Resolve the previous cycle's queued action so the target is claimable
+        // again; the pool re-queues it mid-cycle while the helper is judged.
+        db.prepare(
+          `DELETE FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+        ).run(JSON.stringify([rollupId]));
+        db.prepare(`UPDATE t1_rollups SET promotion_retry_count=0 WHERE rollup_id=?`).run(helperId);
+      }
+      await runDreamCycle(db, config, {
+        judgePool: midCycleQueuePool(db, rollupId),
+        dispatchEventLog: {
+          record(event) {
+            events.push(event);
+          },
+        },
+      });
+      const row = db
+        .prepare(
+          `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after
+             FROM t1_rollups WHERE rollup_id=?`,
+        )
+        .get(rollupId) as {
+        promotion_retry_exhausted_at: number | null;
+        promotion_retry_count: number;
+        promotion_retry_after: number | null;
+      } | null;
+      expect(row?.promotion_retry_exhausted_at).toBeNull();
+      expect(row?.promotion_retry_count).toBe(0);
+      expect(row?.promotion_retry_after).toBe(nowMs + dayMs);
+    }
+  } finally {
+    Object.defineProperty(Date, "now", { value: originalDateNow, writable: true });
+  }
+  expect(events.filter((e) => e.kind === "dream_p1_promotion_retry_exhausted")).toHaveLength(0);
+});
+
+it("P1 starts a fresh retry count when judging resumes after a queued action resolves", async () => {
+  const db = openTestDb();
+  const helperId = seedUnpromotedRollup(db, {
+    body: "helper rollup judged first each cycle so the target's queued review action lands mid-cycle.",
+  });
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a rejected promote action returns the rollup to judging with its retry budget intact.",
+  });
+  const config = testConfig({
+    autoPromoteMinJudges: 2,
+    skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+  });
+  const dayMs = 24 * 60 * 60_000;
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Object.defineProperty(Date, "now", { value: () => nowMs, writable: true });
+  try {
+    for (let cycle = 0; cycle < 4; cycle++) {
+      if (cycle > 0) {
+        nowMs += dayMs + 60_000;
+        db.prepare(
+          `DELETE FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+        ).run(JSON.stringify([rollupId]));
+        db.prepare(`UPDATE t1_rollups SET promotion_retry_count=0 WHERE rollup_id=?`).run(helperId);
+      }
+      await runDreamCycle(db, config, { judgePool: midCycleQueuePool(db, rollupId) });
+    }
+    // The operator rejects the queued action; the next cycle must judge the
+    // rollup again, and the resulting non-verdict is the first counted one.
+    db.prepare(
+      `UPDATE dream_actions SET status='rejected' WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+    ).run(JSON.stringify([rollupId]));
+    nowMs += dayMs + 60_000;
+    await runDreamCycle(db, config, { judgePool: allAbstain() });
+  } finally {
+    Object.defineProperty(Date, "now", { value: originalDateNow, writable: true });
+  }
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after
+         FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(1);
+  expect(row?.promotion_retry_after).toBeGreaterThan(nowMs);
 });
 
 it("P1 never claims a rollup stamped promotion_retry_exhausted_at", async () => {

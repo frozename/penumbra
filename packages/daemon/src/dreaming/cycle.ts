@@ -720,10 +720,13 @@ interface ClaimedT1Rollup {
 const P1_PROMOTION_RETRY_BASE_MS = 60 * 60_000;
 const P1_PROMOTION_RETRY_MAX_MS = 24 * 60 * 60_000;
 
-// A rollup that reaches this many non-verdicts stops being retried. It gets a
-// terminal stamp distinct from a judged NO (promotion_filtered_at), so a
-// deterministic abstention cannot re-judge the same rollup every 24h forever,
-// and an operator can re-open it by clearing the stamp and the count.
+// A rollup that reaches this many judge non-verdicts stops being retried. Only
+// insufficient_judge_votes deferrals count: a queued promote_t1 action means a
+// verdict already exists and is awaiting operator review, so there is nothing
+// for the judge to retry. The rollup gets a terminal stamp distinct from a
+// judged NO (promotion_filtered_at), so a deterministic abstention cannot
+// re-judge the same rollup every 24h forever, and an operator can re-open it
+// by clearing the stamp and the count.
 const P1_PROMOTION_MAX_DEFERRALS = 5;
 
 function deferT1PromotionRetry(
@@ -732,6 +735,26 @@ function deferT1PromotionRetry(
   rollup: ClaimedT1Rollup,
   reason: "insufficient_judge_votes" | "queued_action_pending",
 ): void {
+  // A queued promote_t1 is an outcome awaiting review, not a non-verdict:
+  // defer without touching the retry count or the exhaustion cap.
+  if (reason === "queued_action_pending") {
+    db.prepare(`UPDATE t1_rollups SET promotion_retry_after=? WHERE rollup_id=?`).run(
+      ctx.nowMs + P1_PROMOTION_RETRY_MAX_MS,
+      rollup.rollup_id,
+    );
+    ctx.log?.info(
+      {
+        phase: "P1",
+        cycleId: ctx.cycleId,
+        rollupId: rollup.rollup_id,
+        reason,
+        retryCount: rollup.promotion_retry_count,
+        retryAfterMs: P1_PROMOTION_RETRY_MAX_MS,
+      },
+      "dream-cycle P1 promotion deferred",
+    );
+    return;
+  }
   const attempt = rollup.promotion_retry_count;
   if (attempt + 1 >= P1_PROMOTION_MAX_DEFERRALS) {
     exhaustT1PromotionRetry(db, ctx, rollup, reason);
