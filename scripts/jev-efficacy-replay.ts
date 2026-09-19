@@ -62,6 +62,7 @@ export interface EfficacyClassStat {
   selected: number;
   compared: number;
   agreed: number;
+  abstained: number;
   recall: number | null;
 }
 
@@ -176,7 +177,9 @@ export async function runEfficacyReplay(
   args: EfficacyReplayArgs,
   deps: EfficacyReplayDeps,
 ): Promise<EfficacyReplayReport> {
-  const db = args.live ? new Database(args.db) : new Database(args.db, { readonly: true });
+  const db = args.live
+    ? new Database(args.db, { readwrite: true, create: false })
+    : new Database(args.db, { readonly: true });
   try {
     assertJudgeDecisionsTable(db);
     const rows = selectEfficacyFindings(db, args);
@@ -247,6 +250,7 @@ function isAlreadyJudged(db: Database, findingId: string): boolean {
         WHERE site = 'memory.efficacy'
           AND subject_id = ?
           AND json_extract(jev_json, '$.requestedModel') = ?
+          AND json_extract(jev_json, '$.kind') = 'answered'
         LIMIT 1
       `,
     )
@@ -263,7 +267,7 @@ function countAlreadyJudged(db: Database, rows: EfficacyFindingRow[]): number {
 }
 
 function emptyClassStat(): EfficacyClassStat {
-  return { selected: 0, compared: 0, agreed: 0, recall: null };
+  return { selected: 0, compared: 0, agreed: 0, abstained: 0, recall: null };
 }
 
 function initReport(rows: EfficacyFindingRow[]): EfficacyReplayReport {
@@ -289,13 +293,14 @@ function recordVerdict(
   row: EfficacyFindingRow,
   verdict: JevEfficacyVerdict,
 ): void {
+  const stat = (report.perIncumbentClass[row.classification] ??= emptyClassStat());
   if (verdict.kind === "abstained") {
     report.abstained[verdict.reason] += 1;
+    stat.abstained += 1;
     return;
   }
   report.answered += 1;
   report.agreement.compared += 1;
-  const stat = (report.perIncumbentClass[row.classification] ??= emptyClassStat());
   stat.compared += 1;
   const byJev = (report.confusion[row.classification] ??= {});
   byJev[verdict.bucket] = (byJev[verdict.bucket] ?? 0) + 1;

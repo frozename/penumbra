@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -179,6 +179,25 @@ function makeDeps(
   };
 }
 
+function make429Deps(counter: { calls: number }): {
+  fetch: TypesafeFetch;
+  typesafeEnv: TypesafeEnvInput;
+  maxRetries: number;
+  now: () => number;
+} {
+  return {
+    fetch: (url, init): Promise<Response> => {
+      counter.calls += 1;
+      void url;
+      void init;
+      return Promise.resolve(new Response("rate limited", { status: 429 }));
+    },
+    typesafeEnv: TYPESAFE_ENV,
+    maxRetries: 0,
+    now: () => FIXED_NOW,
+  };
+}
+
 interface JudgeDecisionSqlRow {
   decision_id: string;
   site: string;
@@ -190,6 +209,10 @@ interface JudgeDecisionSqlRow {
   applied: number;
   usage_input_tokens: number;
   created_at: string;
+}
+
+function jevKind(row: JudgeDecisionSqlRow): string {
+  return (JSON.parse(row.jev_json) as { kind: string }).kind;
 }
 
 function readJudgeDecisionRows(dbPath: string): JudgeDecisionSqlRow[] {
@@ -338,12 +361,14 @@ describe("jev-efficacy-replay", () => {
       selected: 2,
       compared: 2,
       agreed: 2,
+      abstained: 0,
       recall: 1,
     });
     expect(report.perIncumbentClass["recall_miss"]).toEqual({
       selected: 1,
       compared: 1,
       agreed: 0,
+      abstained: 0,
       recall: 0,
     });
   });
@@ -385,6 +410,121 @@ describe("jev-efficacy-replay", () => {
     expect(report.written).toBe(2);
     expect(report.selected).toBe(5);
     expect(readJudgeDecisionRows(dbPath)).toHaveLength(2);
+  });
+
+  test("abstained verdicts stay retryable: the next pass re-judges them and keeps the abstained rows", async () => {
+    const dbPath = makeDbPath();
+    const args = parseEfficacyReplayArgs(["--db", dbPath, "--all-completed-jobs", "--live"]);
+
+    const counter429 = { calls: 0 };
+    const first = await runEfficacyReplay(args, make429Deps(counter429));
+    expect(counter429.calls).toBe(5);
+    expect(first.called).toBe(5);
+    expect(first.answered).toBe(0);
+    expect(first.abstained).toEqual({ timeout: 0, judge_error: 5, invalid_answer: 0 });
+    expect(first.written).toBe(5);
+
+    const firstRows = readJudgeDecisionRows(dbPath);
+    expect(firstRows.map((row) => row.subject_id).sort()).toEqual([...FINDING_IDS].sort());
+    for (const row of firstRows) {
+      expect(jevKind(row)).toBe("abstained");
+    }
+    const abstainedIds = new Set(firstRows.map((row) => row.decision_id));
+
+    const counterOk = { calls: 0 };
+    const second = await runEfficacyReplay(args, makeDeps(JEV_EFFICACY_MODEL, counterOk));
+    expect(counterOk.calls).toBe(5);
+    expect(second.called).toBe(5);
+    expect(second.answered).toBe(5);
+    expect(second.written).toBe(5);
+    expect(second.alreadyJudged).toBe(0);
+
+    const third = await runEfficacyReplay(args, makeDeps(JEV_EFFICACY_MODEL, counterOk));
+    expect(counterOk.calls).toBe(5);
+    expect(third.called).toBe(0);
+    expect(third.written).toBe(0);
+    expect(third.alreadyJudged).toBe(5);
+
+    const finalRows = readJudgeDecisionRows(dbPath);
+    expect(finalRows).toHaveLength(10);
+    const finalAbstainedIds = new Set(
+      finalRows.filter((row) => jevKind(row) === "abstained").map((row) => row.decision_id),
+    );
+    expect(finalAbstainedIds).toEqual(abstainedIds);
+    expect(finalRows.filter((row) => jevKind(row) === "answered")).toHaveLength(5);
+  });
+
+  test("dry run after an all-abstained live pass reports alreadyJudged 0", async () => {
+    const dbPath = makeDbPath();
+    const counter429 = { calls: 0 };
+    await runEfficacyReplay(
+      parseEfficacyReplayArgs(["--db", dbPath, "--all-completed-jobs", "--live"]),
+      make429Deps(counter429),
+    );
+
+    const dryCounter = { calls: 0 };
+    const report = await runEfficacyReplay(
+      parseEfficacyReplayArgs(["--db", dbPath, "--all-completed-jobs"]),
+      makeDeps(JEV_EFFICACY_MODEL, dryCounter),
+    );
+
+    expect(dryCounter.calls).toBe(0);
+    expect(report.selected).toBe(5);
+    expect(report.alreadyJudged).toBe(0);
+  });
+
+  test("live mode rejects a missing db path without creating the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jev-efficacy-replay-"));
+    tmpDirs.push(dir);
+    const dbPath = join(dir, "missing.sqlite");
+    const counter = { calls: 0 };
+    const args = parseEfficacyReplayArgs(["--db", dbPath, "--all-completed-jobs", "--live"]);
+
+    const error = await runEfficacyReplay(args, makeDeps(JEV_EFFICACY_MODEL, counter)).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(counter.calls).toBe(0);
+    expect(existsSync(dbPath)).toBe(false);
+  });
+
+  test("per-incumbent-class stats expose abstained counts beside selected and compared", async () => {
+    const dbPath = makeDbPath();
+    const counter = { calls: 0 };
+    const report = await runEfficacyReplay(
+      parseEfficacyReplayArgs(["--db", dbPath, "--all-completed-jobs", "--live"]),
+      make429Deps(counter),
+    );
+
+    expect(report.perIncumbentClass["missed_registration"]).toEqual({
+      selected: 1,
+      compared: 0,
+      agreed: 0,
+      abstained: 1,
+      recall: null,
+    });
+    expect(report.perIncumbentClass["recall_miss"]).toEqual({
+      selected: 1,
+      compared: 0,
+      agreed: 0,
+      abstained: 1,
+      recall: null,
+    });
+    expect(report.perIncumbentClass["memory_ignored"]).toEqual({
+      selected: 1,
+      compared: 0,
+      agreed: 0,
+      abstained: 1,
+      recall: null,
+    });
+    expect(report.perIncumbentClass["not_memory_related"]).toEqual({
+      selected: 2,
+      compared: 0,
+      agreed: 0,
+      abstained: 2,
+      recall: null,
+    });
   });
 
   test("runEfficacyReplay throws naming judge_decisions before any fetch when the table is missing", async () => {
