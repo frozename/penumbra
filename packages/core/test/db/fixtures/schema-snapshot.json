@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 45,
+  "schemaVersion": 46,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -162,6 +162,18 @@
       "use_worktree",
       "worker_id",
       "workflow_run_id"
+    ],
+    "judge_decisions": [
+      "applied",
+      "created_at",
+      "decision_id",
+      "incumbent_json",
+      "jev_json",
+      "mode",
+      "model",
+      "site",
+      "subject_id",
+      "usage_input_tokens"
     ],
     "lane_ledger": [
       "gate_status",
@@ -718,6 +730,8 @@
     "idx_dream_research_cache_negative",
     "idx_dream_research_cache_project",
     "idx_handoffs_root_status",
+    "idx_judge_decisions_site_created_at",
+    "idx_judge_decisions_subject_id",
     "idx_long_lived_action_audit_lookup",
     "idx_long_lived_pending_actions_lookup",
     "idx_long_lived_ticks_by_agent",

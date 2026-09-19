@@ -65,8 +65,7 @@ export { BundledEmbedder } from "./embedder/bundled.js";
 export type { Embedder } from "./embedder/interface.js";
 export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
 export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
-export { resolveEmbedder } from "./embedder/resolve.js";
-export type { EmbedderMode } from "./embedder/resolve.js";
+export { type EmbedderMode, resolveEmbedder } from "./embedder/resolve.js";
 export {
   ConversationStreamBus,
   type ConversationStreamListener,
@@ -205,6 +204,7 @@ export {
 } from "./readers/fleet-latency.js";
 export { getObservations } from "./readers/get-observations.js";
 export { HandoffReader, type HandoffReaderOpts } from "./readers/handoff.js";
+export * from "./readers/judge-decisions.js";
 export {
   claimNextJob,
   completeJob,
@@ -655,6 +655,7 @@ export {
   type CreateHandoffParams,
   HandoffWriter,
 } from "./writers/handoff.js";
+export * from "./writers/judge-decisions.js";
 export {
   type NotificationOutboxEntry,
   type NotificationOutboxKind,

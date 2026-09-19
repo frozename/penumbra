@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 
+// 46 = judge_decisions shadow sink for the TypeSafe judge.
 // 45 = t1_rollups promotion_retry_exhausted_at terminal stamp.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -1042,6 +1043,23 @@ const SCHEMA_DDL_BLOCK_15 = `
       CREATE INDEX IF NOT EXISTS registrar_events_by_entry ON registrar_events(registrar_id, created_at);
       CREATE INDEX IF NOT EXISTS registrar_events_open_state ON registrar_events(registrar_id, kind, state);
 `;
+const SCHEMA_DDL_BLOCK_16 = `
+      CREATE TABLE IF NOT EXISTS judge_decisions (
+        decision_id         TEXT PRIMARY KEY,
+        site                TEXT NOT NULL,
+        subject_id          TEXT NOT NULL,
+        mode                TEXT NOT NULL,
+        model               TEXT NOT NULL,
+        incumbent_json      TEXT NOT NULL,
+        jev_json            TEXT NOT NULL,
+        applied             INTEGER NOT NULL CHECK (applied IN (0, 1)),
+        usage_input_tokens  INTEGER NOT NULL CHECK (usage_input_tokens >= 0),
+        created_at          TEXT NOT NULL,
+        CHECK (mode <> 'shadow' OR applied = 0)
+      );
+      CREATE INDEX IF NOT EXISTS idx_judge_decisions_site_created_at ON judge_decisions(site, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_judge_decisions_subject_id ON judge_decisions(subject_id);
+`;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -1398,6 +1416,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.run(SCHEMA_DDL_BLOCK_12);
     db.run(SCHEMA_DDL_BLOCK_14);
     db.run(SCHEMA_DDL_BLOCK_15);
+    db.run(SCHEMA_DDL_BLOCK_16);
     db.run("COMMIT");
   } catch (err) {
     db.run("ROLLBACK");
