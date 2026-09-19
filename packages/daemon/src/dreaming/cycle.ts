@@ -546,6 +546,7 @@ function ensureSchemaColumns(db: Database): void {
     "ALTER TABLE t1_rollups ADD COLUMN promotion_retry_count INTEGER NOT NULL DEFAULT 0",
   );
   alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_retry_after INTEGER");
+  alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_retry_exhausted_at INTEGER");
 }
 
 async function canAdvance(config: DreamConfig, deps: DreamCycleDeps): Promise<boolean> {
@@ -719,6 +720,12 @@ interface ClaimedT1Rollup {
 const P1_PROMOTION_RETRY_BASE_MS = 60 * 60_000;
 const P1_PROMOTION_RETRY_MAX_MS = 24 * 60 * 60_000;
 
+// A rollup that reaches this many non-verdicts stops being retried. It gets a
+// terminal stamp distinct from a judged NO (promotion_filtered_at), so a
+// deterministic abstention cannot re-judge the same rollup every 24h forever,
+// and an operator can re-open it by clearing the stamp and the count.
+const P1_PROMOTION_MAX_DEFERRALS = 5;
+
 function deferT1PromotionRetry(
   db: Database,
   ctx: CycleCtx,
@@ -726,6 +733,10 @@ function deferT1PromotionRetry(
   reason: "insufficient_judge_votes" | "queued_action_pending",
 ): void {
   const attempt = rollup.promotion_retry_count;
+  if (attempt + 1 >= P1_PROMOTION_MAX_DEFERRALS) {
+    exhaustT1PromotionRetry(db, ctx, rollup, reason);
+    return;
+  }
   const delayMs = Math.min(
     P1_PROMOTION_RETRY_BASE_MS * 2 ** Math.min(attempt, 5),
     P1_PROMOTION_RETRY_MAX_MS,
@@ -743,6 +754,29 @@ function deferT1PromotionRetry(
       retryAfterMs: delayMs,
     },
     "dream-cycle P1 promotion deferred",
+  );
+}
+
+function exhaustT1PromotionRetry(
+  db: Database,
+  ctx: CycleCtx,
+  rollup: ClaimedT1Rollup,
+  reason: "insufficient_judge_votes" | "queued_action_pending",
+): void {
+  const retryCount = rollup.promotion_retry_count + 1;
+  db.prepare(
+    `UPDATE t1_rollups
+        SET promotion_retry_count=?, promotion_retry_after=NULL, promotion_retry_exhausted_at=?
+      WHERE rollup_id=?`,
+  ).run(retryCount, ctx.nowMs, rollup.rollup_id);
+  ctx.emitDreamEvent("dream_p1_promotion_retry_exhausted", {
+    rollup_id: rollup.rollup_id,
+    reason,
+    retry_count: retryCount,
+  });
+  ctx.log?.warn(
+    { phase: "P1", cycleId: ctx.cycleId, rollupId: rollup.rollup_id, reason, retryCount },
+    "dream-cycle P1 promotion retries exhausted",
   );
 }
 
@@ -782,6 +816,7 @@ function claimT1Rollups(
                  AND claimed_at IS NULL
                  AND promotion_filtered_at IS NULL
                  AND promotion_unusable_excerpt_at IS NULL
+                 AND promotion_retry_exhausted_at IS NULL
                  AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
                  AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
                  ${longLivedFilter}
@@ -809,6 +844,7 @@ function claimT1Rollups(
             AND claimed_at IS NULL
             AND promotion_filtered_at IS NULL
             AND promotion_unusable_excerpt_at IS NULL
+            AND promotion_retry_exhausted_at IS NULL
             AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
             AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
             ${longLivedFilter}

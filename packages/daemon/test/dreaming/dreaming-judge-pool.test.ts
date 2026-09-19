@@ -64,6 +64,7 @@ describe("parseDreamingJudgeResponse", () => {
     expect(result.promote).toBe(false);
     expect(result.confidence).toBe(0);
     expect(result.rationale).toBe("parse_error");
+    expect(result.unparseable).toBe(true);
   });
 
   it("returns parse_error sentinel on empty string", () => {
@@ -84,6 +85,38 @@ describe("parseDreamingJudgeResponse", () => {
       parseDreamingJudgeResponse('{"promote": true, "confidence": "0.9", "rationale": "x"}')
         .confidence,
     ).toBe(0.9);
+  });
+
+  it("counts promote only as a boolean or the exact strings true/false", () => {
+    expect(
+      parseDreamingJudgeResponse('{"promote": "false", "confidence": 0.9, "rationale": "x"}'),
+    ).toMatchObject({ promote: false, confidence: 0.9 });
+    expect(
+      parseDreamingJudgeResponse('{"promote": "true", "confidence": 0.9, "rationale": "x"}'),
+    ).toMatchObject({ promote: true });
+    expect(
+      parseDreamingJudgeResponse('{"promote": "false", "confidence": 0.9, "rationale": "x"}')
+        .unparseable,
+    ).toBeUndefined();
+  });
+
+  it("marks a non-boolean promote or an unreadable confidence as unparseable", () => {
+    for (const reply of [
+      '{"promote": "yes", "confidence": 0.9, "rationale": "x"}',
+      '{"promote": 1, "confidence": 0.9, "rationale": "x"}',
+      '{"confidence": 0.9, "rationale": "x"}',
+      '{"promote": true, "confidence": "high", "rationale": "x"}',
+    ]) {
+      expect(parseDreamingJudgeResponse(reply)).toMatchObject({
+        unparseable: true,
+        rationale: "parse_error",
+        promote: false,
+      });
+    }
+    expect(parseDreamingJudgeResponse('{"promote": true, "rationale": "x"}')).toMatchObject({
+      promote: true,
+      confidence: 0,
+    });
   });
 });
 
@@ -220,6 +253,32 @@ describe("DreamingJudgePool.judgeAll", () => {
       error_class: "transport_error",
     });
     expect(JSON.stringify(results)).not.toContain("ECONNREFUSED");
+  });
+
+  it("turns an unparseable reply into a parse_error abstention, never a counted NO", async () => {
+    const proseReply = new Response(
+      JSON.stringify({ choices: [{ message: { content: "Yes, promote this." } }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+    const fakeFetch = ((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return Promise.resolve(url.includes("1111") ? makeVoteResponse(true, 0.9) : proseReply);
+    }) as unknown as typeof fetch;
+    const pool = createDreamingJudgePool(
+      [
+        { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
+        { name: "j2", baseUrl: "http://localhost:2222/v1", apiKey: "", model: "local" },
+      ],
+      fakeFetch,
+    );
+    const results = await pool.judgeAll!({ body: "test", kind: "promote_t1" });
+    expect(results[1]).toMatchObject({
+      seat: "j2",
+      abstained: true,
+      error_class: "parse_error",
+      rationale: "parse_error",
+    });
+    expect(results[0]?.abstained).toBeUndefined();
   });
 });
 

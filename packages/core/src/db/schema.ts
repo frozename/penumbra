@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
 
+// 45 = t1_rollups promotion_retry_exhausted_at terminal stamp.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 45;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -1175,6 +1176,7 @@ const T1_ROLLUPS_LATE_ADDITIVE_COLUMNS: [string, string][] = [
   ["promotion_unusable_excerpt_at", "INTEGER"],
   ["promotion_retry_count", "INTEGER NOT NULL DEFAULT 0"],
   ["promotion_retry_after", "INTEGER"],
+  ["promotion_retry_exhausted_at", "INTEGER"],
 ];
 
 function addColumnsIfMissing(db: Database, table: string, cols: [string, string][]): void {

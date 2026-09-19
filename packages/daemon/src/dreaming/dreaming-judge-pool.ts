@@ -27,6 +27,7 @@ interface DreamingVoteRaw {
   promote: boolean;
   confidence: number;
   rationale: string;
+  unparseable?: boolean;
 }
 
 interface ChatCompletionResponse {
@@ -45,13 +46,28 @@ Output ONLY valid JSON — no prose, no code fences, no wrapper tags:
 {"promote": <boolean>, "confidence": <number 0.0-1.0>, "rationale": "<one sentence>"}`.trim();
 }
 
-// Unreadable values stay 0 for now; a later task turns them into an
-// abstention together with the retry cap.
-function parseConfidence(value: unknown): number {
+const UNPARSEABLE_VOTE: DreamingVoteRaw = {
+  promote: false,
+  confidence: 0,
+  rationale: "parse_error",
+  unparseable: true,
+};
+
+function parsePromote(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
+// An absent confidence reads as 0 (it never enters the quorum). A present
+// but unreadable one makes the whole ballot unreadable.
+function parseConfidence(value: unknown): number | null {
+  if (value === undefined) return 0;
   let numeric = Number.NaN;
   if (typeof value === "number") numeric = value;
   else if (typeof value === "string" && value.trim() !== "") numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
+  if (!Number.isFinite(numeric)) return null;
   return Math.min(1, Math.max(0, numeric));
 }
 
@@ -65,13 +81,16 @@ export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
     const match = /\{[\s\S]*\}/.exec(stripped);
     if (!match) throw new Error("no_json_object");
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    const promote = parsePromote(parsed.promote);
+    const confidence = parseConfidence(parsed.confidence);
+    if (promote === null || confidence === null) return { ...UNPARSEABLE_VOTE };
     return {
-      promote: Boolean(parsed.promote),
-      confidence: parseConfidence(parsed.confidence),
+      promote,
+      confidence,
       rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
     };
   } catch {
-    return { promote: false, confidence: 0, rationale: "parse_error" };
+    return { ...UNPARSEABLE_VOTE };
   }
 }
 
@@ -157,9 +176,17 @@ class DreamingJudgePoolImpl implements JudgePool {
       throw new Error("dreaming judge pool index out of range");
     }
     const raw = await this.callJudge(judge, prompt);
+    let verdict: "yes" | "no" | "unsure";
+    if (raw.unparseable === true) {
+      verdict = "unsure";
+    } else if (raw.promote) {
+      verdict = "yes";
+    } else {
+      verdict = "no";
+    }
     return {
       confidence: raw.confidence,
-      verdict: raw.promote ? "yes" : "no",
+      verdict,
       rationale: raw.rationale,
     };
   }
@@ -173,6 +200,18 @@ class DreamingJudgePoolImpl implements JudgePool {
       this.judges.map(async (judge): Promise<JudgeVote> => {
         try {
           const raw = await this.callJudge(judge, prompt);
+          if (raw.unparseable === true) {
+            // A reply that never became a ballot is an abstention, not a NO
+            // vote: it leaves both quorum counters like a transport failure.
+            return {
+              promote: false,
+              confidence: 0,
+              rationale: "parse_error",
+              abstained: true,
+              seat: judge.name,
+              error_class: "parse_error",
+            };
+          }
           return {
             promote: raw.promote,
             confidence: raw.confidence,

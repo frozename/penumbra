@@ -45,6 +45,7 @@ export const DispatchEventKindSchema = z.enum([
   "dream_p4_query_rewrite_failed",
   "dream_p4_query_rejected_unsearchable",
   "dream_p4_query_skipped",
+  "dream_p1_promotion_retry_exhausted",
   "extra_worker_wedge_evicted",
   "shell.session.open",
   "shell.run",

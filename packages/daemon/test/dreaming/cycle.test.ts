@@ -1,5 +1,6 @@
 import type { LlamactlInventory, Logger } from "@penumbra/core";
 
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, it } from "bun:test";
@@ -1584,6 +1585,133 @@ it("P1 minted t2 memory includes project_id from rollup", async () => {
     .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
     .get() as { project_id: string | null } | null;
   expect(row?.project_id).toBe("proj_x");
+});
+
+it("P1 defers, never filters, a rollup whose only dissent is a malformed ballot", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a formatting failure is a non-verdict, not a judged decline.",
+  });
+  const pool = threeSeatPool(
+    seatFetch({
+      "1111": upstream502,
+      "2222": yesReply(0.9),
+      "3333": () => chatReply("Yes, promote this."),
+    }),
+  );
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), { judgePool: pool });
+  const row = db
+    .prepare(
+      `SELECT promotion_filtered_at, promotion_retry_count FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_filtered_at: string | null;
+    promotion_retry_count: number;
+  } | null;
+  expect(row?.promotion_filtered_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(1);
+  expect(readP1Payload(db, rollupId)).toBeUndefined();
+  expect(readSubsystemHealth(db, "dream.judge.j3")?.last_failure_reason).toBe("parse_error");
+});
+
+const allAbstain = (): JudgePool =>
+  makeFakeJudgePool([
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+  ]);
+
+it("P1 stamps promotion_retry_exhausted_at at the fifth deferral and emits a dream event", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a rollup that never gets a verdict must stop being re-judged.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_count=4 WHERE rollup_id=?`).run(rollupId);
+  // meta MUST stay optional: record() receives core's DispatchEventInput, whose
+  // meta is optional, so a required meta here is TS2345 in the daemon ratchet.
+  const events: { kind: string; meta?: unknown }[] = [];
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: allAbstain(),
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+  });
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_filtered_at, promotion_retry_count, promotion_retry_after
+         FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_filtered_at: string | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).not.toBeNull();
+  expect(row?.promotion_filtered_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(5);
+  expect(row?.promotion_retry_after).toBeNull();
+  const exhausted = events.filter((e) => e.kind === "dream_p1_promotion_retry_exhausted");
+  expect(exhausted).toHaveLength(1);
+  expect(exhausted[0]?.meta).toEqual({
+    rollup_id: rollupId,
+    reason: "insufficient_judge_votes",
+    retry_count: 5,
+  });
+  // The emitted kind must round-trip through the api-contract enum that
+  // constrains every dispatch_events reader.
+  expect(DispatchEventKindSchema.safeParse(exhausted[0]?.kind).success).toBe(true);
+  expect(readP1Payload(db, rollupId)).toBeUndefined();
+});
+
+it("P1 still defers normally below the deferral cap", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable convention: the fourth non-verdict is still a retry, not a terminal stamp.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_count=3 WHERE rollup_id=?`).run(rollupId);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), { judgePool: allAbstain() });
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(4);
+  expect(row?.promotion_retry_after).toBeGreaterThan(Date.now());
+});
+
+it("P1 never claims a rollup stamped promotion_retry_exhausted_at", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: an exhausted rollup stays out of the claim head until an operator clears it.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_exhausted_at=? WHERE rollup_id=?`).run(
+    Date.now(),
+    rollupId,
+  );
+  let judged = 0;
+  const countingPool: JudgePool = {
+    judge: () => Promise.resolve({ confidence: 0.9, verdict: "yes" }),
+    judgeAll: () => {
+      judged += 1;
+      return Promise.resolve([
+        { promote: true, confidence: 0.9 },
+        { promote: true, confidence: 0.9 },
+      ]);
+    },
+  };
+  const cycleId = await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: countingPool,
+    onReembed: testP1Embed,
+  });
+  expect(getClaimedRollups(db, cycleId)).not.toContain(rollupId);
+  expect(judged).toBe(0);
 });
 
 // ── P3 quality signal ──────────────────────────────────────────────────────
