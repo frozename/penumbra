@@ -5,6 +5,7 @@ import type { ReplayDependencies } from "./replay.js";
 import { type AgentTaskType, AgentTaskTypeSchema } from "../schemas/agent-performance.js";
 import { type RoutingTaskType, type TaskProfile, TaskProfileSchema } from "./schemas.js";
 import {
+  type JevProfileDiagnostics,
   ROUTER_SCORED_AXES,
   type RouterScoredAxis,
   type TaskProfileJudgeFallbackReason,
@@ -42,6 +43,8 @@ export interface ProfileAgreementRowResult {
   decisionId: string;
   source: TaskProfileJudgeResult["source"];
   fallbackReason?: string;
+  /** Question ids the judge applied, when it reports diagnostics. */
+  acceptedAxes?: string[];
   deltas: Partial<Record<RouterScoredAxis, number>> | null;
 }
 
@@ -57,7 +60,13 @@ export interface ProfileAgreementReport {
   fallbackReasons: Partial<Record<TaskProfileJudgeFallbackReason, number>>;
   axes: ProfileAxisAgreement[];
   taskTypesExactMatch: { compared: number; agreed: number };
+  /** Jev's primary_task_type answer vs the recorded profile's first task type. */
+  primaryTaskTypeMatch: { compared: number; agreed: number };
   candidateConfidenceHistogram: number[];
+  /** Per-question answer-confidence histograms, keyed by question id. */
+  questionConfidenceHistogram: Record<string, number[]>;
+  /** Per-question count of rows where that question carried the lowest confidence. */
+  lowestConfidenceQuestionCounts: Record<string, number>;
   rows: ProfileAgreementRowResult[];
 }
 
@@ -216,6 +225,10 @@ function roundDelta(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
+function confidenceBucket(confidence: number): number {
+  return Math.min(CONFIDENCE_BUCKETS - 1, Math.floor(confidence * CONFIDENCE_BUCKETS));
+}
+
 interface AxisAccum {
   compared: number;
   agreed: number;
@@ -239,8 +252,11 @@ class ProfileAgreementStats {
   private readonly bySource = { jev: 0, deterministic: 0, llm: 0 };
   private readonly fallbackReasons: Partial<Record<TaskProfileJudgeFallbackReason, number>> = {};
   private readonly histogram = new Array<number>(CONFIDENCE_BUCKETS).fill(0);
+  private readonly questionHistograms: Record<string, number[]> = {};
+  private readonly lowestConfidenceQuestions: Record<string, number> = {};
   private readonly rows: ProfileAgreementRowResult[] = [];
   private readonly taskTypes = { compared: 0, agreed: 0 };
+  private readonly primaryTaskType = { compared: 0, agreed: 0 };
   private inputDrift = 0;
   private judged = 0;
 
@@ -270,8 +286,15 @@ class ProfileAgreementStats {
       return;
     }
 
+    // When the judge reports per-question diagnostics, only the answers it
+    // actually applied are comparable — a rejected axis still carries the
+    // deterministic base value, which would read as a tautological agreement.
+    const diagnostics = result.source === "jev" ? result.diagnostics : undefined;
+    const accepted = diagnostics === undefined ? null : new Set<string>(diagnostics.acceptedAxes);
+
     const deltas: Partial<Record<RouterScoredAxis, number>> = {};
     for (const axis of ROUTER_SCORED_AXES) {
+      if (accepted !== null && !accepted.has(axis)) continue;
       const delta = roundDelta(result.profile[axis] - row.recordedProfile[axis]);
       deltas[axis] = delta;
       const accum = this.axes[axis];
@@ -280,16 +303,44 @@ class ProfileAgreementStats {
       accum.sumSigned += delta;
       if (Math.abs(delta) <= this.tolerance) accum.agreed++;
     }
+    if (diagnostics !== undefined) this.recordDiagnostics(row, diagnostics);
     this.taskTypes.compared++;
     if (taskTypesEqual(result.profile.taskTypes, row.recordedProfile.taskTypes)) {
       this.taskTypes.agreed++;
     }
-    const bucket = Math.min(
-      CONFIDENCE_BUCKETS - 1,
-      Math.floor(result.profile.confidence * CONFIDENCE_BUCKETS),
-    );
-    this.histogram[bucket] = (this.histogram[bucket] ?? 0) + 1;
-    this.rows.push({ decisionId: row.decisionId, source: result.source, deltas });
+    this.histogram[confidenceBucket(result.profile.confidence)] =
+      (this.histogram[confidenceBucket(result.profile.confidence)] ?? 0) + 1;
+    this.rows.push({
+      decisionId: row.decisionId,
+      source: result.source,
+      ...(diagnostics === undefined ? {} : { acceptedAxes: [...diagnostics.acceptedAxes] }),
+      deltas,
+    });
+  }
+
+  private recordDiagnostics(row: ProfileReplayRow, diagnostics: JevProfileDiagnostics): void {
+    let lowestId: string | undefined;
+    let lowestConfidence = Number.POSITIVE_INFINITY;
+    for (const [questionId, confidence] of Object.entries(diagnostics.answerConfidence)) {
+      const histogram =
+        this.questionHistograms[questionId] ?? new Array<number>(CONFIDENCE_BUCKETS).fill(0);
+      histogram[confidenceBucket(confidence)] = (histogram[confidenceBucket(confidence)] ?? 0) + 1;
+      this.questionHistograms[questionId] = histogram;
+      if (confidence < lowestConfidence) {
+        lowestConfidence = confidence;
+        lowestId = questionId;
+      }
+    }
+    if (lowestId !== undefined) {
+      this.lowestConfidenceQuestions[lowestId] =
+        (this.lowestConfidenceQuestions[lowestId] ?? 0) + 1;
+    }
+    if (diagnostics.primaryTaskType !== undefined) {
+      this.primaryTaskType.compared++;
+      if (diagnostics.primaryTaskType === row.recordedProfile.taskTypes[0]) {
+        this.primaryTaskType.agreed++;
+      }
+    }
   }
 
   toReport(fetched: ProfileReplayRows): ProfileAgreementReport {
@@ -315,7 +366,12 @@ class ProfileAgreementStats {
         };
       }),
       taskTypesExactMatch: { ...this.taskTypes },
+      primaryTaskTypeMatch: { ...this.primaryTaskType },
       candidateConfidenceHistogram: [...this.histogram],
+      questionConfidenceHistogram: Object.fromEntries(
+        Object.entries(this.questionHistograms).map(([id, histogram]) => [id, [...histogram]]),
+      ),
+      lowestConfidenceQuestionCounts: { ...this.lowestConfidenceQuestions },
       rows: this.rows,
     };
   }

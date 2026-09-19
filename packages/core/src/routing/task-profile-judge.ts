@@ -1,5 +1,5 @@
 import { DEFAULT_JUDGE_CHAT_TIMEOUT_MS, type JudgeChatFn } from "../services/judge-chat.js";
-import { type TaskProfile, TaskProfileSchema } from "./schemas.js";
+import { type RoutingTaskType, type TaskProfile, TaskProfileSchema } from "./schemas.js";
 import { profileTaskDeterministic, type TaskProfileHints } from "./task-profile.js";
 
 export type TaskProfileJudgeFallbackReason =
@@ -9,6 +9,15 @@ export type TaskProfileJudgeFallbackReason =
   | "timeout"
   | "judge_error";
 
+export interface JevProfileDiagnostics {
+  /** Per-question answer confidence keyed by question id. Never carries prompt text. */
+  answerConfidence: Record<string, number>;
+  /** Question ids whose answers cleared the judge's confidence floor and were applied. */
+  acceptedAxes: string[];
+  /** The judge's primary_task_type choice, whether or not it cleared the floor. */
+  primaryTaskType?: RoutingTaskType;
+}
+
 export type TaskProfileJudgeResult =
   | {
       profile: TaskProfile;
@@ -17,6 +26,7 @@ export type TaskProfileJudgeResult =
   | {
       profile: TaskProfile;
       source: "jev";
+      diagnostics?: JevProfileDiagnostics;
     }
   | {
       profile: TaskProfile;

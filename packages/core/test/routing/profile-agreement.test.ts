@@ -293,6 +293,139 @@ describe("profile agreement replay", () => {
     expect(report.rows[0]?.deltas?.costSensitivity).toBe(0.4);
   });
 
+  test("a jev result's acceptedAxes bound which axes are compared and are echoed per row", async () => {
+    const recorded = seedReplayRow(db, {
+      handoffId: "handoff-1",
+      decisionId: "decision-1",
+      ts: TS,
+    });
+    const candidate: TaskProfile = {
+      ...recorded,
+      codingDemand: 1,
+      reasoningDemand: Math.min(1, recorded.reasoningDemand + 0.4),
+      latencySensitivity: 0.99,
+      taskTypes: ["debugging", "research", "analysis"],
+    };
+    const judge: TaskProfileJudge = {
+      profileTask: (): Promise<TaskProfileJudgeResult> =>
+        Promise.resolve({
+          profile: candidate,
+          source: "jev",
+          diagnostics: {
+            answerConfidence: {
+              primary_task_type: 0.95,
+              codingDemand: 0.8,
+              reasoningDemand: 0.3,
+              agenticDemand: 0.7,
+            },
+            acceptedAxes: ["primary_task_type", "codingDemand", "agenticDemand"],
+            primaryTaskType: "research",
+          },
+        }),
+    };
+
+    const fetched = fetchProfileReplayRows(db, { since: SINCE, until: UNTIL });
+    const report = await replayTaskProfiles(fetched, { judge });
+
+    expect(report.axes.find((axis) => axis.axis === "codingDemand")?.compared).toBe(1);
+    expect(report.axes.find((axis) => axis.axis === "agenticDemand")?.compared).toBe(1);
+    expect(report.axes.find((axis) => axis.axis === "reasoningDemand")?.compared).toBe(0);
+    expect(report.axes.find((axis) => axis.axis === "latencySensitivity")?.compared).toBe(0);
+    expect(report.axes.find((axis) => axis.axis === "costSensitivity")?.compared).toBe(0);
+    expect(report.rows[0]?.acceptedAxes).toEqual([
+      "primary_task_type",
+      "codingDemand",
+      "agenticDemand",
+    ]);
+    expect(Object.keys(report.rows[0]?.deltas ?? {}).sort()).toEqual([
+      "agenticDemand",
+      "codingDemand",
+    ]);
+  });
+
+  test("jev diagnostics feed per-question confidence stats and primaryTaskTypeMatch", async () => {
+    const recorded = seedReplayRow(db, {
+      handoffId: "handoff-1",
+      decisionId: "decision-1",
+      ts: TS,
+    });
+    seedReplayRow(db, {
+      handoffId: "handoff-2",
+      decisionId: "decision-2",
+      ts: "2026-08-06T10:00:00.000Z",
+    });
+    const results: TaskProfileJudgeResult[] = [
+      {
+        profile: { ...recorded, taskTypes: ["debugging", "research", "analysis"] },
+        source: "jev",
+        diagnostics: {
+          answerConfidence: {
+            primary_task_type: 0.95,
+            codingDemand: 0.8,
+            reasoningDemand: 0.3,
+            agenticDemand: 0.7,
+          },
+          acceptedAxes: ["primary_task_type", "codingDemand", "agenticDemand"],
+          primaryTaskType: "research",
+        },
+      },
+      {
+        profile: recorded,
+        source: "jev",
+        diagnostics: {
+          answerConfidence: {
+            primary_task_type: 0.7,
+            codingDemand: 0.9,
+            reasoningDemand: 0.9,
+            agenticDemand: 0.9,
+          },
+          acceptedAxes: ["primary_task_type", "codingDemand", "reasoningDemand", "agenticDemand"],
+          primaryTaskType: "debugging",
+        },
+      },
+    ];
+    let call = 0;
+    const judge: TaskProfileJudge = {
+      profileTask: (): Promise<TaskProfileJudgeResult> => Promise.resolve(results[call++]!),
+    };
+
+    const fetched = fetchProfileReplayRows(db, { since: SINCE, until: UNTIL });
+    const report = await replayTaskProfiles(fetched, { judge });
+
+    // Recorded taskTypes are ["debugging", "analysis"]: Jev's raw primary is
+    // compared against the recorded FIRST task type ("debugging"), not the union.
+    expect(recorded.taskTypes[0]).toBe("debugging");
+    expect(report.primaryTaskTypeMatch).toEqual({ compared: 2, agreed: 1 });
+    expect(report.taskTypesExactMatch).toEqual({ compared: 2, agreed: 1 });
+    expect(report.questionConfidenceHistogram["primary_task_type"]).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 1, 0, 1,
+    ]);
+    expect(report.questionConfidenceHistogram["codingDemand"]).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+    ]);
+    expect(report.questionConfidenceHistogram["reasoningDemand"]).toEqual([
+      0, 0, 0, 1, 0, 0, 0, 0, 0, 1,
+    ]);
+    expect(report.questionConfidenceHistogram["agenticDemand"]).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 1, 0, 1,
+    ]);
+    expect(report.lowestConfidenceQuestionCounts).toEqual({
+      reasoningDemand: 1,
+      primary_task_type: 1,
+    });
+    expect(report.rows[0]?.acceptedAxes).toEqual([
+      "primary_task_type",
+      "codingDemand",
+      "agenticDemand",
+    ]);
+    expect(report.rows[1]?.acceptedAxes).toEqual([
+      "primary_task_type",
+      "codingDemand",
+      "reasoningDemand",
+      "agenticDemand",
+    ]);
+  });
+
   test("a deterministic fallback result counts its reason and is excluded from axis comparison", async () => {
     seedReplayRow(db, {
       handoffId: "handoff-1",
@@ -324,6 +457,7 @@ describe("profile agreement replay", () => {
     expect(report.rows[0]?.source).toBe("deterministic");
     expect(report.rows[0]?.fallbackReason).toBe("confidence_below_floor");
     expect(report.rows[0]?.deltas).toBeNull();
+    expect(report.rows[0]?.acceptedAxes).toBeUndefined();
   });
 
   test("taskTypesExactMatch counts only candidates whose taskTypes equal the recorded ones", async () => {
@@ -411,7 +545,10 @@ describe("profile agreement replay", () => {
       expect(axis.meanSignedDelta).toBeNull();
     }
     expect(report.taskTypesExactMatch).toEqual({ compared: 0, agreed: 0 });
+    expect(report.primaryTaskTypeMatch).toEqual({ compared: 0, agreed: 0 });
     expect(report.candidateConfidenceHistogram).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(report.questionConfidenceHistogram).toEqual({});
+    expect(report.lowestConfidenceQuestionCounts).toEqual({});
     expect(report.rows).toHaveLength(0);
   });
 });
