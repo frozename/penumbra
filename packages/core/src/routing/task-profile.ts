@@ -19,6 +19,15 @@ export interface TaskProfileHints {
 
 const TASK_TYPE_ORDER = RoutingTaskTypeSchema.options;
 
+export const NON_SMALL_TASK_TYPES: ReadonlySet<AgentTaskType> = new Set<AgentTaskType>([
+  "debug_diagnose",
+  "implement_substantial",
+  "plan_refine",
+  "review_adversarial",
+]);
+
+export const UNKNOWN_TASK_TYPE_SMALL_SIGNAL_MAX_MESSAGE_LENGTH = 1500;
+
 const SIGNALS = {
   coding:
     /\b(?:code|coding|implement|implementation|refactor|typescript|javascript|function|class|api)\b/i,
@@ -164,7 +173,7 @@ function deriveAxes(
   };
 
   applyLegacyTaskTypeAxes(axes, legacyTaskType);
-  applySignalAxes(axes, matched, legacyTaskType);
+  applySignalAxes(axes, matched, legacyTaskType, message.length);
 
   const hasSpecificSignal = countSpecificSignals(matched) > 0 || legacyTaskType !== "unknown";
   axes.ambiguity = matched.vague || !hasSpecificSignal ? 0.82 : message.length < 30 ? 0.55 : 0.25;
@@ -175,6 +184,7 @@ function applySignalAxes(
   axes: DemandAxes,
   matched: ReturnType<typeof matchSignals>,
   legacyTaskType: AgentTaskType,
+  messageLength: number,
 ): void {
   if (matched.coding) axes.codingDemand = Math.max(axes.codingDemand, 0.78);
   if (matched.debugging) {
@@ -198,7 +208,16 @@ function applySignalAxes(
     axes.reliabilityDemand = Math.max(axes.reliabilityDemand, 0.9);
   }
   if (matched.repoWide) applyRepoWideAxes(axes, matched, legacyTaskType);
-  if (matched.small && !matched.repoWide) applySmallTaskAxes(axes, matched);
+  if (matched.small && !matched.repoWide && shouldApplySmallTaskAxes(legacyTaskType, messageLength))
+    applySmallTaskAxes(axes, matched);
+}
+
+function shouldApplySmallTaskAxes(legacyTaskType: AgentTaskType, messageLength: number): boolean {
+  if (NON_SMALL_TASK_TYPES.has(legacyTaskType)) return false;
+  return (
+    legacyTaskType !== "unknown" ||
+    messageLength <= UNKNOWN_TASK_TYPE_SMALL_SIGNAL_MAX_MESSAGE_LENGTH
+  );
 }
 
 function applyRepoWideAxes(
