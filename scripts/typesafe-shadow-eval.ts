@@ -28,6 +28,9 @@ export const DEFAULT_DEGRADED_WINDOW: DegradedWindow = {
   to: "2026-09-18T20:00:00Z",
 };
 
+export const DEFAULT_LIVE_MAX_USD = 0.05;
+export const MAX_LIVE_BODY_CHARS = 16_000;
+
 export interface ShadowEvalArgs {
   dbPath: string;
   outPath: string;
@@ -35,6 +38,8 @@ export interface ShadowEvalArgs {
   since: string | null;
   degradedWindow: DegradedWindow;
   live: boolean;
+  maxRollups: number | null;
+  maxUsd: number;
 }
 
 interface ArgsDraft {
@@ -45,6 +50,8 @@ interface ArgsDraft {
   degradedFrom: string;
   degradedTo: string;
   live: boolean;
+  maxRollups: number | null;
+  maxUsd: number;
 }
 
 function parseIsoFlag(flag: string, value: string): string {
@@ -79,6 +86,22 @@ function applyFlag(draft: ArgsDraft, flag: string, value: string): void {
     case "--degraded-to":
       draft.degradedTo = parseIsoFlag("--degraded-to", value);
       return;
+    case "--max-rollups": {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`invalid --max-rollups: ${value}`);
+      }
+      draft.maxRollups = parsed;
+      return;
+    }
+    case "--max-usd": {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(`invalid --max-usd: ${value}`);
+      }
+      draft.maxUsd = parsed;
+      return;
+    }
     default:
       throw new Error(`unknown flag: ${flag}`);
   }
@@ -93,6 +116,8 @@ export function parseShadowEvalArgs(argv: string[]): ShadowEvalArgs {
     degradedFrom: DEFAULT_DEGRADED_WINDOW.from,
     degradedTo: DEFAULT_DEGRADED_WINDOW.to,
     live: false,
+    maxRollups: null,
+    maxUsd: DEFAULT_LIVE_MAX_USD,
   };
 
   const rest = [...argv];
@@ -113,6 +138,9 @@ export function parseShadowEvalArgs(argv: string[]): ShadowEvalArgs {
   if (draft.outArg === null) {
     throw new Error("--out is required");
   }
+  if (draft.live && draft.maxRollups === null) {
+    throw new Error("--live requires --max-rollups N");
+  }
   const storageRoot = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
   const dbPath = draft.dbArg !== null ? resolve(draft.dbArg) : resolveStorageDbPath(storageRoot);
   return {
@@ -122,6 +150,8 @@ export function parseShadowEvalArgs(argv: string[]): ShadowEvalArgs {
     since: draft.since,
     degradedWindow: { from: draft.degradedFrom, to: draft.degradedTo },
     live: draft.live,
+    maxRollups: draft.maxRollups,
+    maxUsd: draft.maxUsd,
   };
 }
 
@@ -141,6 +171,7 @@ export interface LoadedReplay {
   totalEligible: number;
   unlabelled: number;
   excludedDegraded: number;
+  excludedNoTimestamp: number;
   rows: LoadedJudgement[];
 }
 
@@ -194,7 +225,7 @@ function judgementSurvives(
   opts: ReplayWindowOpts,
 ): boolean {
   const ms = row.judged_at_ms;
-  if (ms !== null && ms >= opts.degradedFromMs && ms <= opts.degradedToMs) {
+  if (ms !== null && ms >= opts.degradedFromMs && ms < opts.degradedToMs) {
     return false;
   }
   return opts.sinceMs === null || (ms !== null && ms >= opts.sinceMs);
@@ -203,6 +234,7 @@ function judgementSurvives(
 type ReplayPick =
   | { kind: "unlabelled" }
   | { kind: "excluded" }
+  | { kind: "no_timestamp" }
   | { kind: "kept"; latest: ReplayRawRow & { payload_json: string } };
 
 function pickReplayJudgement(rows: readonly ReplayRawRow[], opts: ReplayWindowOpts): ReplayPick {
@@ -212,6 +244,11 @@ function pickReplayJudgement(rows: readonly ReplayRawRow[], opts: ReplayWindowOp
   }
   const surviving = labelled.filter((row) => judgementSurvives(row, opts));
   if (surviving.length === 0) {
+    // A labelled judgement whose joined dream-cycle started_at is NULL cannot be
+    // evaluated against --since; counting it as degraded would be a silent drop.
+    if (opts.sinceMs !== null && labelled.every((row) => row.judged_at_ms === null)) {
+      return { kind: "no_timestamp" };
+    }
     return { kind: "excluded" };
   }
   surviving.sort((a, b) => (b.judged_at_ms ?? 0) - (a.judged_at_ms ?? 0));
@@ -244,11 +281,16 @@ export function loadReplayRollups(
 
   let unlabelled = 0;
   let excludedDegraded = 0;
+  let excludedNoTimestamp = 0;
   const kept: LoadedJudgement[] = [];
   for (const [rollupId, rows] of groups) {
     const pick = pickReplayJudgement(rows, opts);
     if (pick.kind === "unlabelled") {
       unlabelled += 1;
+      continue;
+    }
+    if (pick.kind === "no_timestamp") {
+      excludedNoTimestamp += 1;
       continue;
     }
     if (pick.kind === "excluded") {
@@ -269,6 +311,7 @@ export function loadReplayRollups(
     totalEligible: groups.size,
     unlabelled,
     excludedDegraded,
+    excludedNoTimestamp,
     rows: kept.slice(0, opts.limit),
   };
 }
@@ -286,6 +329,7 @@ export interface IncumbentInput {
 export interface IncumbentVerdict {
   ballots: unknown;
   counted: number;
+  unparseable: number;
   pYes: number | null;
   decision: IncumbentDecision;
 }
@@ -294,20 +338,38 @@ export interface IncumbentVerdict {
 // DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2, daemon config.ts:3).
 const INCUMBENT_MIN_COUNTED_BALLOTS = 2;
 
+type BallotClass = "yes" | "no" | "abstained" | "unparseable";
+
+function classifyBallot(vote: unknown): BallotClass {
+  if (typeof vote !== "object" || vote === null) {
+    return "unparseable";
+  }
+  const record = vote as Record<string, unknown>;
+  if (record["abstained"] === true) {
+    return "abstained";
+  }
+  if (typeof record["promote"] !== "boolean") {
+    return "unparseable";
+  }
+  return record["promote"] ? "yes" : "no";
+}
+
 export function incumbentFromBallots(input: IncumbentInput): IncumbentVerdict {
   const list = Array.isArray(input.ballots) ? input.ballots : [];
   let counted = 0;
+  let unparseable = 0;
   let yes = 0;
   for (const vote of list) {
-    if (typeof vote !== "object" || vote === null) {
+    const cls = classifyBallot(vote);
+    if (cls === "abstained") {
       continue;
     }
-    const record = vote as Record<string, unknown>;
-    if (record["abstained"] === true) {
+    if (cls === "unparseable") {
+      unparseable += 1;
       continue;
     }
     counted += 1;
-    if (record["promote"] === true) {
+    if (cls === "yes") {
       yes += 1;
     }
   }
@@ -318,7 +380,7 @@ export function incumbentFromBallots(input: IncumbentInput): IncumbentVerdict {
       : yes >= Math.ceil((counted * 2) / 3)
         ? "promote"
         : "no_promote";
-  return { ballots: input.ballots, counted, pYes, decision };
+  return { ballots: input.ballots, counted, unparseable, pYes, decision };
 }
 
 export function makeLiveClient(deps: {
@@ -331,6 +393,8 @@ export function makeLiveClient(deps: {
 export interface ShadowEvalRowResult {
   incumbentDecision: IncumbentDecision;
   incumbentPYes: number | null;
+  incumbentUnparseable: number;
+  bodyTruncated: boolean;
   jev:
     | { status: "skipped" }
     | {
@@ -350,6 +414,9 @@ export interface ShadowReplayMeta {
   totalEligible: number;
   unlabelled: number;
   excludedDegraded: number;
+  excludedNoTimestamp: number;
+  maxRollups: number | null;
+  maxUsd: number;
 }
 
 export interface ShadowReplayReport {
@@ -359,10 +426,12 @@ export interface ShadowReplayReport {
   total_eligible: number;
   unlabelled: number;
   excluded_degraded: number;
+  excluded_no_timestamp: number;
   judged: number;
   jev_answered: number;
   jev_failed: number;
   incumbent_insufficient: number;
+  incumbent_unparseable_ballots: number;
   confusion: {
     both_promote: number;
     incumbent_only: number;
@@ -371,16 +440,22 @@ export interface ShadowReplayReport {
   };
   agreedCount: number;
   disagreedCount: number;
+  agreement_denominator: number;
   agreementRate: number | null;
   p_gap_mean: number | null;
   total_input_tokens: number;
   total_usd: number;
+  max_rollups: number | null;
+  max_usd: number;
+  bodies_truncated: number;
 }
 
 interface AgreementAccum {
   jevAnswered: number;
   jevFailed: number;
   incumbentInsufficient: number;
+  incumbentUnparseable: number;
+  bodiesTruncated: number;
   confusion: { both_promote: number; incumbent_only: number; jev_only: number; neither: number };
   agreedCount: number;
   disagreedCount: number;
@@ -390,10 +465,21 @@ interface AgreementAccum {
   totalUsd: number;
 }
 
+type ConfusionKey = keyof AgreementAccum["confusion"];
+
+function confusionKeyFor(incumbentPromotes: boolean, shadowPromote: boolean): ConfusionKey {
+  if (incumbentPromotes) {
+    return shadowPromote ? "both_promote" : "incumbent_only";
+  }
+  return shadowPromote ? "jev_only" : "neither";
+}
+
 function recordRow(acc: AgreementAccum, row: ShadowEvalRowResult): void {
   if (row.incumbentDecision === "insufficient") {
     acc.incumbentInsufficient += 1;
   }
+  acc.incumbentUnparseable += row.incumbentUnparseable;
+  acc.bodiesTruncated += Number(row.bodyTruncated);
   if (row.jev.status === "failed") {
     acc.jevFailed += 1;
     return;
@@ -408,14 +494,7 @@ function recordRow(acc: AgreementAccum, row: ShadowEvalRowResult): void {
     return;
   }
   const incumbentPromotes = row.incumbentDecision === "promote";
-  const confusionKey = incumbentPromotes
-    ? row.jev.shadowPromote
-      ? "both_promote"
-      : "incumbent_only"
-    : row.jev.shadowPromote
-      ? "jev_only"
-      : "neither";
-  acc.confusion[confusionKey] += 1;
+  acc.confusion[confusionKeyFor(incumbentPromotes, row.jev.shadowPromote)] += 1;
   if (incumbentPromotes === row.jev.shadowPromote) {
     acc.agreedCount += 1;
   } else {
@@ -435,6 +514,8 @@ export function summarizeAgreement(
     jevAnswered: 0,
     jevFailed: 0,
     incumbentInsufficient: 0,
+    incumbentUnparseable: 0,
+    bodiesTruncated: 0,
     confusion: { both_promote: 0, incumbent_only: 0, jev_only: 0, neither: 0 },
     agreedCount: 0,
     disagreedCount: 0,
@@ -454,17 +535,23 @@ export function summarizeAgreement(
     total_eligible: meta.totalEligible,
     unlabelled: meta.unlabelled,
     excluded_degraded: meta.excludedDegraded,
+    excluded_no_timestamp: meta.excludedNoTimestamp,
     judged: rows.length,
     jev_answered: acc.jevAnswered,
     jev_failed: acc.jevFailed,
     incumbent_insufficient: acc.incumbentInsufficient,
+    incumbent_unparseable_ballots: acc.incumbentUnparseable,
     confusion: acc.confusion,
     agreedCount: acc.agreedCount,
     disagreedCount: acc.disagreedCount,
+    agreement_denominator: compared,
     agreementRate: compared > 0 ? acc.agreedCount / compared : null,
     p_gap_mean: acc.pGapCount > 0 ? acc.pGapSum / acc.pGapCount : null,
     total_input_tokens: acc.totalInputTokens,
     total_usd: acc.totalUsd,
+    max_rollups: meta.maxRollups,
+    max_usd: meta.maxUsd,
+    bodies_truncated: acc.bodiesTruncated,
   };
 }
 
@@ -480,10 +567,14 @@ interface JevFields {
   outcome: ShadowEvalRowResult["jev"];
 }
 
-async function judgeCandidate(client: TypesafeClient | null, body: string): Promise<JevFields> {
-  if (client === null) {
-    return { answers: null, model: null, usage: null, outcome: { status: "skipped" } };
-  }
+const SKIPPED_JEV: JevFields = {
+  answers: null,
+  model: null,
+  usage: null,
+  outcome: { status: "skipped" },
+};
+
+async function judgeCandidate(client: TypesafeClient, body: string): Promise<JevFields> {
   const outcome = await judgePromotion(
     client,
     { kind: "promote_t1", body },
@@ -520,6 +611,9 @@ export async function runShadowEval(
   args: ShadowEvalArgs,
   deps: ShadowEvalDeps,
 ): Promise<ShadowReplayReport> {
+  if (args.live && args.maxRollups === null) {
+    throw new Error("typesafe-shadow-eval: --live requires --max-rollups");
+  }
   const db = openReplayDb(args.dbPath);
   let loaded: LoadedReplay;
   try {
@@ -537,6 +631,13 @@ export async function runShadowEval(
     ? makeLiveClient({ settings: requireEnabledSettings(deps.settings), fetch: deps.fetch })
     : null;
 
+  let liveSent = 0;
+  let spentUsd = 0;
+  const mayJudge = (c: TypesafeClient | null): c is TypesafeClient =>
+    c !== null &&
+    (args.maxRollups === null || liveSent < args.maxRollups) &&
+    spentUsd < args.maxUsd;
+
   const results: ShadowEvalRowResult[] = [];
   const lines: string[] = [];
   for (const candidate of loaded.rows) {
@@ -544,7 +645,17 @@ export async function runShadowEval(
       ballots: candidate.ballots,
       storedConfidence: candidate.storedConfidence,
     });
-    const judged = await judgeCandidate(client, candidate.body);
+    let judged = SKIPPED_JEV;
+    let bodyTruncated = false;
+    if (mayJudge(client)) {
+      const sendBody = candidate.body.slice(0, MAX_LIVE_BODY_CHARS);
+      bodyTruncated = sendBody.length !== candidate.body.length;
+      judged = await judgeCandidate(client, sendBody);
+      liveSent += 1;
+      if (judged.outcome.status === "answered") {
+        spentUsd += judged.outcome.usd;
+      }
+    }
     lines.push(
       `${JSON.stringify({
         rollup_id: candidate.rollupId,
@@ -558,6 +669,8 @@ export async function runShadowEval(
     results.push({
       incumbentDecision: incumbent.decision,
       incumbentPYes: incumbent.pYes,
+      incumbentUnparseable: incumbent.unparseable,
+      bodyTruncated,
       jev: judged.outcome,
     });
   }
@@ -571,6 +684,9 @@ export async function runShadowEval(
       totalEligible: loaded.totalEligible,
       unlabelled: loaded.unlabelled,
       excludedDegraded: loaded.excludedDegraded,
+      excludedNoTimestamp: loaded.excludedNoTimestamp,
+      maxRollups: args.maxRollups,
+      maxUsd: args.maxUsd,
     },
     results,
   );

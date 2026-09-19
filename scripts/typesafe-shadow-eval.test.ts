@@ -49,6 +49,25 @@ const EXCERPT_R4 =
   "Seat 2 abstained on every promote_t1 ballot for this rollup and no verdict row was ever written.";
 const EXCERPT_R5 =
   "Session-scoped note: the bench fleet ran twice on 2026-09-05 and the second run was a retry.";
+const EXCERPT_R6 =
+  "The dream_actions row for this rollup references a cycle row that no longer exists in dream_cycles.";
+const EXCERPT_R7 =
+  "A judgement emitted at the exact start of the degraded window is still inside the window.";
+const EXCERPT_R8 =
+  "A judgement emitted at the exact end of the degraded window is already outside the window.";
+const EXCERPT_R9 =
+  "Only one seat ever returned a ballot for this rollup, so the incumbent quorum floor was not met.";
+const EXCERPT_R10 =
+  "The worktree-gc sweeper tore down three lanes whose handoffs had been terminal for over two hours.";
+const EXCERPT_R11_BODY = `durable finding: ${"x".repeat(17000)}`;
+
+const MIXED_BALLOTS = [
+  { promote: "yes", confidence: 0.9 },
+  { promote: null },
+  { confidence: 0.7 },
+  { promote: true, seat: "seat-1" },
+  { promote: false },
+];
 
 const R1_VOTES = [
   { promote: true, confidence: 0.9 },
@@ -164,6 +183,28 @@ function recordingFetch(calls: RecordedFetchCall[]): TypesafeFetch {
   };
 }
 
+// bun:test's `.rejects.toThrow()` is typed as void even though it awaits the
+// underlying promise at runtime. Use this helper instead.
+async function expectRejection(promise: Promise<unknown>, pattern: RegExp): Promise<void> {
+  let threw = false;
+  try {
+    await promise;
+  } catch (err) {
+    threw = true;
+    expect(String(err)).toMatch(pattern);
+  }
+  expect(threw).toBe(true);
+}
+
+function mutateDb(dbPath: string, fn: (db: Database) => void): void {
+  const db = new Database(dbPath);
+  try {
+    fn(db);
+  } finally {
+    db.close();
+  }
+}
+
 function readRows(path: string): Record<string, unknown>[] {
   return readFileSync(path, "utf8")
     .split("\n")
@@ -242,7 +283,7 @@ test("live replay judges each labelled row through the pinned systemone endpoint
   const outPath = join(dir, "rows.jsonl");
   const calls: RecordedFetchCall[] = [];
   const summary = await runShadowEval(
-    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live"]),
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live", "--max-rollups", "10"]),
     { fetch: recordingFetch(calls), settings: TEST_SETTINGS },
   );
 
@@ -283,7 +324,7 @@ test("the summary carries the per-class confusion matrix", async () => {
   const outPath = join(dir, "rows.jsonl");
   const calls: RecordedFetchCall[] = [];
   const summary = await runShadowEval(
-    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live"]),
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live", "--max-rollups", "10"]),
     { fetch: recordingFetch(calls), settings: TEST_SETTINGS },
   );
 
@@ -326,4 +367,158 @@ test("moving the degraded window brings in-window judgements back", async () => 
   expect(summary.excluded_degraded).toBe(0);
   expect(summary.judged).toBe(3);
   expect(calls).toHaveLength(0);
+});
+
+test("a labelled row with no judgement timestamp lands in excluded_no_timestamp under --since", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R6", EXCERPT_R6);
+    insertAction(db, "A6", "C_GHOST", "R6", 0.8, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--since", "2026-09-01T00:00:00Z"]),
+    { fetch: recordingFetch([]) },
+  );
+
+  expect(summary.excluded_no_timestamp).toBe(1);
+  expect(
+    summary.unlabelled + summary.excluded_degraded + summary.excluded_no_timestamp + summary.judged,
+  ).toBe(summary.total_eligible);
+});
+
+test("the degraded window is half-open: a judgement at `to` survives, one at `from` does not", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R7", EXCERPT_R7);
+    insertRollup(db, "R8", EXCERPT_R8);
+    insertCycle(db, "C_FROM", DEFAULT_DEGRADED_WINDOW.from);
+    insertCycle(db, "C_TO", DEFAULT_DEGRADED_WINDOW.to);
+    insertAction(db, "A7", "C_FROM", "R7", 0.8, R2_VOTES);
+    insertAction(db, "A8", "C_TO", "R8", 0.8, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(parseShadowEvalArgs(["--db", dbPath, "--out", outPath]), {
+    fetch: recordingFetch([]),
+  });
+
+  const rows = readRows(outPath);
+  expect(rows.map((row) => row["rollup_id"]).sort()).toEqual(["R1", "R5", "R8"]);
+  expect(summary.excluded_degraded).toBe(2);
+  expect(summary.judged).toBe(3);
+});
+
+test("insufficient incumbent ballots are excluded from the agreement denominator", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R9", EXCERPT_R9);
+    insertCycle(db, "C9", "2026-09-05T08:00:00Z");
+    insertAction(db, "A9", "C9", "R9", 0.9, [{ promote: true, confidence: 0.9 }]);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const calls: RecordedFetchCall[] = [];
+  const args = {
+    ...parseShadowEvalArgs(["--db", dbPath, "--out", outPath]),
+    live: true,
+    maxRollups: 10,
+  };
+  const summary = await runShadowEval(args, {
+    fetch: recordingFetch(calls),
+    settings: TEST_SETTINGS,
+  });
+
+  expect(summary.incumbent_insufficient).toBe(1);
+  expect(summary.jev_answered).toBe(3);
+  expect(summary.agreement_denominator).toBe(2);
+  expect(summary.agreement_denominator).toBe(summary.agreedCount + summary.disagreedCount);
+  expect(summary.agreementRate).toBe(1);
+});
+
+test("ballots without a real boolean promote are skipped as unparseable, not counted as NO", async () => {
+  const verdict = incumbentFromBallots({ ballots: MIXED_BALLOTS, storedConfidence: 0.5 });
+  expect(verdict.unparseable).toBe(3);
+  expect(verdict.counted).toBe(2);
+  expect(verdict.pYes).toBe(0.5);
+  expect(verdict.decision).toBe("no_promote");
+
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R9", EXCERPT_R9);
+    insertCycle(db, "C9", "2026-09-05T08:00:00Z");
+    insertAction(db, "A9", "C9", "R9", 0.9, MIXED_BALLOTS);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(parseShadowEvalArgs(["--db", dbPath, "--out", outPath]), {
+    fetch: recordingFetch([]),
+  });
+  expect(summary.incumbent_unparseable_ballots).toBe(3);
+});
+
+test("--live requires --max-rollups and stays under the rollup and usd caps", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R10", EXCERPT_R10);
+    insertCycle(db, "C10", "2026-09-06T10:00:00Z");
+    insertAction(db, "A10", "C10", "R10", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+
+  expect(() => parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live"])).toThrow(
+    /--max-rollups/,
+  );
+
+  const base = parseShadowEvalArgs(["--db", dbPath, "--out", outPath]);
+  await expectRejection(
+    runShadowEval({ ...base, live: true }, { fetch: recordingFetch([]), settings: TEST_SETTINGS }),
+    /--max-rollups/,
+  );
+
+  const rollupCapCalls: RecordedFetchCall[] = [];
+  const rollupCap = await runShadowEval(
+    { ...base, live: true, maxRollups: 2 },
+    { fetch: recordingFetch(rollupCapCalls), settings: TEST_SETTINGS },
+  );
+  expect(rollupCapCalls).toHaveLength(2);
+  expect(rollupCap.jev_answered).toBe(2);
+  expect(rollupCap.max_rollups).toBe(2);
+  expect(rollupCap.max_usd).toBe(0.05);
+
+  const usdCapCalls: RecordedFetchCall[] = [];
+  const usdCap = await runShadowEval(
+    { ...base, live: true, maxRollups: 10, maxUsd: 0.00002 },
+    { fetch: recordingFetch(usdCapCalls), settings: TEST_SETTINGS },
+  );
+  expect(usdCapCalls).toHaveLength(2);
+  expect(usdCap.jev_answered).toBe(2);
+  expect(usdCap.total_usd).toBeGreaterThan(0.00002);
+  expect(usdCap.max_rollups).toBe(10);
+  expect(usdCap.max_usd).toBe(0.00002);
+});
+
+test("--live truncates each body sent as state to 16000 characters and counts it", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R11", EXCERPT_R11_BODY);
+    insertCycle(db, "C11", "2026-09-05T09:00:00Z");
+    insertAction(db, "A11", "C11", "R11", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const calls: RecordedFetchCall[] = [];
+  const args = {
+    ...parseShadowEvalArgs(["--db", dbPath, "--out", outPath]),
+    live: true,
+    maxRollups: 10,
+  };
+  const summary = await runShadowEval(args, {
+    fetch: recordingFetch(calls),
+    settings: TEST_SETTINGS,
+  });
+
+  const bodies = calls.map((call) => (call.body["state"] as { body: string }).body);
+  expect(bodies).toHaveLength(3);
+  for (const body of bodies) {
+    expect(body.length).toBeLessThanOrEqual(16000);
+  }
+  expect(bodies.some((body) => body.length === 16000)).toBe(true);
+  expect(summary.bodies_truncated).toBe(1);
 });
