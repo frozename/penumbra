@@ -1,4 +1,5 @@
 import { getConfig, resetConfigForTest } from "@penumbra/config";
+import { PROMOTION_PINNED_MODEL_ID } from "@penumbra/typesafe";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import {
@@ -119,6 +120,60 @@ const MANAGED_ENV: readonly EnvSlot[] = [
       delete process.env.PENUMBRA_DREAMING_DAILY_USD;
     },
   },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_API_KEY,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_API_KEY = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_API_KEY;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_BASE_URL,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_BASE_URL = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_BASE_URL;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_MODEL,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_MODEL = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_MODEL;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_TIMEOUT_MS,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_TIMEOUT_MS = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_TIMEOUT_MS;
+    },
+  },
+  {
+    read: () => process.env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
+    write: (v): void => {
+      process.env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION = v;
+    },
+    clear: (): void => {
+      delete process.env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION;
+    },
+  },
 ];
 
 describe("dreaming/config", () => {
@@ -204,6 +259,23 @@ describe("dreaming/config", () => {
     const estimate = config.phaseCostEstimatesUsd?.p1JevShadowUsd;
     expect(estimate).toBeGreaterThan(0);
     expect(estimate).toBeGreaterThanOrEqual((64_000 * 0.042) / 1_000_000);
+  });
+
+  it("maps the typesafe judge-promotion flag and env slice into DreamConfig", () => {
+    const unset = buildDreamingConfig(getConfig({}));
+    expect(unset.typesafeJudgePromotion).toBe("off");
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_API_KEY).toBeUndefined();
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN).toBeUndefined();
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_BASE_URL).toBe("https://api.typesafe.ai");
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_MODEL).toBe("jev-1.13.0");
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_TIMEOUT_MS).toBe(10_000);
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("off");
+    expect(unset.typesafeEnv?.PENUMBRA_TYPESAFE_MODEL).toBe(PROMOTION_PINNED_MODEL_ID);
+
+    process.env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION = "shadow";
+    const shadow = buildFromProcessEnv();
+    expect(shadow.typesafeJudgePromotion).toBe("shadow");
+    expect(shadow.typesafeEnv?.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("shadow");
   });
 
   it("resolveP1JevShadowEstimateUsd honors a positive finite override and defaults the rest", () => {

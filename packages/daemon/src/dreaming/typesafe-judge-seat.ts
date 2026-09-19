@@ -1,3 +1,11 @@
+import type { Logger } from "@penumbra/core";
+import type {
+  PromotionClient,
+  TypesafeClientOptions,
+  TypesafeEnvInput,
+  TypesafeFetch,
+  TypesafeSettings,
+} from "@penumbra/typesafe";
 import type { Database } from "bun:sqlite";
 
 import { createHash } from "node:crypto";
@@ -279,4 +287,77 @@ export function composeShadowJudgePool(incumbent: JudgePool, seat: TypesafeShado
 
 export function isShadowComposedPool(pool: JudgePool): boolean {
   return COMPOSED_POOLS.has(pool);
+}
+
+// Structural twin of the @penumbra/typesafe surface the shadow seat needs.
+// Members are declared with METHOD syntax on purpose: under strictFunctionTypes
+// a function-typed property's parameters are checked contravariantly, which
+// would make a loosely typed client parameter break the
+// `typeof import("@penumbra/typesafe") extends TypesafeModuleLike` pin in the
+// deps test. Method parameters are checked bivariantly.
+export interface TypesafeModuleLike {
+  resolveTypesafeSettings(env: TypesafeEnvInput): TypesafeSettings;
+  createTypesafeClient(options: TypesafeClientOptions): PromotionClient;
+  judgePromotion(
+    client: PromotionClient,
+    input: { kind: string; body: string },
+    signal: AbortSignal,
+  ): Promise<JevShadowOutcome>;
+}
+
+export const importTypesafeModule = (): Promise<TypesafeModuleLike> => import("@penumbra/typesafe");
+
+export function createLazyTypesafeJudgeLoader(
+  importModule: () => Promise<TypesafeModuleLike>,
+  options: { env: TypesafeEnvInput; log?: Logger; fetch?: TypesafeFetch },
+): JevShadowJudgeLoader {
+  let memo: Promise<JevShadowJudge | { disabled: string }> | undefined;
+  return (): Promise<JevShadowJudge | { disabled: string }> => {
+    memo ??= loadTypesafeJudge(importModule, options);
+    return memo;
+  };
+}
+
+async function loadTypesafeJudge(
+  importModule: () => Promise<TypesafeModuleLike>,
+  options: { env: TypesafeEnvInput; log?: Logger; fetch?: TypesafeFetch },
+): Promise<JevShadowJudge | { disabled: string }> {
+  let mod: TypesafeModuleLike;
+  try {
+    mod = await importModule();
+  } catch (err) {
+    options.log?.warn({ err, reason: "import_failed" }, "typesafe shadow judge disabled");
+    return { disabled: "import_failed" };
+  }
+  const settings = mod.resolveTypesafeSettings(options.env);
+  if (!settings.enabled) {
+    options.log?.warn({ reason: settings.reason }, "typesafe shadow judge disabled");
+    return { disabled: settings.reason };
+  }
+  const client = mod.createTypesafeClient({
+    settings,
+    fetch: options.fetch ?? globalThis.fetch,
+  });
+  return (input, signal) => mod.judgePromotion(client, input, signal);
+}
+
+export function createLazyShadowSeat(
+  loader: JevShadowJudgeLoader,
+  makeSeat: (loadJudge: JevShadowJudgeLoader) => TypesafeShadowSeat,
+): TypesafeShadowSeat {
+  let seat: TypesafeShadowSeat | undefined;
+  return {
+    shadow: async (args, incumbent): Promise<void> => {
+      try {
+        const loaded = await loader();
+        // A disabled loader returns before the seat exists: nothing is
+        // constructed and nothing reaches subsystem_health.
+        if (typeof loaded !== "function") return;
+        seat ??= makeSeat(() => Promise.resolve(loaded));
+        await seat.shadow(args, incumbent);
+      } catch {
+        // The shadow lane is invisible by contract: it never rejects into the pool.
+      }
+    },
+  };
 }

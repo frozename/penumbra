@@ -31,6 +31,18 @@ export function resolveP1JevShadowEstimateUsd(estimates?: DreamPhaseCostEstimate
     : DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD;
 }
 
+// The parsed PENUMBRA_TYPESAFE_* slice, typed exactly as Phase 2's
+// TypesafeEnvInput so the dreaming config can hand it to
+// resolveTypesafeSettings unchanged.
+export interface TypesafeEnvSlice {
+  readonly PENUMBRA_TYPESAFE_API_KEY?: string | undefined;
+  readonly PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN?: string | undefined;
+  readonly PENUMBRA_TYPESAFE_BASE_URL: string;
+  readonly PENUMBRA_TYPESAFE_MODEL: string;
+  readonly PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
+  readonly PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow";
+}
+
 function nonNegIntOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
@@ -81,6 +93,8 @@ export interface DreamConfig {
   rewriterConcurrency: number;
   phaseBudgetFractions?: DreamPhaseBudgetFractions;
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
+  typesafeJudgePromotion?: "off" | "shadow";
+  typesafeEnv?: TypesafeEnvSlice;
 }
 
 // Local typed view of the dreaming slice of EnvConfig (config-refactor F16):
@@ -134,6 +148,23 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS: number;
   PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS: number;
   PENUMBRA_DREAMING_REWRITER_CONCURRENCY: number;
+  PENUMBRA_TYPESAFE_API_KEY: string | undefined;
+  PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: string | undefined;
+  PENUMBRA_TYPESAFE_BASE_URL: string;
+  PENUMBRA_TYPESAFE_MODEL: string;
+  PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow";
+}
+
+function typesafeEnvSlice(env: DreamingEnvSlice): TypesafeEnvSlice {
+  return {
+    PENUMBRA_TYPESAFE_API_KEY: env.PENUMBRA_TYPESAFE_API_KEY,
+    PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: env.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN,
+    PENUMBRA_TYPESAFE_BASE_URL: env.PENUMBRA_TYPESAFE_BASE_URL,
+    PENUMBRA_TYPESAFE_MODEL: env.PENUMBRA_TYPESAFE_MODEL,
+    PENUMBRA_TYPESAFE_TIMEOUT_MS: env.PENUMBRA_TYPESAFE_TIMEOUT_MS,
+    PENUMBRA_TYPESAFE_JUDGE_PROMOTION: env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
+  };
 }
 
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
@@ -255,5 +286,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
       p7EmbedUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD,
       p1JevShadowUsd: DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
     },
+    typesafeJudgePromotion: env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION === "shadow" ? "shadow" : "off",
+    typesafeEnv: typesafeEnvSlice(env),
   };
 }

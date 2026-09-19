@@ -7,23 +7,34 @@ import {
   readSubscriptionPressure,
   resolveRoleLlmCandidates,
   tryResolveLlmProvider,
+  writeJudgeDecision,
 } from "@penumbra/core";
 import { randomUUID } from "node:crypto";
 
-import type { DreamConfig } from "./config.js";
 import type { DreamCycleDeps, ProjectRegistryEntry } from "./cycle.js";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { isAnyProviderOverPressure } from "../pressure.js";
 import { createResearchAdapter } from "../research/firecrawl-adapter.js";
 import { createBriefSynthesizerFromAgentchat } from "./brief-synthesizer.js";
+import { type DreamConfig, resolveP1JevShadowEstimateUsd } from "./config.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
-import { StubJudgePool } from "./judge-pool.js";
+import { type JudgeVote, type SerializedJudgeVote, StubJudgePool } from "./judge-pool.js";
 import {
   createCachedDreamingRewriterInventory,
   DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
 } from "./rewriter-inventory.js";
+import {
+  composeShadowJudgePool,
+  createLazyShadowSeat,
+  createLazyTypesafeJudgeLoader,
+  createTypesafeShadowSeat,
+  importTypesafeModule,
+  type JevShadowDecision,
+  type JevShadowJudgeLoader,
+  type TypesafeModuleLike,
+} from "./typesafe-judge-seat.js";
 
 interface DreamingResearchConfig {
   research_provider?: "firecrawl" | "webfetch" | "off";
@@ -33,6 +44,15 @@ interface DreamingResearchConfig {
 interface ProjectRegistryLike {
   get(id: string): ProjectRegistryEntry | undefined;
   list(): ProjectRegistryEntry[];
+}
+
+interface DreamDepsServices {
+  projectRegistry?: ProjectRegistryLike;
+  embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
+  dispatchEventLog?: { record(event: DispatchEventInput): void };
+  log?: Logger;
+  // Test seam only: production always resolves the lazy import() itself.
+  loadTypesafeModule?: () => Promise<TypesafeModuleLike>;
 }
 
 export function createDreamingRewriterCandidates(
@@ -99,12 +119,7 @@ function withDefaultLocalRewriterSecondary(
 }
 
 export function buildDreamCycleDeps(
-  services: {
-    projectRegistry?: ProjectRegistryLike;
-    embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
-    dispatchEventLog?: { record(event: DispatchEventInput): void };
-    log?: Logger;
-  },
+  services: DreamDepsServices,
   db: Database,
   dreamConfig: DreamConfig,
 ): DreamCycleDeps {
@@ -134,7 +149,7 @@ export function buildDreamCycleDeps(
     return Promise.resolve({ memory_id });
   };
 
-  const realJudgePool = createDreamingJudgePoolFromAgentchat();
+  const realJudgePool = createDreamingJudgePoolFromAgentchat({ log: services.log });
   const judgePool = realJudgePool ?? new StubJudgePool();
 
   const briefSynthesizer = createBriefSynthesizerFromAgentchat({ log: services.log });
@@ -192,6 +207,86 @@ export function buildDreamCycleDeps(
   if (dispatchEventLog) {
     deps.dispatchEventLog = dispatchEventLog;
   }
+  if (dreamConfig.typesafeJudgePromotion === "shadow" && dreamConfig.typesafeEnv !== undefined) {
+    wireTypesafeShadow(deps, services, db, dreamConfig);
+  }
 
   return deps;
+}
+
+// One loader per services object: serve.ts passes the same bag to the boot
+// build and every 60s idle rebuild, so the import, the settings resolution and
+// any keychain read each run once per daemon process.
+const TYPESAFE_JUDGE_LOADERS = new WeakMap<object, JevShadowJudgeLoader>();
+
+function wireTypesafeShadow(
+  deps: DreamCycleDeps,
+  services: DreamDepsServices,
+  db: Database,
+  dreamConfig: DreamConfig,
+): void {
+  const env = dreamConfig.typesafeEnv;
+  if (env === undefined) return;
+  let loader = TYPESAFE_JUDGE_LOADERS.get(services);
+  if (loader === undefined) {
+    loader = createLazyTypesafeJudgeLoader(services.loadTypesafeModule ?? importTypesafeModule, {
+      env,
+      log: services.log,
+    });
+    TYPESAFE_JUDGE_LOADERS.set(services, loader);
+    // Resolve at boot so a disabled reason is logged once, at boot.
+    void loader();
+  }
+  const incumbent = deps.judgePool;
+  if (incumbent === undefined) return;
+  deps.judgePool = composeShadowJudgePool(
+    incumbent,
+    createLazyShadowSeat(loader, (loadJudge) =>
+      createTypesafeShadowSeat({
+        db,
+        loadJudge,
+        writeDecision: (row) => {
+          writeShadowJudgeDecision(db, row);
+        },
+        getCostMeter: () => deps.costMeter,
+        estimateUsd: resolveP1JevShadowEstimateUsd(dreamConfig.phaseCostEstimatesUsd),
+      }),
+    ),
+  );
+}
+
+// The audit row keeps only the ballot fields: rationale is model free text and
+// is dropped exactly as serializeJudgeVotes drops it for dream_actions.
+function toAuditVote(vote: JudgeVote): SerializedJudgeVote {
+  return {
+    ...(vote.seat === undefined ? {} : { seat: vote.seat }),
+    promote: vote.promote,
+    confidence: vote.confidence,
+    ...(vote.abstained === true ? { abstained: true } : {}),
+    ...(vote.error_class === undefined ? {} : { error_class: vote.error_class }),
+  };
+}
+
+function writeShadowJudgeDecision(db: Database, row: JevShadowDecision): void {
+  writeJudgeDecision(db, {
+    decisionId: randomUUID(),
+    site: row.site,
+    subjectId: row.subjectId,
+    mode: "shadow",
+    model: row.model,
+    incumbent: {
+      votes: row.incumbentVotes === null ? null : row.incumbentVotes.map(toAuditVote),
+    },
+    jev: {
+      answers: row.answers,
+      pPromote: row.pPromote,
+      shadowPromote: row.shadowPromote,
+      inputSha256: row.inputSha256,
+      usd: row.usd,
+      latencyMs: row.latencyMs,
+      outputTokens: row.usage.outputTokens,
+    },
+    usageInputTokens: row.usage.inputTokens,
+    createdAt: row.createdAt,
+  });
 }
