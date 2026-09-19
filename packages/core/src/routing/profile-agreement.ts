@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 
-import type { AgentTaskType } from "../schemas/agent-performance.js";
 import type { ReplayDependencies } from "./replay.js";
 
+import { type AgentTaskType, AgentTaskTypeSchema } from "../schemas/agent-performance.js";
 import { type RoutingTaskType, type TaskProfile, TaskProfileSchema } from "./schemas.js";
 import {
   ROUTER_SCORED_AXES,
@@ -17,7 +17,7 @@ export interface ProfileReplayRow {
   handoffId: string;
   ts: string;
   role: string | null;
-  chainTaskType: string | null;
+  chainTaskType: AgentTaskType | null;
   prompt: string;
   recordedProfile: TaskProfile;
 }
@@ -128,12 +128,21 @@ export function fetchProfileReplayRows(
       skippedUnreadable++;
       continue;
     }
+    let chainTaskType: AgentTaskType | null = null;
+    if (row.chain_task_type !== null) {
+      const parsed = AgentTaskTypeSchema.safeParse(row.chain_task_type);
+      if (!parsed.success) {
+        skippedUnreadable++;
+        continue;
+      }
+      chainTaskType = parsed.data;
+    }
     rows.push({
       decisionId: row.decision_id,
       handoffId: row.handoff_id,
       ts: row.ts,
       role: row.role,
-      chainTaskType: row.chain_task_type,
+      chainTaskType,
       prompt: row.prompt,
       recordedProfile: recordedProfile.data,
     });
@@ -152,6 +161,7 @@ export function hasInputDrift(row: ProfileReplayRow): boolean {
   for (const axis of ROUTER_SCORED_AXES) {
     if (recomputed[axis] !== row.recordedProfile[axis]) return true;
   }
+  if (!taskTypesEqual(recomputed.taskTypes, row.recordedProfile.taskTypes)) return true;
   return recomputed.confidence !== row.recordedProfile.confidence;
 }
 
@@ -181,8 +191,21 @@ export async function replayTaskProfiles(
   return stats.toReport(fetched);
 }
 
+/**
+ * Builds the report a --live run would produce without calling any judge:
+ * drift is still detected per row through the same accumulator, so the dry and
+ * live report shapes cannot drift apart.
+ */
+export function dryRunProfileReport(fetched: ProfileReplayRows): ProfileAgreementReport {
+  const stats = new ProfileAgreementStats(DEFAULT_PROFILE_AGREEMENT_TOLERANCE);
+  for (const row of fetched.rows) {
+    if (hasInputDrift(row)) stats.drifted();
+  }
+  return stats.toReport(fetched);
+}
+
 function replayHints(row: ProfileReplayRow): TaskProfileHints {
-  return row.chainTaskType !== null ? { taskType: row.chainTaskType as AgentTaskType } : {};
+  return row.chainTaskType !== null ? { taskType: row.chainTaskType } : {};
 }
 
 function taskTypesEqual(a: RoutingTaskType[], b: RoutingTaskType[]): boolean {

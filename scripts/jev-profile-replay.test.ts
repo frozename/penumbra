@@ -238,6 +238,24 @@ describe("jev-profile-replay", () => {
     expect(report.judged).toBe(0);
   });
 
+  test("an out-of-range confidenceFloor rejects before the database is opened", async () => {
+    const dir = makeTmpDir();
+    const args = parseProfileReplayArgs(
+      ["--db", join(dir, "missing.sqlite"), "--since", SINCE, "--until", UNTIL, "--live"],
+      { PENUMBRA_CONFIG_DIR: join(dir, "cfg") },
+    );
+    args.confidenceFloor = 1.5;
+
+    const error = await runProfileReplay(args, {
+      fetch: () => cannedJevResponse(),
+      typesafeEnv: TYPESAFE_ENV,
+      maxRetries: 0,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/confidence.?floor/i);
+  });
+
   test("live run judges rows through the injected fetch and leaves the DB untouched", async () => {
     const dir = makeTmpDir();
     const dbPath = join(dir, "db.sqlite");

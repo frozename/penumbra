@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { writeRoutingDecision } from "@src/routing/decision-log.js";
-import { fetchProfileReplayRows, replayTaskProfiles } from "@src/routing/profile-agreement.js";
+import {
+  DEFAULT_PROFILE_AGREEMENT_TOLERANCE,
+  fetchProfileReplayRows,
+  replayTaskProfiles,
+} from "@src/routing/profile-agreement.js";
 import type { RoutingDecision, TaskProfile } from "@src/routing/schemas.js";
 import {
   ROUTER_SCORED_AXES,
@@ -171,6 +175,28 @@ describe("profile agreement replay", () => {
     expect(row.recordedProfile).toEqual(recorded);
   });
 
+  test("an invalid chain_task_type is counted unreadable while NULL still reads with no hint", () => {
+    seedReplayRow(db, {
+      handoffId: "handoff-1",
+      decisionId: "decision-1",
+      ts: TS,
+      chainTaskType: "not_a_task_type",
+    });
+    seedReplayRow(db, {
+      handoffId: "handoff-2",
+      decisionId: "decision-2",
+      ts: "2026-08-06T10:00:00.000Z",
+      chainTaskType: null,
+    });
+
+    const fetched = fetchProfileReplayRows(db, { since: SINCE, until: UNTIL });
+
+    expect(fetched.skippedUnreadable).toBe(1);
+    expect(fetched.rows).toHaveLength(1);
+    expect(fetched.rows[0]?.decisionId).toBe("decision-2");
+    expect(fetched.rows[0]?.chainTaskType).toBeNull();
+  });
+
   test("a stored profile that disagrees with the recomputed deterministic profile is input drift, not judged", async () => {
     const base = profileTaskDeterministic(PROMPT, ROLE, { taskType: CHAIN_TASK_TYPE });
     seedReplayRow(db, {
@@ -196,6 +222,32 @@ describe("profile agreement replay", () => {
     expect(report.judged).toBe(0);
     expect(report.rows).toHaveLength(0);
     expect(judgeCalls).toBe(0);
+  });
+
+  test("a stored profile whose taskTypes differ from the recomputed profile is input drift, not judged", async () => {
+    const base = profileTaskDeterministic(PROMPT, ROLE, { taskType: CHAIN_TASK_TYPE });
+    seedReplayRow(db, {
+      handoffId: "handoff-1",
+      decisionId: "decision-1",
+      ts: TS,
+      recordedProfile: { ...base, taskTypes: [...base.taskTypes, "multimodal"] },
+    });
+
+    let judgeCalls = 0;
+    const judge: TaskProfileJudge = {
+      profileTask: (): Promise<TaskProfileJudgeResult> => {
+        judgeCalls++;
+        return Promise.resolve({ profile: base, source: "jev" });
+      },
+    };
+
+    const fetched = fetchProfileReplayRows(db, { since: SINCE, until: UNTIL });
+    const report = await replayTaskProfiles(fetched, { judge });
+
+    expect(report.inputDrift).toBe(1);
+    expect(report.judged).toBe(0);
+    expect(judgeCalls).toBe(0);
+    expect(report.taskTypesExactMatch.compared).toBe(0);
   });
 
   test("jev deltas inside the tolerance agree and outside disagree, per-axis stats are reported", async () => {
@@ -321,5 +373,45 @@ describe("profile agreement replay", () => {
     await replayTaskProfiles(fetched, { judge });
 
     expect(totalChanges(db)).toBe(changesBefore);
+  });
+
+  test("dryRunProfileReport shares the live report shape with nothing judged and a zero histogram", async () => {
+    const recorded = seedReplayRow(db, {
+      handoffId: "handoff-1",
+      decisionId: "decision-1",
+      ts: TS,
+    });
+    seedReplayRow(db, {
+      handoffId: "handoff-2",
+      decisionId: "decision-2",
+      ts: "2026-08-06T10:00:00.000Z",
+      recordedProfile: { ...recorded, codingDemand: 0.99 },
+    });
+
+    const fetched = fetchProfileReplayRows(db, { since: SINCE, until: UNTIL });
+    const { dryRunProfileReport } = await import("@src/routing/profile-agreement.js");
+    expect(dryRunProfileReport).toBeDefined();
+    const report = dryRunProfileReport(fetched);
+
+    expect(report.since).toBe(SINCE);
+    expect(report.until).toBe(UNTIL);
+    expect(report.tolerance).toBe(DEFAULT_PROFILE_AGREEMENT_TOLERANCE);
+    expect(report.totalRows).toBe(2);
+    expect(report.skippedUnreadable).toBe(0);
+    expect(report.inputDrift).toBe(1);
+    expect(report.judged).toBe(0);
+    expect(report.bySource).toEqual({ jev: 0, deterministic: 0, llm: 0 });
+    expect(report.fallbackReasons).toEqual({});
+    expect(report.axes.map((axis) => axis.axis)).toEqual([...ROUTER_SCORED_AXES]);
+    for (const axis of report.axes) {
+      expect(axis.compared).toBe(0);
+      expect(axis.agreed).toBe(0);
+      expect(axis.agreementRate).toBeNull();
+      expect(axis.meanAbsDelta).toBeNull();
+      expect(axis.meanSignedDelta).toBeNull();
+    }
+    expect(report.taskTypesExactMatch).toEqual({ compared: 0, agreed: 0 });
+    expect(report.candidateConfidenceHistogram).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(report.rows).toHaveLength(0);
   });
 });

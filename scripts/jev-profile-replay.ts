@@ -3,21 +3,16 @@ import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type {
-  ProfileAgreementReport,
-  ProfileReplayRows,
-} from "../packages/core/src/routing/profile-agreement.js";
+import type { ProfileAgreementReport } from "../packages/core/src/routing/profile-agreement.js";
 import type { TypesafeFetch } from "../packages/integrations/typesafe/src/client.js";
 import type { TypesafeEnvInput } from "../packages/integrations/typesafe/src/config.js";
 
 import { getConfig, loadTaskRouterConfigFromDir } from "../packages/config/src/index.js";
 import {
-  DEFAULT_PROFILE_AGREEMENT_TOLERANCE,
+  dryRunProfileReport,
   fetchProfileReplayRows,
-  hasInputDrift,
   replayTaskProfiles,
 } from "../packages/core/src/routing/profile-agreement.js";
-import { ROUTER_SCORED_AXES } from "../packages/core/src/routing/task-profile-judge.js";
 import { resolveAgentChatConfigPath } from "../packages/daemon/src/agentchat-config.js";
 import { createTypesafeClient } from "../packages/integrations/typesafe/src/client.js";
 import { resolveTypesafeSettings } from "../packages/integrations/typesafe/src/config.js";
@@ -119,62 +114,46 @@ export async function runProfileReplay(
   args: ProfileReplayArgs,
   deps: ProfileReplayDeps,
 ): Promise<ProfileReplayRunResult> {
+  if (
+    !Number.isFinite(args.confidenceFloor) ||
+    args.confidenceFloor < 0 ||
+    args.confidenceFloor > 1
+  ) {
+    throw new Error(
+      `--confidence-floor must be a number in [0, 1], got ${String(args.confidenceFloor)}`,
+    );
+  }
   const db = new Database(args.db, { readonly: true });
-  const fetched = fetchProfileReplayRows(db, {
-    since: args.since,
-    until: args.until,
-    limit: args.limit,
-  });
+  try {
+    const fetched = fetchProfileReplayRows(db, {
+      since: args.since,
+      until: args.until,
+      limit: args.limit,
+    });
 
-  if (!args.live) {
-    const report = dryReport(fetched);
+    if (!args.live) {
+      const report = dryRunProfileReport(fetched);
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      return { report, db };
+    }
+
+    const settings = resolveTypesafeSettings(deps.typesafeEnv);
+    if (!settings.enabled) {
+      throw new Error(settings.reason);
+    }
+    const client = createTypesafeClient({
+      settings,
+      fetch: deps.fetch,
+      maxRetries: deps.maxRetries,
+    });
+    const judge = createJevTaskProfileJudge({ client, confidenceFloor: args.confidenceFloor });
+    const report = await replayTaskProfiles(fetched, { judge });
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return { report, db };
-  }
-
-  const settings = resolveTypesafeSettings(deps.typesafeEnv);
-  if (!settings.enabled) {
+  } catch (error) {
     db.close();
-    throw new Error(settings.reason);
+    throw error;
   }
-  const client = createTypesafeClient({
-    settings,
-    fetch: deps.fetch,
-    maxRetries: deps.maxRetries,
-  });
-  const judge = createJevTaskProfileJudge({ client, confidenceFloor: args.confidenceFloor });
-  const report = await replayTaskProfiles(fetched, { judge });
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  return { report, db };
-}
-
-function dryReport(fetched: ProfileReplayRows): ProfileAgreementReport {
-  let inputDrift = 0;
-  for (const row of fetched.rows) {
-    if (hasInputDrift(row)) inputDrift++;
-  }
-  return {
-    since: fetched.since,
-    until: fetched.until,
-    tolerance: DEFAULT_PROFILE_AGREEMENT_TOLERANCE,
-    totalRows: fetched.rows.length + fetched.skippedUnreadable,
-    skippedUnreadable: fetched.skippedUnreadable,
-    inputDrift,
-    judged: 0,
-    bySource: { jev: 0, deterministic: 0, llm: 0 },
-    fallbackReasons: {},
-    axes: ROUTER_SCORED_AXES.map((axis) => ({
-      axis,
-      compared: 0,
-      agreed: 0,
-      agreementRate: null,
-      meanAbsDelta: null,
-      meanSignedDelta: null,
-    })),
-    taskTypesExactMatch: { compared: 0, agreed: 0 },
-    candidateConfidenceHistogram: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    rows: [],
-  };
 }
 
 function parsePositiveInt(flag: string, raw: string): number {
