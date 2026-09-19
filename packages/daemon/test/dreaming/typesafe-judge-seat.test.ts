@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 
+import type { DreamCostMeter } from "@src/dreaming/cycle.js";
 import {
   type JudgePool,
   type JudgeVote,
@@ -14,6 +15,7 @@ import {
   createTypesafeShadowSeat,
   drainShadowJudgements,
   isShadowComposedPool,
+  JEV_SHADOW_COST_PHASE,
   type JevShadowDecision,
   type JevShadowJudge,
   type JevShadowJudgeLoader,
@@ -64,12 +66,19 @@ function judgeReturning(outcome: JevShadowOutcome): JevShadowJudge {
 
 const okJudge = judgeReturning({ ok: true, judgement: okJudgement() });
 
+const PERMISSIVE_METER: DreamCostMeter = {
+  canAfford: () => true,
+  record: () => undefined,
+};
+
 function makeSeat(
   db: Database,
   opts: {
     loadJudge?: JevShadowJudgeLoader;
     writeDecision?: (row: JevShadowDecision) => void;
     budgetMs?: number;
+    getCostMeter?: () => DreamCostMeter | undefined;
+    estimateUsd?: number;
   },
 ): { seat: TypesafeShadowSeat; decisions: JevShadowDecision[] } {
   const decisions: JevShadowDecision[] = [];
@@ -81,10 +90,35 @@ function makeSeat(
       ((row): void => {
         decisions.push(row);
       }),
+    getCostMeter: opts.getCostMeter ?? ((): DreamCostMeter => PERMISSIVE_METER),
+    estimateUsd: opts.estimateUsd ?? 0.003,
     ...(opts.budgetMs === undefined ? {} : { budgetMs: opts.budgetMs }),
     now: () => FIXED_NOW_MS,
   });
   return { seat, decisions };
+}
+
+interface MeterSpy {
+  meter: DreamCostMeter;
+  canAffordCalls: { phase: string; lane: string; usd: number }[];
+  recordCalls: { phase: string; lane: string; usd: number }[];
+}
+
+function makeMeterSpy(canAffordResult: boolean): MeterSpy {
+  const spy: MeterSpy = {
+    meter: {
+      canAfford: (phase, lane, usd): boolean => {
+        spy.canAffordCalls.push({ phase, lane, usd });
+        return canAffordResult;
+      },
+      record: (phase, lane, usd): void => {
+        spy.recordCalls.push({ phase, lane, usd });
+      },
+    },
+    canAffordCalls: [],
+    recordCalls: [],
+  };
+  return spy;
 }
 
 describe("composeShadowJudgePool", () => {
@@ -319,5 +353,140 @@ describe("typesafe shadow seat decisions", () => {
     await composite.judgeAll!({ body: B, kind: "promote_t1" });
     expect(loads).toBe(0);
     expect(decisions).toHaveLength(0);
+  });
+});
+
+describe("typesafe shadow seat cost gate", () => {
+  it("skips with a health row and never invokes the judge when the cycle exposes no meter", async () => {
+    const db = openTestDb();
+    let judgeCalls = 0;
+    const spyJudge: JevShadowJudge = () => {
+      judgeCalls += 1;
+      return Promise.resolve({ ok: true, judgement: okJudgement() });
+    };
+    const { seat, decisions } = makeSeat(db, {
+      loadJudge: () => Promise.resolve(spyJudge),
+      getCostMeter: () => undefined,
+    });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(judgeCalls).toBe(0);
+    expect(decisions).toHaveLength(0);
+    const health = readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM);
+    expect(health?.last_skip_ts).not.toBeNull();
+    expect(health?.consecutive_failures).toBe(0);
+  });
+
+  it("a budget refusal skips the ballot without touching the judge, record, or decisions", async () => {
+    const db = openTestDb();
+    const spy = makeMeterSpy(false);
+    let judgeCalls = 0;
+    const spyJudge: JevShadowJudge = () => {
+      judgeCalls += 1;
+      return Promise.resolve({ ok: true, judgement: okJudgement() });
+    };
+    const { seat, decisions } = makeSeat(db, {
+      loadJudge: () => Promise.resolve(spyJudge),
+      getCostMeter: () => spy.meter,
+    });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(judgeCalls).toBe(0);
+    expect(spy.recordCalls).toHaveLength(0);
+    expect(decisions).toHaveLength(0);
+    const health = readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM);
+    expect(health?.last_skip_ts).not.toBeNull();
+  });
+
+  it("asks the meter for the shadow phase in the llm lane at the configured estimate", async () => {
+    const db = openTestDb();
+    const spy = makeMeterSpy(true);
+    const { seat } = makeSeat(db, { getCostMeter: () => spy.meter });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(spy.canAffordCalls).toHaveLength(1);
+    expect(spy.canAffordCalls[0]?.phase).toBe("P1.shadow");
+    expect(spy.canAffordCalls[0]?.phase).toBe(JEV_SHADOW_COST_PHASE);
+    expect(spy.canAffordCalls[0]?.lane).toBe("llm");
+    expect(spy.canAffordCalls[0]?.usd).toBe(0.003);
+  });
+
+  it("records actual spend on a judged ballot", async () => {
+    const db = openTestDb();
+    const spy = makeMeterSpy(true);
+    const judge = judgeReturning({
+      ok: true,
+      judgement: okJudgement({
+        usage: { inputTokens: 1_000_000, outputTokens: 64 },
+        usd: 0.042,
+      }),
+    });
+    const { seat } = makeSeat(db, {
+      loadJudge: () => Promise.resolve(judge),
+      getCostMeter: () => spy.meter,
+    });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(spy.recordCalls).toHaveLength(1);
+    expect(spy.recordCalls[0]?.phase).toBe("P1.shadow");
+    expect(spy.recordCalls[0]?.lane).toBe("llm");
+    expect(spy.recordCalls[0]?.usd).toBeCloseTo(0.042);
+  });
+
+  it("records the estimate when the possibly-billed call fails", async () => {
+    const dbThrow = openTestDb();
+    const spyThrow = makeMeterSpy(true);
+    const throwingJudge: JevShadowJudge = () => Promise.reject(new Error("jev down"));
+    const { seat: seatThrow } = makeSeat(dbThrow, {
+      loadJudge: () => Promise.resolve(throwingJudge),
+      getCostMeter: () => spyThrow.meter,
+    });
+    const compositeThrow = composeShadowJudgePool(makeFakeJudgePool(VOTES), seatThrow);
+    await compositeThrow.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(spyThrow.recordCalls).toHaveLength(1);
+    expect(spyThrow.recordCalls[0]?.phase).toBe("P1.shadow");
+    expect(spyThrow.recordCalls[0]?.lane).toBe("llm");
+    expect(spyThrow.recordCalls[0]?.usd).toBeCloseTo(0.003);
+
+    const dbServer = openTestDb();
+    const spyServer = makeMeterSpy(true);
+    const { seat: seatServer } = makeSeat(dbServer, {
+      loadJudge: () =>
+        Promise.resolve(judgeReturning({ ok: false, reason: "server", status: 529 })),
+      getCostMeter: () => spyServer.meter,
+    });
+    const compositeServer = composeShadowJudgePool(makeFakeJudgePool(VOTES), seatServer);
+    await compositeServer.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(spyServer.recordCalls).toHaveLength(1);
+    expect(spyServer.recordCalls[0]?.phase).toBe("P1.shadow");
+    expect(spyServer.recordCalls[0]?.lane).toBe("llm");
+    expect(spyServer.recordCalls[0]?.usd).toBeCloseTo(0.003);
+  });
+
+  it("a disabled loader never touches the meter and leaves no health row", async () => {
+    const db = openTestDb();
+    const spy = makeMeterSpy(true);
+    const { seat, decisions } = makeSeat(db, {
+      loadJudge: () => Promise.resolve({ disabled: "no_key" }),
+      getCostMeter: () => spy.meter,
+    });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
+    expect(spy.canAffordCalls).toHaveLength(0);
+    expect(spy.recordCalls).toHaveLength(0);
+    expect(decisions).toHaveLength(0);
+    expect(readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM)).toBeNull();
+  });
+
+  it("refuses to construct a dead gate", () => {
+    const db = openTestDb();
+    expect(() => makeSeat(db, { estimateUsd: 0 })).toThrow();
   });
 });

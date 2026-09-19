@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { createHash } from "node:crypto";
 
+import type { DreamCostMeter } from "./cycle.js";
 import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
 import { recordSubsystemOutcome } from "../services/subsystem-health.js";
@@ -11,6 +12,10 @@ export const TYPESAFE_SHADOW_SEAT = "typesafe-jev";
 // must never count a shadow seat.
 export const TYPESAFE_SHADOW_SUBSYSTEM = "dream.shadow.typesafe-jev";
 export const P1_PROMOTION_JUDGE_SITE = "dream.p1.promotion";
+// Deliberately not "P1": a refusal lands this phase in ctx.deferredPhases and a
+// later record() removes it, and only "P3" reads that set today — but a bare
+// "P1" would let a shadow refusal look like a P1 deferral to any future reader.
+export const JEV_SHADOW_COST_PHASE = "P1.shadow";
 // Total per-ballot budget; equals the in-house client's TOTAL deadline default
 // (PENUMBRA_TYPESAFE_TIMEOUT_MS = 10000), which already bounds every attempt,
 // backoff and Retry-After sleep.
@@ -55,6 +60,8 @@ export interface TypesafeShadowSeatDeps {
   db: Database;
   loadJudge: JevShadowJudgeLoader;
   writeDecision: (row: JevShadowDecision) => void;
+  getCostMeter: () => DreamCostMeter | undefined;
+  estimateUsd: number;
   budgetMs?: number;
   now?: () => number;
 }
@@ -93,12 +100,17 @@ interface SeatRuntime {
 
 interface SeatOutcomeRecord {
   model: string | null;
-  ok: boolean;
+  ok: boolean | "skip";
   reason: string | null;
   status: number | null;
 }
 
 export function createTypesafeShadowSeat(deps: TypesafeShadowSeatDeps): TypesafeShadowSeat {
+  // A non-positive estimate makes canAfford unconditionally true (the meter
+  // returns early for usd <= 0), which would leave the gate permanently open.
+  if (!(deps.estimateUsd > 0)) {
+    throw new Error("typesafe shadow seat requires a positive estimateUsd");
+  }
   const rt: SeatRuntime = {
     deps,
     budgetMs: deps.budgetMs ?? JEV_SHADOW_BUDGET_MS,
@@ -198,6 +210,18 @@ async function runShadow(
 ): Promise<void> {
   const judge = await loadSeatJudge(rt);
   if (judge === null) return;
+  const meter = rt.deps.getCostMeter();
+  // No meter means the cycle cannot bill the call: skip rather than judge free.
+  if (meter === undefined) {
+    recordOutcome(rt.deps.db, { model: null, ok: "skip", reason: null, status: null });
+    return;
+  }
+  // A refusal only skips the uncounted shadow ballot: deferring would let Jev's
+  // budget move incumbent promotion timing.
+  if (!meter.canAfford(JEV_SHADOW_COST_PHASE, "llm", rt.deps.estimateUsd)) {
+    recordOutcome(rt.deps.db, { model: null, ok: "skip", reason: null, status: null });
+    return;
+  }
   const startedMs = rt.now();
   const outcome = await callJudgeWithinBudget(
     judge,
@@ -205,6 +229,8 @@ async function runShadow(
     rt.budgetMs,
   );
   if (!outcome.ok) {
+    // The request may have been billed, so fail toward the cap at the estimate.
+    meter.record(JEV_SHADOW_COST_PHASE, "llm", rt.deps.estimateUsd);
     recordOutcome(rt.deps.db, {
       model: null,
       ok: false,
@@ -213,6 +239,7 @@ async function runShadow(
     });
     return;
   }
+  meter.record(JEV_SHADOW_COST_PHASE, "llm", outcome.judgement.usd);
   const incumbentVotes = await incumbent.then(
     (votes) => votes,
     () => null,

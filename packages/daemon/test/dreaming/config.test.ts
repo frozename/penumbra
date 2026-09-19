@@ -1,7 +1,12 @@
 import { getConfig, resetConfigForTest } from "@penumbra/config";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { buildDreamingConfig } from "@src/dreaming/config.js";
+import {
+  buildDreamingConfig,
+  DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
+  type DreamPhaseCostEstimatesUsd,
+  resolveP1JevShadowEstimateUsd,
+} from "@src/dreaming/config.js";
 
 function buildFromProcessEnv(): ReturnType<typeof buildDreamingConfig> {
   resetConfigForTest();
@@ -192,5 +197,35 @@ describe("dreaming/config", () => {
     expect(overrides.enabled).toBe(true);
     expect(overrides.dailyUsd).toBe(5);
     expect(overrides.t2PromotionMinEvents).toBe(7);
+  });
+
+  it("defaults p1JevShadowUsd high enough to cover a full 64k-token Jev request", () => {
+    const config = buildDreamingConfig(getConfig({}));
+    const estimate = config.phaseCostEstimatesUsd?.p1JevShadowUsd;
+    expect(estimate).toBeGreaterThan(0);
+    expect(estimate).toBeGreaterThanOrEqual((64_000 * 0.042) / 1_000_000);
+  });
+
+  it("resolveP1JevShadowEstimateUsd honors a positive finite override and defaults the rest", () => {
+    const base: DreamPhaseCostEstimatesUsd = {
+      p3ScorerLlmUsd: 0.02,
+      p4RewriterLlmUsd: 0.01,
+      p5ResearchUsd: 0.05,
+      p6BriefSynthLlmUsd: 0.04,
+      p7EmbedUsd: 0.005,
+    };
+    expect(resolveP1JevShadowEstimateUsd(undefined)).toBe(DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD);
+    expect(resolveP1JevShadowEstimateUsd(base)).toBe(DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD);
+    expect(resolveP1JevShadowEstimateUsd({ ...base, p1JevShadowUsd: 0 })).toBe(
+      DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
+    );
+    expect(resolveP1JevShadowEstimateUsd({ ...base, p1JevShadowUsd: -1 })).toBe(
+      DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
+    );
+    expect(resolveP1JevShadowEstimateUsd({ ...base, p1JevShadowUsd: NaN })).toBe(
+      DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
+    );
+    expect(resolveP1JevShadowEstimateUsd({ ...base, p1JevShadowUsd: 0.01 })).toBe(0.01);
+    expect(resolveP1JevShadowEstimateUsd()).toBe(DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD);
   });
 });

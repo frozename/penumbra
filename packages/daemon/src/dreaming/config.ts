@@ -18,6 +18,17 @@ export interface DreamPhaseCostEstimatesUsd {
   p5ResearchUsd: number;
   p6BriefSynthLlmUsd: number;
   p7EmbedUsd: number;
+  p1JevShadowUsd?: number;
+}
+
+// Covers one full 64,000-token Jev request: 64,000 × $0.042 / 1e6 = $0.002688.
+export const DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD = 0.003;
+
+export function resolveP1JevShadowEstimateUsd(estimates?: DreamPhaseCostEstimatesUsd): number {
+  const configured = estimates?.p1JevShadowUsd;
+  return configured !== undefined && Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD;
 }
 
 function nonNegIntOr(value: number | undefined, fallback: number): number {
@@ -242,6 +253,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
       p5ResearchUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD,
       p6BriefSynthLlmUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD,
       p7EmbedUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD,
+      p1JevShadowUsd: DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
     },
   };
 }

@@ -2,8 +2,8 @@ import { applySchema, loadSqliteVec, readJudgeDecisions, writeJudgeDecision } fr
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 
-import type { DreamConfig } from "@src/dreaming/config.js";
-import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD, type DreamConfig } from "@src/dreaming/config.js";
+import { type DreamCycleDeps, runDreamCycle } from "@src/dreaming/cycle.js";
 import { type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import {
   composeShadowJudgePool,
@@ -44,7 +44,7 @@ function openTestDb(): Database {
   return db;
 }
 
-function testConfig(): DreamConfig {
+function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
   return {
     enabled: true,
     cronMinutes: 30,
@@ -75,21 +75,31 @@ function testConfig(): DreamConfig {
     rewriterCacheTtlMs: 30 * 24 * 60 * 60 * 1000,
     rewriterConcurrency: 4,
     skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+    ...overrides,
   };
 }
 
-function seedThreeRollups(db: Database): void {
-  for (const [i, rollupId] of ROLLUP_IDS.entries()) {
+function seedRollups(db: Database, n: number): void {
+  for (let i = 0; i < n; i++) {
     db.prepare(
       `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
        VALUES(?, 'test-user', ?, ?, 1, ?)`,
     ).run(
-      rollupId,
+      ROLLUP_IDS[i] ?? `r-extra-${String(i + 1)}`,
       `session-${String(i + 1)}`,
       `2026-01-0${String(i + 1)}T00:00:00Z`,
       `durable finding ${String(i + 1)} about dispatch ordering that outlives this session`,
     );
   }
+}
+
+function seedSameDayLlmSpend(db: Database, llmUsd: number): void {
+  const now = new Date();
+  const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, ended_at, llm_spent_usd, embedding_spent_usd, research_spent_usd)
+     VALUES('seed-spend', ?, 'cron', 1.0, 'completed', ?, ?, 0, 0)`,
+  ).run(todayStartMs + 60_000, todayStartMs + 60_000, llmUsd);
 }
 
 function shadowSink(db: Database): (row: JevShadowDecision) => void {
@@ -116,7 +126,7 @@ function shadowSink(db: Database): (row: JevShadowDecision) => void {
   };
 }
 
-function okJudgement(): JevShadowJudgement {
+function okJudgement(overrides?: Partial<JevShadowJudgement>): JevShadowJudgement {
   return {
     model: "jev-1.2.3",
     answers: { promote: 0.91 },
@@ -124,6 +134,7 @@ function okJudgement(): JevShadowJudgement {
     shadowPromote: true,
     usage: { inputTokens: 987, outputTokens: 42 },
     usd: 0.0031,
+    ...overrides,
   };
 }
 
@@ -157,33 +168,60 @@ interface ShadowPairResult {
   actionsB: Record<string, unknown>[];
   rollupsA: Record<string, unknown>[];
   rollupsB: Record<string, unknown>[];
+  cycleA: { outcome: string; phases_run: string; llm_spent_usd: number };
+  cycleB: { outcome: string; phases_run: string; llm_spent_usd: number };
   shadowDb: Database;
+}
+
+function dumpCycleRow(
+  db: Database,
+  cycleId: string,
+): { outcome: string; phases_run: string; llm_spent_usd: number } {
+  return db
+    .prepare(`SELECT outcome, phases_run, llm_spent_usd FROM dream_cycles WHERE cycle_id = ?`)
+    .get(cycleId) as { outcome: string; phases_run: string; llm_spent_usd: number };
 }
 
 async function runShadowPair(
   judge: JevShadowJudge,
-  opts?: { budgetMs?: number },
+  opts?: {
+    budgetMs?: number;
+    configOverrides?: Partial<DreamConfig>;
+    seedTodayLlmSpendUsd?: number;
+    rollupCount?: number;
+  },
 ): Promise<ShadowPairResult> {
   setSystemTime(FROZEN);
   const dbA = openTestDb();
   const dbB = openTestDb();
-  seedThreeRollups(dbA);
-  seedThreeRollups(dbB);
+  seedRollups(dbA, opts?.rollupCount ?? ROLLUP_IDS.length);
+  seedRollups(dbB, opts?.rollupCount ?? ROLLUP_IDS.length);
+  if (opts?.seedTodayLlmSpendUsd !== undefined) {
+    seedSameDayLlmSpend(dbA, opts.seedTodayLlmSpendUsd);
+    seedSameDayLlmSpend(dbB, opts.seedTodayLlmSpendUsd);
+  }
+  const config = testConfig(opts?.configOverrides);
   const pool = makeFakeJudgePool(VOTES);
-  await runDreamCycle(dbA, testConfig(), { judgePool: pool });
+  const cycleIdA = await runDreamCycle(dbA, config, { judgePool: pool });
+  const depsB: DreamCycleDeps = {};
   const seat = createTypesafeShadowSeat({
     db: dbB,
     loadJudge: loaderReturning(judge),
     writeDecision: shadowSink(dbB),
+    getCostMeter: () => depsB.costMeter,
+    estimateUsd: DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD,
     ...(opts?.budgetMs === undefined ? {} : { budgetMs: opts.budgetMs }),
   });
-  await runDreamCycle(dbB, testConfig(), { judgePool: composeShadowJudgePool(pool, seat) });
+  depsB.judgePool = composeShadowJudgePool(pool, seat);
+  const cycleIdB = await runDreamCycle(dbB, config, depsB);
   await drainShadowJudgements(5_000);
   return {
     actionsA: dumpDreamActions(dbA),
     actionsB: dumpDreamActions(dbB),
     rollupsA: dumpT1Rollups(dbA),
     rollupsB: dumpT1Rollups(dbB),
+    cycleA: dumpCycleRow(dbA, cycleIdA),
+    cycleB: dumpCycleRow(dbB, cycleIdB),
     shadowDb: dbB,
   };
 }
@@ -228,5 +266,47 @@ describe("P1 typesafe shadow seat", () => {
     );
     const decisions = readJudgeDecisions(result.shadowDb, { site: P1_PROMOTION_JUDGE_SITE });
     expect(new Set(decisions.map((d) => d.subjectId))).toEqual(new Set(ROLLUP_IDS));
+  });
+
+  it("never invokes the judge when the daily llm lane cannot afford the estimate", async () => {
+    let judgeCalls = 0;
+    const result = await runShadowPair(
+      () => {
+        judgeCalls += 1;
+        return Promise.resolve({ ok: true, judgement: okJudgement() });
+      },
+      { configOverrides: { dailyUsd: 1 }, seedTodayLlmSpendUsd: 0.299 },
+    );
+    expect(judgeCalls).toBe(0);
+    expectIdenticalRows(result);
+    expect(result.cycleB).toEqual(result.cycleA);
+  });
+
+  it("records judged shadow spend on the cycle row", async () => {
+    const result = await runShadowPair(
+      () =>
+        Promise.resolve({
+          ok: true,
+          judgement: okJudgement({
+            usage: { inputTokens: 1_000_000, outputTokens: 64 },
+            usd: 0.042,
+          }),
+        }),
+      { rollupCount: 1 },
+    );
+    expect(result.cycleB.llm_spent_usd - result.cycleA.llm_spent_usd).toBeCloseTo(0.042);
+  });
+
+  it("still invokes the judge when both usd caps are zero (uncapped is the live contract)", async () => {
+    let judgeCalls = 0;
+    const result = await runShadowPair(
+      () => {
+        judgeCalls += 1;
+        return Promise.resolve({ ok: true, judgement: okJudgement() });
+      },
+      { configOverrides: { perCycleUsd: 0, dailyUsd: 0 } },
+    );
+    expect(judgeCalls).toBe(ROLLUP_IDS.length);
+    expectIdenticalRows(result);
   });
 });
