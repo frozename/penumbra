@@ -88,6 +88,11 @@ describe("profileTaskDeterministic", () => {
     }
   });
 
+  test("confidence formula is pinned: a role fallback alone scores 0.53 and no signal scores 0.25", () => {
+    expect(profileTaskDeterministic("hello there", "executor").confidence).toBe(0.53);
+    expect(profileTaskDeterministic("hello there").confidence).toBe(0.25);
+  });
+
   test("identical input twice produces byte-identical output", () => {
     const hints = {
       expectedInputTokens: 900,

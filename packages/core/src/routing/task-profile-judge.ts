@@ -16,9 +16,23 @@ export type TaskProfileJudgeResult =
     }
   | {
       profile: TaskProfile;
+      source: "jev";
+    }
+  | {
+      profile: TaskProfile;
       source: "deterministic";
       fallbackReason: TaskProfileJudgeFallbackReason;
     };
+
+/** Unit axes router scoring reads; pinned against router.ts by task-profile-judge.test.ts. */
+export const ROUTER_SCORED_AXES = [
+  "codingDemand",
+  "reasoningDemand",
+  "agenticDemand",
+  "latencySensitivity",
+  "costSensitivity",
+] as const satisfies readonly (keyof TaskProfile)[];
+export type RouterScoredAxis = (typeof ROUTER_SCORED_AXES)[number];
 
 export interface TaskProfileJudge {
   profileTask(

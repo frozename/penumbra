@@ -14,6 +14,11 @@ export {
 export { choice, noul, score } from "./questions.js";
 export * from "./questions/promotion.js";
 export {
+  createJevTaskProfileJudge,
+  type CreateJevTaskProfileJudgeOptions,
+  JEV_TASK_PROFILE_MODEL,
+} from "./task-profile.js";
+export {
   type AnswerOf,
   type AnswersOf,
   type ChoiceAnswer,
