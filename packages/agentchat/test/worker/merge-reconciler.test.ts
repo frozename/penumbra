@@ -1723,6 +1723,30 @@ describe("resolveAffectedPackages", () => {
     const result = resolveAffectedPackages(["packages/daemon/package.json"]);
     expect(result).toEqual(["packages/daemon"]);
   });
+
+  test("resolveAffectedPackages maps nested workspace group paths to the real package root", () => {
+    const isPackageDir = (dir: string): boolean =>
+      dir === "packages/core" || dir === "packages/integrations/typesafe";
+    expect(
+      resolveAffectedPackages(["packages/integrations/typesafe/src/client.ts"], isPackageDir),
+    ).toEqual(["packages/integrations/typesafe"]);
+    expect(resolveAffectedPackages(["packages/core/src/x.ts"], isPackageDir)).toEqual([
+      "packages/core",
+    ]);
+  });
+
+  test("resolveAffectedPackages keeps scripts/ and test/ root paths out of the fallback", () => {
+    const isPackageDir = (dir: string): boolean => dir === "packages/daemon";
+    expect(
+      resolveAffectedPackages(["scripts/foo.ts", "scripts/foo.test.ts"], isPackageDir),
+    ).toEqual([]);
+    expect(
+      resolveAffectedPackages(
+        ["test/fixtures/x.test.ts", "packages/daemon/src/x.ts"],
+        isPackageDir,
+      ),
+    ).toEqual(["packages/daemon"]);
+  });
 });
 
 function makeScopedReconciler(

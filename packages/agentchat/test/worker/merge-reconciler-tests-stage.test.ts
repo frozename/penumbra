@@ -378,6 +378,9 @@ function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
   if (cmd.startsWith("bun tsc -b")) {
     return Promise.resolve({ stdout: "", stderr: "" });
   }
+  if (cmd.startsWith("bun scripts/bun-test-gate.ts ")) {
+    return Promise.resolve({ stdout: passOutput(), stderr: "" });
+  }
   if (cmd === "bun test packages/daemon/test/") {
     if (holdBranchTestOpen && !isBaselineCwd(opts.cwd)) {
       return new Promise<ExecResult>(() => undefined);
@@ -979,4 +982,40 @@ test("scoped test timeout still fails the tests stage", async () => {
     handoff_id: "h-timeout",
     tests: "fail",
   });
+});
+
+const ROOT_SHARD_CMD =
+  "bun scripts/bun-test-gate.ts --path-ignore-patterns=packages/** --path-ignore-patterns=**/console/e2e/** --path-ignore-patterns=**/visual/** --path-ignore-patterns=**/dist/** --path-ignore-patterns=**/scripts/bench*.test.ts";
+
+test("scripts-only diff runs the repo root shard instead of an unscoped bun test", async () => {
+  diffOutput = "scripts/foo.ts\nscripts/foo.test.ts\n";
+
+  const result = await makeReconciler()("h-root-shard");
+
+  expect(execHistory.some(({ cmd }) => cmd === ROOT_SHARD_CMD)).toBe(true);
+  expect(execHistory.some(({ cmd }) => cmd === "bun test")).toBe(false);
+  expect(result.status).toBe("verified");
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-root-shard",
+    tests: "pass",
+  });
+});
+
+test("scripts diff alongside a package change runs both the package shard and the root shard", async () => {
+  diffOutput = "scripts/foo.ts\npackages/daemon/src/routes/handoffs.ts\n";
+
+  await makeReconciler()("h-root-shard-mixed");
+
+  expect(execHistory.some(({ cmd }) => cmd === "bun test packages/daemon/test/")).toBe(true);
+  expect(execHistory.some(({ cmd }) => cmd === ROOT_SHARD_CMD)).toBe(true);
+  expect(execHistory.some(({ cmd }) => cmd === "bun test")).toBe(false);
+});
+
+test("bun.lock-only diff keeps the conservative full-suite test and typecheck path", async () => {
+  diffOutput = "bun.lock\n";
+
+  await makeReconciler()("h-bun-lock");
+
+  expect(execHistory.some(({ cmd }) => cmd === "bun test")).toBe(true);
+  expect(execHistory.some(({ cmd }) => cmd === "bun tsc -b")).toBe(true);
 });

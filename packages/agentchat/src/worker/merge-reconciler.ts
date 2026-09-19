@@ -12,6 +12,7 @@ import {
 } from "@penumbra/core";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -108,27 +109,77 @@ const globalMergeLock = new Mutex();
 const testBaselineCache = new Map<string, Promise<BunTestCommandOutcome>>();
 
 /**
+ * Returns true for repo-root paths covered by the root test shard
+ * (`bun scripts/bun-test-gate.ts --path-ignore-patterns=packages/** ...`):
+ * `scripts/` and `test/`. These are not package changes, but they carry real
+ * test coverage, so they must not force the conservative full-suite fallback.
+ */
+function isRootTestShardPath(path: string): boolean {
+  return (
+    path === "scripts" || path.startsWith("scripts/") || path === "test" || path.startsWith("test/")
+  );
+}
+
+function defaultIsWorkspacePackageDir(dir: string): boolean {
+  return existsSync(join(dir, "package.json"));
+}
+
+/**
+ * Resolves a `packages/...` diff path to its package root. A
+ * `packages/<group>/<name>/...` path maps to the nested root when
+ * `packages/<group>` is not itself a workspace package (no package.json) —
+ * e.g. `packages/integrations/typesafe`. Unresolvable shapes keep the
+ * two-segment root, matching the pre-nesting behaviour.
+ */
+function resolvePackageRoot(
+  path: string,
+  isPackageDir: (packageDir: string) => boolean,
+): string | null {
+  const segments = path.split("/");
+  const segment = segments[1];
+  if (!segment) return null;
+  const packageRoot = `packages/${segment}`;
+  if (isPackageDir(packageRoot)) return packageRoot;
+  const nested = segments[2];
+  const nestedRoot = nested ? `${packageRoot}/${nested}` : null;
+  return nestedRoot !== null && isPackageDir(nestedRoot) ? nestedRoot : packageRoot;
+}
+
+/**
  * Maps changed file paths to affected package roots.
  *
  * Returns:
  * - null for conservative full-suite fallback when any non-package path is touched
  * - [] when only docs/non-code paths changed
- * - a deduplicated sorted list of `packages/<name>` roots otherwise
+ * - a deduplicated sorted list of package roots otherwise
+ *
+ * Root `scripts/` and `test/` paths are not package changes: the tests stage
+ * runs the repo root shard for them (see runTestsStage) instead of taking the
+ * conservative fallback.
  */
-export function resolveAffectedPackages(paths: string[]): string[] | null {
+export function resolveAffectedPackages(
+  paths: string[],
+  isPackageDir: (packageDir: string) => boolean = defaultIsWorkspacePackageDir,
+): string[] | null {
   const packageRoots = new Set<string>();
   let docsOnly = true;
 
   for (const p of paths) {
     if (p.startsWith("packages/")) {
-      const segment = p.split("/", 2)[1];
-      if (!segment) continue;
-      packageRoots.add(`packages/${segment}`);
-      docsOnly = false;
+      const packageRoot = resolvePackageRoot(p, isPackageDir);
+      if (packageRoot) {
+        packageRoots.add(packageRoot);
+        docsOnly = false;
+      }
       continue;
     }
 
     if (p.startsWith("docs/") || p.startsWith(".github/")) {
+      continue;
+    }
+
+    if (isRootTestShardPath(p)) {
+      docsOnly = false;
       continue;
     }
 
@@ -505,6 +556,7 @@ interface ReconcileState {
   affectedPackages: string[] | null;
   packagesToBuild: string[] | null;
   changedFiles: Set<string>;
+  runRootTestShard: boolean;
   testCommandUsed: string;
 }
 
@@ -1285,7 +1337,10 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
       .map((line) => line.trim())
       .filter(Boolean);
     state.changedFiles = new Set(diffFiles);
-    state.affectedPackages = resolveAffectedPackages(diffFiles);
+    state.affectedPackages = resolveAffectedPackages(diffFiles, (dir) =>
+      existsSync(join(wt.path, dir, "package.json")),
+    );
+    state.runRootTestShard = diffFiles.some(isRootTestShardPath);
   } catch (err) {
     deps.log.warn(
       { handoffId, baseRef: ctx.baseRef, branch: wt.branchName, err: String(err) },
@@ -1482,14 +1537,14 @@ function didBunTestCommandPass(exitCode: number, report: BunTestReport): boolean
   return isKnownBunTeardownPanicPass(report);
 }
 
-async function runBunTestCommand(
+async function runParsedBunCommand(
   ctx: ReconcileCtx,
-  testArgs: string[],
+  argv: CommandArgs,
   cwd: string,
   timeout: number,
 ): Promise<BunTestCommandOutcome> {
   try {
-    const res = await execCmd(ctx, ["bun", "test", ...testArgs], cwd, timeout);
+    const res = await execCmd(ctx, argv, cwd, timeout);
     const stdout = res.stdout;
     const stderr = res.stderr;
     const report = parseBunTestReport(`${stdout}${stderr}`);
@@ -1516,6 +1571,35 @@ async function runBunTestCommand(
     };
   }
 }
+
+async function runBunTestCommand(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  cwd: string,
+  timeout: number,
+): Promise<BunTestCommandOutcome> {
+  return await runParsedBunCommand(ctx, toCommandArgs("bun", ["test", ...testArgs]), cwd, timeout);
+}
+
+// The repo's real gate shards root-level tests (test/, scripts/) through this
+// exact invocation in .github/workflows/check.yml. The reconciler reuses it for
+// root-shard diffs instead of an unscoped `bun test`, which cannot finish
+// inside reconcileTestTimeoutSec. The gate streams the child's bun-test output
+// verbatim, so the same pass/fail parser applies; a non-zero exit without a
+// reachable summary fails closed exactly like an unparseable `bun test`.
+const ROOT_TEST_SHARD_COMMAND: CommandArgs = [
+  "bun",
+  "scripts/bun-test-gate.ts",
+  "--path-ignore-patterns=packages/**",
+  "--path-ignore-patterns=**/console/e2e/**",
+  "--path-ignore-patterns=**/visual/**",
+  "--path-ignore-patterns=**/dist/**",
+  "--path-ignore-patterns=**/scripts/bench*.test.ts",
+];
+// The merge-base baseline runs the shard's inner `bun test` argv directly —
+// the gate only wraps it for panic tolerance, which didBunTestCommandPass
+// already applies to parsed output.
+const ROOT_TEST_SHARD_TEST_ARGS = ROOT_TEST_SHARD_COMMAND.slice(2);
 
 function safePathToken(value: string): string {
   const token = value.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
@@ -1865,7 +1949,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
         await runBunTestCommand(ctx, [], wt.path, remainingStageSeconds(deadline)),
       );
     }
-    if (affectedPackages.length === 0) {
+    if (affectedPackages.length === 0 && !state.runRootTestShard) {
       deps.log.debug({ handoffId }, "skipping tests for docs-only diff");
       state.testCommandUsed = "skipped (docs-only diff)";
       state.testStatus = "skipped";
@@ -1880,8 +1964,10 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
         });
       }
     }
-    deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
-    state.testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
+    deps.log.debug(
+      { handoffId, affectedPackages, rootTestShard: state.runRootTestShard },
+      "running scoped tests in worktree",
+    );
     provisionTestLocalCache(ctx, wt.path);
     try {
       await assertOwnedTestNodeModules(wt.path, "branch");
@@ -1890,12 +1976,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     }
     // Deliberate check-then-run TOCTOU: filesystem tampering after this point
     // is outside the reconciler's threat model.
-    return await evaluateBunTestOutcome(
-      ctx,
-      scopedTestPaths,
-      deadline,
-      await runBunTestCommand(ctx, scopedTestPaths, wt.path, remainingStageSeconds(deadline)),
-    );
+    return await runDiffScopedShards(ctx, scopedTestPaths, deadline);
   } catch (err: unknown) {
     const info = commandErrorInfo(err);
     if (isVerificationEnvironmentFailure(info)) {
@@ -1920,6 +2001,41 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     await emitResult(ctx, result);
     return result;
   }
+}
+
+async function runDiffScopedShards(
+  ctx: ReconcileCtx,
+  scopedTestPaths: string[],
+  deadline: TestStageDeadline,
+): Promise<MergeResult | null> {
+  const commandsUsed: string[] = [];
+  if (scopedTestPaths.length > 0) {
+    commandsUsed.push(`bun test ${scopedTestPaths.join(" ")}`);
+    ctx.state.testCommandUsed = commandsUsed.join(" && ");
+    const scopedResult = await evaluateBunTestOutcome(
+      ctx,
+      scopedTestPaths,
+      deadline,
+      await runBunTestCommand(ctx, scopedTestPaths, ctx.wt.path, remainingStageSeconds(deadline)),
+    );
+    if (scopedResult) return scopedResult;
+  }
+  if (ctx.state.runRootTestShard) {
+    commandsUsed.push(ROOT_TEST_SHARD_COMMAND.join(" "));
+    ctx.state.testCommandUsed = commandsUsed.join(" && ");
+    return await evaluateBunTestOutcome(
+      ctx,
+      [...ROOT_TEST_SHARD_TEST_ARGS],
+      deadline,
+      await runParsedBunCommand(
+        ctx,
+        ROOT_TEST_SHARD_COMMAND,
+        ctx.wt.path,
+        remainingStageSeconds(deadline),
+      ),
+    );
+  }
+  return null;
 }
 
 async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
@@ -2037,6 +2153,7 @@ export function createMergeReconciler(
         affectedPackages: null,
         packagesToBuild: null,
         changedFiles: new Set<string>(),
+        runRootTestShard: false,
         testCommandUsed: "bun test",
       },
     };
