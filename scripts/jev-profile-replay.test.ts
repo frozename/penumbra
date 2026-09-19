@@ -14,7 +14,6 @@ import { migrate } from "../packages/core/src/db/migrations.js";
 import { loadSqliteVec } from "../packages/core/src/db/sqlite-vec.js";
 import { writeRoutingDecision } from "../packages/core/src/routing/decision-log.js";
 import { RoutingTaskTypeSchema } from "../packages/core/src/routing/schemas.js";
-import { ROUTER_SCORED_AXES } from "../packages/core/src/routing/task-profile-judge.js";
 import { profileTaskDeterministic } from "../packages/core/src/routing/task-profile.js";
 import { parseProfileReplayArgs, runProfileReplay } from "./jev-profile-replay.js";
 
@@ -60,13 +59,18 @@ function choiceAnswer(value: string, confidence: number): Record<string, unknown
   };
 }
 
-function cannedJevResponse(): Promise<Response> {
-  const answers: Record<string, unknown> = {
-    primary_task_type: choiceAnswer("coding", 0.9),
+// Answers exactly the questions the request asked, as the real endpoint does:
+// the profiler rejects an answer to a question it did not ask.
+function cannedJevResponse(requestBody: string): Promise<Response> {
+  const { questions } = JSON.parse(requestBody) as {
+    questions: Record<string, { type: string }>;
   };
-  for (const axis of ROUTER_SCORED_AXES) {
-    answers[axis] = scoreAnswer(3, 0.9);
-  }
+  const answers = Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => [
+      id,
+      question.type === "choice" ? choiceAnswer("coding", 0.9) : scoreAnswer(3, 0.9),
+    ]),
+  );
   return Promise.resolve(
     new Response(
       JSON.stringify({
@@ -221,9 +225,9 @@ describe("jev-profile-replay", () => {
     });
 
     let fetchCalls = 0;
-    const fetchImpl: TypesafeFetch = () => {
+    const fetchImpl: TypesafeFetch = (_url, init) => {
       fetchCalls++;
-      return cannedJevResponse();
+      return cannedJevResponse(init.body);
     };
     const { report, db } = await runProfileReplay(args, {
       fetch: fetchImpl,
@@ -247,7 +251,7 @@ describe("jev-profile-replay", () => {
     args.confidenceFloor = 1.5;
 
     const error = await runProfileReplay(args, {
-      fetch: () => cannedJevResponse(),
+      fetch: (_url, init) => cannedJevResponse(init.body),
       typesafeEnv: TYPESAFE_ENV,
       maxRetries: 0,
     }).catch((caught: unknown) => caught);
@@ -267,9 +271,9 @@ describe("jev-profile-replay", () => {
     const hashBefore = sha256(dbPath);
 
     let fetchCalls = 0;
-    const fetchImpl: TypesafeFetch = () => {
+    const fetchImpl: TypesafeFetch = (_url, init) => {
       fetchCalls++;
-      return cannedJevResponse();
+      return cannedJevResponse(init.body);
     };
     const { report, db } = await runProfileReplay(args, {
       fetch: fetchImpl,
@@ -302,9 +306,9 @@ describe("jev-profile-replay", () => {
     );
 
     let fetchCalls = 0;
-    const fetchImpl: TypesafeFetch = () => {
+    const fetchImpl: TypesafeFetch = (_url, init) => {
       fetchCalls++;
-      return cannedJevResponse();
+      return cannedJevResponse(init.body);
     };
     const { report, db } = await runProfileReplay(args, {
       fetch: fetchImpl,
