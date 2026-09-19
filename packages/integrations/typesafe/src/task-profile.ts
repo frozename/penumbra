@@ -23,13 +23,22 @@ export interface CreateJevTaskProfileJudgeOptions {
   client: Pick<TypesafeClient, "evaluate">;
   confidenceFloor: number;
   timeoutMs?: number;
+  /**
+   * Character budget for the serialized state-plus-longest-question envelope
+   * (~2.5 chars/token against Jev's 32k-token limit). `task_message` is capped
+   * at this minus the serialized longest question and the JSON envelope.
+   */
   maxStateChars?: number;
   deterministicFallback?: typeof profileTaskDeterministic;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
-/** Jev accepts at most 32k tokens for state plus the longest question. */
-const DEFAULT_MAX_STATE_CHARS = 80000;
+/**
+ * Character budget for the serialized state-plus-longest-question envelope at a
+ * conservative 2.5 characters per token: Jev accepts at most 32k tokens for
+ * state plus the longest question, so 80000 characters covers 32000 tokens.
+ */
+export const DEFAULT_MAX_STATE_CHARS = 80000;
 const SCORE_LEVELS = 5;
 
 const UNTRUSTED_STATE_NOTICE =
@@ -148,16 +157,21 @@ export function createJevTaskProfileJudge(
         controller.abort();
       }, timeoutMs);
       try {
+        const questions = buildQuestions();
+        const longestQuestionChars = Math.max(
+          ...Object.values(questions).map((question) => JSON.stringify(question).length),
+        );
+        const state = buildState(message, role, maxStateChars, longestQuestionChars);
         const result = await options.client.evaluate({
-          state: buildState(message, role, maxStateChars),
-          questions: buildQuestions(),
+          state,
+          questions,
           signal: controller.signal,
         });
         if (!result.ok) return fallback(mapFailureKind(result.kind));
         const read = readAnswers(result.answers);
         if (read === null) return fallback("schema_validation_failed");
         const parsed = TaskProfileSchema.safeParse(
-          mergeProfile(base, read, result.model, message.length > maxStateChars),
+          mergeProfile(base, read, result.model, state.task_message.length < message.length),
         );
         if (!parsed.success) return fallback("schema_validation_failed");
         if (parsed.data.confidence < confidenceFloor) return fallback("confidence_below_floor");
@@ -173,11 +187,36 @@ function buildState(
   message: string,
   role: string | undefined,
   maxStateChars: number,
+  longestQuestionChars: number,
 ): { task_message: string; dispatch_role: string | null } {
+  const dispatchRole = role ?? null;
+  const envelopeChars = JSON.stringify({
+    task_message: "",
+    dispatch_role: dispatchRole,
+  }).length;
+  const contentChars = Math.max(0, maxStateChars - longestQuestionChars - envelopeChars);
   return {
-    task_message: message.slice(0, maxStateChars),
-    dispatch_role: role ?? null,
+    task_message: sliceToSerializedChars(message, contentChars),
+    dispatch_role: dispatchRole,
   };
+}
+
+// JSON escaping can only grow the serialized form, so the cap is on serialized
+// length: a raw-length cap would let a quote- or control-heavy prompt push the
+// request past the Jev budget.
+function sliceToSerializedChars(text: string, serializedChars: number): string {
+  if (JSON.stringify(text).length - 2 <= serializedChars) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (JSON.stringify(text.slice(0, mid)).length - 2 <= serializedChars) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return text.slice(0, lo);
 }
 
 function buildQuestions(): Record<string, TypesafeQuestion> {

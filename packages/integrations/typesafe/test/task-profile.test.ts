@@ -14,7 +14,11 @@ import type { TypesafeSettings } from "../src/config.js";
 
 import { createTypesafeClient } from "../src/client.js";
 import { PROMOTION_PINNED_MODEL_ID } from "../src/questions/promotion.js";
-import { createJevTaskProfileJudge, JEV_TASK_PROFILE_MODEL } from "../src/task-profile.js";
+import {
+  createJevTaskProfileJudge,
+  DEFAULT_MAX_STATE_CHARS,
+  JEV_TASK_PROFILE_MODEL,
+} from "../src/task-profile.js";
 
 const SCORE_LEVEL_KEYS = ["0", "1", "2", "3", "4"];
 
@@ -290,14 +294,37 @@ test("a missing axis answer or an out-of-range score falls back with schema_vali
   }
 });
 
-test("maxStateChars truncates the task text in state and records state_truncated in rationale", async () => {
+test("maxStateChars bounds the state-plus-question envelope and records state_truncated in rationale", async () => {
   const { calls, fetchImpl } = recordingFetch(() => okResponse(cannedAnswers()));
-  const judge = judgeFor(fetchImpl, { maxStateChars: 50 });
-  const message = "x".repeat(200);
+  const judge = judgeFor(fetchImpl, { maxStateChars: 4000 });
+  const message = "x".repeat(20000);
 
   const result = await judge.profileTask(message, "executor");
 
   expect(calls).toHaveLength(1);
-  expect(calls[0]!.body.state.task_message).toHaveLength(50);
+  const body = calls[0]!.body;
+  const longestQuestionChars = Math.max(
+    ...Object.values(body.questions).map((question) => JSON.stringify(question).length),
+  );
+  expect(JSON.stringify(body.state).length + longestQuestionChars).toBeLessThanOrEqual(4000);
+  expect(body.state.task_message.length).toBeLessThan(message.length);
+  expect(result.profile.rationale).toContain("state_truncated");
+});
+
+test("an oversized message keeps serialized state plus the longest question within DEFAULT_MAX_STATE_CHARS", async () => {
+  const { calls, fetchImpl } = recordingFetch(() => okResponse(cannedAnswers()));
+  const judge = judgeFor(fetchImpl);
+  const message = "x".repeat(200000);
+
+  const result = await judge.profileTask(message, "executor");
+
+  expect(calls).toHaveLength(1);
+  const body = calls[0]!.body;
+  const longestQuestionChars = Math.max(
+    ...Object.values(body.questions).map((question) => JSON.stringify(question).length),
+  );
+  expect(JSON.stringify(body.state).length + longestQuestionChars).toBeLessThanOrEqual(
+    DEFAULT_MAX_STATE_CHARS,
+  );
   expect(result.profile.rationale).toContain("state_truncated");
 });

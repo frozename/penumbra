@@ -80,6 +80,8 @@ export function createJevEfficacyClassifier(
           servedModel: result.model,
           usageInputTokens: result.usage.inputTokens,
         };
+      } catch {
+        return { kind: "abstained", reason: "judge_error" };
       } finally {
         clearTimeout(timer);
       }

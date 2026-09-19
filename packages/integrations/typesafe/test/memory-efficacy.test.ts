@@ -169,3 +169,27 @@ test("a fetch that never resolves abstains with timeout once the signal aborts",
   expect(calls[0]!.signal.aborted).toBe(true);
   expect(verdict).toEqual({ kind: "abstained", reason: "timeout" });
 });
+
+test("a rejected evaluate promise abstains with judge_error", async () => {
+  const classifier = createJevEfficacyClassifier({
+    client: { evaluate: () => Promise.reject(new Error("judge exploded")) },
+  });
+
+  const verdict = await classifier.classifyFinding({ text: "A finding.", severity: null });
+
+  expect(verdict).toEqual({ kind: "abstained", reason: "judge_error" });
+});
+
+test("a synchronous throw from evaluate abstains with judge_error", async () => {
+  const classifier = createJevEfficacyClassifier({
+    client: {
+      evaluate: () => {
+        throw new Error("judge exploded");
+      },
+    },
+  });
+
+  const verdict = await classifier.classifyFinding({ text: "A finding.", severity: null });
+
+  expect(verdict).toEqual({ kind: "abstained", reason: "judge_error" });
+});
