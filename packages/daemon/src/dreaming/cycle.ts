@@ -113,7 +113,7 @@ function degradedProjectBriefReason(
   }
   return null;
 }
-const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ["473ff22b-fa37-4707-b75c-9ecac18142aa"];
+export const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ["473ff22b-fa37-4707-b75c-9ecac18142aa"];
 
 interface PressureGuard {
   check(): Promise<{ anyThrottled: boolean }>;

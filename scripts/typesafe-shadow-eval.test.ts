@@ -10,6 +10,7 @@ import type {
 } from "../packages/integrations/typesafe/src/index.js";
 
 import { applySchema, loadSqliteVec } from "../packages/core/src/index.js";
+import { KNOWN_LONG_LIVED_DISPATCHER_USER_IDS } from "../packages/daemon/src/dreaming/cycle.js";
 import {
   PROMOTION_PINNED_MODEL_ID,
   PROMOTION_QUESTION_IDS,
@@ -64,6 +65,12 @@ const EXCERPT_R10 =
 const EXCERPT_R11_BODY = `durable finding: ${"x".repeat(17000)}`;
 const EXCERPT_R12 =
   "One promote_t1 judgement row lost its cycle join while a sibling landed inside the degraded window.";
+const EXCERPT_R13 =
+  "You are home-mgmt, a long-lived agent running custodial checks over the fleet.";
+const EXCERPT_R14 =
+  "The dispatcher seat wrote this durable finding about queue replays during the incident.";
+const EXCERPT_R15 =
+  "An ordinary rollup whose first prompt was a normal user question about caching.";
 
 const MIXED_BALLOTS = [
   { promote: "yes", confidence: 0.9 },
@@ -96,11 +103,11 @@ afterEach((): void => {
   }
 });
 
-function insertRollup(db: Database, rollupId: string, excerpt: string): void {
+function insertRollup(db: Database, rollupId: string, excerpt: string, userId = "test-user"): void {
   db.prepare(
     `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
-     VALUES(?, 'test-user', ?, '2026-09-01T00:00:00Z', 1, ?)`,
-  ).run(rollupId, `session-${rollupId}`, excerpt);
+     VALUES(?, ?, ?, '2026-09-01T00:00:00Z', 1, ?)`,
+  ).run(rollupId, userId, `session-${rollupId}`, excerpt);
 }
 
 function insertCycle(db: Database, cycleId: string, startedAtIso: string): void {
@@ -351,6 +358,7 @@ test("live replay judges each labelled row through the pinned systemone endpoint
       "jev_answers",
       "model",
       "usage",
+      "claim_eligible",
     ]);
     expect(Object.keys(row["usage"] as Record<string, unknown>)).toEqual([
       "inputTokens",
@@ -653,4 +661,89 @@ test("a rollup mixing a timestamp-less and a degraded judgement lands in exclude
   expect(
     summary.unlabelled + summary.excluded_degraded + summary.excluded_no_timestamp + summary.judged,
   ).toBe(summary.total_eligible);
+});
+
+test("an ephemera-pattern excerpt is claim-ineligible and only counts in the full summary", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R13", EXCERPT_R13);
+    insertCycle(db, "C13", "2026-09-05T11:00:00Z");
+    insertAction(db, "A13", "C13", "R13", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live", "--max-rollups", "10"]),
+    { fetch: recordingFetch([]), settings: TEST_SETTINGS },
+  );
+
+  const byId = new Map(readRows(outPath).map((row) => [row["rollup_id"], row]));
+  expect(byId.get("R13")?.["claim_eligible"]).toBe(false);
+
+  expect(summary.judged).toBe(3);
+  expect(summary.confusion).toEqual({
+    both_promote: 1,
+    incumbent_only: 1,
+    jev_only: 0,
+    neither: 1,
+  });
+  expect(summary.claim_excluded_rows).toBe(1);
+  expect(summary.current_claim_eligible.judged).toBe(2);
+  expect(summary.current_claim_eligible.confusion).toEqual({
+    both_promote: 1,
+    incumbent_only: 0,
+    jev_only: 0,
+    neither: 1,
+  });
+  expect(summary.current_claim_eligible.agreementRate).toBe(1);
+});
+
+test("a rollup from a known long-lived dispatcher user id is claim-ineligible", async () => {
+  const [dispatcherUserId] = KNOWN_LONG_LIVED_DISPATCHER_USER_IDS;
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R14", EXCERPT_R14, dispatcherUserId);
+    insertCycle(db, "C14", "2026-09-05T11:00:00Z");
+    insertAction(db, "A14", "C14", "R14", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live", "--max-rollups", "10"]),
+    { fetch: recordingFetch([]), settings: TEST_SETTINGS },
+  );
+
+  const byId = new Map(readRows(outPath).map((row) => [row["rollup_id"], row]));
+  expect(byId.get("R14")?.["claim_eligible"]).toBe(false);
+
+  expect(summary.claim_excluded_rows).toBe(1);
+  expect(summary.current_claim_eligible.judged).toBe(2);
+  expect(summary.current_claim_eligible.jev_answered).toBe(2);
+  expect(summary.current_claim_eligible.confusion.incumbent_only).toBe(0);
+});
+
+test("an ordinary rollup is claim-eligible and counted in both summaries", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R15", EXCERPT_R15);
+    insertCycle(db, "C15", "2026-09-05T11:00:00Z");
+    insertAction(db, "A15", "C15", "R15", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--live", "--max-rollups", "10"]),
+    { fetch: recordingFetch([]), settings: TEST_SETTINGS },
+  );
+
+  const rows = readRows(outPath);
+  const byId = new Map(rows.map((row) => [row["rollup_id"], row]));
+  expect(byId.get("R15")?.["claim_eligible"]).toBe(true);
+  expect(byId.get("R1")?.["claim_eligible"]).toBe(true);
+  expect(byId.get("R5")?.["claim_eligible"]).toBe(true);
+
+  expect(summary.claim_excluded_rows).toBe(0);
+  expect(summary.current_claim_eligible.judged).toBe(3);
+  expect(summary.current_claim_eligible.confusion).toEqual(summary.confusion);
+  expect(summary.current_claim_eligible.agreedCount).toBe(2);
+  expect(summary.current_claim_eligible.disagreedCount).toBe(1);
+  expect(summary.current_claim_eligible.agreement_denominator).toBe(3);
+  expect(summary.current_claim_eligible.agreementRate).toBeCloseTo(2 / 3);
 });
