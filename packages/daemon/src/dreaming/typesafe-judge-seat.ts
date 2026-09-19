@@ -68,6 +68,23 @@ export interface TypesafeShadowSeat {
 
 const COMPOSED_POOLS = new WeakSet<JudgePool>();
 
+const IN_FLIGHT_SHADOWS = new Set<Promise<void>>();
+
+export async function drainShadowJudgements(timeoutMs: number): Promise<void> {
+  await Promise.race([
+    (async (): Promise<void> => {
+      for (;;) {
+        const pending = [...IN_FLIGHT_SHADOWS];
+        if (pending.length === 0) return;
+        await Promise.allSettled(pending);
+      }
+    })(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+}
+
 interface SeatRuntime {
   deps: TypesafeShadowSeatDeps;
   budgetMs: number;
@@ -211,21 +228,22 @@ export function composeShadowJudgePool(incumbent: JudgePool, seat: TypesafeShado
     judgeAll: async (args) => {
       const votes = incumbentJudgeAll(args);
       const subjectId = args.subjectId;
-      const shadowDone =
-        args.kind === "promote_t1" && subjectId !== undefined
-          ? seat.shadow(
-              { body: args.body, kind: args.kind, subjectId },
-              votes.then(
-                (v) => v,
-                () => null,
-              ),
-            )
-          : Promise.resolve();
-      try {
-        return await votes;
-      } finally {
-        await shadowDone;
+      if (args.kind === "promote_t1" && subjectId !== undefined) {
+        const shadowDone: Promise<void> = seat
+          .shadow(
+            { body: args.body, kind: args.kind, subjectId },
+            votes.then(
+              (v) => v,
+              () => null,
+            ),
+          )
+          .catch(() => undefined);
+        IN_FLIGHT_SHADOWS.add(shadowDone);
+        void shadowDone.then(() => {
+          IN_FLIGHT_SHADOWS.delete(shadowDone);
+        });
       }
+      return await votes;
     },
   };
   COMPOSED_POOLS.add(pool);

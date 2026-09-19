@@ -8,6 +8,7 @@ import { type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import {
   composeShadowJudgePool,
   createTypesafeShadowSeat,
+  drainShadowJudgements,
   type JevShadowDecision,
   type JevShadowJudge,
   type JevShadowJudgeLoader,
@@ -177,6 +178,7 @@ async function runShadowPair(
     ...(opts?.budgetMs === undefined ? {} : { budgetMs: opts.budgetMs }),
   });
   await runDreamCycle(dbB, testConfig(), { judgePool: composeShadowJudgePool(pool, seat) });
+  await drainShadowJudgements(5_000);
   return {
     actionsA: dumpDreamActions(dbA),
     actionsB: dumpDreamActions(dbB),

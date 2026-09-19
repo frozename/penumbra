@@ -12,6 +12,7 @@ import {
 import {
   composeShadowJudgePool,
   createTypesafeShadowSeat,
+  drainShadowJudgements,
   isShadowComposedPool,
   type JevShadowDecision,
   type JevShadowJudge,
@@ -109,7 +110,34 @@ describe("composeShadowJudgePool", () => {
     expect(isShadowComposedPool(composite)).toBe(true);
     const result = await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
     expect(result).toBe(VOTES);
+    await drainShadowJudgements(1_000);
     expect(seen).toEqual({ kind: "promote_t1", body: B });
+  });
+
+  it("settles with the incumbent ballots while the shadow is still pending", async () => {
+    const db = openTestDb();
+    let releaseJudge: ((outcome: JevShadowOutcome) => void) | undefined;
+    const hangingJudge: JevShadowJudge = () =>
+      new Promise<JevShadowOutcome>((resolve) => {
+        releaseJudge = resolve;
+      });
+    const { seat, decisions } = makeSeat(db, {
+      loadJudge: () => Promise.resolve(hangingJudge),
+      budgetMs: 60_000,
+    });
+    const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
+    const result = await Promise.race([
+      composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" }),
+      new Promise<"shadow_blocked">((resolve) => {
+        setTimeout(() => {
+          resolve("shadow_blocked");
+        }, 200);
+      }),
+    ]);
+    expect(result).toBe(VOTES);
+    releaseJudge?.({ ok: true, judgement: okJudgement() });
+    await drainShadowJudgements(1_000);
+    expect(decisions).toHaveLength(1);
   });
 
   it("propagates an incumbent rejection by identity while the shadow still settles", async () => {
@@ -126,6 +154,7 @@ describe("composeShadowJudgePool", () => {
       (e: unknown) => e,
     );
     expect(err).toBe(E);
+    await drainShadowJudgements(1_000);
     expect(decisions).toHaveLength(1);
     expect(decisions[0]?.incumbentVotes).toBeNull();
   });
@@ -145,6 +174,7 @@ describe("typesafe shadow seat failures", () => {
       subjectId: "r1",
     });
     expect(resultThrow).toBe(VOTES);
+    await drainShadowJudgements(1_000);
     const healthThrow = readSubsystemHealth(dbThrow, TYPESAFE_SHADOW_SUBSYSTEM);
     expect(healthThrow?.consecutive_failures).toBe(1);
     expect(healthThrow?.last_failure_reason).toBe("error");
@@ -157,6 +187,7 @@ describe("typesafe shadow seat failures", () => {
     });
     const compositeRate = composeShadowJudgePool(makeFakeJudgePool(VOTES), seatRate);
     await compositeRate.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
     const healthRate = readSubsystemHealth(dbRate, TYPESAFE_SHADOW_SUBSYSTEM);
     expect(healthRate?.last_failure_reason).toBe("rate_limited");
     expect(healthRate?.last_failure_status).toBe(429);
@@ -171,6 +202,7 @@ describe("typesafe shadow seat failures", () => {
     for (const _ of [1, 2, 3, 4, 5]) {
       await compositeAlert.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
     }
+    await drainShadowJudgements(1_000);
     const healthAlert = readSubsystemHealth(dbAlert, TYPESAFE_SHADOW_SUBSYSTEM);
     expect(healthAlert?.consecutive_failures).toBe(5);
     const alerts = computeSubsystemAlerts(dbAlert, { now: new Date() });
@@ -187,6 +219,7 @@ describe("typesafe shadow seat failures", () => {
     const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
     const result = await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
     expect(result).toBe(VOTES);
+    await drainShadowJudgements(1_000);
     const health = readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM);
     expect(health?.last_failure_reason).toBe("timeout");
     expect(decisions).toHaveLength(0);
@@ -203,6 +236,7 @@ describe("typesafe shadow seat failures", () => {
     });
     const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
     await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
     expect(loads).toBe(1);
     expect(decisions).toHaveLength(0);
     expect(readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM)).toBeNull();
@@ -218,6 +252,7 @@ describe("typesafe shadow seat failures", () => {
     const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
     const result = await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
     expect(result).toBe(VOTES);
+    await drainShadowJudgements(1_000);
     const health = readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM);
     expect(health?.last_failure_reason).toBe("sink_error");
   });
@@ -232,6 +267,7 @@ describe("typesafe shadow seat decisions", () => {
     });
     const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
     await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
     expect(decisions).toHaveLength(1);
     const row = decisions[0]!;
     expect(row.site).toBe("dream.p1.promotion");
@@ -261,9 +297,11 @@ describe("typesafe shadow seat decisions", () => {
     const { seat } = makeSeat(db, { loadJudge: () => Promise.resolve(flipJudge) });
     const composite = composeShadowJudgePool(makeFakeJudgePool(VOTES), seat);
     await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r1" });
+    await drainShadowJudgements(1_000);
     expect(readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM)?.consecutive_failures).toBe(1);
     fail = false;
     await composite.judgeAll!({ body: B, kind: "promote_t1", subjectId: "r2" });
+    await drainShadowJudgements(1_000);
     expect(readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM)?.consecutive_failures).toBe(0);
   });
 
