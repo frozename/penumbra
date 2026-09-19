@@ -397,9 +397,6 @@ function validateAnswers(
     if (answer === undefined) {
       return false;
     }
-    if (answer.type !== question.type) {
-      return false;
-    }
     if (!answerMatchesQuestion(answer, question)) {
       return false;
     }
@@ -407,7 +404,18 @@ function validateAnswers(
   return true;
 }
 
+function exactKeys(
+  record: Readonly<Record<string, unknown>>,
+  expected: readonly string[],
+): boolean {
+  const keys = Object.keys(record);
+  return keys.length === expected.length && expected.every((k) => Object.hasOwn(record, k));
+}
+
 function answerMatchesQuestion(answer: SystemOneWireAnswer, question: TypesafeQuestion): boolean {
+  if (answer.type !== question.type) {
+    return false;
+  }
   if (answer.type === "noul") {
     return inUnit(answer.noul);
   }
@@ -415,11 +423,21 @@ function answerMatchesQuestion(answer: SystemOneWireAnswer, question: TypesafeQu
     return (
       inUnit(answer.confidence) &&
       Object.hasOwn(question.criteria, answer.choice) &&
+      exactKeys(answer.probabilities, Object.keys(question.criteria)) &&
       Object.values(answer.probabilities).every(inUnit)
     );
   }
-  if (answer.type === "score") {
-    return inUnit(answer.confidence) && Object.values(answer.probabilities).every(inUnit);
+  if (answer.type === "score" && question.type === "score") {
+    const levels = Object.keys(question.criteria);
+    return (
+      inUnit(answer.confidence) &&
+      Number.isFinite(answer.score) &&
+      answer.score >= 0 &&
+      answer.score <= question.criteria.length - 1 &&
+      exactKeys(answer.probabilities, levels) &&
+      exactKeys(answer.legend, levels) &&
+      Object.values(answer.probabilities).every(inUnit)
+    );
   }
   return true;
 }

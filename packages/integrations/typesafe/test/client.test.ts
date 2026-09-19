@@ -422,6 +422,154 @@ const INVALID_RESPONSE_CASES: {
       usage: { input_tokens: 1, output_tokens: 1 },
     }),
   },
+  {
+    name: "choice probabilities with an extra key beyond the criteria",
+    questions: { q: choice("Which team?", { billing: "Payments", technical: null }) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "choice",
+          choice: "billing",
+          probabilities: { billing: 0.5, technical: 0.4, other: 0.1 },
+          confidence: 0.5,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "choice probabilities missing a criteria key",
+    questions: { q: choice("Which team?", { billing: "Payments", technical: null }) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "choice",
+          choice: "billing",
+          probabilities: { billing: 1 },
+          confidence: 0.5,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score probabilities with a level above the rubric",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: 1,
+          legend: { "0": "low", "1": "medium", "2": "high" },
+          probabilities: { "0": 0.2, "1": 0.3, "2": 0.4, "3": 0.1 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score probabilities with a negative level",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: 1,
+          legend: { "0": "low", "1": "medium", "2": "high" },
+          probabilities: { "-1": 0.1, "0": 0.3, "1": 0.3, "2": 0.3 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score probabilities missing a rubric level",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: 1,
+          legend: { "0": "low", "1": "medium", "2": "high" },
+          probabilities: { "0": 0.5, "2": 0.5 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score legend with a key outside the rubric",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: 1,
+          legend: { "0": "low", "1": "medium", "2": "high", "9": "absurd" },
+          probabilities: { "0": 0.3, "1": 0.4, "2": 0.3 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score above the rubric range",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: 3,
+          legend: { "0": "low", "1": "medium", "2": "high" },
+          probabilities: { "0": 0.2, "1": 0.3, "2": 0.5 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "score below the rubric range",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        q: {
+          type: "score",
+          score: -1,
+          legend: { "0": "low", "1": "medium", "2": "high" },
+          probabilities: { "0": 0.2, "1": 0.3, "2": 0.5 },
+          confidence: 0.8,
+        },
+      },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
+  {
+    name: "a non-finite score",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: '{"model":"jev-1.13.0","answers":{"q":{"type":"score","score":1e999,"legend":{"0":"low","1":"medium","2":"high"},"probabilities":{"0":0.2,"1":0.3,"2":0.5},"confidence":0.8}},"usage":{"input_tokens":1,"output_tokens":1}}',
+  },
+  {
+    name: "a score question answered with a noul answer",
+    questions: { q: score("How risky?", ["low", "medium", "high"]) },
+    body: JSON.stringify({
+      model: "jev-1.13.0",
+      answers: { q: { type: "noul", noul: 0.5 } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  },
 ];
 
 test.each(INVALID_RESPONSE_CASES)("200 with $name -> invalid_response", async (c) => {
@@ -429,6 +577,36 @@ test.each(INVALID_RESPONSE_CASES)("200 with $name -> invalid_response", async (c
   const result = await client.evaluate({ state: "s", questions: c.questions });
   expect(result).toEqual({ ok: false, kind: "invalid_response", status: 200, attempts: 1 });
   expect(calls).toHaveLength(1);
+});
+
+test("well-formed answers at the boundaries of each shape still pass", async () => {
+  const { client } = harness([
+    okResponse({
+      durable: { type: "noul", noul: 0 },
+      team: {
+        type: "choice",
+        choice: "billing",
+        probabilities: { billing: 1, technical: 0 },
+        confidence: 1,
+      },
+      risk: {
+        type: "score",
+        score: 2,
+        legend: { "0": "low", "1": "medium", "2": "high" },
+        probabilities: { "0": 0, "1": 0, "2": 1 },
+        confidence: 0.9,
+      },
+    }),
+  ]);
+  const result = await client.evaluate({
+    state: "s",
+    questions: {
+      durable: noul("Is it durable?"),
+      team: choice("Which team?", { billing: "Payments", technical: null }),
+      risk: score("How risky?", ["low", "medium", "high"]),
+    },
+  });
+  expect(result).toMatchObject({ ok: true, attempts: 1 });
 });
 
 const INVALID_REQUEST_CASES: {
