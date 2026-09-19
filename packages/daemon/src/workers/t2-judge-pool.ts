@@ -40,6 +40,7 @@ type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean; caPem?: 
 
 interface JudgeChoice {
   message?: { content?: string };
+  finish_reason?: string;
 }
 
 interface JudgeResponse {
@@ -165,6 +166,26 @@ function buildJudgeUrl(baseUrl: string): string {
   return trimmed.endsWith("/v1") ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
 }
 
+// An empty or token-truncated reply is a judge failure, not "nothing durable
+// here" — throwing routes the rollup through failed_promotion_attempts + the
+// retry budget instead of stamping it done with zero extractions.
+function extractJudgeContent(judge: JudgeState, json: JudgeResponse): string {
+  const choice = json.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new JudgeError(
+      `judge ${judge.name} reply truncated by the token limit (finish_reason=length)`,
+      { isContextOverflow: false },
+    );
+  }
+  const content = choice?.message?.content;
+  if (!content) {
+    throw new JudgeError(`judge ${judge.name} reply had no content`, {
+      isContextOverflow: false,
+    });
+  }
+  return content;
+}
+
 function loadJudgeStates(opts: JudgePoolOpts): JudgeState[] {
   const judges: JudgeState[] = [];
   for (const judge of opts.judges) {
@@ -250,9 +271,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       });
     }
     const json = (await res.json()) as JudgeResponse;
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) return [];
-    return opts.parseResponse(content);
+    return opts.parseResponse(extractJudgeContent(judge, json));
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing retry and health policy while changing only cursor advancement.
