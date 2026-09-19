@@ -13,6 +13,8 @@ import { applySchema, loadSqliteVec } from "../packages/core/src/index.js";
 import {
   PROMOTION_PINNED_MODEL_ID,
   PROMOTION_QUESTION_IDS,
+  PROMOTION_QUESTIONS,
+  promotionUsdForInputTokens,
 } from "../packages/integrations/typesafe/src/questions/promotion.js";
 import {
   DEFAULT_DEGRADED_WINDOW,
@@ -60,6 +62,8 @@ const EXCERPT_R9 =
 const EXCERPT_R10 =
   "The worktree-gc sweeper tore down three lanes whose handoffs had been terminal for over two hours.";
 const EXCERPT_R11_BODY = `durable finding: ${"x".repeat(17000)}`;
+const EXCERPT_R12 =
+  "One promote_t1 judgement row lost its cycle join while a sibling landed inside the degraded window.";
 
 const MIXED_BALLOTS = [
   { promote: "yes", confidence: 0.9 },
@@ -176,6 +180,43 @@ function recordingFetch(calls: RecordedFetchCall[]): TypesafeFetch {
           model: PROMOTION_PINNED_MODEL_ID,
           answers: wireAnswers(nouls),
           usage: { input_tokens: 312, output_tokens: 48 },
+        }),
+        { status: 200 },
+      ),
+    );
+  };
+}
+
+// The cap-estimate contract under test: the excerpt plus the fixed question
+// envelope at 3 characters per token, priced at the pinned model's input rate.
+const REQUEST_OVERHEAD_CHARS = JSON.stringify({
+  state: { kind: "promote_t1", body: "" },
+  model: PROMOTION_PINNED_MODEL_ID,
+  questions: PROMOTION_QUESTIONS,
+}).length;
+
+function liveInputTokens(body: string): number {
+  return Math.ceil((body.length + REQUEST_OVERHEAD_CHARS) / 3);
+}
+
+function liveRequestUsd(body: string): number {
+  return promotionUsdForInputTokens(liveInputTokens(body));
+}
+
+function estimateBillingFetch(calls: RecordedFetchCall[]): TypesafeFetch {
+  return (url, init) => {
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    calls.push({ url, body });
+    const state = body["state"] as { body?: unknown } | undefined;
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          model: PROMOTION_PINNED_MODEL_ID,
+          answers: wireAnswers([0.9, 0.1, 0.1, 0.1]),
+          usage: {
+            input_tokens: liveInputTokens(typeof state?.body === "string" ? state.body : ""),
+            output_tokens: 48,
+          },
         }),
         { status: 200 },
       ),
@@ -488,9 +529,10 @@ test("--live requires --max-rollups and stays under the rollup and usd caps", as
     { ...base, live: true, maxRollups: 10, maxUsd: 0.00002 },
     { fetch: recordingFetch(usdCapCalls), settings: TEST_SETTINGS },
   );
-  expect(usdCapCalls).toHaveLength(2);
-  expect(usdCap.jev_answered).toBe(2);
-  expect(usdCap.total_usd).toBeGreaterThan(0.00002);
+  expect(usdCapCalls).toHaveLength(0);
+  expect(usdCap.jev_answered).toBe(0);
+  expect(usdCap.total_usd).toBe(0);
+  expect(usdCap.projected_stop).toBe(true);
   expect(usdCap.max_rollups).toBe(10);
   expect(usdCap.max_usd).toBe(0.00002);
 });
@@ -521,4 +563,94 @@ test("--live truncates each body sent as state to 16000 characters and counts it
   }
   expect(bodies.some((body) => body.length === 16000)).toBe(true);
   expect(summary.bodies_truncated).toBe(1);
+});
+
+test("the usd cap is a hard bound: projected spend skips calls that would overshoot", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R10", EXCERPT_R10);
+    insertCycle(db, "C10", "2026-09-06T10:00:00Z");
+    insertAction(db, "A10", "C10", "R10", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+
+  // Rows judge newest-first (R10, R5, R1); a cap of 2.5 estimates fits two.
+  const estR10 = liveRequestUsd(EXCERPT_R10);
+  const estR5 = liveRequestUsd(EXCERPT_R5);
+  const estR1 = liveRequestUsd(EXCERPT_R1);
+  const maxUsd = estR10 + estR5 + estR1 / 2;
+
+  const calls: RecordedFetchCall[] = [];
+  const summary = await runShadowEval(
+    {
+      ...parseShadowEvalArgs(["--db", dbPath, "--out", outPath]),
+      live: true,
+      maxRollups: 10,
+      maxUsd,
+    },
+    { fetch: estimateBillingFetch(calls), settings: TEST_SETTINGS },
+  );
+
+  expect(calls).toHaveLength(2);
+  expect(calls.map((call) => (call.body["state"] as { body: string }).body)).toEqual([
+    EXCERPT_R10,
+    EXCERPT_R5,
+  ]);
+  expect(summary.jev_answered).toBe(2);
+  expect(summary.total_usd).toBeLessThanOrEqual(maxUsd);
+  expect(summary.total_usd).toBeCloseTo(estR10 + estR5, 10);
+  expect(summary.projected_stop).toBe(true);
+});
+
+test("a failed live call still spends its estimate, so the usd cap stops the run", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R10", EXCERPT_R10);
+    insertCycle(db, "C10", "2026-09-06T10:00:00Z");
+    insertAction(db, "A10", "C10", "R10", 0.9, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+
+  const maxUsd =
+    liveRequestUsd(EXCERPT_R10) + liveRequestUsd(EXCERPT_R5) + liveRequestUsd(EXCERPT_R1) / 2;
+  const calls: RecordedFetchCall[] = [];
+  const failingFetch: TypesafeFetch = (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) as Record<string, unknown> });
+    return Promise.resolve(new Response("server error", { status: 500 }));
+  };
+  const summary = await runShadowEval(
+    {
+      ...parseShadowEvalArgs(["--db", dbPath, "--out", outPath]),
+      live: true,
+      maxRollups: 10,
+      maxUsd,
+    },
+    { fetch: failingFetch, settings: TEST_SETTINGS, maxRetries: 0 },
+  );
+
+  expect(calls).toHaveLength(2);
+  expect(summary.jev_failed).toBe(2);
+  expect(summary.jev_answered).toBe(0);
+  expect(summary.projected_stop).toBe(true);
+});
+
+test("a rollup mixing a timestamp-less and a degraded judgement lands in excluded_no_timestamp", async () => {
+  const { dir, dbPath } = makeSeededDb();
+  mutateDb(dbPath, (db) => {
+    insertRollup(db, "R12", EXCERPT_R12);
+    insertCycle(db, "C12_DEGRADED", "2026-09-12T10:00:00Z");
+    insertAction(db, "A12_GHOST", "C_GHOST", "R12", 0.8, R2_VOTES);
+    insertAction(db, "A12_DEGRADED", "C12_DEGRADED", "R12", 0.8, R2_VOTES);
+  });
+  const outPath = join(dir, "rows.jsonl");
+  const summary = await runShadowEval(
+    parseShadowEvalArgs(["--db", dbPath, "--out", outPath, "--since", "2026-09-01T00:00:00Z"]),
+    { fetch: recordingFetch([]) },
+  );
+
+  expect(summary.excluded_no_timestamp).toBe(1);
+  expect(summary.excluded_degraded).toBe(1);
+  expect(
+    summary.unlabelled + summary.excluded_degraded + summary.excluded_no_timestamp + summary.judged,
+  ).toBe(summary.total_eligible);
 });

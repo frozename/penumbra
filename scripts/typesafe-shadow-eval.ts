@@ -16,7 +16,12 @@ import {
   createTypesafeClient,
   resolveTypesafeSettings,
 } from "../packages/integrations/typesafe/src/index.js";
-import { judgePromotion } from "../packages/integrations/typesafe/src/questions/promotion.js";
+import {
+  judgePromotion,
+  PROMOTION_PINNED_MODEL_ID,
+  PROMOTION_QUESTIONS,
+  promotionUsdForInputTokens,
+} from "../packages/integrations/typesafe/src/questions/promotion.js";
 
 export interface DegradedWindow {
   from: string;
@@ -30,6 +35,22 @@ export const DEFAULT_DEGRADED_WINDOW: DegradedWindow = {
 
 export const DEFAULT_LIVE_MAX_USD = 0.05;
 export const MAX_LIVE_BODY_CHARS = 16_000;
+
+const LIVE_ESTIMATE_CHARS_PER_TOKEN = 3;
+// Everything on the wire except the rollup excerpt: the four promotion
+// questions, the pinned model id and the JSON envelope.
+const LIVE_REQUEST_OVERHEAD_CHARS = JSON.stringify({
+  state: { kind: "promote_t1", body: "" },
+  model: PROMOTION_PINNED_MODEL_ID,
+  questions: PROMOTION_QUESTIONS,
+}).length;
+
+function estimateLiveRequestUsd(sendBody: string): number {
+  const estimatedTokens = Math.ceil(
+    (sendBody.length + LIVE_REQUEST_OVERHEAD_CHARS) / LIVE_ESTIMATE_CHARS_PER_TOKEN,
+  );
+  return promotionUsdForInputTokens(estimatedTokens);
+}
 
 export interface ShadowEvalArgs {
   dbPath: string;
@@ -246,7 +267,8 @@ function pickReplayJudgement(rows: readonly ReplayRawRow[], opts: ReplayWindowOp
   if (surviving.length === 0) {
     // A labelled judgement whose joined dream-cycle started_at is NULL cannot be
     // evaluated against --since; counting it as degraded would be a silent drop.
-    if (opts.sinceMs !== null && labelled.every((row) => row.judged_at_ms === null)) {
+    // One NULL row poisons the group even when siblings carry timestamps.
+    if (opts.sinceMs !== null && labelled.some((row) => row.judged_at_ms === null)) {
       return { kind: "no_timestamp" };
     }
     return { kind: "excluded" };
@@ -386,8 +408,13 @@ export function incumbentFromBallots(input: IncumbentInput): IncumbentVerdict {
 export function makeLiveClient(deps: {
   settings: TypesafeSettings;
   fetch: TypesafeFetch;
+  maxRetries?: number;
 }): TypesafeClient {
-  return createTypesafeClient({ settings: deps.settings, fetch: deps.fetch });
+  return createTypesafeClient({
+    settings: deps.settings,
+    fetch: deps.fetch,
+    maxRetries: deps.maxRetries,
+  });
 }
 
 export interface ShadowEvalRowResult {
@@ -417,6 +444,7 @@ export interface ShadowReplayMeta {
   excludedNoTimestamp: number;
   maxRollups: number | null;
   maxUsd: number;
+  projectedStop: boolean;
 }
 
 export interface ShadowReplayReport {
@@ -447,6 +475,7 @@ export interface ShadowReplayReport {
   total_usd: number;
   max_rollups: number | null;
   max_usd: number;
+  projected_stop: boolean;
   bodies_truncated: number;
 }
 
@@ -551,6 +580,7 @@ export function summarizeAgreement(
     total_usd: acc.totalUsd,
     max_rollups: meta.maxRollups,
     max_usd: meta.maxUsd,
+    projected_stop: meta.projectedStop,
     bodies_truncated: acc.bodiesTruncated,
   };
 }
@@ -558,6 +588,7 @@ export function summarizeAgreement(
 export interface ShadowEvalDeps {
   fetch: TypesafeFetch;
   settings?: TypesafeSettings;
+  maxRetries?: number;
 }
 
 interface JevFields {
@@ -598,6 +629,27 @@ async function judgeCandidate(client: TypesafeClient, body: string): Promise<Jev
   };
 }
 
+type LiveBudget = { sent: number; spentUsd: number; projectedStop: boolean };
+
+async function judgeWithinBudget(
+  client: TypesafeClient,
+  body: string,
+  maxUsd: number,
+  budget: LiveBudget,
+): Promise<{ judged: JevFields; bodyTruncated: boolean }> {
+  const sendBody = body.slice(0, MAX_LIVE_BODY_CHARS);
+  const estimateUsd = estimateLiveRequestUsd(sendBody);
+  if (budget.spentUsd + estimateUsd > maxUsd) {
+    budget.projectedStop = true;
+    return { judged: SKIPPED_JEV, bodyTruncated: false };
+  }
+  const judged = await judgeCandidate(client, sendBody);
+  budget.sent += 1;
+  // A failed call may still have been billed; spend the estimate.
+  budget.spentUsd += judged.outcome.status === "answered" ? judged.outcome.usd : estimateUsd;
+  return { judged, bodyTruncated: sendBody.length !== body.length };
+}
+
 function requireEnabledSettings(
   settings: TypesafeSettings | undefined,
 ): Extract<TypesafeSettings, { enabled: true }> {
@@ -628,15 +680,14 @@ export async function runShadowEval(
   }
 
   const client = args.live
-    ? makeLiveClient({ settings: requireEnabledSettings(deps.settings), fetch: deps.fetch })
+    ? makeLiveClient({
+        settings: requireEnabledSettings(deps.settings),
+        fetch: deps.fetch,
+        maxRetries: deps.maxRetries,
+      })
     : null;
 
-  let liveSent = 0;
-  let spentUsd = 0;
-  const mayJudge = (c: TypesafeClient | null): c is TypesafeClient =>
-    c !== null &&
-    (args.maxRollups === null || liveSent < args.maxRollups) &&
-    spentUsd < args.maxUsd;
+  const budget: LiveBudget = { sent: 0, spentUsd: 0, projectedStop: false };
 
   const results: ShadowEvalRowResult[] = [];
   const lines: string[] = [];
@@ -647,14 +698,10 @@ export async function runShadowEval(
     });
     let judged = SKIPPED_JEV;
     let bodyTruncated = false;
-    if (mayJudge(client)) {
-      const sendBody = candidate.body.slice(0, MAX_LIVE_BODY_CHARS);
-      bodyTruncated = sendBody.length !== candidate.body.length;
-      judged = await judgeCandidate(client, sendBody);
-      liveSent += 1;
-      if (judged.outcome.status === "answered") {
-        spentUsd += judged.outcome.usd;
-      }
+    if (client !== null && (args.maxRollups === null || budget.sent < args.maxRollups)) {
+      const attempt = await judgeWithinBudget(client, candidate.body, args.maxUsd, budget);
+      judged = attempt.judged;
+      bodyTruncated = attempt.bodyTruncated;
     }
     lines.push(
       `${JSON.stringify({
@@ -687,6 +734,7 @@ export async function runShadowEval(
       excludedNoTimestamp: loaded.excludedNoTimestamp,
       maxRollups: args.maxRollups,
       maxUsd: args.maxUsd,
+      projectedStop: budget.projectedStop,
     },
     results,
   );
