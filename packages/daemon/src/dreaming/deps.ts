@@ -235,7 +235,7 @@ function wireTypesafeShadow(
     });
     TYPESAFE_JUDGE_LOADERS.set(services, loader);
     // Resolve at boot so a disabled reason is logged once, at boot.
-    void loader();
+    void loader().catch(() => undefined);
   }
   const incumbent = deps.judgePool;
   if (incumbent === undefined) return;

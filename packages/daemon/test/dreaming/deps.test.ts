@@ -263,6 +263,95 @@ test("lazy loader memoizes a disabled resolution and the lazy seat stays unbuilt
   }
 });
 
+test("lazy loader resolves disabled and never builds the client when settings resolution throws", async () => {
+  let clientCalls = 0;
+  const { log, warnCalls } = makeWarnLog();
+  const baseMod = enabledTypesafeModule();
+  const mod: TypesafeModuleLike = {
+    ...baseMod,
+    resolveTypesafeSettings: () => {
+      throw new Error("boom");
+    },
+    createTypesafeClient: (options) => {
+      clientCalls += 1;
+      return baseMod.createTypesafeClient(options);
+    },
+  };
+  const loader = createLazyTypesafeJudgeLoader(() => Promise.resolve(mod), {
+    env: TEST_ENV,
+    log,
+  });
+  const first = await loader().catch((err: unknown) => ({ rejected: err }));
+  const second = await loader().catch((err: unknown) => ({ rejected: err }));
+  expect(first).toEqual({ disabled: "load_failed" });
+  expect(second).toEqual({ disabled: "load_failed" });
+  expect(warnCalls).toEqual([[{ reason: "load_failed" }, "typesafe shadow judge disabled"]]);
+  expect(JSON.stringify(warnCalls)).not.toContain("boom");
+  expect(clientCalls).toBe(0);
+});
+
+test("lazy loader resolves disabled when client construction throws", async () => {
+  const { log, warnCalls } = makeWarnLog();
+  const mod: TypesafeModuleLike = {
+    ...enabledTypesafeModule(),
+    createTypesafeClient: () => {
+      throw new Error("boom");
+    },
+  };
+  const loader = createLazyTypesafeJudgeLoader(() => Promise.resolve(mod), {
+    env: TEST_ENV,
+    log,
+  });
+  const first = await loader().catch((err: unknown) => ({ rejected: err }));
+  const second = await loader().catch((err: unknown) => ({ rejected: err }));
+  expect(first).toEqual({ disabled: "load_failed" });
+  expect(second).toEqual({ disabled: "load_failed" });
+  expect(warnCalls).toEqual([[{ reason: "load_failed" }, "typesafe shadow judge disabled"]]);
+  expect(JSON.stringify(warnCalls)).not.toContain("boom");
+});
+
+test("boot with a throwing settings resolution leaves no unhandled rejection and incumbent votes still flow", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const { log, warnCalls } = makeWarnLog();
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  const db = openSchemaDb();
+  try {
+    const services = {
+      log,
+      loadTypesafeModule: (): Promise<TypesafeModuleLike> =>
+        Promise.resolve({
+          ...enabledTypesafeModule(),
+          resolveTypesafeSettings: () => {
+            throw new Error("boom");
+          },
+        }),
+    };
+    const deps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(unhandled).toEqual([]);
+    expect(warnCalls).toContainEqual([{ reason: "load_failed" }, "typesafe shadow judge disabled"]);
+    const votes = await deps.judgePool!.judgeAll!({
+      body: "a durable finding worth keeping",
+      kind: "promote_t1",
+      subjectId: "r1",
+    });
+    expect(votes.map((vote) => vote.seat)).toEqual(["judge-a", "judge-b"]);
+    await Bun.sleep(0);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    db.close();
+  }
+});
+
 test("a malformed agents.yaml surfaces the judge-pool warn on services.log", () => {
   writeAgentsYaml("agents: [unclosed\n");
   const { log, warnCalls } = makeWarnLog();
@@ -279,8 +368,27 @@ test("a malformed agents.yaml surfaces the judge-pool warn on services.log", () 
   }
 });
 
+const TYPESAFE_VALUE_IMPORT =
+  /^\s*(?:import\s*["']|(?:import|export)\s(?!type\b)[^;]*?from\s*["'])@penumbra\/typesafe/m;
+
+function staticallyValueImportsTypesafe(source: string): boolean {
+  return TYPESAFE_VALUE_IMPORT.test(source);
+}
+
+test("the value-import tripwire flags side-effect imports of @penumbra/typesafe", () => {
+  expect(staticallyValueImportsTypesafe('import "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe("import '@penumbra/typesafe'")).toBe(true);
+  expect(staticallyValueImportsTypesafe('import { x } from "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe('export * from "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe('import type { X } from "@penumbra/typesafe";')).toBe(
+    false,
+  );
+  expect(staticallyValueImportsTypesafe('const m = () => import("@penumbra/typesafe");')).toBe(
+    false,
+  );
+});
+
 test("no file under packages/daemon/src statically value-imports @penumbra/typesafe", () => {
-  const pattern = /^\s*(?:import|export)\s(?!type\b)[^;]*?from\s["']@penumbra\/typesafe/m;
   const srcRoot = join(import.meta.dir, "..", "..", "src");
   const offenders: string[] = [];
   const walk = (dir: string): void => {
@@ -291,7 +399,7 @@ test("no file under packages/daemon/src statically value-imports @penumbra/types
       } else if (
         entry.isFile() &&
         entry.name.endsWith(".ts") &&
-        pattern.test(readFileSync(full, "utf8"))
+        staticallyValueImportsTypesafe(readFileSync(full, "utf8"))
       ) {
         offenders.push(full);
       }

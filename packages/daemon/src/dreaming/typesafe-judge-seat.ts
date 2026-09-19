@@ -329,16 +329,22 @@ async function loadTypesafeJudge(
     options.log?.warn({ err, reason: "import_failed" }, "typesafe shadow judge disabled");
     return { disabled: "import_failed" };
   }
-  const settings = mod.resolveTypesafeSettings(options.env);
-  if (!settings.enabled) {
-    options.log?.warn({ reason: settings.reason }, "typesafe shadow judge disabled");
-    return { disabled: settings.reason };
+  try {
+    const settings = mod.resolveTypesafeSettings(options.env);
+    if (!settings.enabled) {
+      options.log?.warn({ reason: settings.reason }, "typesafe shadow judge disabled");
+      return { disabled: settings.reason };
+    }
+    const client = mod.createTypesafeClient({
+      settings,
+      fetch: options.fetch ?? globalThis.fetch,
+    });
+    return (input, signal) => mod.judgePromotion(client, input, signal);
+  } catch {
+    // The settings object carries the API key: log the failure class only.
+    options.log?.warn({ reason: "load_failed" }, "typesafe shadow judge disabled");
+    return { disabled: "load_failed" };
   }
-  const client = mod.createTypesafeClient({
-    settings,
-    fetch: options.fetch ?? globalThis.fetch,
-  });
-  return (input, signal) => mod.judgePromotion(client, input, signal);
 }
 
 export function createLazyShadowSeat(
