@@ -1,4 +1,4 @@
-import { MEMORY_EFFICACY_BUCKETS } from "@penumbra/core";
+import { MEMORY_EFFICACY_BUCKET_DEFINITIONS, MEMORY_EFFICACY_BUCKETS } from "@penumbra/core";
 import { expect, test } from "bun:test";
 
 import type { TypesafeFetch } from "../src/client.js";
@@ -124,6 +124,36 @@ test("the wire request sends one choice question over the four buckets on the pi
   expect(JEV_EFFICACY_MODEL).toBe(PROMOTION_PINNED_MODEL_ID);
   expect(JSON.stringify(body.state)).toContain(text);
   expect(JSON.stringify(body.questions)).not.toContain(text);
+});
+
+test("the choice criteria are the shared incumbent rubric verbatim", async () => {
+  const { calls, fetchImpl } = recordingFetch(() => okResponse("recall_miss", PROBABILITIES, 0.7));
+  const classifier = classifierFor(fetchImpl);
+
+  await classifier.classifyFinding({ text: "A finding.", severity: null });
+
+  const criteria = calls[0]!.body.questions["bucket"]?.criteria as Record<string, string>;
+  for (const bucket of MEMORY_EFFICACY_BUCKETS) {
+    expect(criteria[bucket]).toBe(MEMORY_EFFICACY_BUCKET_DEFINITIONS[bucket]);
+  }
+});
+
+test("the fixed instructions carry the incumbent's three rubric rules", async () => {
+  const { calls, fetchImpl } = recordingFetch(() => okResponse("recall_miss", PROBABILITIES, 0.7));
+  const classifier = classifierFor(fetchImpl);
+
+  await classifier.classifyFinding({ text: "A finding.", severity: null });
+
+  const instructions = calls[0]!.body.questions["bucket"]?.instructions ?? "";
+  expect(instructions).toContain(
+    "not_memory_related is the default. Choose another bucket only when the finding text itself gives evidence of a memory-efficacy failure.",
+  );
+  expect(instructions).toContain(
+    "A defect in the memory subsystem's own code (ingestion, ranking, recall or injection code) is a code defect and is not_memory_related.",
+  );
+  expect(instructions).toContain(
+    "Without recall facts in the finding text (hit counts, injected memory ids), never answer recall_miss or memory_ignored.",
+  );
 });
 
 test("a choice outside the four buckets abstains with invalid_answer", async () => {
