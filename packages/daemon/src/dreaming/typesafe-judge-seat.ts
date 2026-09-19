@@ -142,7 +142,9 @@ function recordOutcome(db: Database, outcome: SeatOutcomeRecord): void {
   });
 }
 
-async function loadSeatJudge(rt: SeatRuntime): Promise<JevShadowJudge | null> {
+async function loadSeatJudge(rt: {
+  deps: { db: Database; loadJudge: JevShadowJudgeLoader };
+}): Promise<JevShadowJudge | null> {
   try {
     const loaded = await rt.deps.loadJudge();
     // A { disabled } result records nothing: no health row, no decision.
@@ -345,6 +347,53 @@ async function loadTypesafeJudge(
     options.log?.warn({ reason: "load_failed" }, "typesafe shadow judge disabled");
     return { disabled: "load_failed" };
   }
+}
+
+export interface PromotionVetoDeps {
+  db: Database;
+  loadJudge: JevShadowJudgeLoader;
+  getCostMeter: () => DreamCostMeter | undefined;
+  estimateUsd: number;
+  budgetMs?: number;
+}
+
+export type PromotionVeto = (input: {
+  rollupId: string;
+  body: string;
+}) => Promise<"allow" | "block">;
+
+// A fail-closed gate on the incumbent's P1 auto-promote: "allow" only on an
+// answered judgement whose shadowPromote cleared the promote threshold. Every
+// other outcome — disabled or failed loader, timeout, judge error, a refusing
+// or absent cost meter — blocks. It writes no decision row (the detached
+// shadow ballot still audits the same subject) and never throws into P1.
+export function createPromotionVeto(deps: PromotionVetoDeps): PromotionVeto {
+  const budgetMs = deps.budgetMs ?? JEV_SHADOW_BUDGET_MS;
+  const loaderRt = { deps: { db: deps.db, loadJudge: deps.loadJudge } };
+  return async (input) => {
+    try {
+      const judge = await loadSeatJudge(loaderRt);
+      if (judge === null) return "block";
+      const meter = deps.getCostMeter();
+      if (!meter?.canAfford(JEV_SHADOW_COST_PHASE, "llm", deps.estimateUsd)) {
+        return "block";
+      }
+      const outcome = await callJudgeWithinBudget(
+        judge,
+        { kind: "promote_t1", body: input.body },
+        budgetMs,
+      );
+      if (!outcome.ok) {
+        // The request may have been billed, so fail toward the cap at the estimate.
+        meter.record(JEV_SHADOW_COST_PHASE, "llm", deps.estimateUsd);
+        return "block";
+      }
+      meter.record(JEV_SHADOW_COST_PHASE, "llm", outcome.judgement.usd);
+      return outcome.judgement.shadowPromote ? "allow" : "block";
+    } catch {
+      return "block";
+    }
+  };
 }
 
 export function createLazyShadowSeat(

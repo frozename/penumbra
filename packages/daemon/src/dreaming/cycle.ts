@@ -193,6 +193,7 @@ export interface DreamCycleDeps {
   };
   costMeter?: DreamCostMeter;
   phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
+  promotionVeto?: (input: { rollupId: string; body: string }) => Promise<"allow" | "block">;
 }
 
 interface CycleCtx {
@@ -670,15 +671,30 @@ async function runCycleP1(
     const avgConfidence = countedVotes.reduce((s, v) => s + v.confidence, 0) / total;
     const autoPromote = yesCount >= Math.ceil((total * 2) / 3);
 
+    // Consulted only when the incumbent auto-promotes; it can remove a YES but
+    // never turn a NO into a YES. A throw or a non-"allow" answer fails closed.
+    let jevVeto: "allowed" | "blocked" | undefined;
+    if (autoPromote && deps.promotionVeto !== undefined) {
+      try {
+        jevVeto =
+          (await deps.promotionVeto({ rollupId: rollup.rollup_id, body })) === "allow"
+            ? "allowed"
+            : "blocked";
+      } catch {
+        jevVeto = "blocked";
+      }
+    }
+
     const result = await maybeAutoPromoteT1(
       db,
       ctx,
       deps,
       rollup,
       body,
-      autoPromote,
+      autoPromote && jevVeto !== "blocked",
       votes,
       avgConfidence,
+      jevVeto,
     );
     if (result.skip) continue;
 
@@ -693,6 +709,7 @@ async function runCycleP1(
       rollupTargetIds,
       JSON.stringify({
         votes: serializeJudgeVotes(votes),
+        ...(jevVeto === undefined ? {} : { jev_veto: jevVeto }),
         ...(result.mintedT2Id ? { t2_memory_id: result.mintedT2Id } : {}),
       }),
     );
@@ -964,6 +981,7 @@ async function maybeAutoPromoteT1(
   autoPromote: boolean,
   votes: JudgeVote[],
   avgConfidence: number,
+  jevVeto?: "allowed" | "blocked",
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
   if (!autoPromote) return { skip: false, status: "queued" };
 
@@ -994,6 +1012,7 @@ async function maybeAutoPromoteT1(
           votes: serializeJudgeVotes(votes),
           dedup_against: existing.memory_id,
           project_id: rollup.project_id,
+          ...(jevVeto === undefined ? {} : { jev_veto: jevVeto }),
         }),
       );
       db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(

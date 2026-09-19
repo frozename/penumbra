@@ -29,6 +29,7 @@ import {
   composeShadowJudgePool,
   createLazyShadowSeat,
   createLazyTypesafeJudgeLoader,
+  createPromotionVeto,
   createTypesafeShadowSeat,
   importTypesafeModule,
   type JevShadowDecision,
@@ -207,7 +208,11 @@ export function buildDreamCycleDeps(
   if (dispatchEventLog) {
     deps.dispatchEventLog = dispatchEventLog;
   }
-  if (dreamConfig.typesafeJudgePromotion === "shadow" && dreamConfig.typesafeEnv !== undefined) {
+  if (
+    (dreamConfig.typesafeJudgePromotion === "shadow" ||
+      dreamConfig.typesafeJudgePromotion === "veto") &&
+    dreamConfig.typesafeEnv !== undefined
+  ) {
     wireTypesafeShadow(deps, services, db, dreamConfig);
   }
 
@@ -257,6 +262,14 @@ function wireTypesafeShadow(
       }),
     ),
   );
+  if (dreamConfig.typesafeJudgePromotion === "veto") {
+    deps.promotionVeto = createPromotionVeto({
+      db,
+      loadJudge: loader,
+      getCostMeter: () => deps.costMeter,
+      estimateUsd: resolveP1JevShadowEstimateUsd(dreamConfig.phaseCostEstimatesUsd),
+    });
+  }
 }
 
 // The audit row keeps only the ballot fields: rationale is model free text and

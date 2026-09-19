@@ -1,6 +1,6 @@
 import { parseKeychainRef, resolveAuthSecret, type ResolveKeychainSecret } from "@penumbra/core";
 
-export type TypesafeJudgePromotionMode = "off" | "shadow";
+export type TypesafeJudgePromotionMode = "off" | "shadow" | "veto";
 
 /** The parsed PENUMBRA_TYPESAFE_* subset of the env registry. Dot access keeps every token visible to completeness.test.ts. */
 export interface TypesafeEnvInput {

@@ -7,12 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { DreamConfig, TypesafeEnvSlice } from "@src/dreaming/config.js";
+import type { DreamCycleDeps } from "@src/dreaming/cycle.js";
 import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "@src/dreaming/deps.js";
 import { StubJudgePool } from "@src/dreaming/judge-pool.js";
 import {
   createLazyShadowSeat,
   createLazyTypesafeJudgeLoader,
   isShadowComposedPool,
+  type JevShadowOutcome,
   TYPESAFE_SHADOW_SUBSYSTEM,
   type TypesafeModuleLike,
   type TypesafeShadowSeat,
@@ -30,6 +32,11 @@ const TEST_ENV: TypesafeEnvSlice = {
   PENUMBRA_TYPESAFE_MODEL: "jev-1.13.0",
   PENUMBRA_TYPESAFE_TIMEOUT_MS: 10_000,
   PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "shadow",
+};
+
+const TEST_ENV_VETO: TypesafeEnvSlice = {
+  ...TEST_ENV,
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "veto",
 };
 
 const TWO_JUDGE_SEATS =
@@ -205,6 +212,124 @@ test("shadow flag composes the pool and resolves the module once per services ob
     expect(isShadowComposedPool(rebuilt.judgePool!)).toBe(true);
     await Bun.sleep(0);
     expect(loadCalls).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
+function vetoConfig(): DreamConfig {
+  return {
+    typesafeJudgePromotion: "veto",
+    typesafeEnv: TEST_ENV_VETO,
+  } as DreamConfig;
+}
+
+test("veto flag wires promotionVeto on top of the composed shadow pool", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  let loadCalls = 0;
+  const services = {
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => {
+      loadCalls += 1;
+      return Promise.resolve(enabledTypesafeModule());
+    },
+  };
+  const db = openSchemaDb();
+  try {
+    const deps = buildDreamCycleDeps(services, db, vetoConfig());
+    expect(isShadowComposedPool(deps.judgePool!)).toBe(true);
+    expect(typeof deps.promotionVeto).toBe("function");
+    await Bun.sleep(0);
+    expect(loadCalls).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
+test("shadow and off modes leave promotionVeto unwired", () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const services = {
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => Promise.resolve(enabledTypesafeModule()),
+  };
+  const db = openSchemaDb();
+  try {
+    const shadowDeps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    expect(isShadowComposedPool(shadowDeps.judgePool!)).toBe(true);
+    expect(shadowDeps.promotionVeto).toBeUndefined();
+
+    const offDeps = buildDreamCycleDeps(services, db, {} as DreamConfig);
+    expect(offDeps.promotionVeto).toBeUndefined();
+  } finally {
+    db.close();
+  }
+});
+
+function vetoJudgementOutcome(shadowPromote: boolean): JevShadowOutcome {
+  return {
+    ok: true,
+    judgement: {
+      model: "jev-1.13.0",
+      answers: { promote: shadowPromote ? 0.9 : 0.2 },
+      pPromote: shadowPromote ? 0.9 : 0.2,
+      shadowPromote,
+      usage: { inputTokens: 10, outputTokens: 1 },
+      usd: 0.001,
+    },
+  };
+}
+
+test("promotionVeto allows only an answered shadowPromote and fails closed on every other outcome", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const db = openSchemaDb();
+  const affordMeter = { canAfford: (): boolean => true, record: (): void => undefined };
+  const build = (mod: TypesafeModuleLike): DreamCycleDeps =>
+    buildDreamCycleDeps({ loadTypesafeModule: () => Promise.resolve(mod) }, db, vetoConfig());
+  const verdict = async (deps: DreamCycleDeps): Promise<string> =>
+    (await deps.promotionVeto?.({ rollupId: "r1", body: "a durable finding body" })) ?? "unset";
+  try {
+    const allowDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    allowDeps.costMeter = affordMeter;
+    expect(await verdict(allowDeps)).toBe("allow");
+
+    const holdDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(false)),
+    });
+    holdDeps.costMeter = affordMeter;
+    expect(await verdict(holdDeps)).toBe("block");
+
+    const errorDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve({ ok: false, reason: "timeout", status: null }),
+    });
+    errorDeps.costMeter = affordMeter;
+    expect(await verdict(errorDeps)).toBe("block");
+
+    const importFailDeps = buildDreamCycleDeps(
+      { loadTypesafeModule: () => Promise.reject(new Error("typesafe module missing")) },
+      db,
+      vetoConfig(),
+    );
+    importFailDeps.costMeter = affordMeter;
+    expect(await verdict(importFailDeps)).toBe("block");
+
+    const noMeterDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    expect(await verdict(noMeterDeps)).toBe("block");
+
+    const refusedDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    refusedDeps.costMeter = { canAfford: (): boolean => false, record: (): void => undefined };
+    expect(await verdict(refusedDeps)).toBe("block");
   } finally {
     db.close();
   }

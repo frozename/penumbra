@@ -784,10 +784,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
       "TOTAL deadline in ms for one TypeSafe evaluation, across every attempt and backoff. Not per attempt.",
   },
   PENUMBRA_TYPESAFE_JUDGE_PROMOTION: {
-    schema: z.enum(["off", "shadow"]),
+    schema: z.enum(["off", "shadow", "veto"]),
     default: "off",
     description:
-      "Judge-promotion mode: off | shadow. Any other value (including on/true) fails the whole config parse at boot.",
+      "Judge-promotion mode: off | shadow | veto. Any other value (including on/true) fails the whole config parse at boot.",
   },
   PENUMBRA_EMBEDDING_MODEL_VERSION: {
     schema: z.string(),

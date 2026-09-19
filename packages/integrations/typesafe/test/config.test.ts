@@ -166,6 +166,29 @@ test("non-versioned model and non-https base url disable the judge before key re
   expect(keychain.calls).toEqual([]);
 });
 
+test("promotion veto mode enables the client exactly like shadow", () => {
+  const keychain = keychainSpy(() => "k-chain");
+  const settings = typesafe.resolveTypesafeSettings(
+    {
+      ...base,
+      PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "veto",
+      PENUMBRA_TYPESAFE_API_KEY: "k-env",
+      PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: "llamactl/typesafe",
+    },
+    { resolveKeychain: keychain.resolveKeychain },
+  );
+  expect(settings).toEqual({
+    enabled: true,
+    apiKey: "k-env",
+    keySource: "env",
+    baseUrl: "https://api.typesafe.ai",
+    model: "jev-1.13.0",
+    timeoutMs: 10000,
+    judgePromotion: "veto",
+  });
+  expect(keychain.calls).toEqual([]);
+});
+
 test("missing env key and keychain ref reports no_key and ignores foreign properties", () => {
   const keychain = keychainSpy(() => "k-chain");
   const input = { ...base, TYPESAFE_API_KEY: "leak" } as TypesafeEnvInput;

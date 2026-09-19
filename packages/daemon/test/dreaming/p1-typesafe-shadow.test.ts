@@ -452,3 +452,315 @@ describe("P1 typesafe shadow wiring through buildDreamCycleDeps", () => {
     }
   });
 });
+
+type VetoJev =
+  | { kind: "outcome"; outcome: JevShadowOutcome }
+  | { kind: "wire"; response: unknown }
+  | { kind: "import-fail" };
+
+interface VetoRunResult {
+  db: Database;
+  jevCalls: number;
+  embedCalls: number;
+}
+
+function jevWireResponse(durable: number, strongestFilter: number): unknown {
+  return {
+    model: "jev-1.13.0",
+    answers: {
+      is_durable_fact_worth_keeping: { type: "noul", noul: durable },
+      is_ephemeral_runtime_noise: { type: "noul", noul: strongestFilter },
+      is_prompt_or_task_artifact: { type: "noul", noul: 0 },
+      is_mechanically_discoverable_from_the_repo: { type: "noul", noul: 0 },
+    },
+    usage: { input_tokens: 100, output_tokens: 5 },
+  };
+}
+
+async function runVetoCycle(opts: {
+  mode: "off" | "shadow" | "veto";
+  seatVote: { promote: boolean; confidence: number };
+  jev: VetoJev;
+  rollupCount?: number;
+}): Promise<VetoRunResult> {
+  setSystemTime(FROZEN);
+  const content = JSON.stringify({
+    promote: opts.seatVote.promote,
+    confidence: opts.seatVote.confidence,
+    rationale: "seat-vote",
+  });
+  const server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+  });
+  const dir = join(tmpdir(), `p1-veto-${crypto.randomUUID()}`);
+  const savedConfigDir = process.env.PENUMBRA_CONFIG_DIR;
+  const db = openTestDb();
+  const counters = { jevCalls: 0, embedCalls: 0 };
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "agents.yaml"),
+      "agents:\n" +
+        `  - name: fake-seat-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n` +
+        `  - name: fake-seat-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n`,
+    );
+    writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
+    writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
+    process.env.PENUMBRA_CONFIG_DIR = dir;
+    reloadAgentChatConfig();
+
+    const jev = opts.jev;
+    const loadTypesafeModule = async (): Promise<TypesafeModuleLike> => {
+      if (jev.kind === "import-fail") throw new Error("typesafe module missing");
+      const settings = {
+        enabled: true as const,
+        apiKey: "test-key",
+        keySource: "env" as const,
+        baseUrl: "https://api.typesafe.ai",
+        model: "jev-1.13.0",
+        timeoutMs: 10_000,
+        judgePromotion: opts.mode,
+      };
+      if (jev.kind === "wire") {
+        const real = await import("@penumbra/typesafe");
+        const response = jev.response;
+        const fakeJevFetch: TypesafeFetch = () =>
+          Promise.resolve(
+            new Response(JSON.stringify(response), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        return {
+          ...real,
+          resolveTypesafeSettings: () => settings,
+          createTypesafeClient: (o) => real.createTypesafeClient({ ...o, fetch: fakeJevFetch }),
+          judgePromotion: (client, input, signal): Promise<JevShadowOutcome> => {
+            counters.jevCalls += 1;
+            return real.judgePromotion(client, input, signal);
+          },
+        };
+      }
+      const outcome = jev.outcome;
+      return {
+        resolveTypesafeSettings: () => settings,
+        createTypesafeClient: () => ({
+          evaluate: () => Promise.reject(new Error("unused in veto test")),
+        }),
+        judgePromotion: (): Promise<JevShadowOutcome> => {
+          counters.jevCalls += 1;
+          return Promise.resolve(outcome);
+        },
+      };
+    };
+    const services = {
+      loadTypesafeModule,
+      embedder: {
+        embed: (bodies: string[]): Promise<Float32Array[]> => {
+          counters.embedCalls += bodies.length;
+          return Promise.resolve(bodies.map(() => new Float32Array([0.1, 0.2, 0.3])));
+        },
+      },
+    };
+    seedRollups(db, opts.rollupCount ?? 1);
+    const config = testConfig({
+      typesafeJudgePromotion: opts.mode,
+      typesafeEnv: { ...SHADOW_ENV, PENUMBRA_TYPESAFE_JUDGE_PROMOTION: opts.mode },
+    });
+    const deps = buildDreamCycleDeps(services, db, config);
+    await runDreamCycle(db, config, deps);
+    await drainShadowJudgements(5_000);
+    return { db, ...counters };
+  } finally {
+    void server.stop(true);
+    if (savedConfigDir === undefined) {
+      delete process.env.PENUMBRA_CONFIG_DIR;
+    } else {
+      process.env.PENUMBRA_CONFIG_DIR = savedConfigDir;
+    }
+    reloadAgentChatConfig();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function p1PromoteActions(db: Database): { status: string; payload: Record<string, unknown> }[] {
+  const rows = db
+    .prepare(
+      `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY target_ids`,
+    )
+    .all() as { status: string; payload_json: string }[];
+  return rows.map((r) => ({
+    status: r.status,
+    payload: JSON.parse(r.payload_json) as Record<string, unknown>,
+  }));
+}
+
+function promotedT2Count(db: Database): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS c FROM t2_memories WHERE kind='promoted'`).get() as {
+      c: number;
+    }
+  ).c;
+}
+
+function rollupPromotionStamps(
+  db: Database,
+  rollupId: string,
+): { promotion_filtered_at: string | null; t2_promoted_at: string | null } {
+  return db
+    .prepare(`SELECT promotion_filtered_at, t2_promoted_at FROM t1_rollups WHERE rollup_id = ?`)
+    .get(rollupId) as {
+    promotion_filtered_at: string | null;
+    t2_promoted_at: string | null;
+  };
+}
+
+describe("P1 Jev veto mode", () => {
+  it("blocks the auto-promotion onto the queued path when Jev answers below the promote threshold", async () => {
+    const { db, jevCalls, embedCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: {
+        kind: "outcome",
+        outcome: {
+          ok: true,
+          judgement: okJudgement({ pPromote: 0.2, shadowPromote: false }),
+        },
+      },
+    });
+    try {
+      // One detached shadow ballot plus one synchronous veto consultation.
+      expect(jevCalls).toBe(2);
+      expect(embedCalls).toBe(0);
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      const rollup = rollupPromotionStamps(db, "r1");
+      expect(rollup.promotion_filtered_at).not.toBeNull();
+      expect(rollup.t2_promoted_at).toBeNull();
+      // Veto mode keeps the shadow lane: the detached ballot still lands a row.
+      expect(readJudgeDecisions(db, { site: P1_PROMOTION_JUDGE_SITE })).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mints the t2 row with jev_veto allowed when the real wire lands pPromote exactly on the 0.5 threshold", async () => {
+    const { db, jevCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "wire", response: jevWireResponse(0.5, 0) },
+    });
+    try {
+      expect(jevCalls).toBe(2);
+      expect(promotedT2Count(db)).toBe(1);
+      const actions = p1PromoteActions(db);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]?.status).toBe("auto_applied");
+      expect(actions[0]?.payload["jev_veto"]).toBe("allowed");
+      expect(typeof actions[0]?.payload["t2_memory_id"]).toBe("string");
+      expect(rollupPromotionStamps(db, "r1").t2_promoted_at).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks when the real wire lands pPromote just under the promote threshold", async () => {
+    // 0.5 * (1 - 0.04) = 0.48 < 0.5
+    const { db, jevCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "wire", response: jevWireResponse(0.5, 0.04) },
+    });
+    try {
+      expect(jevCalls).toBe(2);
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails closed when the typesafe module cannot be loaded", async () => {
+    const { db, jevCalls, embedCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "import-fail" },
+    });
+    try {
+      expect(jevCalls).toBe(0);
+      expect(embedCalls).toBe(0);
+      expect(promotedT2Count(db)).toBe(0);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload["jev_veto"]).toBe("blocked");
+      expect(readJudgeDecisions(db, {})).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("never consults the veto when the incumbent does not auto-promote", async () => {
+    const { db, jevCalls } = await runVetoCycle({
+      mode: "veto",
+      seatVote: { promote: false, confidence: 0.8 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+    });
+    try {
+      // Only the detached shadow ballot fires; a veto call would make this 2.
+      expect(jevCalls).toBe(1);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("queued");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+      expect(promotedT2Count(db)).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("shadow mode auto-promotes without a jev_veto payload field", async () => {
+    const { db, jevCalls } = await runVetoCycle({
+      mode: "shadow",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+    });
+    try {
+      expect(jevCalls).toBe(1);
+      expect(promotedT2Count(db)).toBe(1);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("auto_applied");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("off mode auto-promotes with no typesafe wiring and no jev_veto field", async () => {
+    const { db, jevCalls } = await runVetoCycle({
+      mode: "off",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+    });
+    try {
+      expect(jevCalls).toBe(0);
+      expect(promotedT2Count(db)).toBe(1);
+      const actions = p1PromoteActions(db);
+      expect(actions[0]?.status).toBe("auto_applied");
+      expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
+      expect(readJudgeDecisions(db, {})).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+});

@@ -126,10 +126,19 @@ describe("ENV_REGISTRY", () => {
     expect(ENV_REGISTRY.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN?.isSensitive).toBeFalsy();
   });
 
-  test("typesafe judge promotion is a closed off|shadow enum, not a boolean", () => {
+  test("typesafe judge promotion is a closed off|shadow|veto enum, not a boolean", () => {
     expect(
       parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "shadow" }).PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
     ).toBe("shadow");
+    const veto = ((): unknown => {
+      try {
+        return parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "veto" })
+          .PENUMBRA_TYPESAFE_JUDGE_PROMOTION;
+      } catch {
+        return "threw";
+      }
+    })();
+    expect(veto).toBe("veto");
     expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "on" })).toThrow();
     expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "true" })).toThrow();
   });

@@ -40,7 +40,7 @@ export interface TypesafeEnvSlice {
   readonly PENUMBRA_TYPESAFE_BASE_URL: string;
   readonly PENUMBRA_TYPESAFE_MODEL: string;
   readonly PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
-  readonly PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow";
+  readonly PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
 }
 
 function nonNegIntOr(value: number | undefined, fallback: number): number {
@@ -93,7 +93,7 @@ export interface DreamConfig {
   rewriterConcurrency: number;
   phaseBudgetFractions?: DreamPhaseBudgetFractions;
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
-  typesafeJudgePromotion?: "off" | "shadow";
+  typesafeJudgePromotion?: "off" | "shadow" | "veto";
   typesafeEnv?: TypesafeEnvSlice;
 }
 
@@ -154,7 +154,15 @@ interface DreamingEnvSlice {
   PENUMBRA_TYPESAFE_BASE_URL: string;
   PENUMBRA_TYPESAFE_MODEL: string;
   PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
-  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow";
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
+}
+
+// Fail closed: only the exact literals shadow/veto arm a Jev lane; anything
+// else (including a value smuggled past the schema) resolves to "off".
+function resolveTypesafeJudgePromotion(
+  value: "off" | "shadow" | "veto",
+): "off" | "shadow" | "veto" {
+  return value === "veto" ? "veto" : value === "shadow" ? "shadow" : "off";
 }
 
 function typesafeEnvSlice(env: DreamingEnvSlice): TypesafeEnvSlice {
@@ -287,7 +295,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
       p7EmbedUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD,
       p1JevShadowUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD,
     },
-    typesafeJudgePromotion: env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION === "shadow" ? "shadow" : "off",
+    typesafeJudgePromotion: resolveTypesafeJudgePromotion(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION),
     typesafeEnv: typesafeEnvSlice(env),
   };
 }

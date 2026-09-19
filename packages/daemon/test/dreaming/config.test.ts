@@ -323,6 +323,25 @@ describe("dreaming/config", () => {
     const shadow = buildFromProcessEnv();
     expect(shadow.typesafeJudgePromotion).toBe("shadow");
     expect(shadow.typesafeEnv?.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("shadow");
+
+    process.env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION = "veto";
+    let veto: ReturnType<typeof buildDreamingConfig> | null = null;
+    try {
+      veto = buildFromProcessEnv();
+    } catch {
+      veto = null;
+    }
+    expect(veto?.typesafeJudgePromotion).toBe("veto");
+    expect(veto?.typesafeEnv?.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("veto");
+  });
+
+  it("fails closed to off when the promotion flag holds an out-of-enum value", () => {
+    const bundle = getConfig({});
+    const forged = buildDreamingConfig({
+      ...bundle,
+      env: { ...bundle.env, PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "bogus" },
+    });
+    expect(forged.typesafeJudgePromotion).toBe("off");
   });
 
   it("resolveP1JevShadowEstimateUsd honors a positive finite override and defaults the rest", () => {
