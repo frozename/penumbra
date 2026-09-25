@@ -276,12 +276,7 @@ function auditManifest(root: string, result: ScanResult): void {
   }
 }
 
-function auditSpecifier(
-  result: ScanResult,
-  rel: string,
-  root: string,
-  spec: Specifier,
-): void {
+function auditSpecifier(result: ScanResult, rel: string, root: string, spec: Specifier): void {
   const finding = (rule: string, token: string): void => {
     result.findings.push({ file: rel, line: spec.line, rule, token, text: spec.specifier });
   };

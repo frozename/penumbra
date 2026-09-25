@@ -1,28 +1,28 @@
 [
   {
     "file": "process-supervisor.ts",
-    "line": 239,
+    "line": 253,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: names a private helper that wires chunk/line handlers onto a piped child stream; no process/session attachment policy is involved"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 302,
+    "line": 316,
     "token": "resume",
     "classification": "false-positive",
     "reason": "false-positive: Readable.resume() puts the piped child stream into flowing mode for the chunk handler; unrelated to session-resume or warm-reuse policy"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 462,
+    "line": 479,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 465,
+    "line": 482,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"

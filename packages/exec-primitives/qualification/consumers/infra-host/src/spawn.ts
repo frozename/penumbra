@@ -25,6 +25,8 @@ export interface SpawnBinding {
   timeoutMs: number;
   /** Host-owned cancel grace for SIGTERM→SIGKILL escalation. */
   cancelGraceMs: number;
+  /** Optional per-stream output cap forwarded to the supervisor. */
+  outputLimitBytes?: number;
 }
 
 export const SPAWN_BINDING: SpawnBinding = {
@@ -74,6 +76,9 @@ export async function spawnFn(
     stdin: "ignore",
     cancelGraceMs: binding.cancelGraceMs,
     watchdogMs: Math.min(binding.timeoutMs, ctx.deadline),
+    ...(binding.outputLimitBytes !== undefined
+      ? { outputLimitBytes: binding.outputLimitBytes }
+      : {}),
   });
   return {
     stdout: result.stdout,

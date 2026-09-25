@@ -5,7 +5,7 @@
  * the packed client. The deep wire behavior is covered by the parity suite;
  * this file is the "can the host import and run it" check.
  */
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,15 +51,14 @@ const resolvedSpecifier = import.meta.resolve("penumbra-exec-primitives");
 const resolvedEntry = realpathSync(
   resolvedSpecifier.startsWith("file:") ? fileURLToPath(resolvedSpecifier) : resolvedSpecifier,
 );
-// realpath resolves through a node_modules symlink — the file: dep may link
-// to vendor/; either way the real path must stay under this consumer root.
-const expectedPrefix = `${realpathSync(consumerRoot)}${sep}`;
-if (!resolvedEntry.startsWith(expectedPrefix)) {
+const expectedPrefix = `${realpathSync(consumerRoot)}${sep}node_modules${sep}`;
+if (!resolvedEntry.startsWith(expectedPrefix) || resolvedEntry.includes("packages/")) {
   throw new Error(`penumbra-exec-primitives resolved outside this consumer: ${resolvedEntry}`);
 }
 const pkgDir = join(consumerRoot, "node_modules", "penumbra-exec-primitives");
-if (!statSync(pkgDir).isDirectory()) {
-  throw new Error(`installed package is missing: ${pkgDir}`);
+const pkgStat = lstatSync(pkgDir);
+if (!pkgStat.isDirectory() || pkgStat.isSymbolicLink()) {
+  throw new Error(`installed package must be a real directory, not a symlink: ${pkgDir}`);
 }
 
 const out = await spawnCliAdapter({

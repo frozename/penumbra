@@ -247,8 +247,7 @@ function mutationRecord(
     failing_tests: mutated?.failing ?? [],
     expected_detectors: meta.expected,
     expected_detectors_hit:
-      mutated !== undefined &&
-      meta.expected.every((t) => titleLine(t).test(mutated.output)),
+      mutated !== undefined && meta.expected.every((t) => titleLine(t).test(mutated.output)),
     detected:
       (mutated?.failing.length ?? 0) > 0 &&
       unexpected.length === 0 &&

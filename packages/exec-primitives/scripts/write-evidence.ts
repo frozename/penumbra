@@ -259,10 +259,7 @@ const section2Rows: Section2Row[] = DISPOSITIONS.map((d) => {
   let consistent = true;
   if (d.kind === "verbatim") {
     consistent =
-      parity !== null &&
-      parity.fail === 0 &&
-      parity.pass === origin.pass &&
-      origin.fail === 0;
+      parity !== null && parity.fail === 0 && parity.pass === origin.pass && origin.fail === 0;
   } else if (d.kind === "re-expressed") {
     consistent =
       parity !== null &&
@@ -296,8 +293,7 @@ const section2Verdict = {
 const deviations: { rule: string; change: string; reason: string; pointer: string }[] = [
   {
     rule: "infra-host consumer language",
-    change:
-      "TypeScript sources (src/*.ts, test/infra.parity.ts) rather than plain .mjs sources",
+    change: "TypeScript sources (src/*.ts, test/infra.parity.ts) rather than plain .mjs sources",
     reason:
       "the qualification contract requires test/*.parity.ts plus typescript and @types/node devDependencies; node runs the .ts smoke via native type-stripping, so the no-toolchain property is preserved",
     pointer: "qualification/consumers/infra-host",
@@ -311,10 +307,9 @@ const deviations: { rule: string; change: string; reason: string; pointer: strin
     pointer: "scripts/qualify.ts",
   },
   {
-    rule: "check.exit verdict file",
+    rule: "sidecar verdict file",
     change: "removed; the composite derives its verdict from per-gate exits",
-    reason:
-      "a hidden verdict file let earlier runs print a pass while real gates had failed",
+    reason: "a hidden verdict file let earlier runs print a pass while real gates had failed",
     pointer: "scripts/sharedlib6-check.ts",
   },
   {
@@ -354,7 +349,11 @@ const evidence = {
   date: EVIDENCE_DATE,
   base_sha: BASE_SHA,
   head_sha: head,
-  toolchain: { bun: consumersJson.toolchain.bun, node: consumersJson.toolchain.node, typescript: tsc },
+  toolchain: {
+    bun: consumersJson.toolchain.bun,
+    node: consumersJson.toolchain.node,
+    typescript: tsc,
+  },
   note: "local tarball is a channel stand-in for qualification only — not a release, publication, or adoption claim",
   honesty: {
     channel_stand_in: true,
@@ -395,7 +394,10 @@ function gateRows(): string {
 function stepSummary(name: string): string {
   const steps = consumersObj[name]?.steps ?? [];
   return steps
-    .map((s) => `${s.name} exit ${String(s.exit)}${s.pass > 0 || s.fail > 0 ? ` (${String(s.pass)}p/${String(s.fail)}f)` : ""}`)
+    .map(
+      (s) =>
+        `${s.name} exit ${String(s.exit)}${s.pass > 0 || s.fail > 0 ? ` (${String(s.pass)}p/${String(s.fail)}f)` : ""}`,
+    )
     .join(" · ");
 }
 

@@ -15,8 +15,8 @@
  *      must match this run's fresh measurements field-for-field. Missing,
  *      malformed, stale, or inconsistent evidence is a failure.
  *   5. SHAREDLIB6-CHECK PASS, or SHAREDLIB6-CHECK FAIL listing every failing
- *      gate (plus SHAPE). There is no check.exit file; nothing downstream of
- *      a failed step is allowed to stand in for a real verdict.
+ *      gate (plus SHAPE). There is no sidecar verdict file; nothing downstream
+ *      of a failed step is allowed to stand in for a real verdict.
  *
  * Unless --keep is passed, tmp/sharedlib6 is removed at the end of the run.
  * The tracked tree stays byte-clean: consumers run as copies, generated
@@ -36,11 +36,7 @@ const LOG_DIR = join(RUN_DIR, "check-logs");
 const KEEP = process.argv.includes("--keep");
 
 const BASE_SHA = "c264644bc2b4f1e1429e845208fd6ca7f6426d62";
-const REQUIRED_ANCESTORS = [
-  BASE_SHA,
-  "a338eb8e3",
-  "e634f10db87e0f36a14338356e1887cfbf58c83d",
-];
+const REQUIRED_ANCESTORS = [BASE_SHA, "a338eb8e3", "e634f10db87e0f36a14338356e1887cfbf58c83d"];
 const EVIDENCE_DATE = "2026-09-24";
 const EVIDENCE_JSON = join(
   REPO_ROOT,
@@ -77,6 +73,7 @@ interface CmdOut {
 
 function run(argv: string[], cwd: string, env?: NodeJS.ProcessEnv): CmdOut {
   const [bin, ...args] = argv;
+  if (bin === undefined) throw new Error("run: empty argv");
   const r = spawnSync(bin, args, {
     cwd,
     env: env ?? { ...process.env },
@@ -171,12 +168,7 @@ interface GateRec {
 
 const gates: GateRec[] = [];
 
-function recordGate(
-  gate: string,
-  outs: CmdOut[],
-  logNames: string[],
-  gating = true,
-): void {
+function recordGate(gate: string, outs: CmdOut[], logNames: string[], gating = true): void {
   const exit = outs.some((o) => o.exit !== 0) ? 1 : 0;
   let pass: number | null = null;
   let fail: number | null = null;
@@ -199,11 +191,7 @@ const R = REPO_ROOT;
 const P = PACKAGE_DIR;
 
 // 1. root typecheck (also runs dist-freshness scrub + tsc --build)
-recordGate(
-  "typecheck",
-  [runLogged(["bun", "run", "typecheck"], R, "typecheck")],
-  ["typecheck"],
-);
+recordGate("typecheck", [runLogged(["bun", "run", "typecheck"], R, "typecheck")], ["typecheck"]);
 
 // 2. dist freshness, strict
 recordGate(
@@ -222,16 +210,8 @@ recordGate(
 recordGate(
   "typecheck-coverage",
   [
-    runLogged(
-      ["bun", "scripts/check-typecheck-coverage.ts"],
-      R,
-      "typecheck-coverage-ratchet",
-    ),
-    runLogged(
-      ["bun", "scripts/check-typecheck-coverage.ts"],
-      P,
-      "typecheck-coverage-files",
-    ),
+    runLogged(["bun", "scripts/check-typecheck-coverage.ts"], R, "typecheck-coverage-ratchet"),
+    runLogged(["bun", "scripts/check-typecheck-coverage.ts"], P, "typecheck-coverage-files"),
   ],
   ["typecheck-coverage-ratchet", "typecheck-coverage-files"],
 );
@@ -278,11 +258,7 @@ recordGate(
 recordGate(
   "test-gate",
   [
-    runLogged(
-      ["bun", "scripts/bun-test-gate.ts", "packages/exec-primitives"],
-      R,
-      "bun-test-gate",
-    ),
+    runLogged(["bun", "scripts/bun-test-gate.ts", "packages/exec-primitives"], R, "bun-test-gate"),
     runLogged(["bun", "scripts/check-suite-tags.ts"], P, "suite-tags"),
   ],
   ["bun-test-gate", "suite-tags"],
@@ -293,12 +269,7 @@ recordGate(
   "mutations",
   [
     runLogged(
-      [
-        "bun",
-        "scripts/run-mutations.ts",
-        "--out",
-        join(RUN_DIR, "mutations.json"),
-      ],
+      ["bun", "scripts/run-mutations.ts", "--out", join(RUN_DIR, "mutations.json")],
       P,
       "mutations",
     ),
@@ -311,12 +282,7 @@ recordGate(
   "section2-slice",
   [
     runLogged(
-      [
-        "bun",
-        "scripts/section2-slice.ts",
-        "--out",
-        join(RUN_DIR, "section2.json"),
-      ],
+      ["bun", "scripts/section2-slice.ts", "--out", join(RUN_DIR, "section2.json")],
       P,
       "section2-slice",
     ),
@@ -326,7 +292,14 @@ recordGate(
 
 // 10. fence — adapter sources untouched, nothing generated under qualification/
 {
-  const adapterDiff = git(["diff", "--stat", BASE_SHA, "HEAD", "--", "packages/agentchat/src/adapters"]);
+  const adapterDiff = git([
+    "diff",
+    "--stat",
+    BASE_SHA,
+    "HEAD",
+    "--",
+    "packages/agentchat/src/adapters",
+  ]);
   const qualStatus = git(["status", "--porcelain", "--", "packages/exec-primitives/qualification"]);
   const output = `adapter-diff:\n${adapterDiff.output}\nqualification-status:\n${qualStatus.output}`;
   writeFileSync(join(LOG_DIR, "check-fence.log"), output);
@@ -337,34 +310,19 @@ recordGate(
 // 11. closure audit on source + consumer fixtures
 recordGate(
   "closure-audit-src",
-  [
-    runLogged(
-      ["bun", "scripts/closure-audit.ts", "--src", "--consumers"],
-      P,
-      "closure-audit-src",
-    ),
-  ],
+  [runLogged(["bun", "scripts/closure-audit.ts", "--src", "--consumers"], P, "closure-audit-src")],
   ["closure-audit-src"],
 );
 
 // 12. tarball qualification (pack, copy, install, run, consumers.json)
-recordGate(
-  "qualify",
-  [runLogged(["bun", "scripts/qualify.ts"], P, "qualify")],
-  ["qualify"],
-);
+recordGate("qualify", [runLogged(["bun", "scripts/qualify.ts"], P, "qualify")], ["qualify"]);
 
 // 13. closure audit on the packed+extracted tarball
 recordGate(
   "closure-audit-tarball",
   [
     runLogged(
-      [
-        "bun",
-        "scripts/closure-audit.ts",
-        "--tarball",
-        join(RUN_DIR, "pack", "extracted"),
-      ],
+      ["bun", "scripts/closure-audit.ts", "--tarball", join(RUN_DIR, "pack", "extracted")],
       P,
       "closure-audit-tarball",
     ),
@@ -373,12 +331,7 @@ recordGate(
 );
 
 // 14. root lint — recorded, non-gating
-recordGate(
-  "root-lint",
-  [runLogged(["bun", "run", "lint"], R, "root-lint")],
-  ["root-lint"],
-  false,
-);
+recordGate("root-lint", [runLogged(["bun", "run", "lint"], R, "root-lint")], ["root-lint"], false);
 
 for (const [i, g] of gates.entries()) {
   const countsStr = g.pass === null ? "" : ` ${String(g.pass)}p/${String(g.fail ?? "?")}f`;
@@ -460,7 +413,9 @@ function validateShape(): string[] {
         typeof d !== "object" ||
         d === null ||
         ["rule", "change", "reason", "pointer"].some(
-          (k) => typeof (d as Record<string, unknown>)[k] !== "string" || (d as Record<string, unknown>)[k] === "",
+          (k) =>
+            typeof (d as Record<string, unknown>)[k] !== "string" ||
+            (d as Record<string, unknown>)[k] === "",
         ),
     )
   ) {
@@ -479,7 +434,14 @@ function validateShape(): string[] {
       reasons.push("tarball block missing from evidence or measurements");
     } else {
       if (evTarball["channel"] !== "stand-in") reasons.push("tarball.channel != stand-in");
-      for (const k of ["name", "sha256", "content_sha256", "files", "unpacked_bytes", "repack_identical"]) {
+      for (const k of [
+        "name",
+        "sha256",
+        "content_sha256",
+        "files",
+        "unpacked_bytes",
+        "repack_identical",
+      ]) {
         if (!deepEqual(evTarball[k], measuredTarball[k])) {
           reasons.push(`tarball.${k} evidence != measurement`);
         }
@@ -568,10 +530,7 @@ function validateShape(): string[] {
   const readme = readFileSync(join(PACKAGE_DIR, "README.md"), "utf8");
   const manifestText = ["penumbra-host", "infra-host"]
     .map((n) =>
-      readFileSync(
-        join(PACKAGE_DIR, "qualification", "consumers", n, "package.json"),
-        "utf8",
-      ),
+      readFileSync(join(PACKAGE_DIR, "qualification", "consumers", n, "package.json"), "utf8"),
     )
     .join("\n");
   const gitLog = git(["log", `${BASE_SHA}..HEAD`, "--format=%B"]).output;

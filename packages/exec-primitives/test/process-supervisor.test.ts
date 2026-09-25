@@ -729,6 +729,64 @@ test("[B10] a throwing onStdoutChunk neither wedges exit nor skips the output ca
   }
 });
 
+test("[B10] a throwing logger.warn cannot defuse the output-limit kill and exit still settles", async () => {
+  const dir = makeTmpDir("logger-throws-cap");
+  try {
+    const t0 = Date.now();
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", 'head -c 1000000 /dev/zero | tr "\\0" a'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 30_000,
+      outputLimitBytes: 65_536,
+      logger: {
+        warn: () => {
+          throw new Error("logger exploded");
+        },
+      },
+    });
+    const exit = await proc.exit;
+    const elapsed = Date.now() - t0;
+    expect(exit.outcome).toBe("output-limit");
+    expect(exit.truncated).toBe(true);
+    expect(elapsed).toBeLessThan(1_500);
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] a throwing logger.warn plus a throwing onProcessEvent still settles exit", async () => {
+  const dir = makeTmpDir("logger-observer-throw");
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", "echo done"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+      onProcessEvent: () => {
+        throw new Error("observer exploded");
+      },
+      logger: {
+        warn: () => {
+          throw new Error("logger exploded");
+        },
+      },
+    });
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("exited");
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
 test("[B10] args must be a string array — undefined and non-string entries throw before spawn", async () => {
   const dir = makeTmpDir("args");
   const marker = join(dir, "spawned");

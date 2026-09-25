@@ -3,7 +3,7 @@
  * node_modules install. Ids on titles mirror the qualification matrix:
  * [T1] spawn shape, [T3]/[T4] cancel-grace and dispatch-deadline honored at
  * both values while the PENUMBRA_* env knobs stay inert, [T6] group teardown,
- * [T7] warm pool under PENUMBRA_WARM_PREWARM_CAP=0, [ACP-CLIENTINFO] and
+ * [T7] output limit through spawnFn, [WARM-POOL] under PENUMBRA_WARM_PREWARM_CAP=0, [ACP-CLIENTINFO] and
  * [ACP-ENVKEYS] wire assertions, [PERM-DENY] deny-by-default, [SCOPE-2]
  * credential isolation, [B8] closed transport, [PARTIAL-NONZERO] and
  * [ERROR-THEN-EXIT] exit surfaces, [GUARD] workspace-resolution tripwire.
@@ -61,6 +61,25 @@ function hostEnv(extra: HostEnv = {}): HostEnv {
   return { ...process.env, ...INERT_ENV, ...extra };
 }
 
+/**
+ * Push the inert knobs into the ambient env as well — the inertness claim is
+ * only real if the library ignores them where they actually leak. Returns the
+ * restore function; call it in finally.
+ */
+function setAmbientInert(): () => void {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of Object.keys(INERT_ENV)) {
+    saved[key] = process.env[key];
+    process.env[key] = INERT_ENV[key];
+  }
+  return () => {
+    for (const key of Object.keys(INERT_ENV)) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  };
+}
+
 const DENY_OPTIONS = [
   { kind: "allow_always", optionId: "allow_always" },
   { kind: "allow_once", optionId: "allow_once" },
@@ -94,42 +113,73 @@ describe("infra-host spawn surface", () => {
   test.each([150, 2500])(
     "[T3] cancelGraceMs %dms is honored — abort escalates at the host grace, not PENUMBRA_CANCEL_GRACE_S",
     async (graceMs) => {
-      const controller = new AbortController();
-      const t0 = Date.now();
-      const promise = spawnFn(
-        ["sh", "-c", 'trap "" TERM; while :; do sleep 1; done'],
-        hostEnv(),
-        CWD,
-        { signal: controller.signal, deadline: 60_000 },
-        { timeoutMs: 30_000, cancelGraceMs: graceMs },
-      );
-      setTimeout(() => {
-        controller.abort();
-      }, 40);
-      const out = await promise;
-      const elapsed = Date.now() - t0;
-      expect(out.outcome).toBe("cancelled");
-      expect(out.signal).toBe("SIGKILL");
-      expect(elapsed).toBeGreaterThanOrEqual(graceMs - 80);
-      expect(elapsed).toBeLessThan(graceMs + 2_000);
+      const restore = setAmbientInert();
+      try {
+        const controller = new AbortController();
+        const t0 = Date.now();
+        const promise = spawnFn(
+          ["sh", "-c", 'trap "" TERM; while :; do sleep 1; done'],
+          hostEnv(),
+          CWD,
+          { signal: controller.signal, deadline: 60_000 },
+          { timeoutMs: 30_000, cancelGraceMs: graceMs },
+        );
+        setTimeout(() => {
+          controller.abort();
+        }, 40);
+        const out = await promise;
+        const elapsed = Date.now() - t0;
+        expect(out.outcome).toBe("cancelled");
+        expect(out.signal).toBe("SIGKILL");
+        expect(elapsed).toBeGreaterThanOrEqual(graceMs - 80);
+        expect(elapsed).toBeLessThan(graceMs + 2_000);
+      } finally {
+        restore();
+      }
     },
   );
 
   test.each([150, 600])(
     "[T4] watchdog fires at min(binding timeoutMs, deadline)=%dms — PENUMBRA_DISPATCH_TIMEOUT_S inert",
     async (deadline) => {
+      const restore = setAmbientInert();
+      try {
+        const t0 = Date.now();
+        const out = await spawnFn(["sleep", "30"], hostEnv(), CWD, {
+          signal: freshSignal(),
+          deadline,
+        });
+        const elapsed = Date.now() - t0;
+        expect(out.outcome).toBe("watchdog");
+        expect(out.signal).toBe("SIGKILL");
+        expect(elapsed).toBeGreaterThanOrEqual(deadline - 50);
+        expect(elapsed).toBeLessThan(deadline + 2_000);
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  test("[T4] watchdog fires at binding timeoutMs when it is below the deadline", async () => {
+    const restore = setAmbientInert();
+    try {
       const t0 = Date.now();
-      const out = await spawnFn(["sleep", "30"], hostEnv(), CWD, {
-        signal: freshSignal(),
-        deadline,
-      });
+      const out = await spawnFn(
+        ["sleep", "30"],
+        hostEnv(),
+        CWD,
+        { signal: freshSignal(), deadline: 60_000 },
+        { timeoutMs: 150, cancelGraceMs: 500 },
+      );
       const elapsed = Date.now() - t0;
       expect(out.outcome).toBe("watchdog");
       expect(out.signal).toBe("SIGKILL");
-      expect(elapsed).toBeGreaterThanOrEqual(deadline - 50);
-      expect(elapsed).toBeLessThan(deadline + 2_000);
-    },
-  );
+      expect(elapsed).toBeGreaterThanOrEqual(100);
+      expect(elapsed).toBeLessThan(2_000);
+    } finally {
+      restore();
+    }
+  });
 
   test("[T6] cancel resolves the exit record only after the whole group is gone", async () => {
     const controller = new AbortController();
@@ -151,7 +201,22 @@ describe("infra-host spawn surface", () => {
     expect(elapsed).toBeLessThan(300 + 2_000);
   });
 
-  test("[T7] warm pool deposit/acquire works with PENUMBRA_WARM_PREWARM_CAP=0 in the env", () => {
+  test("[T7] outputLimitBytes truncates the stream and resolves outcome output-limit", async () => {
+    const t0 = Date.now();
+    const out = await spawnFn(
+      ["sh", "-c", 'head -c 1000000 /dev/zero | tr "\\0" a'],
+      hostEnv(),
+      CWD,
+      { signal: freshSignal(), deadline: 30_000 },
+      { timeoutMs: 30_000, cancelGraceMs: 500, outputLimitBytes: 65_536 },
+    );
+    const elapsed = Date.now() - t0;
+    expect(out.outcome).toBe("output-limit");
+    expect(out.signal).toBe("SIGKILL");
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  test("[WARM-POOL] warm pool deposit/acquire works with PENUMBRA_WARM_PREWARM_CAP=0 in the env", () => {
     const pool = createPool();
     try {
       const env = hostEnv({ INFRA_MARKER: "t7" });

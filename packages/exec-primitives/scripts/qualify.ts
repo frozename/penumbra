@@ -16,7 +16,7 @@
  * Per consumer the runner:
  *   1. copies the tracked fixture (omitting tsconfig*.json, renaming
  *      test/*.parity.ts to *.test.ts so `bun test` picks them up) and writes a
- *      tsconfig.consumer.json scoped to src/**/* with types ["node"];
+ *      tsconfig.consumer.json scoped to src/** with types ["node"];
  *   2. installs the tarball with `bun add ../pack/penumbra-exec-primitives-0.1.0.tgz`
  *      under an isolated HOME + bun cache and asserts the manifest carries
  *      penumbra-exec-primitives as its only runtime dependency;
@@ -94,6 +94,7 @@ const problems: string[] = [];
 
 function cmd(argv: string[], cwd: string, env: NodeJS.ProcessEnv, name: string): CmdResult {
   const [bin, ...args] = argv;
+  if (bin === undefined) throw new Error(`cmd ${name}: empty argv`);
   const r = spawnSync(bin, args, {
     cwd,
     env,

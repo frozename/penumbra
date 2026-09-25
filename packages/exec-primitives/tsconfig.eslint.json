@@ -8,26 +8,12 @@
     "verbatimModuleSyntax": true,
     "exactOptionalPropertyTypes": true,
     "noPropertyAccessFromIndexSignature": true,
-    "types": [
-      "bun"
-    ],
+    "types": ["bun"],
     "paths": {
-      "penumbra-exec-primitives": [
-        "./src/index.ts"
-      ],
-      "@penumbra/*": [
-        "./qualification/stubs/penumbra-poison.d.ts"
-      ]
+      "penumbra-exec-primitives": ["./src/index.ts"],
+      "@penumbra/*": ["./qualification/stubs/penumbra-poison.d.ts"]
     }
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*.ts",
-    "scripts/**/*.ts",
-    "qualification/**/*.ts"
-  ],
-  "exclude": [
-    "qualification/audit-fixtures/**",
-    "qualification/mutations/**"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "qualification/**/*.ts"],
+  "exclude": ["qualification/audit-fixtures/**", "qualification/mutations/**"]
 }

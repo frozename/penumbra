@@ -122,6 +122,20 @@ function disarmTimer(timers: HostTimers, timer: ArmedTimer | null): void {
   timers.clearTimeout(timer.handle);
 }
 
+// The host logger is untrusted: a throw must never skip a group kill, stall
+// the exit wait, or wedge a stream listener — every log goes through here.
+function safeWarn(
+  logger: ExecLogger | undefined,
+  message: string,
+  fields?: Record<string, unknown>,
+): void {
+  try {
+    logger?.warn?.(message, fields);
+  } catch {
+    // Intentionally swallowed.
+  }
+}
+
 async function waitGroupGone(pgid: number | undefined, timers: HostTimers): Promise<void> {
   if (pgid === undefined) return;
   for (;;) {
@@ -229,11 +243,11 @@ function checkStreamCap(
   if (which === "stdout") state.stdoutCapped = true;
   else state.stderrCapped = true;
   state.truncated = true;
-  n.logger?.warn?.("process-supervisor: output limit exceeded; killing group", {
+  killGroup("SIGKILL", "output-limit");
+  safeWarn(n.logger, "process-supervisor: output limit exceeded; killed group", {
     stream: which,
     limit: n.outputLimitBytes,
   });
-  killGroup("SIGKILL", "output-limit");
 }
 
 function attachStreamHandler(
@@ -252,7 +266,7 @@ function attachStreamHandler(
     try {
       cb(buf);
     } catch (err) {
-      n.logger?.warn?.("process-supervisor: output callback threw", {
+      safeWarn(n.logger, "process-supervisor: output callback threw", {
         stream: which,
         errClass: err instanceof Error ? err.name : typeof err,
       });
@@ -263,7 +277,7 @@ function attachStreamHandler(
     try {
       n.onLine(line, which);
     } catch (err) {
-      n.logger?.warn?.("process-supervisor: line callback threw", {
+      safeWarn(n.logger, "process-supervisor: line callback threw", {
         stream: which,
         errClass: err instanceof Error ? err.name : typeof err,
       });
@@ -451,8 +465,11 @@ function wireChildStreams(
     ["stdout", proc.stdout],
     ["stderr", proc.stderr],
   ] as const) {
-    stream?.on("error", (err: Error) => {
-      n.logger?.warn?.("process-supervisor: child stdio stream error", {
+    // ChildProcess-shaped doubles may expose stdio slots without an emitter —
+    // same duck-typing the stdioDone check applies below.
+    if (typeof stream?.on !== "function") continue;
+    stream.on("error", (err: Error) => {
+      safeWarn(n.logger, "process-supervisor: child stdio stream error", {
         stream: which,
         errClass: err.name,
       });
@@ -503,7 +520,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
     try {
       n.onProcessEvent(event);
     } catch (err) {
-      n.logger?.warn?.("process-supervisor: onProcessEvent callback threw", {
+      safeWarn(n.logger, "process-supervisor: onProcessEvent callback threw", {
         errClass: err instanceof Error ? err.name : typeof err,
       });
     }

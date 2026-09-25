@@ -27,11 +27,11 @@ const PACKAGE_DIR = dirname(SCRIPTS_DIR);
 const CONFIG = join(PACKAGE_DIR, "tsconfig.test.json");
 
 const SKIP_SEGMENTS = new Set(["node_modules", "vendor", "dist", "dist-coverage", ".git"]);
-const SKIP_DIRS = [
+const SKIP_DIRS = new Set([
   join(PACKAGE_DIR, "qualification", "audit-fixtures"),
   join(PACKAGE_DIR, "qualification", "consumers", "infra-host", "test", "contract"),
   join(PACKAGE_DIR, "qualification", "consumers", "penumbra-host", "test", "contract"),
-];
+]);
 
 function collectTs(dir: string): string[] {
   const out: string[] = [];
@@ -39,7 +39,7 @@ function collectTs(dir: string): string[] {
     const path = join(dir, name);
     const stat = statSync(path);
     if (stat.isDirectory()) {
-      if (SKIP_SEGMENTS.has(name) || SKIP_DIRS.includes(path)) continue;
+      if (SKIP_SEGMENTS.has(name) || SKIP_DIRS.has(path)) continue;
       out.push(...collectTs(path));
       continue;
     }

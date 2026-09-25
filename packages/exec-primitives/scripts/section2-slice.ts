@@ -15,8 +15,8 @@
  * errors, or never reaches its "Ran N tests" line.
  */
 import { spawnSync } from "node:child_process";
-import { dirname, join, relative } from "node:path";
 import { writeFileSync } from "node:fs";
+import { dirname, relative } from "node:path";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));

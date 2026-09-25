@@ -10,7 +10,7 @@
  * test titles directly, and every required infra id ([T1], [T3], [T4], [T6],
  * [T7], [ACP-CLIENTINFO], [ACP-ENVKEYS], [PERM-DENY], [SCOPE-2], [B8],
  * [PARTIAL-NONZERO], [ERROR-THEN-EXIT], [GUARD]) must appear at least once.
- * Consumer sources are TypeScript (src/**/*.ts, test/*.parity.ts); plain-JS is
+ * Consumer sources are TypeScript (src/**, test/*.parity.ts); plain-JS is
  * permitted only under fixtures/ for spawned child programs (fake-acp.mjs), so
  * any stray .mjs/.js under src/ or test/ is reported.
  *
