@@ -377,6 +377,8 @@ test("[B10] outputLimitBytes kills the group and marks the record truncated", as
     expect(groupExists(proc.pgid)).toBe(true);
     const exit = await proc.exit;
     const overshoot = exit.stdoutBytes - 65_536;
+    // Measured marker — the evidence writer quotes this line from the gate log.
+    console.error(`t7-overshoot=${String(overshoot)}`);
     expect(exit.outcome).toBe("output-limit");
     expect(exit.truncated).toBe(true);
     expect(overshoot).toBeGreaterThan(0);

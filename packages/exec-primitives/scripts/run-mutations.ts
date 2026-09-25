@@ -118,18 +118,26 @@ function failingTitles(output: string): string[] {
   return [...seen].sort();
 }
 
-function summaryCounts(output: string): { pass: number; fail: number; ran: number } | null {
+function summaryCounts(
+  output: string,
+): { pass: number; fail: number; ran: number; errors: number } | null {
   const pass = /^\s*(\d+) pass$/m.exec(output)?.[1];
   const fail = /^\s*(\d+) fail$/m.exec(output)?.[1];
   const ran = /^\s*Ran (\d+) tests\b/m.exec(output)?.[1];
   if (pass === undefined || fail === undefined || ran === undefined) return null;
-  return { pass: Number(pass), fail: Number(fail), ran: Number(ran) };
+  const errors = /^\s*(\d+) errors?$/m.exec(output)?.[1];
+  return {
+    pass: Number(pass),
+    fail: Number(fail),
+    ran: Number(ran),
+    errors: errors === undefined ? 0 : Number(errors),
+  };
 }
 
 interface SuiteRun {
   output: string;
   code: number;
-  counts: { pass: number; fail: number; ran: number } | null;
+  counts: { pass: number; fail: number; ran: number; errors: number } | null;
   failing: string[];
 }
 
@@ -162,7 +170,8 @@ function srcClean(): boolean {
 
 function greenSuite(label: string): boolean {
   const g = runSuite();
-  if (g.code !== 0 || g.counts?.fail !== 0) {
+  const nonzero = (n: number | undefined): boolean => (n ?? 1) !== 0;
+  if (g.code !== 0 || nonzero(g.counts?.fail) || nonzero(g.counts?.errors)) {
     fail(`${label}: suite not green (exit=${String(g.code)}, counts=${JSON.stringify(g.counts)})`);
     return false;
   }
@@ -188,23 +197,34 @@ function exercisePatch(patch: string, relPatchPath: string): { run?: SuiteRun; g
   return { run: mutated, green: greenSuite(`${patch} post-revert`) };
 }
 
-function patchProblems(patch: string, meta: MutationMeta, mutated: SuiteRun | undefined): string[] {
+function countsProblems(mutated: SuiteRun): string[] {
   const out: string[] = [];
-  if (mutated === undefined) return ["suite never ran under the mutation"];
-  if (mutated.counts === null) {
+  const counts = mutated.counts;
+  if (counts === null) {
     out.push("suite never reached its summary line (load error?)");
-  } else {
-    if (mutated.counts.fail !== mutated.failing.length) {
-      out.push(
-        `summary fail=${String(mutated.counts.fail)} vs parsed failing=${String(mutated.failing.length)}`,
-      );
-    }
-    if (mutated.counts.pass + mutated.counts.fail !== mutated.counts.ran) {
-      out.push(
-        `summary pass+fail ${String(mutated.counts.pass + mutated.counts.fail)} != ran ${String(mutated.counts.ran)}`,
-      );
-    }
+    return out;
   }
+  if (counts.fail !== mutated.failing.length) {
+    out.push(
+      `summary fail=${String(counts.fail)} vs parsed failing=${String(mutated.failing.length)}`,
+    );
+  }
+  if (counts.pass + counts.fail !== counts.ran) {
+    out.push(`summary pass+fail ${String(counts.pass + counts.fail)} != ran ${String(counts.ran)}`);
+  }
+  // bun counts a timed-out test as both a fail and an error, so errors ≤ the
+  // failing count is attribution, not a separate defect. Errors beyond that
+  // bound fired outside test context (load/teardown crash) and do fail closed.
+  if (counts.errors > mutated.failing.length) {
+    out.push(
+      `suite reported ${String(counts.errors)} errors vs ${String(mutated.failing.length)} failing tests — errors outside test context`,
+    );
+  }
+  return out;
+}
+
+function detectorProblems(meta: MutationMeta, mutated: SuiteRun): string[] {
+  const out: string[] = [];
   if (mutated.failing.length === 0) {
     out.push("suite stayed green under the mutation — undetected");
   }
@@ -222,6 +242,11 @@ function patchProblems(patch: string, meta: MutationMeta, mutated: SuiteRun | un
     out.push(`no expected detector carries tag [${meta.tag}]`);
   }
   return out;
+}
+
+function patchProblems(meta: MutationMeta, mutated: SuiteRun | undefined): string[] {
+  if (mutated === undefined) return ["suite never ran under the mutation"];
+  return [...countsProblems(mutated), ...detectorProblems(meta, mutated)];
 }
 
 function mutationRecord(
@@ -244,6 +269,7 @@ function mutationRecord(
     pass: mutated?.counts?.pass ?? null,
     fail: mutated?.counts?.fail ?? null,
     ran: mutated?.counts?.ran ?? null,
+    errors: mutated?.counts?.errors ?? null,
     failing_tests: mutated?.failing ?? [],
     expected_detectors: meta.expected,
     expected_detectors_hit:
@@ -258,33 +284,43 @@ function mutationRecord(
   };
 }
 
+/** One patch end-to-end: numstat scope check, apply, run, revert, record. */
+function exerciseOne(patch: string): Record<string, unknown> | undefined {
+  const meta = MUTATION_META[patch];
+  if (meta === undefined) {
+    fail(`${patch}: no measured expectation — unmeasured mutation entry`);
+    return undefined;
+  }
+  const relPatchPath = join("packages/exec-primitives/qualification/mutations", patch);
+  const paths = numstatPaths(relPatchPath);
+  if (paths.length === 0 || paths.length > 3 || paths.some((p) => !p.startsWith(SRC_PREFIX))) {
+    fail(`${patch}: numstat paths out of scope: ${JSON.stringify(paths)}`);
+    return undefined;
+  }
+  const { run: mutated, green: postGreen } = exercisePatch(patch, relPatchPath);
+  const patchIssues = patchProblems(meta, mutated);
+  if (!postGreen) patchIssues.push("suite not green after revert");
+  for (const p of patchIssues) fail(`${patch}: ${p}`);
+  return mutationRecord(patch, meta, paths, mutated, postGreen, patchIssues);
+}
+
 function main(): void {
   const outIdx = process.argv.indexOf("--out");
   const outPath = outIdx === -1 ? undefined : process.argv[outIdx + 1];
   const patches = readdirSync(MUTATIONS_DIR)
     .filter((f) => f.endsWith(".patch"))
     .sort();
+  const expectedPatches = Object.keys(MUTATION_META).sort();
+  if (patches.join("") !== expectedPatches.join("")) {
+    fail(
+      `patch set != MUTATION_META keys: dir=[${patches.join(",")}] meta=[${expectedPatches.join(",")}]`,
+    );
+  }
   const records: unknown[] = [];
 
   for (const patch of patches) {
-    const meta = MUTATION_META[patch];
-    if (meta === undefined) {
-      fail(`${patch}: no measured expectation — unmeasured mutation entry`);
-      continue;
-    }
-    const relPatchPath = join("packages/exec-primitives/qualification/mutations", patch);
-
-    const paths = numstatPaths(relPatchPath);
-    if (paths.length === 0 || paths.length > 3 || paths.some((p) => !p.startsWith(SRC_PREFIX))) {
-      fail(`${patch}: numstat paths out of scope: ${JSON.stringify(paths)}`);
-      continue;
-    }
-
-    const { run: mutated, green: postGreen } = exercisePatch(patch, relPatchPath);
-    const patchIssues = patchProblems(patch, meta, mutated);
-    if (!postGreen) patchIssues.push("suite not green after revert");
-    for (const p of patchIssues) fail(`${patch}: ${p}`);
-    records.push(mutationRecord(patch, meta, paths, mutated, postGreen, patchIssues));
+    const record = exerciseOne(patch);
+    if (record !== undefined) records.push(record);
   }
 
   const cleanAfter = srcClean();

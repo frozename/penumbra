@@ -9,14 +9,16 @@
  *   2. hard preconditions — closure self-test, origin remote, merge-base
  *      ancestors, frozen-lockfile install, clean worktree. Any failure aborts
  *      before artifacts are written.
- *   3. fourteen ordered gates (below). Every gate runs even when an earlier
- *      one failed; one line per gate is printed.
+ *   3. fourteen ordered steps (below). Every step runs even when an earlier
+ *      one failed; one line per step is printed. The fence runs AFTER qualify
+ *      and the tarball audit so it observes the tree the way the composite
+ *      will leave it.
  *   4. SHAPE — the committed evidence pair must be internally consistent and
  *      must match this run's fresh measurements field-for-field. Missing,
  *      malformed, stale, or inconsistent evidence is a failure.
  *   5. SHAREDLIB6-CHECK PASS, or SHAREDLIB6-CHECK FAIL listing every failing
- *      gate (plus SHAPE). There is no sidecar verdict file; nothing downstream
- *      of a failed step is allowed to stand in for a real verdict.
+ *      step (plus SHAPE). There is no sidecar verdict file; nothing
+ *      downstream of a failed step is allowed to stand in for a real verdict.
  *
  * Unless --keep is passed, tmp/sharedlib6 is removed at the end of the run.
  * The tracked tree stays byte-clean: consumers run as copies, generated
@@ -28,6 +30,27 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import {
+  shapeCheckSteps,
+  shapeConsumers,
+  shapeMutations,
+  shapeParity,
+  shapeSection2,
+  shapeTarball,
+  shapeVerdicts,
+} from "./sharedlib6-shape-measured.js";
+import {
+  claimRe,
+  FORBIDDEN_CLAIMS,
+  type GateRec,
+  NPH_LITERALS,
+  readJsonFile,
+  rec,
+  REQUIRED_BLOCKERS,
+  type ShapeContext,
+  str,
+} from "./sharedlib6-shape-util.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -50,21 +73,9 @@ const EVIDENCE_MD = join(
   "qualification",
   `${EVIDENCE_DATE}-sharedlib6-qualification.md`,
 );
-
-const FORBIDDEN_CLAIMS = [
-  "qualified",
-  "ready",
-  "released",
-  "channel chosen",
-  "home chosen",
-  "adopted by llamactl",
-  "dual-consumer parity",
-  "warm pooling is session resume",
-];
-
-function claimRe(claim: string): RegExp {
-  return new RegExp(`\\b${claim.replaceAll(" ", "\\s+")}\\b`, "i");
-}
+const MEASUREMENTS = join(RUN_DIR, "measurements.json");
+const MUTATIONS_JSON = join(RUN_DIR, "mutations.json");
+const SECTION2_JSON = join(RUN_DIR, "section2.json");
 
 interface CmdOut {
   exit: number;
@@ -155,17 +166,8 @@ if (precheckFailures.length > 0) {
 process.stdout.write("prechecks: PASS\n");
 
 // ---------------------------------------------------------------------------
-// 3. ordered gates — all run; failures accumulate
+// 3. ordered steps — all run; failures accumulate
 // ---------------------------------------------------------------------------
-interface GateRec {
-  gate: string;
-  exit: number;
-  pass: number | null;
-  fail: number | null;
-  log: string;
-  gating: boolean;
-}
-
 const gates: GateRec[] = [];
 
 function recordGate(gate: string, outs: CmdOut[], logNames: string[], gating = true): void {
@@ -267,57 +269,28 @@ recordGate(
 // 8. mutation loop
 recordGate(
   "mutations",
-  [
-    runLogged(
-      ["bun", "scripts/run-mutations.ts", "--out", join(RUN_DIR, "mutations.json")],
-      P,
-      "mutations",
-    ),
-  ],
+  [runLogged(["bun", "scripts/run-mutations.ts", "--out", MUTATIONS_JSON], P, "mutations")],
   ["mutations"],
 );
 
 // 9. section-2 baseline slice (origin adapter suites + test/cli)
 recordGate(
   "section2-slice",
-  [
-    runLogged(
-      ["bun", "scripts/section2-slice.ts", "--out", join(RUN_DIR, "section2.json")],
-      P,
-      "section2-slice",
-    ),
-  ],
+  [runLogged(["bun", "scripts/section2-slice.ts", "--out", SECTION2_JSON], P, "section2-slice")],
   ["section2-slice"],
 );
 
-// 10. fence — adapter sources untouched, nothing generated under qualification/
-{
-  const adapterDiff = git([
-    "diff",
-    "--stat",
-    BASE_SHA,
-    "HEAD",
-    "--",
-    "packages/agentchat/src/adapters",
-  ]);
-  const qualStatus = git(["status", "--porcelain", "--", "packages/exec-primitives/qualification"]);
-  const output = `adapter-diff:\n${adapterDiff.output}\nqualification-status:\n${qualStatus.output}`;
-  writeFileSync(join(LOG_DIR, "check-fence.log"), output);
-  const clean = adapterDiff.output.trim() === "" && qualStatus.output.trim() === "";
-  recordGate("fence", [{ exit: clean ? 0 : 1, output }], ["fence"]);
-}
-
-// 11. closure audit on source + consumer fixtures
+// 10. closure audit on source + consumer fixtures
 recordGate(
   "closure-audit-src",
   [runLogged(["bun", "scripts/closure-audit.ts", "--src", "--consumers"], P, "closure-audit-src")],
   ["closure-audit-src"],
 );
 
-// 12. tarball qualification (pack, copy, install, run, consumers.json)
+// 11. tarball qualification (pack, copy, install, run, measurements.json)
 recordGate("qualify", [runLogged(["bun", "scripts/qualify.ts"], P, "qualify")], ["qualify"]);
 
-// 13. closure audit on the packed+extracted tarball
+// 12. closure audit on the packed+extracted tarball
 recordGate(
   "closure-audit-tarball",
   [
@@ -330,6 +303,40 @@ recordGate(
   ["closure-audit-tarball"],
 );
 
+// 13. fence — the composite's own path list plus both porcelain sweeps; runs
+// after qualify and the tarball audit so nothing the run generated can hide.
+{
+  const adapterDiff = git([
+    "diff",
+    "--stat",
+    BASE_SHA,
+    "HEAD",
+    "--",
+    "packages/agentchat",
+    "eslint.config.mjs",
+    ".github",
+    "scripts",
+    "package.json",
+    ".gitignore",
+    "bunfig.toml",
+  ]);
+  const status = git(["status", "--porcelain"]);
+  const qualStatus = git([
+    "status",
+    "--porcelain",
+    "--ignored",
+    "--",
+    "packages/exec-primitives/qualification",
+  ]);
+  const output = `path-diff:\n${adapterDiff.output}\nporcelain:\n${status.output}\nqualification-ignored:\n${qualStatus.output}`;
+  writeFileSync(join(LOG_DIR, "check-fence.log"), output);
+  const clean =
+    adapterDiff.output.trim() === "" &&
+    status.output.trim() === "" &&
+    qualStatus.output.trim() === "";
+  recordGate("fence", [{ exit: clean ? 0 : 1, output }], ["fence"]);
+}
+
 // 14. root lint — recorded, non-gating
 recordGate("root-lint", [runLogged(["bun", "run", "lint"], R, "root-lint")], ["root-lint"], false);
 
@@ -341,223 +348,297 @@ for (const [i, g] of gates.entries()) {
   );
 }
 
+// check_steps live under their own key — never inside evidence.gates[], which
+// holds only the six L1..L6 verdict objects.
+if (existsSync(MEASUREMENTS)) {
+  const existing = rec(readJsonFile(MEASUREMENTS));
+  if (existing !== undefined) {
+    existing["check_steps"] = gates;
+    writeFileSync(MEASUREMENTS, `${JSON.stringify(existing, null, 2)}\n`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 4. SHAPE — committed evidence vs this run's measurements
 // ---------------------------------------------------------------------------
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(value).sort()) {
-      out[k] = canonicalize((value as Record<string, unknown>)[k]);
-    }
-    return out;
-  }
-  return value;
-}
+const shapeCtx: ShapeContext = {
+  repoRoot: REPO_ROOT,
+  packageDir: PACKAGE_DIR,
+  runDir: RUN_DIR,
+  logDir: LOG_DIR,
+  evidenceJson: EVIDENCE_JSON,
+  evidenceMd: EVIDENCE_MD,
+  measurements: MEASUREMENTS,
+  mutations: MUTATIONS_JSON,
+  section2: SECTION2_JSON,
+  baseSha: BASE_SHA,
+  gates,
+  git,
+};
 
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(canonicalize(a)) === JSON.stringify(canonicalize(b));
-}
-
-function readJsonFile(path: string): unknown | undefined {
-  if (!existsSync(path)) return undefined;
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-function validateShape(): string[] {
+function shapeHeadSha(ctx: ShapeContext, evidence: Record<string, unknown>): string[] {
   const reasons: string[] = [];
-  const evidence = readJsonFile(EVIDENCE_JSON) as Record<string, unknown> | undefined;
-  if (evidence === undefined) {
-    reasons.push(`ENOENT or unparseable: ${EVIDENCE_JSON}`);
+  if (evidence["base_sha"] !== ctx.baseSha) reasons.push("evidence base_sha != required base");
+  const headSha = str(evidence["head_sha"]);
+  if (headSha === "") {
+    reasons.push("evidence head_sha missing");
     return reasons;
   }
-  if (!existsSync(EVIDENCE_MD)) {
-    reasons.push(`ENOENT: ${EVIDENCE_MD}`);
+  if (ctx.git(["cat-file", "-e", headSha]).exit !== 0) {
+    reasons.push(`evidence head_sha ${headSha} is not a commit`);
+    return reasons;
   }
+  const listed = ctx
+    .git(["rev-list", `${ctx.baseSha}..HEAD`])
+    .output.split("\n")
+    .map((l) => l.trim());
+  if (!listed.includes(headSha)) {
+    reasons.push("evidence head_sha is not a commit between base and HEAD");
+  }
+  return reasons;
+}
 
-  const head = git(["rev-parse", "HEAD"]).output.trim();
-  if (evidence["base_sha"] !== BASE_SHA) reasons.push("evidence base_sha != required base");
-  if (evidence["head_sha"] !== head) reasons.push("evidence head_sha != HEAD");
-
-  const honesty = evidence["honesty"] as Record<string, unknown> | undefined;
+function shapeHonestyAndClaims(evidence: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
+  const honesty = rec(evidence["honesty"]);
   if (
-    honesty === undefined ||
-    honesty["channel_stand_in"] !== true ||
-    honesty["overall_claim"] !== "none" ||
+    honesty?.["channel_stand_in"] !== true ||
     honesty["channel_chosen"] !== false ||
     honesty["home_chosen"] !== false ||
-    honesty["published"] !== false ||
-    honesty["adopted"] !== false
+    honesty["adoption_performed"] !== false ||
+    honesty["overall_claim"] !== "none"
   ) {
     reasons.push("honesty fields missing or wrong");
   }
-  const claims = evidence["claims_not_made"];
-  if (
-    !Array.isArray(claims) ||
-    claims.length !== FORBIDDEN_CLAIMS.length ||
-    !FORBIDDEN_CLAIMS.every((c) => claims.includes(c))
-  ) {
+  if (!deepEqualLocal(evidence["claims_not_made"], FORBIDDEN_CLAIMS)) {
     reasons.push("claims_not_made does not list exactly the required claims");
   }
-
   const deviations = evidence["deviations"];
   if (
     !Array.isArray(deviations) ||
-    deviations.some(
-      (d) =>
-        typeof d !== "object" ||
-        d === null ||
-        ["rule", "change", "reason", "pointer"].some(
-          (k) =>
-            typeof (d as Record<string, unknown>)[k] !== "string" ||
-            (d as Record<string, unknown>)[k] === "",
-        ),
-    )
+    deviations.some((d) => {
+      const r = rec(d);
+      return (
+        r === undefined || ["rule", "change", "reason", "pointer"].some((k) => str(r[k]) === "")
+      );
+    })
   ) {
     reasons.push("deviations[] entries must all carry non-empty rule/change/reason/pointer");
   }
+  return reasons;
+}
 
-  const consumersJson = readJsonFile(join(RUN_DIR, "consumers.json")) as
-    | Record<string, unknown>
-    | undefined;
-  if (consumersJson === undefined) {
-    reasons.push("ENOENT: tmp/sharedlib6/consumers.json");
+function deepEqualLocal(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function gateEvidenceShape(g: Record<string, unknown>, idx: number): string[] {
+  const reasons: string[] = [];
+  const label = `L${String(idx + 1)}`;
+  if (g["gate"] !== label) reasons.push(`gate ${String(idx + 1)} is not ${label}`);
+  if (g["scope"] !== "branch") reasons.push(`${label} scope != branch`);
+  if (!["PASS", "FAIL", "DEFERRED"].includes(str(g["verdict"]))) {
+    reasons.push(`${label} verdict invalid`);
+  }
+  const nph = g["not_provable_here"];
+  if (!Array.isArray(nph) || nph.length === 0 || nph.some((s) => typeof s !== "string")) {
+    reasons.push(`${label} not_provable_here missing or empty`);
   } else {
-    const measuredTarball = consumersJson["tarball"] as Record<string, unknown> | undefined;
-    const evTarball = evidence["tarball"] as Record<string, unknown> | undefined;
-    if (measuredTarball === undefined || evTarball === undefined) {
-      reasons.push("tarball block missing from evidence or measurements");
-    } else {
-      if (evTarball["channel"] !== "stand-in") reasons.push("tarball.channel != stand-in");
-      for (const k of [
-        "name",
-        "sha256",
-        "content_sha256",
-        "files",
-        "unpacked_bytes",
-        "repack_identical",
-      ]) {
-        if (!deepEqual(evTarball[k], measuredTarball[k])) {
-          reasons.push(`tarball.${k} evidence != measurement`);
-        }
-      }
-      if (measuredTarball["repack_identical"] !== true) {
-        reasons.push("repack determinism not measured identical");
-      }
-    }
-    const measuredConsumers = consumersJson["consumers"] as Record<string, unknown> | undefined;
-    const evConsumers = evidence["consumers"] as Record<string, unknown> | undefined;
-    if (measuredConsumers === undefined || evConsumers === undefined) {
-      reasons.push("consumers block missing from evidence or measurements");
-    } else {
-      if (!deepEqual(evConsumers, measuredConsumers)) {
-        reasons.push("consumers evidence != fresh measurements");
-      } else {
-        for (const [name, rec] of Object.entries(measuredConsumers)) {
-          const r = rec as Record<string, unknown>;
-          const spec = String(r["install_specifier"] ?? "");
-          if (!/^\.\.?\/pack\/penumbra-exec-primitives-0\.1\.0\.tgz$/.test(spec)) {
-            reasons.push(`${name}: install_specifier ${spec} does not name the tmp pack tarball`);
-          }
-          if (r["home_entries_after"] !== 0) {
-            reasons.push(`${name}: isolated HOME not empty after run`);
-          }
-          if (r["network_required"] !== false) {
-            reasons.push(`${name}: runtime steps did not prove network-free`);
-          }
-          if ((r["poison_run"] as Record<string, unknown> | undefined)?.["exit"] !== 0) {
-            reasons.push(`${name}: poison run did not resolve to the stub`);
-          }
-          if (r["digest_equal"] !== true) {
-            reasons.push(`${name}: installed content digest != tarball digest`);
-          }
-          const steps = r["steps"];
-          if (!Array.isArray(steps) || steps.some((s) => (s as { exit: number }).exit !== 0)) {
-            reasons.push(`${name}: a consumer step exited non-zero`);
-          }
-        }
+    for (const lit of NPH_LITERALS[idx + 1] ?? []) {
+      if (!nph.some((s) => String(s).includes(lit))) {
+        reasons.push(`${label} not_provable_here missing literal "${lit}"`);
       }
     }
   }
-
-  const mutationsJson = readJsonFile(join(RUN_DIR, "mutations.json")) as
-    | Record<string, unknown>
-    | undefined;
-  if (mutationsJson === undefined) {
-    reasons.push("ENOENT: tmp/sharedlib6/mutations.json");
-  } else {
-    if (!deepEqual(evidence["mutations"], mutationsJson["mutations"])) {
-      reasons.push("mutations[] evidence != mutation-loop results");
-    }
-    if (mutationsJson["clean_after"] !== true) {
-      reasons.push("mutations left the tree dirty");
-    }
+  const ev = g["evidence"];
+  if (
+    !Array.isArray(ev) ||
+    ev.length === 0 ||
+    ev.some((e) => {
+      const er = rec(e);
+      return (
+        er === undefined ||
+        !["confirmed", "inferred"].includes(str(er["status"])) ||
+        str(er["pointer"]) === "" ||
+        str(er["claim"]) === ""
+      );
+    })
+  ) {
+    reasons.push(`${label} evidence[] malformed`);
   }
+  return reasons;
+}
 
-  const section2 = readJsonFile(join(RUN_DIR, "section2.json")) as
-    | Record<string, unknown>
-    | undefined;
-  if (section2 === undefined) {
-    reasons.push("ENOENT: tmp/sharedlib6/section2.json");
-  } else {
-    const evSection2 = evidence["section2"] as Record<string, unknown> | undefined;
-    if (evSection2 === undefined || !deepEqual(evSection2["measurements"], section2)) {
-      reasons.push("section2 measurements evidence != fresh slice");
-    }
+function shapeL3(g: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
+  if (g["verdict"] === "PASS") reasons.push("L3 must never be PASS");
+  const parts = rec(g["parts"]);
+  if (
+    !["PASS", "FAIL"].includes(str(parts?.["penumbra"])) ||
+    !["PASS", "FAIL"].includes(str(parts?.["synthetic"])) ||
+    parts?.["llamactl"] !== "DEFERRED"
+  ) {
+    reasons.push("L3 parts malformed");
   }
+  if (g["deferred_to"] !== "P2.2/llamactl-adoption") {
+    reasons.push("L3 deferred_to wrong");
+  }
+  if (
+    g["verdict"] === "DEFERRED" &&
+    (parts?.["penumbra"] !== "PASS" || parts["synthetic"] !== "PASS")
+  ) {
+    reasons.push("L3 DEFERRED needs both parts PASS");
+  }
+  return reasons;
+}
 
+function shapeGates(evidence: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
   const evGates = evidence["gates"];
-  if (!Array.isArray(evGates)) {
-    reasons.push("evidence gates[] missing");
-  } else {
-    const simplify = (list: unknown[]): unknown[] =>
-      list.map((g) => {
-        const rec = g as Record<string, unknown>;
-        return { exit: rec["exit"], fail: rec["fail"], gate: rec["gate"], pass: rec["pass"] };
-      });
-    if (!deepEqual(simplify(evGates), simplify(gates))) {
-      reasons.push("evidence gates[] != this run's gate results");
+  if (!Array.isArray(evGates) || evGates.length !== 6) {
+    reasons.push("evidence gates[] must be exactly six L1..L6 entries");
+    return reasons;
+  }
+  for (const [i, g] of evGates.entries()) {
+    reasons.push(...gateEvidenceShape(rec(g) ?? {}, i));
+  }
+  if (rec(evGates[1])?.["verdict_scope"] !== "stand-in") {
+    reasons.push("L2 verdict_scope != stand-in");
+  }
+  reasons.push(...shapeL3(rec(evGates[2]) ?? {}));
+  for (const [i, g] of evGates.entries()) {
+    if (i !== 2 && rec(g)?.["verdict"] === "DEFERRED") {
+      reasons.push(`DEFERRED appears on gate ${String(i + 1)}`);
     }
   }
+  return reasons;
+}
 
-  // forbidden claims: README, consumer manifests, commit messages, and the
-  // evidence md outside its Claims-not-made section
-  const readme = readFileSync(join(PACKAGE_DIR, "README.md"), "utf8");
+function blockerIndex(evidence: Record<string, unknown>): Record<string, Record<string, unknown>> {
+  const bl: Record<string, Record<string, unknown>> = {};
+  const raw = evidence["blockers"];
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const er = rec(entry);
+      const id = str(er?.["id"] ?? er?.["blocker"]);
+      if (id !== "") bl[id] = er ?? {};
+    }
+  } else {
+    for (const [k, v] of Object.entries(rec(raw) ?? {})) {
+      const er = rec(v);
+      if (er !== undefined) bl[k] = er;
+    }
+  }
+  return bl;
+}
+
+function blockerVerdictReasons(
+  evidence: Record<string, unknown>,
+  bl: Record<string, Record<string, unknown>>,
+): string[] {
+  const reasons: string[] = [];
+  const verdict = (i: number): string => {
+    const gatesArr = evidence["gates"];
+    return Array.isArray(gatesArr) ? str(rec(gatesArr[i])?.["verdict"]) : "";
+  };
+  const statusOf = (id: string): string => str(bl[id]?.["status"]);
+  if (verdict(1) === "PASS" && statusOf("B1") !== "resolved") {
+    reasons.push("L2 PASS needs B1 resolved");
+  }
+  if (
+    verdict(3) === "PASS" &&
+    ["B3", "B4", "B6", "B7", "B10"].some((k) => statusOf(k) !== "resolved")
+  ) {
+    reasons.push("L4 PASS needs B3 B4 B6 B7 B10 resolved");
+  }
+  if (verdict(5) === "PASS" && statusOf("B7") !== "resolved") {
+    reasons.push("L6 PASS needs B7 resolved");
+  }
+  return reasons;
+}
+
+function shapeBlockers(evidence: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
+  const bl = blockerIndex(evidence);
+  for (const id of REQUIRED_BLOCKERS) {
+    const status = str(bl[id]?.["status"]);
+    if (!["resolved", "disproved", "open"].includes(status)) {
+      reasons.push(`blocker ${id} status invalid or missing`);
+    }
+  }
+  reasons.push(...blockerVerdictReasons(evidence, bl));
+  return reasons;
+}
+
+function claimsSectionReasons(md: string): string[] {
+  const reasons: string[] = [];
+  const sectionRe = /## Claims not made\n([\s\S]*?)(?=\n## |\n?$)/;
+  const section = sectionRe.exec(md)?.[1] ?? "";
+  const rest = md.replace(sectionRe, "");
+  for (const claim of FORBIDDEN_CLAIMS) {
+    if (!section.includes(claim)) {
+      reasons.push(`claims section missing: ${claim}`);
+    }
+    if (claimRe(claim).test(rest)) {
+      reasons.push(`claim "${claim}" appears outside the Claims-not-made section`);
+    }
+  }
+  return reasons;
+}
+
+function shapeForbiddenClaims(ctx: ShapeContext): string[] {
+  const reasons: string[] = [];
+  const readme = readFileSync(join(ctx.packageDir, "README.md"), "utf8");
   const manifestText = ["penumbra-host", "infra-host"]
     .map((n) =>
-      readFileSync(join(PACKAGE_DIR, "qualification", "consumers", n, "package.json"), "utf8"),
+      readFileSync(join(ctx.packageDir, "qualification", "consumers", n, "package.json"), "utf8"),
     )
     .join("\n");
-  const gitLog = git(["log", `${BASE_SHA}..HEAD`, "--format=%B"]).output;
+  const gitLog = ctx.git(["log", `${ctx.baseSha}..HEAD`, "--format=%B"]).output;
   for (const claim of FORBIDDEN_CLAIMS) {
     const re = claimRe(claim);
     if (re.test(readme)) reasons.push(`README contains forbidden claim: ${claim}`);
     if (re.test(manifestText)) reasons.push(`consumer manifest contains forbidden claim: ${claim}`);
     if (re.test(gitLog)) reasons.push(`commit messages contain forbidden claim: ${claim}`);
   }
-  if (existsSync(EVIDENCE_MD)) {
-    const md = readFileSync(EVIDENCE_MD, "utf8");
-    const sectionRe = /## Claims not made\n([\s\S]*?)(?=\n## |\n?$)/;
-    const section = sectionRe.exec(md)?.[1] ?? "";
-    for (const claim of FORBIDDEN_CLAIMS) {
-      if (!section.includes(claim)) {
-        reasons.push(`claims section missing: ${claim}`);
-      }
-      const rest = md.replace(sectionRe, "");
-      if (claimRe(claim).test(rest)) {
-        reasons.push(`claim "${claim}" appears outside the Claims-not-made section`);
-      }
-    }
+  if (existsSync(ctx.evidenceMd)) {
+    reasons.push(...claimsSectionReasons(readFileSync(ctx.evidenceMd, "utf8")));
   }
   return reasons;
 }
 
-const shapeReasons = validateShape();
+function validateShape(ctx: ShapeContext): string[] {
+  const reasons: string[] = [];
+  const evidence = rec(readJsonFile(ctx.evidenceJson));
+  if (evidence === undefined) {
+    reasons.push(`ENOENT or unparseable: ${ctx.evidenceJson}`);
+    return reasons;
+  }
+  if (!existsSync(ctx.evidenceMd)) {
+    reasons.push(`ENOENT: ${ctx.evidenceMd}`);
+  }
+  reasons.push(...shapeHeadSha(ctx, evidence));
+  reasons.push(...shapeHonestyAndClaims(evidence));
+  reasons.push(...shapeGates(evidence));
+  reasons.push(...shapeBlockers(evidence));
+
+  const measured = rec(readJsonFile(ctx.measurements));
+  if (measured === undefined) {
+    reasons.push("ENOENT: tmp/sharedlib6/measurements.json");
+  } else {
+    reasons.push(...shapeTarball(ctx, evidence, measured));
+    reasons.push(...shapeConsumers(evidence, measured));
+    reasons.push(...shapeParity(ctx, evidence, measured));
+    reasons.push(...shapeVerdicts(ctx, evidence, measured));
+  }
+  reasons.push(...shapeMutations(ctx, evidence));
+  reasons.push(...shapeSection2(ctx, evidence));
+  reasons.push(...shapeCheckSteps(ctx, evidence));
+  reasons.push(...shapeForbiddenClaims(ctx));
+  return reasons;
+}
+
+const shapeReasons = validateShape(shapeCtx);
 if (shapeReasons.length === 0) {
   process.stdout.write("SHAPE PASS\n");
 } else {
@@ -575,7 +656,7 @@ writeFileSync(
   `${JSON.stringify(
     {
       finished_at: new Date().toISOString(),
-      gates,
+      check_steps: gates,
       shape: shapeReasons,
       result,
     },
