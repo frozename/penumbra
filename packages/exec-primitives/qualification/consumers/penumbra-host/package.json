@@ -1,0 +1,8 @@
+{
+  "name": "penumbra-host",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "penumbra-exec-primitives": "file:./vendor/penumbra-exec-primitives"
+  }
+}

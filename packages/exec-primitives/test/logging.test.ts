@@ -31,10 +31,13 @@ describe("[B1] sink boundary", () => {
     }
   });
 
-  test("[B1] with a logger installed, a framing breach reaches logger.warn once", async () => {
+  test("[B1] with a logger installed, a framing breach reaches the logger", async () => {
     const messages: string[] = [];
     const logger: lib.ExecLogger = {
       warn: (msg) => {
+        messages.push(msg);
+      },
+      error: (msg) => {
         messages.push(msg);
       },
     };

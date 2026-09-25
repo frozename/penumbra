@@ -283,7 +283,7 @@ export class StdioAcpClient {
   private breakFraming(reason: string): void {
     if (this.framingBroken) return;
     this.framingBroken = true;
-    this.options.logger?.warn?.(`stdio-acp-client: framing breach — ${reason}; closing transport`);
+    this.options.logger?.error?.(`stdio-acp-client: framing breach — ${reason}; closing transport`);
     this.buffer = Buffer.alloc(0);
     this.contentLength = null;
     try {
