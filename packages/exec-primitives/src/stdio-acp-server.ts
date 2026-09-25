@@ -1,13 +1,18 @@
 import type { Readable, Writable } from "node:stream";
 
-import { spawn } from "node:child_process";
+import type { ExecLogger, HostEnv, HostTimers } from "./host.js";
 
-export interface StartStdioAcpServerOptions {
-  binary: string;
+import { superviseProcess } from "./process-supervisor.js";
+
+export interface StdioAcpServerOptions {
+  command: string;
   args?: string[];
-  cwd?: string;
-  env?: Record<string, string>;
-  signal?: AbortSignal;
+  cwd: string;
+  env: HostEnv;
+  signal: AbortSignal;
+  cancelGraceMs: number;
+  /** Optional hard ceiling on the child lifetime; omit for no watchdog. */
+  watchdogMs?: number;
   /**
    * Bytes of child stderr to retain for diagnostic surfacing in error paths.
    * The captured tail is exposed via `getStderrTail()` so callers can append
@@ -15,6 +20,10 @@ export interface StartStdioAcpServerOptions {
    * before responding. Default 8192.
    */
   stderrTailBytes?: number;
+  /** Host-owned stderr sink — invoked per chunk; the library never tees. */
+  onStderrChunk?: (chunk: string) => void;
+  logger?: ExecLogger;
+  timers?: HostTimers;
 }
 
 export interface StdioAcpHandle {
@@ -29,48 +38,42 @@ export interface StdioAcpHandle {
    * Populated when the child process fails to spawn (ENOENT/EACCES) or emits
    * an `error` event before/without exiting. Callers can surface this to
    * disambiguate `exited === null` (spawn failure) from a SIGKILL exit code.
-   * Optional so existing test fixtures/handle stubs don't need to implement it.
    */
-  getSpawnError?: () => Error | null;
+  getSpawnError: () => Error | null;
 }
 
-export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<StdioAcpHandle> {
-  const {
-    binary,
-    args = [],
-    cwd = process.cwd(),
-    env = process.env,
-    signal,
-    stderrTailBytes = 8192,
-  } = opts;
-  if (signal?.aborted === true) {
-    return Promise.reject(
-      signal.reason instanceof Error ? signal.reason : new Error("stdio-acp-server: start aborted"),
-    );
-  }
+// superviseProcess requires a finite watchdog; the largest setTimeout-safe
+// value (~24.8 days) stands in for "no watchdog" on a long-lived child.
+const NO_WATCHDOG = 2_147_483_000;
 
-  const child = spawn(binary, args, {
-    cwd,
-    env,
-    // Pipe stderr (was 'inherit') so we can both tee bytes to the worker's
-    // stderr (preserves existing log capture in launchd.worker.err.log) and
-    // retain a bounded tail buffer that error paths can surface — without
-    // this, a crashed/limit-bound CLI's stderr was unattributable to a
-    // specific handoff once it landed in the shared worker log.
-    stdio: ["pipe", "pipe", "pipe"],
-    detached: process.platform !== "win32",
+export function startStdioAcpServer(opts: StdioAcpServerOptions): Promise<StdioAcpHandle> {
+  const { stderrTailBytes = 8192, onStderrChunk, logger } = opts;
+  const proc = superviseProcess({
+    command: opts.command,
+    args: opts.args ?? [],
+    cwd: opts.cwd,
+    env: opts.env,
+    signal: opts.signal,
+    cancelGraceMs: opts.cancelGraceMs,
+    watchdogMs: opts.watchdogMs ?? NO_WATCHDOG,
+    stdinMode: "pipe",
+    stdoutMode: "raw",
+    stderrMode: "pipe",
+    ...(logger !== undefined ? { logger } : {}),
+    ...(opts.timers !== undefined ? { timers: opts.timers } : {}),
   });
 
   const tailChunks: Buffer[] = [];
   let tailBytes = 0;
-  child.stderr.on("data", (chunk: Buffer) => {
+  proc.stderr?.on("data", (chunk: Buffer | string) => {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
     try {
-      process.stderr.write(chunk);
+      onStderrChunk?.(buf.toString("utf8"));
     } catch {
-      /* downstream stderr closed */
+      // A throwing host sink must not destabilize the transport.
     }
-    tailChunks.push(chunk);
-    tailBytes += chunk.length;
+    tailChunks.push(buf);
+    tailBytes += buf.length;
     while (tailBytes > stderrTailBytes && tailChunks.length > 0) {
       const head = tailChunks[0] ?? Buffer.alloc(0);
       const overflow = tailBytes - stderrTailBytes;
@@ -84,64 +87,35 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     }
   });
 
-  let spawnError: Error | null = null;
-  const exited = new Promise<number | null>((resolve) => {
-    child.on("exit", (code) => {
-      resolve(code);
+  if (proc.spawnError !== null) {
+    logger?.error?.("stdio-acp-server: spawn error", {
+      command: opts.command,
+      message: proc.spawnError.message,
     });
-    child.on("error", (err) => {
-      // Retain the error so callers can distinguish ENOENT/EACCES from a
-      // clean SIGKILL exit (both otherwise yield exited === null). Log with
-      // adapter+binary context so a misconfigured binary path is not silent
-      // in worker logs.
-      spawnError = err;
-      console.error(
-        `stdio-acp-server: spawn error for binary=${binary} args=${JSON.stringify(args)}: ${err.message}`,
-      );
-      resolve(null);
-    });
+  }
+  void proc.exit.then((record) => {
+    if (record.outcome === "spawn-error") {
+      logger?.error?.("stdio-acp-server: spawn error", {
+        command: opts.command,
+        message: proc.spawnError?.message ?? "unknown",
+      });
+    }
   });
 
-  const signalProcess = (sig: NodeJS.Signals): void => {
-    if (!child.pid) return;
-    try {
-      if (process.platform !== "win32") {
-        process.kill(-child.pid, sig);
-      } else {
-        child.kill(sig);
-      }
-    } catch {
-      // Process may already be gone.
-    }
-  };
-
-  const kill = (): void => {
-    signalProcess("SIGTERM");
-    const timer = setTimeout(() => {
-      signalProcess("SIGKILL");
-    }, 2000);
-    timer.unref();
-  };
-
-  if (signal) {
-    signal.addEventListener(
-      "abort",
-      () => {
-        kill();
-      },
-      { once: true },
-    );
+  const stdin = proc.stdin;
+  const stdout = proc.stdout;
+  if (stdin === undefined || stdout === undefined) {
+    return Promise.reject(new Error("stdio-acp-server: child stdio not piped"));
   }
-
-  const stdin: Writable = child.stdin;
-  const stdout: Readable = child.stdout;
   return Promise.resolve({
     stdin,
     stdout,
-    kill,
-    exited,
-    pid: child.pid,
+    kill: () => {
+      proc.cancel();
+    },
+    exited: proc.exit.then((record) => record.code),
+    pid: proc.pid,
     getStderrTail: () => Buffer.concat(tailChunks).toString("utf8"),
-    getSpawnError: () => spawnError,
+    getSpawnError: () => proc.spawnError,
   });
 }

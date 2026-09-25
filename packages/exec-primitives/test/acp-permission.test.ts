@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import * as lib from "../src/index.ts";
-
-import { requestsTo, startFakeAcp, stopFakeAcp, type FakeAcp } from "./helpers.ts";
+import { type FakeAcp, requestsTo, startFakeAcp, stopFakeAcp } from "./helpers.ts";
 
 interface DecideCall {
   toolName: string;
@@ -11,7 +10,7 @@ interface DecideCall {
 }
 
 async function bootedFake(
-  decide?: (req: DecideCall) => Promise<"approve" | "reject">,
+  decide?: (req: DecideCall) => Promise<"approve" | "reject"> | "approve" | "reject",
   signal?: AbortSignal,
 ): Promise<{
   fake: FakeAcp;
@@ -40,7 +39,7 @@ async function bootedFake(
     ...(decide === undefined
       ? {}
       : {
-          decide: async (req: DecideCall) => {
+          decide: async (req: DecideCall): Promise<"approve" | "reject"> => {
             decideCalls.push(req);
             return await decide(req);
           },
@@ -72,7 +71,7 @@ describe("[PERM] permission requests over a real ACP transport", () => {
   });
 
   test("[PERM] a throwing decide selects reject_once", async () => {
-    const { fake, outcomes, promptDone } = await bootedFake(async () => {
+    const { fake, outcomes, promptDone } = await bootedFake(() => {
       throw new Error("decider exploded");
     });
     try {
@@ -84,7 +83,7 @@ describe("[PERM] permission requests over a real ACP transport", () => {
   });
 
   test("[PERM] decide receives toolName, rawInput and sessionId from the wire", async () => {
-    const { fake, outcomes, decideCalls, promptDone } = await bootedFake(async () => "approve");
+    const { fake, outcomes, decideCalls, promptDone } = await bootedFake(() => "approve");
     try {
       await promptDone;
       expect(decideCalls).toEqual([
@@ -104,7 +103,7 @@ describe("[PERM] permission requests over a real ACP transport", () => {
     const controller = new AbortController();
     controller.abort();
     const { fake, outcomes, decideCalls, promptDone } = await bootedFake(
-      async () => "approve",
+      () => "approve",
       controller.signal,
     );
     try {

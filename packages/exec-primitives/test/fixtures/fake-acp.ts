@@ -99,7 +99,8 @@ function askPermissionThenFinish(id: number | string | null | undefined, session
 
 function handleRequest(message: InboundMessage): void {
   const params = message.params ?? {};
-  switch (message.method) {
+  const method = message.method ?? "";
+  switch (method) {
     case "initialize": {
       const meta: Record<string, unknown> = {
         echo: {

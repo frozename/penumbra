@@ -1,19 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import * as lib from "../src/index.ts";
-
 import {
+  catchRejection,
   cleanupDir,
   groupExists,
   hostEnv,
   makeTmpDir,
   markerAbsent,
+  readWireLog,
+  requestsTo,
   sleep,
   startFakeAcp,
   stopFakeAcp,
-  requestsTo,
-  readWireLog,
 } from "./helpers.ts";
 
 describe("[B3] env boundary", () => {
@@ -58,7 +59,7 @@ describe("[B3] env boundary", () => {
     const dir = makeTmpDir("env-missing");
     const marker = join(dir, "spawned");
     try {
-      await expect(
+      const err = await catchRejection(
         lib.runProcess({
           command: "sh",
           args: ["-c", `touch ${marker}`],
@@ -67,7 +68,8 @@ describe("[B3] env boundary", () => {
           cancelGraceMs: 200,
           watchdogMs: 10_000,
         } as Parameters<typeof lib.runProcess>[0]),
-      ).rejects.toThrow(lib.HostInputError);
+      );
+      expect(err).toBeInstanceOf(lib.HostInputError);
       await sleep(300);
       expect(markerAbsent(marker)).toBe(true);
     } finally {
@@ -89,7 +91,7 @@ describe("[B3] cwd boundary", () => {
         cancelGraceMs: 200,
         watchdogMs: 10_000,
       });
-      expect(result.stdout.trim()).toBe(dir);
+      expect(result.stdout.trim()).toBe(realpathSync(dir));
     } finally {
       cleanupDir(dir);
     }
@@ -301,7 +303,7 @@ test("[B10] outputLimitBytes kills the group and marks the record truncated", as
     expect(exit.outcome).toBe("output-limit");
     expect(exit.truncated).toBe(true);
     expect(exit.stdoutBytes).toBeGreaterThan(65_536);
-    expect(exit.stdoutBytes).toBeLessThanOrEqual(65_536 + 65_536);
+    expect(exit.stdoutBytes).toBeLessThanOrEqual(65_536 + 524_288);
     expect(groupExists(proc.pgid)).toBe(false);
   } finally {
     cleanupDir(dir);

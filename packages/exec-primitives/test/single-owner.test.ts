@@ -32,9 +32,12 @@ describe("[B10] single-owner guarantees", () => {
             kill: () => {
               killed = true;
             },
-            exited: Promise.resolve(null),
+            exited: new Promise<number | null>(() => {
+              // pending forever: a live mock handle
+            }),
             pid: undefined,
             getStderrTail: () => "",
+            getSpawnError: () => null,
           },
         },
       );
@@ -53,11 +56,13 @@ describe("[B10] single-owner guarantees", () => {
   test("[B10] the package namespace contains exactly the documented exports", () => {
     const keys = Object.keys(lib).sort();
     const documented = [
+      "AcpResponseError",
       "AcpTransportClosedError",
       "HostInputError",
       "StdioAcpClient",
       "StdioAcpPermissionContext",
       "createAcpWarmPool",
+      "detectCapacityError",
       "handleStdioAcpPermissionRequest",
       "initializeAcpSession",
       "poolKeyFor",
@@ -85,6 +90,6 @@ describe("[B10] single-owner guarantees", () => {
     });
     expect(result.exitCode).toBe(0);
     const output = result.stdout.toString();
-    expect(output).toContain('"mutableBindings": 0');
+    expect(output).toContain('"mutableBindings":0');
   });
 });

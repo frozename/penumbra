@@ -8,7 +8,7 @@ export class HostInputError extends Error {
   }
 }
 
-export interface HostLogger {
+export interface ExecLogger {
   debug?: (message: string, fields?: Record<string, unknown>) => void;
   warn?: (message: string, fields?: Record<string, unknown>) => void;
   error?: (message: string, fields?: Record<string, unknown>) => void;

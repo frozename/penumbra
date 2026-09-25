@@ -2,8 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import * as lib from "../src/index.ts";
-
-import { hostEnv, makeTmpDir, sleep, cleanupDir } from "./helpers.ts";
+import { cleanupDir, hostEnv, makeTmpDir, sleep } from "./helpers.ts";
 
 describe("[B1] sink boundary", () => {
   test("[B1] with no logger installed, a framing breach writes nothing to stderr or console", async () => {

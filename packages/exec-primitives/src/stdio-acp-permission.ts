@@ -1,4 +1,4 @@
-import type { DispatchInput } from "../sdk/adapter.js";
+import type { ExecLogger } from "./host.js";
 
 const MAX_TOOL_CALL_CONTEXTS = 64;
 const MAX_RETIRED_TOOL_CALL_IDS = 4096;
@@ -103,7 +103,7 @@ function pickPermissionOption(
   return undefined;
 }
 
-function selectTrustAllOption(options: PermissionOption[]): PermissionOption | undefined {
+export function selectTrustAllOption(options: PermissionOption[]): PermissionOption | undefined {
   return pickPermissionOption(options, [
     (option): boolean => option.kind === "allow_always" && isBypassOptionId(option.optionId),
     (option): boolean => option.kind === "allow_always" && !isBypassLikeOptionId(option.optionId),
@@ -113,7 +113,7 @@ function selectTrustAllOption(options: PermissionOption[]): PermissionOption | u
   ]);
 }
 
-function selectConfigOption(
+export function selectConfigOption(
   options: PermissionOption[],
   decision: "approve" | "reject",
 ): PermissionOption | undefined {
@@ -293,12 +293,31 @@ export class StdioAcpPermissionContext {
   }
 }
 
+export interface PermissionDecideRequest {
+  toolName: string;
+  rawInput: unknown;
+  sessionId: string;
+}
+
+/**
+ * Host-owned inputs for a permission decision. The library never reaches into
+ * a dispatch/conversation object: the host supplies the signal, a dispatchId
+ * for diagnostics, an optional trust-all flag, and the decision function.
+ */
+export interface PermissionHost {
+  signal: AbortSignal;
+  dispatchId: string;
+  trustAll?: boolean;
+  decide?: (req: PermissionDecideRequest) => Promise<"approve" | "reject"> | "approve" | "reject";
+  logger?: ExecLogger;
+}
+
 function isSignalAborted(signal: AbortSignal): boolean {
   return signal.aborted;
 }
 
 export async function handleStdioAcpPermissionRequest(
-  input: DispatchInput,
+  host: PermissionHost,
   context: StdioAcpPermissionContext,
   wireRequest: unknown,
 ): Promise<PermissionResult> {
@@ -306,36 +325,37 @@ export async function handleStdioAcpPermissionRequest(
     return cancelledOutcome();
   }
   const request = wireRequest as AcpPermissionRequest;
-  if (isSignalAborted(input.signal) || !context.matchesActiveSession(request.sessionId)) {
+  if (isSignalAborted(host.signal) || !context.matchesActiveSession(request.sessionId)) {
     return cancelledOutcome();
   }
   const options = permissionOptions(request.options);
-  if (input.trust_mode === "all") {
+  if (host.trustAll === true) {
     const chosen = selectTrustAllOption(options);
     return typeof chosen?.optionId === "string"
       ? { outcome: { outcome: "selected", optionId: chosen.optionId } }
       : cancelledOutcome();
   }
-  if (!input.requestPermission) return cancelledOutcome();
+  if (host.decide === undefined) return cancelledOutcome();
   const permissionContext = context.resolve(request);
   if (permissionContext === null) return cancelledOutcome();
 
   let decision: "approve" | "reject" = "approve";
   try {
-    decision = await input.requestPermission({
+    decision = await host.decide({
       toolName: permissionContext.toolName,
       rawInput: permissionContext.rawInput,
-      dispatchId: input.handoff_id ?? input.conversation.id,
+      sessionId: permissionContext.sessionId,
     });
   } catch (err) {
-    console.warn("stdio-acp: permission request failed; rejecting", {
+    host.logger?.warn?.("stdio-acp: permission request failed; rejecting", {
       toolName: permissionContext.toolName,
+      dispatchId: host.dispatchId,
       err: String(err),
     });
     decision = "reject";
   }
   const decisionIsCurrent = context.finishDecision(permissionContext);
-  if (isSignalAborted(input.signal) || !decisionIsCurrent) return cancelledOutcome();
+  if (isSignalAborted(host.signal) || !decisionIsCurrent) return cancelledOutcome();
   const chosen = selectConfigOption(options, decision);
   return typeof chosen?.optionId === "string"
     ? { outcome: { outcome: "selected", optionId: chosen.optionId } }

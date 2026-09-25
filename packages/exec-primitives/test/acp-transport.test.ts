@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import * as lib from "../src/index.ts";
-
-import { sleep } from "./helpers.ts";
+import { catchRejection, sleep } from "./helpers.ts";
 
 function makeClient(opts?: { framing?: "newline" | "content-length" }): {
   client: lib.StdioAcpClient;
@@ -41,7 +40,8 @@ describe("[B8] closed transport", () => {
     const pending = client.request("initialize", { protocolVersion: 1 });
     stdout.destroy();
 
-    await expect(pending).rejects.toBeInstanceOf(lib.AcpTransportClosedError);
+    const err = await catchRejection(pending);
+    expect(err).toBeInstanceOf(lib.AcpTransportClosedError);
   });
 
   test("[B8] notify() after close throws AcpTransportClosedError synchronously", () => {
@@ -63,7 +63,8 @@ describe("[B8] framing limits", () => {
 
     stdout.write(`Content-Length: ${String(32 * 1024 * 1024)}\r\n\r\n`);
 
-    await expect(pending).rejects.toThrow();
+    const err = await catchRejection(pending);
+    expect(err).toBeInstanceOf(Error);
     expect(client.isTransportOpen()).toBe(false);
   });
 });

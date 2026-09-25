@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import * as lib from "../src/index.ts";
-
-import { readWireLog, requestsTo, startFakeAcp, stopFakeAcp, type FakeAcp } from "./helpers.ts";
+import {
+  catchRejection,
+  type FakeAcp,
+  readWireLog,
+  requestsTo,
+  startFakeAcp,
+  stopFakeAcp,
+} from "./helpers.ts";
 
 const CLIENT_INFO = { name: "probe-client", version: "9.9.9", build: { sha: "abc", dirty: true } };
 
@@ -21,9 +27,8 @@ function baseOpts(fake: FakeAcp): BootstrapOpts {
 }
 
 function withoutField(opts: BootstrapOpts, field: keyof BootstrapOpts): BootstrapOpts {
-  const copy: Partial<BootstrapOpts> = { ...opts };
-  delete copy[field];
-  return copy as BootstrapOpts;
+  const entries = Object.entries(opts).filter(([key]) => key !== field);
+  return Object.fromEntries(entries) as BootstrapOpts;
 }
 
 describe("[B6] session bootstrap", () => {
@@ -49,9 +54,10 @@ describe("[B6] session bootstrap", () => {
   test("[B6] a missing clientInfo throws HostInputError before any byte is written", async () => {
     const fake = await startFakeAcp("b6-noclientinfo");
     try {
-      await expect(
+      const err = await catchRejection(
         lib.initializeAcpSession(withoutField(baseOpts(fake), "clientInfo")),
-      ).rejects.toThrow(lib.HostInputError);
+      );
+      expect(err).toBeInstanceOf(lib.HostInputError);
       expect(requestsTo(fake.logPath, "initialize")).toHaveLength(0);
 
       const session = await lib.initializeAcpSession(baseOpts(fake));
@@ -65,9 +71,10 @@ describe("[B6] session bootstrap", () => {
   test("[B6] a missing bootDeadlineMs throws HostInputError before any write", async () => {
     const fake = await startFakeAcp("b6-nodeadline");
     try {
-      await expect(
+      const err = await catchRejection(
         lib.initializeAcpSession(withoutField(baseOpts(fake), "bootDeadlineMs")),
-      ).rejects.toThrow(lib.HostInputError);
+      );
+      expect(err).toBeInstanceOf(lib.HostInputError);
       expect(requestsTo(fake.logPath, "initialize")).toHaveLength(0);
     } finally {
       await stopFakeAcp(fake);
@@ -99,12 +106,13 @@ describe("[B6] session bootstrap", () => {
   test("[B6] a null selector result rejects the bootstrap", async () => {
     const fake = await startFakeAcp("b6-nullsel", { FAKE_ACP_REQUIRE_AUTH: "1" });
     try {
-      await expect(
+      const err = await catchRejection(
         lib.initializeAcpSession({
           ...baseOpts(fake),
           selectAuthMethod: () => null,
         }),
-      ).rejects.toThrow();
+      );
+      expect(err).toBeInstanceOf(Error);
       const log = readWireLog(fake.logPath);
       const methods = log.filter((l) => l.method !== undefined).map((l) => l.method);
       expect(methods).toEqual(["initialize", "session/new"]);
@@ -116,9 +124,10 @@ describe("[B6] session bootstrap", () => {
   test("[B6] a passed boot deadline rejects the bootstrap", async () => {
     const fake = await startFakeAcp("b6-deadline", { FAKE_ACP_DELAY_MS: "300" });
     try {
-      await expect(
+      const err = await catchRejection(
         lib.initializeAcpSession({ ...baseOpts(fake), bootDeadlineMs: 50 }),
-      ).rejects.toThrow(/deadline/i);
+      );
+      expect((err as Error).message).toMatch(/deadline/i);
     } finally {
       await stopFakeAcp(fake);
     }

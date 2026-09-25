@@ -2,10 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import * as lib from "../src/index.ts";
-
 import { cleanupDir, groupExists, hostEnv, makeTmpDir, sleep } from "./helpers.ts";
 
-function mockHandle(label: string): { handle: lib.StdioAcpHandle; killed: () => boolean } {
+function mockHandle(): { handle: lib.StdioAcpHandle; killed: () => boolean } {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   let killed = false;
@@ -15,10 +14,12 @@ function mockHandle(label: string): { handle: lib.StdioAcpHandle; killed: () => 
     kill: () => {
       killed = true;
     },
-    exited: Promise.resolve(null),
+    exited: new Promise<number | null>(() => {
+      // pending forever: a live mock handle
+    }),
     pid: undefined,
     getStderrTail: () => "",
-    label,
+    getSpawnError: () => null,
   };
   return { handle, killed: () => killed };
 }
@@ -46,7 +47,7 @@ describe("[B7] warm pool", () => {
 
   test("[B7] distinct digests never share an entry; identical digests reuse", () => {
     const pool = lib.createAcpWarmPool({ now: () => Date.now() });
-    const { handle } = mockHandle("scope-a");
+    const { handle } = mockHandle();
     pool.deposit(spec("scope-a"), { client: {}, handle });
     try {
       expect(pool.acquire(spec("scope-b"))).toBeNull();
@@ -88,6 +89,7 @@ describe("[B7] warm pool", () => {
         exited: pooledProc.exit.then((r) => r.code),
         pid: pooledProc.pid,
         getStderrTail: () => "",
+        getSpawnError: () => null,
       };
       pool.deposit(spec("scope-a"), { client: {}, handle: pooled });
       pool.deposit(spec("scope-b"), { client: {}, handle: pooled });
@@ -111,7 +113,7 @@ describe("[B7] warm pool", () => {
     const poolA = lib.createAcpWarmPool({ now: () => Date.now() });
     const poolB = lib.createAcpWarmPool({ now: () => Date.now() });
     try {
-      const { handle } = mockHandle("only-a");
+      const { handle } = mockHandle();
       poolA.deposit(spec("scope-a"), { client: {}, handle });
       expect(poolB.acquire(spec("scope-a"))).toBeNull();
       expect(poolB.diagnostics().live).toBe(0);
@@ -126,7 +128,7 @@ describe("[B7] warm pool", () => {
   test("[B7] sweepIntervalMs is an injectable option and the sweeper evicts an expired idle entry", async () => {
     const pool = lib.createAcpWarmPool({ sweepIntervalMs: 30, now: () => Date.now() });
     try {
-      const { handle, killed } = mockHandle("idle");
+      const { handle, killed } = mockHandle();
       pool.deposit({ ...spec("scope-a"), graceMs: 1 }, { client: {}, handle });
       expect(pool.diagnostics().live).toBe(1);
       await sleep(300);

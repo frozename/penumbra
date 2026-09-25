@@ -2,6 +2,27 @@ import type { Readable, Writable } from "node:stream";
 
 import { createInterface } from "node:readline";
 
+import type { ExecLogger } from "./host.js";
+
+export class AcpTransportClosedError extends Error {
+  constructor(message = "stdio-acp-client: transport closed") {
+    super(message);
+    this.name = "AcpTransportClosedError";
+  }
+}
+
+export class AcpResponseError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(message: string, code: number, data?: unknown) {
+    super(message);
+    this.name = "AcpResponseError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
   method: string;
@@ -32,6 +53,7 @@ export interface StdioAcpClientOptions {
   stdin: Writable;
   stdout: Readable;
   framing?: "newline" | "content-length";
+  logger?: ExecLogger;
 }
 
 interface PendingRequest {
@@ -123,6 +145,11 @@ export class StdioAcpClient {
   }
 
   async request(method: string, params?: unknown): Promise<unknown> {
+    if (!this.isTransportOpen()) {
+      return await Promise.reject(
+        new AcpTransportClosedError(`stdio-acp-client: request "${method}" on closed transport`),
+      );
+    }
     const id = this.nextId++;
     const request: JsonRpcRequest = {
       jsonrpc: "2.0",
@@ -138,6 +165,9 @@ export class StdioAcpClient {
   }
 
   notify(method: string, params?: unknown): void {
+    if (!this.isTransportOpen()) {
+      throw new AcpTransportClosedError(`stdio-acp-client: notify "${method}" on closed transport`);
+    }
     const notification: JsonRpcNotification = {
       jsonrpc: "2.0",
       method,
@@ -168,7 +198,9 @@ export class StdioAcpClient {
         const message = JSON.parse(trimmed) as unknown;
         this.handleMessage(message);
       } catch (err) {
-        console.error("stdio-acp-client: failed to parse JSON-RPC message:", err);
+        this.options.logger?.error?.("stdio-acp-client: failed to parse JSON-RPC message", {
+          err: String(err),
+        });
       }
     });
   }
@@ -209,7 +241,9 @@ export class StdioAcpClient {
       const message = JSON.parse(bodyStr) as unknown;
       this.handleMessage(message);
     } catch (err) {
-      console.error("stdio-acp-client: failed to parse framed JSON-RPC message:", err);
+      this.options.logger?.error?.("stdio-acp-client: failed to parse framed JSON-RPC message", {
+        err: String(err),
+      });
     }
     return true;
   }
@@ -237,10 +271,10 @@ export class StdioAcpClient {
         }
         this.contentLength = parsed;
       } else {
-        console.error("stdio-acp-client: invalid Content-Length header");
+        this.options.logger?.warn?.("stdio-acp-client: invalid Content-Length header");
       }
     } else {
-      console.error("stdio-acp-client: missing Content-Length in header");
+      this.options.logger?.warn?.("stdio-acp-client: missing Content-Length in header");
       // Try to recover by dropping header
     }
     this.buffer = this.buffer.subarray(headerEnd + 4);
@@ -249,7 +283,7 @@ export class StdioAcpClient {
   private breakFraming(reason: string): void {
     if (this.framingBroken) return;
     this.framingBroken = true;
-    console.error(`stdio-acp-client: framing breach — ${reason}; closing transport`);
+    this.options.logger?.warn?.(`stdio-acp-client: framing breach — ${reason}; closing transport`);
     this.buffer = Buffer.alloc(0);
     this.contentLength = null;
     try {
@@ -272,7 +306,7 @@ export class StdioAcpClient {
   private closeTransport(cause?: Error): void {
     if (!this.transportOpen) return;
     this.transportOpen = false;
-    const err = cause ?? new Error("stdio-acp-client: transport closed");
+    const err = cause ?? new AcpTransportClosedError();
     for (const req of this.pendingRequests.values()) {
       req.reject(err);
     }
@@ -307,8 +341,10 @@ export class StdioAcpClient {
     this.pendingRequests.delete(id);
     if (message.error) {
       pending.reject(
-        new Error(
+        new AcpResponseError(
           `stdio-acp-client: ${message.error.message} (code: ${String(message.error.code)})`,
+          message.error.code,
+          message.error.data,
         ),
       );
     } else {
@@ -341,7 +377,7 @@ export class StdioAcpClient {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       const code = extractErrorCode(err);
-      console.warn("stdio-acp-client: wrote JSON-RPC error frame", {
+      this.options.logger?.warn?.("stdio-acp-client: wrote JSON-RPC error frame", {
         method: message.method,
         code,
         messageLength: err.message.length,

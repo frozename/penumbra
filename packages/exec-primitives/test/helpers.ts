@@ -24,6 +24,17 @@ export function sleep(ms: number): Promise<void> {
   });
 }
 
+// bun:test types report `.rejects.X()` as void though it is async at runtime;
+// capture the rejection directly so assertions stay lint-clean.
+export async function catchRejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected promise to reject");
+}
+
 export function groupExists(pgid: number | undefined): boolean {
   if (pgid === undefined) return false;
   try {
@@ -75,7 +86,7 @@ export async function startFakeAcp(
   const logPath = join(dir, "wire.log");
   const env = hostEnv(dir, { FAKE_ACP_LOG: logPath, ...extraEnv });
   const handle = await lib.startStdioAcpServer({
-    binary: "bun",
+    command: "bun",
     args: [FIXTURE_PATH],
     cwd: dir,
     env,
