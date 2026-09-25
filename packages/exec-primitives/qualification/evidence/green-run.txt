@@ -1,0 +1,63 @@
+bun test v1.3.14 (0d9b296a)
+
+test/acp-permission.test.ts:
+(pass) [PERM] permission requests over a real ACP transport > [PERM] a host without decide cancels the request (deny by default) [29.53ms]
+(pass) [PERM] permission requests over a real ACP transport > [PERM] a throwing decide selects reject_once [21.11ms]
+(pass) [PERM] permission requests over a real ACP transport > [PERM] decide receives toolName, rawInput and sessionId from the wire [20.62ms]
+(pass) [PERM] permission requests over a real ACP transport > [PERM] an aborted signal cancels before decide runs [20.95ms]
+(pass) [PERM] permission requests over a real ACP transport > [PERM] selectConfigOption and selectTrustAllOption are pure exported helpers [0.11ms]
+
+test/acp-session.test.ts:
+(pass) [B6] session bootstrap > [B6] initialize params carry the host clientInfo verbatim on the wire [20.61ms]
+(pass) [B6] session bootstrap > [B6] a missing clientInfo throws HostInputError before any byte is written [20.47ms]
+(pass) [B6] session bootstrap > [B6] a missing bootDeadlineMs throws HostInputError before any write [0.82ms]
+(pass) [B6] session bootstrap > [B6] session/new -32000 runs the selector, authenticates, and issues a single new-session retry [20.07ms]
+(pass) [B6] session bootstrap > [B6] a null selector result rejects the bootstrap [19.91ms]
+(pass) [B6] session bootstrap > [B6] a passed boot deadline rejects the bootstrap [54.25ms]
+
+test/acp-transport.test.ts:
+(pass) [B8] closed transport > [B8] request() on a closed transport rejects AcpTransportClosedError within 50ms [22.66ms]
+(pass) [B8] closed transport > [B8] an in-flight request still rejects when the transport closes [0.46ms]
+(pass) [B8] closed transport > [B8] notify() after close throws AcpTransportClosedError synchronously [0.08ms]
+(pass) [B8] framing limits > [B8] an oversized Content-Length frame breaks framing and rejects pending requests [0.32ms]
+
+test/acp-warm-pool.test.ts:
+(pass) [B7] warm pool > [B7] poolKeyFor requires a credential scope and fails closed [0.09ms]
+(pass) [B7] warm pool > [B7] distinct digests never share an entry; identical digests reuse [0.34ms]
+(pass) [B7] warm pool > [B7] teardown kills exactly the deposited handles; a control process survives [205.16ms]
+(pass) [B7] warm pool > [B7] createAcpWarmPool is instance state: separate pools do not share entries [0.88ms]
+(pass) [B7] warm pool > [B7] sweepIntervalMs is an injectable option and the sweeper evicts an expired idle entry [302.91ms]
+
+test/logging.test.ts:
+(pass) [B1] sink boundary > [B1] with no logger installed, a framing breach writes nothing to stderr or console [13.77ms]
+(pass) [B1] sink boundary > [B1] with a logger installed, a framing breach reaches the logger [13.30ms]
+(pass) [B1] sink boundary > [B1] child stderr reaches onStderrChunk and is never teed to process.stderr [310.11ms]
+
+test/process-supervisor.test.ts:
+(pass) [B3] env boundary > [B3] runProcess passes the host env verbatim and leaks nothing [22.81ms]
+(pass) [B3] env boundary > [B3] startStdioAcpServer child sees exactly the host env keys [35.78ms]
+(pass) [B3] env boundary > [B3] a missing env throws HostInputError before spawn [302.67ms]
+(pass) [B3] cwd boundary > [B3] cwd is required and reaches the child verbatim [37.46ms]
+(pass) [B3] cwd boundary > [B3] a missing cwd throws HostInputError before spawn [301.88ms]
+(pass) [B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=300 [364.73ms]
+(pass) [B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=2500 [2565.37ms]
+(pass) [B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=400 [410.03ms]
+(pass) [B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=2500 [2508.51ms]
+(pass) [B10] required host inputs > [B10] missing cancelGraceMs throws HostInputError before spawn [305.63ms]
+(pass) [B10] required host inputs > [B10] missing watchdogMs throws HostInputError before spawn [306.62ms]
+(pass) [B10] required host inputs > [B10] missing signal throws HostInputError before spawn [304.62ms]
+(pass) [B10] cancel resolves the exit record only after the whole group is gone [362.24ms]
+(pass) [B10] outputLimitBytes kills the group and marks the record truncated [62.62ms]
+(pass) [B10] injected timers are fully disarmed by the time exit resolves on every outcome [220.39ms]
+(pass) [B10] runProcess resolves on non-zero exit without throwing [5.45ms]
+(pass) [B10] the wire log of a real ACP session round-trips through superviseProcess pipes [24.09ms]
+
+test/single-owner.test.ts:
+(pass) [B10] single-owner guarantees > [B10] two imports of the package produce independent pool instances [0.39ms]
+(pass) [B10] single-owner guarantees > [B10] the package namespace contains exactly the documented exports [0.06ms]
+(pass) [B10] single-owner guarantees > [B10] the closure audit reports zero mutable module-scope bindings [16.20ms]
+
+ 43 pass
+ 0 fail
+ 151 expect() calls
+Ran 43 tests across 7 files. [9.29s]
