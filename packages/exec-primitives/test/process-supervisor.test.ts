@@ -308,6 +308,34 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
   }
 });
 
+test("[B10] cancel delivers SIGTERM before escalating to SIGKILL", async () => {
+  const dir = makeTmpDir("term-first");
+  const ac = new AbortController();
+  let stdout = "";
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", 'trap "echo TERM-SEEN; exit 0" TERM; while :; do sleep 1; done'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: ac.signal,
+      cancelGraceMs: 2_000,
+      watchdogMs: 30_000,
+      onStdoutChunk: (chunk) => {
+        stdout += chunk.toString("utf8");
+      },
+    });
+    await sleep(50);
+    ac.abort();
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("cancelled");
+    expect(stdout).toContain("TERM-SEEN");
+    expect(exit.signal).not.toBe("SIGKILL");
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
 test("[B10] outputLimitBytes kills the group and marks the record truncated", async () => {
   const dir = makeTmpDir("cap");
   let maxChunk = 0;

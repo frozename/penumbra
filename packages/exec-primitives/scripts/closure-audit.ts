@@ -19,6 +19,7 @@ const PACKAGE_DIR = dirname(SCRIPTS_DIR);
 const QUALIFICATION_DIR = join(PACKAGE_DIR, "qualification");
 const FIXTURES_DIR = join(QUALIFICATION_DIR, "audit-fixtures");
 const ALLOWLIST_PATH = join(QUALIFICATION_DIR, "audit-allowlist.json");
+const DIST_ALLOWLIST_PATH = join(QUALIFICATION_DIR, "audit-allowlist-dist.json");
 
 interface Finding {
   file: string;
@@ -71,8 +72,7 @@ const CONSUMER_SRC_BANNED_BUILTINS = new Set([
   "net",
   "worker_threads",
 ]);
-const FORBIDDEN_SPECIFIER_SCHEME =
-  /^(?:@penumbra\/|@src\/|workspace:|file:|link:|bun:)/;
+const FORBIDDEN_SPECIFIER_SCHEME = /^(?:@penumbra\/|@src\/|workspace:|file:|link:|bun:)/;
 
 const TOKEN_RULES: { rule: string; re: RegExp }[] = [
   { rule: "process-env", re: /\bprocess\.env\b/ },
@@ -160,7 +160,9 @@ function extractSpecifiers(raw: string, stripped: string, rel: string): Specifie
       line: lineOf(raw, m.index ?? 0),
     });
   }
-  for (const m of stripped.matchAll(/(?:^|\n)\s*(import|export)\s([^;]*?)\bfrom\s*["']([^"'\n]+)["']/g)) {
+  for (const m of stripped.matchAll(
+    /(?:^|\n)\s*(import|export)\s([^;]*?)\bfrom\s*["']([^"'\n]+)["']/g,
+  )) {
     const stmt = m[2] ?? "";
     out.push({
       specifier: m[3] ?? "",
@@ -205,11 +207,7 @@ function specifierKind(specifier: string): "node" | "relative" | "forbidden" | "
   return "bare";
 }
 
-function auditCodeRoot(
-  root: string,
-  extensions: string[],
-  allowlist: AllowEntry[],
-): ScanResult {
+function auditCodeRoot(root: string, extensions: string[], allowlist: AllowEntry[]): ScanResult {
   const result: ScanResult = {
     files: 0,
     lines: 0,
@@ -249,8 +247,7 @@ function auditCodeRoot(
         result.findings.push({ file: rel, line: spec.line, rule, token, text: spec.specifier });
       };
       if (spec.kind === "dynamic") {
-        const okLiteral =
-          spec.specifier.startsWith("./") || spec.specifier.startsWith("../");
+        const okLiteral = spec.specifier.startsWith("./") || spec.specifier.startsWith("../");
         if (!okLiteral) {
           finding("dynamic-import", spec.specifier);
           continue;
@@ -265,8 +262,7 @@ function auditCodeRoot(
         const builtin = spec.specifier.slice(5).split("/")[0] ?? "";
         if (!RUNTIME_NODE_BUILTINS.has(builtin)) finding("node-builtin", spec.specifier);
       } else if (kind === "relative") {
-        if (resolvesOutside(root, rel, spec.specifier))
-          finding("relative-escape", spec.specifier);
+        if (resolvesOutside(root, rel, spec.specifier)) finding("relative-escape", spec.specifier);
       } else {
         finding("bare-specifier", spec.specifier);
       }
@@ -430,8 +426,7 @@ function auditConsumerRoot(root: string): ScanResult {
       }
       if (kind === "node") {
         const builtin = s.slice(5).split("/")[0] ?? "";
-        if (inSrc && CONSUMER_SRC_BANNED_BUILTINS.has(builtin))
-          finding("consumer-node-builtin");
+        if (inSrc && CONSUMER_SRC_BANNED_BUILTINS.has(builtin)) finding("consumer-node-builtin");
         continue;
       }
       if (kind === "forbidden") {
@@ -506,9 +501,7 @@ function auditAndPrint(
       bytes: 0,
       specifiers: [],
       mutableBindings: 0,
-      findings: [
-        { file: label, line: 0, rule: "missing-dir", token: root, text: root },
-      ],
+      findings: [{ file: label, line: 0, rule: "missing-dir", token: root, text: root }],
     };
   }
   const result =
@@ -556,13 +549,7 @@ function runSelfTest(): number {
       failures += 1;
     }
   }
-  const src = auditAndPrint(
-    "src",
-    join(PACKAGE_DIR, "src"),
-    "code",
-    [".ts"],
-    ALLOWLIST_PATH,
-  );
+  const src = auditAndPrint("src", join(PACKAGE_DIR, "src"), "code", [".ts"], ALLOWLIST_PATH);
   if (src.findings.length > 0 || src.mutableBindings > 0) {
     process.stdout.write("self-test FAIL: real src audit not clean\n");
     failures += 1;
@@ -609,17 +596,14 @@ function main(): void {
       join(dir, "package", "dist", "src"),
       "code",
       [".js", ".d.ts"],
-      ALLOWLIST_PATH,
+      DIST_ALLOWLIST_PATH,
     );
     const manifestPath = join(dir, "package", "package.json");
     if (!existsSync(manifestPath)) {
       process.stdout.write(`finding: package.json:0 [missing-dir] ${manifestPath}\n`);
       failures += 1;
     } else {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
-        string,
-        unknown
-      >;
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
       if ("dependencies" in manifest) {
         process.stdout.write(`finding: package.json:0 [dependencies-key] dependencies\n`);
         failures += 1;

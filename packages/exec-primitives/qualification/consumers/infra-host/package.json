@@ -1,0 +1,9 @@
+{
+  "name": "infra-host-consumer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "penumbra-exec-primitives": "file:vendor/penumbra-exec-primitives"
+  }
+}

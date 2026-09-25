@@ -1,0 +1,13 @@
+diff --git a/packages/exec-primitives/src/process-supervisor.ts b/packages/exec-primitives/src/process-supervisor.ts
+index 0c1beb7b3..bf8fe9e91 100644
+--- a/packages/exec-primitives/src/process-supervisor.ts
++++ b/packages/exec-primitives/src/process-supervisor.ts
+@@ -343,7 +343,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
+ 
+   const startCancelSequence = (reason: "abort" | "cancel"): void => {
+     if (state.cancelTimer !== null) return;
+-    killGroup("SIGTERM", reason);
++    killGroup("SIGKILL", reason);
+     state.cancelTimer = armTimer(n.timers, n.cancelGraceMs, () => {
+       killGroup("SIGKILL", "grace-expired");
+     });

@@ -1,0 +1,51 @@
+[
+  {
+    "file": "process-supervisor.js",
+    "line": 81,
+    "token": "attachstreamhandler",
+    "classification": "false-positive",
+    "reason": "false-positive: compiled name of the private helper wiring chunk/line handlers onto a piped child stream; no process/session attachment policy"
+  },
+  {
+    "file": "process-supervisor.js",
+    "line": 131,
+    "token": "resume",
+    "classification": "false-positive",
+    "reason": "false-positive: Readable.resume() puts the piped child stream into flowing mode; unrelated to session-resume or warm-reuse policy"
+  },
+  {
+    "file": "process-supervisor.js",
+    "line": 317,
+    "token": "attachstreamhandler",
+    "classification": "false-positive",
+    "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"
+  },
+  {
+    "file": "process-supervisor.js",
+    "line": 320,
+    "token": "attachstreamhandler",
+    "classification": "false-positive",
+    "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"
+  },
+  {
+    "file": "stdio-acp-client.d.ts",
+    "line": 56,
+    "token": "attachnewlinereader",
+    "classification": "false-positive",
+    "reason": "false-positive: declaration of the private readline wirer; no attachment policy"
+  },
+  {
+    "file": "stdio-acp-client.js",
+    "line": 48,
+    "token": "attachnewlinereader",
+    "classification": "false-positive",
+    "reason": "false-positive: compiled name of the private readline wirer; no attachment policy"
+  },
+  {
+    "file": "stdio-acp-client.js",
+    "line": 125,
+    "token": "attachnewlinereader",
+    "classification": "false-positive",
+    "reason": "false-positive: call site of the private readline wirer; no attachment policy"
+  }
+]

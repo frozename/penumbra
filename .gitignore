@@ -10,6 +10,13 @@ coverage/
 
 # Bun
 bun.lockb
+
+# exec-primitives qualification: vendored tarball, installs, lockfiles and the
+# generated contract port are transient run artifacts — qualify.ts rebuilds
+# them on every run.
+packages/exec-primitives/qualification/consumers/*/vendor/
+packages/exec-primitives/qualification/consumers/*/bun.lock
+packages/exec-primitives/qualification/consumers/*/test/contract/
 # Install cache that `bun install` writes into the checkout root. Untracked, it
 # leaves every isolated-install worktree dirty after an install.
 .bun/

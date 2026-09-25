@@ -4,7 +4,7 @@ Shared execution primitives extracted from Penumbra's `agentchat` adapter layer:
 process-group supervision (`superviseProcess`, `runProcess`), stdio ACP transport
 (`StdioAcpClient`, `startStdioAcpServer`), permission request handling
 (`StdioAcpPermissionContext`, `handleStdioAcpPermissionRequest`), a warm-process
-pool (`createAcpWarmPool`, `poolKeyFor`, `acpSpecHash`), and ACP session bootstrap
+pool (`createAcpWarmPool`, `poolKeyFor` — hosts compute `spec.specHash`), and ACP session bootstrap
 (`initializeAcpSession`).
 
 ## Host contract
