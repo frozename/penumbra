@@ -1,0 +1,16 @@
+diff --git a/packages/exec-primitives/src/stdio-acp-client.ts b/packages/exec-primitives/src/stdio-acp-client.ts
+index ad9cd5dfc..e4be009a3 100644
+--- a/packages/exec-primitives/src/stdio-acp-client.ts
++++ b/packages/exec-primitives/src/stdio-acp-client.ts
+@@ -145,11 +145,6 @@ export class StdioAcpClient {
+   }
+ 
+   async request(method: string, params?: unknown): Promise<unknown> {
+-    if (!this.isTransportOpen()) {
+-      return await Promise.reject(
+-        new AcpTransportClosedError(`stdio-acp-client: request "${method}" on closed transport`),
+-      );
+-    }
+     const id = this.nextId++;
+     const request: JsonRpcRequest = {
+       jsonrpc: "2.0",

@@ -1,0 +1,13 @@
+diff --git a/packages/exec-primitives/src/stdio-acp-permission.ts b/packages/exec-primitives/src/stdio-acp-permission.ts
+index 88b19fae1..f0d54f715 100644
+--- a/packages/exec-primitives/src/stdio-acp-permission.ts
++++ b/packages/exec-primitives/src/stdio-acp-permission.ts
+@@ -352,7 +352,7 @@ export async function handleStdioAcpPermissionRequest(
+       dispatchId: host.dispatchId,
+       err: String(err),
+     });
+-    decision = "reject";
++    decision = "approve";
+   }
+   const decisionIsCurrent = context.finishDecision(permissionContext);
+   if (isSignalAborted(host.signal) || !decisionIsCurrent) return cancelledOutcome();
