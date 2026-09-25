@@ -1,26 +1,38 @@
+#!/usr/bin/env bun
 /**
- * qualify.ts — consumer qualification for the exec-primitives candidate.
+ * Tarball qualification: pack the library, install the packed artifact into two
+ * temporary host consumers under tmp/sharedlib6/, and prove it runs there
+ * without any penumbra workspace source on the resolution path.
  *
- * Packs the package into a local tarball (a channel stand-in only — not a
- * release or registry artifact), vendors the unpacked tree into two throwaway
- * consumers, installs with an isolated HOME, and runs each consumer's suites
- * against the packed bits:
+ * Layout (all inside tmp/sharedlib6/, wiped by the composite check):
+ *   pack/penumbra-exec-primitives-0.1.0.tgz   — candidate tarball
+ *   pack/repack/…tgz                          — second pack for determinism
+ *   pack/extracted/, pack/repack-extracted/   — unpacked content trees
+ *   node_modules/@penumbra/<name>/            — poison layer: any upward
+ *     resolution of @penumbra/* from a consumer copy lands on a throwing stub
+ *   home-<consumer>/                          — isolated HOME per consumer
+ *   consumer-<name>/                          — copied consumer fixture
  *
- *   penumbra-host  — bun consumer; ported contract suite (generated into
- *                    test/contract/), the *.parity.ts adapter-parity suites,
- *                    and src/smoke.ts.
- *   infra-host     — plain-JS consumer; test/infra.parity.mjs plus
- *                    src/smoke.mjs under BOTH bun and node.
+ * Per consumer the runner:
+ *   1. copies the tracked fixture (omitting tsconfig*.json, renaming
+ *      test/*.parity.ts to *.test.ts so `bun test` picks them up) and writes a
+ *      tsconfig.consumer.json scoped to src/**/* with types ["node"];
+ *   2. installs the tarball with `bun add ../pack/penumbra-exec-primitives-0.1.0.tgz`
+ *      under an isolated HOME + bun cache and asserts the manifest carries
+ *      penumbra-exec-primitives as its only runtime dependency;
+ *   3. typechecks the consumer src against the installed .d.ts with its own
+ *      typescript + @types/node devDependencies;
+ *   4. runs the consumer's smoke + test suite — infra-host additionally under
+ *      node (which type-strips .ts) — with a poisoned proxy env proving no
+ *      network is required at runtime;
+ *   5. verifies every installed dependency's real path stays inside the
+ *      temporary consumer root, that @penumbra/* resolves to the poison stub,
+ *      and that installed package content is byte-identical to the tarball.
  *
- * The poison check asserts `penumbra-exec-primitives` resolves inside each
- * consumer's own node_modules — never the workspace-root link — so a missing
- * or broken vendor install cannot be masked by repo-level resolution.
- *
- * Outputs go under <repo>/tmp/sharedlib6-run/: tarball extract, per-suite
- * logs, and consumers.json evidence. Consumer vendor/, node_modules/,
- * bun.lock and test/contract/ are transient and removed at the start of each
- * run (left in place at the end so a rerun is incremental and inspectable —
- * they are gitignored).
+ * consumers.json records per-run stdout logs, exit codes, dependency trees,
+ * package.json dependency declarations, test/parity counts, HOME entries,
+ * poison-probe results, and digests so the evidence writer can quote a
+ * measured record rather than prose.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -30,335 +42,593 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SCRIPTS_DIR = import.meta.dir;
-const PACKAGE_DIR = dirname(SCRIPTS_DIR);
-const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
-const QUALIFY_DIR = join(PACKAGE_DIR, "qualification");
-const CONSUMERS = join(QUALIFY_DIR, "consumers");
-const PEN_HOST = join(CONSUMERS, "penumbra-host");
-const INFRA_HOST = join(CONSUMERS, "infra-host");
-const RUN_DIR = join(REPO_ROOT, "tmp", "sharedlib6-run");
-const HOME_DIR = join(RUN_DIR, "home");
-const BUN_CACHE = join(RUN_DIR, "bun-cache");
+const PACKAGE_DIR = dirname(import.meta.dir);
+const REPO_ROOT = join(PACKAGE_DIR, "..", "..");
+const RUN_DIR = join(REPO_ROOT, "tmp", "sharedlib6");
+const PACK_DIR = join(RUN_DIR, "pack");
+const EXTRACT_DIR = join(PACK_DIR, "extracted");
+const REPACK_DIR = join(PACK_DIR, "repack");
+const REPACK_EXTRACT_DIR = join(PACK_DIR, "repack-extracted");
+const LOG_DIR = join(RUN_DIR, "logs");
+const CONSUMERS_DIR = join(PACKAGE_DIR, "qualification", "consumers");
+const TARBALL_NAME = "penumbra-exec-primitives-0.1.0.tgz";
+const TARBALL_SPEC = `../pack/${TARBALL_NAME}`;
+const PKG_NAME = "penumbra-exec-primitives";
+
+const PARITY_FILES: Record<string, string[]> = {
+  "penumbra-host": [
+    "acp-warm-pool.test.ts",
+    "cli-spawn.test.ts",
+    "cli-spawn-stream.test.ts",
+    "exports.test.ts",
+    "guard.test.ts",
+    "stdio-acp-client.test.ts",
+    "stdio-acp-client-onrequest.test.ts",
+    "stdio-acp-permission.test.ts",
+    "stdio-acp-server.test.ts",
+  ],
+  "infra-host": ["infra.test.ts"],
+};
+
+const bunVersion = spawnSync("bun", ["--version"], { encoding: "utf8" }).stdout.trim();
+const nodeVersion = spawnSync("node", ["--version"], { encoding: "utf8" }).stdout.trim();
 
 interface CmdResult {
+  cmd: string[];
   exit: number;
+  pass: number;
+  fail: number;
+  failing: string[];
+  log: string;
   stdout: string;
-  stderr: string;
 }
 
-function run(cmd: string[], cwd: string): CmdResult {
-  const result = spawnSync(cmd[0] ?? "", cmd.slice(1), {
+const problems: string[] = [];
+
+function cmd(argv: string[], cwd: string, env: NodeJS.ProcessEnv, name: string): CmdResult {
+  const [bin, ...args] = argv;
+  const r = spawnSync(bin, args, {
     cwd,
+    env,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: HOME_DIR,
-      BUN_INSTALL_CACHE_DIR: BUN_CACHE,
-    },
-    timeout: 300_000,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 600_000,
   });
+  const stdout = r.stdout;
+  const output = `${stdout}${r.stderr}`;
+  const logFile = join(LOG_DIR, `${name}.log`);
+  writeFileSync(logFile, output);
+  if (r.error !== undefined) {
+    problems.push(`${name}: spawn failed: ${String(r.error)}`);
+  }
   return {
-    exit: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    cmd: argv.map((a) => (a.startsWith(REPO_ROOT + sep) ? relative(REPO_ROOT, a) : a)),
+    exit: r.status ?? 1,
+    pass: parseCount(output, /^\s*(\d+) pass$/m),
+    fail: parseCount(output, /^\s*(\d+) fail$/m),
+    failing: [...output.matchAll(/^\(fail\) (.+)$/gm)]
+      .map((m) => (m[1] ?? "").replace(/ \[[\d.]+m?s\]$/, ""))
+      .filter((t) => t !== ""),
+    log: relative(RUN_DIR, logFile),
+    stdout,
   };
 }
 
-const lines: string[] = [];
-function emit(line: string): void {
-  lines.push(line);
-  process.stdout.write(`${line}\n`);
+function parseCount(output: string, pattern: RegExp): number {
+  const m = pattern.exec(output);
+  return m === null ? 0 : Number(m[1]);
 }
 
-function fail(msg: string): never {
-  process.stderr.write(`qualify: FAIL — ${msg}\n`);
-  writeFileSync(join(RUN_DIR, "qualify.exit"), "1\n");
-  process.exit(1);
+function readJson(path: string): unknown {
+  return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function contentDigest(root: string): { digest: string; files: number; bytes: number } {
+function contentDigest(root: string): string {
   const hash = createHash("sha256");
-  let files = 0;
-  let bytes = 0;
   const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
-        continue;
+      } else if (entry.isFile()) {
+        hash.update(relative(root, full));
+        hash.update("\0");
+        hash.update(readFileSync(full));
+        hash.update("\0");
       }
-      const rel = relative(root, full);
-      const data = readFileSync(full);
-      hash.update(rel);
-      hash.update("\0");
-      hash.update(data);
-      hash.update("\0");
-      files += 1;
-      bytes += statSync(full).size;
     }
   };
   walk(root);
-  return { digest: hash.digest("hex"), files, bytes };
+  return hash.digest("hex");
 }
 
-function pack(destDir: string): string {
-  mkdirSync(destDir, { recursive: true });
-  const packed = run(["bun", "pm", "pack", "--destination", destDir], PACKAGE_DIR);
-  if (packed.exit !== 0) fail(`bun pm pack failed: ${packed.stderr}`);
-  const tgz = readdirSync(destDir).find((f) => f.endsWith(".tgz"));
-  if (tgz === undefined) fail("bun pm pack produced no tarball");
-  return join(destDir, tgz);
+function countFiles(root: string): number {
+  let n = 0;
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) n += 1;
+    }
+  };
+  walk(root);
+  return n;
 }
 
-function extract(tgz: string, destDir: string): string {
-  mkdirSync(destDir, { recursive: true });
-  const result = run(["tar", "-xzf", tgz, "-C", destDir], destDir);
-  if (result.exit !== 0) fail(`tar extract failed: ${result.stderr}`);
-  const pkg = join(destDir, "package");
-  if (!existsSync(pkg)) fail("tarball missing package/ root");
-  return pkg;
+function treeBytes(root: string): number {
+  let n = 0;
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) n += readFileSync(full).byteLength;
+    }
+  };
+  walk(root);
+  return n;
 }
 
-function cleanConsumer(dir: string): void {
-  for (const name of ["vendor", "node_modules", "bun.lock", "test/contract"]) {
-    rmSync(join(dir, name), { recursive: true, force: true });
+function consumerEnv(consumer: string, poisonNet: boolean): NodeJS.ProcessEnv {
+  // HOME must stay empty for the whole run — home_entries_after is the proof.
+  // Every tool-visible directory therefore lives outside HOME, under the run
+  // root.
+  const home = join(RUN_DIR, `home-${consumer}`);
+  const xdgConfig = join(RUN_DIR, `xdg-config-${consumer}`);
+  const xdgCache = join(RUN_DIR, `xdg-cache-${consumer}`);
+  const bunInstall = join(RUN_DIR, `bun-install-${consumer}`);
+  const bunCache = join(RUN_DIR, `bun-cache-${consumer}`);
+  const tmpdir = join(RUN_DIR, `tmpdir-${consumer}`);
+  const dirs = [home, xdgConfig, xdgCache, bunInstall, bunCache, tmpdir];
+  const env: Record<string, string> = {
+    PATH: process.env["PATH"] ?? "/usr/bin:/bin:/usr/local/bin",
+    HOME: home,
+    XDG_CONFIG_HOME: xdgConfig,
+    XDG_CACHE_HOME: xdgCache,
+    BUN_INSTALL: bunInstall,
+    BUN_INSTALL_CACHE_DIR: bunCache,
+    TMPDIR: tmpdir,
+    TERM: "dumb",
+  };
+  for (const dir of dirs) {
+    mkdirSync(dir, { recursive: true });
   }
+  if (poisonNet) {
+    const dead = "http://127.0.0.1:9/";
+    env["HTTP_PROXY"] = dead;
+    env["HTTPS_PROXY"] = dead;
+    env["http_proxy"] = dead;
+    env["https_proxy"] = dead;
+    env["ALL_PROXY"] = dead;
+    env["all_proxy"] = dead;
+    env["NO_PROXY"] = "";
+    env["no_proxy"] = "";
+    env["npm_config_registry"] = dead;
+    const npmCache = join(RUN_DIR, `npm-cache-${consumer}`);
+    env["npm_config_cache"] = npmCache;
+    mkdirSync(npmCache, { recursive: true });
+  }
+  return env;
 }
 
-function vendorInto(dir: string, extracted: string): void {
-  mkdirSync(join(dir, "vendor"), { recursive: true });
-  cpSync(extracted, join(dir, "vendor", "penumbra-exec-primitives"), { recursive: true });
-}
-
-function resolveCheck(consumerDir: string): string {
-  const r = run(
-    ["bun", "-e", 'process.stdout.write(import.meta.resolve("penumbra-exec-primitives"))'],
-    consumerDir,
+function copyConsumer(name: string): string {
+  const src = join(CONSUMERS_DIR, name);
+  const dest = join(RUN_DIR, `consumer-${name}`);
+  rmSync(dest, { recursive: true, force: true });
+  mkdirSync(dest, { recursive: true });
+  const copyDir = (from: string, to: string): void => {
+    for (const entry of readdirSync(from, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === "bun.lock") continue;
+      if (from === src && /^tsconfig.*\.json$/.test(entry.name)) continue;
+      const s = join(from, entry.name);
+      const d = join(to, entry.name);
+      if (entry.isDirectory()) {
+        mkdirSync(d, { recursive: true });
+        copyDir(s, d);
+      } else if (entry.isFile()) {
+        cpSync(s, d);
+      }
+    }
+  };
+  copyDir(src, dest);
+  const testDir = join(dest, "test");
+  if (existsSync(testDir)) {
+    for (const file of readdirSync(testDir)) {
+      if (!file.endsWith(".parity.ts")) continue;
+      cpSync(join(testDir, file), join(testDir, file.replace(/\.parity\.ts$/, ".test.ts")));
+      rmSync(join(testDir, file));
+    }
+  }
+  writeFileSync(
+    join(dest, "tsconfig.consumer.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          strict: true,
+          target: "esnext",
+          module: "esnext",
+          moduleResolution: "bundler",
+          allowImportingTsExtensions: true,
+          noEmit: true,
+          types: ["node"],
+          skipLibCheck: true,
+        },
+        include: ["src/**/*"],
+      },
+      null,
+      2,
+    )}\n`,
   );
-  if (r.exit !== 0) {
-    fail(`resolve check failed in ${consumerDir}: ${r.stderr.trim()}`);
-  }
-  const resolved = r.stdout.trim().replace(/^file:\/\//, "");
-  const local = resolve(consumerDir);
-  const insideConsumer =
-    resolved.startsWith(`${local}${sep}`) ||
-    resolved.includes(`${sep}vendor${sep}penumbra-exec-primitives${sep}`);
-  if (!insideConsumer) {
-    fail(
-      `poison: penumbra-exec-primitives resolves outside the consumer (${resolved}) — ` +
-        `workspace-root resolution would mask a missing vendor install`,
+  return dest;
+}
+
+function writePoisonLayer(): string[] {
+  const penumbraRoot = join(REPO_ROOT, "node_modules", "@penumbra");
+  const names = existsSync(penumbraRoot)
+    ? readdirSync(penumbraRoot, { withFileTypes: true })
+        .filter((e) => e.isDirectory() || e.isSymbolicLink())
+        .map((e) => e.name)
+    : [];
+  if (!names.includes("core")) names.push("core");
+  const poisonRoot = join(RUN_DIR, "node_modules", "@penumbra");
+  for (const name of names) {
+    const dir = join(poisonRoot, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "package.json"),
+      `${JSON.stringify({ name: `@penumbra/${name}`, version: "0.0.0", type: "module", main: "./index.js" })}\n`,
+    );
+    writeFileSync(
+      join(dir, "index.js"),
+      `throw new Error("@penumbra/${name} resolved inside a packed-artifact consumer (resolution-guard)")\n`,
     );
   }
-  return resolved;
+  return names;
 }
 
-function parseBunCounts(output: string): { pass: number | null; fail: number | null } {
-  const pass = /(\d+) pass/.exec(output)?.[1];
-  const failCount = /(\d+) fail/.exec(output)?.[1];
+interface ConsumerRecord {
+  runtime: string;
+  copy_root: string;
+  install_specifier: string;
+  manifest_specifier: string;
+  manifest_dependencies: Record<string, string>;
+  manifest_dev_dependencies: Record<string, string>;
+  installed_dependencies: string[];
+  resolved_to: string;
+  digest_equal: boolean;
+  installed_content_sha256: string;
+  home_entries_after: number;
+  network_required: boolean;
+  poison_run: { exit: number; detail: string };
+  steps: StepRecord[];
+}
+
+interface StepRecord {
+  name: string;
+  exit: number;
+  pass: number;
+  fail: number;
+  failing: string[];
+  log: string;
+  cmd: string[];
+}
+
+function stepRecord(result: CmdResult, label: string): StepRecord {
   return {
-    pass: pass === undefined ? null : Number(pass),
-    fail: failCount === undefined ? null : Number(failCount),
+    name: label,
+    exit: result.exit,
+    pass: result.pass,
+    fail: result.fail,
+    failing: result.failing,
+    log: result.log,
+    cmd: result.cmd,
   };
 }
 
-mkdirSync(RUN_DIR, { recursive: true });
-mkdirSync(HOME_DIR, { recursive: true });
-
-emit("== build ==");
-const build = run(["bun", "run", "build"], PACKAGE_DIR);
-if (build.exit !== 0) fail(`build failed:\n${build.stdout}\n${build.stderr}`);
-
-emit("== pack (twice, reproducibility check) ==");
-const packA = pack(join(RUN_DIR, "pack-a"));
-const packB = pack(join(RUN_DIR, "pack-b"));
-const extractedA = extract(packA, join(RUN_DIR, "extract-a"));
-const extractedB = extract(packB, join(RUN_DIR, "extract-b"));
-const digestA = contentDigest(extractedA);
-const digestB = contentDigest(extractedB);
-const tgzSha = sha256File(packA);
-emit(
-  `tarball: files=${String(digestA.files)} bytes=${String(digestA.bytes)}\n` +
-    `sha256(tgz)=${tgzSha} content_sha256=${digestA.digest} repack_identical=${String(
-      digestA.digest === digestB.digest,
-    )}`,
-);
-if (digestA.digest !== digestB.digest) fail("repack produced a different content digest");
-
-for (const host of [PEN_HOST, INFRA_HOST]) {
-  cleanConsumer(host);
-  vendorInto(host, extractedA);
+function checkManifest(copyRoot: string): {
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+  specifier: string;
+} {
+  const manifest = readJson(join(copyRoot, "package.json")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const dependencies = manifest.dependencies ?? {};
+  const devDependencies = manifest.devDependencies ?? {};
+  const depNames = Object.keys(dependencies);
+  if (depNames.length !== 1 || depNames[0] !== PKG_NAME) {
+    problems.push(
+      `${copyRoot}: dependencies must be exactly {${PKG_NAME}}, got [${depNames.join(",")}]`,
+    );
+  }
+  const specifier = dependencies[PKG_NAME] ?? "";
+  const normalized = specifier.startsWith("file:") ? specifier.slice(5) : specifier;
+  if (!/(^|\/)pack\/penumbra-exec-primitives-0\.1\.0\.tgz$/.test(normalized)) {
+    problems.push(`${copyRoot}: unexpected ${PKG_NAME} specifier ${specifier}`);
+  }
+  const devNames = Object.keys(devDependencies).sort();
+  if (devNames.join(",") !== "@types/node,typescript") {
+    problems.push(
+      `${copyRoot}: devDependencies must be exactly @types/node+typescript, got [${devNames.join(",")}]`,
+    );
+  }
+  return { dependencies, devDependencies, specifier };
 }
 
-emit("== install: penumbra-host ==");
-const penInstall = run(["bun", "install"], PEN_HOST);
-if (penInstall.exit !== 0) fail(`penumbra-host install failed:\n${penInstall.stderr}`);
-
-emit("== install: infra-host ==");
-const infraInstall = run(["bun", "install"], INFRA_HOST);
-if (infraInstall.exit !== 0) fail(`infra-host install failed:\n${infraInstall.stderr}`);
-
-emit("== poison: resolution must be consumer-local ==");
-const penResolved = resolveCheck(PEN_HOST);
-emit(`penumbra-host resolves ${relative(REPO_ROOT, penResolved)}`);
-const infraResolved = resolveCheck(INFRA_HOST);
-emit(`infra-host resolves ${relative(REPO_ROOT, infraResolved)}`);
-
-emit("== port contract suite ==");
-const port = run(["bun", join(QUALIFY_DIR, "contract-port.ts")], PACKAGE_DIR);
-if (port.exit !== 0) fail(`contract-port failed:\n${port.stderr}`);
-emit(port.stdout.trim());
-
-emit("== smoke: penumbra-host (bun src/smoke.ts) ==");
-const penSmoke = run(["bun", "src/smoke.ts"], PEN_HOST);
-emit(penSmoke.stdout.trim());
-if (penSmoke.exit !== 0) {
-  writeFileSync(join(RUN_DIR, "penumbra-host-smoke.log"), `${penSmoke.stdout}\n${penSmoke.stderr}`);
-  fail(`penumbra-host smoke exited ${String(penSmoke.exit)}:\n${penSmoke.stderr}`);
+function checkInstalledDepsInside(copyRoot: string): string[] {
+  const copyReal = realpathSync(copyRoot);
+  const nm = join(copyRoot, "node_modules");
+  const installed: string[] = [];
+  if (!existsSync(nm)) {
+    problems.push(`${copyRoot}: node_modules missing after bun add`);
+    return installed;
+  }
+  const checkEntry = (dir: string, name: string, display: string): void => {
+    const real = realpathSync(join(dir, name));
+    if (real !== copyReal && !real.startsWith(copyReal + sep)) {
+      problems.push(`${display}: realpath escapes consumer root -> ${real}`);
+    }
+    installed.push(display);
+  };
+  for (const entry of readdirSync(nm, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith("@") && entry.isDirectory()) {
+      const scopeDir = join(nm, entry.name);
+      for (const scoped of readdirSync(scopeDir, { withFileTypes: true })) {
+        checkEntry(scopeDir, scoped.name, `${entry.name}/${scoped.name}`);
+      }
+      continue;
+    }
+    checkEntry(nm, entry.name, entry.name);
+  }
+  return installed.sort();
 }
 
-emit("== test: penumbra-host contract suite (bun test) ==");
-const penContract = run(["bun", "test"], PEN_HOST);
-writeFileSync(
-  join(RUN_DIR, "penumbra-host-contract.log"),
-  `${penContract.stdout}\n${penContract.stderr}`,
-);
-if (penContract.exit !== 0) {
-  fail(
-    `penumbra-host contract suite exited ${String(penContract.exit)} — see tmp/sharedlib6-run/penumbra-host-contract.log`,
+function resolveInsideCopy(
+  copyRoot: string,
+  runEnv: NodeJS.ProcessEnv,
+  logName: string,
+): string {
+  const probe = cmd(
+    [
+      "bun",
+      "-e",
+      `console.log(await import.meta.resolve("${PKG_NAME}"));`,
+    ],
+    copyRoot,
+    runEnv,
+    logName,
   );
+  const url = probe.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("file:"));
+  if (url === undefined) {
+    problems.push(`resolve probe produced no file: URL (exit ${String(probe.exit)})`);
+    return "";
+  }
+  const copyReal = realpathSync(copyRoot);
+  let resolvedReal: string;
+  try {
+    resolvedReal = realpathSync(fileURLToPath(url));
+  } catch (e) {
+    problems.push(`resolve probe target unreadable: ${url} (${String(e)})`);
+    return "";
+  }
+  if (resolvedReal !== copyReal && !resolvedReal.startsWith(copyReal + sep)) {
+    problems.push(`${PKG_NAME} resolved outside consumer copy -> ${resolvedReal}`);
+  }
+  return relative(REPO_ROOT, resolvedReal);
 }
 
-emit("== test: penumbra-host parity suites ==");
-const parityFiles = readdirSync(join(PEN_HOST, "test"))
-  .filter((f) => f.endsWith(".parity.ts"))
-  .sort()
-  .map((f) => `./test/${f}`);
-const penParity = run(["bun", "test", ...parityFiles], PEN_HOST);
-writeFileSync(
-  join(RUN_DIR, "penumbra-host-parity.log"),
-  `${penParity.stdout}\n${penParity.stderr}`,
-);
-if (penParity.exit !== 0) {
-  fail(
-    `penumbra-host parity suites exited ${String(penParity.exit)} — see tmp/sharedlib6-run/penumbra-host-parity.log`,
+function runConsumer(
+  name: string,
+  nodeSmoke: boolean,
+  expectedContentDigest: string,
+): ConsumerRecord {
+  const copyRoot = copyConsumer(name);
+  const installEnv = consumerEnv(name, false);
+  const runEnv = consumerEnv(name, true);
+  const steps: StepRecord[] = [];
+
+  if (name === "penumbra-host") {
+    const port = cmd(
+      ["bun", join(PACKAGE_DIR, "qualification", "contract-port.ts"), copyRoot],
+      PACKAGE_DIR,
+      runEnv,
+      `${name}-contract-port`,
+    );
+    steps.push(stepRecord(port, "contract-port"));
+  }
+
+  const add = cmd(["bun", "add", TARBALL_SPEC], copyRoot, installEnv, `${name}-bun-add`);
+  steps.push(stepRecord(add, "bun-add"));
+  const manifest = checkManifest(copyRoot);
+  const installed = checkInstalledDepsInside(copyRoot);
+
+  const typecheck = cmd(
+    ["bun", join("node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.consumer.json"],
+    copyRoot,
+    runEnv,
+    `${name}-typecheck`,
   );
-}
+  steps.push(stepRecord(typecheck, "typecheck"));
 
-emit("== smoke: infra-host under node (src/smoke.mjs) ==");
-const infraNodeSmoke = run(["node", "src/smoke.mjs"], INFRA_HOST);
-emit(infraNodeSmoke.stdout.trim());
-if (infraNodeSmoke.exit !== 0) {
-  writeFileSync(
-    join(RUN_DIR, "infra-host-smoke-node.log"),
-    `${infraNodeSmoke.stdout}\n${infraNodeSmoke.stderr}`,
+  const bunSmoke = cmd(["bun", "src/smoke.ts"], copyRoot, runEnv, `${name}-smoke-bun`);
+  steps.push(stepRecord(bunSmoke, "smoke-bun"));
+
+  if (nodeSmoke) {
+    const nodeSmokeRun = cmd(["node", "src/smoke.ts"], copyRoot, runEnv, `${name}-smoke-node`);
+    steps.push(stepRecord(nodeSmokeRun, "smoke-node"));
+  }
+
+  for (const file of PARITY_FILES[name] ?? []) {
+    const parity = cmd(
+      ["bun", "test", join("test", file)],
+      copyRoot,
+      runEnv,
+      `${name}-parity-${file}`,
+    );
+    steps.push(stepRecord(parity, `parity:${file}`));
+  }
+
+  const suite = cmd(["bun", "test"], copyRoot, runEnv, `${name}-bun-test`);
+  steps.push(stepRecord(suite, "bun-test"));
+
+  const resolvedTo = resolveInsideCopy(copyRoot, runEnv, `${name}-resolve`);
+
+  const poison = cmd(
+    [
+      "bun",
+      "-e",
+      `import("@penumbra/core").then(() => process.exit(1), (e) => { process.exit(/resolution-guard/.test(String(e)) ? 0 : 2); });`,
+    ],
+    copyRoot,
+    runEnv,
+    `${name}-poison`,
   );
-  fail(`infra-host node smoke exited ${String(infraNodeSmoke.exit)}:\n${infraNodeSmoke.stderr}`);
+  steps.push(stepRecord(poison, "poison-run"));
+
+  const installedPkgDir = join(copyRoot, "node_modules", PKG_NAME);
+  const installedDigest = existsSync(installedPkgDir) ? contentDigest(installedPkgDir) : "";
+  const digestEqual =
+    installedDigest !== "" &&
+    expectedContentDigest !== "" &&
+    installedDigest === expectedContentDigest;
+  if (!digestEqual) {
+    problems.push(`${name}: installed content digest does not match tarball`);
+  }
+
+  const runtimeSteps = steps.filter((s) => s.name !== "bun-add" && s.name !== "contract-port");
+  const runtimeClean = runtimeSteps.every((s) => s.exit === 0 && s.fail === 0);
+
+  return {
+    runtime: nodeSmoke ? `bun ${bunVersion} + node ${nodeVersion}` : `bun ${bunVersion}`,
+    copy_root: relative(REPO_ROOT, copyRoot),
+    install_specifier: TARBALL_SPEC,
+    manifest_specifier: manifest.specifier,
+    manifest_dependencies: manifest.dependencies,
+    manifest_dev_dependencies: manifest.devDependencies,
+    installed_dependencies: installed,
+    resolved_to: resolvedTo,
+    digest_equal: digestEqual,
+    installed_content_sha256: installedDigest,
+    home_entries_after: readdirSync(join(RUN_DIR, `home-${name}`)).length,
+    network_required: !runtimeClean,
+    poison_run: {
+      exit: poison.exit,
+      detail:
+        poison.exit === 0
+          ? "@penumbra/core -> poison stub (resolution-guard)"
+          : `exit=${String(poison.exit)}`,
+    },
+    steps,
+  };
 }
 
-emit("== smoke: infra-host under bun (src/smoke.mjs) ==");
-const infraBunSmoke = run(["bun", "src/smoke.mjs"], INFRA_HOST);
-emit(infraBunSmoke.stdout.trim());
-if (infraBunSmoke.exit !== 0) {
-  writeFileSync(
-    join(RUN_DIR, "infra-host-smoke-bun.log"),
-    `${infraBunSmoke.stdout}\n${infraBunSmoke.stderr}`,
+for (const dir of [PACK_DIR, REPACK_DIR, EXTRACT_DIR, REPACK_EXTRACT_DIR, LOG_DIR]) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+}
+
+const build = cmd(["bun", "run", "build"], PACKAGE_DIR, { ...process.env }, "package-build");
+if (build.exit !== 0) {
+  problems.push(`package build failed (exit ${String(build.exit)})`);
+}
+
+function packTarball(dest: string, logName: string): void {
+  const packed = cmd(
+    ["bun", "pm", "pack", "--destination", dest],
+    PACKAGE_DIR,
+    { ...process.env },
+    logName,
   );
-  fail(`infra-host bun smoke exited ${String(infraBunSmoke.exit)}:\n${infraBunSmoke.stderr}`);
+  if (packed.exit === 0 && existsSync(join(dest, TARBALL_NAME))) return;
+  // Fallback for bun versions without --destination: pack into the package
+  // dir and move the artifact under tmp/.
+  const fallback = cmd(["bun", "pm", "pack"], PACKAGE_DIR, { ...process.env }, `${logName}-fb`);
+  const dropped = join(PACKAGE_DIR, TARBALL_NAME);
+  if (fallback.exit === 0 && existsSync(dropped)) {
+    cpSync(dropped, join(dest, TARBALL_NAME));
+    rmSync(dropped);
+    return;
+  }
+  rmSync(dropped, { force: true });
+  problems.push("bun pm pack failed");
 }
 
-emit("== test: infra-host parity suite (bun test) ==");
-const infraTest = run(["bun", "test", "./test/infra.parity.mjs"], INFRA_HOST);
-writeFileSync(join(RUN_DIR, "infra-host-test.log"), `${infraTest.stdout}\n${infraTest.stderr}`);
-if (infraTest.exit !== 0) {
-  fail(
-    `infra-host suite exited ${String(infraTest.exit)} — see tmp/sharedlib6-run/infra-host-test.log`,
+packTarball(PACK_DIR, "pack-1");
+packTarball(REPACK_DIR, "pack-2");
+
+const tarballPath = join(PACK_DIR, TARBALL_NAME);
+const repackPath = join(REPACK_DIR, TARBALL_NAME);
+const untarJobs = [
+  [tarballPath, EXTRACT_DIR],
+  [repackPath, REPACK_EXTRACT_DIR],
+] as const;
+for (const [i, pair] of untarJobs.entries()) {
+  const untar = cmd(
+    ["tar", "-xzf", pair[0], "-C", pair[1]],
+    RUN_DIR,
+    { ...process.env },
+    `untar-${String(i + 1)}`,
   );
+  if (untar.exit !== 0) problems.push(`tar extract failed for ${pair[0]}`);
+}
+const pkgContentRoot = join(EXTRACT_DIR, "package");
+const repackContentRoot = join(REPACK_EXTRACT_DIR, "package");
+const tarballContentDigest = existsSync(pkgContentRoot) ? contentDigest(pkgContentRoot) : "";
+const repackDigest = existsSync(repackContentRoot) ? contentDigest(repackContentRoot) : "";
+const repackIdentical = tarballContentDigest !== "" && tarballContentDigest === repackDigest;
+if (!repackIdentical) {
+  problems.push("repacked tarball content digest differs from first pack");
+}
+if (!existsSync(join(pkgContentRoot, "dist", "src", "index.js"))) {
+  problems.push("tarball missing dist/src/index.js");
 }
 
-const penContractCombined = `${penContract.stdout}\n${penContract.stderr}`;
-const penParityCombined = `${penParity.stdout}\n${penParity.stderr}`;
-const infraCombined = `${infraTest.stdout}\n${infraTest.stderr}`;
-const penContractCounts = parseBunCounts(penContractCombined);
-const penParityCounts = parseBunCounts(penParityCombined);
-const infraCounts = parseBunCounts(infraCombined);
+const poisoned = writePoisonLayer();
 
-const packedManifest = JSON.parse(readFileSync(join(extractedA, "package.json"), "utf8")) as {
-  name: string;
-  version: string;
-};
+const consumers: Record<string, ConsumerRecord> = {};
+for (const name of ["penumbra-host", "infra-host"]) {
+  consumers[name] = runConsumer(name, name === "infra-host", tarballContentDigest);
+}
+
 const evidence = {
   generated_at: new Date().toISOString(),
-  note: "local tarball is a channel stand-in for qualification only — not a release or distribution channel",
-  toolchain: {
-    bun: run(["bun", "--version"], PACKAGE_DIR).stdout.trim(),
-    node: run(["node", "--version"], PACKAGE_DIR).stdout.trim(),
-  },
+  note: "penumbra-exec-primitives tarball qualification (local channel stand-in only; not a release or publication)",
+  toolchain: { bun: bunVersion, node: nodeVersion },
   tarball: {
-    package: `${packedManifest.name}@${packedManifest.version}`,
-    name: `${packedManifest.name}-${packedManifest.version}.tgz`,
-    sha256: tgzSha,
-    content_sha256: digestA.digest,
-    files: digestA.files,
-    unpacked_bytes: digestA.bytes,
-    repack_identical: digestA.digest === digestB.digest,
+    name: TARBALL_NAME,
+    channel: "stand-in",
+    sha256: existsSync(tarballPath) ? sha256File(tarballPath) : "",
+    content_sha256: tarballContentDigest,
+    files: existsSync(pkgContentRoot) ? countFiles(pkgContentRoot) : 0,
+    unpacked_bytes: existsSync(pkgContentRoot) ? treeBytes(pkgContentRoot) : 0,
+    repack_identical: repackIdentical,
   },
-  consumers: {
-    "penumbra-host": {
-      runtime: `bun ${run(["bun", "--version"], PEN_HOST).stdout.trim()}`,
-      install: "file: dep on unpacked tarball (vendor/penumbra-exec-primitives)",
-      resolved_to: relative(REPO_ROOT, penResolved),
-      smoke_exit: penSmoke.exit,
-      contract: { exit: penContract.exit, ...penContractCounts },
-      parity: {
-        exit: penParity.exit,
-        ...penParityCounts,
-        files: parityFiles,
-      },
-    },
-    "infra-host": {
-      runtime_bun: `bun ${run(["bun", "--version"], INFRA_HOST).stdout.trim()}`,
-      runtime_node: run(["node", "--version"], INFRA_HOST).stdout.trim(),
-      install: "file: dep on unpacked tarball (vendor/penumbra-exec-primitives)",
-      resolved_to: relative(REPO_ROOT, infraResolved),
-      smoke_node_exit: infraNodeSmoke.exit,
-      smoke_bun_exit: infraBunSmoke.exit,
-      parity: { exit: infraTest.exit, ...infraCounts },
-    },
-  },
+  poison_layer: poisoned.map((n) => `@penumbra/${n}`),
+  consumers,
+  problems,
 };
 
 writeFileSync(join(RUN_DIR, "consumers.json"), `${JSON.stringify(evidence, null, 2)}\n`);
-writeFileSync(join(RUN_DIR, "qualify.exit"), "0\n");
 
-const ok =
-  penContract.exit === 0 &&
-  penParity.exit === 0 &&
-  infraTest.exit === 0 &&
-  penSmoke.exit === 0 &&
-  infraNodeSmoke.exit === 0 &&
-  infraBunSmoke.exit === 0;
-emit(
-  `qualify: ${ok ? "PASS" : "FAIL"} penumbra-host contract=${String(
-    penContractCounts.pass ?? "?",
-  )}p/${String(penContractCounts.fail ?? "?")}f parity=${String(
-    penParityCounts.pass ?? "?",
-  )}p/${String(penParityCounts.fail ?? "?")}f | infra-host=${String(
-    infraCounts.pass ?? "?",
-  )}p/${String(infraCounts.fail ?? "?")}f | repack_identical=${String(
-    digestA.digest === digestB.digest,
-  )}`,
-);
-process.exit(ok ? 0 : 1);
+if (problems.length > 0) {
+  process.stdout.write(`qualify: FAIL (${String(problems.length)} problems)\n`);
+  for (const p of problems) process.stdout.write(`  ${p}\n`);
+  process.exit(1);
+}
+process.stdout.write("qualify: PASS (evidence written to tmp/sharedlib6/consumers.json)\n");
+process.exit(0);

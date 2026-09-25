@@ -1,10 +1,13 @@
 /**
- * Runnable infra-host smoke (plain JS, node-compatible): namespace resolution
- * + a real fake-acp session over the packed artifact.
+ * Runnable infra-host smoke (plain JS, node-compatible): proves the packed
+ * artifact resolves inside this consumer's own node_modules (never a workspace
+ * link or sibling checkout), then drives a real spawn and a real fake-acp ACP
+ * session over it.
  * Run with `node src/smoke.mjs` or `bun src/smoke.mjs`.
  */
+import { realpathSync, statSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 
 import * as primitives from "penumbra-exec-primitives";
 
@@ -36,11 +39,32 @@ for (const name of REQUIRED_EXPORTS) {
   }
 }
 
+// The packed artifact must resolve inside this consumer's own node_modules —
+// a workspace sibling or repo checkout would mask a broken install.
+const consumerRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const resolvedSpecifier = import.meta.resolve("penumbra-exec-primitives");
+const resolvedEntry = realpathSync(
+  resolvedSpecifier.startsWith("file:") ? fileURLToPath(resolvedSpecifier) : resolvedSpecifier,
+);
+// realpath resolves through a node_modules symlink — the file: dep may link
+// to vendor/; either way the real path must stay under this consumer root.
+const expectedPrefix = `${realpathSync(consumerRoot)}${sep}`;
+if (!resolvedEntry.startsWith(expectedPrefix)) {
+  throw new Error(`penumbra-exec-primitives resolved outside this consumer: ${resolvedEntry}`);
+}
+const pkgDir = join(consumerRoot, "node_modules", "penumbra-exec-primitives");
+if (!statSync(pkgDir).isDirectory()) {
+  throw new Error(`installed package is missing: ${pkgDir}`);
+}
+
 const cwd = dirname(fileURLToPath(import.meta.url));
 const fixture = join(cwd, "..", "fixtures", "fake-acp.mjs");
 const signal = new AbortController().signal;
 
-const echo = await spawnFn(["sh", "-c", 'printf "infra-smoke"'], process.env, cwd, { signal });
+const echo = await spawnFn(["sh", "-c", 'printf "infra-smoke"'], process.env, cwd, {
+  signal,
+  deadline: 5_000,
+});
 if (echo.stdout !== "infra-smoke") {
   throw new Error(`spawnFn returned unexpected stdout: ${JSON.stringify(echo.stdout)}`);
 }

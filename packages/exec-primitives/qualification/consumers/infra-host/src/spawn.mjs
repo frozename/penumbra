@@ -1,6 +1,5 @@
 /**
- * Infra-host spawn surface (plain JS — must run under `node` with no Bun and
- * no TypeScript): runs child processes through the packed
+ * Infra-host spawn surface (plain JS): runs child processes through the packed
  * runProcess/superviseProcess with an explicit env allowlist. The package
  * receives only host-owned inputs — the ambient environment is filtered here,
  * in the consumer, never merged inside the library.
@@ -20,9 +19,11 @@ export const ALLOWED_ENV_NAMES = [
   "INFRA_MARKER",
 ];
 
-export const CANCEL_GRACE_MS = 500;
-/** Default per-dispatch watchdog (host-owned, not a library default). */
-export const DISPATCH_DEADLINE_MS = 30_000;
+/** The infra host's dispatch binding: binding-level caps the caller can only tighten. */
+export const SPAWN_BINDING = {
+  timeoutMs: 30_000,
+  cancelGraceMs: 500,
+};
 
 export function buildChildEnv(env) {
   const out = {};
@@ -34,16 +35,16 @@ export function buildChildEnv(env) {
 }
 
 /** Buffered spawn: capture stdout+stderr, resolve the exit record. */
-export async function spawnFn(argv, env, cwd, opts) {
+export async function spawnFn(argv, env, cwd, ctx, binding = SPAWN_BINDING) {
   const result = await runProcess({
     command: argv[0] ?? "",
     args: argv.slice(1),
     cwd,
     env: buildChildEnv(env),
-    signal: opts.signal,
+    signal: ctx.signal,
     stdin: "ignore",
-    cancelGraceMs: CANCEL_GRACE_MS,
-    watchdogMs: opts.deadlineMs ?? DISPATCH_DEADLINE_MS,
+    cancelGraceMs: binding.cancelGraceMs,
+    watchdogMs: Math.min(binding.timeoutMs, ctx.deadline),
   });
   return {
     stdout: result.stdout,
@@ -55,7 +56,7 @@ export async function spawnFn(argv, env, cwd, opts) {
 }
 
 /** Line-streaming spawn: forward complete output lines as they arrive. */
-export async function spawnFnLines(argv, env, cwd, opts) {
+export async function spawnFnLines(argv, env, cwd, ctx, onLine, binding = SPAWN_BINDING) {
   const stdoutChunks = [];
   const stderrChunks = [];
   const proc = superviseProcess({
@@ -63,13 +64,13 @@ export async function spawnFnLines(argv, env, cwd, opts) {
     args: argv.slice(1),
     cwd,
     env: buildChildEnv(env),
-    signal: opts.signal,
+    signal: ctx.signal,
     stdin: "ignore",
-    cancelGraceMs: CANCEL_GRACE_MS,
-    watchdogMs: opts.deadlineMs ?? DISPATCH_DEADLINE_MS,
+    cancelGraceMs: binding.cancelGraceMs,
+    watchdogMs: Math.min(binding.timeoutMs, ctx.deadline),
     onStdoutChunk: (chunk) => stdoutChunks.push(chunk),
     onStderrChunk: (chunk) => stderrChunks.push(chunk),
-    ...(opts.onLine !== undefined ? { onLine: opts.onLine } : {}),
+    ...(onLine !== undefined ? { onLine } : {}),
   });
   const exit = await proc.exit;
   return {

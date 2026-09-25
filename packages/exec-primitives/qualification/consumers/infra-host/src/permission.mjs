@@ -11,8 +11,27 @@ import {
 
 export const INFRA_DISPATCH_ID = "infra-dispatch";
 
+/**
+ * Deny-by-default permission host. decide() reads its policy off `this`, so a
+ * caller that forgets to bind (host.decide detached and invoked bare) throws —
+ * which the packed handler must still convert into a rejection, never an
+ * approval.
+ */
+export class DenyAllPermissionHost {
+  constructor(signal, logger) {
+    this.signal = signal;
+    this.dispatchId = INFRA_DISPATCH_ID;
+    this.logger = logger;
+    this.policy = "reject";
+  }
+
+  decide(_req) {
+    return this.policy;
+  }
+}
+
 export function denyAllHost(signal) {
-  return { signal, dispatchId: INFRA_DISPATCH_ID, decide: () => "reject" };
+  return new DenyAllPermissionHost(signal);
 }
 
 /** No decide callback at all — the packed handler must fail closed. */

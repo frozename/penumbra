@@ -69,7 +69,7 @@ export class StdioAcpClient {
           console.error(message);
         },
         warn: (message) => {
-          console.warn(message);
+          console.error(message);
         },
       },
     });

@@ -23,7 +23,7 @@ async function collect(stream: AsyncIterable<DispatchEvent>): Promise<DispatchEv
 }
 
 describe("spawnCliAdapterStream (re-expressed)", () => {
-  test("yields delta events in order then a done event with full text", async () => {
+  test("[re-expressed] yields delta events in order then a done event with full text", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'printf "A"; sleep 0.05; printf "B"; sleep 0.05; printf "C"'],
@@ -41,7 +41,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(deltas.map((d) => d.text).join("")).toBe("ABC");
   });
 
-  test("on abort mid-stream yields done with partial text and does not throw", async () => {
+  test("[re-expressed] on abort mid-stream yields done with partial text and does not throw", async () => {
     const ac = new AbortController();
     const lifecycleEvents: DispatchEventInput[] = [];
     const stream = spawnCliAdapterStream({
@@ -77,7 +77,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(lifecycleEvents.some((event) => event.kind === "proc.exited.resolved")).toBe(true);
   });
 
-  test("on abort before any output does not wait for descendant processes that keep stdio open", async () => {
+  test("[re-expressed] on abort before any output does not wait for descendant processes that keep stdio open", async () => {
     const ac = new AbortController();
     const lifecycleEvents: DispatchEventInput[] = [];
     const stream = spawnCliAdapterStream({
@@ -129,7 +129,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(lifecycleEvents.some((event) => event.kind === "proc.exited.resolved")).toBe(true);
   });
 
-  test("on exit 0 with empty stdout and non-empty stderr throws error instead of yielding successful done", async () => {
+  test("[re-expressed] on exit 0 with empty stdout and non-empty stderr throws error instead of yielding successful done", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'echo "some error info" 1>&2; exit 0'],
@@ -154,7 +154,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect((thrownErr as Error).message).toMatch(/empty output — some error info/);
   });
 
-  test("on non-zero exit yields done with collected text then throws", async () => {
+  test("[re-expressed] on non-zero exit yields done with collected text then throws", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'printf "x"; exit 2'],
@@ -179,7 +179,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect((thrownErr as Error).message).toMatch(/exit code 2/);
   });
 
-  test("on signal exit does not yield done and throws signal error", async () => {
+  test("[re-expressed] on signal exit does not yield done and throws signal error", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", "kill -TERM $$"],
@@ -203,7 +203,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect((thrownErr as Error).message).toMatch(/signal SIGTERM/);
   });
 
-  test("fires onCapacityError callback for matching stderr", async () => {
+  test("[re-expressed] fires onCapacityError callback for matching stderr", async () => {
     const calls: { provider: string; model: string | null }[] = [];
     const stream = spawnCliAdapterStream({
       command: "sh",
@@ -220,7 +220,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(calls[0]).toMatchObject({ provider: "google", model: "gemini-3.1-pro-preview" });
   });
 
-  test("passes prompt via stdin when pass_via is unset", async () => {
+  test("[re-expressed] passes prompt via stdin when pass_via is unset", async () => {
     const stream = spawnCliAdapterStream({
       command: "cat",
       args: [],
@@ -233,7 +233,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(done.result.text).toBe("hello from stdin");
   });
 
-  test("applies strip_patterns to the final done text", async () => {
+  test("[re-expressed] applies strip_patterns to the final done text", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'printf "hook: Start\\nresult\\nhook: End\\n"'],
@@ -248,7 +248,7 @@ describe("spawnCliAdapterStream (re-expressed)", () => {
     expect(done.result.text.trim()).toBe("result");
   });
 
-  test("delta text does not have strip_patterns applied (raw chunks emitted as-is)", async () => {
+  test("[re-expressed] delta text does not have strip_patterns applied (raw chunks emitted as-is)", async () => {
     const stream = spawnCliAdapterStream({
       command: "sh",
       args: ["-c", 'printf "keep\\n"'],
