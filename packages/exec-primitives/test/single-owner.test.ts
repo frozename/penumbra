@@ -7,7 +7,7 @@ import * as lib from "../src/index.ts";
 const PACKAGE_DIR = dirname(import.meta.dir);
 
 describe("[B10] single-owner guarantees", () => {
-  test("[B10] two imports of the package produce independent pool instances", async () => {
+  test("[L6] two imports of the package produce independent pool instances", async () => {
     const entryUrl = join(PACKAGE_DIR, "src", "index.ts");
     const first = (await import(entryUrl)) as typeof lib;
     const second = (await import(`${entryUrl}?second-import`)) as typeof lib;
@@ -19,9 +19,9 @@ describe("[B10] single-owner guarantees", () => {
       let killed = false;
       poolA.deposit(
         {
-          agentKey: "k",
-          env: { PATH: "/usr/bin" },
-          credentials: { credentialScope: "s" },
+          agent: "k",
+          cwd: "/tmp",
+          credentialScope: "s",
           specHash: "h",
         },
         {

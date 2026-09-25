@@ -17,9 +17,11 @@ export interface StdioAcpServerOptions {
    * Bytes of child stderr to retain for diagnostic surfacing in error paths.
    * The captured tail is exposed via `getStderrTail()` so callers can append
    * it to error messages when a session/prompt times out or the child crashes
-   * before responding. Default 8192.
+   * before responding.
    */
-  stderrTailBytes?: number;
+  stderrTailBytes: number;
+  /** Combined per-stream output cap; absent means the child is never killed for output volume. */
+  outputLimitBytes?: number;
   /** Host-owned stderr sink — invoked per chunk; the library never tees. */
   onStderrChunk?: (chunk: string) => void;
   logger?: ExecLogger;
@@ -47,7 +49,7 @@ export interface StdioAcpHandle {
 const NO_WATCHDOG = 2_147_483_000;
 
 export function startStdioAcpServer(opts: StdioAcpServerOptions): Promise<StdioAcpHandle> {
-  const { stderrTailBytes = 8192, onStderrChunk, logger } = opts;
+  const { stderrTailBytes, onStderrChunk, logger } = opts;
   const proc = superviseProcess({
     command: opts.command,
     args: opts.args ?? [],
@@ -56,9 +58,10 @@ export function startStdioAcpServer(opts: StdioAcpServerOptions): Promise<StdioA
     signal: opts.signal,
     cancelGraceMs: opts.cancelGraceMs,
     watchdogMs: opts.watchdogMs ?? NO_WATCHDOG,
-    stdinMode: "pipe",
     stdoutMode: "raw",
     stderrMode: "pipe",
+    stderrTailBytes,
+    ...(opts.outputLimitBytes !== undefined ? { outputLimitBytes: opts.outputLimitBytes } : {}),
     ...(logger !== undefined ? { logger } : {}),
     ...(opts.timers !== undefined ? { timers: opts.timers } : {}),
   });

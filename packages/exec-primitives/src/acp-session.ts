@@ -17,8 +17,8 @@ export interface InitializeAcpSessionOptions {
   client: AcpSessionClient | StdioAcpClient;
   /** Host identity advertised on the wire — required verbatim. */
   clientInfo: unknown;
-  clientCapabilities?: unknown;
-  protocolVersion?: number;
+  clientCapabilities: unknown;
+  protocolVersion: number;
   cwd: string;
   mcpServers?: unknown[];
   signal: AbortSignal;
@@ -29,7 +29,7 @@ export interface InitializeAcpSessionOptions {
    * authMethods array from the initialize result; return the methodId to
    * authenticate with, or null to reject the bootstrap.
    */
-  selectAuthMethod?: (authMethods: unknown[]) => string | null | undefined;
+  selectAuthMethod: (authMethods: unknown[]) => string | null | undefined;
   logger?: ExecLogger;
 }
 
@@ -98,13 +98,20 @@ export async function initializeAcpSession(opts: InitializeAcpSessionOptions): P
     throw new HostInputError("client", "expected an ACP client with a request method");
   }
   const client = clientValue as AcpSessionClient;
-  const protocolVersion = opts.protocolVersion ?? 1;
+  const protocolVersion = requireFiniteMs(opts.protocolVersion, "protocolVersion", { min: 1 });
+  if (opts.clientCapabilities === undefined) {
+    throw new HostInputError("clientCapabilities", "host must pass capabilities explicitly");
+  }
+  if (typeof opts.selectAuthMethod !== "function") {
+    throw new HostInputError("selectAuthMethod", "host must supply an auth-method selector");
+  }
+  const selectAuthMethod = opts.selectAuthMethod;
   const deadlineAt = Date.now() + bootDeadlineMs;
 
   const initResult = (await raceDeadline(
     client.request("initialize", {
       protocolVersion,
-      clientCapabilities: opts.clientCapabilities ?? {},
+      clientCapabilities: opts.clientCapabilities,
       clientInfo: opts.clientInfo,
     }),
     signal,
@@ -130,7 +137,7 @@ export async function initializeAcpSession(opts: InitializeAcpSessionOptions): P
     newResult = await newSession();
   } catch (err) {
     if (!(err instanceof AcpResponseError) || err.code !== AUTH_REQUIRED_CODE) throw err;
-    const methodId = opts.selectAuthMethod?.(authMethods);
+    const methodId = selectAuthMethod(authMethods);
     if (typeof methodId !== "string" || methodId.length === 0) {
       throw new Error("acp-session: authentication required and no auth method selected");
     }

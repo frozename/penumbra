@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import * as lib from "../src/index.ts";
-import { type FakeAcp, requestsTo, startFakeAcp, stopFakeAcp } from "./helpers.ts";
+import {
+  type FakeAcp,
+  requestsTo,
+  sleep,
+  startFakeAcp,
+  stopFakeAcp,
+} from "./helpers.ts";
 
 interface DecideCall {
   toolName: string;
@@ -30,6 +36,7 @@ async function bootedFake(
     cwd: fake.dir,
     bootDeadlineMs: 5_000,
     signal: new AbortController().signal,
+    selectAuthMethod: () => null,
   });
   context.activate(session.sessionId);
 
@@ -127,5 +134,62 @@ describe("[PERM] permission requests over a real ACP transport", () => {
       lib.selectConfigOption(options, "approve"),
     );
     expect(lib.selectTrustAllOption(options)?.optionId).toBe("switch_bypass");
+  });
+});
+
+describe("[PERM] permission decision inputs", () => {
+  test("[PERM] decide receives toolCall.name, not the agent-controlled title", async () => {
+    const context = new lib.StdioAcpPermissionContext();
+    context.activate("sess");
+    const calls: DecideCall[] = [];
+    const host: lib.PermissionHost = {
+      signal: new AbortController().signal,
+      dispatchId: "dispatch-perm-name",
+      decide: (req) => {
+        calls.push(req);
+        return "approve";
+      },
+    };
+    const result = await lib.handleStdioAcpPermissionRequest(host, context, {
+      sessionId: "sess",
+      toolCall: {
+        toolCallId: "tc-name",
+        name: "terminal/create",
+        title: "harmless label",
+        rawInput: { cmd: "ls" },
+      },
+      options: [{ kind: "allow_once", optionId: "allow_once" }],
+    });
+    expect(calls).toEqual([
+      { toolName: "terminal/create", rawInput: { cmd: "ls" }, sessionId: "sess" },
+    ]);
+    expect(result).toEqual({ outcome: { outcome: "selected", optionId: "allow_once" } });
+  });
+
+  test("[PERM] aborting the host signal while decide is pending resolves cancelled", async () => {
+    const context = new lib.StdioAcpPermissionContext();
+    context.activate("sess");
+    const ac = new AbortController();
+    let decideCalls = 0;
+    const host: lib.PermissionHost = {
+      signal: ac.signal,
+      dispatchId: "dispatch-perm-abort",
+      decide: () => {
+        decideCalls += 1;
+        return new Promise<"approve" | "reject">(() => {
+          // decide never settles — abort must still resolve the wire request
+        });
+      },
+    };
+    const pending = lib.handleStdioAcpPermissionRequest(host, context, {
+      sessionId: "sess",
+      toolCall: { toolCallId: "tc-abort", name: "terminal/create", rawInput: {} },
+      options: [{ kind: "allow_once", optionId: "allow_once" }],
+    });
+    await sleep(20);
+    ac.abort();
+    const result = await pending;
+    expect(decideCalls).toBe(1);
+    expect(result).toEqual({ outcome: { outcome: "cancelled" } });
   });
 });

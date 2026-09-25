@@ -92,6 +92,7 @@ export async function startFakeAcp(
     env,
     cancelGraceMs: 300,
     signal: new AbortController().signal,
+    stderrTailBytes: 8192,
   });
   const client = new lib.StdioAcpClient({ stdin: handle.stdin, stdout: handle.stdout });
   return { handle, client, dir, logPath };

@@ -28,6 +28,8 @@ export {
   type SupervisedProcess,
   type SuperviseOptions,
   superviseProcess,
+  type SupervisorEvent,
+  type SupervisorSignalReason,
 } from "./process-supervisor.js";
 export {
   AcpResponseError,

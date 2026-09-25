@@ -97,6 +97,28 @@ describe("[B3] cwd boundary", () => {
     }
   });
 
+  test("[B3] startStdioAcpServer without a cwd throws HostInputError before spawn", async () => {
+    const dir = makeTmpDir("server-cwd-missing");
+    const marker = join(dir, "spawned");
+    try {
+      expect(() =>
+        lib.startStdioAcpServer({
+          command: "sh",
+          args: ["-c", `touch ${marker}`],
+          env: hostEnv(dir),
+          signal: new AbortController().signal,
+          cancelGraceMs: 200,
+          watchdogMs: 10_000,
+          stderrTailBytes: 1024,
+        } as Parameters<typeof lib.startStdioAcpServer>[0]),
+      ).toThrow(lib.HostInputError);
+      await sleep(300);
+      expect(markerAbsent(marker)).toBe(true);
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
   test("[B3] a missing cwd throws HostInputError before spawn", async () => {
     const dir = makeTmpDir("cwd-missing");
     const marker = join(dir, "spawned");
@@ -288,6 +310,7 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
 
 test("[B10] outputLimitBytes kills the group and marks the record truncated", async () => {
   const dir = makeTmpDir("cap");
+  let maxChunk = 0;
   try {
     const proc = lib.superviseProcess({
       command: "sh",
@@ -298,12 +321,39 @@ test("[B10] outputLimitBytes kills the group and marks the record truncated", as
       cancelGraceMs: 200,
       watchdogMs: 30_000,
       outputLimitBytes: 65_536,
+      onStdoutChunk: (chunk) => {
+        if (chunk.length > maxChunk) maxChunk = chunk.length;
+      },
     });
     const exit = await proc.exit;
     expect(exit.outcome).toBe("output-limit");
     expect(exit.truncated).toBe(true);
     expect(exit.stdoutBytes).toBeGreaterThan(65_536);
-    expect(exit.stdoutBytes).toBeLessThanOrEqual(65_536 + 524_288);
+    expect(maxChunk).toBeGreaterThan(0);
+    expect(exit.stdoutBytes).toBeLessThanOrEqual(65_536 + maxChunk);
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] output under the cap exits normally within 50ms headroom", async () => {
+  const dir = makeTmpDir("cap-ok");
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", 'head -c 1024 /dev/zero | tr "\\0" a'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 30_000,
+      outputLimitBytes: 65_536,
+    });
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("exited");
+    expect(exit.truncated).toBe(false);
+    expect(exit.stdoutBytes).toBe(1024);
     expect(groupExists(proc.pgid)).toBe(false);
   } finally {
     cleanupDir(dir);
@@ -395,6 +445,114 @@ test("[B10] runProcess resolves on non-zero exit without throwing", async () => 
     expect(result.exit.code).toBe(7);
     expect(result.stdout).toContain("out");
     expect(result.stderr).toContain("err");
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] a pre-aborted signal returns cancelled without spawning", async () => {
+  const dir = makeTmpDir("pre-abort");
+  const marker = join(dir, "spawned");
+  const ac = new AbortController();
+  ac.abort();
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", `touch ${marker}`],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: ac.signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+    });
+    expect(proc.pid).toBeUndefined();
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("cancelled");
+    await sleep(200);
+    expect(markerAbsent(marker)).toBe(true);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] a stdin string is written verbatim and the pipe is closed", async () => {
+  const dir = makeTmpDir("stdin-content");
+  try {
+    const result = await lib.runProcess({
+      command: "sh",
+      args: ["-c", "cat"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+      stdin: "line-one\nline-two\n",
+    });
+    expect(result.exit.outcome).toBe("exited");
+    expect(result.stdout).toBe("line-one\nline-two\n");
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] onLine emits complete lines and the raw stdout reader still returns", async () => {
+  const dir = makeTmpDir("lines");
+  const lines: string[] = [];
+  let chunkBytes = 0;
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", 'printf "one\\ntwo\\n"; printf "partial"'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+      stdoutMode: "raw",
+      onLine: (line, stream) => {
+        if (stream === "stdout") lines.push(line);
+      },
+    });
+    for await (const chunk of proc.stdout ?? []) {
+      chunkBytes += (chunk as Buffer).length;
+    }
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("exited");
+    expect(lines).toEqual(["one", "two", "partial"]);
+    expect(exit.stdoutBytes).toBe(chunkBytes);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] onProcessEvent reports spawn and exit and stderrTailBytes lands on the record", async () => {
+  const dir = makeTmpDir("events");
+  const events: lib.SupervisorEvent[] = [];
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", "echo head-tail-marker 1>&2; echo out"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+      stderrTailBytes: 64,
+      onProcessEvent: (event) => {
+        events.push(event);
+      },
+    });
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("exited");
+    expect(exit.stderrTail).toContain("head-tail-marker");
+    const spawn = events.find(
+      (e): e is Extract<lib.SupervisorEvent, { type: "spawn" }> => e.type === "spawn",
+    );
+    const done = events.find(
+      (e): e is Extract<lib.SupervisorEvent, { type: "exit" }> => e.type === "exit",
+    );
+    expect(spawn?.pid).toBe(proc.pid);
+    expect(done?.outcome).toBe("exited");
   } finally {
     cleanupDir(dir);
   }

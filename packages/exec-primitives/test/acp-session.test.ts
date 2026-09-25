@@ -23,6 +23,7 @@ function baseOpts(fake: FakeAcp): BootstrapOpts {
     cwd: fake.dir,
     bootDeadlineMs: 5_000,
     signal: new AbortController().signal,
+    selectAuthMethod: () => null,
   };
 }
 
@@ -76,6 +77,29 @@ describe("[B6] session bootstrap", () => {
       );
       expect(err).toBeInstanceOf(lib.HostInputError);
       expect(requestsTo(fake.logPath, "initialize")).toHaveLength(0);
+    } finally {
+      await stopFakeAcp(fake);
+    }
+  });
+
+  test("[B6] missing protocolVersion, clientCapabilities or selectAuthMethod throw HostInputError before any write", async () => {
+    const fake = await startFakeAcp("b6-required");
+    try {
+      for (const field of [
+        "protocolVersion",
+        "clientCapabilities",
+        "selectAuthMethod",
+      ] as const) {
+        const err = await catchRejection(
+          lib.initializeAcpSession(withoutField(baseOpts(fake), field)),
+        );
+        expect(err).toBeInstanceOf(lib.HostInputError);
+      }
+      expect(requestsTo(fake.logPath, "initialize")).toHaveLength(0);
+
+      const session = await lib.initializeAcpSession(baseOpts(fake));
+      expect(session.sessionId).toBe("fake-session-1");
+      expect(requestsTo(fake.logPath, "initialize")).toHaveLength(1);
     } finally {
       await stopFakeAcp(fake);
     }

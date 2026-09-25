@@ -1,21 +1,17 @@
 import type { StdioAcpHandle } from "./stdio-acp-server.js";
 
-import { type ExecLogger, type HostEnv, HostInputError, requireNonEmptyString } from "./host.js";
+import { type ExecLogger, HostInputError, requireNonEmptyString } from "./host.js";
 
 /**
- * Identity of a warmable ACP process. Two specs that differ in env or
- * credentials must never share an entry — the credential scope and token
- * digest are part of the pool key, and the host-computed specHash must match
- * on acquire or the entry is torn down instead of reused.
+ * Identity of a warmable ACP process. Two specs that differ in agent, cwd or
+ * credential scope must never share an entry — the pool key carries all
+ * three, and the host-computed specHash must match on acquire or the entry is
+ * torn down instead of reused.
  */
 export interface WarmPoolSpec {
-  agentKey: string;
-  env?: HostEnv;
-  cwd?: string;
-  credentials: {
-    credentialScope: string;
-    tokenHash?: string;
-  };
+  agent: string;
+  cwd: string;
+  credentialScope: string;
   specHash: string;
   /** Per-entry idle grace; falls back to the pool default. */
   graceMs?: number;
@@ -27,16 +23,16 @@ export interface WarmPoolSpec {
 }
 
 export function poolKeyFor(spec: WarmPoolSpec): string {
-  const agentKey = requireNonEmptyString(spec.agentKey, "spec.agentKey");
-  const credentials = spec.credentials as { credentialScope?: unknown } | undefined;
-  const scope = credentials?.credentialScope;
+  const agent = requireNonEmptyString(spec.agent, "spec.agent");
+  const cwd = requireNonEmptyString(spec.cwd, "spec.cwd");
+  const scope = spec.credentialScope;
   if (typeof scope !== "string" || scope.trim().length === 0) {
     throw new HostInputError(
-      "spec.credentials.credentialScope",
+      "spec.credentialScope",
       "pool keys are scoped by credential identity; a missing scope would share across tenants",
     );
   }
-  return `${agentKey}\0${scope}\0${spec.credentials.tokenHash ?? ""}`;
+  return `${agent}\0${cwd}\0${scope}`;
 }
 
 export interface AcpPoolClient {

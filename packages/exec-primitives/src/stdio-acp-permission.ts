@@ -4,7 +4,12 @@ const MAX_TOOL_CALL_CONTEXTS = 64;
 const MAX_RETIRED_TOOL_CALL_IDS = 4096;
 const MAX_CONTEXT_STRING_CHARS = 1024;
 const MAX_RAW_INPUT_BYTES = 64 * 1024;
-const TERMINAL_TOOL_CALL_STATUSES = new Set(["canceled", "cancelled", "completed", "failed"]);
+
+function isTerminalToolCallStatus(status: unknown): boolean {
+  return (
+    status === "canceled" || status === "cancelled" || status === "completed" || status === "failed"
+  );
+}
 
 export interface AcpPermissionToolCallContext {
   name?: unknown;
@@ -216,7 +221,7 @@ export class StdioAcpPermissionContext {
     if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") return;
     const toolCallId = nonEmptyString(update.toolCallId);
     if (toolCallId === undefined) return;
-    if (TERMINAL_TOOL_CALL_STATUSES.has(update.status as string)) {
+    if (isTerminalToolCallStatus(update.status)) {
       this.toolCalls.delete(toolCallId);
       this.pendingDecisions.delete(toolCallId);
       this.retire(toolCallId);
@@ -252,7 +257,7 @@ export class StdioAcpPermissionContext {
 
     const title = mergedRequestField(toolCall, retained, "title");
     const name = mergedRequestField(toolCall, retained, "name");
-    const toolName = title ?? name;
+    const toolName = name ?? title;
     const requestRawInput = hasOwn(toolCall, "rawInput")
       ? retainRawInput(toolCall.rawInput)
       : { retained: retained.hasRawInput, value: retained.rawInput };
@@ -302,18 +307,53 @@ export interface PermissionDecideRequest {
 /**
  * Host-owned inputs for a permission decision. The library never reaches into
  * a dispatch/conversation object: the host supplies the signal, a dispatchId
- * for diagnostics, an optional trust-all flag, and the decision function.
+ * for diagnostics, and the decision function.
  */
 export interface PermissionHost {
   signal: AbortSignal;
   dispatchId: string;
-  trustAll?: boolean;
   decide?: (req: PermissionDecideRequest) => Promise<"approve" | "reject"> | "approve" | "reject";
   logger?: ExecLogger;
 }
 
 function isSignalAborted(signal: AbortSignal): boolean {
   return signal.aborted;
+}
+
+function decideWithAbort(
+  decide: (req: PermissionDecideRequest) => Promise<"approve" | "reject"> | "approve" | "reject",
+  req: PermissionDecideRequest,
+  signal: AbortSignal,
+): Promise<"approve" | "reject" | "aborted"> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve("aborted");
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    Promise.resolve()
+      .then(() => decide(req))
+      .then(
+        (decision) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          resolve(decision);
+        },
+        (err: unknown) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      );
+  });
 }
 
 export async function handleStdioAcpPermissionRequest(
@@ -329,23 +369,26 @@ export async function handleStdioAcpPermissionRequest(
     return cancelledOutcome();
   }
   const options = permissionOptions(request.options);
-  if (host.trustAll === true) {
-    const chosen = selectTrustAllOption(options);
-    return typeof chosen?.optionId === "string"
-      ? { outcome: { outcome: "selected", optionId: chosen.optionId } }
-      : cancelledOutcome();
-  }
   if (host.decide === undefined) return cancelledOutcome();
   const permissionContext = context.resolve(request);
   if (permissionContext === null) return cancelledOutcome();
 
-  let decision: "approve" | "reject" = "approve";
+  let decision: "approve" | "reject";
   try {
-    decision = await host.decide({
-      toolName: permissionContext.toolName,
-      rawInput: permissionContext.rawInput,
-      sessionId: permissionContext.sessionId,
-    });
+    const decided = await decideWithAbort(
+      host.decide,
+      {
+        toolName: permissionContext.toolName,
+        rawInput: permissionContext.rawInput,
+        sessionId: permissionContext.sessionId,
+      },
+      host.signal,
+    );
+    if (decided === "aborted") {
+      context.finishDecision(permissionContext);
+      return cancelledOutcome();
+    }
+    decision = decided;
   } catch (err) {
     host.logger?.warn?.("stdio-acp: permission request failed; rejecting", {
       toolName: permissionContext.toolName,
