@@ -1,28 +1,28 @@
 [
   {
     "file": "process-supervisor.ts",
-    "line": 219,
+    "line": 239,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: names a private helper that wires chunk/line handlers onto a piped child stream; no process/session attachment policy is involved"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 269,
+    "line": 302,
     "token": "resume",
     "classification": "false-positive",
     "reason": "false-positive: Readable.resume() puts the piped child stream into flowing mode for the chunk handler; unrelated to session-resume or warm-reuse policy"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 456,
+    "line": 462,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"
   },
   {
     "file": "process-supervisor.ts",
-    "line": 459,
+    "line": 465,
     "token": "attachstreamhandler",
     "classification": "false-positive",
     "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy"
@@ -32,13 +32,13 @@
     "line": 108,
     "token": "attachnewlinereader",
     "classification": "false-positive",
-    "reason": "false-positive: names the private helper wiring a readline interface to child stdout; no attachment policy"
+    "reason": "false-positive: call site of the readline wirer; no attachment policy"
   },
   {
     "file": "stdio-acp-client.ts",
-    "line": 192,
+    "line": 197,
     "token": "attachnewlinereader",
     "classification": "false-positive",
-    "reason": "false-positive: call site of the readline wirer; no attachment policy"
+    "reason": "false-positive: names the private helper wiring a readline interface to child stdout; no attachment policy"
   }
 ]

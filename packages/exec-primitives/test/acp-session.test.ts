@@ -85,11 +85,7 @@ describe("[B6] session bootstrap", () => {
   test("[B6] missing protocolVersion, clientCapabilities or selectAuthMethod throw HostInputError before any write", async () => {
     const fake = await startFakeAcp("b6-required");
     try {
-      for (const field of [
-        "protocolVersion",
-        "clientCapabilities",
-        "selectAuthMethod",
-      ] as const) {
+      for (const field of ["protocolVersion", "clientCapabilities", "selectAuthMethod"] as const) {
         const err = await catchRejection(
           lib.initializeAcpSession(withoutField(baseOpts(fake), field)),
         );

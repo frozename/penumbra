@@ -4,10 +4,7 @@ import { PassThrough } from "node:stream";
 import * as lib from "../src/index.ts";
 import { catchRejection, sleep } from "./helpers.ts";
 
-function makeClient(opts?: {
-  framing?: "newline" | "content-length";
-  logger?: lib.ExecLogger;
-}): {
+function makeClient(opts?: { framing?: "newline" | "content-length"; logger?: lib.ExecLogger }): {
   client: lib.StdioAcpClient;
   stdin: PassThrough;
   stdout: PassThrough;
@@ -106,8 +103,10 @@ describe("[B8] framing limits", () => {
 });
 
 describe("[B8] stream and handler faults", () => {
-  test("[B8] a second stream error after the transport closes does not throw", async () => {
-    const { client, stdout } = makeClient();
+  // Content-length framing attaches no readline partner: a once()-registered
+  // error listener would leave the second emit without a handler and throw.
+  test("[B8] a second stdout error after the transport closes does not throw (content-length)", async () => {
+    const { client, stdout } = makeClient({ framing: "content-length" });
     const pending = client.request("initialize", {}).catch((err: unknown) => err);
     stdout.emit("error", new Error("first stream fault"));
     await pending;
@@ -117,19 +116,32 @@ describe("[B8] stream and handler faults", () => {
     }).not.toThrow();
   });
 
+  test("[B8] a second stdin error after the transport closes does not throw", async () => {
+    const { client, stdin } = makeClient({ framing: "content-length" });
+    const pending = client.request("initialize", {}).catch((err: unknown) => err);
+    stdin.emit("error", new Error("first stdin fault"));
+    await pending;
+    expect(client.isTransportOpen()).toBe(false);
+    expect(() => {
+      stdin.emit("error", new Error("second stdin fault"));
+    }).not.toThrow();
+  });
+
   test("[B8] a synchronous write failure rejects the request and leaves no orphan", async () => {
     const { client, stdin, stdout } = makeClient();
-    stdin.write = () => {
+    stdin.write = (): boolean => {
       throw new Error("write exploded");
     };
     const err = await catchRejection(client.request("initialize", {}));
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("write exploded");
+    expect(client.pendingRequestCount).toBe(0);
     expect(client.isTransportOpen()).toBe(true);
     stdout.destroy();
     await sleep(10);
     const late = await catchRejection(client.request("session/new", {}));
     expect(late).toBeInstanceOf(lib.AcpTransportClosedError);
+    expect(client.pendingRequestCount).toBe(0);
   });
 
   test("[B8] a throwing notification handler is logged and the transport stays open", async () => {
@@ -147,7 +159,7 @@ describe("[B8] stream and handler faults", () => {
     stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {} })}\n`);
     await sleep(30);
     expect(client.isTransportOpen()).toBe(true);
-    expect(warns.some((w) => /notification handler threw/.test(w))).toBe(true);
+    expect(warns.some((w) => w.includes("notification handler threw"))).toBe(true);
   });
 
   test("[B8] a throwing request handler answers a generic error frame and logs no wire payload", async () => {
@@ -173,5 +185,38 @@ describe("[B8] stream and handler faults", () => {
     expect(warnFields.length).toBeGreaterThanOrEqual(1);
     expect(warnFields.join("\n")).not.toContain("secret-payload-XYZ");
     expect(client.isTransportOpen()).toBe(true);
+  });
+
+  test("[B8] a sentinel inside invalid JSON reaches no logger field in either framing", async () => {
+    const sentinel = "SENTINEL-payload-9f2c";
+    for (const framing of ["newline", "content-length"] as const) {
+      const seen: string[] = [];
+      const { client, stdin, stdout } = makeClient({
+        framing,
+        logger: {
+          warn: (msg, fields) => {
+            seen.push(`${msg} ${JSON.stringify(fields ?? {})}`);
+          },
+          error: (msg, fields) => {
+            seen.push(`${msg} ${JSON.stringify(fields ?? {})}`);
+          },
+        },
+      });
+      const pending = client.request("initialize", {}).catch((err: unknown) => err);
+      stdin.on("data", () => {
+        // drain outbound writes
+      });
+      if (framing === "newline") {
+        stdout.write(`{"jsonrpc":"2.0","id":"${sentinel}\n`);
+      } else {
+        const body = `{"jsonrpc":"2.0","id":"${sentinel}`;
+        stdout.write(`Content-Length: ${String(Buffer.byteLength(body))}\r\n\r\n${body}`);
+      }
+      await sleep(30);
+      expect(seen.length).toBeGreaterThanOrEqual(1);
+      expect(seen.join("\n")).not.toContain(sentinel);
+      stdout.destroy();
+      await pending;
+    }
   });
 });

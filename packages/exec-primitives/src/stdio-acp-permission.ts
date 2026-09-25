@@ -376,7 +376,7 @@ export async function handleStdioAcpPermissionRequest(
   let decision: "approve" | "reject";
   try {
     const decided = await decideWithAbort(
-      host.decide,
+      (req) => host.decide?.(req) ?? "reject",
       {
         toolName: permissionContext.toolName,
         rawInput: permissionContext.rawInput,
@@ -393,7 +393,7 @@ export async function handleStdioAcpPermissionRequest(
     host.logger?.warn?.("stdio-acp: permission request failed; rejecting", {
       toolName: permissionContext.toolName,
       dispatchId: host.dispatchId,
-      err: String(err),
+      errClass: err instanceof Error ? err.name : typeof err,
     });
     decision = "reject";
   }

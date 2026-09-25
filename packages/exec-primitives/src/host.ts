@@ -51,6 +51,13 @@ export function requireEnv(value: unknown, field: string): HostEnv {
   return out;
 }
 
+export function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new HostInputError(field, "expected an array of strings");
+  }
+  return value;
+}
+
 export function requireSignal(value: unknown, field: string): AbortSignal {
   if (
     typeof value !== "object" ||

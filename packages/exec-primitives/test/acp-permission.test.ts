@@ -1,13 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import * as lib from "../src/index.ts";
-import {
-  type FakeAcp,
-  requestsTo,
-  sleep,
-  startFakeAcp,
-  stopFakeAcp,
-} from "./helpers.ts";
+import { type FakeAcp, requestsTo, sleep, startFakeAcp, stopFakeAcp } from "./helpers.ts";
 
 interface DecideCall {
   toolName: string;
@@ -89,6 +83,36 @@ describe("[PERM] permission requests over a real ACP transport", () => {
     }
   });
 
+  test("[PERM] a throwing decide logs only the error class, never the message", async () => {
+    const context = new lib.StdioAcpPermissionContext();
+    context.activate("sess");
+    const logged: string[] = [];
+    const host: lib.PermissionHost = {
+      signal: new AbortController().signal,
+      dispatchId: "dispatch-perm-errclass",
+      decide: () => {
+        throw new Error("SECRET-decide-7b21");
+      },
+      logger: {
+        warn: (msg, fields) => {
+          logged.push(`${msg} ${JSON.stringify(fields ?? {})}`);
+        },
+        error: (msg, fields) => {
+          logged.push(`${msg} ${JSON.stringify(fields ?? {})}`);
+        },
+      },
+    };
+    const result = await lib.handleStdioAcpPermissionRequest(host, context, {
+      sessionId: "sess",
+      toolCall: { toolCallId: "tc-err", name: "terminal/create", rawInput: {} },
+      options: [{ kind: "reject_once", optionId: "reject_once" }],
+    });
+    expect(result).toEqual({ outcome: { outcome: "selected", optionId: "reject_once" } });
+    expect(logged.length).toBeGreaterThanOrEqual(1);
+    expect(logged.join("\n")).not.toContain("SECRET-decide-7b21");
+    expect(logged.join("\n")).toContain("errClass");
+  });
+
   test("[PERM] decide receives toolName, rawInput and sessionId from the wire", async () => {
     const { fake, outcomes, decideCalls, promptDone } = await bootedFake(() => "approve");
     try {
@@ -163,6 +187,28 @@ describe("[PERM] permission decision inputs", () => {
     expect(calls).toEqual([
       { toolName: "terminal/create", rawInput: { cmd: "ls" }, sessionId: "sess" },
     ]);
+    expect(result).toEqual({ outcome: { outcome: "selected", optionId: "allow_once" } });
+  });
+
+  test("[PERM] a class-host decide is invoked with its own this-binding", async () => {
+    const context = new lib.StdioAcpPermissionContext();
+    context.activate("sess");
+    class ClassDecider implements lib.PermissionHost {
+      signal = new AbortController().signal;
+      dispatchId = "dispatch-perm-class";
+      calls = 0;
+      decide(_req: lib.PermissionDecideRequest): "approve" {
+        this.calls += 1;
+        return "approve";
+      }
+    }
+    const host = new ClassDecider();
+    const result = await lib.handleStdioAcpPermissionRequest(host, context, {
+      sessionId: "sess",
+      toolCall: { toolCallId: "tc-class", name: "terminal/create", rawInput: {} },
+      options: [{ kind: "allow_once", optionId: "allow_once" }],
+    });
+    expect(host.calls).toBe(1);
     expect(result).toEqual({ outcome: { outcome: "selected", optionId: "allow_once" } });
   });
 

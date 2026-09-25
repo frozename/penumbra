@@ -1,12 +1,11 @@
 import type { Readable, Writable } from "node:stream";
 
-import type { ExecLogger, HostEnv, HostTimers } from "./host.js";
-
+import { type ExecLogger, type HostEnv, type HostTimers, requireFiniteMs } from "./host.js";
 import { superviseProcess } from "./process-supervisor.js";
 
 export interface StdioAcpServerOptions {
   command: string;
-  args?: string[];
+  args: string[];
   cwd: string;
   env: HostEnv;
   signal: AbortSignal;
@@ -49,10 +48,13 @@ export interface StdioAcpHandle {
 const NO_WATCHDOG = 2_147_483_000;
 
 export function startStdioAcpServer(opts: StdioAcpServerOptions): Promise<StdioAcpHandle> {
-  const { stderrTailBytes, onStderrChunk, logger } = opts;
+  // The tail budget is a host input: validate it, and keep exactly one tail —
+  // this function's rolling buffer. superviseProcess must not also retain one.
+  const stderrTailBytes = requireFiniteMs(opts.stderrTailBytes, "stderrTailBytes", { min: 0 });
+  const { onStderrChunk, logger } = opts;
   const proc = superviseProcess({
     command: opts.command,
-    args: opts.args ?? [],
+    args: opts.args,
     cwd: opts.cwd,
     env: opts.env,
     signal: opts.signal,
@@ -60,7 +62,6 @@ export function startStdioAcpServer(opts: StdioAcpServerOptions): Promise<StdioA
     watchdogMs: opts.watchdogMs ?? NO_WATCHDOG,
     stdoutMode: "raw",
     stderrMode: "pipe",
-    stderrTailBytes,
     ...(opts.outputLimitBytes !== undefined ? { outputLimitBytes: opts.outputLimitBytes } : {}),
     ...(logger !== undefined ? { logger } : {}),
     ...(opts.timers !== undefined ? { timers: opts.timers } : {}),

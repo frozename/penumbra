@@ -82,13 +82,19 @@ function raceDeadline<T>(
   });
 }
 
-export async function initializeAcpSession(opts: InitializeAcpSessionOptions): Promise<AcpSession> {
+interface BootstrapInputs {
+  client: AcpSessionClient;
+  cwd: string;
+  signal: AbortSignal;
+  bootDeadlineMs: number;
+  protocolVersion: number;
+  selectAuthMethod: (authMethods: unknown[]) => string | null | undefined;
+}
+
+function validateBootstrapInputs(opts: InitializeAcpSessionOptions): BootstrapInputs {
   if (opts.clientInfo === undefined || opts.clientInfo === null) {
     throw new HostInputError("clientInfo", "host must advertise its identity verbatim");
   }
-  const cwd = requireNonEmptyString(opts.cwd, "cwd");
-  const signal = requireSignal(opts.signal, "signal");
-  const bootDeadlineMs = requireFiniteMs(opts.bootDeadlineMs, "bootDeadlineMs", { min: 1 });
   const clientValue: unknown = opts.client;
   if (
     typeof clientValue !== "object" ||
@@ -97,15 +103,25 @@ export async function initializeAcpSession(opts: InitializeAcpSessionOptions): P
   ) {
     throw new HostInputError("client", "expected an ACP client with a request method");
   }
-  const client = clientValue as AcpSessionClient;
-  const protocolVersion = requireFiniteMs(opts.protocolVersion, "protocolVersion", { min: 1 });
   if (opts.clientCapabilities === undefined) {
     throw new HostInputError("clientCapabilities", "host must pass capabilities explicitly");
   }
   if (typeof opts.selectAuthMethod !== "function") {
     throw new HostInputError("selectAuthMethod", "host must supply an auth-method selector");
   }
-  const selectAuthMethod = opts.selectAuthMethod;
+  return {
+    client: clientValue as AcpSessionClient,
+    cwd: requireNonEmptyString(opts.cwd, "cwd"),
+    signal: requireSignal(opts.signal, "signal"),
+    bootDeadlineMs: requireFiniteMs(opts.bootDeadlineMs, "bootDeadlineMs", { min: 1 }),
+    protocolVersion: requireFiniteMs(opts.protocolVersion, "protocolVersion", { min: 1 }),
+    selectAuthMethod: opts.selectAuthMethod,
+  };
+}
+
+export async function initializeAcpSession(opts: InitializeAcpSessionOptions): Promise<AcpSession> {
+  const { client, cwd, signal, bootDeadlineMs, protocolVersion, selectAuthMethod } =
+    validateBootstrapInputs(opts);
   const deadlineAt = Date.now() + bootDeadlineMs;
 
   const initResult = (await raceDeadline(

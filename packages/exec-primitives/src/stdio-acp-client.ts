@@ -131,6 +131,11 @@ export class StdioAcpClient {
     });
   }
 
+  /** Read-only observability: pending (unanswered) request count. */
+  get pendingRequestCount(): number {
+    return this.pendingRequests.size;
+  }
+
   isTransportOpen(): boolean {
     const stdout = this.options.stdout as Readable & { closed?: boolean; readableEnded?: boolean };
     return (
@@ -354,17 +359,20 @@ export class StdioAcpClient {
       return;
     }
     if (message.method !== undefined) {
-      const handler = this.handlers.get(message.method);
-      if (handler) {
-        try {
-          handler(message.params);
-        } catch (err) {
-          this.options.logger?.warn?.("stdio-acp-client: notification handler threw", {
-            method: message.method,
-            errClass: err instanceof Error ? err.name : typeof err,
-          });
-        }
-      }
+      this.dispatchNotification(message.method, message.params);
+    }
+  }
+
+  private dispatchNotification(method: string, params: unknown): void {
+    const handler = this.handlers.get(method);
+    if (!handler) return;
+    try {
+      handler(params);
+    } catch (err) {
+      this.options.logger?.warn?.("stdio-acp-client: notification handler threw", {
+        method,
+        errClass: err instanceof Error ? err.name : typeof err,
+      });
     }
   }
 

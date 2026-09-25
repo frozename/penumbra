@@ -285,7 +285,12 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
   try {
     const proc = lib.superviseProcess({
       command: "sh",
-      args: ["-c", 'trap "exit 0" TERM; (trap "" TERM; while :; do sleep 1; done) & wait'],
+      // The descendant detaches its stdio: the leader's pipes EOF at leader
+      // exit, so only the group-gone wait (not stream EOF) can delay exit.
+      args: [
+        "-c",
+        'trap "exit 0" TERM; (trap "" TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & wait',
+      ],
       cwd: dir,
       env: hostEnv(dir),
       signal: ac.signal,
@@ -295,13 +300,26 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
     await sleep(50);
     expect(groupExists(proc.pgid)).toBe(true);
 
+    let stdoutEof = false;
+    const stdoutDrained = (async (): Promise<void> => {
+      for await (const _chunk of proc.stdout ?? []) {
+        // drain until EOF
+      }
+      stdoutEof = true;
+    })();
+
     const t0 = Date.now();
     ac.abort();
     const exit = await proc.exit;
     const elapsed = Date.now() - t0;
 
     expect(exit.outcome).toBe("cancelled");
-    expect(elapsed).toBeLessThan(300 + 500);
+    // SIGTERM kills the leader; the TERM-immune detached descendant holds the
+    // group until the grace expires — exit cannot resolve before ~graceMs.
+    expect(elapsed).toBeGreaterThanOrEqual(300 - 50);
+    expect(elapsed).toBeLessThan(300 + 1500);
+    await stdoutDrained;
+    expect(stdoutEof).toBe(true);
     expect(groupExists(proc.pgid)).toBe(false);
   } finally {
     cleanupDir(dir);
@@ -342,7 +360,9 @@ test("[B10] outputLimitBytes kills the group and marks the record truncated", as
   try {
     const proc = lib.superviseProcess({
       command: "sh",
-      args: ["-c", 'head -c 1000000 /dev/zero | tr "\\0" a'],
+      // Delay the producer so the group must still exist before any output:
+      // the cap can only trip mid-stream, never before spawn.
+      args: ["-c", 'sleep 0.2; head -c 1000000 /dev/zero | tr "\\0" a'],
       cwd: dir,
       env: hostEnv(dir),
       signal: new AbortController().signal,
@@ -353,19 +373,23 @@ test("[B10] outputLimitBytes kills the group and marks the record truncated", as
         if (chunk.length > maxChunk) maxChunk = chunk.length;
       },
     });
+    await sleep(50);
+    expect(groupExists(proc.pgid)).toBe(true);
     const exit = await proc.exit;
+    const overshoot = exit.stdoutBytes - 65_536;
     expect(exit.outcome).toBe("output-limit");
     expect(exit.truncated).toBe(true);
-    expect(exit.stdoutBytes).toBeGreaterThan(65_536);
+    expect(overshoot).toBeGreaterThan(0);
     expect(maxChunk).toBeGreaterThan(0);
-    expect(exit.stdoutBytes).toBeLessThanOrEqual(65_536 + maxChunk);
+    // The cap trips on the chunk that crosses it: overshoot <= that chunk.
+    expect(overshoot).toBeLessThanOrEqual(maxChunk);
     expect(groupExists(proc.pgid)).toBe(false);
   } finally {
     cleanupDir(dir);
   }
 });
 
-test("[B10] output under the cap exits normally within 50ms headroom", async () => {
+test("[B10] output under the cap exits normally and is not truncated", async () => {
   const dir = makeTmpDir("cap-ok");
   try {
     const proc = lib.superviseProcess({
@@ -600,5 +624,185 @@ test("[B10] the wire log of a real ACP session round-trips through superviseProc
     expect(readWireLog(fake.logPath).length).toBeGreaterThanOrEqual(2);
   } finally {
     await stopFakeAcp(fake);
+  }
+});
+
+test("[B10] a leader exit with a detached descendant still resolves under the watchdog", async () => {
+  const dir = makeTmpDir("leader-detached");
+  try {
+    const t0 = Date.now();
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", "sleep 30 >/dev/null 2>&1 </dev/null & exit 0"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 500,
+    });
+    const exit = await proc.exit;
+    const elapsed = Date.now() - t0;
+    // The leader exited 0 but the detached sleep keeps the process group
+    // alive; the watchdog stays armed until the group is gone and SIGKILLs it.
+    expect(elapsed).toBeLessThan(2_000);
+    expect(exit.outcome).toBe("exited");
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] an abort landing after the leader exits still reaches the detached group", async () => {
+  const dir = makeTmpDir("abort-late");
+  const ac = new AbortController();
+  try {
+    const t0 = Date.now();
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", "sleep 30 >/dev/null 2>&1 </dev/null & exit 0"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: ac.signal,
+      cancelGraceMs: 200,
+      watchdogMs: 30_000,
+    });
+    await sleep(150);
+    ac.abort();
+    const exit = await proc.exit;
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(2_000);
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] a throwing onProcessEvent observer cannot defuse the watchdog and exit still settles", async () => {
+  const dir = makeTmpDir("observer-throws");
+  try {
+    const t0 = Date.now();
+    const proc = lib.superviseProcess({
+      command: "sleep",
+      args: ["30"],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 500,
+      onProcessEvent: () => {
+        throw new Error("observer exploded");
+      },
+    });
+    const exit = await proc.exit;
+    const elapsed = Date.now() - t0;
+    expect(exit.outcome).toBe("watchdog");
+    expect(elapsed).toBeLessThan(500 + 1500);
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] a throwing onStdoutChunk neither wedges exit nor skips the output cap", async () => {
+  const dir = makeTmpDir("chunk-throws");
+  try {
+    const proc = lib.superviseProcess({
+      command: "sh",
+      args: ["-c", 'head -c 1000000 /dev/zero | tr "\\0" a'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 30_000,
+      outputLimitBytes: 65_536,
+      onStdoutChunk: () => {
+        throw new Error("chunk sink exploded");
+      },
+    });
+    const exit = await proc.exit;
+    expect(exit.outcome).toBe("output-limit");
+    expect(exit.truncated).toBe(true);
+    expect(exit.stdoutBytes).toBeGreaterThan(65_536);
+    expect(groupExists(proc.pgid)).toBe(false);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] args must be a string array — undefined and non-string entries throw before spawn", async () => {
+  const dir = makeTmpDir("args");
+  const marker = join(dir, "spawned");
+  try {
+    for (const bad of [undefined, [1, 2], "sh"] as unknown[]) {
+      expect(() =>
+        lib.superviseProcess({
+          command: "sh",
+          args: bad,
+          cwd: dir,
+          env: hostEnv(dir),
+          signal: new AbortController().signal,
+          cancelGraceMs: 200,
+          watchdogMs: 10_000,
+        } as unknown as Parameters<typeof lib.superviseProcess>[0]),
+      ).toThrow(lib.HostInputError);
+    }
+    await sleep(300);
+    expect(markerAbsent(marker)).toBe(true);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] runProcess stops collecting each stream at outputLimitBytes", async () => {
+  const dir = makeTmpDir("run-cap");
+  try {
+    const result = await lib.runProcess({
+      command: "sh",
+      args: ["-c", 'head -c 524288 /dev/zero | tr "\\0" a'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 30_000,
+      outputLimitBytes: 65_536,
+    });
+    expect(result.exit.outcome).toBe("output-limit");
+    expect(result.stdout.length).toBeLessThanOrEqual(65_536);
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test("[B10] startStdioAcpServer requires stderrTailBytes and keeps one bounded tail", async () => {
+  const dir = makeTmpDir("tail-input");
+  try {
+    expect(() =>
+      lib.startStdioAcpServer({
+        command: "sh",
+        args: ["-c", "true"],
+        cwd: dir,
+        env: hostEnv(dir),
+        signal: new AbortController().signal,
+        cancelGraceMs: 200,
+      } as unknown as Parameters<typeof lib.startStdioAcpServer>[0]),
+    ).toThrow(lib.HostInputError);
+
+    const handle = await lib.startStdioAcpServer({
+      command: "sh",
+      args: ["-c", 'head -c 200 /dev/zero | tr "\\0" "t" 1>&2; sleep 0.2'],
+      cwd: dir,
+      env: hostEnv(dir),
+      signal: new AbortController().signal,
+      cancelGraceMs: 200,
+      watchdogMs: 10_000,
+      stderrTailBytes: 32,
+    });
+    await sleep(400);
+    const tail = handle.getStderrTail();
+    expect(tail).toBe("t".repeat(32));
+    handle.kill();
+    await handle.exited;
+  } finally {
+    cleanupDir(dir);
   }
 });

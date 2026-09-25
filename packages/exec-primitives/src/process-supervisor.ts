@@ -10,6 +10,7 @@ import {
   requireFiniteMs,
   requireNonEmptyString,
   requireSignal,
+  requireStringArray,
 } from "./host.js";
 
 export type ExitOutcome = "exited" | "cancelled" | "watchdog" | "output-limit" | "spawn-error";
@@ -60,7 +61,7 @@ export interface SuperviseOptions {
   watchdogMs: number;
   /** Child stdin: a string is written verbatim then closed; "ignore" attaches
    * /dev/null; omitted leaves the stdio pipe open for `handle.stdin`. */
-  stdin?: string | "ignore";
+  stdin?: string;
   /** Per-stream output cap in bytes; absent means uncapped. */
   outputLimitBytes?: number;
   /** Trailing stderr bytes retained on `ExitRecord.stderrTail`. */
@@ -158,7 +159,7 @@ interface NormalizedOpts {
   signal: AbortSignal;
   cancelGraceMs: number;
   watchdogMs: number;
-  stdin: string | "ignore" | "pipe";
+  stdin: string;
   outputLimitBytes: number | undefined;
   stderrTailBytes: number | undefined;
   stdoutPipe: boolean;
@@ -185,7 +186,7 @@ function normalizeOptions(opts: SuperviseOptions): NormalizedOpts {
   };
   return {
     command: requireNonEmptyString(opts.command, "command"),
-    args: opts.args,
+    args: requireStringArray(opts.args, "args"),
     cwd: requireNonEmptyString(opts.cwd, "cwd"),
     env: requireEnv(opts.env, "env"),
     signal: requireSignal(opts.signal, "signal"),
@@ -216,6 +217,25 @@ interface StreamLineState {
   pending: string;
 }
 
+function checkStreamCap(
+  state: SupervisorState,
+  n: NormalizedOpts,
+  which: "stdout" | "stderr",
+  killGroup: (sig: NodeJS.Signals, reason: SupervisorSignalReason) => void,
+): void {
+  if (n.outputLimitBytes === undefined) return;
+  const observed = which === "stdout" ? state.stdoutBytes : state.stderrBytes;
+  if (observed <= n.outputLimitBytes) return;
+  if (which === "stdout") state.stdoutCapped = true;
+  else state.stderrCapped = true;
+  state.truncated = true;
+  n.logger?.warn?.("process-supervisor: output limit exceeded; killing group", {
+    stream: which,
+    limit: n.outputLimitBytes,
+  });
+  killGroup("SIGKILL", "output-limit");
+}
+
 function attachStreamHandler(
   stream: Readable,
   state: SupervisorState,
@@ -224,6 +244,31 @@ function attachStreamHandler(
   lineState: StreamLineState,
   killGroup: (sig: NodeJS.Signals, reason: SupervisorSignalReason) => void,
 ): void {
+  // Host callbacks are untrusted: a throw must never skip accounting, the
+  // output cap, or the group kill — so all of those run before any callback.
+  const callChunkCallback = (buf: Buffer): void => {
+    const cb = which === "stdout" ? n.onStdoutChunk : n.onStderrChunk;
+    if (cb === undefined) return;
+    try {
+      cb(buf);
+    } catch (err) {
+      n.logger?.warn?.("process-supervisor: output callback threw", {
+        stream: which,
+        errClass: err instanceof Error ? err.name : typeof err,
+      });
+    }
+  };
+  const callLineCallback = (line: string): void => {
+    if (n.onLine === undefined) return;
+    try {
+      n.onLine(line, which);
+    } catch (err) {
+      n.logger?.warn?.("process-supervisor: line callback threw", {
+        stream: which,
+        errClass: err instanceof Error ? err.name : typeof err,
+      });
+    }
+  };
   stream.on("data", (chunk: Buffer | string) => {
     if (which === "stdout" ? state.stdoutCapped : state.stderrCapped) return;
     const buf = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
@@ -235,35 +280,23 @@ function attachStreamHandler(
         state.stderrTail = state.stderrTail.subarray(state.stderrTail.length - n.stderrTailBytes);
       }
     }
-    if (which === "stdout") n.onStdoutChunk?.(buf);
-    else n.onStderrChunk?.(buf);
+    checkStreamCap(state, n, which, killGroup);
+    callChunkCallback(buf);
     if (n.onLine !== undefined) {
       lineState.pending += buf.toString("utf8");
       let idx: number;
       while ((idx = lineState.pending.indexOf("\n")) !== -1) {
         const line = lineState.pending.slice(0, idx);
         lineState.pending = lineState.pending.slice(idx + 1);
-        n.onLine(line.replace(/\r$/, ""), which);
-      }
-    }
-    if (n.outputLimitBytes !== undefined) {
-      const observed = which === "stdout" ? state.stdoutBytes : state.stderrBytes;
-      if (observed > n.outputLimitBytes) {
-        if (which === "stdout") state.stdoutCapped = true;
-        else state.stderrCapped = true;
-        state.truncated = true;
-        n.logger?.warn?.("process-supervisor: output limit exceeded; killing group", {
-          stream: which,
-          limit: n.outputLimitBytes,
-        });
-        killGroup("SIGKILL", "output-limit");
+        callLineCallback(line.replace(/\r$/, ""));
       }
     }
   });
   stream.on("end", () => {
     if (n.onLine !== undefined && lineState.pending.length > 0) {
-      n.onLine(lineState.pending, which);
+      const pending = lineState.pending;
       lineState.pending = "";
+      callLineCallback(pending);
     }
   });
   stream.resume();
@@ -288,85 +321,40 @@ function cancelledProcess(): SupervisedProcess {
     stderr: undefined,
     spawnError: null,
     exit,
-    kill: () => {},
-    cancel: () => {},
+    kill: (): void => undefined,
+    cancel: (): void => undefined,
   };
 }
 
-export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
-  const n = normalizeOptions(opts);
-  if (n.signal.aborted) {
-    return cancelledProcess();
-  }
-  const state: SupervisorState = {
-    aborted: false,
-    watchdogFired: false,
-    truncated: false,
-    stdoutBytes: 0,
-    stderrBytes: 0,
-    stderrTail: Buffer.alloc(0),
-    stdoutCapped: false,
-    stderrCapped: false,
-    spawnError: null,
-    settled: false,
-    watchdogTimer: null,
-    cancelTimer: null,
-  };
+interface ExitWaitCtx {
+  proc: ChildProcess;
+  pgid: number | undefined;
+  spawnTs: number;
+  state: SupervisorState;
+  n: NormalizedOpts;
+  onAbort: () => void;
+  emitEvent: (event: SupervisorEvent) => void;
+}
 
-  const proc: ChildProcess = spawn(n.command, n.args, {
-    cwd: n.cwd,
-    env: n.env,
-    stdio: [n.stdin === "ignore" ? "ignore" : "pipe", "pipe", "pipe"],
-    shell: false,
-    detached: process.platform !== "win32",
-  });
-  const spawnTs = n.now();
-  const pgid = process.platform !== "win32" ? proc.pid : undefined;
-
-  const killGroup = (sig: NodeJS.Signals, reason: SupervisorSignalReason): void => {
-    if (proc.pid === undefined) return;
-    n.onProcessEvent?.({ type: "signal", signal: sig, reason });
-    try {
-      if (process.platform !== "win32") {
-        process.kill(-proc.pid, sig);
-      } else {
-        proc.kill(sig);
-      }
-    } catch {
-      try {
-        proc.kill(sig);
-      } catch {
-        // Process may already be gone.
-      }
-    }
-  };
-
-  const startCancelSequence = (reason: "abort" | "cancel"): void => {
-    if (state.cancelTimer !== null) return;
-    killGroup("SIGTERM", reason);
-    state.cancelTimer = armTimer(n.timers, n.cancelGraceMs, () => {
-      killGroup("SIGKILL", "grace-expired");
-    });
-  };
-  const onAbort = (): void => {
-    state.aborted = true;
-    startCancelSequence("abort");
-  };
-
-  const exit = new Promise<ExitRecord>((resolve) => {
+function watchExit(ctx: ExitWaitCtx): Promise<ExitRecord> {
+  const { proc, pgid, spawnTs, state, n, onAbort, emitEvent } = ctx;
+  return new Promise<ExitRecord>((resolve) => {
     const finish = (record: Omit<ExitRecord, "durationMs" | "stderrTail">): void => {
       if (state.settled) return;
       state.settled = true;
-      disarmTimer(n.timers, state.watchdogTimer);
-      n.signal.removeEventListener("abort", onAbort);
+      // A detached descendant can keep the process group alive after the
+      // leader exits: keep the watchdog and abort listener armed until the
+      // group is actually gone so neither supervision path is disarmed early.
       void waitGroupGone(pgid, n.timers).then(() => {
+        disarmTimer(n.timers, state.watchdogTimer);
+        n.signal.removeEventListener("abort", onAbort);
         disarmTimer(n.timers, state.cancelTimer);
         const full: ExitRecord = {
           ...record,
           stderrTail: state.stderrTail.toString("utf8"),
           durationMs: Math.max(0, n.now() - spawnTs),
         };
-        n.onProcessEvent?.({
+        emitEvent({
           type: "exit",
           code: full.code,
           signal: full.signal,
@@ -385,7 +373,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
       if (stream === null || stream === undefined) return true;
       const s = stream as Readable & { closed?: boolean };
       if (typeof s.readableEnded !== "boolean") return true;
-      return s.readableEnded || s.destroyed || s.closed === true;
+      return s.readableEnded || s.destroyed || s.closed;
     };
     const finishFromExit = (): void => {
       if (sawExit === null) return;
@@ -424,7 +412,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
     });
     proc.once("close", (code, closeSignal) => {
       sawClose = true;
-      if (sawExit === null) sawExit = { code, signal: closeSignal };
+      sawExit ??= { code, signal: closeSignal };
       finishFromExit();
     });
     const streamDone = (): void => {
@@ -438,7 +426,14 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
       emitter?.once?.("close", streamDone);
     }
   });
+}
 
+function wireChildStreams(
+  proc: ChildProcess,
+  state: SupervisorState,
+  n: NormalizedOpts,
+  killGroup: (sig: NodeJS.Signals, reason: SupervisorSignalReason) => void,
+): void {
   const stdoutNeedsHandler =
     n.stdoutPipe ||
     n.onStdoutChunk !== undefined ||
@@ -450,14 +445,102 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
     n.onLine !== undefined ||
     n.stderrTailBytes !== undefined ||
     n.outputLimitBytes !== undefined;
-  const stdoutLineState: StreamLineState = { pending: "" };
-  const stderrLineState: StreamLineState = { pending: "" };
+  // An 'error' emitted on a child stdio stream with no listener throws
+  // synchronously from the emitter — keep a persistent listener on both.
+  for (const [which, stream] of [
+    ["stdout", proc.stdout],
+    ["stderr", proc.stderr],
+  ] as const) {
+    stream?.on("error", (err: Error) => {
+      n.logger?.warn?.("process-supervisor: child stdio stream error", {
+        stream: which,
+        errClass: err.name,
+      });
+    });
+  }
   if (stdoutNeedsHandler && proc.stdout !== null) {
-    attachStreamHandler(proc.stdout, state, n, "stdout", stdoutLineState, killGroup);
+    attachStreamHandler(proc.stdout, state, n, "stdout", { pending: "" }, killGroup);
   }
   if (stderrNeedsHandler && proc.stderr !== null) {
-    attachStreamHandler(proc.stderr, state, n, "stderr", stderrLineState, killGroup);
+    attachStreamHandler(proc.stderr, state, n, "stderr", { pending: "" }, killGroup);
   }
+}
+
+export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
+  const n = normalizeOptions(opts);
+  const sig: AbortSignal = n.signal;
+  if (sig.aborted) {
+    return cancelledProcess();
+  }
+  const state: SupervisorState = {
+    aborted: false,
+    watchdogFired: false,
+    truncated: false,
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    stderrTail: Buffer.alloc(0),
+    stdoutCapped: false,
+    stderrCapped: false,
+    spawnError: null,
+    settled: false,
+    watchdogTimer: null,
+    cancelTimer: null,
+  };
+
+  const proc: ChildProcess = spawn(n.command, n.args, {
+    cwd: n.cwd,
+    env: n.env,
+    stdio: [n.stdin === "ignore" ? "ignore" : "pipe", "pipe", "pipe"],
+    shell: false,
+    detached: process.platform !== "win32",
+  });
+  const spawnTs = n.now();
+  const pgid = process.platform !== "win32" ? proc.pid : undefined;
+
+  // A throwing host observer must never defuse a kill — signal first, emit after.
+  const emitEvent = (event: SupervisorEvent): void => {
+    if (n.onProcessEvent === undefined) return;
+    try {
+      n.onProcessEvent(event);
+    } catch (err) {
+      n.logger?.warn?.("process-supervisor: onProcessEvent callback threw", {
+        errClass: err instanceof Error ? err.name : typeof err,
+      });
+    }
+  };
+
+  const killGroup = (signal: NodeJS.Signals, reason: SupervisorSignalReason): void => {
+    if (proc.pid === undefined) return;
+    try {
+      if (process.platform !== "win32") {
+        process.kill(-proc.pid, signal);
+      } else {
+        proc.kill(signal);
+      }
+    } catch {
+      try {
+        proc.kill(signal);
+      } catch {
+        // Process may already be gone.
+      }
+    }
+    emitEvent({ type: "signal", signal, reason });
+  };
+
+  const startCancelSequence = (reason: "abort" | "cancel"): void => {
+    if (state.cancelTimer !== null) return;
+    killGroup("SIGTERM", reason);
+    state.cancelTimer = armTimer(n.timers, n.cancelGraceMs, () => {
+      killGroup("SIGKILL", "grace-expired");
+    });
+  };
+  const onAbort = (): void => {
+    state.aborted = true;
+    startCancelSequence("abort");
+  };
+
+  const exit = watchExit({ proc, pgid, spawnTs, state, n, onAbort, emitEvent });
+  wireChildStreams(proc, state, n, killGroup);
 
   state.watchdogTimer = armTimer(n.timers, n.watchdogMs, () => {
     state.watchdogFired = true;
@@ -469,11 +552,9 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
     (rawHandle as { unref: () => void }).unref();
   }
 
-  if (n.signal.aborted) {
-    onAbort();
-  } else {
-    n.signal.addEventListener("abort", onAbort, { once: true });
-  }
+  // The aborted case was handled before spawn; no host code runs between that
+  // check and this registration, so a bare listener covers every later abort.
+  sig.addEventListener("abort", onAbort, { once: true });
 
   if (n.stdin !== "pipe" && n.stdin !== "ignore" && proc.stdin !== null) {
     const sink = proc.stdin;
@@ -485,7 +566,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
     });
   }
 
-  n.onProcessEvent?.({ type: "spawn", pid: proc.pid });
+  emitEvent({ type: "spawn", pid: proc.pid });
 
   return {
     pid: proc.pid,
@@ -497,8 +578,8 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
       return state.spawnError;
     },
     exit,
-    kill: (sig: NodeJS.Signals = "SIGKILL"): void => {
-      killGroup(sig, "kill");
+    kill: (signal: NodeJS.Signals = "SIGKILL"): void => {
+      killGroup(signal, "kill");
     },
     cancel: (): void => {
       state.aborted = true;
@@ -508,14 +589,28 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
 }
 
 export async function runProcess(opts: SuperviseOptions): Promise<RunProcessResult> {
+  const limit = opts.outputLimitBytes;
   const proc = superviseProcess({ ...opts, stdin: opts.stdin ?? "ignore" });
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
+  let stdoutCollected = 0;
+  let stderrCollected = 0;
+  const collect = (chunks: Buffer[], collected: number, chunk: Buffer | string): number => {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    if (limit === undefined) {
+      chunks.push(buf);
+      return collected + buf.length;
+    }
+    const remaining = limit - collected;
+    if (remaining <= 0) return collected;
+    chunks.push(buf.subarray(0, remaining));
+    return collected + Math.min(buf.length, remaining);
+  };
   proc.stdout?.on("data", (chunk: Buffer | string) => {
-    stdoutChunks.push(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk);
+    stdoutCollected = collect(stdoutChunks, stdoutCollected, chunk);
   });
   proc.stderr?.on("data", (chunk: Buffer | string) => {
-    stderrChunks.push(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk);
+    stderrCollected = collect(stderrChunks, stderrCollected, chunk);
   });
   const exit = await proc.exit;
   return {

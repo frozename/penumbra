@@ -31,14 +31,15 @@ describe("[B1] sink boundary", () => {
     }
   });
 
-  test("[B10] with a logger installed, a framing breach reaches the logger", async () => {
-    const messages: string[] = [];
+  test("[B10] with a logger installed, a framing breach reaches warn and never error", async () => {
+    const warns: string[] = [];
+    const errors: string[] = [];
     const logger: lib.ExecLogger = {
       warn: (msg) => {
-        messages.push(msg);
+        warns.push(msg);
       },
       error: (msg) => {
-        messages.push(msg);
+        errors.push(msg);
       },
     };
     const stdin = new PassThrough();
@@ -48,8 +49,9 @@ describe("[B1] sink boundary", () => {
     stdout.write(`Content-Length: ${String(32 * 1024 * 1024)}\r\n\r\n`);
     await pending;
     await sleep(10);
-    expect(messages.length).toBeGreaterThanOrEqual(1);
-    expect(messages[0]).toMatch(/framing|content.length/i);
+    expect(warns.length).toBeGreaterThanOrEqual(1);
+    expect(warns[0]).toMatch(/framing|content.length/i);
+    expect(errors).toHaveLength(0);
   });
 
   test("[B1] child stderr reaches onStderrChunk and is never teed to process.stderr", async () => {
@@ -59,7 +61,10 @@ describe("[B1] sink boundary", () => {
       const chunks: string[] = [];
       const handle = await lib.startStdioAcpServer({
         command: "sh",
-        args: ["-c", "echo TEE_MARKER_SENTINEL 1>&2; sleep 1"],
+        args: [
+          "-c",
+          'head -c 180 /dev/zero | tr "\\0" "x" 1>&2; echo TEE_MARKER_SENTINEL 1>&2; sleep 0.2',
+        ],
         cwd: dir,
         env: hostEnv(dir),
         signal: new AbortController().signal,
@@ -70,11 +75,13 @@ describe("[B1] sink boundary", () => {
           chunks.push(chunk);
         },
       });
-      await sleep(300);
+      await sleep(400);
       const tail = handle.getStderrTail();
-      expect(chunks.join("")).toContain("TEE_MARKER_SENTINEL");
+      const written = chunks.join("");
+      expect(written).toHaveLength(200);
+      // 180 padding bytes + "TEE_MARKER_SENTINEL\n" = 200; the tail is the last 32.
       expect(tail.length).toBeLessThanOrEqual(32);
-      expect(tail).toContain("SENTINEL");
+      expect(tail).toBe(`${"x".repeat(12)}TEE_MARKER_SENTINEL\n`);
       for (const call of stderrSpy.mock.calls) {
         expect(String(call[0])).not.toContain("TEE_MARKER_SENTINEL");
       }
