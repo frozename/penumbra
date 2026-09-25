@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["bun"],
+    "paths": { "penumbra-exec-primitives": ["./src/index.ts"] }
+  },
+  "include": ["src/**/*", "test/**/*", "scripts/**/*", "qualification/**/*"],
+  "exclude": ["qualification/audit-fixtures/**", "qualification/mutations/**"]
+}
