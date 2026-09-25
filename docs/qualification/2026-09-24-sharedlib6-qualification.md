@@ -6,14 +6,14 @@ about adoption, release, publication, package home, or registry state. Every
 tarball mention below refers to a local channel stand-in, never a versioned
 channel.
 
-Commit: `e1ee17bfc773c2ea19f474ecb013a306a104d5cd` — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
+Commit: `eac2182fe6727e077cc476cb2e05823e8a455604` — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
 Toolchain: bun 1.3.14 · node v26.0.0 · typescript 6.0.3
-Generated: 2026-09-25T23:01:20.228Z
-Result (derived): FAIL
+Generated: 2026-09-25T23:08:02.901Z
+Result (derived): PASS
 
 ## Verdicts
 
-- L1: FAIL
+- L1: PASS
 - L2: PASS (stand-in)
 - L3: DEFERRED (penumbra=PASS, synthetic=PASS, llamactl=DEFERRED → P2.2/llamactl-adoption)
 - L4: PASS
@@ -35,13 +35,13 @@ Result (derived): FAIL
 | section2-slice | `check-logs/check-section2-slice.log` | exit 0 |
 | closure-audit-src | `check-logs/check-closure-audit-src.log` | exit 0 |
 | qualify | `check-logs/check-qualify.log` | exit 0 |
-| closure-audit-tarball | `check-logs/check-closure-audit-tarball.log` | exit 1 |
+| closure-audit-tarball | `check-logs/check-closure-audit-tarball.log` | exit 0 |
 | fence | `check-logs/check-fence.log` | exit 0 |
 | root-lint | `check-logs/check-root-lint.log` | exit 1 (non-gating) |
 
 ## L1
 
-Verdict: FAIL (scope: branch)
+Verdict: PASS (scope: branch)
 
 Evidence:
   - src/ audits clean (specifiers, tokens, mutable bindings, allowlist) — confirmed (`tmp/sharedlib6/check-logs/check-closure-audit-src.log`)
@@ -224,7 +224,6 @@ Boundary imports removed (per extraction contract):
 | comment-only bunfig in consumer copies | consumers ship a comment-only bunfig.toml | a preload bunfig would run inside every spawned bun child of the suite | `qualification/consumers/*/bunfig.toml` |
 | two-file re-expression split | closure-audit.ts is split into closure-audit.ts + closure-audit-core.ts | the 700-line cap | `scripts/closure-audit-core.ts` |
 | extra audit fixtures | b-const-annotated-array, b-const-object-literal, b-const-arrow-map, b-const-arrow-record and d-consumer-guard-dynamic-import added; audit-allowlist-dist.json audits the dist bundle separately | the mutable-binding rule grew per-shape tokens and arrow-type annotations; the consumer guard-tripwire shape needed a src-side negative case | `qualification/audit-fixtures/` |
-| gate-green | gate closure-audit-tarball exited 1 | measured failure — recorded, not waived | `check-logs/check-closure-audit-tarball.log` |
 
 ## Open findings
 
