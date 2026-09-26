@@ -8,13 +8,14 @@
  * Missing or unmeasurable artifacts throw; nothing is defaulted into a record.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { PerFileRow, Section2Row } from "./write-evidence-md.js";
 
 import { parseBunTest } from "./bun-test-parse.js";
 import {
+  ARTIFACT_FILES,
   auditCounts,
   BASE_SHA,
   eslintErrorCounts,
@@ -220,9 +221,10 @@ function deviations(checkSteps: Step[]): Obj[] {
   return out;
 }
 
+/** sha256 of each ARTIFACT_FILES entry this run has written. */
 function artifactSha(runDir: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const name of readdirSync(runDir).filter((f) => f.endsWith(".json"))) {
+  for (const name of ARTIFACT_FILES.filter((f) => existsSync(join(runDir, f)))) {
     out[name] = createHash("sha256")
       .update(readFileSync(join(runDir, name)))
       .digest("hex");

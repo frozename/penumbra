@@ -3,30 +3,27 @@
  * builder (write-evidence-build.ts) runs over the check's fresh run; the
  * committed .json must equal the result field for field, so every count,
  * claim string, blocker, deviation, allowlist entry and adaptation is bound
- * to this run. Exempt from equality, each bound elsewhere or an environment
- * record:
- *   - head_sha (rev-list membership, sharedlib6-shape.ts), generated_at;
- *   - toolchain and poison_layer (the environment: a fresh worktree install
- *     links fewer @penumbra packages than a long-lived one);
- *   - artifact_sha256 (hashes run files that carry timestamps);
+ * to this run; toolchain included, with typescript measured by this check.
+ * Exempt from equality, each bound by its own rule instead:
+ *   - head_sha (rev-list membership, sharedlib6-shape.ts);
+ *   - generated_at (ISO timestamp between head_sha and now), poison_layer (a
+ *     superset of this run's guard stubs: a fresh worktree install links
+ *     fewer @penumbra packages than a long-lived one) and artifact_sha256
+ *     (exactly the writer's hashed files; the files carry timestamps), all
+ *     in sharedlib6-shape-env.ts;
  *   - mutations[].errors (0..failing, sharedlib6-shape-measured.ts);
  *   - gates[L4].measurements.t7_overshoot_bytes (domain, t7Reasons).
  * The .md must equal renderEvidenceMarkdown() of the committed .json byte for
  * byte, so it inherits every binding of the .json.
  */
+import { measureToolchain } from "./sharedlib6-shape-env.js";
 import { rec, type ShapeContext } from "./sharedlib6-shape-util.js";
 import { buildEvidence } from "./write-evidence-build.js";
 import { renderEvidenceMarkdown } from "./write-evidence-md.js";
 
 type Ev = Record<string, unknown>;
 
-export const REGEN_EXEMPT_KEYS = [
-  "head_sha",
-  "generated_at",
-  "toolchain",
-  "poison_layer",
-  "artifact_sha256",
-];
+export const REGEN_EXEMPT_KEYS = ["head_sha", "generated_at", "poison_layer", "artifact_sha256"];
 const DIFF_LIMIT = 25;
 
 interface Regen {
@@ -50,7 +47,7 @@ function regenerate(ctx: ShapeContext): Regen {
         runDir: ctx.runDir,
         checkSteps: ctx.gates,
         head: "",
-        typescript: "",
+        typescript: measureToolchain(ctx.repoRoot).typescript,
         generatedAt: "",
       }),
     };

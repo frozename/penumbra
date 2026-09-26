@@ -15,7 +15,7 @@
  *      will leave it.
  *   4. SHAPE (sharedlib6-shape.ts) — the committed .json must equal the
  *      record the evidence writer's builder produces from this run (a short
- *      list of exempt fields is bound by range or recorded as environment),
+ *      list of exempt fields is each bound by its own rule instead),
  *      the committed .md must equal the render of the committed .json, and
  *      the contract rules must hold. Self-test probes then edit clones of the
  *      committed pair (counts, claim text, blockers, deviations, honesty, a

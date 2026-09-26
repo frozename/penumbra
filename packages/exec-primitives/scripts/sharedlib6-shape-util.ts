@@ -86,6 +86,15 @@ export const NPH_LITERALS: Record<number, string[]> = {
   5: ["the versioned release"],
   6: ["real llamactl worker"],
 };
+/** The run files the evidence writer hashes into artifact_sha256; the check
+ * writes its verdict file after SHAPE, so SHAPE cannot require it on disk. */
+export const CHECK_VERDICT_FILE = "check.json";
+export const ARTIFACT_FILES = [
+  CHECK_VERDICT_FILE,
+  "measurements.json",
+  "mutations.json",
+  "section2.json",
+];
 export const REQUIRED_BLOCKERS = ["B1", "B3", "B4", "B6", "B7", "B8", "B10"];
 export const CONTROL_FLOW_TOKEN_RE = /retry|fallback|reconnect|resume|adopt|takeover|attach/i;
 
@@ -113,8 +122,10 @@ export interface ShapeContext {
   git: (args: string[]) => { exit: number; output: string };
 }
 
+/** A claim phrase with its words joined by any run of spaces or hyphens, so
+ * "dual consumer parity" and "home-chosen" match the listed phrases. */
 export function claimRe(claim: string): RegExp {
-  return new RegExp(`\\b${claim.replaceAll(" ", "\\s+")}\\b`, "i");
+  return new RegExp(`\\b${claim.split(/[\s-]+/).join("[\\s-]+")}\\b`, "i");
 }
 
 export function canonicalize(value: unknown): unknown {

@@ -264,6 +264,119 @@ const BINDING_PROBES: ShapeProbe[] = [
   ),
 ];
 
+/** Keeps every entry of the record at `key` except `drop`. */
+function withoutKey(old: unknown, drop: string): Ev {
+  return Object.fromEntries(Object.entries(obj(old) ?? {}).filter(([k]) => k !== drop));
+}
+
+function appendToFinding(name: string, text: string, expect: RegExp): ShapeProbe {
+  return setProbe(
+    name,
+    expect,
+    ["open_findings", 0],
+    "finding",
+    (old) => `${String(old)}; ${text}`,
+  );
+}
+
+/** Probes for the environment records (sharedlib6-shape-env.ts) and the
+ * separator variants of the claim phrases. */
+const ENVIRONMENT_PROBES: ShapeProbe[] = [
+  setProbe("toolchain.bun fabricated", /toolchain\.bun/, ["toolchain"], "bun", () => "1.2.0"),
+  setProbe(
+    "toolchain.typescript fabricated",
+    /toolchain\.typescript/,
+    ["toolchain"],
+    "typescript",
+    () => "5.0.0",
+  ),
+  {
+    name: "toolchain carries an extra key",
+    expect: /toolchain keys/,
+    mutate: (ev): boolean => {
+      const t = obj(ev["toolchain"]);
+      if (t === undefined) return false;
+      t["note"] = "recorded elsewhere";
+      return true;
+    },
+  },
+  setProbe(
+    "poison_layer emptied",
+    /poison_layer must be a non-empty/,
+    [],
+    "poison_layer",
+    () => [],
+  ),
+  setProbe(
+    "poison_layer without @penumbra/core",
+    /poison_layer lacks/,
+    [],
+    "poison_layer",
+    (old) => (Array.isArray(old) ? (old as unknown[]).filter((n) => n !== "@penumbra/core") : old),
+  ),
+  setProbe(
+    "poison_layer names a foreign package",
+    /poison_layer names non-workspace/,
+    [],
+    "poison_layer",
+    (old) => [
+      ...(Array.isArray(old) ? (old as unknown[]) : []),
+      "@penumbra/not-a-workspace-package",
+    ],
+  ),
+  setProbe(
+    "artifact_sha256 carries an extra file",
+    /artifact_sha256 keys/,
+    [],
+    "artifact_sha256",
+    (old) => ({
+      ...obj(old),
+      "extra.json": "0".repeat(64),
+    }),
+  ),
+  setProbe("artifact_sha256 drops a file", /artifact_sha256 keys/, [], "artifact_sha256", (old) =>
+    withoutKey(old, "measurements.json"),
+  ),
+  setProbe(
+    "artifact_sha256 value is not a digest",
+    /artifact_sha256\.mutations\.json .* is not a sha256/,
+    ["artifact_sha256"],
+    "mutations.json",
+    () => "not-a-digest",
+  ),
+  setProbe(
+    "generated_at malformed",
+    /generated_at .* is not an ISO-8601/,
+    [],
+    "generated_at",
+    () => "yesterday",
+  ),
+  setProbe(
+    "generated_at in the future",
+    /generated_at .* is in the future/,
+    [],
+    "generated_at",
+    () => "2099-01-01T00:00:00.000Z",
+  ),
+  setProbe(
+    "generated_at before the head_sha commit",
+    /precedes the head_sha commit/,
+    [],
+    "generated_at",
+    () => "2020-01-01T00:00:00.000Z",
+  ),
+  appendToFinding(
+    "space-separated claim phrase",
+    "dual consumer parity demonstrated",
+    /evidence json carries claim "dual-consumer parity"/,
+  ),
+  appendToFinding(
+    "hyphen-separated claim phrase",
+    "home-chosen by the operator",
+    /evidence json carries claim "home chosen"/,
+  ),
+];
+
 export const SHAPE_PROBES: ShapeProbe[] = [
   perFileProbe(0, "passed"),
   perFileProbe(1, "ported"),
@@ -335,6 +448,7 @@ export const SHAPE_PROBES: ShapeProbe[] = [
       ),
   },
   ...BINDING_PROBES,
+  ...ENVIRONMENT_PROBES,
 ];
 
 /** Runs every probe against `validate`; baseline reasons never count as new. */

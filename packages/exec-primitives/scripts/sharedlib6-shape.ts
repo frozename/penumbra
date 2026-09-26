@@ -23,6 +23,7 @@ import {
   shapePerFile,
   shapeStandInLabels,
 } from "./sharedlib6-shape-bind.js";
+import { shapeEnvironment } from "./sharedlib6-shape-env.js";
 import {
   shapeCheckSteps,
   shapeConsumers,
@@ -327,6 +328,7 @@ function measuredReasons(
     ...shapeVerdicts(ctx, evidence, measured, md),
     ...shapeGateMeasurements(ctx, evidence, measured),
     ...shapePerFile(ctx, evidence, measured),
+    ...shapeEnvironment(ctx, evidence, measured),
   ];
 }
 

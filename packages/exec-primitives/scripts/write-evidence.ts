@@ -27,7 +27,8 @@ import { dirname, join } from "node:path";
 
 import type { Step } from "./write-evidence-gates.js";
 
-import { EVIDENCE_DATE } from "./sharedlib6-shape-util.js";
+import { measureToolchain } from "./sharedlib6-shape-env.js";
+import { ARTIFACT_FILES, EVIDENCE_DATE } from "./sharedlib6-shape-util.js";
 import { buildEvidence } from "./write-evidence-build.js";
 import { renderEvidenceMarkdown } from "./write-evidence-md.js";
 
@@ -47,14 +48,15 @@ if (!existsSync(checkPath)) {
 }
 const check = JSON.parse(readFileSync(checkPath, "utf8")) as { check_steps?: unknown };
 if (!Array.isArray(check.check_steps)) fail("check.json carries no check_steps[]");
+const missingArtifacts = ARTIFACT_FILES.filter((f) => !existsSync(join(RUN_DIR, f)));
+if (missingArtifacts.length > 0) fail(`missing run artifact(s) ${missingArtifacts.join(", ")}`);
 
 const head = spawnSync("git", ["rev-parse", "HEAD"], {
   cwd: REPO_ROOT,
   encoding: "utf8",
 }).stdout.trim();
-const typescript = spawnSync("bunx", ["tsc", "--version"], { cwd: REPO_ROOT, encoding: "utf8" })
-  .stdout.trim()
-  .replace(/^Version\s+/, "");
+const { typescript } = measureToolchain(REPO_ROOT);
+if (typescript === "") fail("tsc --version did not report a version");
 
 let evidence: Record<string, unknown>;
 try {

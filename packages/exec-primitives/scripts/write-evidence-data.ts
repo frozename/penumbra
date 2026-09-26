@@ -429,10 +429,10 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
   {
     rule: "SHAPE regeneration exemptions",
     change:
-      "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, except head_sha (bound to rev-list), generated_at, toolchain, poison_layer, artifact_sha256, mutations[].errors and gates[L4].measurements.t7_overshoot_bytes; the .md must equal the render of the committed .json byte for byte",
+      "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, toolchain included, except head_sha (bound to rev-list), generated_at (an ISO-8601 time between the head_sha commit and now), poison_layer (a superset of this run's guard stubs, each a workspace package, @penumbra/core included), artifact_sha256 (exactly the four run files the writer hashes, each a sha256 digest), mutations[].errors and gates[L4].measurements.t7_overshoot_bytes; toolchain must also equal the check's own bun, node and tsc versions; the .md must equal the render of the committed .json byte for byte",
     reason:
-      "toolchain and poison_layer record the environment (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, and errors and the T7 overshoot vary run to run and are bound by range instead",
-    pointer: "scripts/sharedlib6-shape-regen.ts",
+      "poison_layer records the install (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, generated_at is the write time, and errors and the T7 overshoot vary run to run, so each is bound by a rule instead of equality",
+    pointer: "scripts/sharedlib6-shape-regen.ts, scripts/sharedlib6-shape-env.ts",
   },
   {
     rule: "re-expression two-file split",
