@@ -36,6 +36,7 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
 import { stripComments } from "./closure-audit-core.js";
 
 const SCRIPTS_DIR = import.meta.dir;
@@ -114,21 +115,19 @@ function describesOf(src: string): { index: number; tag: string | undefined }[] 
 }
 
 /** Executed test titles — "(pass) describe > test [12ms]" lines from a real
- * `bun test` run, deduped. test.each rows resolve into distinct executions. */
-function executedTitles(): { titles: string[]; ran: boolean } {
+ * `bun test` run under agentFreeEnv(), deduped. test.each rows resolve into
+ * distinct executions. `problem` is set when the result lines cannot account
+ * for the summary (agent-mode output) — the count is then refused. */
+function executedTitles(): { titles: string[]; ran: boolean; problem: string | undefined } {
   const r = spawnSync("bun", ["test", "test/"], {
     cwd: PACKAGE_DIR,
+    env: agentFreeEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 600_000,
   });
-  const output = `${r.stdout}${r.stderr}`;
-  const seen = new Set<string>();
-  for (const line of output.split("\n")) {
-    const m = /^\((?:pass|fail)\) (.+?)(?: \[[\d.]+m?s\])?$/.exec(line.trimEnd());
-    if (m?.[1] !== undefined && m[1] !== "") seen.add(m[1]);
-  }
-  return { titles: [...seen].sort(), ran: /^\s*Ran \d+ tests\b/m.test(output) };
+  const parsed = parseBunTest(`${r.stdout}${r.stderr}`, "test/");
+  return { titles: parsed.titles, ran: parsed.summary.ran !== null, problem: parsed.problem };
 }
 
 // Scope A — scanned for skip/mock patterns: package test/ plus every
@@ -205,10 +204,11 @@ function listFilesDeep(dir: string, filter: (n: string) => boolean): string[] {
 }
 
 // --- package contract suite: executed titles drive tag minimums ---
-const { titles: executed, ran: suiteRan } = executedTitles();
+const { titles: executed, ran: suiteRan, problem: titleProblem } = executedTitles();
 if (!suiteRan) {
   findings.push("test/: bun test never reached its summary line — cannot count executed titles");
 }
+if (titleProblem !== undefined) findings.push(titleProblem);
 // Executed lines are "describe > ... > test": the test's own tag wins, then
 // the nearest enclosing describe — same resolution as the static pass below.
 function executedTag(title: string): string | undefined {

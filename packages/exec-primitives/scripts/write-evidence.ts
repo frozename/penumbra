@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { parseBunTest } from "./bun-test-parse.js";
 import {
   BASELINE_SET,
   blockerMap,
@@ -104,15 +105,14 @@ function auditCounts(label: string): Record<string, number> {
 }
 const srcCounts = auditCounts("src");
 
+/** Executed titles from a parity log; a log whose result lines cannot account
+ * for its summary (agent-mode output) is refused rather than counted as 0. */
 function titlesFromLog(logRel: string): string[] {
   const path = join(RUN_DIR, logRel);
   if (!existsSync(path)) return [];
-  const seen = new Set<string>();
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    const m = /^\((?:pass|fail)\) (.+?)(?: \[[\d.]+m?s\])?$/.exec(line.trimEnd());
-    if (m?.[1] !== undefined) seen.add(m[1]);
-  }
-  return [...seen].sort();
+  const parsed = parseBunTest(readFileSync(path, "utf8"), logRel);
+  if (parsed.problem !== undefined) fail(parsed.problem);
+  return parsed.titles;
 }
 
 function parityStep(file: string): { pass: number; fail: number } | null {

@@ -6,6 +6,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { parseBunTest } from "./bun-test-parse.js";
+
 export interface Step {
   name?: string;
   gate?: string;
@@ -60,13 +62,16 @@ function consumerGreen(consumers: Record<string, unknown>, name: string): boolea
   );
 }
 
+/** [tag] titles pass and none fail in the gate log. A log whose result lines
+ * cannot account for its summary (agent-mode output) throws: an unmeasurable
+ * tag is never written as a verdict. */
 function tagPass(ctx: GateCtx, tag: string): boolean {
   const log = join(ctx.logDir, "check-bun-test-gate.log");
   if (!existsSync(log)) return false;
-  const text = readFileSync(log, "utf8");
-  const pass = text.split("\n").some((l) => l.startsWith("(pass) ") && l.includes(`[${tag}]`));
-  const failing = text.split("\n").some((l) => l.startsWith("(fail) ") && l.includes(`[${tag}]`));
-  return pass && !failing;
+  const parsed = parseBunTest(readFileSync(log, "utf8"), "check-bun-test-gate.log");
+  if (parsed.problem !== undefined) throw new Error(parsed.problem);
+  const has = (titles: string[]): boolean => titles.some((t) => t.includes(`[${tag}]`));
+  return has(parsed.passTitles) && !has(parsed.failTitles);
 }
 
 export interface DerivedVerdicts {

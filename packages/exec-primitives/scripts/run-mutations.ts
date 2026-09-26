@@ -15,6 +15,8 @@
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
+
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
 const MUTATIONS_DIR = join(PACKAGE_DIR, "qualification", "mutations");
@@ -96,7 +98,7 @@ interface CmdResult {
 }
 
 function run(cmd: string[], cwd: string): CmdResult {
-  const r = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
+  const r = Bun.spawnSync({ cmd, cwd, env: agentFreeEnv(), stdout: "pipe", stderr: "pipe" });
   return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), code: r.exitCode };
 }
 
@@ -139,12 +141,20 @@ interface SuiteRun {
   code: number;
   counts: { pass: number; fail: number; ran: number; errors: number } | null;
   failing: string[];
+  /** Set when the result lines cannot account for the summary. */
+  titleProblem: string | undefined;
 }
 
 function runSuite(): SuiteRun {
   const t = run(["bun", "test", TEST_GLOB], PACKAGE_DIR);
   const output = `${t.stdout}\n${t.stderr}`;
-  return { output, code: t.code, counts: summaryCounts(output), failing: failingTitles(output) };
+  return {
+    output,
+    code: t.code,
+    counts: summaryCounts(output),
+    failing: failingTitles(output),
+    titleProblem: parseBunTest(output, "package suite").problem,
+  };
 }
 
 /** Escape a literal title into a whole-line (fail) regex. */
@@ -173,6 +183,10 @@ function greenSuite(label: string): boolean {
   const nonzero = (n: number | undefined): boolean => (n ?? 1) !== 0;
   if (g.code !== 0 || nonzero(g.counts?.fail) || nonzero(g.counts?.errors)) {
     fail(`${label}: suite not green (exit=${String(g.code)}, counts=${JSON.stringify(g.counts)})`);
+    return false;
+  }
+  if (g.titleProblem !== undefined) {
+    fail(`${label}: ${g.titleProblem}`);
     return false;
   }
   return true;
@@ -204,6 +218,7 @@ function countsProblems(mutated: SuiteRun): string[] {
     out.push("suite never reached its summary line (load error?)");
     return out;
   }
+  if (mutated.titleProblem !== undefined) out.push(mutated.titleProblem);
   if (counts.fail !== mutated.failing.length) {
     out.push(
       `summary fail=${String(counts.fail)} vs parsed failing=${String(mutated.failing.length)}`,

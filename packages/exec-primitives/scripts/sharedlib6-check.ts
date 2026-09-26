@@ -31,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { agentFreeEnv } from "./bun-test-parse.js";
 import {
   shapeCheckSteps,
   shapeConsumers,
@@ -87,7 +88,9 @@ function run(argv: string[], cwd: string, env?: NodeJS.ProcessEnv): CmdOut {
   if (bin === undefined) throw new Error("run: empty argv");
   const r = spawnSync(bin, args, {
     cwd,
-    env: env ?? { ...process.env },
+    // Agent-mode keys are stripped for every step: bun test hides its
+    // "(pass)" lines under CLAUDECODE/AGENT/REPL_ID (bun-test-parse.ts).
+    env: env ?? agentFreeEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 900_000,
@@ -135,6 +138,13 @@ const selfTest = runLogged(
   "precheck-closure-self-test",
 );
 if (selfTest.exit !== 0) precheckFailures.push("closure-audit --self-test");
+
+const parseSelfTest = runLogged(
+  ["bun", "scripts/bun-test-parse.ts", "--self-test"],
+  PACKAGE_DIR,
+  "precheck-bun-test-parse-self-test",
+);
+if (parseSelfTest.exit !== 0) precheckFailures.push("bun-test-parse --self-test");
 
 const remote = git(["remote", "get-url", "origin"]);
 if (remote.exit !== 0 || !remote.output.includes("frozename/penumbra")) {
@@ -199,10 +209,12 @@ recordGate("typecheck", [runLogged(["bun", "run", "typecheck"], R, "typecheck")]
 recordGate(
   "dist-freshness",
   [
-    runLogged(["bun", "scripts/check-dist-freshness.ts"], R, "dist-freshness", {
-      ...process.env,
-      DIST_CHECK_STRICT: "1",
-    }),
+    runLogged(
+      ["bun", "scripts/check-dist-freshness.ts"],
+      R,
+      "dist-freshness",
+      agentFreeEnv({ DIST_CHECK_STRICT: "1" }),
+    ),
   ],
   ["dist-freshness"],
 );
@@ -243,7 +255,7 @@ recordGate(
       ],
       R,
       "eslint",
-      { ...process.env, NODE_OPTIONS: "--max-old-space-size=8192" },
+      agentFreeEnv({ NODE_OPTIONS: "--max-old-space-size=8192" }),
     ),
   ],
   ["eslint"],

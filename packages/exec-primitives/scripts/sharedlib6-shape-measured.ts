@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { parseBunTest } from "./bun-test-parse.js";
 import {
   CONTROL_FLOW_TOKEN_RE,
   deepEqual,
@@ -222,20 +223,22 @@ export function shapeCheckSteps(ctx: ShapeContext, evidence: Record<string, unkn
 
 interface ParityStepIndex {
   titles: Map<string, string[]>;
+  problems: string[];
 }
 
 function parityStepIndex(ctx: ShapeContext, measured: Record<string, unknown>): ParityStepIndex {
   const titles = new Map<string, string[]>();
+  const problems: string[] = [];
   const host = rec(rec(measured["consumers"])?.["penumbra-host"]);
   const steps = Array.isArray(host?.["steps"]) ? host["steps"] : [];
   for (const s of steps) {
     const sr = rec(s) ?? {};
     const name = str(sr["name"]);
     if (name.startsWith("parity:")) {
-      titles.set(name.slice(7), titlesFromLog(ctx, str(sr["log"])));
+      titles.set(name.slice(7), titlesFromLog(ctx, str(sr["log"]), problems));
     }
   }
-  return { titles };
+  return { titles, problems };
 }
 
 function coverageForOrigin(
@@ -363,6 +366,7 @@ export function shapeParity(
   const section2 = rec(readJsonFile(ctx.section2));
   const originRecs = rec(section2?.["origin"]);
   const idx = parityStepIndex(ctx, measured);
+  reasons.push(...idx.problems);
   const reexpr = shapeReexpressedCoverage(originRecs, idx, parity["excluded_cases"]);
   reasons.push(...reexpr.reasons);
   if (reexpr.ported + reexpr.excludedTotal !== 43 || reexpr.ported !== 38) {
@@ -386,12 +390,19 @@ function allowlistControlFlow(ctx: ShapeContext): string[] {
     .map((e) => e.token);
 }
 
-function tagLineCounts(ctx: ShapeContext, tag: string): { pass: number; fail: number } {
+function tagLineCounts(
+  ctx: ShapeContext,
+  tag: string,
+): { pass: number; fail: number; problem: string | undefined } {
   const path = join(ctx.logDir, "check-bun-test-gate.log");
-  const log = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const parsed = parseBunTest(
+    existsSync(path) ? readFileSync(path, "utf8") : "",
+    "check-bun-test-gate.log",
+  );
   return {
-    pass: log.split("\n").filter((l) => l.startsWith("(pass) ") && l.includes(`[${tag}]`)).length,
-    fail: log.split("\n").filter((l) => l.startsWith("(fail) ") && l.includes(`[${tag}]`)).length,
+    pass: parsed.passTitles.filter((t) => t.includes(`[${tag}]`)).length,
+    fail: parsed.failTitles.filter((t) => t.includes(`[${tag}]`)).length,
+    problem: parsed.problem,
   };
 }
 
@@ -445,6 +456,7 @@ function l6GreenReasons(ctx: ShapeContext): string[] {
     reasons.push("allowlist entry names a real control-flow path");
   }
   const l6 = tagLineCounts(ctx, "L6");
+  if (l6.problem !== undefined) reasons.push(l6.problem);
   if (l6.pass < 1 || l6.fail > 0) reasons.push("the [L6] test is not green in this run");
   const b7 = tagLineCounts(ctx, "B7");
   if (b7.pass < 1 || b7.fail > 0) reasons.push("the [B7] tests are not all green in this run");

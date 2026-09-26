@@ -20,6 +20,8 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
 
+import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
+
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
 
@@ -60,47 +62,34 @@ interface SliceRecord {
   reached_summary: boolean;
 }
 
-/** Full executed titles — "(pass) describe > test [12ms]" lines, deduped. */
-function executedTitles(output: string): string[] {
-  const seen = new Set<string>();
-  for (const line of output.split("\n")) {
-    const t = line.trimEnd();
-    const m = /^\((?:pass|fail)\) (.+?)(?: \[[\d.]+m?s\])?$/.exec(t);
-    if (m?.[1] !== undefined && m[1] !== "") seen.add(m[1]);
-  }
-  return [...seen].sort();
-}
-
+/** One slice under agentFreeEnv(); titles are the executed "(pass)/(fail)"
+ * lines, and a title count the summary cannot account for is refused. */
 function runSlice(path: string): SliceRecord {
   const r = spawnSync("bun", ["test", "--path-ignore-patterns=**/dist/**", path], {
     cwd: REPO_ROOT,
+    env: agentFreeEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 600_000,
   });
-  const output = `${r.stdout}${r.stderr}`;
-  const pass = /^\s*(\d+) pass$/m.exec(output)?.[1];
-  const fail = /^\s*(\d+) fail$/m.exec(output)?.[1];
-  const ran = /^\s*Ran (\d+) tests\b/m.exec(output)?.[1];
-  const failing = [...output.matchAll(/^\(fail\) (.+)$/gm)]
-    .map((m) => (m[1] ?? "").replace(/ \[[\d.]+m?s\]$/, ""))
-    .filter((t) => t !== "")
-    .sort();
+  const parsed = parseBunTest(`${r.stdout}${r.stderr}`, path);
+  if (parsed.problem !== undefined) titleProblems.push(parsed.problem);
   return {
     exit: r.status ?? 1,
-    pass: pass === undefined ? 0 : Number(pass),
-    fail: fail === undefined ? 0 : Number(fail),
-    ran: ran === undefined ? 0 : Number(ran),
+    pass: parsed.summary.pass ?? 0,
+    fail: parsed.summary.fail ?? 0,
+    ran: parsed.summary.ran ?? 0,
     baseline: BASELINE_PASS[path] ?? 0,
-    failing,
-    titles: executedTitles(output),
-    reached_summary: ran !== undefined,
+    failing: parsed.failTitles,
+    titles: parsed.titles,
+    reached_summary: parsed.summary.ran !== null,
   };
 }
 
 const outIdx = process.argv.indexOf("--out");
 const outPath = outIdx === -1 ? undefined : process.argv[outIdx + 1];
 
+const titleProblems: string[] = [];
 const origin: Record<string, SliceRecord> = {};
 let bad = false;
 for (const slice of ORIGIN_SLICES) {
@@ -113,6 +102,11 @@ for (const slice of ORIGIN_SLICES) {
       `section2-slice: ${slice} exit=${String(rec.exit)} pass=${String(rec.pass)} fail=${String(rec.fail)} baseline=${String(rec.baseline)}${drifted ? " DRIFT" : ""}${rec.reached_summary ? "" : " (no summary)"}\n`,
     );
   }
+}
+
+for (const p of titleProblems) {
+  bad = true;
+  process.stdout.write(`section2-slice: ${p}\n`);
 }
 
 const totals = {
