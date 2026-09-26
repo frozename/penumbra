@@ -22,6 +22,26 @@ export const FORBIDDEN_CLAIMS = [
   "warm pooling is session resume",
 ];
 
+/** The section-3 honesty object, exactly: extra keys are refused. */
+export const HONESTY = {
+  channel_stand_in: true,
+  channel_chosen: false,
+  home_chosen: false,
+  adoption_performed: false,
+  overall_claim: "none",
+};
+
+/** Deviation rules item 6 requires by name, kept apart from the writer's data. */
+export const REQUIRED_DEVIATION_RULES = [
+  "comment-only bunfig in consumer copies",
+  "re-expression two-file split",
+  "extra audit fixtures",
+];
+
+/** T7: the producer emits 1000000 bytes against a 65536-byte cap. */
+export const T7_CAP_BYTES = 65_536;
+export const T7_PRODUCED_BYTES = 1_000_000;
+
 /** Keep baseline — origin pass counts pinned by the evidence contract. */
 export const SECTION2_BASELINE: Record<string, number> = {
   "packages/agentchat/test/adapters/cli-spawn.test.ts": 24,

@@ -15,6 +15,8 @@ export interface ShapeProbe {
   expect: RegExp;
   /** Applies the edit in place; false when the target field is missing. */
   mutate: (ev: Ev) => boolean;
+  /** Edits the .md instead; null when the target text is missing. */
+  mutateMd?: (md: string) => string | null;
 }
 
 export interface ProbeOutcome {
@@ -110,6 +112,158 @@ function openFindingEdit(
   };
 }
 
+/** A .md-only probe: the .json stays as committed. */
+function mdProbe(name: string, re: RegExp, edit: (m: RegExpExecArray) => string): ShapeProbe {
+  return {
+    name,
+    expect: /evidence \.md differs from the render of the committed \.json/,
+    mutate: () => true,
+    mutateMd: (md): string | null => {
+      const m = re.exec(md);
+      return m === null ? null : md.slice(0, m.index) + edit(m) + md.slice(m.index + m[0].length);
+    },
+  };
+}
+
+function setProbe(
+  name: string,
+  expect: RegExp,
+  path: (string | number)[],
+  key: string,
+  next: (old: unknown) => unknown,
+): ShapeProbe {
+  return { name, expect, mutate: (ev) => edit(ev, path, key, next) };
+}
+
+/** Probes for the fields the regeneration diff and the explicit rules bind. */
+const BINDING_PROBES: ShapeProbe[] = [
+  mdProbe(
+    ".md per-file parity cell",
+    /(\| `packages\/agentchat\/test\/adapters\/cli-spawn\.test\.ts` \| \d+ \| \d+ \| )(\d+)/,
+    (m) => `${m[1] ?? ""}${String(Number(m[2]) + 75)}`,
+  ),
+  mdProbe(".md RED/GREEN cell", /(\| \[B3\] \| [^|]+\| )(\d+)( failing)/, (m) =>
+    [m[1], String(Number(m[2]) + 27), m[3]].join(""),
+  ),
+  {
+    name: "honesty carries an extra key",
+    expect: /honesty/,
+    mutate: (ev): boolean => {
+      const h = obj(ev["honesty"]);
+      if (h === undefined) return false;
+      h["summary"] = "no claim";
+      return true;
+    },
+  },
+  {
+    name: "claim phrase inside honesty",
+    expect: /evidence json carries claim "qualified" at honesty/,
+    mutate: (ev): boolean => {
+      const h = obj(ev["honesty"]);
+      if (h === undefined) return false;
+      h["summary"] = "the library is qualified and ready";
+      return true;
+    },
+  },
+  setProbe(
+    "t7_overshoot_bytes = 1 (below one read)",
+    /gates\[L4\]\.measurements\.t7_overshoot_bytes/,
+    ["gates", 3, "measurements"],
+    "t7_overshoot_bytes",
+    () => 1,
+  ),
+  setProbe(
+    "t7_overshoot_bytes = 999999999 (past the producer)",
+    /gates\[L4\]\.measurements\.t7_overshoot_bytes/,
+    ["gates", 3, "measurements"],
+    "t7_overshoot_bytes",
+    () => 999_999_999,
+  ),
+  {
+    name: "gates[L1].evidence[0] inferred without would_confirm",
+    expect: /L1 evidence\[0\] is inferred without would_confirm/,
+    mutate: (ev) => edit(ev, ["gates", 0, "evidence", 0], "status", () => "inferred"),
+  },
+  setProbe(
+    "deviations emptied",
+    /deviations\[\] missing required rule/,
+    [],
+    "deviations",
+    () => [],
+  ),
+  setProbe(
+    "parity.per_file[0].adaptations emptied",
+    /parity\.per_file\[0\]\.adaptations/,
+    ["parity", "per_file", 0],
+    "adaptations",
+    () => [],
+  ),
+  setProbe(
+    "audit_allowlist_entries emptied",
+    /audit_allowlist_entries/,
+    [],
+    "audit_allowlist_entries",
+    () => [],
+  ),
+  setProbe(
+    "audit_allowlist_entries[0] reclassified",
+    /audit_allowlist_entries/,
+    ["audit_allowlist_entries", 0],
+    "classification",
+    () => "pre-approved",
+  ),
+  setProbe("blockers.B8 resolved", /B8/, ["blockers", "B8"], "status", () => "resolved"),
+  setProbe(
+    "blockers.B3 evidence text",
+    /blockers\.B3\.evidence/,
+    ["blockers", "B3"],
+    "evidence",
+    (old) => `${String(old)} (edited)`,
+  ),
+  setProbe(
+    "count inside an L1 claim",
+    /gates\[0\]\.evidence\[2\]\.claim/,
+    ["gates", 0, "evidence", 2],
+    "claim",
+    (old) => String(old).replace(/lines=\d+/, "lines=1"),
+  ),
+  setProbe(
+    "count appended to an L4 claim",
+    /gates\[3\]\.evidence\[0\]\.claim/,
+    ["gates", 3, "evidence", 0],
+    "claim",
+    (old) => `${String(old)} (suite 999/0)`,
+  ),
+  setProbe(
+    "section2.verdict.rows[0].origin_pass",
+    /section2\.verdict\.rows\[0\]\.origin_pass/,
+    ["section2", "verdict", "rows", 0],
+    "origin_pass",
+    bump,
+  ),
+  setProbe(
+    "red_green.tag_passes.B3",
+    /red_green\.tag_passes\.B3/,
+    ["red_green", "tag_passes"],
+    "B3",
+    bump,
+  ),
+  setProbe(
+    "open_findings[0].finding text",
+    /open_findings\[0\]\.finding/,
+    ["open_findings", 0],
+    "finding",
+    (old) => `${String(old)} (edited)`,
+  ),
+  setProbe(
+    "check_steps[0].log",
+    /check_steps\[0\]\.log/,
+    ["check_steps", 0],
+    "log",
+    () => "check-logs/elsewhere.log",
+  ),
+];
+
 export const SHAPE_PROBES: ShapeProbe[] = [
   perFileProbe(0, "passed"),
   perFileProbe(1, "ported"),
@@ -180,19 +334,24 @@ export const SHAPE_PROBES: ShapeProbe[] = [
         () => "the packed tarball installs into both copies",
       ),
   },
+  ...BINDING_PROBES,
 ];
 
 /** Runs every probe against `validate`; baseline reasons never count as new. */
 export function probeOutcomes(
   evidence: Ev,
+  md: string,
   baseline: string[],
-  validate: (ev: Ev) => string[],
+  validate: (ev: Ev, md: string) => string[],
 ): ProbeOutcome[] {
   const known = new Set(baseline);
   return SHAPE_PROBES.map((probe) => {
     const clone = structuredClone(evidence);
-    if (!probe.mutate(clone)) return { name: probe.name, status: "target missing" };
-    const fresh = validate(clone).filter((r) => !known.has(r));
+    const mdEdit = probe.mutateMd === undefined ? md : probe.mutateMd(md);
+    if (!probe.mutate(clone) || mdEdit === null) {
+      return { name: probe.name, status: "target missing" };
+    }
+    const fresh = validate(clone, mdEdit).filter((r) => !known.has(r));
     return {
       name: probe.name,
       status: fresh.some((r) => probe.expect.test(r)) ? "detected" : "undetected",
@@ -203,10 +362,11 @@ export function probeOutcomes(
 /** SHAPE reasons for every probe that did not turn SHAPE red. */
 export function probeReasons(
   evidence: Ev,
+  md: string,
   baseline: string[],
-  validate: (ev: Ev) => string[],
+  validate: (ev: Ev, md: string) => string[],
 ): string[] {
-  return probeOutcomes(evidence, baseline, validate)
+  return probeOutcomes(evidence, md, baseline, validate)
     .filter((o) => o.status !== "detected")
     .map((o) => `shape self-test: probe ${o.name} ${o.status}`);
 }

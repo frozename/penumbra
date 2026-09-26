@@ -65,7 +65,7 @@ function consumerGreen(consumers: Record<string, unknown>, name: string): boolea
 /** [tag] titles pass and none fail in the gate log. A log whose result lines
  * cannot account for its summary (agent-mode output) throws: an unmeasurable
  * tag is never written as a verdict. */
-function tagPass(ctx: GateCtx, tag: string): boolean {
+export function tagPass(ctx: GateCtx, tag: string): boolean {
   const log = join(ctx.logDir, "check-bun-test-gate.log");
   if (!existsSync(log)) return false;
   const parsed = parseBunTest(readFileSync(log, "utf8"), "check-bun-test-gate.log");
@@ -433,5 +433,89 @@ export function buildGates(ctx: GateCtx): {
       l6Gate(ctx, d),
     ],
     derived: d,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// blockers — derived from this run's tag passes, tagged mutations and audit
+// ---------------------------------------------------------------------------
+
+export interface BlockerRecord {
+  status: "resolved" | "open";
+  evidence: string;
+}
+
+/** Every mutation carrying `tag` is detected and green after revert. */
+function mutationsBite(ctx: GateCtx, tag: string): boolean {
+  const tagged = ctx.mutations.map((m) => rec(m)).filter((m) => m?.["tag"] === tag);
+  return (
+    tagged.length > 0 &&
+    tagged.every((m) => m?.["detected"] === true && m["post_revert_green"] === true)
+  );
+}
+
+function blocker(ok: boolean, resolved: string, open: string): BlockerRecord {
+  return ok ? { status: "resolved", evidence: resolved } : { status: "open", evidence: open };
+}
+
+function b8Record(ctx: GateCtx): BlockerRecord {
+  const seen = (tag: string): string => (tagPass(ctx, tag) ? "passes" : "has no passing title");
+  const ok =
+    tagPass(ctx, "B8") && mutationsBite(ctx, "B8") && tagPass(ctx, "T10") && tagPass(ctx, "T14");
+  return blocker(
+    ok,
+    "[B8], [T10] and [T14] pass in the gate log and mutation c breaks the suite as measured",
+    `B8 resolved needs T10 and T14: in the gate log [B8] ${seen("B8")}, [T10] ${seen("T10")} and [T14] ${seen("T14")}; mutation c ${mutationsBite(ctx, "B8") ? "breaks the suite as measured" : "is not detected"}; the T10 byte, request-count and backpressure limits are recorded in open_findings`,
+  );
+}
+
+function mutationBlocker(ctx: GateCtx, tag: string, resolved: string): BlockerRecord {
+  return blocker(
+    tagPass(ctx, tag) && mutationsBite(ctx, tag),
+    resolved,
+    `[${tag}] titles or the ${tag}-tagged mutations are not green in this run`,
+  );
+}
+
+export function deriveBlockers(
+  ctx: GateCtx,
+  manifestPrivate: boolean,
+): Record<string, BlockerRecord> {
+  const b10 =
+    tagPass(ctx, "B10") &&
+    ctx.srcCounts["mutableBindings"] === 0 &&
+    stepExit(ctx, "closure-audit-src") === 0;
+  return {
+    B1: blocker(
+      manifestPrivate,
+      "private:true retained in package.json and in the packed manifest (channel stand-in); no publish path",
+      "private:true is missing from package.json or from the packed manifest (channel stand-in)",
+    ),
+    B3: mutationBlocker(
+      ctx,
+      "B3",
+      "[B3] env-boundary tests pass: the child env is the verbatim host env plus a computed PATH; mutation a (ambient merge) breaks the suite as measured",
+    ),
+    B4: mutationBlocker(
+      ctx,
+      "B4",
+      "[B4] cancel-grace and watchdog tests pass; mutations d and f (hardcoded defaults) break the suite as measured",
+    ),
+    B6: mutationBlocker(
+      ctx,
+      "B6",
+      "[B6]/[ACP-CLIENTINFO] pass: initialize advertises the host clientInfo verbatim; mutation e breaks the suite as measured",
+    ),
+    B7: mutationBlocker(
+      ctx,
+      "B7",
+      "[B7]/[SCOPE-2] pass: pool keys include credential scope; mutation b (digestless key) breaks the suite as measured",
+    ),
+    B8: b8Record(ctx),
+    B10: blocker(
+      b10,
+      "zero mutable module-scope bindings under the audit; callback-failure and malformed-stream tests pass; T13 ([B10]) green",
+      "[B10] titles, the mutable-binding count or the src audit are not green in this run",
+    ),
   };
 }

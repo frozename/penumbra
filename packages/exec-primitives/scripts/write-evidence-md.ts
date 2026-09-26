@@ -1,8 +1,10 @@
 /**
  * write-evidence-md.ts — renders the .md half of the evidence pair from the
- * same values the .json carries. Every number comes from the input; every
- * tarball mention in prose carries the "channel stand-in" label (SHAPE checks
- * it per table row, list item and paragraph, code spans excluded).
+ * committed .json alone (renderEvidenceMarkdown). SHAPE renders the committed
+ * .json again and requires the committed .md to be byte-equal, so every count
+ * in the .md inherits the .json's bindings. Every tarball mention in prose
+ * carries the "channel stand-in" label (SHAPE checks it per table row, list
+ * item and paragraph, code spans excluded).
  */
 import type { Step } from "./write-evidence-gates.js";
 
@@ -49,6 +51,7 @@ export interface MdInput {
   deviations: Record<string, unknown>[];
   openFindings: Record<string, unknown>[];
   claimsNotMade: string[];
+  blockers: Record<string, unknown>;
   /** [tag] titles passing in this run's gate log. */
   tagPasses: Record<string, number>;
   t7Overshoot: number | null;
@@ -64,6 +67,12 @@ function str(v: unknown): string {
 }
 function stringList(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+function list(v: unknown): unknown[] {
+  return Array.isArray(v) ? (v as unknown[]) : [];
+}
+function recList(v: unknown): Record<string, unknown>[] {
+  return list(v).map((x) => rec(x) ?? {});
 }
 
 function verdictLine(g: Record<string, unknown>): string {
@@ -102,7 +111,7 @@ function gateSection(g: Record<string, unknown>, t7: string): string {
 function t7Line(t7: number | null): string {
   return t7 === null
     ? "T7 overshoot: no `t7-overshoot=` marker in the gate log."
-    : `T7 overshoot: ${String(t7)} bytes past the 65536-byte limit (the \`t7-overshoot=\` marker the [B10] output-limit test prints into the gate log). It varies run to run with pipe chunking and stays within the largest chunk, so SHAPE binds it as a positive measurement rather than a fixed value.`;
+    : `T7 overshoot: ${String(t7)} bytes past the 65536-byte limit (the \`t7-overshoot=\` marker the [B10] output-limit test prints into the gate log). It varies run to run with pipe chunking and stays within the largest chunk, so SHAPE binds it to the measured domain (a whole number of 65536-byte reads) rather than to a fixed value.`;
 }
 
 function stepRow(g: Step): string {
@@ -145,16 +154,22 @@ function section2Row(r: Section2Row): string {
     r.parity === null
       ? "context slice (not ported)"
       : `\`${r.parity}\` → ${String(r.parity_pass)}p/${String(r.parity_fail)}f`;
-  const more = r.excluded.length > 1 ? ", …" : "";
+  const rows = recList(r.excluded);
+  const more = rows.length > 1 ? ", …" : "";
   const excluded =
-    r.excluded.length === 0
+    rows.length === 0
       ? "—"
-      : `${String(r.excluded.length)} excluded (${r.excluded[0]?.reason ?? ""}${more})`;
+      : `${String(rows.length)} excluded (${str(rows[0]?.["reason"])}${more})`;
   return `| \`${r.origin}\` | ${r.kind} | ${String(r.origin_pass)}p/${String(r.origin_fail)}f (${String(r.origin_ran)} ran) | ${parity} | ${excluded} | ${r.consistent ? "consistent" : "INCONSISTENT"} |`;
 }
 
 function perFileRow(f: PerFileRow): string {
-  return `| \`${f.origin}\` | ${String(f.baseline_tests)} | ${String(f.ported)} | ${String(f.passed)} | ${String(f.not_portable)} | ${String(f.adaptations.length)} | ${f.reason} |`;
+  return `| \`${f.origin}\` | ${String(f.baseline_tests)} | ${String(f.ported)} | ${String(f.passed)} | ${String(f.not_portable)} | ${String(list(f.adaptations).length)} | ${f.reason} |`;
+}
+
+function blockerLine([id, b]: [string, unknown]): string {
+  const r = rec(b) ?? {};
+  return `| ${id} | ${str(r["status"])} | ${str(r["evidence"])} |`;
 }
 
 function findingLine(f: Record<string, unknown>): string {
@@ -267,6 +282,12 @@ ${i.checkSteps.map(stepRow).join("\n")}
 
 ${i.gates.map((g) => gateSection(g, t7Line(i.t7Overshoot))).join("\n\n")}
 
+## Blockers
+
+| Blocker | Status | Evidence |
+| --- | --- | --- |
+${Object.entries(i.blockers).map(blockerLine).join("\n")}
+
 ## Mutations
 
 ${String(i.mutations.length)} patches; clean after revert: \`${String(i.cleanAfter)}\`.
@@ -321,4 +342,45 @@ The packed tarball exercised here is a local channel stand-in. Parity is
 bounded by the suites actually executed and recorded above; nothing about
 distribution, hosting, or downstream adoption follows from this record.
 `;
+}
+
+/** MdInput read from an evidence object; missing fields render as empty. */
+export function mdInputFromEvidence(ev: Record<string, unknown>): MdInput {
+  const tool = rec(ev["toolchain"]) ?? {};
+  const parity = rec(ev["parity"]) ?? {};
+  const t7 = rec(rec(list(ev["gates"])[3])?.["measurements"])?.["t7_overshoot_bytes"];
+  const tagPasses = rec(rec(ev["red_green"])?.["tag_passes"]) ?? {};
+  return {
+    head: str(ev["head_sha"]),
+    headNote: str(ev["head_sha_note"]),
+    baseSha: str(ev["base_sha"]),
+    toolchain: `bun ${str(tool["bun"])} · node ${str(tool["node"])} · typescript ${str(tool["typescript"])}`,
+    generatedAt: str(ev["generated_at"]),
+    result: str(ev["result"]),
+    gates: recList(ev["gates"]),
+    checkSteps: recList(ev["check_steps"]) as unknown as Step[],
+    mutations: list(ev["mutations"]),
+    cleanAfter: ev["mutations_clean_after"],
+    tarball: rec(ev["tarball"]) ?? {},
+    consumers: rec(ev["consumers"]) ?? {},
+    section2Rows: recList(
+      rec(rec(ev["section2"])?.["verdict"])?.["rows"],
+    ) as unknown as Section2Row[],
+    delta: typeof ev["delta"] === "number" ? ev["delta"] : Number.NaN,
+    perFile: recList(parity["per_file"]) as unknown as PerFileRow[],
+    excludedCases: recList(parity["excluded_cases"]) as unknown as MdInput["excludedCases"],
+    deviations: recList(ev["deviations"]),
+    openFindings: recList(ev["open_findings"]),
+    claimsNotMade: stringList(ev["claims_not_made"]),
+    blockers: rec(ev["blockers"]) ?? {},
+    tagPasses: Object.fromEntries(
+      Object.entries(tagPasses).map(([k, v]) => [k, typeof v === "number" ? v : Number.NaN]),
+    ),
+    t7Overshoot: typeof t7 === "number" ? t7 : null,
+  };
+}
+
+/** The .md for an evidence object — the one render the writer and SHAPE share. */
+export function renderEvidenceMarkdown(ev: Record<string, unknown>): string {
+  return renderMarkdown(mdInputFromEvidence(ev));
 }

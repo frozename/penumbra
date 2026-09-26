@@ -1,8 +1,12 @@
 /**
  * sharedlib6-shape.ts — SHAPE: the committed evidence pair against this run's
  * fresh measurements. validateEvidence() holds every rule and takes the
- * evidence object as a parameter, so the self-test probes
+ * evidence object and the .md text as parameters, so the self-test probes
  * (sharedlib6-shape-probes.ts) run the exact same rules over edited clones.
+ * The rules: contract shape and verdict consistency (here and in
+ * sharedlib6-shape-measured.ts), field bindings (sharedlib6-shape-bind.ts),
+ * and regeneration (sharedlib6-shape-regen.ts): the .json must equal the
+ * writer's record rebuilt from this run and the .md must equal its render.
  * runShape() validates the committed pair, then runs the probes: a probe that
  * stays green means a field is no longer bound, and SHAPE fails closed.
  */
@@ -10,6 +14,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  shapeAllowlistEntries,
+  shapeB8Derivation,
   shapeCandidate,
   shapeGateMeasurements,
   shapeJsonClaims,
@@ -27,16 +33,20 @@ import {
   shapeVerdicts,
 } from "./sharedlib6-shape-measured.js";
 import { probeReasons } from "./sharedlib6-shape-probes.js";
+import { shapeMarkdownRender, shapeRegenerated } from "./sharedlib6-shape-regen.js";
 import {
   BASE_SHA,
+  canonicalize,
   claimRe,
   EVIDENCE_DATE,
   FORBIDDEN_CLAIMS,
   type GateRec,
+  HONESTY,
   NPH_LITERALS,
   readJsonFile,
   rec,
   REQUIRED_BLOCKERS,
+  REQUIRED_DEVIATION_RULES,
   type ShapeContext,
   str,
 } from "./sharedlib6-shape-util.js";
@@ -90,15 +100,8 @@ function shapeHeadSha(ctx: ShapeContext, evidence: Record<string, unknown>): str
 
 function shapeHonestyAndClaims(evidence: Record<string, unknown>): string[] {
   const reasons: string[] = [];
-  const honesty = rec(evidence["honesty"]);
-  if (
-    honesty?.["channel_stand_in"] !== true ||
-    honesty["channel_chosen"] !== false ||
-    honesty["home_chosen"] !== false ||
-    honesty["adoption_performed"] !== false ||
-    honesty["overall_claim"] !== "none"
-  ) {
-    reasons.push("honesty fields missing or wrong");
+  if (!deepEqualLocal(canonicalize(evidence["honesty"]), canonicalize(HONESTY))) {
+    reasons.push(`honesty must equal exactly ${JSON.stringify(HONESTY)} (no extra keys)`);
   }
   if (!deepEqualLocal(evidence["claims_not_made"], FORBIDDEN_CLAIMS)) {
     reasons.push("claims_not_made does not list exactly the required claims");
@@ -114,6 +117,12 @@ function shapeHonestyAndClaims(evidence: Record<string, unknown>): string[] {
     })
   ) {
     reasons.push("deviations[] entries must all carry non-empty rule/change/reason/pointer");
+  }
+  const rules = new Set(
+    (Array.isArray(deviations) ? deviations : []).map((d) => str(rec(d)?.["rule"])),
+  );
+  for (const rule of REQUIRED_DEVIATION_RULES) {
+    if (!rules.has(rule)) reasons.push(`deviations[] missing required rule "${rule}"`);
   }
   return reasons;
 }
@@ -140,21 +149,30 @@ function gateEvidenceShape(g: Record<string, unknown>, idx: number): string[] {
       }
     }
   }
-  const ev = g["evidence"];
-  if (
-    !Array.isArray(ev) ||
-    ev.length === 0 ||
-    ev.some((e) => {
-      const er = rec(e);
-      return (
-        er === undefined ||
-        !["confirmed", "inferred"].includes(str(er["status"])) ||
-        str(er["pointer"]) === "" ||
-        str(er["claim"]) === ""
-      );
-    })
-  ) {
-    reasons.push(`${label} evidence[] malformed`);
+  reasons.push(...gateEvidenceEntries(label, g["evidence"]));
+  return reasons;
+}
+
+/** evidence[]: non-empty, each entry { claim, status, pointer }, and every
+ * inferred entry carries would_confirm (section 3). */
+function gateEvidenceEntries(label: string, ev: unknown): string[] {
+  const reasons: string[] = [];
+  const entries = Array.isArray(ev) ? (ev as unknown[]) : [];
+  const malformed = entries.some((e) => {
+    const er = rec(e);
+    return (
+      er === undefined ||
+      !["confirmed", "inferred"].includes(str(er["status"])) ||
+      str(er["pointer"]) === "" ||
+      str(er["claim"]) === ""
+    );
+  });
+  if (entries.length === 0 || malformed) reasons.push(`${label} evidence[] malformed`);
+  for (const [i, e] of entries.entries()) {
+    const er = rec(e);
+    if (er?.["status"] === "inferred" && str(er["would_confirm"]) === "") {
+      reasons.push(`${label} evidence[${String(i)}] is inferred without would_confirm`);
+    }
   }
   return reasons;
 }
@@ -276,7 +294,7 @@ function claimsSectionReasons(md: string): string[] {
   return reasons;
 }
 
-function shapeForbiddenClaims(ctx: ShapeContext): string[] {
+function shapeForbiddenClaims(ctx: ShapeContext, md: string): string[] {
   const reasons: string[] = [];
   const readme = readFileSync(join(ctx.packageDir, "README.md"), "utf8");
   const manifestText = ["penumbra-host", "infra-host"]
@@ -291,37 +309,50 @@ function shapeForbiddenClaims(ctx: ShapeContext): string[] {
     if (re.test(manifestText)) reasons.push(`consumer manifest contains forbidden claim: ${claim}`);
     if (re.test(gitLog)) reasons.push(`commit messages contain forbidden claim: ${claim}`);
   }
-  if (existsSync(ctx.evidenceMd)) {
-    reasons.push(...claimsSectionReasons(readFileSync(ctx.evidenceMd, "utf8")));
-  }
+  reasons.push(...claimsSectionReasons(md));
   return reasons;
 }
 
-function measuredReasons(ctx: ShapeContext, evidence: Record<string, unknown>): string[] {
+function measuredReasons(
+  ctx: ShapeContext,
+  evidence: Record<string, unknown>,
+  md: string,
+): string[] {
   const measured = rec(readJsonFile(ctx.measurements));
   if (measured === undefined) return ["ENOENT: tmp/sharedlib6/measurements.json"];
   return [
     ...shapeTarball(ctx, evidence, measured),
     ...shapeConsumers(evidence, measured),
     ...shapeParity(ctx, evidence, measured),
-    ...shapeVerdicts(ctx, evidence, measured),
+    ...shapeVerdicts(ctx, evidence, measured, md),
     ...shapeGateMeasurements(ctx, evidence, measured),
     ...shapePerFile(ctx, evidence, measured),
   ];
 }
 
-function evidenceTextReasons(ctx: ShapeContext, evidence: Record<string, unknown>): string[] {
-  const md = existsSync(ctx.evidenceMd) ? readFileSync(ctx.evidenceMd, "utf8") : "";
+function evidenceTextReasons(
+  ctx: ShapeContext,
+  evidence: Record<string, unknown>,
+  md: string,
+): string[] {
   return [
     ...shapeCandidate(ctx, evidence),
     ...shapeOpenFindings(ctx, evidence),
     ...shapeJsonClaims(evidence),
     ...shapeStandInLabels(evidence, md),
+    ...shapeAllowlistEntries(ctx, evidence),
+    ...shapeB8Derivation(ctx, evidence),
+    ...shapeRegenerated(ctx, evidence),
+    ...shapeMarkdownRender(evidence, md),
   ];
 }
 
-/** Every SHAPE rule over one evidence object. */
-export function validateEvidence(ctx: ShapeContext, evidence: Record<string, unknown>): string[] {
+/** Every SHAPE rule over one evidence object and its .md text. */
+export function validateEvidence(
+  ctx: ShapeContext,
+  evidence: Record<string, unknown>,
+  md: string,
+): string[] {
   const reasons: string[] = [];
   if (!existsSync(ctx.evidenceMd)) {
     reasons.push(`ENOENT: ${ctx.evidenceMd}`);
@@ -330,12 +361,12 @@ export function validateEvidence(ctx: ShapeContext, evidence: Record<string, unk
   reasons.push(...shapeHonestyAndClaims(evidence));
   reasons.push(...shapeGates(evidence));
   reasons.push(...shapeBlockers(evidence));
-  reasons.push(...measuredReasons(ctx, evidence));
-  reasons.push(...evidenceTextReasons(ctx, evidence));
+  reasons.push(...measuredReasons(ctx, evidence, md));
+  reasons.push(...evidenceTextReasons(ctx, evidence, md));
   reasons.push(...shapeMutations(ctx, evidence));
   reasons.push(...shapeSection2(ctx, evidence));
   reasons.push(...shapeCheckSteps(ctx, evidence));
-  reasons.push(...shapeForbiddenClaims(ctx));
+  reasons.push(...shapeForbiddenClaims(ctx, md));
   return reasons;
 }
 
@@ -343,6 +374,10 @@ export function validateEvidence(ctx: ShapeContext, evidence: Record<string, unk
 export function runShape(ctx: ShapeContext): string[] {
   const evidence = rec(readJsonFile(ctx.evidenceJson));
   if (evidence === undefined) return [`ENOENT or unparseable: ${ctx.evidenceJson}`];
-  const reasons = validateEvidence(ctx, evidence);
-  return [...reasons, ...probeReasons(evidence, reasons, (ev) => validateEvidence(ctx, ev))];
+  const md = existsSync(ctx.evidenceMd) ? readFileSync(ctx.evidenceMd, "utf8") : "";
+  const reasons = validateEvidence(ctx, evidence, md);
+  return [
+    ...reasons,
+    ...probeReasons(evidence, md, reasons, (ev, text) => validateEvidence(ctx, ev, text)),
+  ];
 }

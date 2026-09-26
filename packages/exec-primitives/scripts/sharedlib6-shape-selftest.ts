@@ -5,10 +5,11 @@
  * re-running the fourteen steps. The step records come from the check_steps
  * the check wrote into measurements.json. Prints one line per probe.
  *
- * Usage: bun scripts/sharedlib6-shape-selftest.ts [--evidence <json>]
+ * Usage: bun scripts/sharedlib6-shape-selftest.ts [--evidence <json>] [--md <md>]
  * Exit 0 only when SHAPE passes on the evidence and every probe is detected.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { probeOutcomes } from "./sharedlib6-shape-probes.js";
@@ -39,9 +40,14 @@ if (evidence === undefined) {
   process.exit(1);
 }
 
-const baseline = validateEvidence(ctx, evidence);
+const mdIdx = process.argv.indexOf("--md");
+const mdPath = mdIdx === -1 ? ctx.evidenceMd : (process.argv[mdIdx + 1] ?? "");
+const md = existsSync(mdPath) ? readFileSync(mdPath, "utf8") : "";
+const baseline = validateEvidence(ctx, evidence, md);
 for (const r of baseline) process.stdout.write(`SHAPE FAIL: ${r}\n`);
-const outcomes = probeOutcomes(evidence, baseline, (ev) => validateEvidence(ctx, ev));
+const outcomes = probeOutcomes(evidence, md, baseline, (ev, text) =>
+  validateEvidence(ctx, ev, text),
+);
 for (const o of outcomes) process.stdout.write(`probe ${o.name}: ${o.status}\n`);
 const detected = outcomes.filter((o) => o.status === "detected").length;
 const ok = baseline.length === 0 && detected === outcomes.length;

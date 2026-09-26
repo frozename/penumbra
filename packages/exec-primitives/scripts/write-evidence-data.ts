@@ -321,6 +321,14 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
     pointer: "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations",
   },
   {
+    id: "t7-overshoot-domain",
+    finding:
+      "the committed T7 overshoot is bound to a whole number of 65536-byte reads, a domain measured on this host only (22 of 22 sampled runs); a host whose pipe reads are not 64 KiB multiples needs the domain re-derived before evidence is regenerated there",
+    status: "inferred",
+    would_confirm: "gate-log t7-overshoot markers from a second platform",
+    pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
+  },
+  {
     id: "parity-adaptations-incomplete",
     finding:
       "parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs",
@@ -406,10 +414,25 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
   {
     rule: "SHAPE t7_overshoot_bytes binding",
     change:
-      "SHAPE binds gates[L4].measurements.t7_overshoot_bytes as a positive measured overshoot, not by equality",
+      "SHAPE binds the committed gates[L4].measurements.t7_overshoot_bytes to the measured domain, a whole number of 65536-byte reads in [65536, 917504], and this run's t7-overshoot marker to the bound 0 < v <= 934464 (1000000 bytes produced minus the 65536-byte cap), not by equality",
     reason:
-      "the overshoot varies with pipe chunking (131072 in 6 and 196608 in 4 of 10 measured runs), so equality would fail at random",
+      "the overshoot varies with pipe chunking (131072 in 10 and 196608 in 12 of 22 sampled runs on this host), so equality would fail at random",
     pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
+  },
+  {
+    rule: "SHAPE regeneration exemptions",
+    change:
+      "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, except head_sha (bound to rev-list), generated_at, toolchain, poison_layer, artifact_sha256, mutations[].errors and gates[L4].measurements.t7_overshoot_bytes; the .md must equal the render of the committed .json byte for byte",
+    reason:
+      "toolchain and poison_layer record the environment (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, and errors and the T7 overshoot vary run to run and are bound by range instead",
+    pointer: "scripts/sharedlib6-shape-regen.ts",
+  },
+  {
+    rule: "re-expression two-file split",
+    change:
+      "the re-expressed cases live in test/cli-spawn-stream.parity.ts and test/stdio-acp-permission.parity.ts instead of one test/permission-and-stream.parity.ts",
+    reason: "combined, the two files exceed the 700-line cap",
+    pointer: "qualification/consumers/penumbra-host/test/",
   },
   {
     rule: "extra audit fixtures",
@@ -420,43 +443,3 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
     pointer: "qualification/audit-fixtures/",
   },
 ];
-
-export function blockerMap(): Record<string, { status: string; evidence: string }> {
-  return {
-    B1: {
-      status: "resolved",
-      evidence:
-        "private:true retained in package.json and in the packed manifest (channel stand-in); no publish path",
-    },
-    B3: {
-      status: "resolved",
-      evidence:
-        "[B3] env-boundary tests pass: the child env is the verbatim host env plus a computed PATH; mutation a (ambient merge) breaks the suite as measured",
-    },
-    B4: {
-      status: "resolved",
-      evidence:
-        "[B4] cancel-grace and watchdog tests pass; mutations d and f (hardcoded defaults) break the suite as measured",
-    },
-    B6: {
-      status: "resolved",
-      evidence:
-        "[B6]/[ACP-CLIENTINFO] pass: initialize advertises the host clientInfo verbatim; mutation e breaks the suite as measured",
-    },
-    B7: {
-      status: "resolved",
-      evidence:
-        "[B7]/[SCOPE-2] pass: pool keys include credential scope; mutation b (digestless key) breaks the suite as measured",
-    },
-    B8: {
-      status: "open",
-      evidence:
-        "[B8] closed-transport rejection passes in both consumers, but the T10 (byte/request-count/backpressure limits) and T14 residual limits are unmeasured — recorded in open_findings",
-    },
-    B10: {
-      status: "resolved",
-      evidence:
-        "zero mutable module-scope bindings under the audit; callback-failure and malformed-stream tests pass; T13 ([B10]) green",
-    },
-  };
-}

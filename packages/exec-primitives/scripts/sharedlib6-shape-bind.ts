@@ -14,6 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { parseBunTest } from "./bun-test-parse.js";
 import { consumerStepFailures } from "./sharedlib6-shape-measured.js";
 import {
   auditCounts,
@@ -31,6 +32,8 @@ import {
   SECTION2_BASELINE,
   type ShapeContext,
   str,
+  T7_CAP_BYTES,
+  T7_PRODUCED_BYTES,
   titlesFromLog,
 } from "./sharedlib6-shape-util.js";
 
@@ -110,22 +113,34 @@ function expectedGateMeasurements(ctx: ShapeContext, measured: Ev): Ev[] {
   ];
 }
 
-/** The overshoot varies run to run with pipe chunking (measured over 10 runs:
- * 131072 six times, 196608 four times), so equality would be a coin toss.
- * Bound instead: the evidence carries a positive integer and this run's gate
- * log measured a positive overshoot too. */
+/** The overshoot varies run to run with pipe chunking (22 sampled runs on
+ * this host: 131072 ten times, 196608 twelve times), so equality would be a
+ * coin toss. Bound instead:
+ *   - the committed value to the measured domain: a whole number of
+ *     65536-byte reads, at least one read, at most the largest such multiple
+ *     the producer allows (1000000 - 65536 = 934464, floored to 917504);
+ *   - this run's marker to the sound bound 0 < v <= 934464, which holds on any
+ *     host whatever its pipe read size. */
 function t7Reasons(ctx: ShapeContext, got: unknown): string[] {
   const reasons: string[] = [];
+  const maxOvershoot = T7_PRODUCED_BYTES - T7_CAP_BYTES;
+  const maxDomain = maxOvershoot - (maxOvershoot % T7_CAP_BYTES);
   const value = num(got);
-  if (value === undefined || !Number.isInteger(value) || value <= 0) {
+  const inDomain =
+    value !== undefined &&
+    Number.isInteger(value) &&
+    value % T7_CAP_BYTES === 0 &&
+    value >= T7_CAP_BYTES &&
+    value <= maxDomain;
+  if (!inDomain) {
     reasons.push(
-      `gates[L4].measurements.t7_overshoot_bytes ${String(got)} is not a measured positive overshoot`,
+      `gates[L4].measurements.t7_overshoot_bytes ${String(got)} is outside the measured domain (a whole number of ${String(T7_CAP_BYTES)}-byte reads in [${String(T7_CAP_BYTES)}, ${String(maxDomain)}])`,
     );
   }
   const fresh = t7Overshoot(ctx.logDir);
-  if (fresh === null || fresh <= 0) {
+  if (fresh === null || fresh <= 0 || fresh > maxOvershoot) {
     reasons.push(
-      "gates[L4].measurements: this run's gate log carries no positive t7-overshoot marker",
+      `gates[L4].measurements: this run's t7-overshoot marker ${String(fresh)} is not in (0, ${String(maxOvershoot)}]`,
     );
   }
   return reasons;
@@ -337,19 +352,72 @@ function evidenceLeaves(evidence: Ev, skip: string[]): [string, string, string][
   return out;
 }
 
-/** Claim phrases may appear in the .json only inside claims_not_made and honesty. */
+/** Claim phrases may appear in the .json only inside claims_not_made. The
+ * honesty object is scanned too: its exact keys and values (channel_chosen,
+ * home_chosen, ...) never match a phrase, so any match there is an addition. */
 export function shapeJsonClaims(evidence: Ev): string[] {
   const reasons: string[] = [];
-  for (const [path, , text] of evidenceLeaves(evidence, ["claims_not_made", "honesty"])) {
+  for (const [path, , text] of evidenceLeaves(evidence, ["claims_not_made"])) {
     for (const claim of FORBIDDEN_CLAIMS) {
       if (claimRe(claim).test(text)) {
         reasons.push(
-          `evidence json carries claim "${claim}" at ${path}; claims belong only in claims_not_made and honesty`,
+          `evidence json carries claim "${claim}" at ${path}; claims belong only in claims_not_made`,
         );
       }
     }
   }
   return reasons;
+}
+
+// --- audit_allowlist_entries and blockers ----------------------------------------
+
+const ALLOWLIST_FILES = ["audit-allowlist.json", "audit-allowlist-dist.json"];
+
+function classified(e: Ev): boolean {
+  return (
+    e["classification"] === "pre-approved" ||
+    (e["classification"] === "false-positive" && str(e["reason"]).startsWith("false-positive:"))
+  );
+}
+
+/** audit_allowlist_entries equals both allowlist files, each entry classified. */
+export function shapeAllowlistEntries(ctx: ShapeContext, evidence: Ev): string[] {
+  const want = ALLOWLIST_FILES.flatMap((f) => {
+    const raw = readJsonFile(join(ctx.packageDir, "qualification", f));
+    return (Array.isArray(raw) ? (raw as unknown[]) : []).map((e) => ({
+      ...(rec(e) ?? {}),
+      allowlist: f,
+    }));
+  });
+  const reasons: string[] = [];
+  if (!deepEqual(evidence["audit_allowlist_entries"], want)) {
+    reasons.push(
+      `audit_allowlist_entries != the ${String(want.length)} entries of ${ALLOWLIST_FILES.join(" and ")}`,
+    );
+  }
+  for (const [i, e] of want.entries()) {
+    if (!classified(e)) reasons.push(`audit_allowlist_entries[${String(i)}] is not classified`);
+  }
+  return reasons;
+}
+
+function gateTagGreen(ctx: ShapeContext, tag: string): boolean {
+  const path = join(ctx.logDir, "check-bun-test-gate.log");
+  const parsed = parseBunTest(existsSync(path) ? readFileSync(path, "utf8") : "", path);
+  const has = (titles: string[]): boolean => titles.some((t) => t.includes(`[${tag}]`));
+  return parsed.problem === undefined && has(parsed.passTitles) && !has(parsed.failTitles);
+}
+
+/** B8 resolved needs T10 and T14 (spec section 8): both tags green in the gate log. */
+export function shapeB8Derivation(ctx: ShapeContext, evidence: Ev): string[] {
+  const status = str(rec(rec(evidence["blockers"])?.["B8"])?.["status"]);
+  if (status !== "resolved") return [];
+  const missing = ["B8", "T10", "T14"].filter((t) => !gateTagGreen(ctx, t));
+  return missing.length === 0
+    ? []
+    : [
+        `blockers.B8 resolved needs T10 and T14: no green [${missing.join("], [")}] title in the gate log`,
+      ];
 }
 
 const TARBALL_MENTION_RE = /\btarballs?\b|\bpacked\b|\.tgz\b/i;

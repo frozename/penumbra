@@ -13,11 +13,13 @@
  *      one failed; one line per step is printed. The fence runs AFTER qualify
  *      and the tarball audit so it observes the tree the way the composite
  *      will leave it.
- *   4. SHAPE (sharedlib6-shape.ts) — the committed evidence pair must be
- *      internally consistent and every measured field must equal this run's
- *      fresh measurement. Self-test probes then edit clones of the committed
- *      evidence (per_file, gates[].measurements, candidate, open_findings, a
- *      claim phrase, a tarball label) and each must turn SHAPE red.
+ *   4. SHAPE (sharedlib6-shape.ts) — the committed .json must equal the
+ *      record the evidence writer's builder produces from this run (a short
+ *      list of exempt fields is bound by range or recorded as environment),
+ *      the committed .md must equal the render of the committed .json, and
+ *      the contract rules must hold. Self-test probes then edit clones of the
+ *      committed pair (counts, claim text, blockers, deviations, honesty, a
+ *      .md cell) and each must turn SHAPE red.
  *   5. SHAREDLIB6-CHECK PASS, or SHAREDLIB6-CHECK FAIL listing every failing
  *      step (plus SHAPE). There is no sidecar verdict file; nothing
  *      downstream of a failed step is allowed to stand in for a real verdict.

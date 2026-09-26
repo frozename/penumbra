@@ -495,7 +495,7 @@ const PRE_QUALIFY_STEPS = [
   "closure-audit-src",
 ];
 
-function l6GreenReasons(ctx: ShapeContext): string[] {
+function l6GreenReasons(ctx: ShapeContext, md: string): string[] {
   const reasons: string[] = [];
   if (allowlistControlFlow(ctx).length > 0) {
     reasons.push("allowlist entry names a real control-flow path");
@@ -509,7 +509,6 @@ function l6GreenReasons(ctx: ShapeContext): string[] {
   if (l6.pass < 1 || l6.fail > 0) reasons.push("the [L6] test is not green in this run");
   const b7 = tagLineCounts(ctx, "B7");
   if (b7.pass < 1 || b7.fail > 0) reasons.push("the [B7] tests are not all green in this run");
-  const md = existsSync(ctx.evidenceMd) ? readFileSync(ctx.evidenceMd, "utf8") : "";
   if (!/warm pooling is not (?:a )?resume/i.test(md)) {
     reasons.push("the report must state that warm pooling is not resume");
   }
@@ -547,9 +546,9 @@ function l5VerdictReasons(ctx: ShapeContext, verdict: (i: number) => string): st
   return [];
 }
 
-function l6VerdictReasons(ctx: ShapeContext, verdict: (i: number) => string): string[] {
+function l6VerdictReasons(ctx: ShapeContext, verdict: (i: number) => string, md: string): string[] {
   const reasons: string[] = [];
-  const problems = l6GreenReasons(ctx);
+  const problems = l6GreenReasons(ctx, md);
   if (verdict(5) === "PASS" && problems.length > 0) {
     reasons.push(`L6 PASS claimed but: ${problems.join("; ")}`);
   }
@@ -564,6 +563,7 @@ export function shapeVerdicts(
   ctx: ShapeContext,
   evidence: Record<string, unknown>,
   measured: Record<string, unknown>,
+  md: string,
 ): string[] {
   const reasons: string[] = [];
   const evGates = evidence["gates"];
@@ -580,6 +580,6 @@ export function shapeVerdicts(
     reasons.push("L4 PASS claimed with a red test-gate or an undetected mutation");
   }
   reasons.push(...l5VerdictReasons(ctx, verdict));
-  reasons.push(...l6VerdictReasons(ctx, verdict));
+  reasons.push(...l6VerdictReasons(ctx, verdict, md));
   return reasons;
 }
