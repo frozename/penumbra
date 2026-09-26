@@ -8,6 +8,9 @@ import { join } from "node:path";
 
 import { parseBunTest } from "./bun-test-parse.js";
 
+export const BASE_SHA = "c264644bc2b4f1e1429e845208fd6ca7f6426d62";
+export const EVIDENCE_DATE = "2026-09-24";
+
 export const FORBIDDEN_CLAIMS = [
   "qualified",
   "ready",
@@ -164,4 +167,64 @@ export function loadAllowEntries(path: string): AllowEntry[] {
       return { token: str(r?.["token"]), classification: str(r?.["classification"]) };
     })
     .filter((e) => e.token !== "");
+}
+
+/** Open findings SHAPE requires by id: the contract item-13 list, item 8's
+ * skipLibCheck record, item 7(g)'s shim inference, the host-input gaps
+ * outside the supervisor, and the root-lint attribution. Kept here, apart
+ * from the writer's data, so dropping an entry from both still fails. */
+export const REQUIRED_OPEN_FINDINGS = [
+  "t10-limits",
+  "stderr-in-errors",
+  "dts-needs-types-node",
+  "detect-capacity-provider-specific",
+  "stdio-acp-server-sync-throw",
+  "cli-spawn-folded",
+  "content-length-unanchored",
+  "pool-key-nul-joined",
+  "log-field-identifiers",
+  "stdin-ignore-literal",
+  "warm-pool-shim-logic",
+  "unpinned-behaviours",
+  "abort-listener-comment",
+  "outcome-frozen-before-group-gone",
+  "review-record-only",
+  "consumer-skiplibcheck",
+  "b10-logger-stdio-acp-client",
+  "b10-logger-stdio-acp-permission",
+  "b10-logger-stdio-acp-server",
+  "b10-logger-acp-warm-pool",
+  "root-lint-qualification-errors",
+];
+
+/** The `counts <label>: {...}` line of the closure-audit src step log. */
+export function auditCounts(logDir: string, label: string): Record<string, number> {
+  const path = join(logDir, "check-closure-audit-src.log");
+  if (!existsSync(path)) return {};
+  const m = new RegExp(`^counts ${label}: (\\{.*\\})$`, "m").exec(readFileSync(path, "utf8"));
+  if (m?.[1] === undefined) return {};
+  try {
+    return JSON.parse(m[1]) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+/** eslint stylish output: error lines under files whose path contains
+ * `fragment`, and how many such files carry at least one error. */
+export function eslintErrorCounts(
+  text: string,
+  fragment: string,
+): { errors: number; files: number } {
+  let file = "";
+  let errors = 0;
+  const files = new Set<string>();
+  for (const line of text.split("\n")) {
+    if (line.startsWith("/")) file = line.trim();
+    else if (/^\s+\d+:\d+\s+error\s/.test(line) && file.includes(fragment)) {
+      errors += 1;
+      files.add(file);
+    }
+  }
+  return { errors, files: files.size };
 }

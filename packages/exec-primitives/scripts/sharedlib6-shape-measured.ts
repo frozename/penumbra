@@ -455,6 +455,10 @@ function l6GreenReasons(ctx: ShapeContext): string[] {
   if (allowlistControlFlow(ctx).length > 0) {
     reasons.push("allowlist entry names a real control-flow path");
   }
+  const auditExit = (name: string): number => ctx.gates.find((g) => g.gate === name)?.exit ?? 1;
+  if (auditExit("closure-audit-src") !== 0 || auditExit("closure-audit-tarball") !== 0) {
+    reasons.push("a closure-audit step (rules b and c) is red in this run");
+  }
   const l6 = tagLineCounts(ctx, "L6");
   if (l6.problem !== undefined) reasons.push(l6.problem);
   if (l6.pass < 1 || l6.fail > 0) reasons.push("the [L6] test is not green in this run");
