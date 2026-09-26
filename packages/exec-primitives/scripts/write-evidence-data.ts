@@ -329,6 +329,13 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
     pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
   },
   {
+    id: "audit-rule-b-syntactic",
+    finding:
+      "rule (b) is syntactic: module state reached only through a call to a function defined elsewhere (const x = make() where make returns a Map), a top-level statement that mutates an imported object, and an enum object are not flagged; the syntax-tree pass covers destructured, nested, factory-call, immediately-invoked, any-new, static-field, static-block and export-default shapes",
+    status: "open",
+    pointer: "scripts/closure-audit-ast.ts",
+  },
+  {
     id: "parity-adaptations-incomplete",
     finding:
       "parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs",
@@ -437,9 +444,9 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
   {
     rule: "extra audit fixtures",
     change:
-      "b-const-annotated-array, b-const-object-literal, b-const-arrow-map, b-const-arrow-record and d-consumer-guard-dynamic-import added; audit-allowlist-dist.json audits the dist bundle separately",
+      "b-const-annotated-array, b-const-object-literal, b-const-arrow-map, b-const-arrow-record, b-static-scalar, b-const-destructured, b-const-destructured-array, b-const-new-typed-array, b-const-object-create, b-const-nested-map, b-const-iife-closure, b-export-default and d-consumer-guard-dynamic-import added; audit-allowlist-dist.json audits the dist bundle separately",
     reason:
-      "the mutable-binding rule grew per-shape tokens and arrow-type annotations; the consumer guard-tripwire shape needed a src-side negative case",
+      "the mutable-binding rule grew per-shape tokens, arrow-type annotations and a syntax-tree pass (scripts/closure-audit-ast.ts) that flags destructured, nested, factory-call, immediately-invoked, any-new, non-readonly static, static-block and export-default module state beyond the spec's literal list; the consumer guard-tripwire shape needed a src-side negative case",
     pointer: "qualification/audit-fixtures/",
   },
 ];

@@ -7,6 +7,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, sep } from "node:path";
 
+import { astMutableBindings } from "./closure-audit-ast.js";
+
 export interface Finding {
   file: string;
   line: number;
@@ -288,6 +290,29 @@ function auditCodeFile(
   result.specifiers.push(...specifiers);
   for (const spec of specifiers) auditSpecifier(result, rel, root, spec);
   auditFileLines(result, hitLines, rel, stripped.split("\n"));
+  auditSyntaxTree(result, rel, path, raw);
+}
+
+/** Rule (b) shapes only the syntax tree can see; one finding per line, so a
+ * line the line rules already flagged is not counted twice. */
+function auditSyntaxTree(result: ScanResult, rel: string, path: string, raw: string): void {
+  const flagged = new Set(
+    result.findings
+      .filter((f) => f.file === rel && f.rule === "mutable-binding")
+      .map((f) => f.line),
+  );
+  for (const b of astMutableBindings(path, raw)) {
+    if (flagged.has(b.line)) continue;
+    flagged.add(b.line);
+    result.mutableBindings += 1;
+    result.findings.push({
+      file: rel,
+      line: b.line,
+      rule: "mutable-binding",
+      token: b.token,
+      text: b.text,
+    });
+  }
 }
 
 function resolveAllowlist(
