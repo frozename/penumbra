@@ -6,9 +6,9 @@ about adoption, release, publication, package home, or registry state. Every
 tarball mention below refers to a local channel stand-in, never a versioned
 channel.
 
-Commit: `43618f57ca648a816fba55cdddd33b4dbb2c91d4` (head_sha: the commit this evidence was written against; the evidence commit itself lands on top) — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
+Commit: `ab0903bd56419ee1a6b8bdebb74dd64a4b41e35a` (head_sha: the commit this evidence was written against; the evidence commit itself lands on top) — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
 Toolchain: bun 1.3.14 · node v26.0.0 · typescript 6.0.3
-Generated: 2026-09-26T00:49:13.357Z
+Generated: 2026-09-26T01:24:20.077Z
 Result (derived): PASS
 
 Superseded evidence: commit `eac2182fe` carries an earlier evidence pair (its dist audit exited 1); it stays in branch history, this pair supersedes it, and the PR merge squashes it away.
@@ -244,6 +244,7 @@ Boundary imports removed (per extraction contract):
 | comment-only bunfig in consumer copies | consumers ship a comment-only bunfig.toml | a preload bunfig would run inside every spawned bun child of the suite | `qualification/consumers/*/bunfig.toml` |
 | closure-audit split | closure-audit.ts is split into closure-audit.ts + closure-audit-core.ts | the 700-line cap | `scripts/closure-audit-core.ts` |
 | mutation error count | a mutated suite may report errors up to its failing-test count; errors beyond that fail the loop | bun counts a timed-out test as both a fail and an error, so requiring 0 errors would reject every timeout detector | `scripts/run-mutations.ts countsProblems` |
+| SHAPE mutations[].errors binding | SHAPE compares every mutation field exactly except errors, which it binds to 0..failing on both sides | errors is bun's timeout attribution and depends on scheduling; with the loop green, the failing set, fail, pass and ran are already fixed, so errors is the one field that can move | `scripts/sharedlib6-shape-measured.ts mutationDiffs` |
 | SHAPE t7_overshoot_bytes binding | SHAPE binds gates[L4].measurements.t7_overshoot_bytes as a positive measured overshoot, not by equality | the overshoot varies with pipe chunking (131072 in 6 and 196608 in 4 of 10 measured runs), so equality would fail at random | `scripts/sharedlib6-shape-bind.ts t7Reasons` |
 | extra audit fixtures | b-const-annotated-array, b-const-object-literal, b-const-arrow-map, b-const-arrow-record and d-consumer-guard-dynamic-import added; audit-allowlist-dist.json audits the dist bundle separately | the mutable-binding rule grew per-shape tokens and arrow-type annotations; the consumer guard-tripwire shape needed a src-side negative case | `qualification/audit-fixtures/` |
 
@@ -270,7 +271,7 @@ Boundary imports removed (per extraction contract):
 - `b10-logger-stdio-acp-server` [inferred] the spawn-error paths call logger.error unguarded (B10 class); by code reading, a throwing logger at :95 throws out of startStdioAcpServer and at :102 rejects an unobserved promise (would confirm: a [B10] test spawning a missing command with a throwing logger)
 - `b10-logger-acp-warm-pool` [inferred] crashed-entry teardown logs through an unguarded logger before teardownEntry runs (B10 class); by code reading, a throwing logger skips the teardown and leaves the crashed entry pooled (would confirm: a [B10] test crashing a pooled entry with a throwing logger)
 - `b10-timers-orphan` [inferred] a throwing or non-function host timers.setTimeout makes superviseProcess throw after spawn and leaves the spawned child running; post-spawn setup has no kill-on-throw (seen by an independent verification probe, not measured on this branch) (would confirm: a [B10] test injecting a throwing timers.setTimeout)
-- `mutation-loop-timing` [open] the mutation-loop comparison is timing-sensitive: an independent verification saw one failure in about eleven green-tree runs, cause not captured; the watchdog and grace mutations (d, f) compare exact fail and error counts
+- `mutation-loop-timing` [open] the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. SHAPE now names the differing mutation and field and binds errors to 0..failing
 - `parity-adaptations-incomplete` [open] parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs
 - `root-lint-qualification-errors` [open] root `bun run lint` (non-gating) reports 28 errors in 12 files under packages/exec-primitives/qualification/**, which the package lint gate does not cover
 
