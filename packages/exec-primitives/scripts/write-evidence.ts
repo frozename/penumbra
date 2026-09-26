@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 
 import { parseBunTest } from "./bun-test-parse.js";
+import { auditCounts, eslintErrorCounts } from "./sharedlib6-shape-util.js";
 import {
   BASELINE_SET,
   blockerMap,
@@ -31,10 +32,12 @@ import {
   CLAIMS_NOT_MADE,
   DISPOSITIONS,
   OPEN_FINDINGS,
+  rootLintFinding,
   SHIM_LOGIC,
   STATIC_DEVIATIONS,
 } from "./write-evidence-data.js";
 import { buildGates, type GateCtx, type Step } from "./write-evidence-gates.js";
+import { renderMarkdown } from "./write-evidence-md.js";
 
 const SCRIPTS_DIR = import.meta.dir;
 const PACKAGE_DIR = dirname(SCRIPTS_DIR);
@@ -95,15 +98,30 @@ const tsc = spawnSync("bunx", ["tsc", "--version"], {
   .stdout.trim()
   .replace(/^Version\s+/, "");
 
-/** counts <label>: {...} lines from the closure-audit step log. */
-function auditCounts(label: string): Record<string, number> {
-  const log = join(LOG_DIR, "check-closure-audit-src.log");
-  if (!existsSync(log)) return {};
-  const re = new RegExp(`^counts ${label}: (\\{.*\\})$`, "m");
-  const m = re.exec(readFileSync(log, "utf8"));
-  return m === null ? {} : (JSON.parse(m[1] ?? "{}") as Record<string, number>);
+const srcCounts = auditCounts(LOG_DIR, "src");
+
+function logText(name: string): string {
+  const path = join(LOG_DIR, name);
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
-const srcCounts = auditCounts("src");
+
+/** [tag] titles passing in the gate log, per mutation tag (RED/GREEN table). */
+function tagPassCounts(): Record<string, number> {
+  const parsed = parseBunTest(logText("check-bun-test-gate.log"), "check-bun-test-gate.log");
+  if (parsed.problem !== undefined) fail(parsed.problem);
+  const counts: Record<string, number> = {};
+  for (const tag of ["B3", "B4", "B6", "B7", "B8", "B10"]) {
+    counts[tag] = parsed.passTitles.filter((t) => t.includes(`[${tag}]`)).length;
+  }
+  return counts;
+}
+
+const openFindings = [
+  ...OPEN_FINDINGS,
+  rootLintFinding(
+    eslintErrorCounts(logText("check-root-lint.log"), "/packages/exec-primitives/qualification/"),
+  ),
+];
 
 /** Executed titles from a parity log; a log whose result lines cannot account
  * for its summary (agent-mode output) is refused rather than counted as 0. */
@@ -351,252 +369,37 @@ const evidence = {
     overall_claim: "none",
   },
   claims_not_made: CLAIMS_NOT_MADE,
-  open_findings: OPEN_FINDINGS,
+  open_findings: openFindings,
   deviations,
   artifact_sha256: artifactSha,
 };
 
 // ---------------------------------------------------------------------------
-// markdown
+// markdown (write-evidence-md.ts renders it from the same values)
 // ---------------------------------------------------------------------------
-const verdictLine = (g: Record<string, unknown>): string => {
-  const parts = rec(g["parts"]);
-  const extra =
-    g["gate"] === "L2"
-      ? ` (${str(g["verdict_scope"])})`
-      : g["gate"] === "L3"
-        ? ` (penumbra=${str(parts?.["penumbra"])}, synthetic=${str(parts?.["synthetic"])}, llamactl=DEFERRED → ${str(g["deferred_to"])})`
-        : "";
-  return `- ${str(g["gate"])}: ${str(g["verdict"])}${extra}`;
-};
-
-interface EvEntry {
-  claim: string;
-  status: string;
-  pointer: string;
-  would_confirm?: string;
-}
-
-function stringList(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-}
-
-function evList(v: unknown): EvEntry[] {
-  if (!Array.isArray(v)) return [];
-  return v
-    .map((e) => rec(e))
-    .filter((e): e is Record<string, unknown> => e !== undefined)
-    .map((e) => ({
-      claim: str(e["claim"]),
-      status: str(e["status"]),
-      pointer: str(e["pointer"]),
-      would_confirm: e["would_confirm"] === undefined ? undefined : str(e["would_confirm"]),
-    }));
-}
-
-const gateSections = gates
-  .map((g) => {
-    const nph = stringList(g["not_provable_here"])
-      .map((s) => `  - ${s}`)
-      .join("\n");
-    const ev = evList(g["evidence"])
-      .map(
-        (e) =>
-          `  - ${e.claim} — ${e.status} (\`${e.pointer}\`)${e.would_confirm === undefined ? "" : `; would confirm: ${e.would_confirm}`}`,
-      )
-      .join("\n");
-    const heading =
-      g["gate"] === "L2" ? "## L2 packed artifact (channel stand-in)" : `## ${str(g["gate"])}`;
-    const intro =
-      g["gate"] === "L2"
-        ? "Both consumers ran inside this worktree against a locally packed tarball used as a channel stand-in — nothing here asserts a versioned channel, a package home, or a llamactl-side install.\n\n"
-        : g["gate"] === "L6"
-          ? "Warm pooling is not a resume mechanism: the pool reuses idle child processes within one host process lifetime and carries no session state.\n\n"
-          : "";
-    return `${heading}\n\n${intro}Verdict: ${str(g["verdict"])} (scope: branch)\n\nEvidence:\n${ev}\n\nNot provable here:\n${nph}`;
-  })
-  .join("\n\n");
-
-const stepRows = checkSteps
-  .map(
-    (g) =>
-      `| ${String(g.gate)} | \`${str(g.log)}\` | exit ${String(g.exit)}${g.pass !== null ? ` · ${String(g.pass)}p/${String(g.fail ?? "?")}f` : ""}${g.gating === false ? " (non-gating)" : ""} |`,
-  )
-  .join("\n");
-
-const mutationRows = mutations
-  .map((m) => {
-    const r = rec(m) ?? {};
-    const failingCount = Array.isArray(r["failing_tests"]) ? r["failing_tests"].length : 0;
-    return `| ${str(r["patch"])} | ${str(r["intent"])} | ${r["detected"] === true ? "detected" : "MISSED"} (${String(failingCount)} failing; expected-detectors ${String(r["expected_detectors_hit"])}; post-revert-green ${String(r["post_revert_green"])}) |`;
-  })
-  .join("\n");
-
-function consumerSteps(name: string): string {
-  const c = rec(consumers[name]);
-  const steps = Array.isArray(c?.["steps"]) ? (c["steps"] as Step[]) : [];
-  return steps
-    .map(
-      (s) =>
-        `${String(s.name)} exit ${String(s.exit)}${(s.pass ?? 0) > 0 || (s.fail ?? 0) > 0 ? ` (${String(s.pass)}p/${String(s.fail)}f)` : ""}`,
-    )
-    .join(" · ");
-}
-
-function consumerRow(name: string): string {
-  const c = rec(consumers[name]);
-  if (c === undefined) return `| ${name} | missing | — | — | — |`;
-  return `| ${name} | ${str(c["runtime"])} | \`bun add ${str(c["install_specifier"])}\` | \`${str(c["resolved_to"])}\` | ${consumerSteps(name)} |`;
-}
-
-const section2RowsMd = section2Rows
-  .map((r) => {
-    const parity =
-      r.parity === null
-        ? "context slice (not ported)"
-        : `\`${r.parity}\` → ${String(r.parity_pass)}p/${String(r.parity_fail)}f`;
-    const excluded =
-      r.excluded.length === 0
-        ? "—"
-        : `${String(r.excluded.length)} excluded (${r.excluded[0]?.reason ?? ""}${r.excluded.length > 1 ? ", …" : ""})`;
-    return `| \`${r.origin}\` | ${r.kind} | ${String(r.origin_pass)}p/${String(r.origin_fail)}f (${String(r.origin_ran)} ran) | ${parity} | ${excluded} | ${r.consistent ? "consistent" : "INCONSISTENT"} |`;
-  })
-  .join("\n");
-
-const excludedList = excludedCases
-  .map((e) => `- \`${e.module}\` — "${e.origin_title}" — ${e.reason}`)
-  .join("\n");
-
-const deviationRows = deviations
-  .map(
-    (d) =>
-      `| ${str(d["rule"])} | ${str(d["change"])} | ${str(d["reason"])} | \`${str(d["pointer"])}\` |`,
-  )
-  .join("\n");
-
-const perFileRows = perFile
-  .map(
-    (f) =>
-      `| \`${f.origin}\` | ${String(f.baseline_tests)} | ${String(f.ported)} | ${String(f.passed)} | ${String(f.not_portable)} |`,
-  )
-  .join("\n");
-
-const md = `# Qualification — penumbra-exec-primitives (P2.2 / sharedlib6)
-
-Evidence-only qualification of the shared execution-primitives candidate
-extracted from \`packages/agentchat/src/adapters/\`. This report asserts nothing
-about adoption, release, publication, package home, or registry state. Every
-tarball mention below refers to a local channel stand-in, never a versioned
-channel.
-
-Commit: \`${head}\` — base: \`${BASE_SHA}\`
-Toolchain: bun ${str(toolchain["bun"])} · node ${str(toolchain["node"])} · typescript ${tsc}
-Generated: ${str(evidence.generated_at)}
-Result (derived): ${str(evidence.result)}
-
-## Verdicts
-
-${gates.map(verdictLine).join("\n")}
-
-## Check steps
-
-| Step | Log | Result |
-| --- | --- | --- |
-${stepRows}
-
-${gateSections}
-
-## Mutations
-
-${String(mutations.length)} patches; clean after revert: \`${String(mutationsJson["clean_after"])}\`.
-
-| Patch | Intent | Detection |
-| --- | --- | --- |
-${mutationRows}
-
-## Tarball (channel stand-in)
-
-\`${str(tarballMeasured["name"])}\` — ${String(tarballMeasured["files"])} files, ${String(tarballMeasured["unpacked_bytes"])} bytes unpacked. This tarball is a local channel stand-in.
-
-- \`sha256(tgz) = ${str(tarballMeasured["sha256"])}\`
-- \`content_sha256 = ${str(tarballMeasured["content_sha256"])}\` (sorted-path content digest of the unpacked tree)
-- repack determinism: two independent \`bun pm pack\` runs → byte_reproducible=${String(tarballMeasured["byte_reproducible"])}
-- entries: ${String(Array.isArray(tarballMeasured["entries"]) ? tarballMeasured["entries"].length : 0)} (package.json, LICENSE, README.md, dist/src/** only)
-
-## Consumers
-
-Each consumer fixture is copied to \`tmp/sharedlib6/consumer-<name>/\`, installs
-the packed channel-stand-in tarball via \`bun add\` under an isolated HOME + bun
-cache, and runs against a poisoned \`@penumbra/*\` resolution layer so a
-workspace link can never mask a missing install. Runtime steps run with dead
-proxy variables — the suite proves no network is required once installed.
-
-| Host | Runtime | Install | Resolved to | Steps |
-| ---- | --- | --- | --- | --- |
-${consumerRow("penumbra-host")}
-${consumerRow("infra-host")}
-
-Installed-content digest equals the channel-stand-in tarball digest for each
-consumer (\`digest_equal\`), \`home_entries_after\` is empty for both isolated
-HOMEs, and the per-copy poison run passes 0 tests against the broken entry.
-
-## Section 2 — adapter-surface parity vs \`packages/agentchat/\`
-
-Origin slices are measured fresh each run (\`section2-slice.ts\`); parity counts
-come from the per-file parity steps inside the penumbra-host consumer copy.
-Baseline and after carry a delta of ${String(delta)}.
-
-| Origin | Disposition | Origin result | Parity result | Exclusions | Verdict |
-| --- | --- | --- | --- | --- | --- |
-${section2RowsMd}
-
-Per-file parity table (baseline_tests = ported + not_portable):
-
-| Origin | baseline_tests | ported | passed | not_portable |
-| --- | --- | --- | --- | --- |
-${perFileRows}
-
-Excluded origin executions (exercising surfaces deliberately not extracted):
-${excludedList === "" ? "- none" : excludedList}
-
-Boundary imports removed (per extraction contract):
-
-| Adapter source | Removed import | Replaced by |
-| --- | --- | --- |
-| \`cli-spawn.ts\` | \`@penumbra/core\` (DispatchEventInput), \`@src/sdk/adapter.js\` (DispatchEvent), \`@src/worker/thought-capture.js\` | generic supervision in \`process-supervisor.ts\` |
-| \`stdio-acp-permission.ts\` | \`@src/sdk/adapter.js\` (DispatchInput) | \`PermissionHost\` — host passes \`signal\`, \`dispatchId\`, \`decide\`, \`logger\` |
-| \`stdio-acp-server.ts\` | none (was already local) | \`console.error\` → \`logger\`; stderr tee → \`onStderrChunk\` callback |
-| \`stdio-acp-client.ts\` | none | \`console.*\` → \`ExecLogger\`; close-guards added |
-| \`acp-warm-pool.ts\` | \`@src/adapters/stdio-acp-client.js\` (type-level) | \`AcpPoolClient\` structural type (no runtime import) |
-
-## Deviations
-
-| Rule | Change | Reason | Pointer |
-| --- | --- | --- | --- |
-${deviationRows}
-
-## Open findings
-
-${OPEN_FINDINGS.map((f) => `- ${str(f["finding"])}${f["would_confirm"] === undefined ? "" : ` (would confirm: ${str(f["would_confirm"])})`}`).join("\n")}
-
-## Claims not made
-
-${CLAIMS_NOT_MADE.map((c) => `- ${c}`).join("\n")}
-
-## Reproduce
-
-\`\`\`sh
-bun install --frozen-lockfile
-bun packages/exec-primitives/scripts/sharedlib6-check.ts --keep
-bun packages/exec-primitives/scripts/write-evidence.ts
-\`\`\`
-
-## Scope
-
-The packed tarball exercised here is a local channel stand-in. Parity is
-bounded by the suites actually executed and recorded above; nothing about
-distribution, hosting, or downstream adoption follows from this record.
-`;
+const md = renderMarkdown({
+  head,
+  headNote: evidence.head_sha_note,
+  baseSha: BASE_SHA,
+  toolchain: `bun ${str(toolchain["bun"])} · node ${str(toolchain["node"])} · typescript ${tsc}`,
+  generatedAt: evidence.generated_at,
+  result: evidence.result,
+  gates,
+  checkSteps,
+  mutations,
+  cleanAfter: mutationsJson["clean_after"],
+  tarball: tarballMeasured,
+  consumers,
+  section2Rows,
+  delta,
+  perFile,
+  excludedCases,
+  deviations,
+  openFindings,
+  claimsNotMade: CLAIMS_NOT_MADE,
+  tagPasses: tagPassCounts(),
+  t7Overshoot: t7Marker === "" ? null : Number(t7Marker),
+});
 
 mkdirSync(DOCS_DIR, { recursive: true });
 const jsonPath = join(DOCS_DIR, `${EVIDENCE_DATE}-sharedlib6-qualification.json`);

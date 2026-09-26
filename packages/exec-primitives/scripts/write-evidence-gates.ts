@@ -112,8 +112,18 @@ function mutationsGreen(ctx: GateCtx): boolean {
   );
 }
 
+function auditsGreen(ctx: GateCtx): boolean {
+  return stepExit(ctx, "closure-audit-src") === 0 && stepExit(ctx, "closure-audit-tarball") === 0;
+}
+
+/** A claim that holds only on a green audit step; otherwise the measured exit. */
+function auditClaim(ctx: GateCtx, step: string, clean: string): string {
+  const exit = stepExit(ctx, step);
+  return exit === 0 ? clean : `${step} exited ${String(exit)}; the audit is not clean`;
+}
+
 function l6Clean(ctx: GateCtx): boolean {
-  return ctx.controlFlowCount === 0 && tagPass(ctx, "L6") && tagPass(ctx, "B7");
+  return ctx.controlFlowCount === 0 && auditsGreen(ctx) && tagPass(ctx, "L6") && tagPass(ctx, "B7");
 }
 
 type GateFlags = Omit<DerivedVerdicts, "l1" | "l2" | "l3" | "l3Parts" | "l4" | "l5" | "l6">;
@@ -133,8 +143,7 @@ function lVerdicts(
   f: GateFlags,
 ): Pick<DerivedVerdicts, "l1" | "l2" | "l3" | "l3Parts" | "l4" | "l5" | "l6"> {
   const v = (ok: boolean): string => (ok ? "PASS" : "FAIL");
-  const auditGreen =
-    stepExit(ctx, "closure-audit-src") === 0 && stepExit(ctx, "closure-audit-tarball") === 0;
+  const auditGreen = auditsGreen(ctx);
   const bothGreen = f.penumbraGreen && f.infraGreen;
   const versionOk = ctx.version !== "0.0.0" && ctx.version !== "";
   return {
@@ -165,11 +174,15 @@ function l1Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
     scope: "branch",
     not_provable_here: [
       "that the audit token list covers every future forbidden pattern — only the fixture shapes are proven",
-      "that the dist bundle cannot hide behaviour the source audit missed — the tarball audit runs over dist/src, not the bundler",
+      "that the dist bundle cannot hide behaviour the source audit missed — the tarball (channel stand-in) audit runs over dist/src, not the bundler",
     ],
     evidence: [
       {
-        claim: "src/ audits clean (specifiers, tokens, mutable bindings, allowlist)",
+        claim: auditClaim(
+          ctx,
+          "closure-audit-src",
+          "src/ audits clean (specifiers, tokens, mutable bindings, allowlist)",
+        ),
         status: "confirmed",
         pointer: "tmp/sharedlib6/check-logs/check-closure-audit-src.log",
       },
@@ -184,7 +197,11 @@ function l1Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
         pointer: "tmp/sharedlib6/check-logs/check-closure-audit-src.log",
       },
       {
-        claim: "dist/ audits clean under the same rules plus the dist allowlist",
+        claim: auditClaim(
+          ctx,
+          "closure-audit-tarball",
+          "dist/ audits clean under the same rules plus the dist allowlist",
+        ),
         status: "confirmed",
         pointer: "tmp/sharedlib6/check-logs/check-closure-audit-tarball.log",
       },
@@ -235,7 +252,7 @@ function l2Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
       },
       {
         claim:
-          "both copies resolve the package from inside the copy; installed content digest equals the tarball digest",
+          "both copies resolve the package from inside the copy; installed content digest equals the tarball (channel stand-in) digest",
         status: "confirmed",
         pointer: "tmp/sharedlib6/measurements.json consumers.*.resolved_to, digest_equal",
       },
@@ -247,7 +264,7 @@ function l2Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
         would_confirm: "an install outside any checkout — owed to P2.2/llamactl-adoption",
       },
       {
-        claim: "B1 resolved — private:true retained in the packed manifest",
+        claim: "B1 resolved — private:true retained in the packed manifest (channel stand-in)",
         status: "confirmed",
         pointer: "tmp/sharedlib6/pack/extracted/package/package.json",
       },
@@ -269,7 +286,7 @@ function l3Gate(d: DerivedVerdicts): Record<string, unknown> {
     ],
     evidence: [
       {
-        claim: `penumbra part ${d.l3Parts.penumbra} — origin adapter suite ported to the packed artifact`,
+        claim: `penumbra part ${d.l3Parts.penumbra} — origin adapter suite ported to the packed artifact (channel stand-in)`,
         status: "confirmed",
         pointer: "tmp/sharedlib6/measurements.json consumers.penumbra-host.steps parity:*",
       },
@@ -336,7 +353,7 @@ function l5Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
         pointer: "check_steps in this document",
       },
       {
-        claim: "the 6.2 manifest/content gate holds on the extracted tarball",
+        claim: "the 6.2 manifest/content gate holds on the extracted tarball (channel stand-in)",
         status: "confirmed",
         pointer: "tmp/sharedlib6/measurements.json problems + tarball.entries",
       },
@@ -377,7 +394,9 @@ function l6Gate(ctx: GateCtx, d: DerivedVerdicts): Record<string, unknown> {
         pointer: "audit_allowlist_entries in this document",
       },
       {
-        claim: "src and dist audits clean under (b) and (c)",
+        claim: auditsGreen(ctx)
+          ? "src and dist audits clean under (b) and (c)"
+          : "a closure-audit step exited non-zero; rules (b) and (c) are not shown clean",
         status: "confirmed",
         pointer: "tmp/sharedlib6/check-logs/check-closure-audit-*.log",
       },

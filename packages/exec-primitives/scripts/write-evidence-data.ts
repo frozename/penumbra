@@ -170,57 +170,68 @@ export const SHIM_LOGIC = [
 
 export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
+    id: "t10-limits",
     finding: "T10 byte, request-count and backpressure limits are unmeasured (keeps B8 open)",
     status: "open",
     pointer: "blockers.B8",
   },
   {
+    id: "stderr-in-errors",
     finding: "stderr bytes can appear inside an errors payload (the stderr-in-errors leak vector)",
     status: "open",
     pointer: "src/process-supervisor.ts stderr tail accumulation",
   },
   {
+    id: "dts-needs-types-node",
     finding: "generated .d.ts references node: builtins — consumer typecheck needs @types/node",
     status: "open",
     pointer: "qualification consumer devDependencies",
   },
   {
+    id: "detect-capacity-provider-specific",
     finding: "detectCapacityError matches provider-specific stderr patterns only",
     status: "open",
     pointer: "src/process-supervisor.ts detectCapacityError",
   },
   {
+    id: "stdio-acp-server-sync-throw",
     finding: "startStdioAcpServer is typed Promise but throws synchronously on a bad spawn",
     status: "open",
     pointer: "src/stdio-acp-server.ts",
   },
   {
+    id: "cli-spawn-folded",
     finding:
       "the cli-spawn adapter surface is folded into process-supervisor.ts, not a separate module",
     status: "open",
     pointer: "src/process-supervisor.ts",
   },
   {
+    id: "content-length-unanchored",
     finding: "the Content-Length framing regex is unanchored",
     status: "open",
     pointer: "src/stdio-acp-client.ts",
   },
   {
+    id: "pool-key-nul-joined",
     finding: "the pool key is NUL-joined and specHash is not validated against a digest grammar",
     status: "open",
     pointer: "src/acp-warm-pool.ts",
   },
   {
+    id: "log-field-identifiers",
     finding: "method, toolName and dispatchId are written into logger fields",
     status: "open",
     pointer: "src/stdio-acp-client.ts, src/stdio-acp-permission.ts:393-395",
   },
   {
+    id: "stdin-ignore-literal",
     finding: "the literal 'ignore' stdin option assumes every consumer wants the same default",
     status: "open",
     pointer: "src/process-supervisor.ts stdio config",
   },
   {
+    id: "warm-pool-shim-logic",
     finding:
       "the warm-pool parity passes measure a shim that implements holder/release/canAddEntry/peekMissReason and mints a scope per deposit",
     status: "inferred",
@@ -228,36 +239,111 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
     pointer: "qualification/consumers/penumbra-host/src/shim/acp-warm-pool.ts",
   },
   {
+    id: "unpinned-behaviours",
     finding:
       'unpinned behaviours: abort-listener removal, cap-before-callback ordering, the ?? "reject" decide default, and the persistent stdio error listeners',
     status: "open",
     pointer: "src/process-supervisor.ts, src/stdio-acp-client.ts",
   },
   {
+    id: "abort-listener-comment",
     finding:
       "the comment that no host code runs before addEventListener is wrong: n.now and n.timers run first and the post-registration aborted re-check was removed",
     status: "open",
     pointer: "src/process-supervisor.ts:555",
   },
   {
+    id: "outcome-frozen-before-group-gone",
     finding:
       "the outcome is frozen before waitGroupGone resolves, so a watchdog kill of a detached group still reports outcome 'exited'",
     status: "open",
     pointer: "src/process-supervisor.ts waitGroupGone",
   },
   {
+    id: "review-record-only",
     finding:
       "record-only review items: no newline line bound; per-chunk Buffer.concat; no request() timeout; no close/dispose; the 4096 retired-id budget; the 64 KB rawInput deny; writeMessage ignores backpressure; unvalidated initialize and response shapes; the instanceof auth retry; ambient timers; bootDeadlineMs naming; the duplicate agentchat stack",
     status: "open",
     pointer: ".penumbra/reviews/2026-09-25T10-16-30.218Z/synthesis.md",
   },
   {
+    id: "consumer-skiplibcheck",
     finding:
       "skipLibCheck:true in the generated tsconfig.consumer.json may hide .d.ts errors inside the installed package surface",
     status: "open",
     pointer: "scripts/qualify.ts copyConsumer tsconfig",
   },
+  {
+    id: "b10-logger-stdio-acp-client",
+    finding:
+      "host logger calls outside the supervisor are unguarded (B10 class): by code reading, a throwing logger in breakFraming leaves a pending request unsettled with the transport open, and a throwing handler plus a throwing logger leaves the peer request unanswered with an unhandled rejection",
+    status: "inferred",
+    would_confirm: "a [B10] test driving each path with a throwing logger",
+    pointer: "src/stdio-acp-client.ts:309, :350, :372, :421",
+  },
+  {
+    id: "b10-logger-stdio-acp-permission",
+    finding:
+      "the permission-failure catch block calls host.logger.warn unguarded before setting the reject decision (B10 class); by code reading, a throwing logger escapes the catch instead of rejecting",
+    status: "inferred",
+    would_confirm: "a [B10] test with a throwing decide and a throwing logger",
+    pointer: "src/stdio-acp-permission.ts:393",
+  },
+  {
+    id: "b10-logger-stdio-acp-server",
+    finding:
+      "the spawn-error paths call logger.error unguarded (B10 class); by code reading, a throwing logger at :95 throws out of startStdioAcpServer and at :102 rejects an unobserved promise",
+    status: "inferred",
+    would_confirm: "a [B10] test spawning a missing command with a throwing logger",
+    pointer: "src/stdio-acp-server.ts:95, :102",
+  },
+  {
+    id: "b10-logger-acp-warm-pool",
+    finding:
+      "crashed-entry teardown logs through an unguarded logger before teardownEntry runs (B10 class); by code reading, a throwing logger skips the teardown and leaves the crashed entry pooled",
+    status: "inferred",
+    would_confirm: "a [B10] test crashing a pooled entry with a throwing logger",
+    pointer: "src/acp-warm-pool.ts:176",
+  },
+  {
+    id: "b10-timers-orphan",
+    finding:
+      "a throwing or non-function host timers.setTimeout makes superviseProcess throw after spawn and leaves the spawned child running; post-spawn setup has no kill-on-throw (seen by an independent verification probe, not measured on this branch)",
+    status: "inferred",
+    would_confirm: "a [B10] test injecting a throwing timers.setTimeout",
+    pointer: "src/process-supervisor.ts superviseProcess post-spawn timer setup",
+  },
+  {
+    id: "mutation-loop-timing",
+    finding:
+      "the mutation-loop comparison is timing-sensitive: an independent verification saw one failure in about eleven green-tree runs, cause not captured; the watchdog and grace mutations (d, f) compare exact fail and error counts",
+    status: "open",
+    pointer: "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations",
+  },
+  {
+    id: "parity-adaptations-incomplete",
+    finding:
+      "parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs",
+    status: "open",
+    pointer: "scripts/write-evidence.ts importAdaptations",
+  },
 ];
+
+/** The root `bun run lint` errors inside branch-added qualification/**,
+ * counted from this run's root-lint step log (non-gating per the spec). */
+export function rootLintFinding(measured: {
+  errors: number;
+  files: number;
+}): Record<string, unknown> {
+  return {
+    id: "root-lint-qualification-errors",
+    finding: `root \`bun run lint\` (non-gating) reports ${String(measured.errors)} errors in ${String(measured.files)} files under packages/exec-primitives/qualification/**, which the package lint gate does not cover`,
+    status: "open",
+    pointer:
+      "tmp/sharedlib6/check-logs/check-root-lint.log; reproduce: NODE_OPTIONS=--max-old-space-size=8192 bunx eslint packages/exec-primitives/qualification",
+    measured,
+  };
+}
 
 export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
   {
@@ -270,9 +356,9 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
   {
     rule: "vendor-dir consumer installs",
     change:
-      "consumers are copied to tmp/sharedlib6/consumer-<name>/ and install the packed tarball via bun add",
+      "consumers are copied to tmp/sharedlib6/consumer-<name>/ and install the packed tarball (channel stand-in) via bun add",
     reason:
-      "a tracked vendor/ directory and file: dependency let workspace resolution mask a broken packed-package install; the tmp copy makes missing isolation impossible to hide",
+      "a tracked vendor/ directory and file: dependency let workspace resolution mask a broken install of the tarball (channel stand-in); the tmp copy makes missing isolation impossible to hide",
     pointer: "scripts/qualify.ts",
   },
   {
@@ -296,10 +382,26 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
     pointer: "qualification/consumers/*/bunfig.toml",
   },
   {
-    rule: "two-file re-expression split",
+    rule: "closure-audit split",
     change: "closure-audit.ts is split into closure-audit.ts + closure-audit-core.ts",
     reason: "the 700-line cap",
     pointer: "scripts/closure-audit-core.ts",
+  },
+  {
+    rule: "mutation error count",
+    change:
+      "a mutated suite may report errors up to its failing-test count; errors beyond that fail the loop",
+    reason:
+      "bun counts a timed-out test as both a fail and an error, so requiring 0 errors would reject every timeout detector",
+    pointer: "scripts/run-mutations.ts countsProblems",
+  },
+  {
+    rule: "SHAPE t7_overshoot_bytes binding",
+    change:
+      "SHAPE binds gates[L4].measurements.t7_overshoot_bytes as a positive measured overshoot, not by equality",
+    reason:
+      "the overshoot varies with pipe chunking (131072 in 6 and 196608 in 4 of 10 measured runs), so equality would fail at random",
+    pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
   },
   {
     rule: "extra audit fixtures",
@@ -316,7 +418,7 @@ export function blockerMap(): Record<string, { status: string; evidence: string 
     B1: {
       status: "resolved",
       evidence:
-        "private:true retained in package.json and in the packed manifest (no publish path)",
+        "private:true retained in package.json and in the packed manifest (channel stand-in); no publish path",
     },
     B3: {
       status: "resolved",
