@@ -127,6 +127,53 @@ export function shapeConsumers(
   return reasons;
 }
 
+/** `errors` is bun's timeout attribution: a detector that times out counts as
+ * a fail AND an error, one that fails its assertion first counts as a fail
+ * only, and which comes first depends on scheduling. run-mutations bounds it
+ * to 0..failing; SHAPE binds that bound on both sides. */
+function errorsWithinBound(r: Record<string, unknown>): boolean {
+  const errors = r["errors"];
+  const failing = Array.isArray(r["failing_tests"]) ? r["failing_tests"].length : -1;
+  return typeof errors === "number" && Number.isInteger(errors) && errors >= 0 && errors <= failing;
+}
+
+function mutationRecordDiffs(
+  i: number,
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (k !== "errors" && !deepEqual(a[k], b[k])) {
+      out.push(
+        `mutations[${String(i)}].${k} evidence ${JSON.stringify(a[k])} != mutation-loop ${JSON.stringify(b[k])}`,
+      );
+    }
+  }
+  for (const [side, r] of [
+    ["evidence", a],
+    ["mutation-loop", b],
+  ] as const) {
+    if (!errorsWithinBound(r)) {
+      out.push(`mutations[${String(i)}].errors ${side} ${String(r["errors"])} outside 0..failing`);
+    }
+  }
+  return out;
+}
+
+/** Every mutation field is compared exactly except `errors` (bounded above);
+ * a mismatch names the mutation and the field, so a timing flake leaves data. */
+function mutationDiffs(evList: unknown, freshList: unknown): string[] {
+  const ev = Array.isArray(evList) ? evList : [];
+  const fresh = Array.isArray(freshList) ? freshList : [];
+  if (ev.length !== fresh.length) {
+    return [
+      `mutations[] has ${String(ev.length)} entries, the loop measured ${String(fresh.length)}`,
+    ];
+  }
+  return ev.flatMap((e, i) => mutationRecordDiffs(i, rec(e) ?? {}, rec(fresh[i]) ?? {}));
+}
+
 export function shapeMutations(ctx: ShapeContext, evidence: Record<string, unknown>): string[] {
   const reasons: string[] = [];
   const mutationsJson = rec(readJsonFile(ctx.mutations));
@@ -134,9 +181,7 @@ export function shapeMutations(ctx: ShapeContext, evidence: Record<string, unkno
     reasons.push("ENOENT: tmp/sharedlib6/mutations.json");
     return reasons;
   }
-  if (!deepEqual(evidence["mutations"], mutationsJson["mutations"])) {
-    reasons.push("mutations[] evidence != mutation-loop results");
-  }
+  reasons.push(...mutationDiffs(evidence["mutations"], mutationsJson["mutations"]));
   if (mutationsJson["clean_after"] !== true) {
     reasons.push("mutations left the tree dirty");
   }

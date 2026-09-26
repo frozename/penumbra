@@ -316,7 +316,7 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
     id: "mutation-loop-timing",
     finding:
-      "the mutation-loop comparison is timing-sensitive: an independent verification saw one failure in about eleven green-tree runs, cause not captured; the watchdog and grace mutations (d, f) compare exact fail and error counts",
+      "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. SHAPE now names the differing mutation and field and binds errors to 0..failing",
     status: "open",
     pointer: "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations",
   },
@@ -394,6 +394,14 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
     reason:
       "bun counts a timed-out test as both a fail and an error, so requiring 0 errors would reject every timeout detector",
     pointer: "scripts/run-mutations.ts countsProblems",
+  },
+  {
+    rule: "SHAPE mutations[].errors binding",
+    change:
+      "SHAPE compares every mutation field exactly except errors, which it binds to 0..failing on both sides",
+    reason:
+      "errors is bun's timeout attribution and depends on scheduling; with the loop green, the failing set, fail, pass and ran are already fixed, so errors is the one field that can move",
+    pointer: "scripts/sharedlib6-shape-measured.ts mutationDiffs",
   },
   {
     rule: "SHAPE t7_overshoot_bytes binding",

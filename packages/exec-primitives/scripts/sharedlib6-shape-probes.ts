@@ -137,6 +137,24 @@ export const SHAPE_PROBES: ShapeProbe[] = [
     expect: /candidate\.runtime_imports/,
     mutate: (ev) => edit(ev, ["candidate"], "runtime_imports", bump),
   },
+  {
+    name: "mutations[3].fail",
+    expect: /mutations\[3\]\.fail evidence/,
+    mutate: (ev) => edit(ev, ["mutations", 3], "fail", bump),
+  },
+  {
+    name: "mutations[5].failing_tests",
+    expect: /mutations\[5\]\.failing_tests evidence/,
+    mutate: (ev) =>
+      edit(ev, ["mutations", 5], "failing_tests", (old): unknown[] =>
+        Array.isArray(old) ? (old as unknown[]).slice(1) : [],
+      ),
+  },
+  {
+    name: "mutations[5].errors beyond the failing count",
+    expect: /mutations\[5\]\.errors evidence 99 outside/,
+    mutate: (ev) => edit(ev, ["mutations", 5], "errors", () => 99),
+  },
   dropOpenFinding("t10-limits"),
   dropOpenFinding("b10-logger-stdio-acp-client"),
   openFindingEdit(
