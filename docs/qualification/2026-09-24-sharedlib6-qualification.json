@@ -4,10 +4,10 @@
   "follow_up_event_id": 1830,
   "coordinator": "frozename/llamactl#135",
   "roadmap": "frozename/llamactl#127",
-  "generated_at": "2026-09-26T01:24:20.077Z",
+  "generated_at": "2026-09-26T03:51:59.135Z",
   "date": "2026-09-24",
   "base_sha": "c264644bc2b4f1e1429e845208fd6ca7f6426d62",
-  "head_sha": "ab0903bd56419ee1a6b8bdebb74dd64a4b41e35a",
+  "head_sha": "869119ef75828040578265db2f7d80bf6994d7d7",
   "head_sha_note": "the commit this evidence was written against; the evidence commit itself lands on top",
   "toolchain": {
     "bun": "1.3.14",
@@ -1290,11 +1290,21 @@
     },
     "B8": {
       "status": "open",
-      "evidence": "[B8] closed-transport rejection passes in both consumers, but the T10 (byte/request-count/backpressure limits) and T14 residual limits are unmeasured — recorded in open_findings"
+      "evidence": "B8 resolved needs T10 and T14: in the gate log [B8] passes, [T10] has no passing title and [T14] has no passing title; mutation c breaks the suite as measured; the T10 byte, request-count and backpressure limits are recorded in open_findings"
     },
     "B10": {
       "status": "resolved",
       "evidence": "zero mutable module-scope bindings under the audit; callback-failure and malformed-stream tests pass; T13 ([B10]) green"
+    }
+  },
+  "red_green": {
+    "tag_passes": {
+      "B3": 6,
+      "B4": 4,
+      "B6": 7,
+      "B7": 7,
+      "B8": 11,
+      "B10": 27
     }
   },
   "mutations": [
@@ -1741,6 +1751,13 @@
       "pointer": "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations"
     },
     {
+      "id": "t7-overshoot-domain",
+      "finding": "the committed T7 overshoot is bound to a whole number of 65536-byte reads, a domain measured on this host only (22 of 22 sampled runs); a host whose pipe reads are not 64 KiB multiples needs the domain re-derived before evidence is regenerated there",
+      "status": "inferred",
+      "would_confirm": "gate-log t7-overshoot markers from a second platform",
+      "pointer": "scripts/sharedlib6-shape-bind.ts t7Reasons"
+    },
+    {
       "id": "parity-adaptations-incomplete",
       "finding": "parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs",
       "status": "open",
@@ -1808,9 +1825,21 @@
     },
     {
       "rule": "SHAPE t7_overshoot_bytes binding",
-      "change": "SHAPE binds gates[L4].measurements.t7_overshoot_bytes as a positive measured overshoot, not by equality",
-      "reason": "the overshoot varies with pipe chunking (131072 in 6 and 196608 in 4 of 10 measured runs), so equality would fail at random",
+      "change": "SHAPE binds the committed gates[L4].measurements.t7_overshoot_bytes to the measured domain, a whole number of 65536-byte reads in [65536, 917504], and this run's t7-overshoot marker to the bound 0 < v <= 934464 (1000000 bytes produced minus the 65536-byte cap), not by equality",
+      "reason": "the overshoot varies with pipe chunking (131072 in 10 and 196608 in 12 of 22 sampled runs on this host), so equality would fail at random",
       "pointer": "scripts/sharedlib6-shape-bind.ts t7Reasons"
+    },
+    {
+      "rule": "SHAPE regeneration exemptions",
+      "change": "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, except head_sha (bound to rev-list), generated_at, toolchain, poison_layer, artifact_sha256, mutations[].errors and gates[L4].measurements.t7_overshoot_bytes; the .md must equal the render of the committed .json byte for byte",
+      "reason": "toolchain and poison_layer record the environment (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, and errors and the T7 overshoot vary run to run and are bound by range instead",
+      "pointer": "scripts/sharedlib6-shape-regen.ts"
+    },
+    {
+      "rule": "re-expression two-file split",
+      "change": "the re-expressed cases live in test/cli-spawn-stream.parity.ts and test/stdio-acp-permission.parity.ts instead of one test/permission-and-stream.parity.ts",
+      "reason": "combined, the two files exceed the 700-line cap",
+      "pointer": "qualification/consumers/penumbra-host/test/"
     },
     {
       "rule": "extra audit fixtures",
@@ -1821,8 +1850,8 @@
   ],
   "artifact_sha256": {
     "section2.json": "74d6bc500db886f8cadd7cece764d867a8865b5993fd414a05ffc5926c03aab5",
-    "measurements.json": "8dac57838f734a16984da217fedb5f7bfba959ab0b5e1e1891d75f06eabbe53a",
-    "check.json": "1879bac7fef4ed3b7d594b784ebe21a833260fcc4eeb8a847069f9c0915cfa8c",
+    "measurements.json": "f32fc406ab6c2caba765cf2170d671020cccd26011699e5ed30555a32e6c3ceb",
+    "check.json": "55b3e28740d4c1349d20ccdc0374d82cf6790b3684934af59c187c292c88781d",
     "mutations.json": "97227b38e6a0079fdc30514607115a6293d1d8e25e15c20d24f43612644a43a3"
   }
 }
