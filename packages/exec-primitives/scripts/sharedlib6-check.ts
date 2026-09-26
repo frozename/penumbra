@@ -33,7 +33,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv } from "./bun-test-parse.js";
+import { agentFreeEnv, bunTestSummary } from "./bun-test-parse.js";
 import { BASE_SHA, type GateRec, readJsonFile, rec } from "./sharedlib6-shape-util.js";
 import { buildShapeContext, runShape } from "./sharedlib6-shape.js";
 
@@ -58,8 +58,9 @@ function run(argv: string[], cwd: string, env?: NodeJS.ProcessEnv): CmdOut {
   if (bin === undefined) throw new Error("run: empty argv");
   const r = spawnSync(bin, args, {
     cwd,
-    // Agent-mode keys are stripped for every step: bun test hides its
-    // "(pass)" lines under CLAUDECODE/AGENT/REPL_ID (bun-test-parse.ts).
+    // Output-format keys are stripped for every step: bun test hides or
+    // reshapes its "(pass)" lines under CLAUDECODE/AGENT/REPL_ID/FORCE_COLOR
+    // (bun-test-parse.ts).
     env: env ?? agentFreeEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -83,12 +84,8 @@ function git(args: string[]): CmdOut {
 }
 
 function counts(output: string): { pass: number | null; fail: number | null } {
-  const pass = /^\s*(\d+) pass$/m.exec(output)?.[1];
-  const fail = /^\s*(\d+) fail$/m.exec(output)?.[1];
-  return {
-    pass: pass === undefined ? null : Number(pass),
-    fail: fail === undefined ? null : Number(fail),
-  };
+  const { pass, fail } = bunTestSummary(output);
+  return { pass, fail };
 }
 
 // ---------------------------------------------------------------------------

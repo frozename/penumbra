@@ -15,7 +15,7 @@
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
+import { agentFreeEnv, parseBunTest, stripAnsi } from "./bun-test-parse.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -147,7 +147,7 @@ interface SuiteRun {
 
 function runSuite(): SuiteRun {
   const t = run(["bun", "test", TEST_GLOB], PACKAGE_DIR);
-  const output = `${t.stdout}\n${t.stderr}`;
+  const output = stripAnsi(`${t.stdout}\n${t.stderr}`);
   return {
     output,
     code: t.code,
