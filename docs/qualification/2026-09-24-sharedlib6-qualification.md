@@ -6,9 +6,9 @@ about adoption, release, publication, package home, or registry state. Every
 tarball mention below refers to a local channel stand-in, never a versioned
 channel.
 
-Commit: `718b93cb71ade4512c96ddc85e935a725f3d8289` (head_sha: the commit this evidence was written against; the evidence commit itself lands on top) — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
+Commit: `1231427a2e80df121661c148242a2c24a2671dff` (head_sha: the commit this evidence was written against; the evidence commit itself lands on top) — base: `c264644bc2b4f1e1429e845208fd6ca7f6426d62`
 Toolchain: bun 1.3.14 · node v26.0.0 · typescript 6.0.3
-Generated: 2026-09-28T16:30:47.533Z
+Generated: 2026-09-28T18:48:38.197Z
 Result (derived): PASS
 
 Superseded evidence: commit `eac2182fe` carries an earlier evidence pair (its dist audit exited 1); it stays in branch history, this pair supersedes it, and the PR merge squashes it away.
@@ -32,7 +32,7 @@ Superseded evidence: commit `eac2182fe` carries an earlier evidence pair (its di
 | `lint-guards` | `check-logs/check-lint-no-raw-env.log,check-logs/check-lint-no-sync-exec.log` | exit 0 |
 | `eslint` | `check-logs/check-eslint.log` | exit 0 |
 | `prettier` | `check-logs/check-prettier.log` | exit 0 |
-| `test-gate` | `check-logs/check-bun-test-gate.log,check-logs/check-suite-tags.log` | exit 0 · 73p/0f |
+| `test-gate` | `check-logs/check-bun-test-gate.log,check-logs/check-test-gate-results.log,check-logs/check-suite-tags.log` | exit 0 · 73p/0f |
 | `mutations` | `check-logs/check-mutations.log` | exit 0 |
 | `section2-slice` | `check-logs/check-section2-slice.log` | exit 0 |
 | `closure-audit-src` | `check-logs/check-closure-audit-src.log` | exit 0 |
@@ -291,6 +291,8 @@ Boundary imports removed (per extraction contract):
 - `writer-unconditional-confirmed-claims` [open] the evidence writer emits five gate claims with status confirmed whatever the measurements say: B1 resolved with private:true retained, B3, B4, B6, B7 and B10 resolved, every gating step before qualify.ts passed, no allowlist entry names a real control-flow path, and T15 and T9 pass; on a red run SHAPE's regeneration would reproduce the same confirmed text. Deferred by operator ruling
 - `artifact-sha256-format-only` [open] SHAPE binds artifact_sha256 by key set and sha256 hex format only and never recomputes a digest, although section2.json and mutations.json reproduce byte-identically across runs (check.json and measurements.json carry timestamps)
 - `parity-adaptations-incomplete` [open] parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs
+- `test-result-forgery-residual` [open] bun test results are read from stderr only, with exactly one trailing summary block (Ran = pass + fail + skip + todo), and the package gate, suite-tags and mutation runs are cross-checked against bun's JUnit report and against static test( titles. Not closed: test code that prints a complete forged run and ends the process (process.exit(0): measured on bun 1.3.14, exit 0, no bun summary, no JUnit report) on the consumer suites in qualify.ts and on the section-2 slice, which parse stderr only; test code that learns the report path from the parent command line and rewrites the report after bun exits; and a test( call that is present but never runs
+- `timing-window-load-sensitivity` [open] wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a READY handshake (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged
 - `root-lint-qualification-errors` [open] root `bun run lint` (non-gating) reports 28 errors in 12 files under packages/exec-primitives/qualification/**, which the package lint gate does not cover
 
 ## Claims not made
