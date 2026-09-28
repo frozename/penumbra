@@ -472,6 +472,13 @@ export const SHAPE_PROBES: ShapeProbe[] = [
     "errors_within_failing",
     (old) => old !== true,
   ),
+  setProbe(
+    "mutations[0] detected with a suite exit of 0 (p14e)",
+    /mutations\[0\] evidence record is detected with test_exit_code 0/,
+    ["mutations", 0],
+    "test_exit_code",
+    () => 0,
+  ),
   dropOpenFinding("t10-limits"),
   dropOpenFinding("b10-logger-stdio-acp-client"),
   openFindingEdit(

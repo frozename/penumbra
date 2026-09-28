@@ -4,10 +4,9 @@
  * mutations.json, section2.json, executed parity logs, the extracted tarball
  * and the bun-test-gate log).
  */
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseBunTest } from "./bun-test-parse.js";
+import { parseResultLog } from "./bun-test-parse.js";
 import {
   CONTROL_FLOW_TOKEN_RE,
   deepEqual,
@@ -156,6 +155,16 @@ function mutationRecordDiffs(
     out.push(
       `mutations[${String(i)}].errors mutation-loop ${String(loop["errors"])} outside 0..failing`,
     );
+  }
+  // A detection needs a failing suite exit: result lines alone can be
+  // printed by test code under a no-op patch (p14e).
+  for (const [who, r] of [
+    ["evidence", ev],
+    ["mutation-loop", loop],
+  ] as const) {
+    if (r["detected"] === true && r["test_exit_code"] === 0) {
+      out.push(`mutations[${String(i)}] ${who} record is detected with test_exit_code 0`);
+    }
   }
   return out;
 }
@@ -439,10 +448,9 @@ function tagLineCounts(
   ctx: ShapeContext,
   tag: string,
 ): { pass: number; fail: number; problem: string | undefined } {
-  const path = join(ctx.logDir, "check-bun-test-gate.log");
-  const parsed = parseBunTest(
-    existsSync(path) ? readFileSync(path, "utf8") : "",
-    "check-bun-test-gate.log",
+  const parsed = parseResultLog(
+    join(ctx.logDir, "check-bun-test-gate.log"),
+    "check-bun-test-gate.stderr.log",
   );
   return {
     pass: parsed.passTitles.filter((t) => t.includes(`[${tag}]`)).length,

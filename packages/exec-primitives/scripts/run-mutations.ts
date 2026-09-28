@@ -6,16 +6,23 @@
  * Every record carries the full failing-tests set, collateral included —
  * mutations that shift allowlisted audit lines also trip the [B10] audit test.
  * The script exits non-zero on: a patch that applies outside src/, a suite
- * that stays green under the mutation, extra/missing failures versus the
- * expected detector set, a suite that never reaches its summary line, a
- * revert failure, or a dirty src tree afterwards.
+ * that stays green or exits 0 under the mutation, extra/missing failures
+ * versus the expected detector set, a suite that never reaches its summary
+ * line, a revert failure, or a dirty src tree afterwards.
  *
- * Usage: bun scripts/run-mutations.ts [--out <path>]
+ * Every count, failing title and detector hit comes from bun's stderr result
+ * lines cross-checked against bun's own JUnit report (bun-test-junit.ts) —
+ * never from stdout, where test code prints — and `detected` also needs a
+ * non-zero suite exit: a result line printed by test code cannot mark a
+ * no-op mutation detected (p14e).
+ *
+ * Usage: bun scripts/run-mutations.ts [--out <path>] | --self-test
  */
-import { readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, bunTestResultText, parseBunTest, stripAnsi } from "./bun-test-parse.js";
+import { junitArgs, readJunit, verifyBunTestOutput } from "./bun-test-junit.js";
+import { agentFreeEnv } from "./bun-test-parse.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -24,6 +31,7 @@ const MUTATIONS_DIR = join(PACKAGE_DIR, "qualification", "mutations");
 // parity files under qualification/ are never picked up.
 const TEST_GLOB = "./test/";
 const SRC_PREFIX = "packages/exec-primitives/src/";
+const JUNIT_DIR = join(REPO_ROOT, "tmp", "sharedlib6", "junit");
 
 interface MutationMeta {
   /** Boundary tag the patch is designed to prove (must appear in ≥1 detector). */
@@ -108,59 +116,36 @@ function fail(problem: string): void {
   problems.push(problem);
 }
 
-/** Whole-line `(fail) <title> [X.XXms]` lines — deduped (bun prints them twice). */
-function failingTitles(output: string): string[] {
-  const seen = new Set<string>();
-  for (const line of output.split("\n")) {
-    const t = line.trimEnd();
-    if (!t.startsWith("(fail) ")) continue;
-    const title = t.slice("(fail) ".length).replace(/ \[[\d.]+m?s\]$/, "");
-    if (title !== "") seen.add(title);
-  }
-  return [...seen].sort();
-}
-
-function summaryCounts(
-  output: string,
-): { pass: number; fail: number; ran: number; errors: number } | null {
-  const pass = /^\s*(\d+) pass$/m.exec(output)?.[1];
-  const fail = /^\s*(\d+) fail$/m.exec(output)?.[1];
-  const ran = /^\s*Ran (\d+) tests\b/m.exec(output)?.[1];
-  if (pass === undefined || fail === undefined || ran === undefined) return null;
-  const errors = /^\s*(\d+) errors?$/m.exec(output)?.[1];
-  return {
-    pass: Number(pass),
-    fail: Number(fail),
-    ran: Number(ran),
-    errors: errors === undefined ? 0 : Number(errors),
-  };
-}
-
 interface SuiteRun {
-  output: string;
   code: number;
   counts: { pass: number; fail: number; ran: number; errors: number } | null;
+  /** Distinct failing titles from bun's stderr result lines (recap excluded). */
   failing: string[];
-  /** Set when the result lines cannot account for the summary. */
+  /** Set when the stderr results cannot account for bun's summary or
+   * disagree with bun's JUnit report. */
   titleProblem: string | undefined;
 }
 
-function runSuite(): SuiteRun {
-  const t = run(["bun", "test", TEST_GLOB], PACKAGE_DIR);
-  const output = stripAnsi(`${t.stdout}\n${t.stderr}`);
-  return {
-    output,
-    code: t.code,
-    counts: summaryCounts(output),
-    failing: failingTitles(output),
-    titleProblem: parseBunTest(bunTestResultText(t), "package suite").problem,
-  };
+/** One suite run's record from its stderr and JUnit report alone. */
+export function suiteRunFrom(t: CmdResult, junitXml: string | undefined): SuiteRun {
+  const { parse, problem } = verifyBunTestOutput(t, junitXml, "package suite");
+  const { pass, fail, ran, errors } = parse.summary;
+  const counts =
+    pass === null || fail === null || ran === null || parse.summary.problem !== undefined
+      ? null
+      : { pass, fail, ran, errors };
+  return { code: t.code, counts, failing: parse.failTitles, titleProblem: problem };
 }
 
-/** Escape a literal title into a whole-line (fail) regex. */
-function titleLine(title: string): RegExp {
-  const esc = title.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^\\(fail\\) ${esc}( \\[[0-9.]+m?s\\])?$`, "m");
+function runSuite(label: string, cwd = PACKAGE_DIR, glob = TEST_GLOB): SuiteRun {
+  const junit = join(JUNIT_DIR, `${label}.xml`);
+  const t = run(["bun", "test", glob, ...junitArgs(junit)], cwd);
+  return suiteRunFrom(t, readJunit(junit));
+}
+
+/** A detector fired: its title failed in bun's own result stream. */
+function hit(mutated: SuiteRun, title: string): boolean {
+  return mutated.failing.includes(title);
 }
 
 function numstatPaths(patchPath: string): string[] {
@@ -179,7 +164,7 @@ function srcClean(): boolean {
 }
 
 function greenSuite(label: string): boolean {
-  const g = runSuite();
+  const g = runSuite(label);
   const nonzero = (n: number | undefined): boolean => (n ?? 1) !== 0;
   if (g.code !== 0 || nonzero(g.counts?.fail) || nonzero(g.counts?.errors)) {
     fail(`${label}: suite not green (exit=${String(g.code)}, counts=${JSON.stringify(g.counts)})`);
@@ -201,7 +186,7 @@ function exercisePatch(patch: string, relPatchPath: string): { run?: SuiteRun; g
   }
   let mutated: SuiteRun | undefined;
   try {
-    mutated = runSuite();
+    mutated = runSuite(`${patch}-mutated`);
   } finally {
     const reverted = run(["git", "apply", "-R", relPatchPath], REPO_ROOT);
     if (reverted.code !== 0) {
@@ -213,12 +198,12 @@ function exercisePatch(patch: string, relPatchPath: string): { run?: SuiteRun; g
 
 function countsProblems(mutated: SuiteRun): string[] {
   const out: string[] = [];
+  if (mutated.titleProblem !== undefined) out.push(mutated.titleProblem);
   const counts = mutated.counts;
   if (counts === null) {
-    out.push("suite never reached its summary line (load error?)");
+    out.push("suite never reached a sound summary block (load error?)");
     return out;
   }
-  if (mutated.titleProblem !== undefined) out.push(mutated.titleProblem);
   if (counts.fail !== mutated.failing.length) {
     out.push(
       `summary fail=${String(counts.fail)} vs parsed failing=${String(mutated.failing.length)}`,
@@ -243,8 +228,11 @@ function detectorProblems(meta: MutationMeta, mutated: SuiteRun): string[] {
   if (mutated.failing.length === 0) {
     out.push("suite stayed green under the mutation — undetected");
   }
+  if (mutated.code === 0) {
+    out.push("suite exited 0 under the mutation — a detector that fails must fail the run");
+  }
   for (const title of meta.expected) {
-    if (!titleLine(title).test(mutated.output)) {
+    if (!hit(mutated, title)) {
       out.push(`expected detector did not fail: ${title}`);
     }
   }
@@ -264,6 +252,20 @@ function patchProblems(meta: MutationMeta, mutated: SuiteRun | undefined): strin
   return [...countsProblems(mutated), ...detectorProblems(meta, mutated)];
 }
 
+/** Detected: the run failed (non-zero exit), its results are sound, and the
+ * failing set is exactly the expected detectors. */
+export function isDetected(meta: MutationMeta, mutated: SuiteRun | undefined): boolean {
+  if (mutated === undefined || mutated.code === 0 || mutated.titleProblem !== undefined) {
+    return false;
+  }
+  const expectedSet = new Set(meta.expected);
+  return (
+    mutated.failing.length > 0 &&
+    mutated.failing.every((f) => expectedSet.has(f)) &&
+    meta.expected.every((t) => hit(mutated, t))
+  );
+}
+
 function mutationRecord(
   patch: string,
   meta: MutationMeta,
@@ -272,8 +274,6 @@ function mutationRecord(
   postGreen: boolean,
   patchIssues: string[],
 ): Record<string, unknown> {
-  const expectedSet = new Set(meta.expected);
-  const unexpected = mutated?.failing.filter((f) => !expectedSet.has(f)) ?? [];
   return {
     mutation: patch.replace(/\.patch$/, ""),
     patch,
@@ -287,13 +287,8 @@ function mutationRecord(
     errors: mutated?.counts?.errors ?? null,
     failing_tests: mutated?.failing ?? [],
     expected_detectors: meta.expected,
-    expected_detectors_hit:
-      mutated !== undefined && meta.expected.every((t) => titleLine(t).test(mutated.output)),
-    detected:
-      (mutated?.failing.length ?? 0) > 0 &&
-      unexpected.length === 0 &&
-      mutated !== undefined &&
-      meta.expected.every((t) => titleLine(t).test(mutated.output)),
+    expected_detectors_hit: mutated !== undefined && meta.expected.every((t) => hit(mutated, t)),
+    detected: isDetected(meta, mutated),
     post_revert_green: postGreen,
     exit: patchIssues.length === 0 ? 0 : 1,
   };
@@ -319,7 +314,7 @@ function exerciseOne(patch: string): Record<string, unknown> | undefined {
   return mutationRecord(patch, meta, paths, mutated, postGreen, patchIssues);
 }
 
-function main(): void {
+function main(): number {
   const outIdx = process.argv.indexOf("--out");
   const outPath = outIdx === -1 ? undefined : process.argv[outIdx + 1];
   const patches = readdirSync(MUTATIONS_DIR)
@@ -348,9 +343,114 @@ function main(): void {
   process.stdout.write(`${json}\n`);
   if (problems.length > 0) {
     process.stderr.write(`run-mutations: FAIL\n${problems.map((p) => `  - ${p}`).join("\n")}\n`);
-    process.exit(1);
+    return 1;
   }
   process.stdout.write("run-mutations: PASS\n");
+  return 0;
 }
 
-main();
+// ---------------------------------------------------------------------------
+// --self-test
+// ---------------------------------------------------------------------------
+
+type Check = (ok: boolean, label: string) => void;
+
+function metaOf(patch: string): MutationMeta {
+  const meta = MUTATION_META[patch];
+  if (meta === undefined)
+    throw new Error(`run-mutations self-test: no MUTATION_META entry ${patch}`);
+  return meta;
+}
+
+const A_META = metaOf("a-env-base.patch");
+const failLines = (titles: string[]): string =>
+  titles.map((t) => `(fail) ${t} [1.00ms]\n`).join("");
+const junitOf = (pass: string[], fail: string[]): string => {
+  const esc = (t: string): string =>
+    t
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  const cases = [
+    ...pass.map((t) => `<testcase name="${esc(t)}" />`),
+    ...fail.map((t) => `<testcase name="${esc(t)}"><failure /></testcase>`),
+  ];
+  return `<testsuites><testsuite name="f.test.ts">${cases.join("")}</testsuite></testsuites>`;
+};
+
+function syntheticCases(check: Check): void {
+  const clean =
+    "(pass) p1 [1.00ms]\n(pass) p2 [1.00ms]\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.\n";
+  const forgedStdout = suiteRunFrom(
+    {
+      stdout: `${failLines(A_META.expected)}\n 71 pass\n 3 fail\nRan 74 tests across 7 files.\n`,
+      stderr: clean,
+      code: 0,
+    },
+    junitOf(["p1", "p2"], []),
+  );
+  check(
+    !isDetected(A_META, forgedStdout) &&
+      forgedStdout.failing.length === 0 &&
+      patchProblems(A_META, forgedStdout).length > 0,
+    "detector (fail) lines forged on stdout under a no-op patch are not a detection (p14e)",
+  );
+  const realFails = `(pass) p1 [1.00ms]\n${failLines(A_META.expected)}\n 1 pass\n 3 fail\nRan 4 tests across 1 file.\n`;
+  const junit = junitOf(["p1"], A_META.expected);
+  const exitZero = suiteRunFrom({ stdout: "", stderr: realFails, code: 0 }, junit);
+  check(
+    !isDetected(A_META, exitZero) &&
+      patchProblems(A_META, exitZero).some((p) => p.includes("exited 0")),
+    "detector failures with a suite exit of 0 are not a detection",
+  );
+  const noReport = suiteRunFrom({ stdout: "", stderr: realFails, code: 1 }, undefined);
+  check(!isDetected(A_META, noReport), "a mutated run with no JUnit report is not a detection");
+  const real = suiteRunFrom({ stdout: "", stderr: realFails, code: 1 }, junit);
+  check(
+    isDetected(A_META, real) && patchProblems(A_META, real).length === 0,
+    "detector failures on stderr, in the JUnit report and a non-zero exit are a detection",
+  );
+}
+
+function liveCase(check: Check): void {
+  const dir = join(REPO_ROOT, "tmp", `run-mutations-selftest-${String(process.pid)}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    const forged = `${failLines(A_META.expected)}\n 0 pass\n 3 fail\nRan 3 tests across 1 file.`;
+    writeFileSync(
+      join(dir, "forge.test.ts"),
+      `import { expect, test } from "bun:test";\ntest("[B10] forger", () => { console.log(${JSON.stringify(forged)}); expect(1).toBe(1); });\n`,
+    );
+    const live = runSuite("selftest-forge", dir, "./");
+    check(
+      live.code === 0 &&
+        live.titleProblem === undefined &&
+        live.failing.length === 0 &&
+        !isDetected(A_META, live),
+      "live: a passing test that prints the detectors' (fail) lines on stdout is not a detection",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function selfTest(): number {
+  const failures: string[] = [];
+  let cases = 0;
+  const check: Check = (ok, label) => {
+    cases += 1;
+    if (!ok) failures.push(label);
+  };
+  syntheticCases(check);
+  liveCase(check);
+  for (const f of failures) process.stdout.write(`run-mutations self-test FAIL: ${f}\n`);
+  process.stdout.write(
+    `run-mutations self-test: ${failures.length === 0 ? "PASS" : "FAIL"} (${String(cases - failures.length)}/${String(cases)} cases)\n`,
+  );
+  return failures.length === 0 ? 0 : 1;
+}
+
+if (import.meta.main) {
+  process.exit(process.argv.includes("--self-test") ? selfTest() : main());
+}
