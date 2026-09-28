@@ -1,0 +1,519 @@
+import type { DispatchEventInput } from "../src/shim/types.js";
+
+import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
+
+import {
+  type CapacityError,
+  detectCapacityError,
+  spawnCliAdapter,
+  spawnCliAdapterStream,
+} from "../src/shim/cli-spawn.js";
+import type { DispatchEvent } from "../src/shim/types.js";
+import type { RecordThoughtInput } from "../src/shim/types.js";
+
+import {
+  expectRejection,
+  makeMockChildProcess,
+  makeThoughtCaptureStub,
+} from "../fixtures/cli-spawn-fixtures.js";
+
+const noopLogger = {
+  debug: (): void => {
+    /* intentional no-op for tests */
+  },
+};
+
+test("spawnCliAdapter pipes prompt to stdin and returns stdout", async () => {
+  const out = await spawnCliAdapter({
+    command: "cat",
+    args: [],
+    prompt: "hello\nworld\n",
+    signal: new AbortController().signal,
+  });
+  expect(out.text.trim()).toBe("hello\nworld");
+});
+
+test("spawnCliAdapter passes prompt via argv when configured", async () => {
+  const out = await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", 'echo "$1"', "--"],
+    prompt: "hello via argv",
+    signal: new AbortController().signal,
+    pass_via: "argv",
+  });
+  expect(out.text.trim()).toBe("hello via argv");
+});
+
+test("spawnCliAdapter throws on non-zero exit", async () => {
+  const calls: CapacityError[] = [];
+  await expectRejection(
+    spawnCliAdapter({
+      command: "sh",
+      args: [
+        "-c",
+        'echo "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview" 1>&2; exit 7',
+      ],
+      prompt: "",
+      signal: new AbortController().signal,
+      onCapacityError: (err) => calls.push(err),
+    }),
+    /exit code 7/,
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ provider: "google", model: "gemini-3.1-pro-preview" });
+});
+
+test("spawnCliAdapter removes inherited env vars listed in unset_env", async () => {
+  process.env.AGENTCHAT_TEST_VAR = "should-be-gone";
+  try {
+    const withVar = await spawnCliAdapter({
+      command: "sh",
+      args: ["-c", 'printf %s "${AGENTCHAT_TEST_VAR-MISSING}"'],
+      prompt: "",
+      signal: new AbortController().signal,
+    });
+    expect(withVar.text).toBe("should-be-gone");
+
+    const withoutVar = await spawnCliAdapter({
+      command: "sh",
+      args: ["-c", 'printf %s "${AGENTCHAT_TEST_VAR-MISSING}"'],
+      prompt: "",
+      signal: new AbortController().signal,
+      unset_env: ["AGENTCHAT_TEST_VAR"],
+    });
+    expect(withoutVar.text).toBe("MISSING");
+  } finally {
+    delete process.env.AGENTCHAT_TEST_VAR;
+  }
+});
+
+test("spawnCliAdapter strips lines matching strip_patterns regexes from output", async () => {
+  const out = await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", 'printf "hook: SessionStart\\nMODEL_REPLY_OK\\nhook: Stop\\n"'],
+    prompt: "",
+    signal: new AbortController().signal,
+    strip_patterns: ["^hook: .*$"],
+  });
+  expect(out.text.trim()).toBe("MODEL_REPLY_OK");
+});
+
+test("spawnCliAdapter without strip_patterns leaves output untouched", async () => {
+  const out = await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", 'printf "line one\\nline two\\n"'],
+    prompt: "",
+    signal: new AbortController().signal,
+  });
+  expect(out.text).toBe("line one\nline two\n");
+});
+
+test("parses <thinking>…</thinking> blocks from stdout when emit_stdout_thoughts is true", async () => {
+  const calls: RecordThoughtInput[] = [];
+  const thoughtCapture = makeThoughtCaptureStub((input) => calls.push(input));
+
+  const out = await spawnCliAdapter({
+    command: "sh",
+    args: [
+      "-c",
+      'printf "<thinking> first pass </thinking>\\nVISIBLE\\n<thinking>second pass</thinking>\\n<thinking>   </thinking>\\n"',
+    ],
+    prompt: "",
+    signal: new AbortController().signal,
+    emit_stdout_thoughts: true,
+    thoughtCapture,
+    eventContext: { handoffId: "h-think", workerId: "w-cli", agentName: "gemini-cli" },
+  });
+
+  expect(out.text).toBe(
+    "<thinking> first pass </thinking>\nVISIBLE\n<thinking>second pass</thinking>\n<thinking>   </thinking>\n",
+  );
+  expect(calls).toEqual([
+    { handoffId: "h-think", adapter: "cli-spawn", agentName: "gemini-cli", text: "first pass" },
+    { handoffId: "h-think", adapter: "cli-spawn", agentName: "gemini-cli", text: "second pass" },
+  ]);
+});
+
+test("does not parse <thinking> blocks when emit_stdout_thoughts is false (default)", async () => {
+  const calls: RecordThoughtInput[] = [];
+  const thoughtCapture = makeThoughtCaptureStub((input) => calls.push(input));
+
+  const out = await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", 'printf "<thinking> first pass </thinking>\\nVISIBLE\\n"'],
+    prompt: "",
+    signal: new AbortController().signal,
+    thoughtCapture,
+    eventContext: { handoffId: "h-think-off", workerId: "w-cli", agentName: "gemini-cli" },
+  });
+
+  expect(out.text).toBe("<thinking> first pass </thinking>\nVISIBLE\n");
+  expect(calls).toHaveLength(0);
+});
+
+test("spawnCliAdapter aborts on signal", async () => {
+  const ac = new AbortController();
+  const p = spawnCliAdapter({
+    command: "sleep",
+    args: ["5"],
+    prompt: "",
+    signal: ac.signal,
+  });
+  ac.abort();
+  await expectRejection(p);
+});
+
+test("spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace", async () => {
+  const ac = new AbortController();
+  const p = spawnCliAdapter({
+    command: "sh",
+    args: ["-c", 'trap "" TERM; while :; do sleep 1; done'],
+    prompt: "",
+    signal: ac.signal,
+    env: { PENUMBRA_CANCEL_GRACE_S: "0.05" },
+  });
+  ac.abort();
+  await expectRejection(p);
+});
+
+test("spawnCliAdapter throws when the child exits due to signal", async () => {
+  await expectRejection(
+    spawnCliAdapter({
+      command: "sh",
+      args: ["-c", "kill -TERM $$"],
+      prompt: "",
+      signal: new AbortController().signal,
+      pass_via: "argv",
+    }),
+    /signal SIGTERM/,
+  );
+});
+
+test("spawnCliAdapter emits lifecycle events only when eventContext is present", async () => {
+  const withoutContext: DispatchEventInput[] = [];
+  await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", "echo ok"],
+    prompt: "",
+    signal: new AbortController().signal,
+    onEvent: (event) => withoutContext.push(event),
+  });
+  expect(withoutContext).toHaveLength(0);
+
+  const events: DispatchEventInput[] = [];
+  await spawnCliAdapter({
+    command: "sh",
+    args: ["-c", "echo ok"],
+    prompt: "",
+    signal: new AbortController().signal,
+    eventContext: { handoffId: "h-cli", workerId: "w-cli" },
+    onEvent: (event) => events.push(event),
+  });
+  expect(events.map((event) => event.kind)).toEqual(["proc.spawn", "proc.exited.resolved"]);
+  expect(events[0]).toMatchObject({ handoff_id: "h-cli", worker_id: "w-cli", source: "worker" });
+});
+
+test("spawnCliAdapter emits proc.kill.sent on abort", async () => {
+  const events: DispatchEventInput[] = [];
+  const ac = new AbortController();
+  const p = spawnCliAdapter({
+    command: "sleep",
+    args: ["5"],
+    prompt: "",
+    signal: ac.signal,
+    eventContext: { handoffId: "h-kill", workerId: "w-cli" },
+    onEvent: (event) => events.push(event),
+  });
+
+  ac.abort();
+  await expectRejection(p);
+  expect(
+    events.some((event) => event.kind === "proc.kill.sent" && event.meta?.signal === "SIGTERM"),
+  ).toBe(true);
+});
+
+test("spawnCliAdapter kills child and surfaces output-cap warning when stdout exceeds cap", async () => {
+  const events: DispatchEventInput[] = [];
+  const warnings: string[] = [];
+  const err = await expectRejection(
+    spawnCliAdapter({
+      command: "node",
+      args: [
+        "-e",
+        "const chunk = 'x'.repeat(1024 * 1024); for (let i = 0; i < 25; i++) process.stdout.write(chunk);",
+      ],
+      prompt: "",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-cap", workerId: "w-cli" },
+      onEvent: (event) => events.push(event),
+      log: {
+        debug: (_fields: Record<string, unknown>, message: string): void => {
+          warnings.push(message);
+        },
+      },
+    }),
+    /output cap exceeded/i,
+  );
+  expect(err).toBeInstanceOf(Error);
+  expect(warnings.some((message) => message.includes("output cap exceeded"))).toBe(true);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "proc.kill.sent" &&
+        event.meta?.reason === "output_capacity" &&
+        event.meta.stream === "stdout",
+    ),
+  ).toBe(true);
+});
+
+test("spawnCliAdapterStream kills child and surfaces truncated tail after output-cap overflow", async () => {
+  const events: DispatchEventInput[] = [];
+  const stream = spawnCliAdapterStream({
+    command: "node",
+    args: [
+      "-e",
+      "const chunk = 'x'.repeat(1024 * 1024); for (let i = 0; i < 25; i++) process.stdout.write(chunk);",
+    ],
+    prompt: "",
+    signal: new AbortController().signal,
+    pass_via: "argv",
+    eventContext: { handoffId: "h-cap-stream", workerId: "w-cli" },
+    onEvent: (event) => events.push(event),
+  });
+
+  const seen: DispatchEvent[] = [];
+  let thrown: unknown;
+  try {
+    for await (const event of stream) {
+      seen.push(event);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+
+  const done = seen.find((event) => event.type === "done");
+  expect(done).toBeDefined();
+  expect(typeof done).toBe("object");
+  expect(done!.result.text.length).toBeLessThanOrEqual(16_777_216);
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/output cap exceeded/i);
+  expect(
+    events.some(
+      (event) => event.kind === "proc.kill.sent" && event.meta?.reason === "output_capacity",
+    ),
+  ).toBe(true);
+});
+
+test("spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout before throwing", async () => {
+  const events: DispatchEventInput[] = [];
+  const stream = spawnCliAdapterStream({
+    command: "sleep",
+    args: ["60"],
+    prompt: "",
+    signal: new AbortController().signal,
+    env: { PENUMBRA_DISPATCH_TIMEOUT_S: "0.1" },
+    eventContext: { handoffId: "h-watchdog-stream", workerId: "w-cli" },
+    onEvent: (event) => events.push(event),
+  });
+
+  const seen: DispatchEvent[] = [];
+  let thrown: unknown;
+  try {
+    for await (const ev of stream) {
+      seen.push(ev);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+
+  expect(seen.some((event) => event.type === "done")).toBe(false);
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/dispatch exceeded 100ms \(watchdog\)/);
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "proc.exited.resolved" &&
+        event.meta?.signal === "SIGKILL" &&
+        event.meta.reason === "watchdog",
+    ),
+  ).toBe(true);
+});
+
+test("spawnCliAdapterStream kills a live child when stdout iteration throws mid-stream", async () => {
+  let killed = false;
+  // Single documented cast: spawn() has an overloaded signature whose return type
+  // depends on the stdio tuple. The mock returns a ChildProcessWithoutNullStreams
+  // shape but the overload union cannot be matched structurally, so cast the
+  // mock implementation through `typeof childProcess.spawn` once at the call site.
+  const spawnImpl = (): ReturnType<typeof childProcess.spawn> =>
+    makeMockChildProcess({
+      onKill: (signal, proc) => {
+        killed = true;
+        proc.signalCode = signal;
+        queueMicrotask(() => {
+          proc.stderr.end();
+          proc.emit("exit", null, signal);
+        });
+        return true;
+      },
+      stdout: {
+        [Symbol.asyncIterator]: () => {
+          let yielded = false;
+          return {
+            next: (): Promise<IteratorResult<Buffer>> => {
+              if (!yielded) {
+                yielded = true;
+                return Promise.resolve({ value: Buffer.from("partial"), done: false });
+              }
+              return Promise.reject(new Error("stdout broke"));
+            },
+          };
+        },
+      },
+    });
+  const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+    spawnImpl as typeof childProcess.spawn,
+  );
+
+  let thrown: unknown;
+  const events: DispatchEventInput[] = [];
+  try {
+    for await (const ev of spawnCliAdapterStream({
+      command: "mock-cli",
+      args: [],
+      prompt: "",
+      signal: new AbortController().signal,
+      onEvent: (event) => events.push(event),
+      log: noopLogger,
+    })) {
+      void ev;
+    }
+  } catch (err) {
+    thrown = err;
+  } finally {
+    spawnSpy.mockRestore();
+  }
+
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toBe("stdout broke");
+  expect(killed).toBe(true);
+});
+
+test("spawnCliAdapter emits proc.exited.resolved on watchdog timeout before throwing", async () => {
+  const events: DispatchEventInput[] = [];
+  await expectRejection(
+    spawnCliAdapter({
+      command: "sleep",
+      args: ["60"],
+      prompt: "",
+      signal: new AbortController().signal,
+      env: { PENUMBRA_DISPATCH_TIMEOUT_S: "0.1" },
+      eventContext: { handoffId: "h-watchdog", workerId: "w-cli" },
+      onEvent: (event) => events.push(event),
+    }),
+    /dispatch exceeded 100ms \(watchdog\)/,
+  );
+
+  expect(
+    events.some(
+      (event) =>
+        event.kind === "proc.exited.resolved" &&
+        event.meta?.signal === "SIGKILL" &&
+        event.meta.reason === "watchdog",
+    ),
+  ).toBe(true);
+});
+
+test("spawnCliAdapterStream throws before spawn when signal is already aborted", async () => {
+  const events: DispatchEventInput[] = [];
+  const ctrl = new AbortController();
+  ctrl.abort();
+
+  await expectRejection(
+    (async (): Promise<void> => {
+      const stream = spawnCliAdapterStream({
+        command: "sleep",
+        args: ["60"],
+        prompt: "",
+        signal: ctrl.signal,
+        eventContext: { handoffId: "h-preabort-stream", workerId: "w-cli" },
+        onEvent: (event) => events.push(event),
+      });
+      for await (const _ of stream) {
+        void _;
+      }
+    })(),
+    /signal aborted before spawn/,
+  );
+
+  expect(events).toHaveLength(0);
+});
+
+test("spawnCliAdapter throws before spawn when signal is already aborted", async () => {
+  const events: DispatchEventInput[] = [];
+  const ctrl = new AbortController();
+  ctrl.abort();
+
+  await expectRejection(
+    spawnCliAdapter({
+      command: "sleep",
+      args: ["60"],
+      prompt: "",
+      signal: ctrl.signal,
+      eventContext: { handoffId: "h-preabort", workerId: "w-cli" },
+      onEvent: (event) => events.push(event),
+    }),
+    /signal aborted before spawn/,
+  );
+
+  expect(events).toHaveLength(0);
+});
+
+describe("detectCapacityError", () => {
+  test("extracts provider+model from gemini stderr", () => {
+    const stderr =
+      "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview\n";
+    expect(detectCapacityError(stderr)).toEqual({
+      provider: "google",
+      model: "gemini-3.1-pro-preview",
+      raw: "No capacity available for model gemini-3.1-pro-preview",
+    });
+  });
+
+  test("returns null when no capacity error is present", () => {
+    expect(detectCapacityError("some normal error\n")).toBeNull();
+    expect(detectCapacityError("")).toBeNull();
+  });
+});
+
+describe("spawnCliAdapter onCapacityError callback", () => {
+  test("fires onCapacityError when stderr matches a capacity pattern", async () => {
+    const calls: CapacityError[] = [];
+    const result = await spawnCliAdapter({
+      command: "sh",
+      args: [
+        "-c",
+        'echo "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview" 1>&2; echo OK',
+      ],
+      prompt: "",
+      signal: new AbortController().signal,
+      onCapacityError: (err) => calls.push(err),
+    });
+    expect(result.text.trim()).toBe("OK");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ provider: "google", model: "gemini-3.1-pro-preview" });
+  });
+
+  test("does NOT fire onCapacityError when stderr is clean", async () => {
+    const calls: CapacityError[] = [];
+    await spawnCliAdapter({
+      command: "sh",
+      args: ["-c", "echo OK"],
+      prompt: "",
+      signal: new AbortController().signal,
+      onCapacityError: (err) => calls.push(err),
+    });
+    expect(calls).toHaveLength(0);
+  });
+});

@@ -28,6 +28,9 @@
     "packages/e2e": {
       "errorCount": 313
     },
+    "packages/exec-primitives": {
+      "errorCount": 0
+    },
     "packages/integrations/sirius-middleware": {
       "errorCount": 8
     },

@@ -1,0 +1,13 @@
+diff --git a/packages/exec-primitives/src/acp-warm-pool.ts b/packages/exec-primitives/src/acp-warm-pool.ts
+index 93c4d650f..6650f33ce 100644
+--- a/packages/exec-primitives/src/acp-warm-pool.ts
++++ b/packages/exec-primitives/src/acp-warm-pool.ts
+@@ -32,7 +32,7 @@ export function poolKeyFor(spec: WarmPoolSpec): string {
+       "pool keys are scoped by credential identity; a missing scope would share across tenants",
+     );
+   }
+-  return `${agent}\0${cwd}\0${scope}`;
++  return `${agent}\0${cwd}`;
+ }
+ 
+ export interface AcpPoolClient {

@@ -1,0 +1,13 @@
+diff --git a/packages/exec-primitives/src/process-supervisor.ts b/packages/exec-primitives/src/process-supervisor.ts
+index 0c1beb7b3..9bf2f1d5e 100644
+--- a/packages/exec-primitives/src/process-supervisor.ts
++++ b/packages/exec-primitives/src/process-supervisor.ts
+@@ -315,7 +315,7 @@ export function superviseProcess(opts: SuperviseOptions): SupervisedProcess {
+ 
+   const proc: ChildProcess = spawn(n.command, n.args, {
+     cwd: n.cwd,
+-    env: n.env,
++    env: { ...process.env, ...n.env },
+     stdio: [n.stdin === "ignore" ? "ignore" : "pipe", "pipe", "pipe"],
+     shell: false,
+     detached: process.platform !== "win32",
