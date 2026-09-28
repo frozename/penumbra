@@ -356,6 +356,20 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
     status: "open",
     pointer: "scripts/write-evidence.ts importAdaptations",
   },
+  {
+    id: "test-result-forgery-residual",
+    finding:
+      "bun test results are read from stderr only, with exactly one trailing summary block (Ran = pass + fail + skip + todo), and the package gate, suite-tags and mutation runs are cross-checked against bun's JUnit report and against static test( titles. Not closed: test code that prints a complete forged run and ends the process (process.exit(0): measured on bun 1.3.14, exit 0, no bun summary, no JUnit report) on the consumer suites in qualify.ts and on the section-2 slice, which parse stderr only; test code that learns the report path from the parent command line and rewrites the report after bun exits; and a test( call that is present but never runs",
+    status: "open",
+    pointer: "scripts/bun-test-junit.ts, scripts/suite-titles.ts, scripts/qualify.ts cmd",
+  },
+  {
+    id: "timing-window-load-sensitivity",
+    finding:
+      "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a READY handshake (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
+    status: "open",
+    pointer: "test/process-supervisor.test.ts, test/helpers.ts waitForText",
+  },
 ];
 
 /** The root `bun run lint` errors inside branch-added qualification/**,
