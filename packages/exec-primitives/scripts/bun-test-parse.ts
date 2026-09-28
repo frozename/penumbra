@@ -18,6 +18,9 @@
  *     "(pass)" / "(fail)" line counts differ from the summary's pass / fail
  *     counts, in either direction. An under-count is hidden output; an
  *     over-count is a result line printed by test code (a forged title).
+ *     A "(pass) " / "(fail) " token anywhere but at a line start is refused
+ *     too: a forged line that ends in a partial line splices bun's next
+ *     result line onto it, which would keep the counts equal.
  * bun writes its result lines and summary to stderr; console.log in a test
  * goes to stdout, so every spawner parses stderr alone (bunTestResultText).
  * Logs that hold both streams still fail closed through the over-count rule.
@@ -66,6 +69,7 @@ export interface BunTestParse {
  * ANSI codes are stripped. Skipped-test lines ("(skip)", "»") never match. */
 const RESULT_LINE_RE = /^(?:\((pass|fail)\)|(✓|✗)) (.+?)(?: \[[\d.]+m?s\])?$/;
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+const PLAIN_TOKEN_RE = /\((?:pass|fail)\) /g;
 
 /** Output with every ANSI SGR sequence removed. */
 export function stripAnsi(output: string): string {
@@ -102,10 +106,19 @@ function lineCountProblem(
 function titleProblem(
   source: string,
   summary: BunTestSummary,
-  counts: { passLines: number; failLines: number; titles: number },
+  counts: {
+    passLines: number;
+    failLines: number;
+    titles: number;
+    plainLines: number;
+    plainTokens: number;
+  },
 ): string | undefined {
   if ((summary.ran ?? 0) > 0 && counts.titles === 0) {
     return `${source}: bun reported Ran ${String(summary.ran)} tests but 0 result titles were parsed; an output-format env key (${FORMAT_ENV_KEYS.join("/")}) hides or reshapes them, refusing to count`;
+  }
+  if (counts.plainTokens !== counts.plainLines) {
+    return `${source}: ${String(counts.plainTokens - counts.plainLines)} (pass)/(fail) token(s) sit inside a line rather than at its start; a result line was spliced by test code, refusing a forged title count`;
   }
   return (
     lineCountProblem(source, "pass", summary.pass, counts.passLines) ??
@@ -126,10 +139,12 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
   const fail = new Set<string>();
   let passLines = 0;
   let failLines = 0;
+  let plainLines = 0;
   for (const line of output.split("\n")) {
     const m = RESULT_LINE_RE.exec(line.trimEnd());
     const title = m?.[3];
     if (title === undefined || title === "") continue;
+    if (m?.[1] !== undefined) plainLines += 1;
     if (m?.[1] === "pass" || m?.[2] === "✓") {
       passLines += 1;
       pass.add(title);
@@ -147,7 +162,13 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
     passLines,
     failLines,
     summary,
-    problem: titleProblem(source, summary, { passLines, failLines, titles: titles.length }),
+    problem: titleProblem(source, summary, {
+      passLines,
+      failLines,
+      titles: titles.length,
+      plainLines,
+      plainTokens: output.match(PLAIN_TOKEN_RE)?.length ?? 0,
+    }),
   };
 }
 
@@ -169,6 +190,13 @@ test("real one", () => { console.log("(pass) forged > [L6] via stdout [1.00ms]")
 `;
 const FORGE_STDERR_SRC = `import { expect, test } from "bun:test";
 test("real two", () => { process.stderr.write("(pass) forged > [L6] via stderr [1.00ms]\\n"); expect(2).toBe(2); });
+`;
+
+/** The forged line ends in a partial line, so bun's own "(pass) real three"
+ * line is spliced onto it and the pass-line count still equals the summary. */
+const FORGE_SPLICE_SRC = `import { expect, test } from "bun:test";
+test("real three", () => { process.stderr.write("(pass) forged > [L6] spliced [1.00ms]\\nX"); expect(3).toBe(3); });
+test("real four", () => { expect(4).toBe(4); });
 `;
 
 function parserCases(check: (ok: boolean, label: string) => void): void {
@@ -209,6 +237,14 @@ function parserCases(check: (ok: boolean, label: string) => void): void {
   check(
     forgedFail.problem !== undefined,
     "a forged extra (fail) line (1 line, 0 fail) sets problem",
+  );
+  const spliced = parseBunTest(
+    "(pass) d > forged [L6] [1.00ms]\nX(pass) d > p1 [0.10ms]\n(pass) d > p2\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.\n",
+    "h",
+  );
+  check(
+    spliced.problem !== undefined,
+    "a forged line spliced onto a real result line (counts still equal) sets problem",
   );
   const esc = "\u001b";
   const colored = parseBunTest(
@@ -264,6 +300,11 @@ function forgeCases(
     parseBunTest(bunTestResultText(viaStderr), "live forge stderr").problem !== undefined,
     "live: a forged (pass) line written to stderr sets problem",
   );
+  const viaSplice = spawnFile("forge-splice.test.ts");
+  check(
+    parseBunTest(bunTestResultText(viaSplice), "live forge splice").problem !== undefined,
+    "live: a forged stderr line spliced onto bun's next result line sets problem",
+  );
 }
 
 function liveCases(check: (ok: boolean, label: string) => void): void {
@@ -273,6 +314,7 @@ function liveCases(check: (ok: boolean, label: string) => void): void {
     writeFileSync(join(dir, "probe.test.ts"), PROBE_SRC);
     writeFileSync(join(dir, "forge-stdout.test.ts"), FORGE_STDOUT_SRC);
     writeFileSync(join(dir, "forge-stderr.test.ts"), FORGE_STDERR_SRC);
+    writeFileSync(join(dir, "forge-splice.test.ts"), FORGE_SPLICE_SRC);
     const spawnRaw = (
       file: string,
       env: Record<string, string> | undefined,
