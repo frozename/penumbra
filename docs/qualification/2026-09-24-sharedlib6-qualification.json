@@ -4,10 +4,10 @@
   "follow_up_event_id": 1830,
   "coordinator": "frozename/llamactl#135",
   "roadmap": "frozename/llamactl#127",
-  "generated_at": "2026-09-28T18:48:38.197Z",
+  "generated_at": "2026-09-28T18:55:44.450Z",
   "date": "2026-09-24",
   "base_sha": "c264644bc2b4f1e1429e845208fd6ca7f6426d62",
-  "head_sha": "1231427a2e80df121661c148242a2c24a2671dff",
+  "head_sha": "fb4e560078baaf9177eb32a44ea0d29186edfa4a",
   "head_sha_note": "the commit this evidence was written against; the evidence commit itself lands on top",
   "toolchain": {
     "bun": "1.3.14",
@@ -1789,7 +1789,7 @@
     },
     {
       "id": "timing-window-load-sensitivity",
-      "finding": "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a READY handshake (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
+      "finding": "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a marker-line handshake: the child prints a marker after its traps and the test waits for it (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
       "status": "open",
       "pointer": "test/process-supervisor.test.ts, test/helpers.ts waitForText"
     },
@@ -1879,8 +1879,8 @@
     }
   ],
   "artifact_sha256": {
-    "check.json": "6e88041f43987ae9d9cc228a081a9cc2e23161ecee409de5265010c3d94c445a",
-    "measurements.json": "f1c01a23b371b098642bcd6364664eabe2f675992462301b72ecb8a64c66d938",
+    "check.json": "50d0288fa03e8ab43d850c64a2a1be9aeb535d0d7acf0f4e723c083c42888a5b",
+    "measurements.json": "94fe7af9226383439a1dbb89567d9e58429c405e17289553094c08bd025022aa",
     "mutations.json": "97227b38e6a0079fdc30514607115a6293d1d8e25e15c20d24f43612644a43a3",
     "section2.json": "74d6bc500db886f8cadd7cece764d867a8865b5993fd414a05ffc5926c03aab5"
   }
