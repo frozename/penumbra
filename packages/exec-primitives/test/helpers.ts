@@ -24,6 +24,22 @@ export function sleep(ms: number): Promise<void> {
   });
 }
 
+/** Readiness handshake: true once read() contains `needle`, false after
+ * `timeoutMs`. A child prints the needle after its setup (a trap install),
+ * so a test never races that setup with a fixed sleep. */
+export async function waitForText(
+  read: () => string,
+  needle: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!read().includes(needle)) {
+    if (Date.now() > deadline) return false;
+    await sleep(10);
+  }
+  return true;
+}
+
 // bun:test types report `.rejects.X()` as void though it is async at runtime;
 // capture the rejection directly so assertions stay lint-clean.
 export async function catchRejection(promise: Promise<unknown>): Promise<unknown> {

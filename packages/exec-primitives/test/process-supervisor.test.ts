@@ -15,6 +15,7 @@ import {
   sleep,
   startFakeAcp,
   stopFakeAcp,
+  waitForText,
 } from "./helpers.ts";
 
 describe("[B3] env boundary", () => {
@@ -147,17 +148,24 @@ describe("[B4] cancel grace", () => {
       process.env.PENUMBRA_CANCEL_GRACE_S = "60";
       const dir = makeTmpDir("grace");
       const ac = new AbortController();
+      let out = "";
       try {
         const proc = lib.superviseProcess({
           command: "sh",
-          args: ["-c", 'trap "" TERM; while :; do sleep 1; done'],
+          // READY follows the trap: the abort never races its install.
+          args: ["-c", 'trap "" TERM; echo READY; while :; do sleep 1; done'],
           cwd: dir,
           env: hostEnv(dir),
           signal: ac.signal,
           cancelGraceMs,
           watchdogMs: 30_000,
+          onStdoutChunk: (chunk) => {
+            out += chunk.toString("utf8");
+          },
         });
-        await sleep(50);
+        const ready = await waitForText(() => out, "READY", 2_000);
+        if (!ready) ac.abort();
+        expect(ready).toBe(true);
         expect(groupExists(proc.pgid)).toBe(true);
 
         const t0 = Date.now();
@@ -287,9 +295,10 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
       command: "sh",
       // The descendant detaches its stdio: the leader's pipes EOF at leader
       // exit, so only the group-gone wait (not stream EOF) can delay exit.
+      // READY follows both traps (the descendant's is installed last).
       args: [
         "-c",
-        'trap "exit 0" TERM; (trap "" TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & wait',
+        'trap "exit 0" TERM; (trap "" TERM; echo READY; exec sleep 30 >/dev/null 2>&1 </dev/null) & wait',
       ],
       cwd: dir,
       env: hostEnv(dir),
@@ -297,16 +306,19 @@ test("[B10] cancel resolves the exit record only after the whole group is gone",
       cancelGraceMs: 300,
       watchdogMs: 30_000,
     });
-    await sleep(50);
-    expect(groupExists(proc.pgid)).toBe(true);
 
+    let out = "";
     let stdoutEof = false;
     const stdoutDrained = (async (): Promise<void> => {
-      for await (const _chunk of proc.stdout ?? []) {
-        // drain until EOF
+      for await (const chunk of proc.stdout ?? []) {
+        out += String(chunk);
       }
       stdoutEof = true;
     })();
+    const ready = await waitForText(() => out, "READY", 2_000);
+    if (!ready) ac.abort();
+    expect(ready).toBe(true);
+    expect(groupExists(proc.pgid)).toBe(true);
 
     const t0 = Date.now();
     ac.abort();
@@ -333,7 +345,7 @@ test("[B10] cancel delivers SIGTERM before escalating to SIGKILL", async () => {
   try {
     const proc = lib.superviseProcess({
       command: "sh",
-      args: ["-c", 'trap "echo TERM-SEEN; exit 0" TERM; while :; do sleep 1; done'],
+      args: ["-c", 'trap "echo TERM-SEEN; exit 0" TERM; echo READY; while :; do sleep 1; done'],
       cwd: dir,
       env: hostEnv(dir),
       signal: ac.signal,
@@ -343,8 +355,9 @@ test("[B10] cancel delivers SIGTERM before escalating to SIGKILL", async () => {
         stdout += chunk.toString("utf8");
       },
     });
-    await sleep(50);
+    const ready = await waitForText(() => stdout, "READY", 2_000);
     ac.abort();
+    expect(ready).toBe(true);
     const exit = await proc.exit;
     expect(exit.outcome).toBe("cancelled");
     expect(stdout).toContain("TERM-SEEN");
