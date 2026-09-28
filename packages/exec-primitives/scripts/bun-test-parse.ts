@@ -14,24 +14,34 @@
  *     with the format keys removed, NO_COLOR=1, plus only the caller's extras;
  *   - parseBunTest() and bunTestSummary() strip ANSI codes and read the glyph
  *     form too;
- *   - parseBunTest() fails closed: `problem` is set whenever the raw
- *     "(pass)" / "(fail)" line counts differ from the summary's pass / fail
- *     counts, in either direction. An under-count is hidden output; an
- *     over-count is a result line printed by test code (a forged title).
- *     A "(pass) " / "(fail) " token anywhere but at a line start is refused
- *     too: a forged line that ends in a partial line splices bun's next
- *     result line onto it, which would keep the counts equal.
- *     The lines after bun's last "N tests failed:" header are its failure
- *     recap: they are not counted again, and must repeat exactly the
- *     failures above them (N equal to the summary's fail count).
+ *   - parseBunTest() fails closed: `problem` is set when
+ *       - the summary block is not bun's alone: the " N pass", " N fail" and
+ *         "Ran N tests" lines must each appear exactly once (skip, to-do and
+ *         error lines at most once), after every result line, with Ran equal
+ *         to pass + fail + skip + to-do. A test that prints a forged result
+ *         line plus a forged summary ahead of bun's own leaves two blocks;
+ *       - the raw "(pass)" / "(fail)" line counts differ from the summary's
+ *         pass / fail counts, in either direction. An under-count is hidden
+ *         output; an over-count is a result line printed by test code;
+ *       - a "(pass) " / "(fail) " token sits anywhere but at a line start: a
+ *         forged line that ends in a partial line splices bun's next result
+ *         line onto it, which would keep the counts equal;
+ *       - bun's failure recap (the lines after its last "N tests failed:"
+ *         header, not counted again) does not repeat exactly the failures
+ *         above it, N equal to the summary's fail count.
  * bun writes its result lines and summary to stderr; console.log in a test
- * goes to stdout, so every spawner parses stderr alone (bunTestResultText).
- * Logs that hold both streams still fail closed through the over-count rule.
+ * goes to stdout, so every spawner parses stderr alone (bunTestResultText)
+ * and every log reader parses the stderr-only log (resultLogPath).
+ * Not closed by any output parser: a test that prints a complete forged run
+ * and then ends the process itself (process.exit(0)) leaves only forged
+ * output (measured on 1.3.14: exit 0, bun's summary never printed).
+ * bun-test-junit.ts closes that on the runs that drive verdicts: bun writes
+ * no JUnit report when the process ends inside a test.
  *
  * Usage: bun scripts/bun-test-parse.ts --self-test
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const AGENT_MODE_ENV_KEYS: readonly string[] = ["CLAUDECODE", "AGENT", "REPL_ID"];
@@ -53,6 +63,12 @@ export interface BunTestSummary {
   pass: number | null;
   fail: number | null;
   ran: number | null;
+  skip: number;
+  todo: number;
+  errors: number;
+  /** Set when the block is missing or incomplete, a line of it repeats, a
+   * result line follows it, or Ran is not pass + fail + skip + to-do. */
+  problem: string | undefined;
 }
 
 export interface BunTestParse {
@@ -81,18 +97,89 @@ export function stripAnsi(output: string): string {
   return output.replaceAll(ANSI_RE, "");
 }
 
-function summaryCount(output: string, re: RegExp): number | null {
-  const m = re.exec(output)?.[1];
-  return m === undefined ? null : Number(m);
+/** The lines of bun's summary block (measured on 1.3.14: " 2 pass", " 1 skip",
+ * " 1 to-do", " 1 fail", " 2 errors", "Ran 5 tests across 2 files. [7ms]"). */
+const SUMMARY_LINE_RES = {
+  pass: /^\s*(\d+) pass$/,
+  fail: /^\s*(\d+) fail$/,
+  ran: /^\s*Ran (\d+) tests?\b/,
+  skip: /^\s*(\d+) skip$/,
+  todo: /^\s*(\d+) todo$/,
+  errors: /^\s*(\d+) errors?$/,
+} as const;
+type SummaryKey = keyof typeof SUMMARY_LINE_RES;
+const SUMMARY_KEYS = Object.keys(SUMMARY_LINE_RES) as SummaryKey[];
+const REQUIRED_SUMMARY_KEYS: readonly SummaryKey[] = ["pass", "fail", "ran"];
+/** A bun result line in any of its forms, or one that starts with a token. */
+const ANY_RESULT_LINE_RE = /^(?:\((?:pass|fail|skip|todo)\) |[✓✗»] )/;
+
+interface SummaryHit {
+  line: number;
+  count: number;
+}
+
+function summaryHits(lines: string[]): {
+  hits: Record<SummaryKey, SummaryHit[]>;
+  lastResultLine: number;
+} {
+  const hits = Object.fromEntries(SUMMARY_KEYS.map((k) => [k, []])) as unknown as Record<
+    SummaryKey,
+    SummaryHit[]
+  >;
+  let lastResultLine = -1;
+  for (const [i, raw] of lines.entries()) {
+    const line = raw.trimEnd();
+    if (ANY_RESULT_LINE_RE.test(line) || RESULT_LINE_RE.test(line)) lastResultLine = i;
+    for (const key of SUMMARY_KEYS) {
+      const m = SUMMARY_LINE_RES[key].exec(line)?.[1];
+      if (m !== undefined) hits[key].push({ line: i, count: Number(m) });
+    }
+  }
+  return { hits, lastResultLine };
+}
+
+function summaryBlockProblem(
+  hits: Record<SummaryKey, SummaryHit[]>,
+  lastResultLine: number,
+): string | undefined {
+  const repeated = SUMMARY_KEYS.filter((k) => hits[k].length > 1);
+  if (repeated.length > 0) {
+    return `the bun summary line(s) ${repeated.map((k) => `"${k}"`).join(", ")} appear more than once; only bun's single trailing summary block is accepted, a second block was printed by test code`;
+  }
+  const missing = REQUIRED_SUMMARY_KEYS.filter((k) => hits[k].length === 0);
+  if (missing.length > 0) {
+    return `no complete bun summary block (missing ${missing.join(", ")}); refusing an unmeasured run`;
+  }
+  const first = Math.min(...SUMMARY_KEYS.flatMap((k) => hits[k].map((h) => h.line)));
+  if (lastResultLine > first) {
+    return "a result line follows the bun summary block; bun prints nothing after it, so test code printed it";
+  }
+  return undefined;
 }
 
 export function bunTestSummary(raw: string): BunTestSummary {
-  const output = stripAnsi(raw);
-  return {
-    pass: summaryCount(output, /^\s*(\d+) pass$/m),
-    fail: summaryCount(output, /^\s*(\d+) fail$/m),
-    ran: summaryCount(output, /^\s*Ran (\d+) tests?\b/m),
+  const { hits, lastResultLine } = summaryHits(stripAnsi(raw).split("\n"));
+  const blockProblem = summaryBlockProblem(hits, lastResultLine);
+  const one = (k: SummaryKey): number | null =>
+    hits[k].length === 1 ? (hits[k][0]?.count ?? null) : null;
+  const optional = (k: SummaryKey): number => (hits[k].length === 1 ? (one(k) ?? 0) : 0);
+  const summary: BunTestSummary = {
+    pass: one("pass"),
+    fail: one("fail"),
+    ran: one("ran"),
+    skip: optional("skip"),
+    todo: optional("todo"),
+    errors: optional("errors"),
+    problem: blockProblem,
   };
+  const { pass, fail, ran } = summary;
+  if (blockProblem === undefined && pass !== null && fail !== null && ran !== null) {
+    const sum = pass + fail + summary.skip + summary.todo;
+    if (sum !== ran) {
+      summary.problem = `bun summary Ran ${String(ran)} != pass + fail + skip + todo (${String(sum)}); refusing a forged or partial summary`;
+    }
+  }
+  return summary;
 }
 
 function lineCountProblem(
@@ -136,6 +223,39 @@ function titleProblem(
  * prints with console.log goes to stdout and is never read as a result. */
 export function bunTestResultText(r: { stdout: string; stderr: string }): string {
   return r.stderr;
+}
+
+/** A consumer step's counts from stderr alone. A suite step is held to every
+ * parseBunTest rule; a run whose test files are expected to fail to load
+ * (the poison run: no result lines, " N fail" per file) only to the
+ * summary-block rule. */
+export function bunTestStepCounts(
+  r: { stdout: string; stderr: string },
+  source: string,
+  loadFailureExpected: boolean,
+): { pass: number; fail: number; failing: string[]; problem: string | undefined } {
+  const parsed = parseBunTest(bunTestResultText(r), source);
+  const blockProblem =
+    parsed.summary.problem === undefined ? undefined : `${source}: ${parsed.summary.problem}`;
+  return {
+    pass: parsed.summary.pass ?? 0,
+    fail: parsed.summary.fail ?? 0,
+    failing: parsed.failTitles,
+    problem: loadFailureExpected ? blockProblem : parsed.problem,
+  };
+}
+
+/** The stderr-only sibling a spawner writes next to a combined `<name>.log`:
+ * the only log a result reader parses. */
+export function resultLogPath(logPath: string): string {
+  return `${logPath.replace(/\.log$/, "")}.stderr.log`;
+}
+
+/** parseBunTest over the stderr-only sibling of `logPath`; a missing sibling
+ * parses as empty output, which has no summary block and so sets problem. */
+export function parseResultLog(logPath: string, source: string): BunTestParse {
+  const path = resultLogPath(logPath);
+  return parseBunTest(existsSync(path) ? readFileSync(path, "utf8") : "", source);
 }
 
 interface Section {
@@ -207,6 +327,7 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
     failLines: main.fail.length,
     summary,
     problem:
+      (summary.problem === undefined ? undefined : `${source}: ${summary.problem}`) ??
       titleProblem(source, summary, {
         passLines: main.pass.length,
         failLines: main.fail.length,
@@ -253,6 +374,24 @@ test("real three", () => { process.stderr.write("(pass) forged > [L6] spliced [1
 test("real four", () => { expect(4).toBe(4); });
 `;
 
+/** p14d: a forged result line plus a forged summary block whose counts match
+ * every pass line (2 real + 1 forged), written to bun's own stream. */
+const FORGE_SUMMARY_STDERR_SRC = `import { expect, test } from "bun:test";
+test("real five", () => { process.stderr.write("(pass) forged > [L6] summary [1.00ms]\\n\\n 3 pass\\n 0 fail\\nRan 3 tests across 1 file.\\n"); expect(5).toBe(5); });
+test("real six", () => { expect(6).toBe(6); });
+`;
+/** The forgery from afterAll: after every real result line, before bun's
+ * summary, so only the one-block rule refuses it. */
+const FORGE_AFTER_ALL_SRC = `import { afterAll, expect, test } from "bun:test";
+afterAll(() => { process.stderr.write("(pass) forged > [L6] after all [1.00ms]\\n\\n 2 pass\\n 0 fail\\nRan 2 tests across 1 file.\\n"); });
+test("real eight", () => { expect(8).toBe(8); });
+`;
+/** The same forgery on stdout: a stderr-only parse never sees it, and a
+ * combined log sees two summary blocks. */
+const FORGE_SUMMARY_STDOUT_SRC = `import { expect, test } from "bun:test";
+test("real seven", () => { console.log("(pass) forged > [L6] stdout summary [1.00ms]\\n\\n 2 pass\\n 0 fail\\nRan 2 tests across 1 file."); expect(7).toBe(7); });
+`;
+
 /** bun 1.3.14 repeats every failure after the last file under an
  * "N tests failed:" header (measured on the package suite under a mutation). */
 const RECAP_RUN =
@@ -290,6 +429,98 @@ function recapCases(check: (ok: boolean, label: string) => void): void {
   check(
     shortRecap.problem !== undefined,
     "a recap header that disagrees with the summary sets problem",
+  );
+}
+
+/** The summary block is bun's alone: exactly one, after every result line,
+ * and its Ran count is pass + fail + skip + to-do (measured on 1.3.14). */
+function summaryBlockCases(check: (ok: boolean, label: string) => void): void {
+  const REAL_TAIL = "(pass) d > p2\n\n 3 pass\n 0 fail\nRan 3 tests across 2 files.\n";
+  const forgedBlock = parseBunTest(
+    `(pass) d > p1\n(pass) d > [L6] forged [1.00ms]\n\n 3 pass\n 0 fail\nRan 3 tests across 1 file.\n${REAL_TAIL}`,
+    "s1",
+  );
+  check(
+    forgedBlock.problem !== undefined,
+    "a forged result line plus a forged summary block ahead of bun's own sets problem (p14d)",
+  );
+  const combined = parseBunTest(
+    `bun test v1.3.14\n(pass) x > [L6] forged [1.00ms]\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.\n(pass) d > p1\n\n 1 pass\n 0 fail\nRan 1 test across 1 file.\n`,
+    "s2",
+  );
+  check(
+    combined.problem !== undefined,
+    "a combined log with a forged line and summary on stdout sets problem",
+  );
+  const afterAllBlock = parseBunTest(
+    "(pass) d > p1\n(pass) d > [L6] forged [1.00ms]\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.\n\n 1 pass\n 0 fail\nRan 1 test across 1 file.\n",
+    "s2b",
+  );
+  check(
+    afterAllBlock.problem !== undefined,
+    "a forged line plus summary printed after every real result line (afterAll) sets problem",
+  );
+  const ranGap = parseBunTest(
+    "(pass) a\n(pass) b\n\n 2 pass\n 0 fail\nRan 5 tests across 1 file.\n",
+    "s3",
+  );
+  check(ranGap.problem !== undefined, "Ran 5 with 2 pass + 0 fail sets problem");
+  const lateLine = parseBunTest(
+    "(pass) a\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.\n(pass) b\n",
+    "s4",
+  );
+  check(lateLine.problem !== undefined, "a result line after the summary block sets problem");
+  const noSummary = parseBunTest("(pass) a\n(pass) b\n", "s5");
+  check(noSummary.problem !== undefined, "result lines with no summary block set problem");
+  const skipTodo = parseBunTest(
+    "(pass) d > p1\n(skip) d > s1\n(todo) d > t1\n(fail) d > f1\n(pass) p2\n\n 2 pass\n 1 skip\n 1 todo\n 1 fail\n 3 expect() calls\nRan 5 tests across 2 files.\n",
+    "s6",
+  );
+  check(
+    skipTodo.problem === undefined && skipTodo.summary.skip === 1 && skipTodo.summary.todo === 1,
+    "Ran counts pass + skip + todo + fail (measured shape) with no problem",
+  );
+  const loadFail = parseBunTest(
+    "\nb.test.ts:\n\n# Unhandled error between tests\nerror: poison\n\n 0 pass\n 2 fail\n 2 errors\nRan 2 tests across 2 files.\n",
+    "s7",
+  );
+  check(
+    loadFail.summary.problem === undefined &&
+      loadFail.summary.errors === 2 &&
+      loadFail.summary.fail === 2 &&
+      loadFail.problem !== undefined,
+    "a load-failure run has a sound summary block but an unaccounted fail count",
+  );
+}
+
+/** qualify.ts consumer steps: counts from stderr only, and a load-failure
+ * (poison) run held to the summary-block rule alone. */
+function stepCountCases(check: (ok: boolean, label: string) => void): void {
+  const stderr = "(pass) a\n(fail) b\n\n 1 pass\n 1 fail\nRan 2 tests across 1 file.\n";
+  const forgedOut = bunTestStepCounts({ stdout: "\n 999 pass\n 0 fail\n", stderr }, "q1", false);
+  check(
+    forgedOut.pass === 1 &&
+      forgedOut.fail === 1 &&
+      forgedOut.failing.join("|") === "b" &&
+      forgedOut.problem === undefined,
+    "consumer step: a forged ' 999 pass' on stdout never reaches the counts",
+  );
+  const forgedErr = bunTestStepCounts(
+    { stdout: "", stderr: `\n 999 pass\n 0 fail\nRan 999 tests across 1 file.\n${stderr}` },
+    "q2",
+    false,
+  );
+  check(forgedErr.problem !== undefined, "consumer step: a forged summary on stderr sets problem");
+  const poison =
+    "\n# Unhandled error between tests\n\n 0 pass\n 2 fail\n 2 errors\nRan 2 tests across 2 files.\n";
+  const poisonRun = bunTestStepCounts({ stdout: "", stderr: poison }, "q3", true);
+  check(
+    poisonRun.problem === undefined && poisonRun.pass === 0 && poisonRun.fail === 2,
+    "poison run: a sound load-failure summary is measured, not refused",
+  );
+  check(
+    bunTestStepCounts({ stdout: "", stderr: poison }, "q4", false).problem !== undefined,
+    "a suite step with the load-failure shape is refused (no result lines behind its fails)",
   );
 }
 
@@ -341,6 +572,8 @@ function parserCases(check: (ok: boolean, label: string) => void): void {
     "a forged line spliced onto a real result line (counts still equal) sets problem",
   );
   recapCases(check);
+  summaryBlockCases(check);
+  stepCountCases(check);
   const esc = "\u001b";
   const colored = parseBunTest(
     `${esc}[0m${esc}[32m✓${esc}[0m${esc}[0m${esc}[1m d > p1${esc}[0m ${esc}[0m${esc}[2m[0.03ms${esc}[0m${esc}[2m]${esc}[0m\n` +
@@ -400,6 +633,25 @@ function forgeCases(
     parseBunTest(bunTestResultText(viaSplice), "live forge splice").problem !== undefined,
     "live: a forged stderr line spliced onto bun's next result line sets problem",
   );
+  const summaryErr = spawnFile("forge-summary-stderr.test.ts");
+  check(
+    parseBunTest(bunTestResultText(summaryErr), "live forge summary stderr").problem !== undefined,
+    "live: a forged [L6] line plus a matching forged summary block on stderr sets problem (p14d)",
+  );
+  const afterAll = spawnFile("forge-after-all.test.ts");
+  check(
+    parseBunTest(bunTestResultText(afterAll), "live forge afterAll").problem !== undefined,
+    "live: a forged line plus summary written from afterAll on stderr sets problem",
+  );
+  const summaryOut = spawnFile("forge-summary-stdout.test.ts");
+  const summaryOutParse = parseBunTest(bunTestResultText(summaryOut), "live forge summary stdout");
+  check(
+    summaryOutParse.problem === undefined &&
+      summaryOutParse.passTitles.join("|") === "real seven" &&
+      parseBunTest(`${summaryOut.stdout}${summaryOut.stderr}`, "live combined summary").problem !==
+        undefined,
+    "live: a forged line plus summary on stdout never reaches stderr and fails a combined log",
+  );
 }
 
 function liveCases(check: (ok: boolean, label: string) => void): void {
@@ -410,6 +662,9 @@ function liveCases(check: (ok: boolean, label: string) => void): void {
     writeFileSync(join(dir, "forge-stdout.test.ts"), FORGE_STDOUT_SRC);
     writeFileSync(join(dir, "forge-stderr.test.ts"), FORGE_STDERR_SRC);
     writeFileSync(join(dir, "forge-splice.test.ts"), FORGE_SPLICE_SRC);
+    writeFileSync(join(dir, "forge-summary-stderr.test.ts"), FORGE_SUMMARY_STDERR_SRC);
+    writeFileSync(join(dir, "forge-summary-stdout.test.ts"), FORGE_SUMMARY_STDOUT_SRC);
+    writeFileSync(join(dir, "forge-after-all.test.ts"), FORGE_AFTER_ALL_SRC);
     const spawnRaw = (
       file: string,
       env: Record<string, string> | undefined,
