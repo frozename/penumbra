@@ -331,9 +331,23 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
     id: "audit-rule-b-syntactic",
     finding:
-      "rule (b) is syntactic: module state reached only through a call to a function defined elsewhere (const x = make() where make returns a Map), a top-level statement that mutates an imported object, and an enum object are not flagged; the syntax-tree pass covers destructured, nested, factory-call, immediately-invoked, any-new, static-field, static-block and export-default shapes",
+      "rule (b) is syntactic: module state reached only through a call to a function defined elsewhere (const x = make() where make returns a Map), a top-level statement that mutates an imported object, module state held on a function object (f.cache = new Map() or tick.count = 0 on a module-local function, exported or not), a module-scope regex literal with the g or y flag (its lastIndex is shared state), and an enum object are not flagged; the syntax-tree pass covers destructured, nested, factory-call, immediately-invoked, any-new, static-field, static-block and export-default shapes",
     status: "open",
     pointer: "scripts/closure-audit-ast.ts",
+  },
+  {
+    id: "writer-unconditional-confirmed-claims",
+    finding:
+      "the evidence writer emits five gate claims with status confirmed whatever the measurements say: B1 resolved with private:true retained, B3, B4, B6, B7 and B10 resolved, every gating step before qualify.ts passed, no allowlist entry names a real control-flow path, and T15 and T9 pass; on a red run SHAPE's regeneration would reproduce the same confirmed text. Deferred by operator ruling",
+    status: "open",
+    pointer: "scripts/write-evidence-gates.ts:267, :326, :351, :392, :404",
+  },
+  {
+    id: "artifact-sha256-format-only",
+    finding:
+      "SHAPE binds artifact_sha256 by key set and sha256 hex format only and never recomputes a digest, although section2.json and mutations.json reproduce byte-identically across runs (check.json and measurements.json carry timestamps)",
+    status: "open",
+    pointer: "scripts/sharedlib6-shape-env.ts artifactShaReasons",
   },
   {
     id: "parity-adaptations-incomplete",

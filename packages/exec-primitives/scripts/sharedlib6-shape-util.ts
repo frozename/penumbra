@@ -226,6 +226,9 @@ export const REQUIRED_OPEN_FINDINGS = [
   "b10-logger-stdio-acp-server",
   "b10-logger-acp-warm-pool",
   "root-lint-qualification-errors",
+  "audit-rule-b-syntactic",
+  "writer-unconditional-confirmed-claims",
+  "artifact-sha256-format-only",
 ];
 
 /** The `counts <label>: {...}` line of the closure-audit src step log. */
