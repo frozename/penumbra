@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * sharedlib6-fence.ts — the contract fence (dispatch section 0) as one pure
- * rule over `git diff --name-only <base> HEAD` plus the two allowed root
+ * rule over `git diff --name-only --no-renames <base> HEAD` plus the two allowed root
  * edits, read at base and at HEAD:
  *   - every changed path lies under packages/exec-primitives/ or
  *     docs/qualification/, or is bun.lock, tsconfig.json or
@@ -14,6 +14,10 @@
  *
  * Usage: bun scripts/sharedlib6-fence.ts --self-test
  */
+import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 import { deepEqual, rec } from "./sharedlib6-shape-util.js";
 
 export const FENCE_PATH_RE =
@@ -21,8 +25,15 @@ export const FENCE_PATH_RE =
 export const FENCE_REFERENCE = "./packages/exec-primitives";
 export const FENCE_RATCHET_KEY = "packages/exec-primitives";
 
+/** The git argv whose output feeds FenceInput.names. --no-renames lists both
+ * sides of a move: with rename detection (git's default), a file moved out of
+ * another package shows only its in-fence destination. */
+export function fenceNameDiffArgs(base: string): string[] {
+  return ["diff", "--name-only", "--no-renames", base, "HEAD"];
+}
+
 export interface FenceInput {
-  /** `git diff --name-only <base> HEAD`, one path per entry. */
+  /** `git diff --name-only --no-renames <base> HEAD`, one path per entry. */
   names: string[];
   /** File text at base and HEAD; null when the file is absent there. */
   tsconfigBase: string | null;
@@ -233,6 +244,68 @@ const FENCE_CASES: { label: string; input: FenceInput; red: RegExp | null }[] = 
   },
 ];
 
+const REPO_ROOT = dirname(dirname(dirname(import.meta.dir)));
+
+/** A scratch repo commits packages/core/big.ts, then `git mv`s it into the
+ * package with diff.renames on. The names fenceNameDiffArgs() yields must
+ * still carry the source path, so a file moved out of another package is
+ * outside the fence. */
+function renameCase(): string[] {
+  const dir = join(REPO_ROOT, "tmp", `fence-selftest-${String(process.pid)}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(join(dir, "packages", "core"), { recursive: true });
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+  ) as Record<string, string>;
+  const git = (args: string[]): string => {
+    const r = spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=fence",
+        "-c",
+        "user.email=fence@self.test",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "diff.renames=true",
+        ...args,
+      ],
+      { cwd: dir, env: { ...env, GIT_CONFIG_NOSYSTEM: "1" }, encoding: "utf8" },
+    );
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout;
+  };
+  try {
+    git(["init", "-q"]);
+    const body = Array.from({ length: 40 }, (_, i) => `export const v${String(i)} = ${String(i)};`);
+    writeFileSync(join(dir, "packages", "core", "big.ts"), `${body.join("\n")}\n`);
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).trim();
+    mkdirSync(join(dir, "packages", "exec-primitives"), { recursive: true });
+    git(["mv", "packages/core/big.ts", "packages/exec-primitives/big.ts"]);
+    git(["commit", "-q", "-m", "move"]);
+    const names = git(fenceNameDiffArgs(base))
+      .split("\n")
+      .map((l) => l.trim());
+    const reasons = fenceReasons({
+      names,
+      tsconfigBase: null,
+      tsconfigHead: null,
+      ratchetBase: null,
+      ratchetHead: null,
+    });
+    return reasons.some((r) => r.includes("outside the fence: packages/core/big.ts"))
+      ? []
+      : [`a file moved out of packages/core is not refused (names: ${JSON.stringify(names)})`];
+  } catch (err) {
+    return [`rename case: ${String(err)}`];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function selfTest(): number {
   const failures: string[] = [];
   for (const c of FENCE_CASES) {
@@ -240,10 +313,11 @@ function selfTest(): number {
     const ok = c.red === null ? reasons.length === 0 : reasons.some((r) => c.red?.test(r) === true);
     if (!ok) failures.push(`${c.label} (reasons: ${JSON.stringify(reasons)})`);
   }
+  failures.push(...renameCase());
+  const total = FENCE_CASES.length + 1;
   for (const f of failures) process.stdout.write(`fence self-test FAIL: ${f}\n`);
-  const passed = FENCE_CASES.length - failures.length;
   process.stdout.write(
-    `fence self-test: ${failures.length === 0 ? "PASS" : "FAIL"} (${String(passed)}/${String(FENCE_CASES.length)} cases)\n`,
+    `fence self-test: ${failures.length === 0 ? "PASS" : "FAIL"} (${String(total - failures.length)}/${String(total)} cases)\n`,
   );
   return failures.length === 0 ? 0 : 1;
 }

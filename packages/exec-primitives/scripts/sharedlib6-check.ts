@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { agentFreeEnv, bunTestSummary } from "./bun-test-parse.js";
-import { fenceReasons } from "./sharedlib6-fence.js";
+import { fenceNameDiffArgs, fenceReasons } from "./sharedlib6-fence.js";
 import { BASE_SHA, type GateRec, readJsonFile, rec } from "./sharedlib6-shape-util.js";
 import { buildShapeContext, runShape } from "./sharedlib6-shape.js";
 
@@ -301,7 +301,7 @@ recordGate(
     const r = git(["show", `${rev}:${path}`]);
     return r.exit === 0 ? r.output : null;
   };
-  const nameDiff = git(["diff", "--name-only", BASE_SHA, "HEAD"]);
+  const nameDiff = git(fenceNameDiffArgs(BASE_SHA));
   const allowlist =
     nameDiff.exit === 0
       ? fenceReasons({
@@ -311,7 +311,7 @@ recordGate(
           ratchetBase: show(BASE_SHA, "typecheck-coverage-ratchet.json"),
           ratchetHead: show("HEAD", "typecheck-coverage-ratchet.json"),
         })
-      : [`git diff --name-only exited ${String(nameDiff.exit)}`];
+      : [`git ${fenceNameDiffArgs(BASE_SHA).join(" ")} exited ${String(nameDiff.exit)}`];
   const adapterDiff = git([
     "diff",
     "--stat",
