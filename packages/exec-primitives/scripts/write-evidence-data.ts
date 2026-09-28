@@ -316,7 +316,7 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
     id: "mutation-loop-timing",
     finding:
-      "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. SHAPE names the differing mutation and field and compares errors by equality with each run's loop, so a recurrence fails closed with the field named",
+      "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. Two check runs of one tree (f27fb40ca) then gave f-watchdog-default 5 and 4 errors, so the evidence records errors_within_failing, the bound the loop enforces on every run, instead of the count; SHAPE compares every mutation field exactly and names the differing mutation and field",
     status: "open",
     pointer: "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations",
   },
@@ -423,6 +423,14 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
     reason:
       "bun counts a timed-out test as both a fail and an error, so requiring 0 errors would reject every timeout detector",
     pointer: "scripts/run-mutations.ts countsProblems",
+  },
+  {
+    rule: "mutation errors record",
+    change:
+      "each mutations[] entry records errors_within_failing (0 <= errors <= the failing-test count, as run-mutations requires) instead of bun's errors count",
+    reason:
+      "the count is bun's timeout attribution and varies for one tree (f-watchdog-default gave 5, then 4, in two check runs at f27fb40ca), so a committed count could be bound only by a range",
+    pointer: "scripts/sharedlib6-shape-util.ts evidenceMutationRecord",
   },
   {
     rule: "SHAPE t7_overshoot_bytes binding",

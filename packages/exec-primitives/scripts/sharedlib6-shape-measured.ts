@@ -11,6 +11,7 @@ import { parseBunTest } from "./bun-test-parse.js";
 import {
   CONTROL_FLOW_TOKEN_RE,
   deepEqual,
+  evidenceMutationRecord,
   EXPECTED_EXCLUDED_TITLES,
   leaf,
   loadAllowEntries,
@@ -130,7 +131,7 @@ export function shapeConsumers(
 /** `errors` is bun's timeout attribution: a detector that times out counts as
  * a fail AND an error, one that fails its assertion first counts as a fail
  * only. run-mutations bounds it to 0..failing; SHAPE checks that bound on
- * both sides and also compares errors by equality with this run's loop. */
+ * this run's loop record, and the evidence carries only the bound. */
 function errorsWithinBound(r: Record<string, unknown>): boolean {
   const errors = r["errors"];
   const failing = Array.isArray(r["failing_tests"]) ? r["failing_tests"].length : -1;
@@ -139,31 +140,29 @@ function errorsWithinBound(r: Record<string, unknown>): boolean {
 
 function mutationRecordDiffs(
   i: number,
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
+  ev: Record<string, unknown>,
+  loop: Record<string, unknown>,
 ): string[] {
+  const want = evidenceMutationRecord(loop);
   const out: string[] = [];
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (!deepEqual(a[k], b[k])) {
+  for (const k of new Set([...Object.keys(ev), ...Object.keys(want)])) {
+    if (!deepEqual(ev[k], want[k])) {
       out.push(
-        `mutations[${String(i)}].${k} evidence ${JSON.stringify(a[k])} != mutation-loop ${JSON.stringify(b[k])}`,
+        `mutations[${String(i)}].${k} evidence ${JSON.stringify(ev[k])} != mutation-loop ${JSON.stringify(want[k])}`,
       );
     }
   }
-  for (const [side, r] of [
-    ["evidence", a],
-    ["mutation-loop", b],
-  ] as const) {
-    if (!errorsWithinBound(r)) {
-      out.push(`mutations[${String(i)}].errors ${side} ${String(r["errors"])} outside 0..failing`);
-    }
+  if (!errorsWithinBound(loop)) {
+    out.push(
+      `mutations[${String(i)}].errors mutation-loop ${String(loop["errors"])} outside 0..failing`,
+    );
   }
   return out;
 }
 
-/** Every mutation field, errors included, is compared exactly with this run's
- * loop; a mismatch names the mutation and the field, so a timing flake leaves
- * data. */
+/** Every evidence mutation field is compared exactly with this run's loop
+ * record in its evidence form (evidenceMutationRecord); a mismatch names the
+ * mutation and the field. */
 function mutationDiffs(evList: unknown, freshList: unknown): string[] {
   const ev = Array.isArray(evList) ? evList : [];
   const fresh = Array.isArray(freshList) ? freshList : [];

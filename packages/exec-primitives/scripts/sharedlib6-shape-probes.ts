@@ -135,6 +135,26 @@ function setProbe(
   return { name, expect, mutate: (ev) => edit(ev, path, key, next) };
 }
 
+/** Sets `key` (absent from the committed record) on the container at `path`. */
+function addKeyProbe(
+  name: string,
+  expect: RegExp,
+  path: (string | number)[],
+  key: string,
+  value: unknown,
+): ShapeProbe {
+  return {
+    name,
+    expect,
+    mutate: (ev): boolean => {
+      const holder = obj(at(ev, path));
+      if (holder === undefined || key in holder) return false;
+      holder[key] = value;
+      return true;
+    },
+  };
+}
+
 /** Probes for the fields the regeneration diff and the explicit rules bind. */
 const BINDING_PROBES: ShapeProbe[] = [
   mdProbe(
@@ -179,19 +199,19 @@ const BINDING_PROBES: ShapeProbe[] = [
     "t7_overshoot_bytes",
     (old) => (typeof old === "number" && old <= 458_752 ? 917_504 : 65_536),
   ),
-  setProbe(
-    "mutations[3].errors within 0..failing but not this run's count (p13)",
-    /mutations\[3\]\.errors evidence \d+ != mutation-loop \d+/,
+  addKeyProbe(
+    "mutations[3] carries an errors count the loop comparison refuses (p13)",
+    /mutations\[3\]\.errors evidence 3 != mutation-loop undefined/,
     ["mutations", 3],
     "errors",
-    (old) => (old === 0 ? 1 : 0),
+    3,
   ),
-  setProbe(
-    "mutations[3].errors not exempt from the regeneration diff (p13)",
-    /evidence\.mutations\[3\]\.errors \d+ != regenerated \d+/,
+  addKeyProbe(
+    "mutations[3] carries an errors count the regeneration diff refuses (p13)",
+    /evidence\.mutations\[3\]\.errors is not in the regenerated record/,
     ["mutations", 3],
     "errors",
-    (old) => (old === 0 ? 1 : 0),
+    3,
   ),
   setProbe(
     "head_sha names an older commit whose code tree differs from HEAD",
@@ -445,11 +465,13 @@ export const SHAPE_PROBES: ShapeProbe[] = [
         Array.isArray(old) ? (old as unknown[]).slice(1) : [],
       ),
   },
-  {
-    name: "mutations[5].errors beyond the failing count",
-    expect: /mutations\[5\]\.errors evidence 99 outside/,
-    mutate: (ev) => edit(ev, ["mutations", 5], "errors", () => 99),
-  },
+  setProbe(
+    "mutations[5].errors_within_failing flipped",
+    /mutations\[5\]\.errors_within_failing evidence false != mutation-loop true/,
+    ["mutations", 5],
+    "errors_within_failing",
+    (old) => old !== true,
+  ),
   dropOpenFinding("t10-limits"),
   dropOpenFinding("b10-logger-stdio-acp-client"),
   openFindingEdit(

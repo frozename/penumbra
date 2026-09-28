@@ -20,6 +20,7 @@ import {
   BASE_SHA,
   eslintErrorCounts,
   EVIDENCE_DATE,
+  evidenceMutationRecord,
 } from "./sharedlib6-shape-util.js";
 import {
   BASELINE_SET,
@@ -360,7 +361,7 @@ export function buildEvidence(env: BuildEnv): Obj {
     check_steps: env.checkSteps,
     blockers: deriveBlockers(gateCtx, a.manifestPrivate),
     red_green: { tag_passes: tagPassCounts(a.logDir) },
-    mutations: a.mutations,
+    mutations: a.mutations.map(evidenceMutationRecord),
     mutations_clean_after: a.mutationsJson["clean_after"] === true,
     audit_allowlist_entries: allowEntries,
     deferred: [

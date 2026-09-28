@@ -13,7 +13,9 @@
  *     in sharedlib6-shape-env.ts;
  *   - gates[L4].measurements.t7_overshoot_bytes (the measured domain and
  *     within one 65536-byte read of this run's marker, t7Reasons).
- * mutations[].errors is compared by equality like every other field.
+ * mutations[] carries errors_within_failing, not bun's errors count
+ * (evidenceMutationRecord), and is compared by equality like every other
+ * field.
  * The .md must equal renderEvidenceMarkdown() of the committed .json byte for
  * byte, so it inherits every binding of the .json.
  */

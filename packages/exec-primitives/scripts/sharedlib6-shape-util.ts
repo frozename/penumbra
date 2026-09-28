@@ -38,6 +38,21 @@ export const REQUIRED_DEVIATION_RULES = [
   "extra audit fixtures",
 ];
 
+/** The evidence form of one mutation-loop record: every field as the loop
+ * wrote it, except bun's errors count (its timeout attribution, which gave
+ * f-watchdog-default 5 and then 4 in two check runs of one tree) becomes
+ * errors_within_failing, the 0..failing bound the loop enforces each run.
+ * The writer emits this and SHAPE compares against it field for field. */
+export function evidenceMutationRecord(loop: unknown): Record<string, unknown> {
+  const { errors, ...rest } = rec(loop) ?? {};
+  const failing = Array.isArray(rest["failing_tests"]) ? rest["failing_tests"].length : -1;
+  return {
+    ...rest,
+    errors_within_failing:
+      typeof errors === "number" && Number.isInteger(errors) && errors >= 0 && errors <= failing,
+  };
+}
+
 /** T7: the producer emits 1000000 bytes against a 65536-byte cap. */
 export const T7_CAP_BYTES = 65_536;
 export const T7_PRODUCED_BYTES = 1_000_000;
