@@ -119,6 +119,8 @@ function expectedGateMeasurements(ctx: ShapeContext, measured: Ev): Ev[] {
  *   - the committed value to the measured domain: a whole number of
  *     65536-byte reads, at least one read, at most the largest such multiple
  *     the producer allows (1000000 - 65536 = 934464, floored to 917504);
+ *   - the committed value to within one 65536-byte read of this run's marker,
+ *     so an in-domain value this run did not come near is refused;
  *   - this run's marker to the sound bound 0 < v <= 934464, which holds on any
  *     host whatever its pipe read size. */
 function t7Reasons(ctx: ShapeContext, got: unknown): string[] {
@@ -138,6 +140,11 @@ function t7Reasons(ctx: ShapeContext, got: unknown): string[] {
     );
   }
   const fresh = t7Overshoot(ctx.logDir);
+  if (inDomain && fresh !== null && Math.abs(value - fresh) > T7_CAP_BYTES) {
+    reasons.push(
+      `gates[L4].measurements.t7_overshoot_bytes ${String(value)} is more than one ${String(T7_CAP_BYTES)}-byte read from this run's t7-overshoot marker ${String(fresh)}`,
+    );
+  }
   if (fresh === null || fresh <= 0 || fresh > maxOvershoot) {
     reasons.push(
       `gates[L4].measurements: this run's t7-overshoot marker ${String(fresh)} is not in (0, ${String(maxOvershoot)}]`,

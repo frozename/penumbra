@@ -129,8 +129,8 @@ export function shapeConsumers(
 
 /** `errors` is bun's timeout attribution: a detector that times out counts as
  * a fail AND an error, one that fails its assertion first counts as a fail
- * only, and which comes first depends on scheduling. run-mutations bounds it
- * to 0..failing; SHAPE binds that bound on both sides. */
+ * only. run-mutations bounds it to 0..failing; SHAPE checks that bound on
+ * both sides and also compares errors by equality with this run's loop. */
 function errorsWithinBound(r: Record<string, unknown>): boolean {
   const errors = r["errors"];
   const failing = Array.isArray(r["failing_tests"]) ? r["failing_tests"].length : -1;
@@ -144,7 +144,7 @@ function mutationRecordDiffs(
 ): string[] {
   const out: string[] = [];
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (k !== "errors" && !deepEqual(a[k], b[k])) {
+    if (!deepEqual(a[k], b[k])) {
       out.push(
         `mutations[${String(i)}].${k} evidence ${JSON.stringify(a[k])} != mutation-loop ${JSON.stringify(b[k])}`,
       );
@@ -161,8 +161,9 @@ function mutationRecordDiffs(
   return out;
 }
 
-/** Every mutation field is compared exactly except `errors` (bounded above);
- * a mismatch names the mutation and the field, so a timing flake leaves data. */
+/** Every mutation field, errors included, is compared exactly with this run's
+ * loop; a mismatch names the mutation and the field, so a timing flake leaves
+ * data. */
 function mutationDiffs(evList: unknown, freshList: unknown): string[] {
   const ev = Array.isArray(evList) ? evList : [];
   const fresh = Array.isArray(freshList) ? freshList : [];

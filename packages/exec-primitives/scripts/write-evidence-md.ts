@@ -113,7 +113,7 @@ function gateSection(g: Record<string, unknown>, t7: string): string {
 function t7Line(t7: number | null): string {
   return t7 === null
     ? "T7 overshoot: no `t7-overshoot=` marker in the gate log."
-    : `T7 overshoot: ${String(t7)} bytes past the 65536-byte limit (the \`t7-overshoot=\` marker the [B10] output-limit test prints into the gate log). It varies run to run with pipe chunking and stays within the largest chunk, so SHAPE binds it to the measured domain (a whole number of 65536-byte reads) rather than to a fixed value.`;
+    : `T7 overshoot: ${String(t7)} bytes past the 65536-byte limit (the \`t7-overshoot=\` marker the [B10] output-limit test prints into the gate log). It varies run to run with pipe chunking and stays within the largest chunk, so SHAPE binds it to the measured domain (a whole number of 65536-byte reads) and to within one read of each run's marker rather than to a fixed value.`;
 }
 
 function stepRow(g: Step): string {

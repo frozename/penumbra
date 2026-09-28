@@ -95,6 +95,15 @@ function shapeHeadSha(ctx: ShapeContext, evidence: Record<string, unknown>): str
     .map((l) => l.trim());
   if (!listed.includes(headSha)) {
     reasons.push("evidence head_sha is not a commit between base and HEAD");
+    return reasons;
+  }
+  // head_sha is the commit before the evidence commit or a later fix commit:
+  // either way it carries HEAD's code tree; only the pair may differ.
+  const sameTree = ctx.git(["diff", "--quiet", headSha, "HEAD", "--", ".", ":!docs/qualification"]);
+  if (sameTree.exit !== 0) {
+    reasons.push(
+      `evidence head_sha ${headSha} does not carry HEAD's code tree (git diff ${headSha} HEAD -- . ':!docs/qualification' is not empty)`,
+    );
   }
   return reasons;
 }

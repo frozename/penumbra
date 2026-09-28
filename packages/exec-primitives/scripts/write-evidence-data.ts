@@ -316,14 +316,14 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
     id: "mutation-loop-timing",
     finding:
-      "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. SHAPE now names the differing mutation and field and binds errors to 0..failing",
+      "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. SHAPE names the differing mutation and field and compares errors by equality with each run's loop, so a recurrence fails closed with the field named",
     status: "open",
     pointer: "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations",
   },
   {
     id: "t7-overshoot-domain",
     finding:
-      "the committed T7 overshoot is bound to a whole number of 65536-byte reads, a domain measured on this host only (22 of 22 sampled runs); a host whose pipe reads are not 64 KiB multiples needs the domain re-derived before evidence is regenerated there",
+      "the committed T7 overshoot is bound to a whole number of 65536-byte reads and to within one read of each run's t7-overshoot marker, both measured on this host only (22 of 22 sampled runs gave 131072 or 196608); a host whose pipe reads are not 64 KiB multiples needs the domain re-derived before evidence is regenerated there",
     status: "inferred",
     would_confirm: "gate-log t7-overshoot markers from a second platform",
     pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
@@ -411,27 +411,19 @@ export const STATIC_DEVIATIONS: Record<string, unknown>[] = [
     pointer: "scripts/run-mutations.ts countsProblems",
   },
   {
-    rule: "SHAPE mutations[].errors binding",
-    change:
-      "SHAPE compares every mutation field exactly except errors, which it binds to 0..failing on both sides",
-    reason:
-      "errors is bun's timeout attribution and depends on scheduling; with the loop green, the failing set, fail, pass and ran are already fixed, so errors is the one field that can move",
-    pointer: "scripts/sharedlib6-shape-measured.ts mutationDiffs",
-  },
-  {
     rule: "SHAPE t7_overshoot_bytes binding",
     change:
-      "SHAPE binds the committed gates[L4].measurements.t7_overshoot_bytes to the measured domain, a whole number of 65536-byte reads in [65536, 917504], and this run's t7-overshoot marker to the bound 0 < v <= 934464 (1000000 bytes produced minus the 65536-byte cap), not by equality",
+      "SHAPE binds the committed gates[L4].measurements.t7_overshoot_bytes to the measured domain, a whole number of 65536-byte reads in [65536, 917504], and to within one 65536-byte read of this run's t7-overshoot marker, and binds that marker to 0 < v <= 934464 (1000000 bytes produced minus the 65536-byte cap), not by equality",
     reason:
-      "the overshoot varies with pipe chunking (131072 in 10 and 196608 in 12 of 22 sampled runs on this host), so equality would fail at random",
+      "the overshoot varies with pipe chunking (131072 in 10 and 196608 in 12 of 22 sampled runs on this host, one read apart), so equality would fail at random",
     pointer: "scripts/sharedlib6-shape-bind.ts t7Reasons",
   },
   {
     rule: "SHAPE regeneration exemptions",
     change:
-      "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, toolchain included, except head_sha (bound to rev-list), generated_at (an ISO-8601 time between the head_sha commit and now), poison_layer (a superset of this run's guard stubs, each a workspace package, @penumbra/core included), artifact_sha256 (exactly the four run files the writer hashes, each a sha256 digest), mutations[].errors and gates[L4].measurements.t7_overshoot_bytes; toolchain must also equal the check's own bun, node and tsc versions; the .md must equal the render of the committed .json byte for byte",
+      "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, toolchain included, except head_sha (a commit in base..HEAD whose code tree outside docs/qualification equals HEAD's), generated_at (an ISO-8601 time between the head_sha commit and now), poison_layer (a superset of this run's guard stubs, each a workspace package, @penumbra/core included), artifact_sha256 (exactly the four run files the writer hashes, each a sha256 digest) and gates[L4].measurements.t7_overshoot_bytes (its own deviation); toolchain must also equal the check's own bun, node and tsc versions; the .md must equal the render of the committed .json byte for byte",
     reason:
-      "poison_layer records the install (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, generated_at is the write time, and errors and the T7 overshoot vary run to run, so each is bound by a rule instead of equality",
+      "poison_layer records the install (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, generated_at is the write time, head_sha cannot name the evidence commit itself, and the T7 overshoot varies run to run, so each is bound by a rule instead of equality",
     pointer: "scripts/sharedlib6-shape-regen.ts, scripts/sharedlib6-shape-env.ts",
   },
   {

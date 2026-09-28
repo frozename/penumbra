@@ -11,8 +11,9 @@
  *     fewer @penumbra packages than a long-lived one) and artifact_sha256
  *     (exactly the writer's hashed files; the files carry timestamps), all
  *     in sharedlib6-shape-env.ts;
- *   - mutations[].errors (0..failing, sharedlib6-shape-measured.ts);
- *   - gates[L4].measurements.t7_overshoot_bytes (domain, t7Reasons).
+ *   - gates[L4].measurements.t7_overshoot_bytes (the measured domain and
+ *     within one 65536-byte read of this run's marker, t7Reasons).
+ * mutations[].errors is compared by equality like every other field.
  * The .md must equal renderEvidenceMarkdown() of the committed .json byte for
  * byte, so it inherits every binding of the .json.
  */
@@ -69,12 +70,6 @@ function withExemptions(fresh: Ev, committed: Ev): Ev {
   );
   for (const k of REGEN_EXEMPT_KEYS) {
     if (k in committed) out[k] = committed[k];
-  }
-  const committedMutations = list(committed["mutations"]);
-  for (const [i, m] of list(out["mutations"]).entries()) {
-    const c = rec(committedMutations[i]);
-    const r = rec(m);
-    if (r !== undefined && c !== undefined && "errors" in c) r["errors"] = c["errors"];
   }
   const freshL4 = rec(rec(list(out["gates"])[3])?.["measurements"]);
   const committedL4 = rec(rec(list(committed["gates"])[3])?.["measurements"]);
