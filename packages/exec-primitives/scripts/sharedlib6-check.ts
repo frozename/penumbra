@@ -6,9 +6,12 @@
  *
  * Flow:
  *   1. rm -rf tmp/sharedlib6 (fresh scratch space for every run)
- *   2. hard preconditions — closure, parser and fence self-tests, origin
- *      remote, merge-base ancestors, frozen-lockfile install, clean worktree. Any failure aborts
- *      before artifacts are written.
+ *   2. hard preconditions — the PATH-resolved bun and node against the
+ *      committed evidence toolchain, closure, parser, fence and toolchain
+ *      self-tests, origin remote, merge-base ancestors, frozen-lockfile
+ *      install, clean worktree. Any failure aborts before artifacts are
+ *      written. Under --keep a toolchain mismatch is printed instead, so a
+ *      pair can be regenerated on a new toolchain; SHAPE still fails that run.
  *   3. fourteen ordered steps (below). Every step runs even when an earlier
  *      one failed; one line per step is printed. The fence runs AFTER qualify
  *      and the tarball audit so it observes the tree the way the composite
@@ -37,7 +40,14 @@ import { dirname, join } from "node:path";
 
 import { agentFreeEnv, bunTestSummary } from "./bun-test-parse.js";
 import { fenceNameDiffArgs, fenceReasons } from "./sharedlib6-fence.js";
-import { BASE_SHA, type GateRec, readJsonFile, rec } from "./sharedlib6-shape-util.js";
+import { resolvePathToolchain, toolchainPrecheckReasons } from "./sharedlib6-shape-env.js";
+import {
+  BASE_SHA,
+  EVIDENCE_DATE,
+  type GateRec,
+  readJsonFile,
+  rec,
+} from "./sharedlib6-shape-util.js";
 import { buildShapeContext, runShape } from "./sharedlib6-shape.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
@@ -101,6 +111,32 @@ mkdirSync(LOG_DIR, { recursive: true });
 // 2. hard preconditions — abort before any artifact is written
 // ---------------------------------------------------------------------------
 const precheckFailures: string[] = [];
+
+const committedEvidence = rec(
+  readJsonFile(
+    join(REPO_ROOT, "docs", "qualification", `${EVIDENCE_DATE}-sharedlib6-qualification.json`),
+  ),
+);
+const toolchainMismatch = toolchainPrecheckReasons(
+  committedEvidence?.["toolchain"],
+  resolvePathToolchain(),
+);
+if (KEEP) {
+  for (const r of toolchainMismatch) {
+    process.stdout.write(
+      `precheck note (--keep): ${r}; SHAPE fails until the pair is regenerated\n`,
+    );
+  }
+} else {
+  precheckFailures.push(...toolchainMismatch);
+}
+
+const toolchainSelfTest = runLogged(
+  ["bun", "scripts/sharedlib6-shape-env.ts", "--self-test"],
+  PACKAGE_DIR,
+  "precheck-toolchain-self-test",
+);
+if (toolchainSelfTest.exit !== 0) precheckFailures.push("sharedlib6-shape-env --self-test");
 
 const selfTest = runLogged(
   ["bun", "scripts/closure-audit.ts", "--self-test"],

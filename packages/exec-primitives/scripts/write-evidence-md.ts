@@ -36,6 +36,8 @@ export interface MdInput {
   headNote: string;
   baseSha: string;
   toolchain: string;
+  /** "bun <v> and node <v>": the PATH toolchain the check requires. */
+  pathToolchain: string;
   generatedAt: string;
   result: string;
   gates: Record<string, unknown>[];
@@ -329,6 +331,8 @@ ${i.claimsNotMade.map((c) => `- ${c}`).join("\n")}
 
 ## Reproduce
 
+Toolchain: ${i.pathToolchain} must be the first \`bun\` and \`node\` on PATH (typescript comes from the lockfile). sharedlib6-check.ts stops at its prechecks, naming the binaries PATH resolves, when either differs from \`toolchain\`; with --keep it prints the mismatch and SHAPE fails.
+
 \`\`\`sh
 bun install --frozen-lockfile
 bun packages/exec-primitives/scripts/sharedlib6-check.ts --keep
@@ -355,6 +359,7 @@ export function mdInputFromEvidence(ev: Record<string, unknown>): MdInput {
     headNote: str(ev["head_sha_note"]),
     baseSha: str(ev["base_sha"]),
     toolchain: `bun ${str(tool["bun"])} · node ${str(tool["node"])} · typescript ${str(tool["typescript"])}`,
+    pathToolchain: `bun ${str(tool["bun"])} and node ${str(tool["node"])}`,
     generatedAt: str(ev["generated_at"]),
     result: str(ev["result"]),
     gates: recList(ev["gates"]),

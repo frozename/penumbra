@@ -11,10 +11,22 @@
  *     sha256 hex digest, each file this run has written by SHAPE time present;
  *   - generated_at: an ISO-8601 UTC timestamp between the head_sha commit
  *     and now.
+ * toolchainPrecheckReasons() runs before the check's steps: the bun and node
+ * that PATH resolves against the committed toolchain, named by path.
+ *
+ * Usage: bun scripts/sharedlib6-shape-env.ts --self-test
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
 import {
   ARTIFACT_FILES,
@@ -196,4 +208,123 @@ export function shapeEnvironment(ctx: ShapeContext, evidence: Ev, measured: Ev):
     ...artifactShaReasons(ctx, evidence),
     ...generatedAtReasons(ctx, evidence),
   ];
+}
+
+export interface ResolvedTool {
+  /** The binary PATH resolves; "" when none. */
+  path: string;
+  /** Its `--version` output; "" when it did not report one. */
+  version: string;
+}
+
+export type PathToolchain = Record<"bun" | "node", ResolvedTool>;
+
+/** `bun` and `node` as `pathValue` resolves them, each with its version. */
+export function resolvePathToolchain(pathValue: string = process.env["PATH"] ?? ""): PathToolchain {
+  const resolve = (name: string): ResolvedTool => {
+    const path = Bun.which(name, { PATH: pathValue }) ?? "";
+    if (path === "") return { path, version: "" };
+    const r = spawnSync(path, ["--version"], { encoding: "utf8" });
+    return { path, version: r.status === 0 ? r.stdout.trim() : "" };
+  };
+  return { bun: resolve("bun"), node: resolve("node") };
+}
+
+/** The PATH-resolved bun and node against the committed evidence toolchain. */
+export function toolchainPrecheckReasons(committed: unknown, resolved: PathToolchain): string[] {
+  const want = rec(committed);
+  if (want === undefined) return [];
+  const reasons: string[] = [];
+  for (const k of ["bun", "node"] as const) {
+    const expected = str(want[k]);
+    const got = resolved[k];
+    if (expected === "" || got.version === expected) continue;
+    const where =
+      got.path === ""
+        ? "not on PATH"
+        : `${got.version === "" ? "(no version)" : got.version} at ${got.path}`;
+    reasons.push(
+      `toolchain: ${k} ${where} != evidence toolchain.${k} ${expected}; put ${k} ${expected} first on PATH`,
+    );
+  }
+  return reasons;
+}
+
+// ---------------------------------------------------------------------------
+// --self-test
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = dirname(dirname(dirname(import.meta.dir)));
+const COMMITTED = { bun: "1.3.14", node: "v26.0.0", typescript: "6.0.3" };
+
+function tool(path: string, version: string): ResolvedTool {
+  return { path, version };
+}
+
+function pureCases(check: (ok: boolean, label: string) => void): void {
+  const match = { bun: tool("/opt/bun", "1.3.14"), node: tool("/opt/node", "v26.0.0") };
+  check(toolchainPrecheckReasons(COMMITTED, match).length === 0, "a matching toolchain passes");
+  const oldNode = toolchainPrecheckReasons(COMMITTED, {
+    ...match,
+    node: tool("/fnm/v24/bin/node", "v24.14.1"),
+  });
+  check(
+    oldNode.length === 1 &&
+      oldNode.some(
+        (r) => r.includes("/fnm/v24/bin/node") && r.includes("v24.14.1") && r.includes("v26.0.0"),
+      ),
+    "a different node names the PATH-resolved binary and both versions",
+  );
+  const noBun = toolchainPrecheckReasons(COMMITTED, { ...match, bun: tool("", "") });
+  check(
+    noBun.some((r) => r.includes("bun") && r.includes("not on PATH")),
+    "a bun missing from PATH is refused",
+  );
+  check(
+    toolchainPrecheckReasons(undefined, match).length === 0,
+    "no committed toolchain is left to SHAPE",
+  );
+}
+
+/** A fake node printing v24.14.1, first on PATH: the resolver must name it. */
+function liveCase(check: (ok: boolean, label: string) => void): void {
+  const dir = join(REPO_ROOT, "tmp", `toolchain-selftest-${String(process.pid)}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    const fake = join(dir, "node");
+    writeFileSync(fake, "#!/bin/sh\necho v24.14.1\n");
+    chmodSync(fake, 0o755);
+    const resolved = resolvePathToolchain(`${dir}${delimiter}${process.env["PATH"] ?? ""}`);
+    check(
+      resolved.node.path === fake && resolved.node.version === "v24.14.1",
+      "live: PATH resolves the first node on PATH and reads its version",
+    );
+    const reasons = toolchainPrecheckReasons(COMMITTED, resolved);
+    check(
+      reasons.some((r) => r.includes(fake)),
+      "live: the precheck names the PATH-resolved node",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function selfTest(): number {
+  const failures: string[] = [];
+  let cases = 0;
+  const check = (ok: boolean, label: string): void => {
+    cases += 1;
+    if (!ok) failures.push(label);
+  };
+  pureCases(check);
+  liveCase(check);
+  for (const f of failures) process.stdout.write(`toolchain self-test FAIL: ${f}\n`);
+  process.stdout.write(
+    `toolchain self-test: ${failures.length === 0 ? "PASS" : "FAIL"} (${String(cases - failures.length)}/${String(cases)} cases)\n`,
+  );
+  return failures.length === 0 ? 0 : 1;
+}
+
+if (import.meta.main && process.argv.includes("--self-test")) {
+  process.exit(selfTest());
 }
