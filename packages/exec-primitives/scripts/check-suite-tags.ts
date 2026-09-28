@@ -6,7 +6,10 @@
  * the nearest enclosing describe(). Tag minimums and the ≥15-test floor are
  * counted from EXECUTED titles — the suite is run and the (pass)/(fail) lines
  * parsed — so a deleted or commented-out test can never count toward a
- * minimum.
+ * minimum. The run must agree with bun's own JUnit report
+ * (bun-test-junit.ts), and every executed title must match a static test(
+ * title in the comment-stripped sources (suite-titles.ts), so a result line
+ * printed by test code cannot count either.
  *
  * infra-host parity suite (consumers/infra-host/test/*.parity.ts): tags go on
  * test titles directly, and every required infra id ([T1], [T3], [T4], [T6],
@@ -36,8 +39,10 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, bunTestResultText, parseBunTest } from "./bun-test-parse.js";
+import { junitArgs, verifyBunTestRun } from "./bun-test-junit.js";
+import { agentFreeEnv } from "./bun-test-parse.js";
 import { stripComments } from "./closure-audit-core.js";
+import { describeTitlesOf, testSources, titlesOf, unmatchedTitles } from "./suite-titles.js";
 
 const SCRIPTS_DIR = import.meta.dir;
 const PACKAGE_DIR = dirname(SCRIPTS_DIR);
@@ -45,6 +50,7 @@ const TEST_DIR = join(PACKAGE_DIR, "test");
 const CONSUMERS_DIR = join(PACKAGE_DIR, "qualification", "consumers");
 const INFRA_DIR = join(CONSUMERS_DIR, "infra-host");
 const PEN_DIR = join(CONSUMERS_DIR, "penumbra-host");
+const JUNIT_PATH = join(PACKAGE_DIR, "..", "..", "tmp", "sharedlib6", "junit", "suite-tags.xml");
 
 /** Package-suite boundary tags and their distinct-test minimums. */
 const TAG_MINIMUMS: Record<string, number> = {
@@ -79,10 +85,6 @@ const INFRA_REQUIRED_IDS = [
 const MIN_INFRA_TESTS = 13;
 
 const TAG_RE = /\[([A-Z][A-Z0-9-]*)\]/;
-const TITLE_RE = /\b(?:test|it)\s*\(\s*(["'`])([\s\S]*?)\1/g;
-// test.each(<rows>)("title") — the rows argument may itself contain brackets.
-const EACH_TITLE_RE = /\b(?:test|it)\.each\s*\([\s\S]*?\)\s*\(\s*(["'`])([\s\S]*?)\1/g;
-const DESCRIBE_RE = /\bdescribe\s*\(\s*(["'`])([\s\S]*?)\1/g;
 
 const findings: string[] = [];
 
@@ -90,44 +92,25 @@ function rel(path: string): string {
   return path.slice(PACKAGE_DIR.length + 1);
 }
 
-interface Title {
-  index: number;
-  text: string;
-}
-
-function titlesOf(src: string): Title[] {
-  const plain = [...src.matchAll(TITLE_RE)].map((m) => ({
-    index: m.index,
-    text: m[2] ?? "",
-  }));
-  const each = [...src.matchAll(EACH_TITLE_RE)].map((m) => ({
-    index: m.index,
-    text: m[2] ?? "",
-  }));
-  return [...plain, ...each].sort((a, b) => a.index - b.index);
-}
-
 function describesOf(src: string): { index: number; tag: string | undefined }[] {
-  return [...src.matchAll(DESCRIBE_RE)].map((m) => ({
-    index: m.index,
-    tag: TAG_RE.exec(m[2] ?? "")?.[1],
-  }));
+  return describeTitlesOf(src).map((d) => ({ index: d.index, tag: TAG_RE.exec(d.text)?.[1] }));
 }
 
-/** Executed test titles — "(pass) describe > test [12ms]" lines from a real
- * `bun test` run under agentFreeEnv(), deduped. test.each rows resolve into
- * distinct executions. `problem` is set when the result lines cannot account
- * for the summary (agent-mode output) — the count is then refused. */
+/** Executed test titles — "(pass) describe > test [12ms]" lines on stderr
+ * from a real `bun test` run under agentFreeEnv(), deduped. test.each rows
+ * resolve into distinct executions. `problem` is set when the stderr results
+ * cannot account for bun's summary or disagree with bun's JUnit report
+ * (bun-test-junit.ts) — the count is then refused. */
 function executedTitles(): { titles: string[]; ran: boolean; problem: string | undefined } {
-  const r = spawnSync("bun", ["test", "test/"], {
+  const r = spawnSync("bun", ["test", "test/", ...junitArgs(JUNIT_PATH)], {
     cwd: PACKAGE_DIR,
     env: agentFreeEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 600_000,
   });
-  const parsed = parseBunTest(bunTestResultText(r), "test/");
-  return { titles: parsed.titles, ran: parsed.summary.ran !== null, problem: parsed.problem };
+  const { parse, problem } = verifyBunTestRun(r, JUNIT_PATH, "test/");
+  return { titles: parse.titles, ran: parse.summary.ran !== null, problem };
 }
 
 // Scope A — scanned for skip/mock patterns: package test/ plus every
@@ -209,6 +192,11 @@ if (!suiteRan) {
   findings.push("test/: bun test never reached its summary line — cannot count executed titles");
 }
 if (titleProblem !== undefined) findings.push(titleProblem);
+// Every executed title must come from a test( call in the comment-stripped
+// sources: a result line printed by test code names no such call.
+for (const t of unmatchedTitles(executed, testSources(TEST_DIR))) {
+  findings.push(`test/: executed title with no static test( title: ${JSON.stringify(t)}`);
+}
 // Executed lines are "describe > ... > test": the test's own tag wins, then
 // the nearest enclosing describe — same resolution as the static pass below.
 function executedTag(title: string): string | undefined {
