@@ -56,6 +56,8 @@ import {
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { bunTestStepCounts, resultLogPath } from "./bun-test-parse.js";
+
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = join(PACKAGE_DIR, "..", "..");
 const RUN_DIR = join(REPO_ROOT, "tmp", "sharedlib6");
@@ -103,7 +105,17 @@ interface CmdResult {
 
 const problems: string[] = [];
 
-function cmd(argv: string[], cwd: string, env: NodeJS.ProcessEnv, name: string): CmdResult {
+/** Runs one step. A `bun test` step takes its counts and failing titles
+ * from stderr alone (bunTestStepCounts) and fails closed when they are
+ * unsound; `loadFailureExpected` marks the poison run, whose test files must
+ * fail to load. */
+function cmd(
+  argv: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  name: string,
+  loadFailureExpected = false,
+): CmdResult {
   const [bin, ...args] = argv;
   if (bin === undefined) throw new Error(`cmd ${name}: empty argv`);
   const r = spawnSync(bin, args, {
@@ -114,28 +126,26 @@ function cmd(argv: string[], cwd: string, env: NodeJS.ProcessEnv, name: string):
     timeout: 600_000,
   });
   const stdout = r.stdout;
-  const output = `${stdout}${r.stderr}`;
   const logFile = join(LOG_DIR, `${name}.log`);
-  writeFileSync(logFile, output);
+  writeFileSync(logFile, `${stdout}${r.stderr}`);
+  writeFileSync(resultLogPath(logFile), r.stderr);
   if (r.error !== undefined) {
     problems.push(`${name}: spawn failed: ${String(r.error)}`);
   }
+  const counts =
+    bin === "bun" && args[0] === "test"
+      ? bunTestStepCounts(r, name, loadFailureExpected)
+      : { pass: 0, fail: 0, failing: [], problem: undefined };
+  if (counts.problem !== undefined) problems.push(counts.problem);
   return {
     cmd: argv.map((a) => (a.startsWith(REPO_ROOT + sep) ? relative(REPO_ROOT, a) : a)),
     exit: r.status ?? 1,
-    pass: parseCount(output, /^\s*(\d+) pass$/m),
-    fail: parseCount(output, /^\s*(\d+) fail$/m),
-    failing: [...output.matchAll(/^\(fail\) (.+)$/gm)]
-      .map((m) => (m[1] ?? "").replace(/ \[[\d.]+m?s\]$/, ""))
-      .filter((t) => t !== ""),
+    pass: counts.pass,
+    fail: counts.fail,
+    failing: counts.failing,
     log: relative(RUN_DIR, logFile),
     stdout,
   };
-}
-
-function parseCount(output: string, pattern: RegExp): number {
-  const m = pattern.exec(output);
-  return m === null ? 0 : Number(m[1]);
 }
 
 function readJson(path: string): unknown {
@@ -461,7 +471,7 @@ function poisonRun(
   const original = readFileSync(entry);
   try {
     writeFileSync(entry, `throw new Error("poisoned installed entry (qualification)")\n`);
-    const run = cmd(["bun", "test"], copyRoot, runEnv, `${name}-poison-run`);
+    const run = cmd(["bun", "test"], copyRoot, runEnv, `${name}-poison-run`, true);
     if (run.pass !== 0) {
       problems.push(`${name}: ${String(run.pass)} test(s) passed against a poisoned artifact`);
     }

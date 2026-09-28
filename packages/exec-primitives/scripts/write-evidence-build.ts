@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import type { PerFileRow, Section2Row } from "./write-evidence-md.js";
 
-import { parseBunTest } from "./bun-test-parse.js";
+import { parseResultLog } from "./bun-test-parse.js";
 import {
   ARTIFACT_FILES,
   auditCounts,
@@ -76,9 +76,9 @@ function logText(logDir: string, name: string): string {
 
 /** [tag] titles passing in the gate log (RED/GREEN table, blockers). */
 function tagPassCounts(logDir: string): Record<string, number> {
-  const parsed = parseBunTest(
-    logText(logDir, "check-bun-test-gate.log"),
-    "check-bun-test-gate.log",
+  const parsed = parseResultLog(
+    join(logDir, "check-bun-test-gate.log"),
+    "check-bun-test-gate.stderr.log",
   );
   if (parsed.problem !== undefined) throw new Error(parsed.problem);
   const counts: Record<string, number> = {};
@@ -92,7 +92,7 @@ function tagPassCounts(logDir: string): Record<string, number> {
 function titlesFromLog(runDir: string, logRel: string): string[] {
   const path = join(runDir, logRel);
   if (!existsSync(path)) return [];
-  const parsed = parseBunTest(readFileSync(path, "utf8"), logRel);
+  const parsed = parseResultLog(path, logRel);
   if (parsed.problem !== undefined) throw new Error(parsed.problem);
   return parsed.titles;
 }

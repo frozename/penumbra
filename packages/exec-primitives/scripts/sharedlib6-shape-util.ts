@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseBunTest } from "./bun-test-parse.js";
+import { parseResultLog } from "./bun-test-parse.js";
 
 export const BASE_SHA = "c264644bc2b4f1e1429e845208fd6ca7f6426d62";
 export const EVIDENCE_DATE = "2026-09-24";
@@ -188,13 +188,13 @@ export function leaf(title: string): string {
   return idx === -1 ? title : title.slice(idx + 3);
 }
 
-/** Executed full titles from a `bun test` log file under the run dir. A log
- * whose result lines cannot account for its summary is refused: the reason
- * goes to `problems` (bun-test-parse.ts). */
+/** Executed full titles from the stderr-only sibling of a `bun test` log
+ * under the run dir. A log whose result lines cannot account for its summary
+ * is refused: the reason goes to `problems` (bun-test-parse.ts). */
 export function titlesFromLog(ctx: ShapeContext, logRel: string, problems: string[]): string[] {
   const path = join(ctx.runDir, logRel);
   if (logRel === "" || !existsSync(path)) return [];
-  const parsed = parseBunTest(readFileSync(path, "utf8"), logRel);
+  const parsed = parseResultLog(path, logRel);
   if (parsed.problem !== undefined) problems.push(parsed.problem);
   return parsed.titles;
 }

@@ -3,10 +3,10 @@
  * fresh run artifacts. Verdicts are computed from measurements, never
  * asserted.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseBunTest } from "./bun-test-parse.js";
+import { parseResultLog } from "./bun-test-parse.js";
 
 export interface Step {
   name?: string;
@@ -68,7 +68,7 @@ function consumerGreen(consumers: Record<string, unknown>, name: string): boolea
 export function tagPass(ctx: GateCtx, tag: string): boolean {
   const log = join(ctx.logDir, "check-bun-test-gate.log");
   if (!existsSync(log)) return false;
-  const parsed = parseBunTest(readFileSync(log, "utf8"), "check-bun-test-gate.log");
+  const parsed = parseResultLog(log, "check-bun-test-gate.stderr.log");
   if (parsed.problem !== undefined) throw new Error(parsed.problem);
   const has = (titles: string[]): boolean => titles.some((t) => t.includes(`[${tag}]`));
   return has(parsed.passTitles) && !has(parsed.failTitles);

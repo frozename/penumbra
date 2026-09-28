@@ -15,7 +15,12 @@
  *   3. fourteen ordered steps (below). Every step runs even when an earlier
  *      one failed; one line per step is printed. The fence runs AFTER qualify
  *      and the tarball audit so it observes the tree the way the composite
- *      will leave it.
+ *      will leave it. Every step logs its combined output to
+ *      check-<name>.log and its stderr alone to check-<name>.stderr.log;
+ *      bun test results and counts are read from the stderr log only. The
+ *      test-gate step also refuses the package suite run when its stderr
+ *      results disagree with bun's JUnit report or name a title with no
+ *      static test( call (check-test-gate-results.log).
  *   4. SHAPE (sharedlib6-shape.ts) — the committed .json must equal the
  *      record the evidence writer's builder produces from this run (a short
  *      list of exempt fields is each bound by its own rule instead),
@@ -38,7 +43,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, bunTestSummary } from "./bun-test-parse.js";
+import { junitArgs, verifyBunTestRun } from "./bun-test-junit.js";
+import { agentFreeEnv, bunTestSummary, resultLogPath } from "./bun-test-parse.js";
 import { fenceNameDiffArgs, fenceReasons } from "./sharedlib6-fence.js";
 import { resolvePathToolchain, toolchainPrecheckReasons } from "./sharedlib6-shape-env.js";
 import {
@@ -49,6 +55,7 @@ import {
   rec,
 } from "./sharedlib6-shape-util.js";
 import { buildShapeContext, runShape } from "./sharedlib6-shape.js";
+import { testSources, unmatchedTitles } from "./suite-titles.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -64,6 +71,8 @@ const SECTION2_JSON = join(RUN_DIR, "section2.json");
 interface CmdOut {
   exit: number;
   output: string;
+  /** The step's stderr alone — where bun writes its results and summary. */
+  stderr: string;
 }
 
 function run(argv: string[], cwd: string, env?: NodeJS.ProcessEnv): CmdOut {
@@ -81,14 +90,16 @@ function run(argv: string[], cwd: string, env?: NodeJS.ProcessEnv): CmdOut {
   });
   const output = `${r.stdout}${r.stderr}`;
   if (r.error !== undefined) {
-    return { exit: 1, output: `${output}spawn error: ${String(r.error)}` };
+    return { exit: 1, output: `${output}spawn error: ${String(r.error)}`, stderr: r.stderr };
   }
-  return { exit: r.status ?? 1, output };
+  return { exit: r.status ?? 1, output, stderr: r.stderr };
 }
 
 function runLogged(argv: string[], cwd: string, logName: string, env?: NodeJS.ProcessEnv): CmdOut {
   const r = run(argv, cwd, env);
-  writeFileSync(join(LOG_DIR, `check-${logName}.log`), r.output);
+  const log = join(LOG_DIR, `check-${logName}.log`);
+  writeFileSync(log, r.output);
+  writeFileSync(resultLogPath(log), r.stderr);
   return r;
 }
 
@@ -131,33 +142,24 @@ if (KEEP) {
   precheckFailures.push(...toolchainMismatch);
 }
 
-const toolchainSelfTest = runLogged(
-  ["bun", "scripts/sharedlib6-shape-env.ts", "--self-test"],
-  PACKAGE_DIR,
-  "precheck-toolchain-self-test",
-);
-if (toolchainSelfTest.exit !== 0) precheckFailures.push("sharedlib6-shape-env --self-test");
-
-const selfTest = runLogged(
-  ["bun", "scripts/closure-audit.ts", "--self-test"],
-  PACKAGE_DIR,
-  "precheck-closure-self-test",
-);
-if (selfTest.exit !== 0) precheckFailures.push("closure-audit --self-test");
-
-const parseSelfTest = runLogged(
-  ["bun", "scripts/bun-test-parse.ts", "--self-test"],
-  PACKAGE_DIR,
-  "precheck-bun-test-parse-self-test",
-);
-if (parseSelfTest.exit !== 0) precheckFailures.push("bun-test-parse --self-test");
-
-const fenceSelfTest = runLogged(
-  ["bun", "scripts/sharedlib6-fence.ts", "--self-test"],
-  PACKAGE_DIR,
-  "precheck-fence-self-test",
-);
-if (fenceSelfTest.exit !== 0) precheckFailures.push("sharedlib6-fence --self-test");
+// [script, precheck log name] — each runs with --self-test and must exit 0.
+const SELF_TESTS: [string, string][] = [
+  ["sharedlib6-shape-env", "toolchain"],
+  ["closure-audit", "closure"],
+  ["bun-test-parse", "bun-test-parse"],
+  ["bun-test-junit", "bun-test-junit"],
+  ["suite-titles", "suite-titles"],
+  ["run-mutations", "run-mutations"],
+  ["sharedlib6-fence", "fence"],
+];
+for (const [script, log] of SELF_TESTS) {
+  const r = runLogged(
+    ["bun", `scripts/${script}.ts`, "--self-test"],
+    PACKAGE_DIR,
+    `precheck-${log}-self-test`,
+  );
+  if (r.exit !== 0) precheckFailures.push(`${script} --self-test`);
+}
 
 const remote = git(["remote", "get-url", "origin"]);
 if (remote.exit !== 0 || !remote.output.includes("frozename/penumbra")) {
@@ -198,7 +200,7 @@ function recordGate(gate: string, outs: CmdOut[], logNames: string[], gating = t
   let pass: number | null = null;
   let fail: number | null = null;
   for (const o of outs) {
-    const c = counts(o.output);
+    const c = counts(o.stderr);
     if (c.pass !== null) pass = (pass ?? 0) + c.pass;
     if (c.fail !== null) fail = (fail ?? 0) + c.fail;
   }
@@ -281,15 +283,42 @@ recordGate(
   ["prettier"],
 );
 
-// 7. package tests + suite-tag discipline
-recordGate(
-  "test-gate",
-  [
-    runLogged(["bun", "scripts/bun-test-gate.ts", "packages/exec-primitives"], R, "bun-test-gate"),
-    runLogged(["bun", "scripts/check-suite-tags.ts"], P, "suite-tags"),
-  ],
-  ["bun-test-gate", "suite-tags"],
-);
+// 7. package tests + suite-tag discipline. The suite run's stderr results
+// must agree with bun's JUnit report and name only titles that a static
+// test( call declares; SHAPE and the writer read the same stderr log.
+const GATE_JUNIT = join(LOG_DIR, "check-bun-test-gate.junit.xml");
+
+function gateResults(gate: CmdOut): CmdOut {
+  const { parse, problem } = verifyBunTestRun(
+    { stdout: "", stderr: gate.stderr },
+    GATE_JUNIT,
+    "check-bun-test-gate.stderr.log",
+  );
+  const stray = unmatchedTitles(parse.titles, testSources(join(P, "test")));
+  const reasons = [
+    ...(problem === undefined ? [] : [problem]),
+    ...stray.map((t) => `executed title with no static test( title: ${JSON.stringify(t)}`),
+  ];
+  const output =
+    reasons.length === 0
+      ? `test-gate results: PASS (${String(parse.titles.length)} titles; JUnit report and static titles agree)\n`
+      : `${reasons.map((r) => `test-gate results: ${r}`).join("\n")}\n`;
+  writeFileSync(join(LOG_DIR, "check-test-gate-results.log"), output);
+  return { exit: reasons.length === 0 ? 0 : 1, output, stderr: "" };
+}
+
+{
+  const gate = runLogged(
+    ["bun", "scripts/bun-test-gate.ts", "packages/exec-primitives", ...junitArgs(GATE_JUNIT)],
+    R,
+    "bun-test-gate",
+  );
+  recordGate(
+    "test-gate",
+    [gate, gateResults(gate), runLogged(["bun", "scripts/check-suite-tags.ts"], P, "suite-tags")],
+    ["bun-test-gate", "test-gate-results", "suite-tags"],
+  );
+}
 
 // 8. mutation loop
 recordGate(
@@ -377,7 +406,7 @@ recordGate(
     adapterDiff.output.trim() === "" &&
     status.output.trim() === "" &&
     qualStatus.output.trim() === "";
-  recordGate("fence", [{ exit: clean ? 0 : 1, output }], ["fence"]);
+  recordGate("fence", [{ exit: clean ? 0 : 1, output, stderr: "" }], ["fence"]);
 }
 
 // 14. root lint — recorded, non-gating

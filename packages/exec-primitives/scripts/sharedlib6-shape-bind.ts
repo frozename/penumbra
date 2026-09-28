@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseBunTest } from "./bun-test-parse.js";
+import { parseResultLog } from "./bun-test-parse.js";
 import { consumerStepFailures } from "./sharedlib6-shape-measured.js";
 import {
   auditCounts,
@@ -409,8 +409,7 @@ export function shapeAllowlistEntries(ctx: ShapeContext, evidence: Ev): string[]
 }
 
 function gateTagGreen(ctx: ShapeContext, tag: string): boolean {
-  const path = join(ctx.logDir, "check-bun-test-gate.log");
-  const parsed = parseBunTest(existsSync(path) ? readFileSync(path, "utf8") : "", path);
+  const parsed = parseResultLog(join(ctx.logDir, "check-bun-test-gate.log"), "gate results");
   const has = (titles: string[]): boolean => titles.some((t) => t.includes(`[${tag}]`));
   return parsed.problem === undefined && has(parsed.passTitles) && !has(parsed.failTitles);
 }
