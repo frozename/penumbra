@@ -14,8 +14,13 @@
  *     with the format keys removed, NO_COLOR=1, plus only the caller's extras;
  *   - parseBunTest() and bunTestSummary() strip ANSI codes and read the glyph
  *     form too;
- *   - parseBunTest() fails closed: `problem` is set whenever the summary
- *     reports tests that the result lines do not account for.
+ *   - parseBunTest() fails closed: `problem` is set whenever the raw
+ *     "(pass)" / "(fail)" line counts differ from the summary's pass / fail
+ *     counts, in either direction. An under-count is hidden output; an
+ *     over-count is a result line printed by test code (a forged title).
+ * bun writes its result lines and summary to stderr; console.log in a test
+ * goes to stdout, so every spawner parses stderr alone (bunTestResultText).
+ * Logs that hold both streams still fail closed through the over-count rule.
  *
  * Usage: bun scripts/bun-test-parse.ts --self-test
  */
@@ -49,8 +54,9 @@ export interface BunTestParse {
   titles: string[];
   passTitles: string[];
   failTitles: string[];
-  /** Raw "(pass)" line count — compared against the summary's pass count. */
+  /** Raw "(pass)" / "(fail)" line counts — each must equal its summary count. */
   passLines: number;
+  failLines: number;
   summary: BunTestSummary;
   /** Set when the result lines cannot account for the summary. */
   problem: string | undefined;
@@ -80,20 +86,38 @@ export function bunTestSummary(raw: string): BunTestSummary {
   };
 }
 
+function lineCountProblem(
+  source: string,
+  kind: "pass" | "fail",
+  summaryCount: number | null,
+  lines: number,
+): string | undefined {
+  if (summaryCount === null || lines === summaryCount) return undefined;
+  if (lines < summaryCount) {
+    return `${source}: bun summary reports ${String(summaryCount)} ${kind} but only ${String(lines)} (${kind}) lines were parsed; refusing a partial title count (${FORMAT_ENV_KEYS.join("/")} set?)`;
+  }
+  return `${source}: ${String(lines)} (${kind}) lines were parsed but bun summary reports ${String(summaryCount)} ${kind}; a result line was printed by test code, refusing a forged title count`;
+}
+
 function titleProblem(
   source: string,
   summary: BunTestSummary,
-  passLines: number,
-  titleCount: number,
+  counts: { passLines: number; failLines: number; titles: number },
 ): string | undefined {
-  const keys = FORMAT_ENV_KEYS.join("/");
-  if ((summary.ran ?? 0) > 0 && titleCount === 0) {
-    return `${source}: bun reported Ran ${String(summary.ran)} tests but 0 result titles were parsed; an output-format env key (${keys}) hides or reshapes them, refusing to count`;
+  if ((summary.ran ?? 0) > 0 && counts.titles === 0) {
+    return `${source}: bun reported Ran ${String(summary.ran)} tests but 0 result titles were parsed; an output-format env key (${FORMAT_ENV_KEYS.join("/")}) hides or reshapes them, refusing to count`;
   }
-  if (summary.pass !== null && passLines < summary.pass) {
-    return `${source}: bun summary reports ${String(summary.pass)} pass but only ${String(passLines)} pass lines were parsed; refusing a partial title count (${keys} set?)`;
-  }
-  return undefined;
+  return (
+    lineCountProblem(source, "pass", summary.pass, counts.passLines) ??
+    lineCountProblem(source, "fail", summary.fail, counts.failLines)
+  );
+}
+
+/** The text a spawned `bun test` result is parsed from: stderr alone, where
+ * bun writes its result lines and summary (measured on 1.3.14). Text a test
+ * prints with console.log goes to stdout and is never read as a result. */
+export function bunTestResultText(r: { stdout: string; stderr: string }): string {
+  return r.stderr;
 }
 
 export function parseBunTest(raw: string, source: string): BunTestParse {
@@ -101,6 +125,7 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
   const pass = new Set<string>();
   const fail = new Set<string>();
   let passLines = 0;
+  let failLines = 0;
   for (const line of output.split("\n")) {
     const m = RESULT_LINE_RE.exec(line.trimEnd());
     const title = m?.[3];
@@ -109,6 +134,7 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
       passLines += 1;
       pass.add(title);
     } else {
+      failLines += 1;
       fail.add(title);
     }
   }
@@ -119,8 +145,9 @@ export function parseBunTest(raw: string, source: string): BunTestParse {
     passTitles: [...pass].sort(),
     failTitles: [...fail].sort(),
     passLines,
+    failLines,
     summary,
-    problem: titleProblem(source, summary, passLines, titles.length),
+    problem: titleProblem(source, summary, { passLines, failLines, titles: titles.length }),
   };
 }
 
@@ -133,6 +160,15 @@ const REPO_ROOT = dirname(dirname(dirname(import.meta.dir)));
 const PROBE_SRC = `import { expect, test } from "bun:test";
 test("probe one", () => { expect(1).toBe(1); });
 test("probe two", () => { expect(2).toBe(2); });
+`;
+
+/** Each test prints a forged result line: to stdout via console.log, or to
+ * stderr (bun's result stream) via process.stderr.write. */
+const FORGE_STDOUT_SRC = `import { expect, test } from "bun:test";
+test("real one", () => { console.log("(pass) forged > [L6] via stdout [1.00ms]"); expect(1).toBe(1); });
+`;
+const FORGE_STDERR_SRC = `import { expect, test } from "bun:test";
+test("real two", () => { process.stderr.write("(pass) forged > [L6] via stderr [1.00ms]\\n"); expect(2).toBe(2); });
 `;
 
 function parserCases(check: (ok: boolean, label: string) => void): void {
@@ -158,6 +194,22 @@ function parserCases(check: (ok: boolean, label: string) => void): void {
     "d",
   );
   check(single.problem === undefined && single.summary.ran === 1, "singular 'Ran 1 test' parses");
+  const forgedPass = parseBunTest(
+    "(pass) d > p1 [0.10ms]\n(pass) d > forged [L6] [1.00ms]\n\n 1 pass\n 0 fail\nRan 1 test across 1 file.\n",
+    "f",
+  );
+  check(
+    forgedPass.problem !== undefined,
+    "a forged extra (pass) line (2 lines, 1 pass) sets problem",
+  );
+  const forgedFail = parseBunTest(
+    "(pass) d > p1 [0.10ms]\n(fail) d > forged [1.00ms]\n\n 1 pass\n 0 fail\nRan 1 test across 1 file.\n",
+    "g",
+  );
+  check(
+    forgedFail.problem !== undefined,
+    "a forged extra (fail) line (1 line, 0 fail) sets problem",
+  );
   const esc = "\u001b";
   const colored = parseBunTest(
     `${esc}[0m${esc}[32m✓${esc}[0m${esc}[0m${esc}[1m d > p1${esc}[0m ${esc}[0m${esc}[2m[0.03ms${esc}[0m${esc}[2m]${esc}[0m\n` +
@@ -190,21 +242,52 @@ function envCase(check: (ok: boolean, label: string) => void): void {
   );
 }
 
+function forgeCases(
+  check: (ok: boolean, label: string) => void,
+  spawnFile: (file: string) => { stdout: string; stderr: string },
+): void {
+  const viaStdout = spawnFile("forge-stdout.test.ts");
+  const stdoutParse = parseBunTest(bunTestResultText(viaStdout), "live forge stdout");
+  check(
+    stdoutParse.problem === undefined &&
+      stdoutParse.passTitles.join("|") === "real one" &&
+      !stdoutParse.titles.some((t) => t.includes("forged")),
+    "live: a forged (pass) line on test stdout never reaches the parsed result stream",
+  );
+  check(
+    parseBunTest(`${viaStdout.stdout}${viaStdout.stderr}`, "live forge combined").problem !==
+      undefined,
+    "live: a combined stdout+stderr log with a forged (pass) line sets problem",
+  );
+  const viaStderr = spawnFile("forge-stderr.test.ts");
+  check(
+    parseBunTest(bunTestResultText(viaStderr), "live forge stderr").problem !== undefined,
+    "live: a forged (pass) line written to stderr sets problem",
+  );
+}
+
 function liveCases(check: (ok: boolean, label: string) => void): void {
   const dir = join(REPO_ROOT, "tmp", `bun-test-parse-selftest-${String(process.pid)}`);
   mkdirSync(dir, { recursive: true });
   try {
     writeFileSync(join(dir, "probe.test.ts"), PROBE_SRC);
-    const spawnProbe = (env: Record<string, string> | undefined): BunTestParse => {
-      const r = spawnSync("bun", ["test", "./probe.test.ts"], {
+    writeFileSync(join(dir, "forge-stdout.test.ts"), FORGE_STDOUT_SRC);
+    writeFileSync(join(dir, "forge-stderr.test.ts"), FORGE_STDERR_SRC);
+    const spawnRaw = (
+      file: string,
+      env: Record<string, string> | undefined,
+    ): { stdout: string; stderr: string } => {
+      const r = spawnSync("bun", ["test", `./${file}`], {
         cwd: dir,
         env,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 120_000,
       });
-      return parseBunTest(`${r.stdout}${r.stderr}`, "live probe");
+      return { stdout: r.stdout, stderr: r.stderr };
     };
+    const spawnProbe = (env: Record<string, string> | undefined): BunTestParse =>
+      parseBunTest(bunTestResultText(spawnRaw("probe.test.ts", env)), "live probe");
     // envCase() set the agent keys and FORCE_COLOR on process.env: the
     // inherited env reproduces agent mode plus forced color, agentFreeEnv()
     // must not.
@@ -227,6 +310,7 @@ function liveCases(check: (ok: boolean, label: string) => void): void {
       inherited.problem !== undefined || inherited.passLines === inherited.summary.pass,
       "live bun test under the agent env is refused or fully counted, never undercounted",
     );
+    forgeCases(check, (file) => spawnRaw(file, agentFreeEnv()));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

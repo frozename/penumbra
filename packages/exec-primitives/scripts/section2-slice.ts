@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
 
-import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
+import { agentFreeEnv, bunTestResultText, parseBunTest } from "./bun-test-parse.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -72,7 +72,7 @@ function runSlice(path: string): SliceRecord {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 600_000,
   });
-  const parsed = parseBunTest(`${r.stdout}${r.stderr}`, path);
+  const parsed = parseBunTest(bunTestResultText(r), path);
   if (parsed.problem !== undefined) titleProblems.push(parsed.problem);
   return {
     exit: r.status ?? 1,

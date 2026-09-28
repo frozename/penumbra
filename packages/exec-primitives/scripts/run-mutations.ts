@@ -15,7 +15,7 @@
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, parseBunTest, stripAnsi } from "./bun-test-parse.js";
+import { agentFreeEnv, bunTestResultText, parseBunTest, stripAnsi } from "./bun-test-parse.js";
 
 const PACKAGE_DIR = dirname(import.meta.dir);
 const REPO_ROOT = dirname(dirname(PACKAGE_DIR));
@@ -153,7 +153,7 @@ function runSuite(): SuiteRun {
     code: t.code,
     counts: summaryCounts(output),
     failing: failingTitles(output),
-    titleProblem: parseBunTest(output, "package suite").problem,
+    titleProblem: parseBunTest(bunTestResultText(t), "package suite").problem,
   };
 }
 

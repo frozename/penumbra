@@ -36,7 +36,7 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { agentFreeEnv, parseBunTest } from "./bun-test-parse.js";
+import { agentFreeEnv, bunTestResultText, parseBunTest } from "./bun-test-parse.js";
 import { stripComments } from "./closure-audit-core.js";
 
 const SCRIPTS_DIR = import.meta.dir;
@@ -126,7 +126,7 @@ function executedTitles(): { titles: string[]; ran: boolean; problem: string | u
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 600_000,
   });
-  const parsed = parseBunTest(`${r.stdout}${r.stderr}`, "test/");
+  const parsed = parseBunTest(bunTestResultText(r), "test/");
   return { titles: parsed.titles, ran: parsed.summary.ran !== null, problem: parsed.problem };
 }
 
