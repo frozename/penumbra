@@ -366,7 +366,7 @@ export const OPEN_FINDINGS: Record<string, unknown>[] = [
   {
     id: "timing-window-load-sensitivity",
     finding:
-      "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a READY handshake (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
+      "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a marker-line handshake: the child prints a marker after its traps and the test waits for it (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
     status: "open",
     pointer: "test/process-supervisor.test.ts, test/helpers.ts waitForText",
   },
