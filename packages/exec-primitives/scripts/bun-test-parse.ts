@@ -21,6 +21,9 @@
  *     A "(pass) " / "(fail) " token anywhere but at a line start is refused
  *     too: a forged line that ends in a partial line splices bun's next
  *     result line onto it, which would keep the counts equal.
+ *     The lines after bun's last "N tests failed:" header are its failure
+ *     recap: they are not counted again, and must repeat exactly the
+ *     failures above them (N equal to the summary's fail count).
  * bun writes its result lines and summary to stderr; console.log in a test
  * goes to stdout, so every spawner parses stderr alone (bunTestResultText).
  * Logs that hold both streams still fail closed through the over-count rule.
@@ -70,6 +73,8 @@ export interface BunTestParse {
 const RESULT_LINE_RE = /^(?:\((pass|fail)\)|(✓|✗)) (.+?)(?: \[[\d.]+m?s\])?$/;
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const PLAIN_TOKEN_RE = /\((?:pass|fail)\) /g;
+/** The header of bun's failure recap, printed after the last file. */
+const RECAP_RE = /^(\d+) tests? failed:$/;
 
 /** Output with every ANSI SGR sequence removed. */
 export function stripAnsi(output: string): string {
@@ -133,42 +138,91 @@ export function bunTestResultText(r: { stdout: string; stderr: string }): string
   return r.stderr;
 }
 
-export function parseBunTest(raw: string, source: string): BunTestParse {
-  const output = stripAnsi(raw);
-  const pass = new Set<string>();
-  const fail = new Set<string>();
-  let passLines = 0;
-  let failLines = 0;
-  let plainLines = 0;
-  for (const line of output.split("\n")) {
+interface Section {
+  pass: string[];
+  fail: string[];
+  /** Plain-form "(pass) t" / "(fail) t" result lines. */
+  plainLines: number;
+  /** "(pass) " / "(fail) " tokens anywhere in the section. */
+  plainTokens: number;
+}
+
+function scanSection(lines: string[]): Section {
+  const out: Section = { pass: [], fail: [], plainLines: 0, plainTokens: 0 };
+  for (const line of lines) {
+    out.plainTokens += line.match(PLAIN_TOKEN_RE)?.length ?? 0;
     const m = RESULT_LINE_RE.exec(line.trimEnd());
     const title = m?.[3];
     if (title === undefined || title === "") continue;
-    if (m?.[1] !== undefined) plainLines += 1;
-    if (m?.[1] === "pass" || m?.[2] === "✓") {
-      passLines += 1;
-      pass.add(title);
-    } else {
-      failLines += 1;
-      fail.add(title);
+    if (m?.[1] !== undefined) out.plainLines += 1;
+    if (m?.[1] === "pass" || m?.[2] === "✓") out.pass.push(title);
+    else out.fail.push(title);
+  }
+  return out;
+}
+
+/** bun's failure recap must repeat exactly the failures above it, no more. */
+function recapProblem(
+  source: string,
+  recap: Section,
+  headerCount: number,
+  main: Section,
+  summaryFail: number | null,
+): string | undefined {
+  const sorted = (xs: string[]): string => JSON.stringify([...xs].sort());
+  if (recap.pass.length > 0 || recap.plainTokens !== recap.plainLines) {
+    return `${source}: bun's failure recap carries a (pass) line or a spliced result token; refusing a forged title count`;
+  }
+  if (
+    headerCount !== summaryFail ||
+    recap.fail.length !== headerCount ||
+    sorted(recap.fail) !== sorted(main.fail)
+  ) {
+    return `${source}: bun's failure recap (${String(headerCount)} tests failed, ${String(recap.fail.length)} lines) does not repeat exactly the ${String(main.fail.length)} (fail) lines above it and the summary's ${String(summaryFail)} fail; refusing`;
+  }
+  return undefined;
+}
+
+export function parseBunTest(raw: string, source: string): BunTestParse {
+  const output = stripAnsi(raw);
+  const lines = output.split("\n");
+  let recapAt = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (RECAP_RE.test((lines[i] ?? "").trimEnd())) {
+      recapAt = i;
+      break;
     }
   }
+  const main = scanSection(recapAt === -1 ? lines : lines.slice(0, recapAt));
+  const pass = new Set(main.pass);
+  const fail = new Set(main.fail);
   const summary = bunTestSummary(output);
   const titles = [...new Set([...pass, ...fail])].sort();
+  const headerCount = Number(RECAP_RE.exec((lines[recapAt] ?? "").trimEnd())?.[1] ?? "0");
   return {
     titles,
     passTitles: [...pass].sort(),
     failTitles: [...fail].sort(),
-    passLines,
-    failLines,
+    passLines: main.pass.length,
+    failLines: main.fail.length,
     summary,
-    problem: titleProblem(source, summary, {
-      passLines,
-      failLines,
-      titles: titles.length,
-      plainLines,
-      plainTokens: output.match(PLAIN_TOKEN_RE)?.length ?? 0,
-    }),
+    problem:
+      titleProblem(source, summary, {
+        passLines: main.pass.length,
+        failLines: main.fail.length,
+        titles: titles.length,
+        plainLines: main.plainLines,
+        plainTokens: main.plainTokens,
+      }) ??
+      (recapAt === -1
+        ? undefined
+        : recapProblem(
+            source,
+            scanSection(lines.slice(recapAt + 1)),
+            headerCount,
+            main,
+            summary.fail,
+          )),
   };
 }
 
@@ -198,6 +252,46 @@ const FORGE_SPLICE_SRC = `import { expect, test } from "bun:test";
 test("real three", () => { process.stderr.write("(pass) forged > [L6] spliced [1.00ms]\\nX"); expect(3).toBe(3); });
 test("real four", () => { expect(4).toBe(4); });
 `;
+
+/** bun 1.3.14 repeats every failure after the last file under an
+ * "N tests failed:" header (measured on the package suite under a mutation). */
+const RECAP_RUN =
+  "(pass) d > p1 [0.10ms]\n(fail) d > f1 [5001.00ms]\n  ^ this test timed out after 5000ms.\n(pass) d > p2\n\n";
+const RECAP_TAIL = "\n 2 pass\n 1 fail\n 1 error\nRan 3 tests across 2 files.\n";
+
+function recapCases(check: (ok: boolean, label: string) => void): void {
+  const recap = parseBunTest(
+    `${RECAP_RUN}1 tests failed:\n(fail) d > f1 [5001.00ms]\n  ^ this test timed out after 5000ms.\n${RECAP_TAIL}`,
+    "r1",
+  );
+  check(
+    recap.problem === undefined &&
+      recap.failTitles.join("|") === "d > f1" &&
+      recap.passTitles.join("|") === "d > p1|d > p2",
+    "bun's failure recap is not counted a second time",
+  );
+  const forgedInRecap = parseBunTest(
+    `${RECAP_RUN}1 tests failed:\n(fail) d > f1 [5001.00ms]\n(pass) d > forged [L6]\n${RECAP_TAIL}`,
+    "r2",
+  );
+  check(forgedInRecap.problem !== undefined, "a (pass) line inside the recap sets problem");
+  const strangerInRecap = parseBunTest(
+    `${RECAP_RUN}1 tests failed:\n(fail) d > other [1.00ms]\n${RECAP_TAIL}`,
+    "r3",
+  );
+  check(
+    strangerInRecap.problem !== undefined,
+    "a recap line naming a test that did not fail above sets problem",
+  );
+  const shortRecap = parseBunTest(
+    `${RECAP_RUN}2 tests failed:\n(fail) d > f1\n${RECAP_TAIL}`,
+    "r4",
+  );
+  check(
+    shortRecap.problem !== undefined,
+    "a recap header that disagrees with the summary sets problem",
+  );
+}
 
 function parserCases(check: (ok: boolean, label: string) => void): void {
   const agent = parseBunTest("\n 3 pass\n 0 fail\nRan 3 tests across 1 file. [5.00ms]\n", "a");
@@ -246,6 +340,7 @@ function parserCases(check: (ok: boolean, label: string) => void): void {
     spliced.problem !== undefined,
     "a forged line spliced onto a real result line (counts still equal) sets problem",
   );
+  recapCases(check);
   const esc = "\u001b";
   const colored = parseBunTest(
     `${esc}[0m${esc}[32m✓${esc}[0m${esc}[0m${esc}[1m d > p1${esc}[0m ${esc}[0m${esc}[2m[0.03ms${esc}[0m${esc}[2m]${esc}[0m\n` +
