@@ -17,6 +17,7 @@
     { "path": "./packages/console" },
     { "path": "./packages/e2e" },
     { "path": "./packages/agy-acp-shim" },
+    { "path": "./packages/exec-primitives-consumer" },
     { "path": "./plugin" }
   ]
 }
