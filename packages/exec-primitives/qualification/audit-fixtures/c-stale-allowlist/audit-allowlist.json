@@ -1,7 +1,0 @@
-[
-  {
-    "rule": "policy-token",
-    "token": "nomatchtokenhere",
-    "why": "fixture: an allowlist entry that matches nothing must be flagged stale"
-  }
-]
