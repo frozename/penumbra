@@ -23,11 +23,9 @@ describe("@novaproto/exec-primitives registry pin", () => {
 
   test("resolves to an installed registry copy, not a workspace or sibling checkout", async () => {
     const mod = await import("@novaproto/exec-primitives");
-    const resolved = realpathSync(
-      fileURLToPath(import.meta.resolve("@novaproto/exec-primitives")),
-    );
+    const resolved = realpathSync(fileURLToPath(import.meta.resolve("@novaproto/exec-primitives")));
     expect(resolved).toContain("/node_modules/.bun/@novaproto+exec-primitives@0.1.0/");
-    const pkgDir = dirname(dirname(resolved));
+    const pkgDir = dirname(dirname(dirname(resolved)));
     const installed = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as {
       name: string;
       version: string;
