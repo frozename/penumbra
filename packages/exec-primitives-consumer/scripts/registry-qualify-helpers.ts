@@ -10,17 +10,30 @@ export interface BunTestSummary {
   files: number;
 }
 
-export function parseBunSummary(output: string): BunTestSummary {
+export function parseBunSummary(output: string): BunTestSummary | null {
   const passLines = output.match(/^ *\d+ pass$/gm) ?? [];
   const failLines = output.match(/^ *\d+ fail$/gm) ?? [];
   const ranMatches = [...output.matchAll(/Ran (\d+) tests? across (\d+) files?/g)];
   const ranMatch = ranMatches.at(-1);
-  const pass =
-    passLines.length > 0 ? parseInt(passLines[passLines.length - 1]!.replace(/\D/g, ""), 10) : 0;
-  const fail =
-    failLines.length > 0 ? parseInt(failLines[failLines.length - 1]!.replace(/\D/g, ""), 10) : 0;
-  const files = ranMatch ? parseInt(ranMatch[2] ?? "0", 10) : 0;
+  if (passLines.length === 0 || failLines.length === 0 || !ranMatch) return null;
+  const pass = parseInt(passLines[passLines.length - 1]!.replace(/\D/g, ""), 10);
+  const fail = parseInt(failLines[failLines.length - 1]!.replace(/\D/g, ""), 10);
+  const files = parseInt(ranMatch[2] ?? "0", 10);
   return { pass, fail, files };
+}
+
+export function listRecursiveEntries(dir: string): string[] {
+  const entries: string[] = [];
+  function walk(d: string): void {
+    for (const entry of readdirSync(d)) {
+      const full = join(d, entry);
+      const rel = relative(dir, full);
+      entries.push(rel);
+      if (statSync(full).isDirectory()) walk(full);
+    }
+  }
+  walk(dir);
+  return entries.sort();
 }
 
 export function computeDigest(dir: string): string {

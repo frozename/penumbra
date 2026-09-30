@@ -19,6 +19,7 @@ import {
   computeDigest,
   computeTarballHashes,
   hasLockEntry,
+  listRecursiveEntries,
   parseBunSummary,
   validatePublishedManifest,
 } from "./registry-qualify-helpers.ts";
@@ -36,10 +37,11 @@ import {
 
 const TAG = "qualification/sharedlib6-2026-09-24";
 const TAG_COMMIT = "001e12fc79c40d6c3c3a5fdf106d96d420f4c997";
-const BASE_SHA = "f122106dc5e84849eba1ba415c0ae122a6e79338";
+const ANCESTRY_FLOOR_SHA = "f122106dc5e84849eba1ba415c0ae122a6e79338";
 const RUN_JSON = "tmp/exec-primitives-registry/run.json";
 const EVIDENCE_JSON = "docs/qualification/exec-primitives-0.1.0-registry-qualification.json";
 const EVIDENCE_MD = "docs/qualification/exec-primitives-0.1.0-registry-qualification.md";
+const SPAWN_TIMEOUT_MS = 600_000;
 
 const SOURCE_BLOBS: Record<string, string> = {
   "acp-session": "d4a384d7ef5d42be1c6db33ceafa53ab370e0b4b",
@@ -93,8 +95,12 @@ interface ConsumerRun {
   bun_test: { pass: number; fail: number; files: number };
   installed_content_sha256: string;
   install_specifier: string;
+  copy_outside_repo: boolean;
+  resolved_inside_copy: boolean;
+  digest_equal: boolean;
   poison_run: { pass: number; exit: number };
   home_entries_after: string[];
+  fixture_toolchain: { typescript: string; "@types/node": string };
   adaptations: Adaptation[];
   guard: { exit: number };
   smoke_node?: { exit: number };
@@ -103,13 +109,18 @@ interface ConsumerRun {
 const repoRoot = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 const writeEvidence = process.argv.includes("--write-evidence");
 
-function run(cmd: string, args: string[], options: { cwd?: string; env?: Record<string, string>; log?: string } = {}): CmdResult {
+function run(
+  cmd: string,
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string>; log?: string } = {},
+): CmdResult {
   const proc = Bun.spawnSync({
     cmd: [cmd, ...args],
     cwd: options.cwd ?? repoRoot,
     env: options.env ?? process.env,
     stdout: "pipe",
     stderr: "pipe",
+    timeout: SPAWN_TIMEOUT_MS,
   });
   const result = {
     exit: proc.exitCode,
@@ -120,10 +131,16 @@ function run(cmd: string, args: string[], options: { cwd?: string; env?: Record<
   return result;
 }
 
-function must(cmd: string, args: string[], options: { cwd?: string; env?: Record<string, string>; log?: string } = {}): CmdResult {
+function must(
+  cmd: string,
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string>; log?: string } = {},
+): CmdResult {
   const result = run(cmd, args, options);
   if (result.exit !== 0) {
-    throw new Error(`${cmd} ${args.join(" ")} failed with ${result.exit}${options.log ? `; see ${options.log}` : ""}`);
+    throw new Error(
+      `${cmd} ${args.join(" ")} failed with ${result.exit}${options.log ? `; see ${options.log}` : ""}`,
+    );
   }
   return result;
 }
@@ -150,6 +167,15 @@ function listFiles(dir: string): string[] {
   }
   walk(dir);
   return files.sort();
+}
+
+function requireBunSummary(
+  output: string,
+  label: string,
+): { pass: number; fail: number; files: number } {
+  const summary = parseBunSummary(output);
+  if (!summary) throw new Error(`${label} missing complete bun summary`);
+  return summary;
 }
 
 function rewriteFiles(dir: string, needle: string, replacement: string): Adaptation[] {
@@ -202,7 +228,7 @@ function homeEntries(runDir: string, name: string): string[] {
   const entries: string[] = [];
   for (const root of roots) {
     if (!existsSync(root)) continue;
-    for (const rel of listFiles(root)) entries.push(relative(runDir, join(root, rel)));
+    for (const rel of listRecursiveEntries(root)) entries.push(relative(runDir, join(root, rel)));
   }
   return entries.sort();
 }
@@ -232,7 +258,8 @@ async function artifact(runDir: string) {
   must("tar", ["-xzf", tgz, "-C", extract]);
   const pkg = join(extract, "package");
   const manifestBad = validatePublishedManifest(readJson(join(pkg, "package.json")));
-  if (manifestBad.length > 0) failClosed(`published manifest gate failed: ${manifestBad.join(",")}`);
+  if (manifestBad.length > 0)
+    failClosed(`published manifest gate failed: ${manifestBad.join(",")}`);
   const entries = listFiles(pkg);
   const unpackedBytes = entries.reduce((n, rel) => n + readFileSync(join(pkg, rel)).byteLength, 0);
   const digest = computeDigest(pkg);
@@ -253,19 +280,104 @@ async function artifact(runDir: string) {
   };
 }
 
+async function fetchDistTagsLatest(): Promise<{ http: number; latest: string }> {
+  let response: Response;
+  try {
+    response = await fetch("https://registry.npmjs.org/@novaproto%2fexec-primitives", {
+      headers: { Accept: "application/vnd.npm.install-v1+json" },
+    });
+  } catch (error) {
+    failClosed(`packument fetch failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) failClosed(`packument fetch failed: ${response.status}`);
+  const body = (await response.json()) as { "dist-tags"?: Record<string, string> };
+  const latest = body["dist-tags"]?.["latest"] ?? "";
+  if (latest !== PACKAGE_VERSION) failClosed(`packument latest mismatch: ${latest}`);
+  return { http: response.status, latest };
+}
+
 function preflight(): void {
   rmSync(join(repoRoot, RUN_JSON), { force: true });
   const tag = run("git", ["rev-parse", "-q", "--verify", `${TAG}^{commit}`]).stdout.trim();
   if (tag !== TAG_COMMIT) failClosed("qualification tag is missing or moved");
   for (const [name, blob] of Object.entries(SOURCE_BLOBS)) {
-    const actual = run("git", ["rev-parse", `${TAG_COMMIT}:packages/exec-primitives/src/${name}.ts`]).stdout.trim();
+    const actual = run("git", [
+      "rev-parse",
+      `${TAG_COMMIT}:packages/exec-primitives/src/${name}.ts`,
+    ]).stdout.trim();
     if (actual !== blob) failClosed(`source blob mismatch: ${name}`);
   }
-  const srcCount = run("git", ["ls-tree", "--name-only", TAG_COMMIT, "packages/exec-primitives/src/"])
+  const srcCount = run("git", [
+    "ls-tree",
+    "--name-only",
+    TAG_COMMIT,
+    "packages/exec-primitives/src/",
+  ])
     .stdout.trim()
     .split("\n")
     .filter(Boolean).length;
   if (srcCount !== 8) failClosed("source blob count mismatch");
+}
+
+function assertCleanWorktree(): void {
+  const status = run("git", ["status", "--porcelain"]).stdout.trim();
+  if (status.length > 0) failClosed("worktree is dirty; refusing to write measured evidence");
+}
+
+function assertRunDirOutsideRepo(runDir: string): void {
+  const repo = realpathSync(repoRoot);
+  const run = realpathSync(runDir);
+  if (run === repo || run.startsWith(`${repo}/`)) {
+    failClosed("run directory resolved inside repository");
+  }
+}
+
+function measureBaseSha(): string {
+  return must("git", ["merge-base", "HEAD", "origin/main"]).stdout.trim();
+}
+
+function measurePin(): {
+  manifest: string;
+  section: string;
+  specifier: string;
+  lock_entry: string;
+} {
+  const manifestPath = "packages/exec-primitives-consumer/package.json";
+  const manifest = readJson(join(repoRoot, manifestPath));
+  const specifier =
+    (manifest["devDependencies"] as Record<string, string> | undefined)?.[PACKAGE_NAME] ?? "";
+  if (specifier !== PACKAGE_VERSION) failClosed(`manifest pin mismatch: ${specifier}`);
+  const lockLine = readFileSync(join(repoRoot, "bun.lock"), "utf8")
+    .split("\n")
+    .find((line) => line.trim().startsWith(`"${PACKAGE_NAME}": [`))
+    ?.trim()
+    .replace(/,$/, "");
+  if (lockLine !== LOCK_ENTRY) failClosed("root bun.lock entry mismatch");
+  return {
+    manifest: manifestPath,
+    section: "devDependencies",
+    specifier,
+    lock_entry: lockLine,
+  };
+}
+
+function measureRuntimeImportFence(): boolean {
+  const out = run("git", [
+    "grep",
+    "-l",
+    "-E",
+    `(from|import\\()[[:space:]]*['"]${PACKAGE_NAME}`,
+    "HEAD",
+    "--",
+    "packages",
+    "plugin",
+    "scripts",
+    "test",
+    ":!packages/exec-primitives-consumer",
+  ]);
+  if (out.exit === 1 && out.stdout.trim() === "") return false;
+  if (out.exit !== 0) throw new Error(`git grep failed with ${out.exit}: ${out.stderr}`);
+  failClosed(`runtime import outside consumer: ${out.stdout.trim()}`);
 }
 
 function exportFixtures(runDir: string): string {
@@ -296,6 +408,11 @@ function writeConsumerTsconfig(dir: string): void {
       },
       include: ["src/**/*"],
     }),
+    "utf8",
+  );
+  writeFileSync(
+    join(dir, "tsconfig.consumer.json"),
+    `${readFileSync(join(dir, "tsconfig.consumer.json"), "utf8")}\n`,
   );
 }
 
@@ -323,13 +440,29 @@ function prepareConsumer(name: string, fixtureRoot: string, dest: string): Adapt
       const st = statSync(src);
       if (!st.isFile()) continue;
       const out = join(contractDir, f);
-      writeFileSync(out, readFileSync(src, "utf8").split('"../src/index.ts"').join(`"${PACKAGE_NAME}"`));
-      adaptations.push({ id: `test/contract/${f}`, change: `ported contract suite to ${PACKAGE_NAME}` });
+      writeFileSync(
+        out,
+        readFileSync(src, "utf8").split('"../src/index.ts"').join(`"${PACKAGE_NAME}"`),
+      );
+      adaptations.push({
+        id: `test/contract/${f}`,
+        change: `ported contract suite to ${PACKAGE_NAME}`,
+      });
     }
-    cpSync(join(fixtureRoot, "test", "fixtures", "fake-acp.ts"), join(contractDir, "fixtures", "fake-acp.ts"));
-    adaptations.push({ id: "test/contract/fixtures/fake-acp.ts", change: "ported contract fixture" });
+    cpSync(
+      join(fixtureRoot, "test", "fixtures", "fake-acp.ts"),
+      join(contractDir, "fixtures", "fake-acp.ts"),
+    );
+    adaptations.push({
+      id: "test/contract/fixtures/fake-acp.ts",
+      change: "ported contract fixture",
+    });
   }
-  if (listFiles(dest).some((rel) => readFileSync(join(dest, rel), "utf8").includes("penumbra-exec-primitives"))) {
+  if (
+    listFiles(dest).some((rel) =>
+      readFileSync(join(dest, rel), "utf8").includes("penumbra-exec-primitives"),
+    )
+  ) {
     throw new Error(`${name} still contains the local package specifier`);
   }
   writeConsumerTsconfig(dest);
@@ -337,11 +470,18 @@ function prepareConsumer(name: string, fixtureRoot: string, dest: string): Adapt
 }
 
 function countFile(log: string, want: number, label: string): number {
-  const summary = parseBunSummary(readFileSync(log, "utf8"));
+  const summary = requireBunSummary(readFileSync(log, "utf8"), label);
   if (summary.pass !== want || summary.fail !== 0) {
     throw new Error(`${label} expected ${want}/0, got ${summary.pass}/${summary.fail}`);
   }
   return summary.pass;
+}
+
+function readPackageVersion(dir: string): string {
+  const manifest = readJson(join(dir, "package.json"));
+  const version = manifest["version"];
+  if (typeof version !== "string") throw new Error(`${dir} missing package version`);
+  return version;
 }
 
 function runConsumer(name: string, fixtureRoot: string, runDir: string): ConsumerRun {
@@ -356,9 +496,15 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
     log: join(logs, `${name}-add.log`),
   });
   const manifest = readJson(join(dir, "package.json"));
-  const specifier = (manifest["dependencies"] as Record<string, string> | undefined)?.[PACKAGE_NAME] ?? "";
+  const specifier =
+    (manifest["dependencies"] as Record<string, string> | undefined)?.[PACKAGE_NAME] ?? "";
   if (specifier !== PACKAGE_VERSION) throw new Error(`${name} install specifier mismatch`);
-  if (!hasLockEntry(readFileSync(join(dir, "bun.lock"), "utf8"))) throw new Error(`${name} lock entry mismatch`);
+  if (!hasLockEntry(readFileSync(join(dir, "bun.lock"), "utf8")))
+    throw new Error(`${name} lock entry mismatch`);
+  const fixtureToolchain = {
+    typescript: readPackageVersion(join(dir, "node_modules", "typescript")),
+    "@types/node": readPackageVersion(join(dir, "node_modules", "@types", "node")),
+  };
 
   const env = makeEnv(runDir, name, true);
   must("./node_modules/.bin/tsc", ["--noEmit", "-p", "tsconfig.consumer.json"], {
@@ -367,7 +513,10 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
     log: join(logs, `${name}-typecheck.log`),
   });
   must("bun", ["src/smoke.ts"], { cwd: dir, env, log: join(logs, `${name}-smoke-bun.log`) });
-  const smokeNode = name === "infra-host" ? run("node", ["src/smoke.ts"], { cwd: dir, env, log: join(logs, `${name}-smoke-node.log`) }) : undefined;
+  const smokeNode =
+    name === "infra-host"
+      ? run("node", ["src/smoke.ts"], { cwd: dir, env, log: join(logs, `${name}-smoke-node.log`) })
+      : undefined;
   if (smokeNode && smokeNode.exit !== 0) throw new Error(`${name} node smoke failed`);
 
   const parity: Record<string, number> = {};
@@ -382,7 +531,11 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
   if (name === "penumbra-host") {
     for (const [stem, want] of Object.entries(CONTRACT)) {
       const log = join(logs, `${name}-contract-${stem}.log`);
-      const result = run("bun", ["test", `./test/contract/${stem}.test.ts`], { cwd: dir, env, log });
+      const result = run("bun", ["test", `./test/contract/${stem}.test.ts`], {
+        cwd: dir,
+        env,
+        log,
+      });
       if (result.exit !== 0) throw new Error(`${name} contract ${stem} failed`);
       contract[`contract/${stem}.test.ts`] = countFile(log, want, `${name} contract ${stem}`);
     }
@@ -390,27 +543,46 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
 
   const fullLog = join(logs, `${name}-bun-test.log`);
   const full = run("bun", ["test"], { cwd: dir, env, log: fullLog });
-  const fullSummary = parseBunSummary(readFileSync(fullLog, "utf8"));
+  const fullSummary = requireBunSummary(readFileSync(fullLog, "utf8"), `${name} full bun test`);
   const expectedFull = name === "penumbra-host" ? { pass: 178, files: 15 } : { pass: 21, files: 1 };
-  if (full.exit !== 0 || fullSummary.pass !== expectedFull.pass || fullSummary.fail !== 0 || fullSummary.files !== expectedFull.files) {
+  if (
+    full.exit !== 0 ||
+    fullSummary.pass !== expectedFull.pass ||
+    fullSummary.fail !== 0 ||
+    fullSummary.files !== expectedFull.files
+  ) {
     throw new Error(`${name} full bun test mismatch`);
   }
 
-  const resolved = run("bun", [
-    "-e",
-    `import { realpathSync } from "node:fs"; console.log(realpathSync(Bun.fileURLToPath(import.meta.resolve("${PACKAGE_NAME}"))))`,
-  ], { cwd: dir, env }).stdout.trim().split("\n").at(-1) ?? "";
+  const resolved =
+    run(
+      "bun",
+      [
+        "-e",
+        `import { realpathSync } from "node:fs"; console.log(realpathSync(Bun.fileURLToPath(import.meta.resolve("${PACKAGE_NAME}"))))`,
+      ],
+      { cwd: dir, env },
+    )
+      .stdout.trim()
+      .split("\n")
+      .at(-1) ?? "";
   const realDir = realpathSync(dir);
-  if (!resolved.startsWith(`${realDir}/`)) throw new Error(`${name} resolved outside copy`);
-  const guard = run("bun", [
-    "-e",
-    'import("@penumbra/core").then(()=>process.exit(1),(e)=>process.exit(/resolution-guard/.test(String(e))?0:2))',
-  ], { cwd: dir, env });
+  const resolvedInsideCopy = resolved.startsWith(`${realDir}/`);
+  if (!resolvedInsideCopy) throw new Error(`${name} resolved outside copy`);
+  const guard = run(
+    "bun",
+    [
+      "-e",
+      'import("@penumbra/core").then(()=>process.exit(1),(e)=>process.exit(/resolution-guard/.test(String(e))?0:2))',
+    ],
+    { cwd: dir, env },
+  );
   if (guard.exit !== 0) throw new Error(`${name} guard failed`);
 
   const pkgDir = realpathSync(join(dir, "node_modules", PACKAGE_NAME));
   const installedDigest = computeDigest(pkgDir);
-  if (installedDigest !== CONTENT_SHA256) throw new Error(`${name} installed digest mismatch`);
+  const digestEqual = installedDigest === CONTENT_SHA256;
+  if (!digestEqual) throw new Error(`${name} installed digest mismatch`);
   const entry = join(pkgDir, "dist", "src", "index.js");
   const backup = join(runDir, `${name}-entry.bak`);
   cpSync(entry, backup);
@@ -418,10 +590,16 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
   writeFileSync(entry, 'throw new Error("poisoned installed entry")\n');
   const poisonLog = join(logs, `${name}-poison.log`);
   const poison = run("bun", ["test"], { cwd: dir, env, log: poisonLog });
-  const poisonPass = parseBunSummary(readFileSync(poisonLog, "utf8")).pass;
+  const poisonSummary = requireBunSummary(readFileSync(poisonLog, "utf8"), `${name} poison run`);
   rmSync(entry);
   cpSync(backup, entry);
-  if (poisonPass !== 0 || computeDigest(pkgDir) !== CONTENT_SHA256) {
+  if (
+    poison.exit === 0 ||
+    poisonSummary.pass !== 0 ||
+    poisonSummary.fail !== expectedFull.files ||
+    poisonSummary.files !== expectedFull.files ||
+    computeDigest(pkgDir) !== CONTENT_SHA256
+  ) {
     throw new Error(`${name} poison run did not fail closed or restore cleanly`);
   }
 
@@ -433,8 +611,12 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
     bun_test: fullSummary,
     installed_content_sha256: installedDigest,
     install_specifier: specifier,
-    poison_run: { pass: poisonPass, exit: poison.exit },
+    copy_outside_repo: !realDir.startsWith(`${realpathSync(repoRoot)}/`),
+    resolved_inside_copy: resolvedInsideCopy,
+    digest_equal: digestEqual,
+    poison_run: { pass: poisonSummary.pass, exit: poison.exit },
     home_entries_after: homes,
+    fixture_toolchain: fixtureToolchain,
     adaptations,
     guard: { exit: guard.exit },
     ...(smokeNode ? { smoke_node: { exit: smokeNode.exit } } : {}),
@@ -444,8 +626,11 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
 async function main(): Promise<void> {
   if (writeEvidence) {
     const runJsonPath = join(repoRoot, RUN_JSON);
-    if (!existsSync(runJsonPath)) failRun(`${RUN_JSON} is missing; run without --write-evidence first`);
-    const runJson = JSON.parse(readFileSync(runJsonPath, "utf8")) as Parameters<typeof renderEvidenceJson>[0];
+    if (!existsSync(runJsonPath))
+      failRun(`${RUN_JSON} is missing; run without --write-evidence first`);
+    const runJson = JSON.parse(readFileSync(runJsonPath, "utf8")) as Parameters<
+      typeof renderEvidenceJson
+    >[0];
     const date = new Date().toISOString().slice(0, 10);
     writeFileSync(join(repoRoot, EVIDENCE_JSON), `${renderEvidenceJson(runJson, date)}\n`);
     writeFileSync(join(repoRoot, EVIDENCE_MD), renderEvidenceMd(runJson));
@@ -456,23 +641,53 @@ async function main(): Promise<void> {
 
   preflight();
   const runDir = mkdtempSync(join(tmpdir(), "exec-primitives-registry-"));
+  assertRunDirOutsideRepo(runDir);
   mkdirSync(join(repoRoot, dirname(RUN_JSON)), { recursive: true });
   mkdirSync(join(runDir, "node_modules", "@penumbra", "core"), { recursive: true });
-  writeFileSync(join(runDir, "node_modules", "@penumbra", "core", "package.json"), '{"name":"@penumbra/core","version":"0.0.0","type":"module","main":"./index.js"}\n');
-  writeFileSync(join(runDir, "node_modules", "@penumbra", "core", "index.js"), 'throw new Error("@penumbra/core resolved inside a registry-artifact consumer (resolution-guard)")\n');
+  writeFileSync(
+    join(runDir, "node_modules", "@penumbra", "core", "package.json"),
+    '{"name":"@penumbra/core","version":"0.0.0","type":"module","main":"./index.js"}\n',
+  );
+  writeFileSync(
+    join(runDir, "node_modules", "@penumbra", "core", "index.js"),
+    'throw new Error("@penumbra/core resolved inside a registry-artifact consumer (resolution-guard)")\n',
+  );
   const artifactInfo = await artifact(runDir);
+  const release = await fetchDistTagsLatest();
+  assertCleanWorktree();
+  const pin = measurePin();
+  const penumbraRuntimeImport = measureRuntimeImportFence();
   const fixtureRoot = exportFixtures(runDir);
+  const measuredRows: string[] = [];
   const consumers = {
     "penumbra-host": runConsumer("penumbra-host", fixtureRoot, runDir),
     "infra-host": runConsumer("infra-host", fixtureRoot, runDir),
   };
+  for (const [consumer, result] of Object.entries(consumers)) {
+    for (const [file, pass] of Object.entries(result.parity))
+      measuredRows.push(`${consumer}\t${file}\t${pass}\t0`);
+    for (const [file, pass] of Object.entries(result.contract ?? {}))
+      measuredRows.push(`${consumer}\t${file}\t${pass}\t0`);
+    measuredRows.push(
+      `${consumer}\tALL\t${result.bun_test.pass}\t${result.bun_test.fail}\t${result.bun_test.files}`,
+    );
+  }
+  writeFileSync(join(runDir, "measured.tsv"), `${measuredRows.join("\n")}\n`);
   const runJson = {
     schema: "exec-primitives-registry-run/1",
     run_dir: runDir,
     consumers,
     artifact: artifactInfo,
-    toolchain: { bun: run("bun", ["--version"]).stdout.trim(), node: process.version },
-    base_sha: BASE_SHA,
+    pin,
+    release,
+    honesty: { penumbra_runtime_import: penumbraRuntimeImport },
+    toolchain: {
+      bun: run("bun", ["--version"]).stdout.trim(),
+      node: must("node", ["--version"], { env: { PATH: process.env["PATH"] ?? "" } }).stdout.trim(),
+      bun_node_compat: process.version,
+    },
+    base_sha: measureBaseSha(),
+    ancestry_floor_sha: ANCESTRY_FLOOR_SHA,
     head_sha: run("git", ["rev-parse", "HEAD"]).stdout.trim(),
   };
   writeFileSync(join(repoRoot, RUN_JSON), `${JSON.stringify(runJson, null, 2)}\n`);

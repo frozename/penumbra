@@ -7,6 +7,7 @@ import {
   computeDigest,
   computeTarballHashes,
   hasLockEntry,
+  listRecursiveEntries,
   parseBunSummary,
   validatePublishedManifest,
 } from "../scripts/registry-qualify-helpers.ts";
@@ -35,6 +36,20 @@ describe("registry qualification helpers", () => {
     ].join("\n");
 
     expect(parseBunSummary(output)).toEqual({ pass: 178, fail: 0, files: 15 });
+  });
+
+  test("returns null when the bun summary is incomplete", () => {
+    expect(parseBunSummary(" 0 pass\nRan 1 test across 1 file")).toBeNull();
+    expect(parseBunSummary(" 0 fail\nRan 1 test across 1 file")).toBeNull();
+    expect(parseBunSummary(" 1 pass\n 0 fail")).toBeNull();
+  });
+
+  test("lists recursive entries including directories", () => {
+    const dir = mkdtempSync(join(tmpdir(), "exec-primitives-home-"));
+    mkdirSync(join(dir, "xdg", "nested"), { recursive: true });
+    writeFileSync(join(dir, "xdg", "nested", "cache.json"), "{}\n");
+
+    expect(listRecursiveEntries(dir)).toEqual(["xdg", "xdg/nested", "xdg/nested/cache.json"]);
   });
 
   test("rejects non-published manifest shapes", () => {

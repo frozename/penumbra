@@ -81,8 +81,12 @@ interface ConsumerResult {
   bun_test: { pass: number; fail: number; files: number };
   installed_content_sha256: string;
   install_specifier: string;
+  copy_outside_repo: boolean;
+  resolved_inside_copy: boolean;
+  digest_equal: boolean;
   poison_run: { pass: number; exit: number };
   home_entries_after: string[];
+  fixture_toolchain: { typescript: string; "@types/node": string };
   adaptations: Array<{ id: string; change: string }>;
   guard: { exit: number };
   smoke_node?: { exit: number };
@@ -103,8 +107,12 @@ interface RunJson {
     content_sha256: string;
     entries: string[];
   };
-  toolchain: { bun: string; node: string };
+  pin: { manifest: string; section: string; specifier: string; lock_entry: string };
+  release: { http: number; latest: string };
+  honesty: { penumbra_runtime_import: boolean };
+  toolchain: { bun: string; node: string; bun_node_compat?: string };
   base_sha: string;
+  ancestry_floor_sha?: string;
   head_sha: string;
 }
 
@@ -138,15 +146,16 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
       install_command: "bun add --exact @novaproto/exec-primitives@0.1.0",
       install_specifier: c.install_specifier,
       lock_entry: lockEntry,
-      copy_outside_repo: true,
-      resolved_inside_copy: true,
-      digest_equal: true,
+      copy_outside_repo: c.copy_outside_repo,
+      resolved_inside_copy: c.resolved_inside_copy,
+      digest_equal: c.digest_equal,
       installed_content_sha256: c.installed_content_sha256,
       home_entries_after: c.home_entries_after,
       poison_run: c.poison_run,
       guard: c.guard,
       parity: c.parity,
       bun_test: c.bun_test,
+      fixture_toolchain: c.fixture_toolchain,
       adaptations: c.adaptations,
     };
     if (c.contract) consumerObj["contract"] = c.contract;
@@ -160,6 +169,7 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
     decisions: [1948, 2031],
     run_date: runDate,
     base_sha: run.base_sha,
+    ancestry_floor_sha: run.ancestry_floor_sha,
     head_sha: run.head_sha,
     toolchain: run.toolchain,
     evidence_of_record: {
@@ -185,10 +195,10 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
       },
     },
     pin: {
-      manifest: "packages/exec-primitives-consumer/package.json",
-      section: "devDependencies",
-      specifier: PACKAGE_VERSION,
-      lock_entry: lockEntry,
+      manifest: run.pin.manifest,
+      section: run.pin.section,
+      specifier: run.pin.specifier,
+      lock_entry: run.pin.lock_entry,
     },
     consumers,
     acp_primitives: buildAcpPrimitives(run),
@@ -213,6 +223,11 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
             claim: "manifest exact-pins 0.1.0 in devDependencies",
             status: "confirmed",
             pointer: "packages/exec-primitives-consumer/package.json",
+          },
+          {
+            claim: "registry dist-tags.latest is 0.1.0",
+            status: "confirmed",
+            pointer: `packument_http=${run.release.http}`,
           },
         ],
       },
@@ -247,7 +262,7 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
     carried_forward: ["L1", "L4", "L5", "L6"],
     release: {
       published_event_id: 2024,
-      dist_tags_latest: "0.1.0",
+      dist_tags_latest: run.release.latest,
     },
     blockers: {
       B1: {
@@ -259,7 +274,7 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
     honesty: {
       channel: "registry",
       adoption_performed: false,
-      penumbra_runtime_import: false,
+      penumbra_runtime_import: run.honesty.penumbra_runtime_import,
     },
     claims_not_made: [
       "adopted by llamactl",
@@ -267,7 +282,20 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
       "penumbra agentchat migrated",
       "ACP fixture parity in the llamactl consumer",
     ],
-    open_findings: [],
+    open_findings: [
+      {
+        item: "dist identity",
+        status: "inferred",
+        pointer: "P2-12",
+        note: "pending the coordinator closure verification for the carried-forward L1/L4/L5/L6 bridge",
+      },
+      {
+        item: "llamactl record pointer",
+        status: "inferred",
+        pointer: "P2-13",
+        note: `${LREC}.json is named here before the llamactl-side record lands on main`,
+      },
+    ],
   };
 
   return JSON.stringify(evidence, null, 2);
@@ -282,13 +310,13 @@ export function renderEvidenceMd(run: RunJson): string {
   lines.push("## L2 registry install");
   lines.push("");
   lines.push(
-    `Verdict: PASS. The published tarball at ${TARBALL_URL} installs from the public npm registry with exact-pinned specifier 0.1.0 in a private test consumer. The artifact hashes (sha256, sha1, sha512), file count, unpacked bytes, and content digest all match the constants recorded at qualification time. This gate cannot see the llamactl-side install, which is covered by the llamactl record at ${LREC}.json.`,
+    `Verdict: PASS. The published tarball at ${TARBALL_URL} installs from the public npm registry with exact-pinned specifier 0.1.0 in a private test consumer. The artifact hashes (sha256, sha1, sha512), file count, unpacked bytes, content digest, manifest pin, lock entry, and dist-tags.latest are measured by the runner. The llamactl-side install is inferred here from the record pointer ${LREC}.json until that record lands on main.`,
   );
   lines.push("");
   lines.push("## L3 parity");
   lines.push("");
   lines.push(
-    `Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes ${ph.bun_test.pass} tests across ${ph.bun_test.files} files and the infra-host consumer passes ${ih.bun_test.pass} tests across ${ih.bun_test.files} files, both against the registry-installed package. The llamactl consumer part is in the llamactl record and is not re-run here.`,
+    `Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes ${ph.bun_test.pass} tests across ${ph.bun_test.files} files and the infra-host consumer passes ${ih.bun_test.pass} tests across ${ih.bun_test.files} files, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.`,
   );
   lines.push("");
   lines.push("## ACP primitives");
@@ -305,6 +333,9 @@ export function renderEvidenceMd(run: RunJson): string {
   lines.push("");
   lines.push(
     `The evidence of record is tag ${TAG} (commit ${TAG_COMMIT}, head ${EOR_HEAD}). Source identity is confirmed: the 8 src blob ids at the tag equal the nova release commit ${NOVA_COMMIT}. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.`,
+  );
+  lines.push(
+    "Open inferred items: dist identity is pending the coordinator closure verification; the llamactl record pointer is inferred until the llamactl-side record lands on main.",
   );
   lines.push("");
   lines.push("## Claims not made");
