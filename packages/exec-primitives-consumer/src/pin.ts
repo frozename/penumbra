@@ -10,4 +10,4 @@ export const INTEGRITY =
 export const CONTENT_SHA256 =
   "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98";
 export const LOCK_ENTRY =
-  '"@novaproto/exec-primitives": ["@novaproto/exec-primitives@0.1.0", "", {}, "sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew=="]';
+  `"@novaproto/exec-primitives": ["@novaproto/exec-primitives@${PACKAGE_VERSION}", "", {}, "${INTEGRITY}"]`;

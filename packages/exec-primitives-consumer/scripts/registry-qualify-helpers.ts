@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
+import { LOCK_ENTRY } from "../src/pin.ts";
+
 export interface BunTestSummary {
   pass: number;
   fail: number;
@@ -11,7 +13,8 @@ export interface BunTestSummary {
 export function parseBunSummary(output: string): BunTestSummary {
   const passLines = output.match(/^ *\d+ pass$/gm) ?? [];
   const failLines = output.match(/^ *\d+ fail$/gm) ?? [];
-  const ranMatch = output.match(/Ran (\d+) tests? across (\d+) files?/);
+  const ranMatches = [...output.matchAll(/Ran (\d+) tests? across (\d+) files?/g)];
+  const ranMatch = ranMatches.at(-1);
   const pass =
     passLines.length > 0 ? parseInt(passLines[passLines.length - 1]!.replace(/\D/g, ""), 10) : 0;
   const fail =
@@ -69,4 +72,8 @@ export function validatePublishedManifest(m: Record<string, unknown>): string[] 
     if (s.includes(tok)) bad.push(tok);
   }
   return bad;
+}
+
+export function hasLockEntry(lock: string, entry = LOCK_ENTRY): boolean {
+  return lock.includes(entry);
 }
