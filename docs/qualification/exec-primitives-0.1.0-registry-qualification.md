@@ -1,10 +1,10 @@
 ## L2 registry install
 
-Verdict: PASS. The published tarball at https://registry.npmjs.org/@novaproto/exec-primitives/-/exec-primitives-0.1.0.tgz installs from the public npm registry with exact-pinned specifier 0.1.0 in a private test consumer. The artifact hashes (sha256, sha1, sha512), file count, unpacked bytes, and content digest all match the constants recorded at qualification time. This gate cannot see the llamactl-side install, which is covered by the llamactl record at docs/qualification/exec-primitives-0.1.0-test-consumer.json.
+Verdict: PASS. The published tarball at https://registry.npmjs.org/@novaproto/exec-primitives/-/exec-primitives-0.1.0.tgz installs from the public npm registry with exact-pinned specifier 0.1.0 in a private test consumer. The artifact hashes (sha256, sha1, sha512), file count, unpacked bytes, content digest, manifest pin, lock entry, and dist-tags.latest are measured by the runner. The llamactl-side install is inferred here from the record pointer docs/qualification/exec-primitives-0.1.0-test-consumer.json until that record lands on main.
 
 ## L3 parity
 
-Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests across 15 files and the infra-host consumer passes 21 tests across 1 files, both against the registry-installed package. The llamactl consumer part is in the llamactl record and is not re-run here.
+Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests across 15 files and the infra-host consumer passes 21 tests across 1 files, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.
 
 ## ACP primitives
 
@@ -19,6 +19,7 @@ Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests 
 ## Evidence of record
 
 The evidence of record is tag qualification/sharedlib6-2026-09-24 (commit 001e12fc79c40d6c3c3a5fdf106d96d420f4c997, head fb4e560078baaf9177eb32a44ea0d29186edfa4a). Source identity is confirmed: the 8 src blob ids at the tag equal the nova release commit e1a65bd77710afb4b3cf67909bd1984bf80837b1. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.
+Open inferred items: dist identity is pending the coordinator closure verification; the llamactl record pointer is inferred until the llamactl-side record lands on main.
 
 ## Claims not made
 
