@@ -93,6 +93,7 @@ interface ConsumerResult {
 }
 
 interface RunJson {
+  started_at: string;
   run_dir: string;
   consumers: Record<string, ConsumerResult>;
   artifact: {
@@ -126,17 +127,41 @@ function buildAcpPrimitives(run: RunJson): AcpPrimitive[] {
     suites: def.files.map((f) => ({
       consumer: "penumbra-host",
       file: f,
-      pass: allCounts[f] ?? 0,
+      pass: requireCount(allCounts, f),
     })),
     infra_host_ids: def.infra,
   }));
 }
 
-export function renderEvidenceJson(run: RunJson, runDate: string): string {
+function requireCount(counts: Record<string, number>, file: string): number {
+  const count = counts[file];
+  if (typeof count !== "number") throw new Error(`missing per-file count for ${file}`);
+  return count;
+}
+
+function plural(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function penumbraHostPartCounts(run: RunJson): { parity: number; contract: number } {
+  const ph = run.consumers["penumbra-host"];
+  if (!ph) throw new Error("penumbra-host missing from run.json");
+  const parity = Object.values(ph.parity).reduce((sum, n) => sum + n, 0);
+  const contract = Object.values(ph.contract ?? {}).reduce((sum, n) => sum + n, 0);
+  if (parity + contract !== ph.bun_test.pass) {
+    throw new Error(
+      `penumbra-host per-file counts ${parity}+${contract} do not match bun_test.pass ${ph.bun_test.pass}`,
+    );
+  }
+  return { parity, contract };
+}
+
+export function renderEvidenceJson(run: RunJson): string {
   const ph = run.consumers["penumbra-host"]!;
   const ih = run.consumers["infra-host"]!;
   const a = run.artifact;
   const lockEntry = LOCK_ENTRY;
+  const phParts = penumbraHostPartCounts(run);
 
   const consumers: Record<string, unknown> = {};
   for (const [name, c] of Object.entries(run.consumers)) {
@@ -167,7 +192,7 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
     schema: "exec-primitives-registry-qualification/1",
     follow_up_event_id: 1830,
     decisions: [1948, 2031],
-    run_date: runDate,
+    run_date: run.started_at.slice(0, 10),
     base_sha: run.base_sha,
     ancestry_floor_sha: run.ancestry_floor_sha,
     head_sha: run.head_sha,
@@ -229,6 +254,11 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
             status: "confirmed",
             pointer: `packument_http=${run.release.http}`,
           },
+          {
+            claim: "llamactl-side install is in the llamactl record",
+            status: "inferred",
+            pointer: `${LREC}.json`,
+          },
         ],
       },
       {
@@ -242,14 +272,14 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
         },
         evidence: [
           {
-            claim: "penumbra-host parity suite passes",
+            claim: "penumbra-host parity suite and contract port pass",
             status: "confirmed",
-            pointer: `penumbra-host ${ph.bun_test.pass}/${ph.bun_test.fail} across ${ph.bun_test.files} files`,
+            pointer: `penumbra-host parity=${phParts.parity} contract=${phParts.contract} total=${ph.bun_test.pass}/${ph.bun_test.fail} across ${plural(ph.bun_test.files, "file")}`,
           },
           {
             claim: "infra-host parity suite passes",
             status: "confirmed",
-            pointer: `infra-host ${ih.bun_test.pass}/${ih.bun_test.fail} across ${ih.bun_test.files} files`,
+            pointer: `infra-host ${ih.bun_test.pass}/${ih.bun_test.fail} across ${plural(ih.bun_test.files, "file")}`,
           },
           {
             claim: "llamactl-side install is in the llamactl record",
@@ -286,14 +316,22 @@ export function renderEvidenceJson(run: RunJson, runDate: string): string {
       {
         item: "dist identity",
         status: "inferred",
-        pointer: "P2-12",
+        pointer:
+          "closure verification V4b (a build of the tag's source compared file by file with the registry tarball's dist/src)",
         note: "pending the coordinator closure verification for the carried-forward L1/L4/L5/L6 bridge",
       },
       {
         item: "llamactl record pointer",
         status: "inferred",
-        pointer: "P2-13",
+        pointer: "check L item L-37 and closure verification V3 (cross-record pointers)",
         note: `${LREC}.json is named here before the llamactl-side record lands on main`,
+      },
+      {
+        item: "source identity against the nova release",
+        status: "inferred",
+        pointer:
+          "closure verification V4a (a git ls-tree comparison against the nova release commit); check P2-28 re-derives only the tag side against the same constants",
+        note: "the runner measures the tag side and carries the release-side blob ids as constants copied from check P2-28",
       },
     ],
   };
@@ -305,6 +343,7 @@ export function renderEvidenceMd(run: RunJson): string {
   const ph = run.consumers["penumbra-host"]!;
   const ih = run.consumers["infra-host"]!;
   const prims = buildAcpPrimitives(run);
+  const phParts = penumbraHostPartCounts(run);
 
   const lines: string[] = [];
   lines.push("## L2 registry install");
@@ -316,7 +355,7 @@ export function renderEvidenceMd(run: RunJson): string {
   lines.push("## L3 parity");
   lines.push("");
   lines.push(
-    `Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes ${ph.bun_test.pass} tests across ${ph.bun_test.files} files and the infra-host consumer passes ${ih.bun_test.pass} tests across ${ih.bun_test.files} files, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.`,
+    `Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes ${ph.bun_test.pass} tests across ${plural(ph.bun_test.files, "file")} (${phParts.parity} parity plus ${phParts.contract} contract-port tests), and the infra-host consumer passes ${ih.bun_test.pass} tests across ${plural(ih.bun_test.files, "file")}, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.`,
   );
   lines.push("");
   lines.push("## ACP primitives");
@@ -332,10 +371,10 @@ export function renderEvidenceMd(run: RunJson): string {
   lines.push("## Evidence of record");
   lines.push("");
   lines.push(
-    `The evidence of record is tag ${TAG} (commit ${TAG_COMMIT}, head ${EOR_HEAD}). Source identity is confirmed: the 8 src blob ids at the tag equal the nova release commit ${NOVA_COMMIT}. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.`,
+    `The evidence of record is tag ${TAG} (commit ${TAG_COMMIT}, head ${EOR_HEAD}). For source identity, the runner measures the 8 src blob ids at the tag; the nova release side (${NOVA_COMMIT}) is carried here as the copied release constant from check P2-28 pending closure verification V4a. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.`,
   );
   lines.push(
-    "Open inferred items: dist identity is pending the coordinator closure verification; the llamactl record pointer is inferred until the llamactl-side record lands on main.",
+    "Open inferred items: source identity against the nova release is pending closure verification V4a; dist identity is pending closure verification V4b; the llamactl record pointer is pending check L item L-37 and closure verification V3.",
   );
   lines.push("");
   lines.push("## Claims not made");

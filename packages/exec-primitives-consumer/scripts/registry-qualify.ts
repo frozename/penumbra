@@ -16,11 +16,14 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  classifyWorktree,
   computeDigest,
   computeTarballHashes,
   hasLockEntry,
   listRecursiveEntries,
   parseBunSummary,
+  REGISTRY_QUALIFY_IDENTITY_EXIT,
+  REGISTRY_QUALIFY_WORKTREE_EXIT,
   validatePublishedManifest,
 } from "./registry-qualify-helpers.ts";
 import { renderEvidenceJson, renderEvidenceMd } from "./registry-qualify-evidence.ts";
@@ -147,7 +150,12 @@ function must(
 
 function failClosed(message: string): never {
   console.error(message);
-  process.exit(2);
+  process.exit(REGISTRY_QUALIFY_IDENTITY_EXIT);
+}
+
+function failWorktree(message: string): never {
+  console.error(message);
+  process.exit(REGISTRY_QUALIFY_WORKTREE_EXIT);
 }
 
 function failRun(message: string): never {
@@ -298,6 +306,9 @@ async function fetchDistTagsLatest(): Promise<{ http: number; latest: string }> 
 
 function preflight(): void {
   rmSync(join(repoRoot, RUN_JSON), { force: true });
+  if (run("git", ["merge-base", "--is-ancestor", ANCESTRY_FLOOR_SHA, "HEAD"]).exit !== 0) {
+    failClosed(`ancestry floor is not an ancestor of HEAD: ${ANCESTRY_FLOOR_SHA}`);
+  }
   const tag = run("git", ["rev-parse", "-q", "--verify", `${TAG}^{commit}`]).stdout.trim();
   if (tag !== TAG_COMMIT) failClosed("qualification tag is missing or moved");
   for (const [name, blob] of Object.entries(SOURCE_BLOBS)) {
@@ -319,9 +330,25 @@ function preflight(): void {
   if (srcCount !== 8) failClosed("source blob count mismatch");
 }
 
-function assertCleanWorktree(): void {
-  const status = run("git", ["status", "--porcelain"]).stdout.trim();
-  if (status.length > 0) failClosed("worktree is dirty; refusing to write measured evidence");
+function assertCleanWorktree(): string {
+  const status = run("git", ["status", "--porcelain"]);
+  const classification = classifyWorktree({ exit: status.exit, stdout: status.stdout });
+  if (classification === "dirty") failWorktree("worktree is dirty; refusing to write measured evidence");
+  if (classification === "unreadable") {
+    failWorktree("worktree status unreadable; refusing to write measured evidence");
+  }
+  const head = run("git", ["rev-parse", "HEAD"]);
+  if (head.exit !== 0 || head.stdout.trim() === "") {
+    failWorktree("worktree HEAD unreadable; refusing to write measured evidence");
+  }
+  return head.stdout.trim();
+}
+
+function assertHeadStableAndClean(expectedHead: string): void {
+  const head = assertCleanWorktree();
+  if (head !== expectedHead) {
+    failWorktree("HEAD changed while measuring evidence; refusing to write measured evidence");
+  }
 }
 
 function assertRunDirOutsideRepo(runDir: string): void {
@@ -589,16 +616,22 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
   rmSync(entry);
   writeFileSync(entry, 'throw new Error("poisoned installed entry")\n');
   const poisonLog = join(logs, `${name}-poison.log`);
-  const poison = run("bun", ["test"], { cwd: dir, env, log: poisonLog });
-  const poisonSummary = requireBunSummary(readFileSync(poisonLog, "utf8"), `${name} poison run`);
-  rmSync(entry);
-  cpSync(backup, entry);
+  let poison: CmdResult;
+  let poisonSummary: { pass: number; fail: number; files: number };
+  try {
+    poison = run("bun", ["test"], { cwd: dir, env, log: poisonLog });
+    poisonSummary = requireBunSummary(readFileSync(poisonLog, "utf8"), `${name} poison run`);
+  } finally {
+    rmSync(entry, { force: true });
+    cpSync(backup, entry);
+  }
+  const digestAfterPoison = computeDigest(pkgDir);
   if (
     poison.exit === 0 ||
     poisonSummary.pass !== 0 ||
     poisonSummary.fail !== expectedFull.files ||
     poisonSummary.files !== expectedFull.files ||
-    computeDigest(pkgDir) !== CONTENT_SHA256
+    digestAfterPoison !== CONTENT_SHA256
   ) {
     throw new Error(`${name} poison run did not fail closed or restore cleanly`);
   }
@@ -624,6 +657,7 @@ function runConsumer(name: string, fixtureRoot: string, runDir: string): Consume
 }
 
 async function main(): Promise<void> {
+  const startedAt = new Date().toISOString();
   if (writeEvidence) {
     const runJsonPath = join(repoRoot, RUN_JSON);
     if (!existsSync(runJsonPath))
@@ -631,8 +665,7 @@ async function main(): Promise<void> {
     const runJson = JSON.parse(readFileSync(runJsonPath, "utf8")) as Parameters<
       typeof renderEvidenceJson
     >[0];
-    const date = new Date().toISOString().slice(0, 10);
-    writeFileSync(join(repoRoot, EVIDENCE_JSON), `${renderEvidenceJson(runJson, date)}\n`);
+    writeFileSync(join(repoRoot, EVIDENCE_JSON), `${renderEvidenceJson(runJson)}\n`);
     writeFileSync(join(repoRoot, EVIDENCE_MD), renderEvidenceMd(runJson));
     console.log(EVIDENCE_JSON);
     console.log(EVIDENCE_MD);
@@ -654,7 +687,7 @@ async function main(): Promise<void> {
   );
   const artifactInfo = await artifact(runDir);
   const release = await fetchDistTagsLatest();
-  assertCleanWorktree();
+  const cleanHead = assertCleanWorktree();
   const pin = measurePin();
   const penumbraRuntimeImport = measureRuntimeImportFence();
   const fixtureRoot = exportFixtures(runDir);
@@ -673,8 +706,10 @@ async function main(): Promise<void> {
     );
   }
   writeFileSync(join(runDir, "measured.tsv"), `${measuredRows.join("\n")}\n`);
+  assertHeadStableAndClean(cleanHead);
   const runJson = {
     schema: "exec-primitives-registry-run/1",
+    started_at: startedAt,
     run_dir: runDir,
     consumers,
     artifact: artifactInfo,
@@ -688,7 +723,7 @@ async function main(): Promise<void> {
     },
     base_sha: measureBaseSha(),
     ancestry_floor_sha: ANCESTRY_FLOOR_SHA,
-    head_sha: run("git", ["rev-parse", "HEAD"]).stdout.trim(),
+    head_sha: cleanHead,
   };
   writeFileSync(join(repoRoot, RUN_JSON), `${JSON.stringify(runJson, null, 2)}\n`);
   console.log(RUN_JSON);

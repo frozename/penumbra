@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  classifyWorktree,
   computeDigest,
   computeTarballHashes,
   hasLockEntry,
   listRecursiveEntries,
   parseBunSummary,
+  REGISTRY_QUALIFY_IDENTITY_EXIT,
+  REGISTRY_QUALIFY_WORKTREE_EXIT,
   validatePublishedManifest,
 } from "../scripts/registry-qualify-helpers.ts";
 import { INTEGRITY, LOCK_ENTRY } from "../src/pin.ts";
@@ -84,5 +87,19 @@ describe("registry qualification helpers", () => {
       integrity:
         "sha512-lOlQ7aSocOZWXUThS5DxbAo4HNaTBFKcgfa9QIrxPFFVFrhBfgBfwxCT+qSxPekkNkVt0lKJqyhnw6V2+pSESQ==",
     });
+  });
+
+  test("keeps identity and worktree fail-closed exits distinct", () => {
+    expect(REGISTRY_QUALIFY_IDENTITY_EXIT).toBe(2);
+    expect(REGISTRY_QUALIFY_WORKTREE_EXIT).toBe(3);
+  });
+
+  test("classifies clean, dirty, and unreadable worktree status results", () => {
+    expect(classifyWorktree({ exit: 0, stdout: "" })).toBe("clean");
+    expect(classifyWorktree({ exit: 0, stdout: " M packages/exec-primitives-consumer/src/pin.ts\n" })).toBe(
+      "dirty",
+    );
+    expect(classifyWorktree({ exit: 128, stdout: "" })).toBe("unreadable");
+    expect(classifyWorktree({ exit: null, stdout: "" })).toBe("unreadable");
   });
 });

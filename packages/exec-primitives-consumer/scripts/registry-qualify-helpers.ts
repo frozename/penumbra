@@ -10,6 +10,19 @@ export interface BunTestSummary {
   files: number;
 }
 
+export const REGISTRY_QUALIFY_IDENTITY_EXIT = 2;
+export const REGISTRY_QUALIFY_WORKTREE_EXIT = 3;
+
+export type WorktreeClassification = "clean" | "dirty" | "unreadable";
+
+export function classifyWorktree(result: {
+  exit: number | null;
+  stdout: string;
+}): WorktreeClassification {
+  if (result.exit !== 0) return "unreadable";
+  return result.stdout.trim().length === 0 ? "clean" : "dirty";
+}
+
 export function parseBunSummary(output: string): BunTestSummary | null {
   const passLines = output.match(/^ *\d+ pass$/gm) ?? [];
   const failLines = output.match(/^ *\d+ fail$/gm) ?? [];
