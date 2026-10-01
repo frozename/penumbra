@@ -4,7 +4,7 @@ Verdict: PASS. The published tarball at https://registry.npmjs.org/@novaproto/ex
 
 ## L3 parity
 
-Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests across 15 files and the infra-host consumer passes 21 tests across 1 files, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.
+Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests across 15 files (108 parity plus 70 contract-port tests), and the infra-host consumer passes 21 tests across 1 file, both against the registry-installed package. The llamactl consumer part is inferred from the llamactl record pointer and is not re-run here.
 
 ## ACP primitives
 
@@ -18,8 +18,8 @@ Verdict: PASS (penumbra+synthetic). The penumbra-host consumer passes 178 tests 
 
 ## Evidence of record
 
-The evidence of record is tag qualification/sharedlib6-2026-09-24 (commit 001e12fc79c40d6c3c3a5fdf106d96d420f4c997, head fb4e560078baaf9177eb32a44ea0d29186edfa4a). Source identity is confirmed: the 8 src blob ids at the tag equal the nova release commit e1a65bd77710afb4b3cf67909bd1984bf80837b1. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.
-Open inferred items: dist identity is pending the coordinator closure verification; the llamactl record pointer is inferred until the llamactl-side record lands on main.
+The evidence of record is tag qualification/sharedlib6-2026-09-24 (commit 001e12fc79c40d6c3c3a5fdf106d96d420f4c997, head fb4e560078baaf9177eb32a44ea0d29186edfa4a). For source identity, the runner measures the 8 src blob ids at the tag; the nova release side (e1a65bd77710afb4b3cf67909bd1984bf80837b1) is carried here as the copied release constant from check P2-28 pending closure verification V4a. Gates L1, L4, L5, L6 are carried forward from the evidence of record through source identity plus dist identity.
+Open inferred items: source identity against the nova release is pending closure verification V4a; dist identity is pending closure verification V4b; the llamactl record pointer is pending check L item L-37 and closure verification V3.
 
 ## Claims not made
 

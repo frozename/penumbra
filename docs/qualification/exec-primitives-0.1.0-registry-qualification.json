@@ -5,10 +5,10 @@
     1948,
     2031
   ],
-  "run_date": "2026-09-30",
+  "run_date": "2026-10-01",
   "base_sha": "5583740f7126a4086f719f00566b07c7868058e1",
   "ancestry_floor_sha": "f122106dc5e84849eba1ba415c0ae122a6e79338",
-  "head_sha": "08af1d4a404650e327a502484037bb6b39e8efd1",
+  "head_sha": "b1ae7a09e48b0b0606828246bb7def72fc79bb9b",
   "toolchain": {
     "bun": "1.3.14",
     "node": "v26.0.0",
@@ -375,6 +375,11 @@
           "claim": "registry dist-tags.latest is 0.1.0",
           "status": "confirmed",
           "pointer": "packument_http=200"
+        },
+        {
+          "claim": "llamactl-side install is in the llamactl record",
+          "status": "inferred",
+          "pointer": "docs/qualification/exec-primitives-0.1.0-test-consumer.json"
         }
       ]
     },
@@ -392,14 +397,14 @@
       },
       "evidence": [
         {
-          "claim": "penumbra-host parity suite passes",
+          "claim": "penumbra-host parity suite and contract port pass",
           "status": "confirmed",
-          "pointer": "penumbra-host 178/0 across 15 files"
+          "pointer": "penumbra-host parity=108 contract=70 total=178/0 across 15 files"
         },
         {
           "claim": "infra-host parity suite passes",
           "status": "confirmed",
-          "pointer": "infra-host 21/0 across 1 files"
+          "pointer": "infra-host 21/0 across 1 file"
         },
         {
           "claim": "llamactl-side install is in the llamactl record",
@@ -440,14 +445,20 @@
     {
       "item": "dist identity",
       "status": "inferred",
-      "pointer": "P2-12",
+      "pointer": "closure verification V4b (a build of the tag's source compared file by file with the registry tarball's dist/src)",
       "note": "pending the coordinator closure verification for the carried-forward L1/L4/L5/L6 bridge"
     },
     {
       "item": "llamactl record pointer",
       "status": "inferred",
-      "pointer": "P2-13",
+      "pointer": "check L item L-37 and closure verification V3 (cross-record pointers)",
       "note": "docs/qualification/exec-primitives-0.1.0-test-consumer.json is named here before the llamactl-side record lands on main"
+    },
+    {
+      "item": "source identity against the nova release",
+      "status": "inferred",
+      "pointer": "closure verification V4a (a git ls-tree comparison against the nova release commit); check P2-28 re-derives only the tag side against the same constants",
+      "note": "the runner measures the tag side and carries the release-side blob ids as constants copied from check P2-28"
     }
   ]
 }
