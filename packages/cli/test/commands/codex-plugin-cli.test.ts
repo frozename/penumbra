@@ -179,6 +179,8 @@ function removeFakePluginRegistration(content: string): string {
   return content.replace(FAKE_PLUGIN_REGISTRATION, "");
 }
 
+// Spawns the real CLI once per lifecycle step: about 4.5 s on the Linux CI runner,
+// against the 5 s default.
 test("real CLI plugin mode installs, repairs, reports, and uninstalls through the executable host", async () => {
   const fixture = makeFixture();
   try {
@@ -239,7 +241,7 @@ test("real CLI plugin mode installs, repairs, reports, and uninstalls through th
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 test("unknown plugin status never triggers repair mutation", async () => {
   const fixture = makeFixture();
