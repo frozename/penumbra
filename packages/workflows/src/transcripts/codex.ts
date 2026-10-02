@@ -318,7 +318,8 @@ function validateOptions(options: ReadCodexTranscriptOptions): TranscriptReadRes
   return null;
 }
 
-async function readAuthorizedTranscript(
+// Exported so tests can mutate the file between the before and after snapshots.
+export async function readAuthorizedTranscript(
   handle: FileHandle,
   options: ReadCodexTranscriptOptions,
   maxBytes: number,

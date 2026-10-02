@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   appendFile,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rename,
@@ -13,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readCodexTranscript } from "@src/transcripts/codex.js";
+import { readAuthorizedTranscript, readCodexTranscript } from "@src/transcripts/codex.js";
 import type { TranscriptReadResult } from "@src/transcripts/types.js";
 
 const FORMAT = "penumbra-codex-rollout-fixture-v1";
@@ -76,6 +77,50 @@ async function readSynthetic(
     expectedFileIdentity: { dev: target.dev, ino: target.ino },
     ...caps,
   });
+}
+
+// Runs the snapshot-checked read and applies `mutate` on the descriptor's first
+// read: strictly after the before-snapshots and before the after-snapshots, so the
+// change always lands mid-read instead of racing a timer against the reader.
+async function readSyntheticMutatedMidRead(
+  path: string,
+  expectedCwd: string,
+  mutate: () => Promise<void>,
+): Promise<TranscriptReadResult> {
+  const target = await stat(path, { bigint: true });
+  const handle = await open(path, "r");
+  let mutated = false;
+  const intercepted = new Proxy(handle, {
+    get(original, property): unknown {
+      const value: unknown = Reflect.get(original, property, original);
+      if (typeof value !== "function") return value;
+      const bound = (value as (...args: unknown[]) => unknown).bind(original);
+      if (property !== "read") return bound;
+      return async (...args: unknown[]): Promise<unknown> => {
+        if (!mutated) {
+          mutated = true;
+          await mutate();
+        }
+        return await bound(...args);
+      };
+    },
+  });
+  try {
+    return await readAuthorizedTranscript(
+      intercepted,
+      {
+        path,
+        expectedSessionId: "wanted",
+        expectedCwd,
+        format: FORMAT,
+        expectedFileIdentity: { dev: target.dev, ino: target.ino },
+      },
+      1024 * 1024,
+      2_000,
+    );
+  } finally {
+    await handle.close();
+  }
 }
 
 test("reads the supplied disposable CLI capture without event_msg duplicates", async () => {
@@ -646,18 +691,12 @@ test("returns unavailable when the descriptor snapshot is appended during the re
   const root = await makeSyntheticRoot();
   const path = join(root, "append-race.jsonl");
   try {
-    await writeFile(path, jsonl([sessionMeta(root), message("user", "x".repeat(8_000_000))]));
-    const reading = readSynthetic(path, root, "wanted", { maxBytes: 9_000_000 });
-    await new Promise((resolveMutation, rejectMutation) => {
-      setTimeout(() => {
-        appendFile(path, JSON.stringify(message("assistant", "late")) + "\n").then(
-          resolveMutation,
-          rejectMutation,
-        );
-      }, 1);
+    await writeFile(path, jsonl([sessionMeta(root), message("user", "x".repeat(64_000))]));
+    const result = await readSyntheticMutatedMidRead(path, root, async () => {
+      await appendFile(path, JSON.stringify(message("assistant", "late")) + "\n");
     });
 
-    expect((await reading).status).toBe("unavailable");
+    expect(result).toEqual({ status: "unavailable", reason: "Transcript changed while reading" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -668,21 +707,13 @@ test("returns unavailable when the exact path is replaced while its old descript
   const path = join(root, "replace-race.jsonl");
   const displacedPath = join(root, "displaced.jsonl");
   try {
-    await writeFile(path, jsonl([sessionMeta(root), message("user", "x".repeat(8_000_000))]));
-    const reading = readSynthetic(path, root, "wanted", { maxBytes: 9_000_000 });
-    await new Promise((resolveMutation, rejectMutation) => {
-      setTimeout(() => {
-        rename(path, displacedPath)
-          .then(async () => {
-            await writeFile(path, jsonl([sessionMeta(root, "replacement")]));
-          })
-          .then(resolveMutation, rejectMutation);
-      }, 1);
+    await writeFile(path, jsonl([sessionMeta(root), message("user", "x".repeat(64_000))]));
+    const result = await readSyntheticMutatedMidRead(path, root, async () => {
+      await rename(path, displacedPath);
+      await writeFile(path, jsonl([sessionMeta(root, "replacement")]));
     });
 
-    const result = await reading;
-    expect(result.status).toBe("unavailable");
-    expect("messages" in result).toBe(false);
+    expect(result).toEqual({ status: "unavailable", reason: "Transcript changed while reading" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
