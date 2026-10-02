@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { readRuntimeBody } from "./harness.js";
 
 const SCRIPT_PATH = resolve(".claude/workflows/penumbra.js");
 const SWEEP_SCRIPT_PATH = resolve(".claude/workflows/session-memory-sweep.js");
-const MUTATION_DIR = "/private/tmp/generic-native-workflow-bridge";
+const MUTATION_DIR = join(tmpdir(), `generic-native-workflow-bridge-${String(process.pid)}`);
 
 type AgentStub = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
 

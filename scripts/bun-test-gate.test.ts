@@ -55,6 +55,11 @@ test("passes after large stdout and stderr writes", async () => {
 
     const result = await runGate(testPath);
 
+    // The shard's own output is captured, so a failure is otherwise opaque in CI.
+    // Uppercased because this test itself runs under the gate: the summary and
+    // panic patterns in bun-test-output.ts are case-sensitive, so the echoed
+    // inner summary cannot be read as the outer shard's own result.
+    if (result.exitCode !== 0) console.error(result.output.slice(-4000).toUpperCase());
     expect(result.exitCode).toBe(0);
     expect(result.output.includes("Ran 1 test")).toBe(true);
   } finally {

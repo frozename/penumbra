@@ -67,7 +67,10 @@ allow_override() {
   if [ -f "$sentinel" ]; then
     local now mtime age
     now=$(date +%s 2>/dev/null) || return 1
-    mtime=$(stat -f %m "$sentinel" 2>/dev/null || stat -c %Y "$sentinel" 2>/dev/null) || return 1
+    # GNU stat first: GNU reads `-f %m` as "filesystem status of the file named %m",
+    # prints the sentinel's filesystem block to stdout, then fails, so the BSD-first
+    # order captured that text into mtime on Linux. BSD stat rejects -c silently.
+    mtime=$(stat -c %Y "$sentinel" 2>/dev/null || stat -f %m "$sentinel" 2>/dev/null) || return 1
     age=$((now - mtime))
     [ "$age" -ge 0 ] && [ "$age" -le 300 ] && return 0
   fi

@@ -1303,6 +1303,50 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Path to llamactl e2e manifest fixture.",
   },
 
+  // ── codex safety hook ─────────────────────────────────────────────
+  PENUMBRA_ALLOW_AGENT_GC_SENTINEL: {
+    schema: OptStr,
+    description:
+      "Path of the agent-GC override sentinel read by the penumbra-agent-gc-guard hook (default ~/.claude/.penumbra-allow-agent-gc). The Codex safety hook sets it to its managed sentinel path.",
+  },
+  PENUMBRA_DB: {
+    schema: OptStr,
+    description:
+      "SQLite database the penumbra-agent-gc-guard hook queries for dispatch branches (default ~/.penumbra/db.sqlite). The Codex safety hook derives it from the storage root when unset.",
+  },
+
+  // ── codex safety hook test fixtures ───────────────────────────────
+  PENUMBRA_TEST_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where cli/test/commands/codex-safety-hooks.test.ts capture guards write the guard input. Not read outside tests.",
+  },
+  PENUMBRA_TEST_SENTINEL_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts capture guards record the sentinel path they received. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DB_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts capture guards record the PENUMBRA_DB they received. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DB_CAPTURE: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where cli/test/commands/codex-safety-setup.test.ts records the PENUMBRA_DB seen by the installed hook. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DELEGATE_GUARD: {
+    schema: OptStr,
+    description:
+      "Fixture-only guard path that the codex-safety-hooks.test.ts PENUMBRA_DB capture guard execs after recording PENUMBRA_DB. Not read outside tests.",
+  },
+  PENUMBRA_TEST_PID_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts guards record their process ids so the deadline and oversized-output tests can check the owned process tree is reaped. Not read outside tests.",
+  },
+
   // ── core test fixtures ────────────────────────────────────────────
   PENUMBRA_TEST_LLM_KEY: {
     schema: OptStr,
