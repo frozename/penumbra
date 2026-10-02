@@ -305,6 +305,7 @@ type AwaitChainDeps = {
   deadline: () => { remaining_ms: number | null; expired: boolean };
 };
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain awaiting under the shared run deadline while grandfathering its pre-existing complexity.
 async function awaitChainImpl(
   conversationId: string,
   opts: { timeoutMs?: number; lateResponseGraceMs?: number } | undefined,

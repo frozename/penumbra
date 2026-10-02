@@ -243,6 +243,7 @@ function bashCommandLooksWritey(command: string): boolean {
 // Count the trailing run of consecutive SOLO tool-calls, stopping (resetting) at the
 // first real dispatch. Reads/greps and status polls are skipped (neither increment nor
 // reset). rows are newest-first.
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the per-harness solo streak count while grandfathering its pre-existing complexity.
 function countTrailingSoloStreak(rows: ToolRow[], source: "claude-code" | "codex"): number {
   let streak = 0;
   for (const row of rows) {
@@ -282,6 +283,7 @@ function render(streak: number, threshold: number): string {
   ].join("\n");
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the drift-guard workflow body while grandfathering its pre-existing complexity.
 export const fn: WorkflowFn<Args> = async (ctx) => {
   if (process.env.PENUMBRA_DISPATCH_DRIFT_ENABLED === "0") return "";
 

@@ -28,19 +28,19 @@ import {
 import { resolve } from "node:path";
 
 import {
+  acceptCodexDelivery,
+  admitCodexLifecycle,
+  claimCodexContinuity,
+  type CodexIngress,
+  CodexIngressSchema,
+  releaseCodexContinuity,
+  snapshotCodexIngress,
+} from "../workflows/hook-ingress.js";
+import {
   hydrateSessionHandoffTemplateCtx,
   recordContinuitySessionEvents,
   sessionStampFromBodyPrefix,
 } from "../workflows/session-stamp.js";
-import {
-  acceptCodexDelivery,
-  admitCodexLifecycle,
-  claimCodexContinuity,
-  CodexIngressSchema,
-  type CodexIngress,
-  releaseCodexContinuity,
-  snapshotCodexIngress,
-} from "../workflows/hook-ingress.js";
 import { json } from "./_helpers.js";
 import { chainStartFromInput } from "./chains.js";
 import { conversationsCancelRoute } from "./conversations.js";
@@ -1520,6 +1520,7 @@ function filterMatchedByLifecycle(
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve matched trigger execution while grandfathering its pre-existing complexity.
 async function executeMatchedTriggerSpec(opts: {
   spec: WorkflowSpec;
   entry: NonNullable<ReturnType<Registry["getEntry"]>>;
@@ -1825,6 +1826,7 @@ function launchDetachedTriggerRuns(opts: {
   });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the workflow trigger route while grandfathering its pre-existing complexity.
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
   if (!reg) {
