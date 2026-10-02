@@ -1,8 +1,10 @@
 import "../setup";
-import { render } from "@testing-library/react";
-import { describe, expect, test } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { Titlebar } from "@src/shell/Titlebar";
+
+afterEach(cleanup);
 
 describe("Titlebar", () => {
   test("renders traffic lights, orb, brand, and version", () => {
