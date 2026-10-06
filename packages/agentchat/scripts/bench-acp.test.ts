@@ -9,6 +9,7 @@ import { BENCH_SYSTEM_PROMPT } from "./bench-prompts.js";
 interface StartChainArgs {
   initial_agent: string;
   task_type: string;
+  task_class: string;
   use_worktree: boolean;
   trust_mode: string;
   message: string;
@@ -88,6 +89,7 @@ describe("bench-acp runner", () => {
     const startArgs = first(startCalls)[0];
     expect(startArgs.initial_agent).toBe("mock-agent");
     expect(startArgs.task_type).toBe("unknown");
+    expect(startArgs.task_class).toBe("TRIVIAL");
     expect(startArgs.use_worktree).toBe(false);
     expect(startArgs.trust_mode).toBe("all");
     expect(startArgs.message).toContain("What is the default value of the --concurrency flag");

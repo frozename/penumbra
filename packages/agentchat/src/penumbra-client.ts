@@ -5,6 +5,7 @@ import type {
   DispatchReliabilityReport,
   HandoffRow,
   PermissionRequestRow,
+  TaskClass,
   WorktreeHandle,
 } from "@penumbra/core";
 
@@ -88,6 +89,8 @@ type ChainStartInput = {
   project_id?: string | null;
   max_hops?: number;
   trust_mode?: "all" | "config";
+  task_class?: TaskClass;
+  workload?: string;
   use_worktree?: boolean | number | null;
   task_type?: string;
   task_name?: string;
