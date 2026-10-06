@@ -35,7 +35,6 @@ async function runBridge(
   scriptPath: string,
   input: unknown,
   agentStub: AgentStub,
-  options: { now?: () => number } = {},
 ): Promise<{ result: unknown; prompts: string[]; error?: unknown }> {
   const body = readRuntimeBody(scriptPath);
   const prompts: string[] = [];
@@ -56,13 +55,21 @@ async function runBridge(
   const log = () => {};
   const budget = {};
   const workflow = async () => ({});
-  const RuntimeDate = options.now
-    ? class extends Date {
-        static override now(): number {
-          return options.now!();
-        }
-      }
-    : Date;
+  const NOW_ERR = "Date.now() / new Date() are unavailable in workflow scripts (breaks resume).";
+  const RuntimeDate = function (this: unknown, ...a: unknown[]) {
+    if (!new.target || a.length === 0) throw new Error(NOW_ERR);
+    return Reflect.construct(Date, a, new.target);
+  } as unknown as DateConstructor;
+  RuntimeDate.now = () => {
+    throw new Error(NOW_ERR);
+  };
+  const RuntimeMath = Object.create(Math, {
+    random: {
+      value: () => {
+        throw new Error("Math.random() is unavailable in workflow scripts (breaks resume).");
+      },
+    },
+  });
   const run = new Function(
     "agent",
     "parallel",
@@ -73,6 +80,7 @@ async function runBridge(
     "budget",
     "workflow",
     "Date",
+    "Math",
     `"use strict"; return (async () => {\n${body}\n})()`,
   ) as (...a: unknown[]) => Promise<unknown>;
   try {
@@ -86,6 +94,7 @@ async function runBridge(
       budget,
       workflow,
       RuntimeDate,
+      RuntimeMath,
     );
     return { result, prompts };
   } catch (error) {
@@ -1282,100 +1291,15 @@ describe("penumbra.js happy path", () => {
   });
 });
 
-describe("penumbra.js total deadline", () => {
-  test("a delayed start consumes the total deadline and prevents a wait call", async () => {
-    let now = 0;
-    const startStub = makeStartStub();
-    const { result, prompts } = await runBridge(
+describe("penumbra.js per-call budget", () => {
+  test("workflow_wait receives the full timeout budget without reading the clock", async () => {
+    const { error, prompts } = await runBridge(
       SCRIPT_PATH,
       { ...VALID_ARGS, timeout_ms: 100 },
-      async (prompt: string) => {
-        if (!prompt.includes("mcp__penumbra__workflow_run")) {
-          throw new Error("unexpected call after deadline");
-        }
-        now = 100;
-        return startStub(prompt);
-      },
-      { now: () => now },
+      makeFullStub({}, { outcome: "success", result: nativeResult({ ok: true }) }),
     );
-    expect(result).toEqual({
-      ok: false,
-      run_id: "wfrun-test-1",
-      status: "timeout",
-      error: "deadline_exceeded",
-      stage: "start",
-    });
-    expect(prompts).toHaveLength(1);
-  });
-
-  test("workflow_wait receives only the remaining total deadline", async () => {
-    let now = 0;
-    const startStub = makeStartStub();
-    const waitStub = makeWaitStub({ outcome: "success", result: nativeResult({ ok: true }) });
-    const { result, prompts } = await runBridge(
-      SCRIPT_PATH,
-      { ...VALID_ARGS, timeout_ms: 100 },
-      async (prompt: string) => {
-        if (prompt.includes("mcp__penumbra__workflow_run")) {
-          now = 30;
-          return startStub(prompt);
-        }
-        if (prompt.includes("mcp__penumbra__workflow_wait")) {
-          expect(prompt).toContain('"timeout_ms":70');
-          now = 101;
-          return waitStub(prompt);
-        }
-        throw new Error("unexpected call after deadline");
-      },
-      { now: () => now },
-    );
-    expect(result).toEqual({
-      ok: false,
-      run_id: "wfrun-test-1",
-      status: "timeout",
-      error: "deadline_exceeded",
-      stage: "wait",
-    });
-    expect(prompts).toHaveLength(2);
-  });
-
-  test("slow read_handle completion cannot become success after the deadline", async () => {
-    let now = 0;
-    const stub = makeFullStub(
-      {},
-      {
-        outcome: "success",
-        result_truncated: true,
-        result_handle_id: "handle-slow",
-        result_preview: "preview",
-        result_bytes: 99999,
-      },
-      { handle_id_used: "handle-slow" },
-    );
-    const { result, prompts } = await runBridge(
-      SCRIPT_PATH,
-      { ...VALID_ARGS, timeout_ms: 100 },
-      async (prompt, options) => {
-        if (prompt.includes("mcp__penumbra__workflow_run")) now = 10;
-        else if (prompt.includes("mcp__penumbra__workflow_wait")) now = 20;
-        else if (prompt.includes("mcp__penumbra__read_handle")) now = 101;
-        return stub(prompt, options);
-      },
-      { now: () => now },
-    );
-    expect(result).toEqual({
-      ok: false,
-      run_id: "wfrun-test-1",
-      status: "timeout",
-      outcome: "success",
-      result_handle_id: "handle-slow",
-      result_preview: "preview",
-      result_bytes: 99999,
-      error: "deadline_exceeded",
-      stage: "read_handle",
-    });
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain("80 ms remain");
+    expect(error).toBeUndefined();
+    expect(prompts[1]).toContain('"timeout_ms":100');
   });
 });
 
@@ -1395,6 +1319,43 @@ describe("session-memory-sweep.js native collect", () => {
     hook: "When the fact is relevant",
     why: "It prevents repeated investigation.",
   };
+
+  test("collect uses the full timeout budget without reading the clock", async () => {
+    const { error, prompts } = await runBridge(
+      SWEEP_SCRIPT_PATH,
+      { cwd: "/test-repo", timeout_ms: 100 },
+      async (prompt: string) => {
+        if (prompt.includes("mcp__penumbra__workflow_run")) return start;
+        return {
+          status: "completed",
+          outcome: "success",
+          workflow_run_id_used: "wfrun-sweep-1",
+          cwd_used: "/test-repo",
+          payload_read: true,
+          native_outcome: "success",
+          run_result_read: true,
+          ok: true,
+          rendered_block: "",
+          candidates: [],
+        };
+      },
+    );
+    expect(error).toBeUndefined();
+    expect(prompts[1]).toContain('"timeout_ms":100');
+    expect(prompts).toHaveLength(2);
+  });
+
+  test("collect without cwd fails closed with an actionable message", async () => {
+    const { result, prompts, error } = await runBridge(SWEEP_SCRIPT_PATH, {}, async () => {
+      throw new Error("unexpected agent call");
+    });
+    expect(error).toBeUndefined();
+    expect(prompts).toHaveLength(0);
+    expect(result).toMatchObject({
+      error: "cwd_not_absolute",
+      message: expect.stringContaining("args: { cwd"),
+    });
+  });
 
   test("collect returns a validated inline candidate payload with its run id", async () => {
     const { result } = await runBridge(SWEEP_SCRIPT_PATH, sweepArgs, async (prompt: string) => {
@@ -1551,32 +1512,6 @@ describe("session-memory-sweep.js native collect", () => {
       error: "workflow_error",
     });
   });
-
-  test("collect start time consumes its wait budget", async () => {
-    let now = 0;
-    const { result, prompts } = await runBridge(
-      SWEEP_SCRIPT_PATH,
-      { cwd: "/test-repo", timeout_ms: 100 },
-      async (prompt: string) => {
-        if (!prompt.includes("mcp__penumbra__workflow_run")) {
-          throw new Error("unexpected call after deadline");
-        }
-        now = 100;
-        return start;
-      },
-      { now: () => now },
-    );
-    expect(result).toEqual({
-      ok: false,
-      rendered_block: "",
-      candidates: [],
-      run_id: "wfrun-sweep-1",
-      status: "timeout",
-      error: "deadline_exceeded",
-      stage: "start",
-    });
-    expect(prompts).toHaveLength(1);
-  });
 });
 
 describe("penumbra.js copy-based mutation checks", () => {
@@ -1700,40 +1635,6 @@ describe("penumbra.js copy-based mutation checks", () => {
         error: "inner_failure",
         result: native,
       });
-    } finally {
-      cleanupMutations();
-    }
-  });
-
-  test("fresh full wait budget mutation is caught by elapsed accounting", async () => {
-    const mutated = originalContent.replace(
-      "const waitTimeoutMs = remainingDeadlineMs();",
-      "const waitTimeoutMs = effectiveTimeout;",
-    );
-    expect(mutated).not.toBe(originalContent);
-    const mutatedPath = writeMutation(mutated);
-    try {
-      let now = 0;
-      const startStub = makeStartStub();
-      const waitStub = makeWaitStub({ outcome: "success", result: nativeResult({ ok: true }) });
-      const { result, error } = await runBridge(
-        mutatedPath,
-        { ...VALID_ARGS, timeout_ms: 100 },
-        async (prompt: string) => {
-          if (prompt.includes("mcp__penumbra__workflow_run")) {
-            now = 30;
-            return startStub(prompt);
-          }
-          if (prompt.includes("mcp__penumbra__workflow_wait")) {
-            expect(prompt).toContain('"timeout_ms":70');
-            return waitStub(prompt);
-          }
-          throw new Error("unexpected agent call");
-        },
-        { now: () => now },
-      );
-      expect(error).toBeDefined();
-      expect(result).toBeUndefined();
     } finally {
       cleanupMutations();
     }
