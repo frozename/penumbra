@@ -1,5 +1,10 @@
-import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
-
+import {
+  BINARY_BODY_PLACEHOLDER,
+  type RecallBundle,
+  type WorkflowCtx,
+  type WorkflowFn,
+  type WorkflowSpec,
+} from "@penumbra/workflows";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -166,7 +171,10 @@ const spec: WorkflowSpec = {
       source: "git.show",
       args: { range: "{{args.base_ref}}..{{args.target_ref}}", max_commits: 20 },
     },
-    { source: "file.contents", args: { path: "{{args.content_path}}" } },
+    {
+      source: "file.contents",
+      args: { path: "{{args.content_path}}" },
+    },
   ],
   recall_budget_tokens: 24000,
   output: [],
@@ -367,6 +375,25 @@ function fileContentsBody(recall: RecallBundle): string {
   return typeof body === "string" ? body : "";
 }
 
+// not_found and path_outside_allowed_roots surface as body:null + error with no
+// warnings, so recall_warnings alone would hide why the target is empty.
+function fileContentsError(recall: RecallBundle): string | null {
+  const fileContents = recall.byKey["file.contents"];
+  if (!fileContents || typeof fileContents !== "object" || Array.isArray(fileContents)) return null;
+  const error = (fileContents as Record<string, unknown>).error;
+  return typeof error === "string" && error.length > 0 ? error : null;
+}
+
+const RECALL_TRUNCATION_ONLY_RE = /^… \[recall budget: body truncated to \d+ of \d+ chars\]$/;
+
+// The binary placeholder and a marker-only body are omission markers, not
+// reviewable text — count them as empty so a trimmed or undecodable
+// content_path cannot pass itself off as the review target.
+function hasReviewableContent(body: string): boolean {
+  if (body.length === 0 || body === BINARY_BODY_PLACEHOLDER) return false;
+  return !RECALL_TRUNCATION_ONLY_RE.test(body.trim());
+}
+
 const REVIEW_MEMORY_TOP_K = 5;
 const REVIEW_MEMORY_BYTE_BUDGET = 2000;
 
@@ -464,7 +491,7 @@ function renderPersonaPrompt(
   // git.diff and git.show recall fetched from the workflow's cwd, which can be the
   // daemon's cwd (penumbra) rather than the target repo — drop the misleading
   // sections to prevent personas from reviewing the wrong thing.
-  const useContent = hasContentPath && content.length > 0;
+  const useContent = hasContentPath && hasReviewableContent(content);
   const diffBody = useContent ? content : gitDiff;
   const reviewTarget = useContent
     ? `content_path=${args.content_path}\nbase_ref=${args.base_ref}\ntarget_ref=${args.target_ref}\n\nThe Diff section below comes from the explicit content_path file — this is the authoritative review target. Ignore any git context from your worktree.`
@@ -791,14 +818,31 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   // file.contents body means the refs resolved to nothing in this cwd — the
   // wrong-repo dispatch case, where recall ran against the daemon's repo, not
   // the target. Reporting "clean" here would close a review lane on a void run
-  // after paying for every persona. `&&` is load-bearing: a content_path-only
-  // review legitimately has an empty git.diff.
+  // after paying for every persona. A set-but-empty content_path fails closed
+  // on its own, whatever git.diff holds: the caller named the review target
+  // explicitly, and falling back to the cwd's refs would review the wrong
+  // change silently. The binary placeholder and a lone budget-truncation
+  // marker count as empty: they are omission markers, not reviewable text.
   const diffText = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
-  const contentText = fileContentsBody(recall);
-  const recallErrs = recall.warnings.filter((w) =>
-    /^(?:git\.diff|git\.show|file\.contents):/.test(w),
+  const rawContentText = fileContentsBody(recall);
+  const contentIsBinary = rawContentText === BINARY_BODY_PLACEHOLDER;
+  const contentIsMarkerOnly = RECALL_TRUNCATION_ONLY_RE.test(rawContentText.trim());
+  const contentText = hasReviewableContent(rawContentText) ? rawContentText : "";
+  const hasContentPath =
+    typeof ctx.args.content_path === "string" && ctx.args.content_path.length > 0;
+  const recallErrs = recall.warnings.filter(
+    (w) =>
+      /^(?:git\.diff|git\.show|file\.contents):/.test(w) || w.startsWith("recall budget exceeded"),
   );
-  if (diffText.trim().length === 0 && contentText.trim().length === 0) {
+  if (hasContentPath && contentText.trim().length === 0) {
+    const fileError = fileContentsError(recall);
+    const hint = contentIsBinary
+      ? "content_path resolved to binary content that cannot be decoded as text. Point content_path at a UTF-8 text file, or drop it and pass refs that produce a reviewable diff."
+      : contentIsMarkerOnly
+        ? "The recall budget trim emptied the content_path body; raise the workflow's recall_budget_tokens or point content_path at a smaller file."
+        : fileError === "not_found" || fileError === "path_outside_allowed_roots"
+          ? `content_path produced no content (file.contents: ${fileError}) — the path may be outside the allowed roots, or absent under this repo. Pass an explicit \`cwd\` to workflow_run — it defaults to the DAEMON's repo, not yours.`
+          : "content_path produced no reviewable content — the file is missing, unreadable, or empty. Point it at a UTF-8 text file, or drop it and pass refs that produce a reviewable diff.";
     return {
       ok: false,
       outcome: "failed",
@@ -807,7 +851,24 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       target_ref: ctx.args.target_ref,
       base_ref: ctx.args.base_ref,
       recall_warnings: recallErrs,
-      hint: "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.",
+      ...(fileError !== null ? { file_contents_error: fileError } : {}),
+      hint,
+    };
+  }
+  if (diffText.trim().length === 0 && contentText.trim().length === 0) {
+    const budgetTrimmed = recall.warnings.some((w) => w.startsWith("recall budget exceeded"));
+    const hint = budgetTrimmed
+      ? "The recall budget trim dropped every review input; raise the workflow's recall_budget_tokens or narrow the diff range / content_path."
+      : "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.";
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "empty_review_target",
+      cwd: ctx.cwd,
+      target_ref: ctx.args.target_ref,
+      base_ref: ctx.args.base_ref,
+      recall_warnings: recallErrs,
+      hint,
     };
   }
 

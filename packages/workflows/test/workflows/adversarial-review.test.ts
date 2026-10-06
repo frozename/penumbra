@@ -2257,3 +2257,40 @@ test("non-empty git diff recall does not trip the empty_review_target guard", as
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("content_path error hint advises an explicit cwd, not extending allowed_roots", async () => {
+  const deniedRecall: RecallBundle = {
+    byKey: {
+      "git.diff": "",
+      "git.show": [],
+      "file.contents": {
+        path: "/repo/secret.md",
+        body: null,
+        error: "path_outside_allowed_roots",
+      },
+    },
+    warnings: [],
+    estimatedTokens: 10,
+  };
+  const { ctx, root } = makeCtx({
+    args: { content_path: "/repo/secret.md" },
+  });
+  try {
+    const result = (await fn(ctx, deniedRecall)) as {
+      ok: boolean;
+      error?: string;
+      hint?: string;
+      file_contents_error?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("empty_review_target");
+    expect(result.file_contents_error).toBe("path_outside_allowed_roots");
+    expect(result.hint).toBeDefined();
+    // A workflow_run caller cannot widen the daemon's allowed_roots; the only
+    // actionable advice is an explicit cwd.
+    expect(result.hint).toContain("`cwd`");
+    expect(result.hint).not.toContain("extend allowed_roots");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

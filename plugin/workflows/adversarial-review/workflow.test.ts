@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Input } from "./workflow.js";
 
 import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
-import { fn, resolveRequestedPersonas } from "./workflow.js";
+import workflowSpec, { fn, resolveRequestedPersonas } from "./workflow.js";
 
 const WELL_FORMED_SYNTHESIS = `Land as-is.
 
@@ -79,6 +79,351 @@ describe("resolveRequestedPersonas", () => {
 });
 
 describe("adversarial-review workflow", () => {
+  test("fails closed without dispatching when content_path resolves to the binary placeholder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-binary-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "blob.bin",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "blob.bin"),
+            body: "<binary file omitted>",
+            truncated: false,
+            byte_size: 5,
+          },
+        },
+        warnings: [
+          `file.contents: ${join(root, "blob.bin")} 1 NUL bytes escaped`,
+          `file.contents: ${join(root, "blob.bin")} binary content omitted`,
+          "git.diff: 2 NUL bytes escaped",
+        ],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        recall_warnings?: string[];
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("binary");
+      expect(result.recall_warnings).toEqual([
+        `file.contents: ${join(root, "blob.bin")} 1 NUL bytes escaped`,
+        `file.contents: ${join(root, "blob.bin")} binary content omitted`,
+        "git.diff: 2 NUL bytes escaped",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not raise the file.contents max_bytes above the source default", () => {
+    const fileContents = workflowSpec.recall.find((entry) => entry.source === "file.contents");
+    expect(fileContents?.args?.max_bytes).toBeUndefined();
+  });
+
+  test("fails closed without dispatching when content_path is binary even if git.diff is non-empty", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-binary-diff-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "blob.bin",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "blob.bin"),
+            body: "<binary file omitted>",
+            truncated: false,
+            byte_size: 200000,
+          },
+        },
+        warnings: [`file.contents: ${join(root, "blob.bin")} binary content omitted`],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("binary");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed without dispatching when the recall budget trims content_path to a marker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-marker-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "big.md",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "big.md"),
+            body: "\n… [recall budget: body truncated to 0 of 180000 chars]",
+            truncated: true,
+            byte_size: 180000,
+          },
+        },
+        warnings: ["recall budget exceeded: trimmed 1 items (target 24000 tokens)"],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("budget");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed with allowed-roots hint when content_path is outside allowed roots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-roots-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "/etc/hosts",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: "/etc/hosts",
+            body: null,
+            error: "path_outside_allowed_roots",
+          },
+        },
+        warnings: [],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+        file_contents_error?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.file_contents_error).toBe("path_outside_allowed_roots");
+      expect(result.hint).toContain("allowed roots");
+      expect(result.hint).toContain("cwd");
+      expect(result.hint).toContain("DAEMON");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("recall budget warnings reach recall_warnings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-budget-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "",
+          "git.show": [],
+        },
+        warnings: ["recall budget exceeded: trimmed 9 items (target 24000 tokens)"],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        recall_warnings?: string[];
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(result.recall_warnings).toContain(
+        "recall budget exceeded: trimmed 9 items (target 24000 tokens)",
+      );
+      expect(result.hint).toContain("budget");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("reports failure when personas complete but synthesizer dispatch throws", async () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-review-workflow-"));
     try {
