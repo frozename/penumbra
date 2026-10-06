@@ -27,6 +27,9 @@ Bun + TypeScript monorepo (`bun` package manager, workspaces). Top-level package
 # Install
 bun install
 
+# In fresh worktrees, run once before running embedder or e2e tests
+bun scripts/fetch-embedder-model.ts
+
 # Type-check (runs scripts/check-dist-freshness.ts first to scrub stale dist/*)
 bun run typecheck
 
@@ -63,6 +66,8 @@ bun packages/cli/bin/penumbra.ts worktree gc --apply   # actually remove
 bun packages/cli/bin/penumbra.ts notes rotate          # dry-run archive
 bun packages/cli/bin/penumbra.ts notes rotate --apply  # actually archive
 ```
+
+Never bump fastembed without a re-embed migration of stored embeddings, because the vectors change.
 
 ## Conventions
 
