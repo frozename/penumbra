@@ -1,7 +1,7 @@
 export const meta = {
   name: "session-memory-sweep",
   description:
-    "Collect close-time t2 memory candidates for approval, or write explicitly approved candidates to t2.",
+    "Collect close-time t2 memory candidates for approval, or write explicitly approved candidates to t2. Collect mode requires args.cwd (absolute repo path).",
   whenToUse:
     "At session close, pre-compact, or stop when you want Penumbra to propose durable memories before any t2 write.",
   phases: [
@@ -121,7 +121,14 @@ if (Array.isArray(input.approve)) {
 phase("Collect");
 const collectCwd = input.cwd;
 if (typeof collectCwd !== "string" || collectCwd.length === 0 || collectCwd[0] !== "/") {
-  return { ok: false, rendered_block: "", candidates: [], error: "cwd_not_absolute" };
+  return {
+    ok: false,
+    rendered_block: "",
+    candidates: [],
+    error: "cwd_not_absolute",
+    message:
+      'session-memory-sweep: collect mode needs args.cwd set to the absolute repo path, e.g. Workflow({ name: "session-memory-sweep", args: { cwd: "/abs/repo" } })',
+  };
 }
 const DEFAULT_COLLECT_TIMEOUT_MS = 300000;
 const MAX_COLLECT_TIMEOUT_MS = 1800000;
@@ -132,23 +139,10 @@ const collectTimeoutMs =
   input.timeout_ms <= MAX_COLLECT_TIMEOUT_MS
     ? input.timeout_ms
     : DEFAULT_COLLECT_TIMEOUT_MS;
-const collectDeadlineAt = Date.now() + collectTimeoutMs;
-
-function collectRemainingMs() {
-  return Math.max(0, collectDeadlineAt - Date.now());
-}
+// This runtime forbids clock or RNG reads; workflow_wait enforces the budget.
 
 function collectFailure(error, extra) {
   return { ok: false, rendered_block: "", candidates: [], ...(extra ?? {}), error: error };
-}
-
-function collectDeadlineFailure(runId, stage, extra) {
-  return collectFailure("deadline_exceeded", {
-    ...(runId ? { run_id: runId } : {}),
-    ...(extra ?? {}),
-    status: "timeout",
-    stage: stage,
-  });
 }
 
 const COLLECT_START_SCHEMA = {
@@ -178,7 +172,7 @@ const collectStart = await agent(
     collectRunArgs,
     "Return the EXACT JSON response from the tool. If the tool returns an error, return error_code and error_message.",
     "Echo back the exact name, cwd, and wait values you passed as name_used, cwd_used, and wait_used.",
-    `${String(collectRemainingMs())} ms remain in the total collect deadline. Do not do any other work.`,
+    `${String(collectTimeoutMs)} ms is this call's budget. Do not do any other work.`,
   ].join("\n"),
   {
     label: "session-memory-sweep-collect-start",
@@ -218,10 +212,6 @@ const collectRunId = collectStart.workflow_run_id;
 if (typeof collectRunId !== "string" || collectRunId.length === 0) {
   return { ok: false, rendered_block: "", candidates: [], error: "start_no_run_id" };
 }
-if (collectRemainingMs() === 0) {
-  return collectDeadlineFailure(collectRunId, "start");
-}
-
 const COLLECT_WAIT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -282,7 +272,7 @@ const COLLECT_HANDLE_SCHEMA = {
   },
 };
 
-async function readCollectHandle(handleId, expectedKind, remainingMs) {
+async function readCollectHandle(handleId, expectedKind, budgetMs) {
   const readArgs = JSON.stringify({ handle_id: handleId });
   return await agent(
     [
@@ -294,7 +284,7 @@ async function readCollectHandle(handleId, expectedKind, remainingMs) {
       "For a readable error body, set payload_kind:workflow_error and error_present:true.",
       `The expected payload kind is ${expectedKind}.`,
       "Echo back the exact handle_id passed to the tool as handle_id_used.",
-      `${String(remainingMs)} ms remain in the total collect deadline. Do not do any other work.`,
+      `${String(budgetMs)} ms is this call's budget. Do not do any other work.`,
     ].join("\n"),
     {
       label: "session-memory-sweep-collect-read-handle",
@@ -313,7 +303,7 @@ function collectSpillFields(waitResult, field) {
   };
 }
 
-const collectWaitTimeoutMs = collectRemainingMs();
+const collectWaitTimeoutMs = collectTimeoutMs;
 const collectWaitArgs = JSON.stringify({
   workflow_run_id: collectRunId,
   cwd: collectCwd,
@@ -330,7 +320,7 @@ const collectWait = await agent(
     "If status is completed and result is present, copy result.outcome as native_outcome, read the COMPLETE result.runResult Markdown, set run_result_read:true, and extract rendered_block and candidates from it.",
     "If the result is empty or says 'no new candidates', return ok:true with rendered_block:'' and candidates:[].",
     "Do not call memory_write_t2 in collect mode.",
-    `${String(collectWaitTimeoutMs)} ms remain in the total collect deadline. Do not do any other work.`,
+    `${String(collectWaitTimeoutMs)} ms is this call's budget. Do not do any other work.`,
   ].join("\n"),
   {
     label: "session-memory-sweep-collect-wait",
@@ -357,9 +347,6 @@ if (collectWait.resolution_warning) {
     resolution_warning: collectWait.resolution_warning,
   });
 }
-if (collectRemainingMs() === 0) {
-  return collectDeadlineFailure(collectRunId, "wait");
-}
 if (collectWait.status === "timeout") {
   return collectFailure("wait_timeout", { run_id: collectRunId });
 }
@@ -370,12 +357,7 @@ if (collectWait.error_truncated === true) {
   if (typeof handleId !== "string" || handleId.length === 0) {
     return collectFailure("error_handle_missing", fields);
   }
-  const remainingMs = collectRemainingMs();
-  if (remainingMs === 0) return collectDeadlineFailure(collectRunId, "read_handle", fields);
-  const readResult = await readCollectHandle(handleId, "workflow_error", remainingMs);
-  if (collectRemainingMs() === 0) {
-    return collectDeadlineFailure(collectRunId, "read_handle", fields);
-  }
+  const readResult = await readCollectHandle(handleId, "workflow_error", collectTimeoutMs);
   if (!readResult || typeof readResult !== "object") {
     return collectFailure("handle_resolution_no_response", fields);
   }
@@ -408,12 +390,7 @@ if (collectWait.result_truncated === true) {
   if (typeof handleId !== "string" || handleId.length === 0) {
     return collectFailure("result_handle_missing", fields);
   }
-  const remainingMs = collectRemainingMs();
-  if (remainingMs === 0) return collectDeadlineFailure(collectRunId, "read_handle", fields);
-  const readResult = await readCollectHandle(handleId, "memory_sweep_result", remainingMs);
-  if (collectRemainingMs() === 0) {
-    return collectDeadlineFailure(collectRunId, "read_handle", fields);
-  }
+  const readResult = await readCollectHandle(handleId, "memory_sweep_result", collectTimeoutMs);
   if (!readResult || typeof readResult !== "object") {
     return collectFailure("handle_resolution_no_response", fields);
   }

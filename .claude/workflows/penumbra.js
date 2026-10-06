@@ -64,23 +64,7 @@ const effectiveTimeout =
   timeoutMs <= MAX_TIMEOUT_MS
     ? timeoutMs
     : DEFAULT_TIMEOUT_MS;
-const deadlineStartedAt = Date.now();
-const deadlineAt = deadlineStartedAt + effectiveTimeout;
-
-function remainingDeadlineMs() {
-  return Math.max(0, deadlineAt - Date.now());
-}
-
-function deadlineFailure(runId, stage, bounded) {
-  return {
-    ok: false,
-    ...(runId ? { run_id: runId } : {}),
-    ...(bounded ?? {}),
-    status: "timeout",
-    error: "deadline_exceeded",
-    stage: stage,
-  };
-}
+// This runtime forbids clock or RNG reads; workflow_wait enforces the budget.
 
 const runCallArgs = JSON.stringify({
   name: workflow,
@@ -113,7 +97,7 @@ const startResult = await agent(
     "Return the EXACT JSON response from the tool. Do not interpret, summarize, or alter it.",
     "If the tool returns an error, return error_code and error_message from the error object.",
     "Echo back the exact name, cwd, and wait values you passed to the tool as name_used, cwd_used, and wait_used.",
-    `${String(remainingDeadlineMs())} ms remain in the total bridge deadline. Do not do any other work.`,
+    `${String(effectiveTimeout)} ms is this call's budget. Do not do any other work.`,
   ].join("\n"),
   {
     label: "penumbra-bridge-start",
@@ -163,11 +147,7 @@ const runId = startResult.workflow_run_id;
 if (typeof runId !== "string" || runId.length === 0) {
   return { ok: false, error: "start_no_run_id" };
 }
-if (remainingDeadlineMs() === 0) {
-  return deadlineFailure(runId, "start");
-}
-
-const waitTimeoutMs = remainingDeadlineMs();
+const waitTimeoutMs = effectiveTimeout;
 const waitCallArgs = JSON.stringify({
   workflow_run_id: runId,
   cwd: cwd,
@@ -225,7 +205,7 @@ const HANDLE_SCHEMA = {
   },
 };
 
-async function readSpilledPayload(handleId, expectedKind, remainingMs) {
+async function readSpilledPayload(handleId, expectedKind, budgetMs) {
   const readCallArgs = JSON.stringify({ handle_id: handleId });
   phase("Resolve");
   return await agent(
@@ -240,7 +220,7 @@ async function readSpilledPayload(handleId, expectedKind, remainingMs) {
       "Classify a readable error body as payload_kind:workflow_error with error_present:true.",
       `The expected payload kind is ${expectedKind}.`,
       "Echo back the exact handle_id passed to the tool as handle_id_used.",
-      `${String(remainingMs)} ms remain in the total bridge deadline. Do not do any other work.`,
+      `${String(budgetMs)} ms is this call's budget. Do not do any other work.`,
     ].join("\n"),
     {
       label: "penumbra-bridge-read-handle",
@@ -387,7 +367,7 @@ const waitResult = await agent(
     "If result_truncated or error_truncated is true, return the handle_id, preview, and bytes verbatim.",
     "Set payload_read:true only after reading the complete workflow_wait response envelope, including its inline payload or truncation metadata; otherwise set payload_read:false.",
     "Echo back the exact workflow_run_id and cwd values you passed to the tool as workflow_run_id_used and cwd_used.",
-    `${String(waitTimeoutMs)} ms remain in the total bridge deadline. Do not do any other work.`,
+    `${String(waitTimeoutMs)} ms is this call's budget. Do not do any other work.`,
   ].join("\n"),
   {
     label: "penumbra-bridge-wait",
@@ -429,10 +409,6 @@ if (waitResult.resolution_warning) {
     resolution_warning: waitResult.resolution_warning,
   };
 }
-if (remainingDeadlineMs() === 0) {
-  return deadlineFailure(runId, "wait");
-}
-
 const status = waitResult.status;
 const outcome = waitResult.outcome;
 if (status === "timeout") {
@@ -448,14 +424,7 @@ if (waitResult.error_truncated === true) {
   if (typeof errorHandleId !== "string" || errorHandleId.length === 0) {
     return { ok: false, ...bounded, error: "error_handle_missing" };
   }
-  const handleRemainingMs = remainingDeadlineMs();
-  if (handleRemainingMs === 0) {
-    return deadlineFailure(runId, "read_handle", bounded);
-  }
-  const readResult = await readSpilledPayload(errorHandleId, "workflow_error", handleRemainingMs);
-  if (remainingDeadlineMs() === 0) {
-    return deadlineFailure(runId, "read_handle", bounded);
-  }
+  const readResult = await readSpilledPayload(errorHandleId, "workflow_error", effectiveTimeout);
   if (!readResult || typeof readResult !== "object") {
     return { ok: false, ...bounded, error: "handle_resolution_no_response" };
   }
@@ -501,14 +470,7 @@ if (waitResult.result_truncated === true) {
   }
   const outcomeError = validateRequiredOutcome(outcome, "missing_outcome", "malformed_outcome");
   if (outcomeError) return { ok: false, ...bounded, error: outcomeError };
-  const handleRemainingMs = remainingDeadlineMs();
-  if (handleRemainingMs === 0) {
-    return deadlineFailure(runId, "read_handle", bounded);
-  }
-  const readResult = await readSpilledPayload(resultHandleId, "workflow_result", handleRemainingMs);
-  if (remainingDeadlineMs() === 0) {
-    return deadlineFailure(runId, "read_handle", bounded);
-  }
+  const readResult = await readSpilledPayload(resultHandleId, "workflow_result", effectiveTimeout);
   const resolution = validateResolvedWorkflowResult(readResult, resultHandleId, outcome);
   if (resolution.error) {
     return {
