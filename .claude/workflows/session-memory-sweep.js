@@ -3,7 +3,7 @@ export const meta = {
   description:
     "Collect close-time t2 memory candidates for approval, or write explicitly approved candidates to t2. Collect mode requires args.cwd (absolute repo path).",
   whenToUse:
-    "At session close, pre-compact, or stop when you want Penumbra to propose durable memories before any t2 write.",
+    "At session close, pre-compact, or stop when you want Penumbra to propose durable memories before any t2 write. In collect mode timeout_ms is the total budget (default 300000, max 1800000), split without reading a clock: the workflow_run start call and the read_handle call each get min(30000, floor(timeout_ms / 10)) ms and workflow_wait gets the remainder as its enforced timeout_ms. workflow_run, read_handle and agent() accept no timeout, so those two shares are advisory prompt text only.",
   phases: [
     { title: "Collect", detail: "run the daemon workflow and return candidate proposals" },
     { title: "Approve", detail: "write only explicitly approved candidates to t2" },
@@ -139,7 +139,11 @@ const collectTimeoutMs =
   input.timeout_ms <= MAX_COLLECT_TIMEOUT_MS
     ? input.timeout_ms
     : DEFAULT_COLLECT_TIMEOUT_MS;
-// This runtime forbids clock or RNG reads; workflow_wait enforces the budget.
+// No clock or RNG reads are allowed, so split the total up front into advisory shares and the enforced wait remainder.
+const COLLECT_AUX_BUDGET_MS = Math.min(30000, Math.floor(collectTimeoutMs / 10));
+const collectStartBudgetMs = COLLECT_AUX_BUDGET_MS;
+const collectReadBudgetMs = COLLECT_AUX_BUDGET_MS;
+const collectWaitBudgetMs = collectTimeoutMs - collectStartBudgetMs - collectReadBudgetMs;
 
 function collectFailure(error, extra) {
   return { ok: false, rendered_block: "", candidates: [], ...(extra ?? {}), error: error };
@@ -172,7 +176,7 @@ const collectStart = await agent(
     collectRunArgs,
     "Return the EXACT JSON response from the tool. If the tool returns an error, return error_code and error_message.",
     "Echo back the exact name, cwd, and wait values you passed as name_used, cwd_used, and wait_used.",
-    `${String(collectTimeoutMs)} ms is this call's budget. Do not do any other work.`,
+    `${String(collectStartBudgetMs)} ms is this call's budget out of a ${String(collectTimeoutMs)} ms total. Do not do any other work.`,
   ].join("\n"),
   {
     label: "session-memory-sweep-collect-start",
@@ -284,7 +288,7 @@ async function readCollectHandle(handleId, expectedKind, budgetMs) {
       "For a readable error body, set payload_kind:workflow_error and error_present:true.",
       `The expected payload kind is ${expectedKind}.`,
       "Echo back the exact handle_id passed to the tool as handle_id_used.",
-      `${String(budgetMs)} ms is this call's budget. Do not do any other work.`,
+      `${String(budgetMs)} ms is this call's budget out of a ${String(collectTimeoutMs)} ms total. Do not do any other work.`,
     ].join("\n"),
     {
       label: "session-memory-sweep-collect-read-handle",
@@ -303,7 +307,7 @@ function collectSpillFields(waitResult, field) {
   };
 }
 
-const collectWaitTimeoutMs = collectTimeoutMs;
+const collectWaitTimeoutMs = collectWaitBudgetMs;
 const collectWaitArgs = JSON.stringify({
   workflow_run_id: collectRunId,
   cwd: collectCwd,
@@ -320,7 +324,7 @@ const collectWait = await agent(
     "If status is completed and result is present, copy result.outcome as native_outcome, read the COMPLETE result.runResult Markdown, set run_result_read:true, and extract rendered_block and candidates from it.",
     "If the result is empty or says 'no new candidates', return ok:true with rendered_block:'' and candidates:[].",
     "Do not call memory_write_t2 in collect mode.",
-    `${String(collectWaitTimeoutMs)} ms is this call's budget. Do not do any other work.`,
+    `${String(collectWaitTimeoutMs)} ms is this call's budget out of a ${String(collectTimeoutMs)} ms total. Do not do any other work.`,
   ].join("\n"),
   {
     label: "session-memory-sweep-collect-wait",
@@ -357,7 +361,7 @@ if (collectWait.error_truncated === true) {
   if (typeof handleId !== "string" || handleId.length === 0) {
     return collectFailure("error_handle_missing", fields);
   }
-  const readResult = await readCollectHandle(handleId, "workflow_error", collectTimeoutMs);
+  const readResult = await readCollectHandle(handleId, "workflow_error", collectReadBudgetMs);
   if (!readResult || typeof readResult !== "object") {
     return collectFailure("handle_resolution_no_response", fields);
   }
@@ -390,7 +394,7 @@ if (collectWait.result_truncated === true) {
   if (typeof handleId !== "string" || handleId.length === 0) {
     return collectFailure("result_handle_missing", fields);
   }
-  const readResult = await readCollectHandle(handleId, "memory_sweep_result", collectTimeoutMs);
+  const readResult = await readCollectHandle(handleId, "memory_sweep_result", collectReadBudgetMs);
   if (!readResult || typeof readResult !== "object") {
     return collectFailure("handle_resolution_no_response", fields);
   }

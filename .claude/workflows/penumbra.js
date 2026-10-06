@@ -3,7 +3,7 @@ export const meta = {
   description:
     "Generic Claude Code bridge to the Penumbra native workflow runtime. Starts a workflow with wait:false via an agent proxy, then bounded-waits for the result, locally validating every proxy receipt. No auto-land.",
   whenToUse:
-    "When a CC session needs to run a Penumbra native workflow through MCP with explicit absolute scope and validated results. Pass { workflow, cwd, args?, timeout_ms? }. The cwd must be an absolute path.",
+    "When a CC session needs to run a Penumbra native workflow through MCP with explicit absolute scope and validated results. Pass { workflow, cwd, args?, timeout_ms? }. The cwd must be an absolute path. timeout_ms is the total budget (default 300000, max 1800000), split without reading a clock: the workflow_run start call and the read_handle call each get min(30000, floor(timeout_ms / 10)) ms and workflow_wait gets the remainder as its enforced timeout_ms. workflow_run, read_handle and agent() accept no timeout, so those two shares are advisory prompt text only.",
   phases: [
     {
       title: "Validate",
@@ -64,7 +64,11 @@ const effectiveTimeout =
   timeoutMs <= MAX_TIMEOUT_MS
     ? timeoutMs
     : DEFAULT_TIMEOUT_MS;
-// This runtime forbids clock or RNG reads; workflow_wait enforces the budget.
+// No clock or RNG reads are allowed, so split the total up front into advisory shares and the enforced wait remainder.
+const AUX_STAGE_BUDGET_MS = Math.min(30000, Math.floor(effectiveTimeout / 10));
+const startBudgetMs = AUX_STAGE_BUDGET_MS;
+const readHandleBudgetMs = AUX_STAGE_BUDGET_MS;
+const waitBudgetMs = effectiveTimeout - startBudgetMs - readHandleBudgetMs;
 
 const runCallArgs = JSON.stringify({
   name: workflow,
@@ -97,7 +101,7 @@ const startResult = await agent(
     "Return the EXACT JSON response from the tool. Do not interpret, summarize, or alter it.",
     "If the tool returns an error, return error_code and error_message from the error object.",
     "Echo back the exact name, cwd, and wait values you passed to the tool as name_used, cwd_used, and wait_used.",
-    `${String(effectiveTimeout)} ms is this call's budget. Do not do any other work.`,
+    `${String(startBudgetMs)} ms is this call's budget out of a ${String(effectiveTimeout)} ms total. Do not do any other work.`,
   ].join("\n"),
   {
     label: "penumbra-bridge-start",
@@ -147,7 +151,7 @@ const runId = startResult.workflow_run_id;
 if (typeof runId !== "string" || runId.length === 0) {
   return { ok: false, error: "start_no_run_id" };
 }
-const waitTimeoutMs = effectiveTimeout;
+const waitTimeoutMs = waitBudgetMs;
 const waitCallArgs = JSON.stringify({
   workflow_run_id: runId,
   cwd: cwd,
@@ -220,7 +224,7 @@ async function readSpilledPayload(handleId, expectedKind, budgetMs) {
       "Classify a readable error body as payload_kind:workflow_error with error_present:true.",
       `The expected payload kind is ${expectedKind}.`,
       "Echo back the exact handle_id passed to the tool as handle_id_used.",
-      `${String(budgetMs)} ms is this call's budget. Do not do any other work.`,
+      `${String(budgetMs)} ms is this call's budget out of a ${String(effectiveTimeout)} ms total. Do not do any other work.`,
     ].join("\n"),
     {
       label: "penumbra-bridge-read-handle",
@@ -367,7 +371,7 @@ const waitResult = await agent(
     "If result_truncated or error_truncated is true, return the handle_id, preview, and bytes verbatim.",
     "Set payload_read:true only after reading the complete workflow_wait response envelope, including its inline payload or truncation metadata; otherwise set payload_read:false.",
     "Echo back the exact workflow_run_id and cwd values you passed to the tool as workflow_run_id_used and cwd_used.",
-    `${String(waitTimeoutMs)} ms is this call's budget. Do not do any other work.`,
+    `${String(waitTimeoutMs)} ms is this call's budget out of a ${String(effectiveTimeout)} ms total. Do not do any other work.`,
   ].join("\n"),
   {
     label: "penumbra-bridge-wait",
@@ -424,7 +428,7 @@ if (waitResult.error_truncated === true) {
   if (typeof errorHandleId !== "string" || errorHandleId.length === 0) {
     return { ok: false, ...bounded, error: "error_handle_missing" };
   }
-  const readResult = await readSpilledPayload(errorHandleId, "workflow_error", effectiveTimeout);
+  const readResult = await readSpilledPayload(errorHandleId, "workflow_error", readHandleBudgetMs);
   if (!readResult || typeof readResult !== "object") {
     return { ok: false, ...bounded, error: "handle_resolution_no_response" };
   }
@@ -470,7 +474,7 @@ if (waitResult.result_truncated === true) {
   }
   const outcomeError = validateRequiredOutcome(outcome, "missing_outcome", "malformed_outcome");
   if (outcomeError) return { ok: false, ...bounded, error: outcomeError };
-  const readResult = await readSpilledPayload(resultHandleId, "workflow_result", effectiveTimeout);
+  const readResult = await readSpilledPayload(resultHandleId, "workflow_result", readHandleBudgetMs);
   const resolution = validateResolvedWorkflowResult(readResult, resultHandleId, outcome);
   if (resolution.error) {
     return {

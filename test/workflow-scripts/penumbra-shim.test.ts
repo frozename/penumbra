@@ -60,6 +60,7 @@ async function runBridge(
     if (!new.target || a.length === 0) throw new Error(NOW_ERR);
     return Reflect.construct(Date, a, new.target);
   } as unknown as DateConstructor;
+  Object.defineProperty(RuntimeDate, "prototype", { value: Date.prototype });
   RuntimeDate.now = () => {
     throw new Error(NOW_ERR);
   };
