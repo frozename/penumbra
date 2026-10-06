@@ -1327,9 +1327,27 @@ function persistChainStart(args: PersistChainStartArgs): void {
         .run(openPrOnReviewBool ? 1 : 0, handoff_id);
     }
     if (lane_id !== null && taskClass !== undefined) {
+      // TRIVIAL workflow-internal dispatches (persona/synthesizer fan-out)
+      // produce nothing to land and run no gate — the orphan-lane sweeper
+      // would close them 'skipped' anyway — so their lane is recorded
+      // already closed instead of leaking to the sweeper. Non-TRIVIAL
+      // no-worktree dispatches stay open so the sweeper can record
+      // review_debt.
+      const trivialWorkflowInternal =
+        input.dispatch_kind === "workflow" &&
+        input.use_worktree === false &&
+        taskClass === "TRIVIAL";
       insertLane(services.db, {
         lane_id,
         ts_opened: ts,
+        ...(trivialWorkflowInternal
+          ? {
+              ts_closed: ts,
+              gate_status: "skipped" as const,
+              override_reason:
+                "TRIVIAL workflow-internal dispatch with no worktree: nothing to land, no gate",
+            }
+          : {}),
         task_class: taskClass,
         implementer_handoff: handoff_id,
         recalled_memory_ids,

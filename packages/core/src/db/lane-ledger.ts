@@ -27,11 +27,13 @@ export interface LaneRow {
 export interface InsertLaneInput {
   lane_id: string;
   ts_opened: string;
+  ts_closed?: string;
   task_class: TaskClass;
   implementer_handoff: string;
   gate_status?: LaneGateStatus;
   recalled_memory_ids?: string[];
   recalled_query?: string | null;
+  override_reason?: string | null;
   metadata_json?: string;
 }
 
@@ -177,21 +179,33 @@ function parseLaneRow(row: {
 }
 
 export function insertLane(db: Database, row: InsertLaneInput): void {
+  const gate_status = row.gate_status ?? "open";
+  // Fail closed: ts_closed and gate_status must agree at insert time, so a
+  // born-closed lane always carries its close time and an open lane can never
+  // persist one.
+  if (gate_status !== "open" && row.ts_closed === undefined) {
+    throw new Error(`invalid lane insert: gate_status '${gate_status}' requires ts_closed`);
+  }
+  if (gate_status === "open" && row.ts_closed !== undefined) {
+    throw new Error("invalid lane insert: gate_status 'open' cannot carry ts_closed");
+  }
   (
     db.query(
       `INSERT INTO lane_ledger (
-      lane_id, ts_opened, task_class, implementer_handoff, gate_status,
-      recalled_memory_ids, recalled_query, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      lane_id, ts_opened, ts_closed, task_class, implementer_handoff, gate_status,
+      recalled_memory_ids, recalled_query, override_reason, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ) as StatementWithRun
   ).run(
     row.lane_id,
     row.ts_opened,
+    row.ts_closed ?? null,
     row.task_class,
     row.implementer_handoff,
-    row.gate_status ?? "open",
+    gate_status,
     JSON.stringify(row.recalled_memory_ids ?? []),
     row.recalled_query ?? null,
+    row.override_reason ?? null,
     row.metadata_json ?? "{}",
   );
 }

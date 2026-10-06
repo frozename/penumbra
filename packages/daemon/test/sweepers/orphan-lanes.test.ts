@@ -1,4 +1,11 @@
-import { getLane, insertLane, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  captureAgentPerformanceFromReconciler,
+  getLane,
+  insertLane,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
@@ -181,6 +188,38 @@ test("closes trivial orphan lane as skipped", () => {
     >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
     .get("h-impl");
   expect(perf?.gate_outcome).toBe("skipped");
+});
+
+test("workflow-internal read-only lane is never an orphan-sweep candidate", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, "h-impl", "completed", PAST_GRACE);
+  insertLane(db, {
+    lane_id: "lane-wf-readonly",
+    ts_opened: "2026-01-01T09:00:00.000Z",
+    ts_closed: "2026-01-01T09:00:00.000Z",
+    task_class: "TRIVIAL",
+    implementer_handoff: "h-impl",
+    gate_status: "skipped",
+    override_reason: "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
+  });
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 0 });
+
+  expect(result.scanned).toBe(0);
+  expect(result.closed).toBe(0);
+  const lane = getLane(db, "lane-wf-readonly");
+  expect(lane?.gate_status).toBe("skipped");
+  expect(lane?.ts_closed).toBe("2026-01-01T09:00:00.000Z");
+
+  const perf = captureAgentPerformanceFromReconciler({
+    db,
+    uuid: () => "perf-wf-readonly",
+    clock: () => new Date(NOW),
+    input: { handoff_id: "h-impl", result: { status: "no_changes" } },
+  });
+  expect(perf.gate_outcome).toBe("skipped");
 });
 
 test("skips lane within grace window", () => {

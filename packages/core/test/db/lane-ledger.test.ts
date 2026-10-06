@@ -123,6 +123,61 @@ describe("lane-ledger dao", () => {
     });
   });
 
+  it("rejects a non-open gate_status on insert when ts_closed is missing", () => {
+    expect(() => {
+      insertLane(db, {
+        lane_id: "lane-closed-no-ts",
+        ts_opened: "2026-05-12T10:50:00.000Z",
+        task_class: "TRIVIAL",
+        implementer_handoff: "handoff-closed-no-ts",
+        gate_status: "skipped",
+      });
+    }).toThrow(/ts_closed/);
+    expect(getLane(db, "lane-closed-no-ts")).toBeNull();
+  });
+
+  it("rejects ts_closed on insert when gate_status is open", () => {
+    expect(() => {
+      insertLane(db, {
+        lane_id: "lane-open-with-ts",
+        ts_opened: "2026-05-12T10:55:00.000Z",
+        task_class: "STANDARD",
+        implementer_handoff: "handoff-open-with-ts",
+        gate_status: "open",
+        ts_closed: "2026-05-12T10:56:00.000Z",
+      });
+    }).toThrow(/ts_closed/);
+    expect(getLane(db, "lane-open-with-ts")).toBeNull();
+  });
+
+  it("inserts a born-closed lane with ts_closed and override_reason", () => {
+    insertLane(db, {
+      lane_id: "lane-born-closed",
+      ts_opened: "2026-05-12T11:00:00.000Z",
+      task_class: "TRIVIAL",
+      implementer_handoff: "handoff-born-closed",
+      gate_status: "skipped",
+      ts_closed: "2026-05-12T11:00:00.000Z",
+      override_reason:
+        "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
+    });
+
+    expect(getLane(db, "lane-born-closed")).toEqual({
+      lane_id: "lane-born-closed",
+      ts_opened: "2026-05-12T11:00:00.000Z",
+      ts_closed: "2026-05-12T11:00:00.000Z",
+      task_class: "TRIVIAL",
+      implementer_handoff: "handoff-born-closed",
+      reviewer_handoff: null,
+      gate_status: "skipped",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason:
+        "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
+      metadata_json: "{}",
+    });
+  });
+
   it("closes a lane and persists the final gate status", () => {
     insertLane(db, {
       lane_id: "lane-3",
@@ -440,6 +495,7 @@ describe("lane-ledger dao", () => {
     insertLane(db, {
       lane_id: "lane-b",
       ts_opened: "2026-05-12T10:05:00.000Z",
+      ts_closed: "2026-05-12T10:06:00.000Z",
       task_class: "STANDARD",
       implementer_handoff: "handoff-b",
       gate_status: "passed",
@@ -447,6 +503,7 @@ describe("lane-ledger dao", () => {
     insertLane(db, {
       lane_id: "lane-c",
       ts_opened: "2026-05-12T10:10:00.000Z",
+      ts_closed: "2026-05-12T10:11:00.000Z",
       task_class: "STANDARD",
       implementer_handoff: "handoff-c",
       gate_status: "passed",

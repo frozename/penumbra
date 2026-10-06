@@ -32,6 +32,9 @@ interface HandoffRow {
 }
 interface LaneRow {
   gate_status: string;
+  ts_opened: string;
+  ts_closed: string | null;
+  override_reason: string | null;
   recalled_memory_ids: string;
 }
 interface RecalledMemory {
@@ -333,6 +336,107 @@ test("POST /chains/start with TRIVIAL opens a lane and calls recall with top_k=3
   if (!body.lane_id) throw new Error("expected lane_id");
   const lane = getLane(services, body.lane_id);
   expect(parseStringArray(lane.recalled_memory_ids)).toEqual(["tm1"]);
+});
+
+test("POST /chains/start workflow-internal read-only dispatch records a born-closed skipped lane", async () => {
+  const services = tempServices();
+  services.recallReader.recall = (_req: RecallRequest): Promise<RecallResult[]> =>
+    Promise.resolve([fakeRecallHit("wf-m1", "wf-memo")]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "persona review dispatch",
+        task_class: "TRIVIAL",
+        dispatch_kind: "workflow",
+        workflow_run_id: "wf-1",
+        use_worktree: false,
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readBody(res);
+  expect(body.lane_id).toBeTruthy();
+  expect(body.recalled_memory_ids).toEqual(["wf-m1"]);
+
+  if (!body.lane_id) throw new Error("expected lane_id");
+  const lane = getLane(services, body.lane_id);
+  expect(lane.gate_status).toBe("skipped");
+  expect(lane.ts_closed).not.toBeNull();
+  expect(lane.ts_closed).toBe(lane.ts_opened);
+  expect(lane.override_reason).toBe(
+    "TRIVIAL workflow-internal dispatch with no worktree: nothing to land, no gate",
+  );
+  expect(parseStringArray(lane.recalled_memory_ids)).toEqual(["wf-m1"]);
+});
+
+test("POST /chains/start STANDARD workflow dispatch with use_worktree false opens an open lane", async () => {
+  const services = tempServices();
+  services.recallReader.recall = (_req: RecallRequest): Promise<RecallResult[]> =>
+    Promise.resolve([fakeRecallHit("wf-m3", "wf-memo-3")]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "workflow no-worktree dispatch with tools",
+        task_class: "STANDARD",
+        dispatch_kind: "workflow",
+        workflow_run_id: "wf-3",
+        use_worktree: false,
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readBody(res);
+  expect(body.lane_id).toBeTruthy();
+
+  if (!body.lane_id) throw new Error("expected lane_id");
+  const lane = getLane(services, body.lane_id);
+  expect(lane.gate_status).toBe("open");
+  expect(lane.ts_closed).toBeNull();
+  expect(lane.override_reason).toBeNull();
+});
+
+test("POST /chains/start workflow dispatch with use_worktree true still opens an open lane", async () => {
+  const services = tempServices();
+  services.recallReader.recall = (_req: RecallRequest): Promise<RecallResult[]> =>
+    Promise.resolve([fakeRecallHit("wf-m2", "wf-memo-2")]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        message: "workflow worktree dispatch",
+        task_class: "TRIVIAL",
+        dispatch_kind: "workflow",
+        workflow_run_id: "wf-2",
+        use_worktree: true,
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readBody(res);
+  expect(body.lane_id).toBeTruthy();
+
+  if (!body.lane_id) throw new Error("expected lane_id");
+  const lane = getLane(services, body.lane_id);
+  expect(lane.gate_status).toBe("open");
+  expect(lane.ts_closed).toBeNull();
+  expect(lane.override_reason).toBeNull();
 });
 
 test("POST /chains/start proceeds when auto recall throws", async () => {
