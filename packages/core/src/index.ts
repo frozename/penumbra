@@ -238,8 +238,11 @@ export {
   type PressureResult,
   type PressureSnapshot,
   type PressureWarning,
+  type PressureWindow,
+  type PressureWindowStatus,
   readSubscriptionPressure,
   type ReadSubscriptionPressureOpts,
+  readSubscriptionPressureWindows,
 } from "./readers/subscription-pressure.js";
 export {
   getTaskDraftPromotionInfo,
@@ -403,25 +406,7 @@ export {
   renderAgentPerformanceMarkdown,
 } from "./services/agent-performance-markdown.js";
 export { recordOperatorAgentPerformance } from "./services/agent-performance-operator.js";
-export {
-  type AgentRecommendation,
-  type DetailMode,
-  type DroppedAgentPoolMember,
-  isTextOnlyAdapter,
-  type ResolvableAgentProviderInput,
-  resolveAgentPool,
-  type ResolveAgentPoolContext,
-  type ResolveAgentPoolResult,
-  resolveBiasEffect,
-  type ResolvedAgentPoolMember,
-  resolveGateOutcomeCutoverIso,
-  resolveProvider,
-  type RoleRoute,
-  routeAgent,
-  type RouteAgentInput,
-  type RouteAgentOutput,
-  type RoutingBiasEffectInput,
-} from "./services/agent-routing.js";
+export * from "./services/agent-routing.js";
 export * from "./services/dispatch-audit-report.js";
 export * from "./services/dispatch-event-log.js";
 export {

@@ -8,11 +8,13 @@ import {
   AgentRankInputSchema,
   AgentRecommendInputSchema,
   type AgentTaskType,
+  buildPressureExcludedKeys,
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   ImportMarkdownResultSchema,
   inferAgentTaskTypeForRole,
   parseAgentPerformanceMarkdownRows,
+  pressureSnapshotKey,
   type PressureWarning,
   readFleetLatency,
   readSubscriptionPressure,
@@ -151,9 +153,11 @@ function resolveProvider(agent: AgentRouteAgentchatConfig["agents"][number]): st
 
 function isOverPressure(provider: string, pressureSnapshot?: AgentRoutePressureSnapshot): boolean {
   if (!pressureSnapshot) return false;
+  const excludedKeys = buildPressureExcludedKeys(pressureSnapshot);
   return pressureSnapshot.snapshots.some(
     (snapshot) =>
       snapshot.provider === provider &&
+      !excludedKeys.has(pressureSnapshotKey(snapshot)) &&
       (snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown"),
   );
 }

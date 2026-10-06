@@ -1,12 +1,16 @@
+import { UsageSubscriptionPressureResponseSchema } from "@penumbra/api-contract";
 import { type Services } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 
 import {
   usageQuotaStatusRoute,
   usageRecentRoute,
   usageSubscriptionPressureRoute,
 } from "@src/routes/usage.js";
+
+beforeEach(() => setSystemTime(new Date("2026-10-01T12:00:00Z")));
+afterEach(() => setSystemTime());
 
 type ProviderQuota = Services["providerQuotas"][number];
 
@@ -254,14 +258,43 @@ describe("GET /usage/subscription_pressure", () => {
     db = makeDb();
   });
 
+  it("exposes expired_window through the real subscription pressure response schema", async () => {
+    insertSnapshotRow(db, {
+      event_id: "expired",
+      ts: "2026-09-14T21:28:11Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 98,
+      resets_at: 1789813384,
+      source_kind: "local-state-codex-rollout",
+    });
+    const response = usageSubscriptionPressureRoute(
+      new Request("http://x/usage/subscription_pressure"),
+      makeServices(db),
+    );
+    expect(response.status).toBe(200);
+    const parsed = UsageSubscriptionPressureResponseSchema.parse(await response.json());
+    expect(parsed).toMatchObject({
+      snapshots: [],
+      warnings: [
+        {
+          code: "expired_window",
+          provider: "openai",
+          window_label: "secondary",
+          model: null,
+        },
+      ],
+    });
+  });
+
   it("returns PressureResult shape with populated snapshots", async () => {
     insertSnapshotRow(db, {
       event_id: "1",
-      ts: "2026-05-07T12:00:00Z",
+      ts: "2026-09-30T12:00:00Z",
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 15,
-      resets_at: 1778163000,
+      resets_at: 1790899500,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -277,8 +310,8 @@ describe("GET /usage/subscription_pressure", () => {
         model: null,
         window_label: "five_hour",
         used_pct: 15,
-        resets_at: 1778163000,
-        observed_at: "2026-05-07T12:00:00Z",
+        resets_at: 1790899500,
+        observed_at: "2026-09-30T12:00:00Z",
         source_kind: "local-state-claude-statusline",
       },
     ]);
@@ -302,20 +335,20 @@ describe("GET /usage/subscription_pressure", () => {
   it("filters snapshots by provider", async () => {
     insertSnapshotRow(db, {
       event_id: "1",
-      ts: "2026-05-07T12:00:00Z",
+      ts: "2026-09-30T12:00:00Z",
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 15,
-      resets_at: 1778163000,
+      resets_at: 1790899500,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
       event_id: "2",
-      ts: "2026-05-07T12:01:00Z",
+      ts: "2026-09-30T12:01:00Z",
       provider: "openai",
       window_label: "five_hour",
       used_pct: 25,
-      resets_at: 1778164000,
+      resets_at: 1790899600,
       source_kind: "local-state-codex-rollout",
     });
 

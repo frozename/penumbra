@@ -140,7 +140,7 @@ export function quotaStatus(
 ): QuotaStatusOutput {
   const recent = recentCost(db, { since: input.since }, now);
   const pressureByProvider = indexSubscriptionPressureByProvider(
-    readRecentSubscriptionPressureSnapshots(db, { since: recent.window.from }),
+    readRecentSubscriptionPressureSnapshots(db, { since: recent.window.from, now }),
   );
 
   const usageByProvider = new Map<

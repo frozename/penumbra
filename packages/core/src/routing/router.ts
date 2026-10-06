@@ -5,7 +5,7 @@ import type { RoutingBias } from "../readers/routing-bias.js";
 import type { AgentTaskType } from "../schemas/agent-performance.js";
 
 import {
-  buildPressureStaleKeys,
+  buildPressureExcludedKeys,
   isTextOnlyAdapter,
   pressureSnapshotKey,
   resolveBiasEffect,
@@ -663,7 +663,7 @@ function historyFactors(
 function pressureFactors(input: DecideInput): RoutingDecision["factors"] {
   const applyPressure = input.applyPressure;
   if (!applyPressure) return [];
-  const staleKeys = buildPressureStaleKeys(applyPressure);
+  const excludedKeys = buildPressureExcludedKeys(applyPressure);
   const providers: string[] = [];
   for (const agent of input.agentRegistry) {
     const provider = providerFor(input, agent);
@@ -671,7 +671,8 @@ function pressureFactors(input: DecideInput): RoutingDecision["factors"] {
   }
   return providers.flatMap((provider) => {
     const snapshots = applyPressure.snapshots.filter(
-      (snapshot) => snapshot.provider === provider && !staleKeys.has(pressureSnapshotKey(snapshot)),
+      (snapshot) =>
+        snapshot.provider === provider && !excludedKeys.has(pressureSnapshotKey(snapshot)),
     );
     if (snapshots.length === 0) return [];
     const usedPct = Math.max(...snapshots.map((snapshot) => snapshot.used_pct));
@@ -696,11 +697,11 @@ function passesPressure(input: DecideInput, agent: string): boolean {
   if (!input.applyPressure) return true;
   const provider = providerFor(input, agent);
   if (provider === "unknown") return true;
-  const staleKeys = buildPressureStaleKeys(input.applyPressure);
+  const excludedKeys = buildPressureExcludedKeys(input.applyPressure);
   return !input.applyPressure.snapshots.some(
     (snapshot) =>
       snapshot.provider === provider &&
-      !staleKeys.has(pressureSnapshotKey(snapshot)) &&
+      !excludedKeys.has(pressureSnapshotKey(snapshot)) &&
       (snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown"),
   );
 }

@@ -3,11 +3,12 @@ import {
   loadSqliteVec,
   migrate,
   type PressureResult,
+  readSubscriptionPressure,
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 
 import { isAnyProviderOverPressure } from "../src/pressure.js";
 
@@ -19,11 +20,15 @@ try {
   // already loaded in this process
 }
 
+beforeEach(() => setSystemTime(new Date("2026-05-08T01:00:00Z")));
+afterEach(() => setSystemTime());
+
 function makeServices(): { db: Database; services: Services } {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = buildServices({
+    clock: () => new Date("2026-05-08T01:00:00Z"),
     env: {},
     input: {},
     storageRoot: "/tmp/penumbra-services-pressure-cache-test",
@@ -67,6 +72,32 @@ function insertSnapshotRow(
 }
 
 describe("buildServices subscription pressure cache", () => {
+  it("keeps distinct pressure groups when labels contain spaces", () => {
+    const pressure: PressureResult = {
+      warnings: [
+        {
+          code: "stale_snapshot",
+          provider: "a b",
+          window_label: "c",
+          model: null,
+          age_seconds: 9999,
+        },
+      ],
+      snapshots: [
+        {
+          provider: "a",
+          window_label: "b c",
+          model: null,
+          used_pct: 99,
+          resets_at: null,
+          observed_at: "2026-10-01T12:00:00Z",
+          source_kind: "test",
+        },
+      ],
+    };
+    expect(isAnyProviderOverPressure(pressure)).toBe(true);
+  });
+
   it("does not treat a fresh 50 percent usage snapshot as over pressure", () => {
     const pressure: PressureResult = {
       warnings: [],
@@ -214,7 +245,7 @@ describe("buildServices subscription pressure cache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -224,7 +255,7 @@ describe("buildServices subscription pressure cache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       observed_at: "2026-05-08T00:00:00Z",
       source_kind: "local-state-claude-statusline",
     });
@@ -245,4 +276,21 @@ describe("buildServices subscription pressure cache", () => {
     services.db.close();
     db.close();
   });
+});
+
+it("a fresh 98% window with an implausible reset remains over pressure", () => {
+  const { db, services } = makeServices();
+  insertSnapshotRow(db, {
+    event_id: "implausible",
+    ts: new Date().toISOString(),
+    provider: "openai",
+    window_label: "secondary",
+    used_pct: 98,
+    resets_at: 3600,
+    source_kind: "test",
+  });
+  services.subscriptionPressureCache.refresh();
+  expect(isAnyProviderOverPressure(readSubscriptionPressure(db))).toBe(true);
+  services.db.close();
+  db.close();
 });

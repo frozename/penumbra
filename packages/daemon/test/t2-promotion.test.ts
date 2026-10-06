@@ -1813,7 +1813,17 @@ test("worker: an extraction that yields rows resets the empty streak", async () 
     seedPromotableRollup(db, "r-streak-1");
     seedPromotableRollup(db, "r-streak-2");
     seedPromotableRollup(db, "r-streak-3");
-    const responses: T2MemoryExtraction[][] = [[], [], [{ title: "T", body: "B", kind: "fact" }]];
+    const responses: T2MemoryExtraction[][] = [
+      [],
+      [],
+      [
+        {
+          title: "T",
+          body: "A successful promotion stores durable knowledge and resets the empty extraction streak after earlier judge responses produced no memories.",
+          kind: "fact",
+        },
+      ],
+    ];
     const worker = createT2PromotionWorker({
       services,
       delayHours: 24,
