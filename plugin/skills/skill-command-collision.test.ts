@@ -6,16 +6,18 @@ const pluginRoot = join(process.cwd(), "plugin");
 const commands = readdirSync(join(pluginRoot, "commands"))
   .filter((name) => name.endsWith(".md"))
   .map((name) => name.slice(0, -3));
-const skills = readdirSync(join(pluginRoot, "skills"), { withFileTypes: true })
-  .filter(
-    (entry) =>
-      entry.isDirectory() && existsSync(join(pluginRoot, "skills", entry.name, "SKILL.md")),
-  )
-  .map((entry) => entry.name);
+const skills = new Set(
+  readdirSync(join(pluginRoot, "skills"), { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() && existsSync(join(pluginRoot, "skills", entry.name, "SKILL.md")),
+    )
+    .map((entry) => entry.name),
+);
 
 describe("plugin skill/command namespace", () => {
   test("no command shadows a skill", () => {
-    expect(commands.filter((command) => skills.includes(command))).toEqual([]);
+    expect(commands.filter((command) => skills.has(command))).toEqual([]);
   });
 
   test("penumbra:handoff serves the full protocol", () => {

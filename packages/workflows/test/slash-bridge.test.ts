@@ -87,10 +87,11 @@ test("skill-delegating slash trigger renders a Skill() command", async () => {
 });
 
 test("skill-delegating slash trigger wins over a same-command workflow", async () => {
-  for (const [skillName, plainName] of [
+  const pairs: [string, string][] = [
     ["a", "z"],
     ["z", "a"],
-  ]) {
+  ];
+  for (const [skillName, plainName] of pairs) {
     const root = mkdtempSync(join(tmpdir(), "sb-"));
     const cmdDir = mkdtempSync(join(tmpdir(), "sbcmd-"));
     try {
@@ -99,9 +100,9 @@ test("skill-delegating slash trigger wins over a same-command workflow", async (
       mkdirSync(join(root, "workflows"), { recursive: true });
       writeFileSync(
         join(root, `playbooks/${skillName}/playbook.md`),
-        PB(skillName!, "handoff", "penumbra:handoff"),
+        PB(skillName, "handoff", "penumbra:handoff"),
       );
-      writeFileSync(join(root, `playbooks/${plainName}/playbook.md`), PB(plainName!, "handoff"));
+      writeFileSync(join(root, `playbooks/${plainName}/playbook.md`), PB(plainName, "handoff"));
       const reg = await buildRegistry({
         playbooksDir: join(root, "playbooks"),
         workflowsDir: join(root, "workflows"),
