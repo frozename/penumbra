@@ -142,6 +142,7 @@ const WORKFLOWS = [
     topLevelAllowedKeys: [
       "task",
       "check",
+      "parityCheck",
       "rubric",
       "agent",
       "escalateTo",
@@ -661,6 +662,7 @@ const WORKFLOW_LOCAL_KEYS = new Set([
   "maxTasks",
   "check",
   "rubric",
+  "parityCheck",
   "escalateTo",
   "verifyCheck",
   "maxRounds",

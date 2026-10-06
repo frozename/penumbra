@@ -58,6 +58,7 @@ export type RoundRecord = {
   rubric_status: string | null;
   rubric_grade: unknown;
   verified: boolean;
+  ci_parity: boolean;
   passed: boolean;
   hops: HopFields;
 };
@@ -71,6 +72,7 @@ export type FixUntilGreenResult = {
   rounds: RoundRecord[];
   check: string;
   rubric: string[];
+  ci_parity: boolean;
 };
 
 export function makeRoundRecord(opts: {
@@ -91,6 +93,7 @@ export function makeRoundRecord(opts: {
   candidateBranch?: string | null;
   candidateHandoffId?: string | null;
   verified?: boolean;
+  ciParity?: boolean;
   passed: boolean;
 }): RoundRecord {
   return {
@@ -110,6 +113,7 @@ export function makeRoundRecord(opts: {
     rubric_status: opts.rubricStatus ?? null,
     rubric_grade: opts.rubricGrade ?? null,
     verified: opts.verified ?? false,
+    ci_parity: opts.ciParity ?? false,
     passed: opts.passed,
     hops: hopFields(opts.result),
   };

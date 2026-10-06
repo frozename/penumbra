@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -25,6 +25,8 @@ type FetchOptions = {
   archiveSha256?: string;
   download?: (directory: string) => Promise<void>;
   extract?: (archive: string, destination: string) => Promise<void>;
+  from?: string;
+  copy?: (source: string, destination: string) => Promise<void>;
 };
 
 function errorMessage(error: unknown): string {
@@ -80,6 +82,12 @@ async function extractModel(archive: string, destination: string): Promise<void>
   await runCommand(["tar", "--no-same-owner", "-xzf", archive, "-C", destination]);
 }
 
+async function copyModelDir(source: string, destination: string): Promise<void> {
+  // errorOnExist doubles as the exclusive reservation: the directory must not
+  // exist yet, so a concurrent fetch fails instead of interleaving files.
+  await cp(source, destination, { recursive: true, force: false, errorOnExist: true });
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -101,6 +109,26 @@ async function fetchModel(options: FetchOptions): Promise<FetchResult> {
           message: `Existing model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
         }
       : { exitCode: 0, message: `${MODEL_NAME}: already present and verified` };
+  }
+
+  if (options.from !== undefined) {
+    const source = join(options.from, MODEL_NAME);
+    const sourceFailures = await verifyModel(source, manifest);
+    if (sourceFailures.length > 0) {
+      return {
+        exitCode: 1,
+        message: `Source model verification failed for ${source}: ${sourceFailures.join("; ")}; nothing copied`,
+      };
+    }
+    await mkdir(dest, { recursive: true });
+    await (options.copy ?? copyModelDir)(source, directory);
+    const failures = await verifyModel(directory, manifest);
+    return failures.length > 0
+      ? {
+          exitCode: 1,
+          message: `Copied model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
+        }
+      : { exitCode: 0, message: `${MODEL_NAME}: copied from ${source} and verified` };
   }
 
   const temporary = await mkdtemp(join(tmpdir(), "penumbra-embedder-model-"));
@@ -141,17 +169,30 @@ export async function fetchEmbedderModel(options: FetchOptions): Promise<FetchRe
   }
 }
 
-export function parseArgs(args: string[]): string {
-  if (args.length === 0) return resolve(import.meta.dir, "..", "local_cache");
-  if (args.length === 2 && args[0] === "--dest" && args[1] && !args[1].startsWith("--")) {
-    return resolve(args[1]);
+export function parseArgs(args: string[]): { dest: string; from?: string } {
+  let dest: string | undefined;
+  let from: string | undefined;
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--") || (flag !== "--dest" && flag !== "--from")) {
+      throw new Error(
+        "Usage: bun scripts/fetch-embedder-model.ts [--dest <cacheDir>] [--from <cacheDir>]",
+      );
+    }
+    if (flag === "--dest") dest = resolve(value);
+    else from = resolve(value);
   }
-  throw new Error("Usage: bun scripts/fetch-embedder-model.ts [--dest <cacheDir>]");
+  const parsed: { dest: string; from?: string } = {
+    dest: dest ?? resolve(import.meta.dir, "..", "local_cache"),
+  };
+  if (from !== undefined) parsed.from = from;
+  return parsed;
 }
 
 if (import.meta.main) {
   try {
-    const result = await fetchEmbedderModel({ dest: parseArgs(process.argv.slice(2)) });
+    const result = await fetchEmbedderModel(parseArgs(process.argv.slice(2)));
     if (result.exitCode === 0) process.stdout.write(`${result.message}\n`);
     else console.error(result.message);
     process.exitCode = result.exitCode;

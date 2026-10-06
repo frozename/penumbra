@@ -58,7 +58,14 @@ function buildFanoutTask(
     initial_agent: agentForRound,
     task_class: task.task_class ?? "STANDARD",
     task_type: task.task_type ?? "implement_small",
-    message: roundMessage(roundIndex, task.message, input.check, prevBranch, prevOutput),
+    message: roundMessage(
+      roundIndex,
+      task.message,
+      input.check,
+      prevBranch,
+      prevOutput,
+      input.parity_check,
+    ),
     max_hops: 1,
   };
   if (task.branch_type) t.branch_type = task.branch_type;
@@ -147,6 +154,7 @@ async function runVerification(
     verifierAgent,
     timeoutMs: input.timeout_ms,
     projectId,
+    parityCheck: input.parity_check,
   });
 
   if (outcome.status === "unavailable") {
@@ -323,6 +331,7 @@ async function handleVerifyOutcome(
     verifierHandoffId: verify.verifierHandoffId,
     verifierBranch: verify.verifierBranch,
     verified: true,
+    ciParity: input.parity_check !== undefined,
     passed: true,
   });
   ctx.progress?.("penumbra-fix-until-green: green", {
@@ -344,6 +353,7 @@ async function handleRubricOutcome(
 ): Promise<RoundResult> {
   const checkVerifyStatus = verify ? "passed" : "skipped";
   const verified = verify !== null;
+  const ciParity = verified && input.parity_check !== undefined;
   const rubricOutcome = await runRubric(
     ctx,
     input,
@@ -375,6 +385,7 @@ async function handleRubricOutcome(
       graderHandoffId: rubricOutcome.graderHandoffId,
       graderBranch: rubricOutcome.graderBranch,
       verified,
+      ciParity,
       passed: false,
     });
     return { kind: "stop", record, branch: candidate.branch, output: rubricOutcome.failOutput };
@@ -399,6 +410,7 @@ async function handleRubricOutcome(
     graderHandoffId: rubricOutcome.graderHandoffId,
     graderBranch: rubricOutcome.graderBranch,
     verified,
+    ciParity,
     passed: rubricPassed,
   });
 
@@ -686,6 +698,7 @@ export const fn: WorkflowFn = async (
         rounds,
         check: input.check,
         rubric,
+        ci_parity: outcome.record.ci_parity,
       };
     }
 
@@ -699,6 +712,7 @@ export const fn: WorkflowFn = async (
         rounds,
         check: input.check,
         rubric,
+        ci_parity: false,
       };
     }
 
@@ -715,6 +729,7 @@ export const fn: WorkflowFn = async (
     rounds,
     check: input.check,
     rubric,
+    ci_parity: false,
   };
 };
 

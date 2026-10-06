@@ -63,9 +63,20 @@ export const inputSchema = z
     timeout_ms: z.number().int().positive().default(1_800_000),
     verify_check: z.boolean().default(true),
     verifier_agent: z.string().min(1).optional(),
+    parity_check: z.string().trim().min(1).optional(),
     rubric: RubricSchema.optional(),
     grader_agent: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, refinement) => {
+    if (!value.verify_check && value.parity_check !== undefined) {
+      refinement.addIssue({
+        code: "custom",
+        path: ["parity_check"],
+        message:
+          "parity_check requires verify_check; the independent verifier runs the parity command",
+      });
+    }
+  });
 
 export type FixUntilGreenInput = z.infer<typeof inputSchema>;

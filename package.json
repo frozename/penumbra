@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "test": "bun test",
+    "check:ci": "bun scripts/check-ci.ts",
     "dist-check": "bun scripts/check-dist-freshness.ts",
     "deps-check": "bun scripts/check-external-deps.ts",
     "postinstall": "bun scripts/check-external-deps.ts",

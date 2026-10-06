@@ -18,6 +18,7 @@ export const CheckVerifySchema = z
   .object({
     ran: z.boolean(),
     check_exit: z.number().int(),
+    parity_exit: z.number().int().optional(),
     candidate_commit: GitCommitSchema.nullable(),
     checkout_commit: GitCommitSchema.nullable(),
     failing_segment: z.string().max(1000).optional(),
@@ -45,19 +46,22 @@ export const CheckVerifySchema = z
 
 export type CheckVerifyResult = z.infer<typeof CheckVerifySchema>;
 
-const CHECK_VERIFY_EXAMPLE = JSON.stringify(
-  {
-    ran: true,
-    check_exit: 0,
-    candidate_commit: "0123456789abcdef0123456789abcdef01234567",
-    checkout_commit: "0123456789abcdef0123456789abcdef01234567",
-    failing_segment: "",
-    output_tail: "",
-    notes: "",
-  },
-  null,
-  2,
-);
+function checkVerifyExample(withParity: boolean): string {
+  return JSON.stringify(
+    {
+      ran: true,
+      check_exit: 0,
+      ...(withParity ? { parity_exit: 0 } : {}),
+      candidate_commit: "0123456789abcdef0123456789abcdef01234567",
+      checkout_commit: "0123456789abcdef0123456789abcdef01234567",
+      failing_segment: "",
+      output_tail: "",
+      notes: "",
+    },
+    null,
+    2,
+  );
+}
 
 export type VerifyCheckOutcome = {
   status: "passed" | "failed" | "unavailable" | "not_run";
@@ -71,6 +75,7 @@ export function buildVerifyPrompt(opts: {
   check: string;
   candidateBranch: string;
   candidateHandoffId: string;
+  parityCheck?: string;
 }): string {
   const candidateRef = `${opts.candidateBranch}^{commit}`;
   return [
@@ -87,11 +92,29 @@ export function buildVerifyPrompt(opts: {
     "",
     "Run this CHECK command VERBATIM by spawning bash with the command as a single argument:",
     `    ${bashCheckCommand(opts.check)}`,
+    ...(opts.parityCheck !== undefined
+      ? [
+          "",
+          "Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:",
+          `    ${bashCheckCommand(opts.parityCheck)}`,
+          "The PARITY command replays the blocking CI steps and can take several minutes, which can exceed a single shell call's timeout. Run it in the background writing to a log file and poll until the process exits (or run it at the longest timeout your shell tool allows and then keep waiting on the process); never report parity_exit before the PARITY command has exited.",
+        ]
+      : []),
     "",
     "Set ran:true only if both identity commands and the CHECK ran to completion. Report the true CHECK exit code.",
-    "If the CHECK fails, populate failing_segment and output_tail with bounded failure evidence.",
+    ...(opts.parityCheck !== undefined
+      ? [
+          "Report the PARITY exit code as parity_exit; the candidate fails when parity_exit is nonzero even if check_exit is 0.",
+        ]
+      : []),
+    opts.parityCheck !== undefined
+      ? "If the CHECK or PARITY fails, populate failing_segment and output_tail with bounded failure evidence from the command that failed — from the PARITY run when parity_exit is nonzero."
+      : "If the CHECK fails, populate failing_segment and output_tail with bounded failure evidence.",
     "",
-    renderJsonContract({ example: CHECK_VERIFY_EXAMPLE, name: "CHECK_VERIFY" }),
+    renderJsonContract({
+      example: checkVerifyExample(opts.parityCheck !== undefined),
+      name: "CHECK_VERIFY",
+    }),
   ].join("\n");
 }
 
@@ -180,6 +203,7 @@ function interpretVerifierResponse(
   responseText: string,
   verifier: CandidateRef,
   expectedSha: string,
+  parityCheck?: string,
 ): VerifyCheckOutcome {
   const parsed = parseStructured(
     responseText,
@@ -230,6 +254,23 @@ function interpretVerifierResponse(
       fail_output: `Independent CHECK verifier host identity mismatch: checkout_commit=${String(measured.checkout_commit)} does not match host-observed SHA ${expectedSha}.`,
     };
   }
+  if (parityCheck !== undefined && measured.parity_exit !== 0) {
+    const details = [measured.failing_segment, measured.output_tail, measured.notes]
+      .filter(Boolean)
+      .join("\n");
+    return {
+      status: "failed",
+      result: measured,
+      verifier_handoff_id: verifier.handoffId,
+      verifier_branch: verifier.branch,
+      fail_output: [
+        `Independent CHECK verifier measured parity_exit=${String(measured.parity_exit ?? "missing")}; the parity check must exit 0.`,
+        details,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
   return {
     status: "passed",
     result: measured,
@@ -248,6 +289,7 @@ export async function runVerifyCheck(
     verifierAgent: string;
     timeoutMs: number;
     projectId?: string;
+    parityCheck?: string;
   },
 ): Promise<VerifyCheckOutcome> {
   const projectId = opts.projectId ?? ctx.project;
@@ -311,7 +353,12 @@ export async function runVerifyCheck(
     );
   }
 
-  const outcome = interpretVerifierResponse(responseText, verifier.candidate, expectedSha);
+  const outcome = interpretVerifierResponse(
+    responseText,
+    verifier.candidate,
+    expectedSha,
+    opts.parityCheck,
+  );
   if (outcome.status !== "passed") return outcome;
 
   const postInspect = await inspectBoundWorktree(ctx, {

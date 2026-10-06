@@ -179,10 +179,114 @@ test("download failure includes stderr and authentication guidance", async () =>
   expect(result.message).toContain("gh auth login");
 });
 
+test("--from copies a verified local model without downloading", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { root, dest, model } = await fixture();
+  const source = join(root, "source-cache");
+  await writeModel(join(source, modelName));
+  const result = await fetchEmbedderModel({
+    dest,
+    manifest,
+    from: source,
+    download: noDownload,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.message).toContain("copied");
+  for (const [name, value] of Object.entries(contents)) {
+    expect(await readFile(join(model, name), "utf8")).toBe(value);
+  }
+});
+
+test("--from refuses a source file that fails the manifest and leaves the destination empty", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { root, dest, model } = await fixture();
+  const source = join(root, "source-cache");
+  await writeModel(join(source, modelName));
+  await writeFile(join(source, modelName, "model.onnx"), "tampered");
+  const result = await fetchEmbedderModel({
+    dest,
+    manifest,
+    from: source,
+    download: noDownload,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.message).toContain("model.onnx");
+  expect(result.message).toContain("sha256 mismatch");
+  expect(result.message).not.toContain("download must not be attempted");
+  expect(await Bun.file(join(model, "model.onnx")).exists()).toBe(false);
+});
+
+test("--from rejects a missing source model directory", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { root, dest, model } = await fixture();
+  const source = join(root, "empty-cache");
+  await mkdir(source, { recursive: true });
+  const result = await fetchEmbedderModel({
+    dest,
+    manifest,
+    from: source,
+    download: noDownload,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.message).not.toContain("download must not be attempted");
+  expect(result.message).toContain(modelName);
+  expect(await Bun.file(model).exists()).toBe(false);
+});
+
+test("--from is a no-op when the destination already verifies", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { dest, model } = await fixture();
+  await writeModel(model);
+  const result = await fetchEmbedderModel({
+    dest,
+    manifest,
+    from: join(dest, "no-such-source"),
+    download: noDownload,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.message).toContain("already present and verified");
+});
+
+test("--from never overwrites a failing existing model directory", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { root, dest, model } = await fixture();
+  await writeModel(model);
+  await writeFile(join(model, "model.onnx"), "altered");
+  const source = join(root, "source-cache");
+  await writeModel(join(source, modelName));
+  const result = await fetchEmbedderModel({
+    dest,
+    manifest,
+    from: source,
+    download: noDownload,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.message).toContain("remove it and re-run");
+  expect(await readFile(join(model, "model.onnx"), "utf8")).toBe("altered");
+});
+
 test("CLI destination defaults to the repository and accepts --dest", async () => {
   const { parseArgs } = await implementation();
-  expect(parseArgs([])).toBe(join(import.meta.dir, "..", "local_cache"));
-  expect(parseArgs(["--dest", "/tmp/test-cache"])).toBe("/tmp/test-cache");
+  expect(parseArgs([]).dest).toBe(join(import.meta.dir, "..", "local_cache"));
+  expect(parseArgs(["--dest", "/tmp/test-cache"]).dest).toBe("/tmp/test-cache");
+});
+
+test("CLI accepts --from alone and combined with --dest", async () => {
+  const { parseArgs } = await implementation();
+  let fromOnly: ReturnType<typeof parseArgs> | null = null;
+  try {
+    fromOnly = parseArgs(["--from", "/tmp/source"]);
+  } catch {
+    fromOnly = null;
+  }
+  expect(fromOnly).toEqual({
+    dest: join(import.meta.dir, "..", "local_cache"),
+    from: "/tmp/source",
+  });
+  expect(parseArgs(["--dest", "/tmp/dst", "--from", "/tmp/src"])).toEqual({
+    dest: "/tmp/dst",
+    from: "/tmp/src",
+  });
 });
 
 test("CLI rejects unknown arguments and a missing destination", async () => {
@@ -190,4 +294,6 @@ test("CLI rejects unknown arguments and a missing destination", async () => {
   expect(() => parseArgs(["--unknown"])).toThrow("Usage:");
   expect(() => parseArgs(["--dest"])).toThrow("Usage:");
   expect(() => parseArgs(["--dest", "--other"])).toThrow("Usage:");
+  expect(() => parseArgs(["--from"])).toThrow("Usage:");
+  expect(() => parseArgs(["--from", "--dest"])).toThrow("Usage:");
 });

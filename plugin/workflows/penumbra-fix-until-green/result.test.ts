@@ -206,6 +206,22 @@ test("makeRoundRecord builds a rubric record", () => {
   expect(record.passed).toBe(true);
 });
 
+test("makeRoundRecord defaults ci_parity to false and honours an explicit true", () => {
+  const result = fakeFanoutResult();
+  const base = {
+    round: 1,
+    agent: "executor",
+    result,
+    dispatchOk: true,
+    reason: "check_passed",
+    checkPassed: true,
+    checkVerifyStatus: "passed" as const,
+    passed: true,
+  };
+  expect(makeRoundRecord(base).ci_parity).toBe(false);
+  expect(makeRoundRecord({ ...base, ciParity: true }).ci_parity).toBe(true);
+});
+
 test("makeRoundRecord does not leak response body", () => {
   const result = fakeFanoutResult({ response_text: "secret response body" });
   const record: RoundRecord = makeRoundRecord({

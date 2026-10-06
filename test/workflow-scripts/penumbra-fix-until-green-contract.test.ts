@@ -20,6 +20,7 @@ interface Round {
   check_exit?: number;
   check_verify_status?: string;
   check_passed?: boolean;
+  ci_parity?: boolean;
 }
 
 interface FixUntilGreenResult {
@@ -732,5 +733,308 @@ describe("penumbra-fix-until-green independent check verification", () => {
     expect(fanoutCalls).toHaveLength(4);
     const rounds = result?.rounds as Round[] | undefined;
     expect(rounds).toHaveLength(4);
+  });
+});
+
+describe("penumbra-fix-until-green CI parity verification", () => {
+  const trustworthyPassFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        branch: "feat/x",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+        handoff_id: "h-123",
+      },
+    ],
+  });
+
+  test("a worker PASS with a verifier parity_exit nonzero is not green", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({
+          ran: true,
+          check_exit: 0,
+          parity_exit: 1,
+          failing_segment: "bun run check:ci",
+          output_tail: "lint:strict failed",
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_verify_status).toBe("failed");
+    expect(rounds?.[0]?.passed).toBe(false);
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+  });
+
+  test("a worker PASS with check_exit 0 and parity_exit 0 is green with ci_parity true", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+    expect(rounds?.[0]?.ci_parity).toBe(true);
+    expect(result?.ci_parity).toBe(true);
+  });
+
+  test("a verifier that omits parity_exit fails closed when parityCheck is set", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+  });
+
+  test("the verify prompt runs the parity command verbatim via bash -c", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("bash -c 'bun run check:ci'");
+    expect(verifyCall!.prompt).toContain("parity_exit");
+  });
+
+  test("without parityCheck the verifier prompt and results carry no parity state", async () => {
+    const { result, agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).not.toContain("parity_exit");
+    expect(verifyCall!.prompt).not.toContain("PARITY command");
+  });
+
+  test("parityCheck with verifyCheck:false is rejected before any dispatch", async () => {
+    const { result, error, workflowCalls, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        verifyCheck: false,
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toBe("parity_check_requires_verify_check");
+    expect(workflowCalls).toHaveLength(0);
+    expect(agentCalls).toHaveLength(0);
+  });
+
+  test("the round message includes the parity command when parityCheck is set", async () => {
+    const { workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      { workflow: async () => ({}) },
+    );
+
+    expect(error).toBeUndefined();
+    const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
+    expect(fanout).toBeDefined();
+    const message = (fanout!.args as FanoutArgs).tasks[0]?.message;
+    expect(message).toContain("bash -c 'bun run check:ci'");
+    expect(message).toContain("BOTH");
+  });
+
+  test("the round message is byte-for-byte unchanged when parityCheck is not set", async () => {
+    const { workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      { workflow: async () => ({}) },
+    );
+
+    expect(error).toBeUndefined();
+    const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
+    expect(fanout).toBeDefined();
+    const message = (fanout!.args as FanoutArgs).tasks[0]?.message;
+    expect(message).toBe(
+      [
+        "m",
+        "",
+        "When done, run this check in the repo by spawning bash with the command as a single argument:",
+        "    bash -c 'bun run typecheck'",
+        "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
+        "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+      ].join("\n"),
+    );
+  });
+
+  test("a parity failure's output reaches the next round message", async () => {
+    const verifierResults = [
+      {
+        ran: true,
+        check_exit: 0,
+        parity_exit: 1,
+        failing_segment: "bun run check:ci",
+        output_tail: "lint:strict failed",
+      },
+      { ran: true, check_exit: 0, parity_exit: 0 },
+    ];
+    let verifyCallIndex = 0;
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 2,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => verifierResults[Math.min(verifyCallIndex++, verifierResults.length - 1)],
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    const secondMessage = (fanoutCalls[1]!.args as FanoutArgs).tasks[0]?.message;
+    expect(secondMessage).toContain("Last failure output:");
+    expect(secondMessage).toContain("lint:strict failed");
+  });
+
+  test("the verifier prompt budgets the parity command's runtime", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("7 minutes");
+    expect(verifyCall!.prompt).toContain("background");
+    expect(verifyCall!.prompt).toContain("poll");
+    expect(verifyCall!.prompt).toContain("before the PARITY command has exited");
+    // A single Bash call is capped at 10 minutes; asking for a 15-minute
+    // timeout makes the verifier request something the tool cannot grant.
+    expect(verifyCall!.prompt).not.toContain("15 minutes");
+    expect(verifyCall!.prompt).not.toContain("timeout of at least");
+  });
+
+  test("the verifier prompt sources failure evidence from the parity run", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("PARITY run");
   });
 });

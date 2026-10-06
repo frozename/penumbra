@@ -172,6 +172,56 @@ test("roundMessage handles null prevOutput", () => {
   expect(msg).toContain("(none captured)");
 });
 
+test("roundMessage is byte-for-byte unchanged without a parity command", () => {
+  expect(roundMessage(0, "fix the bug", "bun run typecheck", null, null)).toBe(
+    [
+      "fix the bug",
+      "",
+      "When done, run this check in the repo by spawning bash with the command as a single argument:",
+      "    bash -c 'bun run typecheck'",
+      "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
+      "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+    ].join("\n"),
+  );
+  expect(roundMessage(1, "fix the bug", "bun run typecheck", "feature/prev", "error here")).toBe(
+    [
+      "A previous attempt (branch feature/prev) still fails the check. Build on that branch and fix it.",
+      "",
+      "Original task:",
+      "fix the bug",
+      "",
+      "Last failure output:",
+      "error here",
+      "",
+      "When done, run this check in the repo by spawning bash with the command as a single argument:",
+      "    bash -c 'bun run typecheck'",
+      "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
+      "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+    ].join("\n"),
+  );
+});
+
+test("roundMessage includes the parity command when one is set", () => {
+  const msg = roundMessage(0, "fix the bug", "bun run typecheck", null, null, "bun run check:ci");
+  expect(msg).toContain("bash -c 'bun run check:ci'");
+  expect(msg).toContain("BOTH");
+  expect(msg).not.toContain("If it fails, fix and re-run until it passes");
+});
+
+test("roundMessage with parity still carries the previous failure output", () => {
+  const msg = roundMessage(
+    1,
+    "fix the bug",
+    "bun run typecheck",
+    "feature/prev",
+    "parity_exit=1 lint:strict failed",
+    "bun run check:ci",
+  );
+  expect(msg).toContain("Last failure output:");
+  expect(msg).toContain("parity_exit=1 lint:strict failed");
+  expect(msg).toContain("bash -c 'bun run check:ci'");
+});
+
 // ---------------------------------------------------------------------------
 // validateCheckCommand
 // ---------------------------------------------------------------------------

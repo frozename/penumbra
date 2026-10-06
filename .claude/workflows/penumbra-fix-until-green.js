@@ -9,7 +9,9 @@ export const meta = {
 
 // args: { task: { message, task_class?, task_type? }, check: 'bun run typecheck',
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
-//         dispatcherModel?, graderModel? }
+//         dispatcherModel?, graderModel?, parityCheck?: 'bun run check:ci' }
+// parityCheck requires the independent verifier (verifyCheck on by default); combining
+// it with verifyCheck:false is rejected because the parity gate would never run.
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 // task-spec-validation:begin
 function validateSpec(spec) {
@@ -69,6 +71,7 @@ validateSpec({
   topLevelAllowedKeys: [
     'task',
     'check',
+    'parityCheck',
     'rubric',
     'agent',
     'escalateTo',
@@ -134,6 +137,14 @@ const verifierModel = input.verifierModel || 'sonnet'
 const baseAgent = input.agent || defaults.initial_agent || 'executor' // role-routed default; args.agent and escalateTo are deliberate pins
 const escalateTo = input.escalateTo // optional stronger agent for the final round
 const verifyCheck = input.verifyCheck !== false // default ON: a round passes only when an independent verifier re-runs the CHECK. Opt out explicitly with verifyCheck:false.
+// Optional CI-parity command (e.g. 'bun run check:ci'); when set, the independent
+// verifier also runs it in the same worktree and the round only passes when both
+// check and parity exit 0.
+const parityCheck = typeof input.parityCheck === 'string' && input.parityCheck.trim().length > 0 ? input.parityCheck : null
+if (parityCheck !== null && !verifyCheck) {
+  log('penumbra-fix-until-green: parityCheck is measured by the independent CHECK verifier; refusing parityCheck with verifyCheck:false.')
+  return { ok: false, error: 'parity_check_requires_verify_check' }
+}
 const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
@@ -168,12 +179,15 @@ const RUBRIC_RESULT = {
 const CHECK_VERIFY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['ran', 'check_exit'],
+  required: parityCheck ? ['ran', 'check_exit', 'parity_exit'] : ['ran', 'check_exit'],
   properties: {
     ran: { type: 'boolean', description: 'true iff you actually executed the CHECK command to completion' },
     check_exit: { type: 'integer', description: 'exit code of the CHECK run verbatim in the worktree; -1 if it could not be run' },
-    failing_segment: { type: 'string', description: 'the && segment that failed, verbatim, or empty when check_exit is 0' },
-    output_tail: { type: 'string', description: 'last ~2000 characters of the CHECK output' },
+    ...(parityCheck
+      ? { parity_exit: { type: 'integer', description: 'exit code of the PARITY command run verbatim in the same worktree after the CHECK; -1 if it could not be run' } }
+      : {}),
+    failing_segment: { type: 'string', description: parityCheck ? 'the && segment that failed (CHECK or PARITY), verbatim, or empty when both exit 0' : 'the && segment that failed, verbatim, or empty when check_exit is 0' },
+    output_tail: { type: 'string', description: parityCheck ? 'last ~2000 characters of the output of whichever command failed (CHECK or PARITY)' : 'last ~2000 characters of the CHECK output' },
     notes: { type: 'string' },
   },
 }
@@ -193,14 +207,28 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
     roundIndex === 0
       ? task.message
       : `A previous attempt (branch ${prevBranch}) still fails the check. Build on that branch and fix it.\n\nOriginal task:\n${task.message}\n\nLast failure output:\n${prevOutput || '(none captured)'}`
-  return [
+  const lines = [
     head,
     '',
     'When done, run this check in the repo by spawning bash with the command as a single argument:',
     `    ${bashCheckCommand(check)}`,
-    'If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.',
-    'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.',
-  ].join('\n')
+  ]
+  if (parityCheck !== null) {
+    lines.push(
+      '',
+      'Then run this parity command the same way; it replays the blocking CI steps and can take several minutes:',
+      `    ${bashCheckCommand(parityCheck)}`,
+    )
+  }
+  lines.push(
+    parityCheck !== null
+      ? 'If either command fails, fix and re-run until both pass or you cannot make further progress. Commit your work on the worktree branch.'
+      : 'If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.',
+    parityCheck !== null
+      ? 'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. Report PASS only when BOTH commands exit 0; when either fails report FAIL and follow it with the last ~50 lines of the failing output inside a fenced ``` block.'
+      : 'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.',
+  )
+  return lines.join('\n')
 }
 
 function parseCheck(result, responseMode = 'first_line') {
@@ -468,7 +496,7 @@ for (let i = 0; i < maxRounds; i++) {
   }
   if (dispatchFailure) {
     const detail = dispatchFailure === 'untrustworthy_dispatch' ? (r.reliability_trustworthy === false ? 'audited and distrusted' : 'never audited') : ''
-    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r) })
+    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r), ci_parity: false })
     log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}; stopping.`)
     break
   }
@@ -497,10 +525,23 @@ for (let i = 0; i < maxRounds; i++) {
       '',
       'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:',
       `    ${bashCheckCommand(check)}`,
+      ...(parityCheck
+        ? [
+            '',
+            'Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:',
+            `    ${bashCheckCommand(parityCheck)}`,
+            'The PARITY command replays the blocking CI steps and can take about 7 minutes, which can exceed a single Bash call\'s timeout cap. Run it in the background writing to a log file and poll until the process exits (or run it at the maximum allowed timeout and then keep waiting on the process); never report parity_exit before the PARITY command has exited.',
+          ]
+        : []),
       '',
       'Report the true exit code as check_exit and set ran:true only if you ran the CHECK to completion.',
+      ...(parityCheck
+        ? ['Report the PARITY exit code as parity_exit; a round is green only when check_exit and parity_exit are both 0.']
+        : []),
       'If the CHECK could not be run, set ran:false and check_exit:-1.',
-      'If the CHECK fails (check_exit is not 0), populate failing_segment with the failing command/segment verbatim and output_tail with the last ~2000 characters of the CHECK output.',
+      parityCheck
+        ? 'If the CHECK fails (check_exit is not 0), populate failing_segment with the failing command/segment verbatim and output_tail with the last ~2000 characters of the CHECK output. If the PARITY fails (parity_exit is not 0) while the CHECK passes, populate failing_segment and output_tail from the PARITY run instead.'
+        : 'If the CHECK fails (check_exit is not 0), populate failing_segment with the failing command/segment verbatim and output_tail with the last ~2000 characters of the CHECK output.',
     ].join('\n')
     let v
     try {
@@ -510,20 +551,21 @@ for (let i = 0; i < maxRounds; i++) {
     }
     if (v == null || typeof v !== 'object') {
       checkVerifyStatus = 'unavailable'
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: true, verified: false, passed: false })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: true, verified: false, ci_parity: false, passed: false })
       prevOutput = 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.'
       log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; worker PASS not attested on ${r.branch}`)
       break
     }
-    if (v.ran !== true || v.check_exit !== 0) {
+    const parityFailed = parityCheck !== null && v.parity_exit !== 0
+    if (v.ran !== true || v.check_exit !== 0 || parityFailed) {
       const verifierRan = v.ran === true
       consecutiveVerifyNotRun = verifierRan ? 0 : consecutiveVerifyNotRun + 1
       checkVerifyStatus = 'failed'
       const failOutput = [v.failing_segment, v.output_tail, v.notes].filter(Boolean).join('\n')
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: true, verified: false, check_exit: v.check_exit, passed: false })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: true, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
       prevOutput = failOutput
       if (verifierRan) {
-        log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}; treating as FAIL`)
+        log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
       } else {
         log(`fix-until-green round ${i + 1}: the independent CHECK verifier could not run the CHECK (ran=false, check_exit=${v.check_exit}); treating as FAIL`)
       }
@@ -564,6 +606,7 @@ for (let i = 0; i < maxRounds; i++) {
           rubric_status: 'GRADER_UNAVAILABLE',
           rubric_grade: null,
           verified: checkVerified,
+          ci_parity: parityCheck !== null && checkVerified,
           passed: false,
         })
         log(`fix-until-green round ${i + 1}: grader unavailable; rubric not attested on ${r.branch}`)
@@ -585,18 +628,19 @@ for (let i = 0; i < maxRounds; i++) {
         check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
         verified: checkVerified,
+        ci_parity: parityCheck !== null && checkVerified,
       })
       log(`fix-until-green round ${i + 1}: rubric ${rubricPassed ? 'PASS' : 'FAIL'} on ${r.branch}`)
       if (rubricPassed) {
-        return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check, rubric }
+        return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check, rubric, ci_parity: parityCheck !== null && checkVerified }
       }
       prevOutput = failedOutput
     } else {
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_verify_status: checkVerifyStatus, verified: checkVerified })
-      return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check }
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_verify_status: checkVerifyStatus, verified: checkVerified, ci_parity: parityCheck !== null && checkVerified })
+      return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check, ci_parity: parityCheck !== null && checkVerified }
     }
   } else {
-    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: false, check_verify_status: 'skipped' })
+    rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: false, check_verify_status: 'skipped', ci_parity: false })
   }
 }
 
@@ -609,4 +653,5 @@ return {
   rounds,
   check,
   rubric,
+  ci_parity: false,
 }

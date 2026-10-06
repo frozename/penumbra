@@ -168,6 +168,7 @@ type FanoutResponseSpec = {
 type VerifierResponseSpec = {
   ran: boolean;
   check_exit: number;
+  parity_exit?: number;
   candidate_commit?: string | null;
   checkout_commit?: string | null;
   failing_segment?: string;
@@ -1234,6 +1235,147 @@ test("workflow verifier dispatch uses host-observed SHA as branch_base", async (
   );
   expect(verifierStart?.branch_base).toBe(DEFAULT_INSPECT_SHA);
   expect(verifierStart?.branch_base).not.toBe("feature/branch-1");
+});
+
+// ---------------------------------------------------------------------------
+// CI parity check
+// ---------------------------------------------------------------------------
+
+test("inputSchema accepts an optional parity_check string", () => {
+  const result = inputSchema.safeParse(baseArgs({ parity_check: "bun run check:ci" }));
+  expect(result.success).toBe(true);
+});
+
+test("worker PASS with verifier parity_exit nonzero fails the round", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+      verifierResponses: [
+        {
+          ran: true,
+          check_exit: 0,
+          parity_exit: 1,
+          failing_segment: "bun run check:ci",
+          output_tail: "lint:strict failed",
+        },
+      ],
+    },
+    { parity_check: "bun run check:ci", max_rounds: 1 },
+  );
+
+  expect(result.ok).toBe(false);
+  expect(result.green).toBe(false);
+  expect(result.rounds[0]?.check_verify_status).toBe("failed");
+  expect(result.rounds[0]?.passed).toBe(false);
+  expect(result.rounds[0]?.ci_parity).toBe(false);
+  expect(result.ci_parity).toBe(false);
+});
+
+test("worker PASS with check_exit 0 and parity_exit 0 is green with ci_parity true", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+      verifierResponses: [{ ran: true, check_exit: 0, parity_exit: 0 }],
+    },
+    { parity_check: "bun run check:ci" },
+  );
+
+  expect(result.ok).toBe(true);
+  expect(result.green).toBe(true);
+  expect(result.rounds[0]?.ci_parity).toBe(true);
+  expect(result.ci_parity).toBe(true);
+  const verifierStart = ctx.capturedChainStarts?.find(
+    (start) => start.task_name === "verify-check",
+  );
+  expect(verifierStart?.message).toContain("bash -c 'bun run check:ci'");
+  expect(verifierStart?.message).toContain("parity_exit");
+});
+
+test("a verifier that omits parity_exit fails closed when parity_check is set", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+      verifierResponses: [{ ran: true, check_exit: 0 }],
+    },
+    { parity_check: "bun run check:ci", max_rounds: 1 },
+  );
+
+  expect(result.ok).toBe(false);
+  expect(result.rounds[0]?.check_verify_status).toBe("failed");
+  expect(result.rounds[0]?.ci_parity).toBe(false);
+  expect(result.ci_parity).toBe(false);
+});
+
+test("without parity_check, round records and the result carry ci_parity false", async () => {
+  const { result } = await runWorkflow({
+    fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+    verifierResponses: [{ ran: true, check_exit: 0 }],
+  });
+
+  expect(result.green).toBe(true);
+  expect(result.rounds[0]?.ci_parity).toBe(false);
+  expect(result.ci_parity).toBe(false);
+});
+
+test("inputSchema rejects parity_check together with verify_check false", () => {
+  const result = inputSchema.safeParse(
+    baseArgs({ verify_check: false, parity_check: "bun run check:ci" }),
+  );
+  expect(result.success).toBe(false);
+});
+
+test("parity_check with verify_check false is rejected before any dispatch", async () => {
+  const ctx = makeTestCtx({ fanoutResponses: [{ response: "CHECK_RESULT: PASS" }] });
+  await expect(
+    fn(
+      { ...ctx, args: baseArgs({ verify_check: false, parity_check: "bun run check:ci" }) },
+      emptyRecall(),
+    ),
+  ).rejects.toThrow(/parity_check/);
+  expect(ctx.capturedChainStarts).toEqual([]);
+});
+
+test("the implementation round message carries the parity command when parity_check is set", async () => {
+  const { ctx } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+      verifierResponses: [{ ran: true, check_exit: 0, parity_exit: 0 }],
+    },
+    { parity_check: "bun run check:ci" },
+  );
+
+  const implementationStart = ctx.capturedChainStarts?.find((start) => start.task_name === "fix-1");
+  expect(implementationStart?.message).toContain("bash -c 'bun run check:ci'");
+});
+
+test("a parity failure's output reaches the next round message", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+      ],
+      verifierResponses: [
+        {
+          ran: true,
+          check_exit: 0,
+          parity_exit: 1,
+          failing_segment: "bun run check:ci",
+          output_tail: "lint:strict failed",
+        },
+        { ran: true, check_exit: 0, parity_exit: 0 },
+      ],
+    },
+    { parity_check: "bun run check:ci", max_rounds: 2 },
+  );
+
+  expect(result.ok).toBe(true);
+  expect(result.green).toBe(true);
+  const secondImplementation = ctx.capturedChainStarts?.find(
+    (start) => start.task_name === "fix-2",
+  );
+  expect(secondImplementation?.message).toContain("Last failure output:");
+  expect(secondImplementation?.message).toContain("lint:strict failed");
 });
 
 test("workflow stops when verifier candidate_commit does not match host SHA", async () => {

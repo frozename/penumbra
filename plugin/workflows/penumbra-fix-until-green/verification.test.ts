@@ -71,6 +71,54 @@ test("buildVerifyPrompt does not manufacture an expected commit", () => {
   expect(prompt).toContain("none is supplied");
 });
 
+test("buildVerifyPrompt includes the parity command when parityCheck is set", () => {
+  const prompt = buildVerifyPrompt({
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    parityCheck: "bun run check:ci",
+  });
+  expect(prompt).toContain("bash -c 'bun run check:ci'");
+  expect(prompt).toContain("parity_exit");
+});
+
+test("buildVerifyPrompt carries no parity instructions without parityCheck", () => {
+  const prompt = buildVerifyPrompt({
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+  });
+  expect(prompt).not.toContain("parity_exit");
+  expect(prompt).not.toContain("PARITY command");
+});
+
+test("buildVerifyPrompt with parity sources failure evidence from the parity run", () => {
+  const prompt = buildVerifyPrompt({
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    parityCheck: "bun run check:ci",
+  });
+  expect(prompt).toContain("failing_segment");
+  expect(prompt).toContain("output_tail");
+  expect(prompt).toContain("PARITY run");
+});
+
+test("buildVerifyPrompt tells the verifier to poll the parity command until it exits", () => {
+  const prompt = buildVerifyPrompt({
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    parityCheck: "bun run check:ci",
+  });
+  // A single shell call may be capped below the parity run's runtime, so the
+  // verifier must background and poll rather than ask for a longer timeout.
+  expect(prompt).toContain("background");
+  expect(prompt).toContain("poll");
+  expect(prompt).toContain("before the PARITY command has exited");
+  expect(prompt).not.toContain("timeout of at least");
+});
+
 // ---------------------------------------------------------------------------
 // runVerifyCheck dispatch contract
 // ---------------------------------------------------------------------------
@@ -201,6 +249,66 @@ test("returns failed when ran:true and check_exit nonzero", async () => {
   expect(outcome.fail_output).toContain("error");
 });
 
+test("returns failed when parity is configured and parity_exit is nonzero despite check_exit 0", async () => {
+  const { ctx } = ctxWithVerifier(
+    jsonBlock({
+      ran: true,
+      check_exit: 0,
+      parity_exit: 1,
+      output_tail: "lint:strict failed",
+    }),
+  );
+  const outcome = await runVerifyCheck(ctx, {
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    verifierAgent: "verifier",
+    timeoutMs: 60000,
+    parityCheck: "bun run check:ci",
+  });
+  expect(outcome.status).toBe("failed");
+  expect(outcome.fail_output).toContain("parity_exit");
+});
+
+test("returns passed when parity is configured and parity_exit is 0", async () => {
+  const { ctx } = ctxWithVerifier(jsonBlock({ ran: true, check_exit: 0, parity_exit: 0 }));
+  const outcome = await runVerifyCheck(ctx, {
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    verifierAgent: "verifier",
+    timeoutMs: 60000,
+    parityCheck: "bun run check:ci",
+  });
+  expect(outcome.status).toBe("passed");
+});
+
+test("fails closed when parity is configured but parity_exit is omitted", async () => {
+  const { ctx } = ctxWithVerifier(jsonBlock({ ran: true, check_exit: 0 }));
+  const outcome = await runVerifyCheck(ctx, {
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    verifierAgent: "verifier",
+    timeoutMs: 60000,
+    parityCheck: "bun run check:ci",
+  });
+  expect(outcome.status).toBe("failed");
+  expect(outcome.fail_output).toContain("parity_exit");
+});
+
+test("ignores a reported parity_exit when parity is not configured", async () => {
+  const { ctx } = ctxWithVerifier(jsonBlock({ ran: true, check_exit: 0, parity_exit: 7 }));
+  const outcome = await runVerifyCheck(ctx, {
+    check: "bun run typecheck",
+    candidateBranch: "feature/candidate",
+    candidateHandoffId: "handoff-1",
+    verifierAgent: "verifier",
+    timeoutMs: 60000,
+  });
+  expect(outcome.status).toBe("passed");
+});
+
 test("returns failed (not_run) when ran:false", async () => {
   const { ctx } = ctxWithVerifier(
     jsonBlock({ ran: false, check_exit: -1, notes: "could not locate worktree" }),
@@ -311,6 +419,17 @@ test("CheckVerifySchema rejects missing check_exit", () => {
 test("CheckVerifySchema rejects unknown keys", () => {
   const parsed = CheckVerifySchema.safeParse({ ran: true, check_exit: 0, extra: true });
   expect(parsed.success).toBe(false);
+});
+
+test("CheckVerifySchema accepts an optional integer parity_exit", () => {
+  const parsed = CheckVerifySchema.safeParse({
+    ran: true,
+    check_exit: 0,
+    candidate_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    checkout_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    parity_exit: 0,
+  });
+  expect(parsed.success).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

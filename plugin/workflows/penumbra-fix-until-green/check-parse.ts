@@ -145,6 +145,7 @@ export function roundMessage(
   check: string,
   prevBranch: string | null,
   prevOutput: string | null,
+  parityCheck?: string,
 ): string {
   const prevNote = prevOutput ?? "(none captured)";
   const branchLabel = prevBranch ?? "(unknown)";
@@ -152,14 +153,28 @@ export function roundMessage(
     roundIndex === 0
       ? taskMessage
       : `A previous attempt (branch ${branchLabel}) still fails the check. Build on that branch and fix it.\n\nOriginal task:\n${taskMessage}\n\nLast failure output:\n${prevNote}`;
-  return [
+  const lines = [
     head,
     "",
     "When done, run this check in the repo by spawning bash with the command as a single argument:",
     `    ${bashCheckCommand(check)}`,
-    "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
-    "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
-  ].join("\n");
+  ];
+  if (parityCheck !== undefined) {
+    lines.push(
+      "",
+      "Then run this parity command the same way; it replays the blocking CI steps and can take several minutes:",
+      `    ${bashCheckCommand(parityCheck)}`,
+    );
+  }
+  lines.push(
+    parityCheck !== undefined
+      ? "If either command fails, fix and re-run until both pass or you cannot make further progress. Commit your work on the worktree branch."
+      : "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
+    parityCheck !== undefined
+      ? "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. Report PASS only when BOTH commands exit 0; when either fails report FAIL and follow it with the last ~50 lines of the failing output inside a fenced ``` block."
+      : "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+  );
+  return lines.join("\n");
 }
 
 export function validateCheckCommand(check: string, allowPartialCheck: boolean): string | null {
