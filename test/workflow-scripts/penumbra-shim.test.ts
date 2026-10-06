@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -100,6 +100,39 @@ async function runBridge(
   } catch (error) {
     return { result: undefined, prompts, error };
   }
+}
+
+async function runDateProbe(body: string): ReturnType<typeof runBridge> {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-date-probe-"));
+  const path = join(root, "probe.js");
+  try {
+    writeFileSync(
+      path,
+      `export const meta = { name: "probe", description: "probe" };\n${body}\n`,
+      "utf8",
+    );
+    return await runBridge(path, {}, async () => {
+      throw new Error("unexpected agent call");
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function expectStageBudgets(prompts: string[], expected: number[], total: number): void {
+  expect(prompts).toHaveLength(3);
+  expect(prompts[0]).toContain("mcp__penumbra__workflow_run");
+  expect(prompts[1]).toContain("mcp__penumbra__workflow_wait");
+  expect(prompts[2]).toContain("mcp__penumbra__read_handle");
+  const budgets = prompts.map((prompt) => {
+    const match = prompt.match(/(\d+) ms is this call's budget/);
+    expect(match).not.toBeNull();
+    return Number(match![1]);
+  });
+  expect(budgets).toEqual(expected);
+  expect(prompts[1]).toContain(`"timeout_ms":${String(expected[1])}`);
+  expect(expected[1]).toBeGreaterThanOrEqual(1);
+  expect(budgets.reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(total);
 }
 
 function makeStartStub(
@@ -1291,16 +1324,75 @@ describe("penumbra.js happy path", () => {
   });
 });
 
-describe("penumbra.js per-call budget", () => {
-  test("workflow_wait receives the full timeout budget without reading the clock", async () => {
+describe("penumbra.js stage budgets sum to at most timeout_ms", () => {
+  test.each([
+    [1, [0, 1, 0]],
+    [100, [10, 80, 10]],
+    [undefined, [30000, 240000, 30000]],
+    [1800000, [30000, 1740000, 30000]],
+  ] as const)("timeout_ms %s allocates bounded stage budgets", async (timeoutMs, expected) => {
+    const input = timeoutMs === undefined ? VALID_ARGS : { ...VALID_ARGS, timeout_ms: timeoutMs };
+    const { error, prompts } = await runBridge(
+      SCRIPT_PATH,
+      input,
+      makeFullStub(
+        {},
+        {
+          outcome: "success",
+          result_truncated: true,
+          result_handle_id: "handle-result",
+        },
+      ),
+    );
+    expect(error).toBeUndefined();
+    expectStageBudgets(prompts, [...expected], timeoutMs ?? 300000);
+  });
+
+  test("error spill path uses the same bounded stage budgets", async () => {
     const { error, prompts } = await runBridge(
       SCRIPT_PATH,
       { ...VALID_ARGS, timeout_ms: 100 },
-      makeFullStub({}, { outcome: "success", result: nativeResult({ ok: true }) }),
+      makeFullStub(
+        {},
+        {
+          status: "failed",
+          error_truncated: true,
+          error_handle_id: "handle-error",
+        },
+        {
+          handle_id_used: "handle-error",
+          payload_kind: "workflow_error",
+          error_present: true,
+        },
+      ),
     );
     expect(error).toBeUndefined();
-    expect(prompts[1]).toContain('"timeout_ms":100');
+    expectStageBudgets(prompts, [10, 80, 10], 100);
   });
+});
+
+describe("runtime Date shim", () => {
+  test("argful Date construction yields a real Date", async () => {
+    const { result, error } = await runDateProbe(
+      "const d = new Date(0); return { d, inScript: d instanceof Date, iso: d.toISOString(), t: d.getTime() };",
+    );
+    expect(error).toBeUndefined();
+    expect((result as { d: unknown }).d).toBeInstanceOf(Date);
+    expect(result).toEqual({
+      d: new Date(0),
+      inScript: true,
+      iso: "1970-01-01T00:00:00.000Z",
+      t: 0,
+    });
+  });
+
+  test.each(["Date.now()", "new Date()", "Date()", "Math.random()"])(
+    "%s remains unavailable",
+    async (expression) => {
+      const { error } = await runDateProbe(`return ${expression};`);
+      expect(String(error)).toContain("unavailable in workflow scripts");
+    },
+  );
 });
 
 describe("session-memory-sweep.js native collect", () => {
@@ -1320,30 +1412,51 @@ describe("session-memory-sweep.js native collect", () => {
     why: "It prevents repeated investigation.",
   };
 
-  test("collect uses the full timeout budget without reading the clock", async () => {
-    const { error, prompts } = await runBridge(
-      SWEEP_SCRIPT_PATH,
-      { cwd: "/test-repo", timeout_ms: 100 },
-      async (prompt: string) => {
-        if (prompt.includes("mcp__penumbra__workflow_run")) return start;
-        return {
-          status: "completed",
-          outcome: "success",
-          workflow_run_id_used: "wfrun-sweep-1",
-          cwd_used: "/test-repo",
-          payload_read: true,
-          native_outcome: "success",
-          run_result_read: true,
-          ok: true,
-          rendered_block: "",
-          candidates: [],
-        };
-      },
-    );
-    expect(error).toBeUndefined();
-    expect(prompts[1]).toContain('"timeout_ms":100');
-    expect(prompts).toHaveLength(2);
-  });
+  test.each([
+    [1, [0, 1, 0]],
+    [100, [10, 80, 10]],
+    [undefined, [30000, 240000, 30000]],
+    [1800000, [30000, 1740000, 30000]],
+  ] as const)(
+    "session-memory-sweep.js stage budgets sum to at most timeout_ms: %s",
+    async (timeoutMs, expected) => {
+      const input =
+        timeoutMs === undefined
+          ? { cwd: "/test-repo" }
+          : { cwd: "/test-repo", timeout_ms: timeoutMs };
+      const { error, prompts } = await runBridge(
+        SWEEP_SCRIPT_PATH,
+        input,
+        async (prompt: string) => {
+          if (prompt.includes("mcp__penumbra__workflow_run")) return start;
+          if (prompt.includes("mcp__penumbra__workflow_wait")) {
+            return {
+              status: "completed",
+              outcome: "success",
+              workflow_run_id_used: "wfrun-sweep-1",
+              cwd_used: "/test-repo",
+              payload_read: true,
+              result_truncated: true,
+              result_handle_id: "handle-sweep",
+              ok: true,
+              rendered_block: "",
+              candidates: [],
+            };
+          }
+          return {
+            handle_id_used: "handle-sweep",
+            payload_read: true,
+            payload_kind: "memory_sweep_result",
+            native_outcome: "success",
+            run_result_read: true,
+            semantic_ok: true,
+          };
+        },
+      );
+      expect(error).toBeUndefined();
+      expectStageBudgets(prompts, [...expected], timeoutMs ?? 300000);
+    },
+  );
 
   test("collect without cwd fails closed with an actionable message", async () => {
     const { result, prompts, error } = await runBridge(SWEEP_SCRIPT_PATH, {}, async () => {

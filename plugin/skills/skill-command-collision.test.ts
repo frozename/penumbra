@@ -26,4 +26,25 @@ describe("plugin skill/command namespace", () => {
     );
     expect(body).toMatch(/session-memory-sweep[\s\S]{0,400}cwd/);
   });
+
+  test("/handoff and /penumbra:handoff both reach the full protocol", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(pluginRoot, ".claude-plugin/plugin.json"), "utf8"),
+    ) as { name?: string };
+    const skill = readFileSync(join(pluginRoot, "skills/handoff/SKILL.md"), "utf8");
+    const playbook = readFileSync(
+      join(pluginRoot, "playbooks/session-handoff/playbook.md"),
+      "utf8",
+    );
+    const frontmatter = playbook.split("---")[1] ?? "";
+
+    expect(manifest.name).toBe("penumbra");
+    expect(skill).toMatch(/^---\nname: handoff\n/);
+    expect(skill).toContain('mcp__penumbra__workflow_run({ "name": "session-handoff" })');
+    const steps = ["## Step 1", "## Step 2", "## Step 3"].map((heading) => skill.indexOf(heading));
+    expect(steps[0]).toBeGreaterThanOrEqual(0);
+    expect(steps[1]).toBeGreaterThan(steps[0]!);
+    expect(steps[2]).toBeGreaterThan(steps[1]!);
+    expect(frontmatter).toMatch(/- kind: slash\n\s+command: handoff\n\s+skill: penumbra:handoff\n/);
+  });
 });
