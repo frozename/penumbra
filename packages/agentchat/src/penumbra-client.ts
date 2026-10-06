@@ -102,6 +102,7 @@ type ChainStartInput = {
 
 export interface PenumbraClientLogger {
   info(meta: Record<string, unknown>, msg: string): void;
+  warn?(meta: Record<string, unknown>, msg: string): void;
 }
 const NULL_PROJECT_ID_SENTINEL = "__null__"; // Sentinel token that maps to SQL NULL in /handoffs query.
 type ProjectScope = "global";
@@ -129,6 +130,23 @@ async function readJsonOrNull(res: Response): Promise<unknown> {
   }
 }
 
+function rejectedDispatchEventIndices(err: unknown, batchSize: number): Set<number> {
+  if (!(err instanceof PenumbraHttpError) || err.status !== 400) return new Set();
+  const body = err.body;
+  if (!isJsonObject(body) || body.error !== "invalid_payload" || !Array.isArray(body.issues))
+    return new Set();
+  return new Set(
+    body.issues.flatMap((issue: unknown): number[] => {
+      if (!isJsonObject(issue) || !Array.isArray(issue.path) || issue.path[0] !== "events")
+        return [];
+      const index: unknown = issue.path[1];
+      return typeof index === "number" && Number.isInteger(index) && index >= 0 && index < batchSize
+        ? [index]
+        : [];
+    }),
+  );
+}
+
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -137,6 +155,7 @@ export class PenumbraClient {
   private workerId: string | null = null;
   private workerMetadata: Record<string, unknown> | undefined;
   private reregisterInFlight: Promise<void> | null = null;
+  private rejectedDispatchEvents = 0;
 
   constructor(opts: PenumbraClientOpts = {}) {
     this.storageRoot = opts.storageRoot;
@@ -351,10 +370,33 @@ export class PenumbraClient {
   async postDispatchEvents(events: DispatchEventInput[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
     try {
-      await this.post("/dispatch/events", { events }, { signal });
+      try {
+        await this.post("/dispatch/events", { events }, { signal });
+      } catch (err) {
+        const rejected = rejectedDispatchEventIndices(err, events.length);
+        if (rejected.size === 0) return;
+        this.rejectedDispatchEvents += rejected.size;
+        this.logger?.warn?.(
+          {
+            dropped_kinds: events
+              .filter((_, index) => rejected.has(index))
+              .map((event) => event.kind),
+            dropped_count: rejected.size,
+            batch_size: events.length,
+          },
+          "daemon rejected dispatch events; dropping invalid entries",
+        );
+        const remainder = events.filter((_, index) => !rejected.has(index));
+        if (remainder.length > 0)
+          await this.post("/dispatch/events", { events: remainder }, { signal });
+      }
     } catch {
       // Instrumentation is best-effort and must not break dispatch execution.
     }
+  }
+
+  rejectedDispatchEventCount(): number {
+    return this.rejectedDispatchEvents;
   }
 
   async postDispatchEventsStrict(

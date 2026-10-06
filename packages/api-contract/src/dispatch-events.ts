@@ -13,6 +13,7 @@ export const DispatchEventKindSchema = z.enum([
   "acp.session.end",
   "acp.model_warmup",
   "acp.model_warmup.failed",
+  "acp.phase.drift",
   "http.server.start",
   "http.session.start",
   "http.session.open_timeout",

@@ -1,4 +1,12 @@
-import { buildServices, loadSqliteVec, migrate, type Services, type T0Event } from "@penumbra/core";
+import { DispatchEventsListResponseSchema } from "@penumbra/api-contract";
+import {
+  buildServices,
+  type DispatchEventInput,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type T0Event,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
@@ -326,6 +334,162 @@ serviceTest("PenumbraClient.postDispatchEvents posts best-effort event batches",
       },
     ]);
     expect(services.dispatchEventLog.listByHandoff("h-events")).toHaveLength(1);
+  } finally {
+    stop();
+  }
+});
+
+function dispatchEventBatch(): DispatchEventInput[] {
+  return (["heartbeat.sent", "acp.phase.drift", "dispatch.end"] as const).map((kind) => ({
+    handoff_id: "h-events",
+    source: "worker",
+    kind,
+    ts: "2026-05-01T00:00:00.000Z",
+  }));
+}
+
+test("postDispatchEvents drops only daemon-rejected kinds and resends the rest of the batch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-client-rejected-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    const bodies: { events: DispatchEventInput[] }[] = [];
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const warnings: Record<string, unknown>[] = [];
+    const fetchImpl: FetchImpl = async (input, init) => {
+      bodies.push((await toRequest(input, init).json()) as { events: DispatchEventInput[] });
+      signals.push(init?.signal);
+      return bodies.length === 1
+        ? Response.json(
+            {
+              error: "invalid_payload",
+              issues: [{ path: ["events", 1, "kind"], code: "invalid_value", message: "x" }],
+            },
+            { status: 400 },
+          )
+        : Response.json({ recorded: 2 });
+    };
+    const client = new PenumbraClient({
+      storageRoot: root,
+      fetch: fetchImpl as typeof fetch,
+      logger: {
+        info: (meta: Record<string, unknown>): void => {
+          warnings.push(meta);
+        },
+        warn: (meta: Record<string, unknown>): void => {
+          warnings.push(meta);
+        },
+      },
+    });
+    const signal = new AbortController().signal;
+    await client.postDispatchEvents(dispatchEventBatch(), signal);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]?.events.map((event) => event.kind)).toEqual([
+      "heartbeat.sent",
+      "dispatch.end",
+    ]);
+    expect(client.rejectedDispatchEventCount()).toBe(1);
+    expect(signals).toEqual([signal, signal]);
+    expect(warnings).toEqual([
+      { dropped_kinds: ["acp.phase.drift"], dropped_count: 1, batch_size: 3 },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("postDispatchEvents gives up on invalid_json without throwing", async () => {
+  const { storageRoot, stop } = withDaemon();
+  try {
+    const bodies: unknown[] = [];
+    const fetchImpl: FetchImpl = async (input, init) => {
+      bodies.push(await toRequest(input, init).json());
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    };
+    const client = new PenumbraClient({ storageRoot, fetch: fetchImpl as typeof fetch });
+    await client.postDispatchEvents(dispatchEventBatch());
+    expect(bodies).toHaveLength(1);
+    expect(client.rejectedDispatchEventCount()).toBe(0);
+  } finally {
+    stop();
+  }
+});
+
+test("postDispatchEvents retries a rejected remainder only once", async () => {
+  const { storageRoot, stop } = withDaemon();
+  try {
+    const bodies: unknown[] = [];
+    const fetchImpl: FetchImpl = async (input, init) => {
+      bodies.push(await toRequest(input, init).json());
+      return Response.json(
+        { error: "invalid_payload", issues: [{ path: ["events", 1, "kind"] }] },
+        { status: 400 },
+      );
+    };
+    const client = new PenumbraClient({ storageRoot, fetch: fetchImpl as typeof fetch });
+    await client.postDispatchEvents(dispatchEventBatch());
+    expect(bodies).toHaveLength(2);
+    expect(client.rejectedDispatchEventCount()).toBe(1);
+  } finally {
+    stop();
+  }
+});
+
+test("postDispatchEventsStrict still rejects daemon 400 responses", async () => {
+  const { storageRoot, stop } = withDaemon();
+  try {
+    const fetchImpl: FetchImpl = () =>
+      Promise.resolve(
+        Response.json(
+          { error: "invalid_payload", issues: [{ path: ["events", 1, "kind"] }] },
+          { status: 400 },
+        ),
+      );
+    const client = new PenumbraClient({ storageRoot, fetch: fetchImpl as typeof fetch });
+    let caught: unknown;
+    try {
+      await client.postDispatchEventsStrict(dispatchEventBatch());
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PenumbraHttpError);
+    if (!(caught instanceof PenumbraHttpError)) throw new Error("expected PenumbraHttpError");
+    expect(caught.status).toBe(400);
+  } finally {
+    stop();
+  }
+});
+
+test("postDispatchEvents round-trip preserves accepted events through the strict daemon consumer", async () => {
+  const { storageRoot, services, fetchImpl: daemonFetch, stop } = withDaemon();
+  try {
+    const statuses: number[] = [];
+    const fetchImpl: FetchImpl = async (input, init) => {
+      const req = toRequest(input, init);
+      const body = (await req.json()) as { events: DispatchEventInput[] };
+      // Model a worker kind unknown to the running daemon without replacing its schema.
+      const events = body.events.map((event) =>
+        event.kind === "acp.phase.drift" ? { ...event, kind: "future.phase.drift" } : event,
+      );
+      const response = await daemonFetch(new Request(req, { body: JSON.stringify({ events }) }));
+      statuses.push(response.status);
+      if (response.status === 400) {
+        expect(services.dispatchEventLog.listByHandoff("h-events")).toHaveLength(0);
+      }
+      return response;
+    };
+    const client = new PenumbraClient({ storageRoot, fetch: fetchImpl as typeof fetch });
+    await client.postDispatchEvents(dispatchEventBatch());
+    expect(services.dispatchEventLog.listByHandoff("h-events").map((event) => event.kind)).toEqual([
+      "heartbeat.sent",
+      "dispatch.end",
+    ]);
+    expect(statuses).toEqual([400, 200]);
+    const response = await daemonFetch("http://127.0.0.1:1/dispatch/events?handoff_id=h-events", {
+      headers: { authorization: "Bearer tok" },
+    });
+    const parsed = DispatchEventsListResponseSchema.parse(await response.json());
+    expect(parsed.events.map((event) => event.kind)).toEqual(["heartbeat.sent", "dispatch.end"]);
   } finally {
     stop();
   }

@@ -590,9 +590,14 @@ interface AcpTextContent {
   text?: string;
 }
 
+interface AcpSessionUpdateMeta {
+  codex?: { phase?: unknown };
+}
+
 interface AcpSessionUpdate {
   sessionUpdate: string;
   content?: AcpTextContent;
+  _meta?: AcpSessionUpdateMeta;
   name?: unknown;
   rawInput?: unknown;
   toolCallId?: string;
@@ -821,7 +826,7 @@ interface DispatchTurnContext {
   modelLabel: string;
   arm: () => void;
   markUpdate: () => void;
-  accumulate: (text: string) => void;
+  accumulate: (text: string, phase?: string) => void;
   permissionContext: StdioAcpPermissionContext;
   toolNames: Map<string, string>;
 }
@@ -1066,10 +1071,18 @@ function resolveToolName(update: AcpSessionUpdate, toolNames: Map<string, string
   return null;
 }
 
+const CODEX_FINAL_ANSWER_PHASE = "final_answer";
+
+function codexChunkPhase(update: AcpSessionUpdate): string | undefined {
+  // A null or empty phase is normalised to undefined (phase-less chunk).
+  const phase = update._meta?.codex?.phase;
+  return typeof phase === "string" && phase.length > 0 ? phase : undefined;
+}
+
 function handleAgentMessageChunk(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
   const content = update.content;
   if (content?.type !== "text" || typeof content.text !== "string") return;
-  ctx.accumulate(content.text);
+  ctx.accumulate(content.text, codexChunkPhase(update));
   ctx.capturePort?.emit({ kind: "agent_message_chunk", content: content.text });
 }
 
@@ -1687,7 +1700,7 @@ export class StdioAcpAdapter implements Adapter {
       }
       return;
     }
-    augmentDispatchError(err, state.server, state.accumulatedText);
+    augmentDispatchError(err, state.server, resolveFinalResponseText(state).text);
     state.errorThrown = true;
     throw err;
   }
@@ -1812,7 +1825,7 @@ export class StdioAcpAdapter implements Adapter {
         state.warmupTimedOut = warmupResult.warmupTimedOutRef.current;
         // Drop whatever the warmup turn accumulated (the `/model` ack) so the
         // task response below starts from a clean buffer.
-        state.accumulatedText = "";
+        resetPromptTurnAccumulators(state);
         state.lastSessionUpdateTs = Date.now();
       }
 
@@ -1825,7 +1838,7 @@ export class StdioAcpAdapter implements Adapter {
         lifecycleHandles,
         adapterKind: this.kind,
       });
-      yield buildDispatchDoneEvent(state, promptResponse);
+      yield buildDispatchDoneEvent(state, promptResponse, input);
     } catch (err) {
       yield* this.handleDispatchCatch(err, state, warmPoolEnabled, poolKey, input);
     } finally {
@@ -1841,10 +1854,16 @@ export class StdioAcpAdapter implements Adapter {
   }
 }
 
+interface MessagePhaseAccum {
+  sawPhasedChunk: boolean;
+  finalAnswerText: string;
+}
+
 interface DispatchState {
   server: StdioAcpHandle | null;
   pooledEntry: AcpWarmPoolEntry | null;
   accumulatedText: string;
+  messagePhase: MessagePhaseAccum;
   frameworkOverheadMs: number | undefined;
   errorThrown: boolean;
   warmupTimedOut: boolean;
@@ -1882,8 +1901,23 @@ function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContex
     markUpdate: (): void => {
       state.lastSessionUpdateTs = Date.now();
     },
-    accumulate: (text: string): void => {
+    accumulate: (text: string, phase?: string): void => {
       state.accumulatedText += text;
+      // codex-acp tags each agent_message_chunk with _meta.codex.phase
+      // ("commentary" progress narration vs "final_answer"). Only
+      // final_answer chunks count toward the recorded response; unknown
+      // future phases are treated as non-final. Chunks with a null/absent
+      // phase (normalised to undefined by codexChunkPhase) are deliberately
+      // NOT counted here: codex emits phase-less items around tool calls and
+      // item lifecycle, so counting them would re-glue noise onto the answer.
+      // They still land in accumulatedText, so the no-final_answer fail-open
+      // path keeps them — the only case where a phase-less chunk contributes
+      // to the response.
+      if (phase === undefined) return;
+      state.messagePhase.sawPhasedChunk = true;
+      if (phase === CODEX_FINAL_ANSWER_PHASE) {
+        state.messagePhase.finalAnswerText += text;
+      }
     },
     permissionContext,
     toolNames: new Map<string, string>(),
@@ -2010,11 +2044,20 @@ function computeDispatchConstants(
   };
 }
 
+// Phase state is scoped per prompt turn: it must reset wherever the text
+// buffer is cleared, or a previous turn's final_answer leaks into the next
+// turn's recorded response.
+function resetPromptTurnAccumulators(state: DispatchState): void {
+  state.accumulatedText = "";
+  state.messagePhase = { sawPhasedChunk: false, finalAnswerText: "" };
+}
+
 function createDispatchState(): DispatchState {
   return {
     server: null,
     pooledEntry: null,
     accumulatedText: "",
+    messagePhase: { sawPhasedChunk: false, finalAnswerText: "" },
     frameworkOverheadMs: undefined,
     errorThrown: false,
     warmupTimedOut: false,
@@ -2191,18 +2234,40 @@ function handleSessionCreated(args: {
   return args.session.sessionId;
 }
 
+function resolveFinalResponseText(state: DispatchState): { text: string; drift: boolean } {
+  const phases = state.messagePhase;
+  if (phases.finalAnswerText.trim().length > 0)
+    return { text: phases.finalAnswerText, drift: false };
+  // Fail open on the full concatenation when there is no non-whitespace final_answer text.
+  return { text: state.accumulatedText, drift: phases.sawPhasedChunk };
+}
+
 function buildDispatchDoneEvent(
   state: DispatchState,
   promptResponse: AcpPromptResponse | null,
+  input: DispatchInput,
 ): DispatchEvent {
+  const resolved = resolveFinalResponseText(state);
+  if (resolved.drift) {
+    const handoffId = input.handoff_id ?? input.eventContext?.handoffId ?? "unknown";
+    console.warn(
+      `stdio-acp: agent_message_chunk carried _meta.codex.phase but no non-whitespace final_answer text; falling back to full concatenation (handoff_id=${handoffId})`,
+      { accumulated_len: state.accumulatedText.length },
+    );
+    emitLifecycle(input, "acp.phase.drift", {
+      adapter: "stdio-acp",
+      accumulated_len: state.accumulatedText.length,
+    });
+  }
+  const finalText = resolved.text;
   const classifierDecline = detectStdioAcpClassifierDecline({
-    finalText: state.accumulatedText,
-    errorText: state.accumulatedText.trim().length === 0 ? JSON.stringify(promptResponse) : null,
+    finalText,
+    errorText: finalText.trim().length === 0 ? JSON.stringify(promptResponse) : null,
   });
   return {
     type: "done",
     result: {
-      text: state.accumulatedText,
+      text: finalText,
       meta: {
         framework_overhead_ms: state.frameworkOverheadMs,
         ...(classifierDecline ?? {}),
