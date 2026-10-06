@@ -8,7 +8,12 @@ import {
 import { z } from "zod";
 
 export const TriggerSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("slash"), command: z.string().min(1) }),
+  // skill names a plugin skill such as penumbra:handoff for generated slash-command delegation.
+  z.object({
+    kind: z.literal("slash"),
+    command: z.string().min(1),
+    skill: z.string().min(1).optional(),
+  }),
   z.object({
     kind: z.literal("lifecycle"),
     event: z.enum([
@@ -76,7 +81,11 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
     args: ArgsRecord.optional(),
     ...RequiredFlag,
   }),
-  z.object({ source: z.literal("routing_bias_list"), args: ArgsRecord.optional(), ...RequiredFlag }),
+  z.object({
+    source: z.literal("routing_bias_list"),
+    args: ArgsRecord.optional(),
+    ...RequiredFlag,
+  }),
   z.object({ source: z.literal("registrar_status"), args: ArgsRecord.optional(), ...RequiredFlag }),
   z.object({ source: z.literal("dispatch_events"), args: ArgsRecord, ...RequiredFlag }),
   z.object({ source: z.literal("session_events"), args: ArgsRecord, ...RequiredFlag }),

@@ -6,6 +6,7 @@ triggers:
     event: pre-compact
   - kind: slash
     command: handoff
+    skill: penumbra:handoff
   - kind: state-threshold
     metric: time-since-last-handoff-min
     op: ">"
