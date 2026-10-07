@@ -60,10 +60,15 @@ export const DispatchEventKindSchema = z.enum([
   "worker.recovery.exhausted",
   "lane.override",
   "long_lived.action.expired",
+  "workflow.cancel.wait_timeout",
 ]);
 export type DispatchEventKind = z.infer<typeof DispatchEventKindSchema>;
 
-export const DispatchEventSourceSchema = z.enum(["worker", "daemon"]);
+// Read contract for stored rows. "workflow" marks rows a workflow writes
+// directly (the wait-timeout cancel marker) and "sweeper" marks stale-handoff
+// sweeper ends; the worker POST route keeps its own ["worker", "daemon"] enum,
+// so neither source can be posted by a worker.
+export const DispatchEventSourceSchema = z.enum(["worker", "daemon", "workflow", "sweeper"]);
 export type DispatchEventSource = z.infer<typeof DispatchEventSourceSchema>;
 
 export const DispatchEventSchema = z

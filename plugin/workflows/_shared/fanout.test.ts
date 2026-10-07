@@ -489,3 +489,124 @@ describe("runFanout result isolation", () => {
     }
   });
 });
+
+describe("runFanout abandon-cancel contract", () => {
+  for (const path of ["timeout", "thrown", "deadline"] as const) {
+    for (const rejects of [false, true]) {
+      test(`records cancel ${rejects ? "error" : "request"} on the ${path} path`, async () => {
+        let deadlineCalls = 0;
+        const out = await runFanout(
+          context({
+            deadline:
+              path === "deadline"
+                ? () => ({
+                    remaining_ms: ++deadlineCalls === 1 ? 10_000 : 0,
+                    expired: deadlineCalls > 1,
+                  })
+                : undefined,
+            awaitChain: async () => {
+              if (path === "thrown") throw new Error("wait failed");
+              return { status: "timeout", final_agent: null, response_text: null };
+            },
+            cancel: async () => {
+              if (rejects) throw new Error("cancel down");
+            },
+          }),
+          { defaults: {}, tasks: [{ message: "work" }] },
+        );
+        expect(out.results[0]).toMatchObject({ cancel_requested: !rejects });
+        expect((out.results[0] as unknown as { cancel_error?: string }).cancel_error).toBe(
+          rejects ? "cancel down" : undefined,
+        );
+      });
+    }
+  }
+  test("cancels a started chain whose wait times out", async () => {
+    const cancelled: string[] = [];
+    const ctx = context({
+      chainStart: async () =>
+        response({ conversation_id: "stuck-conv", handoff_id: "stuck-handoff" }),
+      awaitChain: async () => ({
+        status: "timeout",
+        final_agent: null,
+        response_text: null,
+      }),
+      cancel: async (conversationId) => {
+        cancelled.push(conversationId);
+      },
+    });
+
+    const out = await runFanout(ctx, { defaults: {}, tasks: [{ message: "work" }] });
+
+    expect(cancelled).toEqual(["stuck-conv"]);
+    expect(out.results[0]?.status).toBe("timeout");
+    expect(out.results[0]?.error_summary).toBe("wait_timeout");
+  });
+
+  test("cancels a started chain when the wait throws", async () => {
+    const cancelled: string[] = [];
+    const ctx = context({
+      chainStart: async () => response({ conversation_id: "throw-conv", handoff_id: "throw-h" }),
+      awaitChain: async () => {
+        throw new Error("wait stream lost");
+      },
+      cancel: async (conversationId) => {
+        cancelled.push(conversationId);
+      },
+    });
+
+    const out = await runFanout(ctx, { defaults: {}, tasks: [{ message: "work" }] });
+
+    expect(cancelled).toEqual(["throw-conv"]);
+    expect(out.results[0]?.error_summary).toBe("wait_failed");
+  });
+
+  test("cancels a started chain when the run deadline expires before the wait", async () => {
+    const cancelled: string[] = [];
+    let deadlineCall = 0;
+    const ctx = context({
+      deadline: () => {
+        deadlineCall += 1;
+        // startWithRetry sees budget, waitForTask sees none.
+        return deadlineCall === 1
+          ? { remaining_ms: 10_000, expired: false }
+          : { remaining_ms: 0, expired: true };
+      },
+      chainStart: async () =>
+        response({ conversation_id: "expired-conv", handoff_id: "expired-h" }),
+      awaitChain: async () => ({
+        status: "completed",
+        final_agent: "worker",
+        response_text: "done",
+      }),
+      cancel: async (conversationId) => {
+        cancelled.push(conversationId);
+      },
+    });
+
+    const out = await runFanout(ctx, { defaults: {}, tasks: [{ message: "work" }] });
+
+    expect(cancelled).toEqual(["expired-conv"]);
+    expect(out.results[0]?.error_summary).toBe("run_deadline_expired");
+  });
+
+  test("never cancels a chain that completed or failed on its own", async () => {
+    for (const status of ["completed", "failed"] as const) {
+      const cancelled: string[] = [];
+      const ctx = context({
+        awaitChain: async () => ({
+          status,
+          final_agent: "worker",
+          response_text: status === "completed" ? "done" : null,
+        }),
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+      });
+
+      await runFanout(ctx, { defaults: {}, tasks: [{ message: "work" }] });
+
+      expect(cancelled).toEqual([]);
+    }
+  });
+});

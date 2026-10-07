@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { awaitChainOrCancel } from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
   type AgentField,
@@ -64,6 +65,8 @@ type PersonaRunResult = {
   handoff_id: string | null;
   error?: string;
   retry_count?: 1;
+  cancel_requested?: boolean;
+  cancel_error?: string;
 };
 
 const RETRY_BACKOFF_MS = 5000;
@@ -391,6 +394,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           handoff_id: result.handoff_id,
           error: result.error,
           retry_count: result.retry_count,
+          cancel_requested: result.cancel_requested,
+          cancel_error: result.cancel_error,
         },
         null,
         2,
@@ -408,6 +413,15 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
       const persona = personasByKey[key]!;
       let retryCount: 0 | 1 = 0;
+      let cancelRequested = false;
+      let cancelError: string | undefined;
+      const recordCancel = (outcome: {
+        cancel_requested: boolean;
+        cancel_error?: string;
+      }): void => {
+        cancelRequested ||= outcome.cancel_requested;
+        cancelError ??= outcome.cancel_error;
+      };
       try {
         let dispatch: { conversation_id: string; handoff_id: string };
         let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
@@ -418,7 +432,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           fallback_role: "planner",
           tool_free: true,
         });
-        while (true) {
+        for (;;) {
           try {
             dispatch = await ctx.dispatch({
               agent: personaAgent,
@@ -427,9 +441,6 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
               use_worktree: false,
               task_class: "TRIVIAL",
             });
-            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
-            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
-            break;
           } catch (err) {
             if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
               retryCount = 1;
@@ -438,6 +449,20 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             }
             throw err;
           }
+          const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+          const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, { timeoutMs });
+          recordCancel(awaited);
+          if (awaited.wait === null) {
+            const err = awaited.error;
+            if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+              retryCount = 1;
+              await sleep(RETRY_BACKOFF_MS);
+              continue;
+            }
+            throw err instanceof Error ? err : new Error(String(err));
+          }
+          wait = awaited.wait;
+          break;
         }
         const result: PersonaRunResult = {
           persona: persona.name,
@@ -448,6 +473,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: dispatch.conversation_id,
           handoff_id: dispatch.handoff_id,
           retry_count: retryCount === 1 ? 1 : undefined,
+          cancel_requested: cancelRequested,
+          cancel_error: cancelError,
         };
         await writePersonaOutputs(result);
         return result;
@@ -462,6 +489,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           handoff_id: null,
           error: err instanceof Error ? err.message : String(err),
           retry_count: retryCount === 1 ? 1 : undefined,
+          cancel_requested: cancelRequested,
+          cancel_error: cancelError,
         };
         await writePersonaOutputs(result);
         return result;
@@ -488,9 +517,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         name: result.persona,
         status: result.status,
         conversation_id: result.conversation_id,
+        cancel_requested: result.cancel_requested ?? false,
+        ...(result.cancel_error !== undefined ? { cancel_error: result.cancel_error } : {}),
       })),
       synthesis_path: null,
       synthesizer_status: null,
+      synthesizer_cancel_requested: false,
       error: "all_persona_dispatches_failed",
       hint: "all persona dispatches failed or timed out",
     };
@@ -500,6 +532,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthStatus: "completed" | "failed" | "timeout" | null = null;
   let synthHandoffId: string | null = null;
   let synthRetryUsed = false;
+  let synthCancelRequested = false;
+  let synthCancelError: string | undefined;
   const personaHandoffIds: Record<string, string> = {};
   for (const r of personaResults) {
     if (r.handoff_id) {
@@ -521,10 +555,15 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           use_worktree: false,
           task_class: "TRIVIAL",
         });
-        const wait = await ctx.awaitChain(dispatch.conversation_id, {
+        const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,
         });
-        return { dispatch, wait };
+        synthCancelRequested ||= awaited.cancel_requested;
+        if (awaited.cancel_error !== undefined) synthCancelError = awaited.cancel_error;
+        if (awaited.wait === null) {
+          throw awaited.error instanceof Error ? awaited.error : new Error(String(awaited.error));
+        }
+        return { dispatch, wait: awaited.wait };
       } catch (err) {
         if (attempts < 1 && shouldRetryWorkerUnavailable(err)) {
           attempts += 1;
@@ -594,9 +633,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       name: result.persona,
       status: result.status,
       conversation_id: result.conversation_id,
+      cancel_requested: result.cancel_requested ?? false,
+      ...(result.cancel_error !== undefined ? { cancel_error: result.cancel_error } : {}),
     })),
     synthesis_path: synthesisPath,
     synthesizer_status: synthStatus,
+    synthesizer_cancel_requested: synthCancelRequested,
+    ...(synthCancelError !== undefined ? { synthesizer_cancel_error: synthCancelError } : {}),
     synth_failed: synthStatus !== "completed",
   };
 };

@@ -774,4 +774,395 @@ describe("adversarial-review workflow", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("cancels a timed-out persona exactly once and surfaces cancel_requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-timeout-"));
+    try {
+      const cancelled: string[] = [];
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+        }),
+        awaitChain: async (conversationId) =>
+          conversationId === "reviewer-agent-conv"
+            ? { status: "timeout" as const, final_agent: null, response_text: null }
+            : {
+                status: "completed" as const,
+                final_agent: "synth",
+                response_text: WELL_FORMED_SYNTHESIS,
+              },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas: { name: string; cancel_requested?: boolean; cancel_error?: string }[];
+      };
+
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(result.personas[0]?.name).toBe("reviewer");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+      expect(result.personas[0]?.cancel_error).toBeUndefined();
+      const personaJson = JSON.parse(
+        [...writes.entries()].find(([path]) => path.endsWith("reviewer.json"))?.[1] ?? "{}",
+      ) as { status?: string; cancel_requested?: boolean; cancel_error?: string };
+      expect(personaJson.status).toBe("timeout");
+      expect(personaJson.cancel_requested).toBe(true);
+      expect(personaJson.cancel_error).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("records cancel_error but still resolves when a persona cancel rejects", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-reject-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+        }),
+        awaitChain: async () => ({
+          status: "timeout" as const,
+          final_agent: null,
+          response_text: null,
+        }),
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+          throw new Error("cancel endpoint down");
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas: { name: string; cancel_requested?: boolean; cancel_error?: string }[];
+      };
+
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.personas[0]?.cancel_requested).toBe(false);
+      expect(result.personas[0]?.cancel_error).toBe("cancel endpoint down");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels the persona chain when awaitChain throws after dispatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-throw-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "reviewer-agent-conv") throw new Error("lost stream");
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        error?: string;
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(result.personas[0]?.status).toBe("failed");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels the first persona chain before a worker-unavailable re-dispatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-redispatch-"));
+    try {
+      const cancelled: string[] = [];
+      let awaits = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv-${cancelled.length}-${awaits}`,
+          handoff_id: `${input.agent}-handoff-${awaits}`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId.startsWith("reviewer-agent")) {
+            awaits += 1;
+            if (awaits === 1) throw new Error("503 no_worker_registered");
+            return {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review complete\n\n```json\n[{"persona":"reviewer","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      // First dispatch's await threw a retryable worker-unavailable error: the
+      // abandoned chain must be cancelled before the retry dispatch lands.
+      expect(cancelled).toHaveLength(1);
+      expect(cancelled[0]).toStartWith("reviewer-agent-conv-");
+      expect(result.ok).toBe(true);
+      expect(result.personas[0]?.status).toBe("completed");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test("never cancels personas that completed or failed on their own", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-no-cancel-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["a-rev", "b-rev"], synthesizer: "synth" },
+          },
+          personas: {
+            "a-rev": {
+              bias: "bias a",
+              system_prompt: "Review a.",
+              preferred_agent: "a-agent",
+            },
+            "b-rev": {
+              bias: "bias b",
+              system_prompt: "Review b.",
+              preferred_agent: "b-agent",
+            },
+          },
+          review_min_personas_pass_pct: 50,
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "a-agent-conv") {
+            return {
+              status: "completed" as const,
+              final_agent: "a-agent",
+              response_text:
+                'review a\n\n```json\n[{"persona":"a","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            };
+          }
+          if (conversationId === "b-agent-conv") {
+            return { status: "failed" as const, final_agent: "b-agent", response_text: null };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      expect(cancelled).toEqual([]);
+      for (const persona of result.personas) {
+        expect(persona.cancel_requested).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels a timed-out non-pool synthesizer and marks synthesizer_cancel_requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-synth-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "synth-conv") {
+            return { status: "timeout" as const, final_agent: null, response_text: null };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        synthesizer_status: string | null;
+        synthesizer_cancel_requested?: boolean;
+      };
+
+      expect(cancelled).toEqual(["synth-conv"]);
+      expect(result.synthesizer_status).toBe("timeout");
+      expect(result.synthesizer_cancel_requested).toBe(true);
+      expect(result.ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -7,6 +7,7 @@ import type {
 import type { WorkflowCtx } from "@penumbra/workflows";
 import type { Database } from "bun:sqlite";
 
+import { awaitChainOrCancel, cancelChainQuietly, type CancelOutcome } from "./await-or-cancel.js";
 import {
   type FanoutHop,
   type FanoutHopEvidence,
@@ -53,7 +54,7 @@ export type FanoutCtx = WorkflowCtx & {
   chainStart?: (input: ChainStartRequest) => Promise<Response> | Response;
 };
 
-export type FanoutTaskResult = {
+export type FanoutTaskResult = CancelOutcome & {
   ok: boolean;
   status: "completed" | "failed" | "timeout" | "error";
   label: string;
@@ -283,6 +284,7 @@ function failedBeforeStart(
     retry_count: retryCount,
     error_code: errorCode,
     error_summary: errorSummary,
+    cancel_requested: false,
   };
 }
 
@@ -320,15 +322,21 @@ async function waitForTask(
   ctx: FanoutCtx,
   started: StartSuccess,
   timeoutMs: number,
-): Promise<{
-  status: FanoutTaskResult["status"];
-  finalAgent: string | null;
-  responseText: string | null;
-  waitError: string | null;
-}> {
+): Promise<
+  CancelOutcome & {
+    status: FanoutTaskResult["status"];
+    finalAgent: string | null;
+    responseText: string | null;
+    waitError: string | null;
+  }
+> {
   const remaining = deadlineRemaining(ctx);
   if (remaining !== null && remaining <= 0) {
+    // The chain already started; the run giving up on the wait must not leave
+    // the dispatch running unwatched.
+    const cancel = await cancelChainQuietly(ctx, started.conversationId);
     return {
+      ...cancel,
       status: "timeout",
       finalAgent: null,
       responseText: null,
@@ -336,17 +344,26 @@ async function waitForTask(
     };
   }
   const effectiveTimeoutMs = remaining === null ? timeoutMs : Math.min(timeoutMs, remaining);
-  try {
-    const waited = await ctx.awaitChain(started.conversationId, { timeoutMs: effectiveTimeoutMs });
+  const awaited = await awaitChainOrCancel(ctx, started.conversationId, {
+    timeoutMs: effectiveTimeoutMs,
+  });
+  const cancel = { cancel_requested: awaited.cancel_requested, cancel_error: awaited.cancel_error };
+  if (awaited.wait === null) {
     return {
-      status: waited.status,
-      finalAgent: waited.final_agent,
-      responseText: waited.response_text,
-      waitError: null,
+      status: "error",
+      finalAgent: null,
+      responseText: null,
+      waitError: "wait_failed",
+      ...cancel,
     };
-  } catch {
-    return { status: "error", finalAgent: null, responseText: null, waitError: "wait_failed" };
   }
+  return {
+    ...cancel,
+    status: awaited.wait.status,
+    finalAgent: awaited.wait.final_agent,
+    responseText: awaited.wait.response_text,
+    waitError: null,
+  };
 }
 
 async function runTask(
@@ -396,6 +413,8 @@ async function runTask(
     retry_count: started.retryCount,
     error_code: null,
     error_summary: errorSummary,
+    cancel_requested: waited.cancel_requested,
+    ...(waited.cancel_error !== undefined ? { cancel_error: waited.cancel_error } : {}),
   };
 }
 

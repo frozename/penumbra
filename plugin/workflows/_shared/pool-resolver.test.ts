@@ -12,6 +12,7 @@ import {
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 
+import { awaitChainOrCancel, cancelChainQuietly } from "./await-or-cancel.js";
 import {
   DEAD_PIN_FAILURE_OUTCOMES,
   DEAD_PIN_NON_FAILURE_OUTCOMES,
@@ -28,6 +29,59 @@ if (process.platform === "darwin") {
 
 const NOW = new Date().toISOString();
 const NOW_MS = Date.parse(NOW);
+
+describe("timeout cancellation dead pins", () => {
+  for (const scenario of [
+    { reasons: ["timeout", "timeout", "timeout"], dead: true },
+    { reasons: ["abandon", "abandon", "abandon"], dead: false },
+    { reasons: ["timeout", "abandon", "timeout", "timeout"], dead: true },
+    { reasons: ["timeout", "success", "timeout", "timeout"], dead: false },
+  ]) {
+    test(`${scenario.reasons.join(",")} counts only seat failures`, async () => {
+      const db = freshDb();
+      try {
+        const workflow = ctx({
+          db: () => db,
+          config: {
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          awaitChain: async () => ({ status: "timeout", final_agent: null, response_text: null }),
+          cancel: async (conversationId) => {
+            db.query("UPDATE handoffs SET cancel_requested_at = ? WHERE conversation_id = ?").run(
+              NOW,
+              conversationId,
+            );
+          },
+        });
+        for (const [i, reason] of scenario.reasons.entries()) {
+          const handoffId = `reason-${i}`;
+          const ts = minutesAgo(scenario.reasons.length - i);
+          writeHandoff(db, { handoffId, ts });
+          if (reason === "timeout") await awaitChainOrCancel(workflow, `conv-${handoffId}`);
+          if (reason === "abandon") await cancelChainQuietly(workflow, `conv-${handoffId}`);
+          writeWorkerPerf(db, {
+            agent: "dead-pin-seat",
+            handoffId,
+            ts,
+            outcome: reason === "success" ? "completed_with_output" : "rejected",
+          });
+        }
+        const selected = resolveAgent(
+          { kind: "single", agent: "dead-pin-seat" },
+          "review_adversarial",
+          workflow,
+          { fallback_role: "reviewer" },
+        );
+        expect(selected === "dead-pin-seat").toBe(!scenario.dead);
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
 
 function minutesAgo(minutes: number): string {
   return new Date(NOW_MS - minutes * 60_000).toISOString();
@@ -134,6 +188,17 @@ function writeWorkerPerf(
     environment_failure: row.environmentFailure ?? null,
     metadata_json: "{}",
   });
+}
+
+function writeHandoff(
+  db: Database,
+  row: { handoffId: string; ts: string; cancelRequestedAt?: string | null },
+): void {
+  db.prepare(
+    `INSERT INTO handoffs (
+      handoff_id, ts, conversation_id, from_agent, to_agent, message, status, cancel_requested_at
+    ) VALUES (?, ?, ?, 'test', 'dead-pin-seat', 'msg', 'dispatched', ?)`,
+  ).run(row.handoffId, row.ts, `conv-${row.handoffId}`, row.cancelRequestedAt ?? null);
 }
 
 function writeDeadPinWorkerRows(
@@ -627,6 +692,130 @@ describe("resolveAgent", () => {
         { fallback_role: "reviewer" },
       ),
     ).toBe("dead-pin-seat");
+  });
+
+  test("keeps a single pinned agent when three recent rejected rows came from cancelled handoffs", () => {
+    const db = freshDb();
+    for (const [suffix, minutes] of [
+      ["cancelled-h3", 1],
+      ["cancelled-h2", 2],
+      ["cancelled-h1", 3],
+    ] as const) {
+      const ts = minutesAgo(minutes);
+      writeWorkerPerf(db, {
+        agent: "dead-pin-seat",
+        handoffId: suffix,
+        ts,
+        outcome: "rejected",
+      });
+      writeHandoff(db, { handoffId: suffix, ts, cancelRequestedAt: ts });
+    }
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).toBe("dead-pin-seat");
+  });
+
+  test("still routes away when three recent rejected rows have uncancelled handoffs", () => {
+    const db = freshDb();
+    for (const [suffix, minutes] of [
+      ["real-rejected-h3", 1],
+      ["real-rejected-h2", 2],
+      ["real-rejected-h1", 3],
+    ] as const) {
+      const ts = minutesAgo(minutes);
+      writeWorkerPerf(db, {
+        agent: "dead-pin-seat",
+        handoffId: suffix,
+        ts,
+        outcome: "rejected",
+      });
+      writeHandoff(db, { handoffId: suffix, ts });
+    }
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).not.toBe("dead-pin-seat");
+  });
+
+  test("skips a cancelled row between real failures instead of counting it as a success", () => {
+    const db = freshDb();
+    const cancelledTs = minutesAgo(2);
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "gap-h4",
+      ts: minutesAgo(1),
+      outcome: "failed",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "gap-h3",
+      ts: cancelledTs,
+      outcome: "rejected",
+    });
+    writeHandoff(db, {
+      handoffId: "gap-h3",
+      ts: cancelledTs,
+      cancelRequestedAt: cancelledTs,
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "gap-h2",
+      ts: minutesAgo(3),
+      outcome: "failed",
+    });
+    writeWorkerPerf(db, {
+      agent: "dead-pin-seat",
+      handoffId: "gap-h1",
+      ts: minutesAgo(4),
+      outcome: "failed",
+    });
+
+    expect(
+      resolveAgent(
+        { kind: "single", agent: "dead-pin-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "dead-pin-seat", roles: ["reviewer"] },
+              { name: "healthy-seat", roles: ["reviewer"] },
+            ],
+          },
+          db: () => db,
+        }),
+        { fallback_role: "reviewer" },
+      ),
+    ).not.toBe("dead-pin-seat");
   });
 
   test("keeps a dead single pinned agent when no fallback role is provided", () => {

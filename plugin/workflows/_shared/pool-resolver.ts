@@ -98,14 +98,21 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
   try {
     const windowMs = resolveDeadPinFailureWindowMs();
     const cutoff = new Date(Date.now() - windowMs).toISOString();
+    // Wait timeouts are seat failures. Other cancels neither count toward nor
+    // interrupt consecutive failures; the helper records timeouts before cancel.
     const rows = db
       .query<{ outcome: string }, [string, string, string, number]>(
-        `SELECT outcome
-         FROM agent_performance
-         WHERE agent_name = ? AND task_type = ? AND source IN ('worker','reconciler')
-           AND (environment_failure IS NULL OR environment_failure != 'y')
-           AND ts >= ?
-         ORDER BY ts DESC
+        `SELECT ap.outcome
+         FROM agent_performance ap
+         LEFT JOIN handoffs h ON h.handoff_id = ap.handoff_id
+         WHERE ap.agent_name = ? AND ap.task_type = ? AND ap.source IN ('worker','reconciler')
+           AND (ap.environment_failure IS NULL OR ap.environment_failure != 'y')
+           AND (h.cancel_requested_at IS NULL OR EXISTS (
+             SELECT 1 FROM dispatch_events de WHERE de.handoff_id = ap.handoff_id
+               AND de.source = 'workflow' AND de.kind = 'workflow.cancel.wait_timeout'
+           ))
+           AND ap.ts >= ?
+         ORDER BY ap.ts DESC
          LIMIT ?`,
       )
       .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);
@@ -116,12 +123,17 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
 
     const staleRows = db
       .query<{ outcome: string; ts: string }, [string, string, string, number]>(
-        `SELECT outcome, ts
-         FROM agent_performance
-         WHERE agent_name = ? AND task_type = ? AND source IN ('worker','reconciler')
-           AND (environment_failure IS NULL OR environment_failure != 'y')
-           AND ts < ?
-         ORDER BY ts DESC
+        `SELECT ap.outcome, ap.ts
+         FROM agent_performance ap
+         LEFT JOIN handoffs h ON h.handoff_id = ap.handoff_id
+         WHERE ap.agent_name = ? AND ap.task_type = ? AND ap.source IN ('worker','reconciler')
+           AND (ap.environment_failure IS NULL OR ap.environment_failure != 'y')
+           AND (h.cancel_requested_at IS NULL OR EXISTS (
+             SELECT 1 FROM dispatch_events de WHERE de.handoff_id = ap.handoff_id
+               AND de.source = 'workflow' AND de.kind = 'workflow.cancel.wait_timeout'
+           ))
+           AND ap.ts < ?
+         ORDER BY ap.ts DESC
          LIMIT ?`,
       )
       .all(agent, taskType, cutoff, DEAD_PIN_CONSECUTIVE_FAILURES);

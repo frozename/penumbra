@@ -34,6 +34,7 @@ function fakeFanoutResult(overrides: Partial<FanoutTaskResult> = {}): FanoutTask
     retry_count: 0,
     error_code: null,
     error_summary: null,
+    cancel_requested: false,
     ...overrides,
   };
 }

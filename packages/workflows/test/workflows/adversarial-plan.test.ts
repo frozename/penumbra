@@ -320,8 +320,18 @@ test("happy path: two personas complete, synthesizer runs, and synthesis is writ
     };
     expect(result.ok).toBe(true);
     expect(result.personas).toEqual([
-      { name: "architect", status: "completed", conversation_id: "architect-conv" },
-      { name: "simplifier", status: "completed", conversation_id: "simplifier-conv" },
+      {
+        name: "architect",
+        status: "completed",
+        conversation_id: "architect-conv",
+        cancel_requested: false,
+      },
+      {
+        name: "simplifier",
+        status: "completed",
+        conversation_id: "simplifier-conv",
+        cancel_requested: false,
+      },
     ]);
     expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
     expect(result.synthesizer_status).toBe("completed");
@@ -403,8 +413,18 @@ test("one persona fails: synth still runs with surviving persona only", async ()
     expect(result.outcome).toBe("success_partial");
     expect(result.failed_personas).toEqual(["simplifier"]);
     expect(result.personas).toEqual([
-      { name: "architect", status: "completed", conversation_id: "claude-conv" },
-      { name: "simplifier", status: "failed", conversation_id: "codex-conv" },
+      {
+        name: "architect",
+        status: "completed",
+        conversation_id: "claude-conv",
+        cancel_requested: false,
+      },
+      {
+        name: "simplifier",
+        status: "failed",
+        conversation_id: "codex-conv",
+        cancel_requested: false,
+      },
     ]);
     expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
     expect(result.synthesizer_status).toBe("completed");

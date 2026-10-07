@@ -9,6 +9,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { awaitChainOrCancel, cancelChainQuietly } from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
   type AgentField,
@@ -16,6 +17,7 @@ import {
   parseAgentField,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
+import { beginCheckoutTripwire } from "./checkout-tripwire.js";
 import { summarizeSeverityMetrics } from "./severity.js";
 import {
   REQUIRED_SYNTHESIS_SECTION_LABELS,
@@ -97,6 +99,8 @@ type PersonaRunResult = {
   parse_error?: "no_json_block" | "invalid_json";
   triviality_reason?: "trivial_response" | "no_findings";
   retry_count?: 1;
+  cancel_requested?: boolean;
+  cancel_error?: string;
 };
 
 function isBlockingPersona(persona?: Pick<ReviewPersona, "optional">): boolean {
@@ -959,6 +963,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           parse_error: result.parse_error,
           error: result.error,
           retry_count: result.retry_count,
+          cancel_requested: result.cancel_requested,
+          cancel_error: result.cancel_error,
         },
         null,
         2,
@@ -974,319 +980,394 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const memoryQuery = buildMemoryQuery(recall, parsedArgs);
   const priorFindings = await fetchPriorFindings(ctx, memoryQuery);
 
-  const personaResults = await Promise.all(
-    resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
-      const persona = personasByKey[key]!;
-      let retryCount: 0 | 1 = 0;
-      try {
-        let dispatch: { conversation_id: string; handoff_id: string };
-        let wait: {
-          status: "completed" | "failed" | "timeout";
-          final_agent: string | null;
-          response_text: string | null;
+  // Record-only tripwire: the before-snapshot lands just before personas are
+  // dispatched; the after-snapshot runs in finally so every result produced
+  // past this point carries home_checkout_tripwire without changing it.
+  const tripwire = await beginCheckoutTripwire({
+    cwd: ctx.cwd,
+    db: ctx.db,
+    project: ctx.project,
+    outDir: absoluteOutDir,
+    baseRef: parsedArgs.base_ref,
+    targetRef: parsedArgs.target_ref,
+    contentPath: hasContentPath ? parsedArgs.content_path : null,
+  });
+  let reviewResult: Record<string, unknown> | undefined;
+  try {
+    const personaResults = await Promise.all(
+      resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
+        const persona = personasByKey[key]!;
+        let retryCount: 0 | 1 = 0;
+        let cancelRequested = false;
+        let cancelError: string | undefined;
+        const recordCancel = (outcome: {
+          cancel_requested: boolean;
+          cancel_error?: string;
+        }): void => {
+          cancelRequested ||= outcome.cancel_requested;
+          cancelError ??= outcome.cancel_error;
         };
-        // tool_free:true — reviewer persona dispatch is pure text generation:
-        // it receives the diff inlined in the prompt and emits a markdown
-        // review with a trailing JSON findings block. No penumbra MCP tools,
-        // no worktree, no commit.
-        const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
+        try {
+          let dispatch: { conversation_id: string; handoff_id: string };
+          let wait: {
+            status: "completed" | "failed" | "timeout";
+            final_agent: string | null;
+            response_text: string | null;
+          };
+          // tool_free:true — reviewer persona dispatch is pure text generation:
+          // it receives the diff inlined in the prompt and emits a markdown
+          // review with a trailing JSON findings block. No penumbra MCP tools,
+          // no worktree, no commit.
+          const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
+            fallback_role: "reviewer",
+            tool_free: true,
+          });
+          for (;;) {
+            try {
+              dispatch = await ctx.dispatch({
+                agent: personaAgent,
+                message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
+                task_type: "review_adversarial",
+                use_worktree: false,
+                task_class: "TRIVIAL",
+              });
+            } catch (err) {
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err;
+            }
+            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+            // A dispatched chain the workflow stops watching must not keep a
+            // worker retrying it: cancel on timeout/throw before any re-dispatch.
+            const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, { timeoutMs });
+            recordCancel(awaited);
+            if (awaited.wait === null) {
+              const err = awaited.error;
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err instanceof Error ? err : new Error(String(err));
+            }
+            wait = awaited.wait;
+            break;
+          }
+          const parsed = parseFindingsJson(wait.response_text);
+          let effectiveStatus = wait.status;
+          let trivialityReason: PersonaRunResult["triviality_reason"];
+          if (
+            effectiveStatus === "completed" &&
+            isTrivialResponse(wait.response_text) &&
+            parsed.findings === null
+          ) {
+            effectiveStatus = "failed";
+            trivialityReason = "trivial_response";
+          }
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: effectiveStatus,
+            raw_status: wait.status,
+            triviality_reason: trivialityReason,
+            response_text: wait.response_text,
+            conversation_id: dispatch.conversation_id,
+            handoff_id: dispatch.handoff_id,
+            findings: parsed.findings,
+            parse_error: parsed.parse_error,
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
+        } catch (err) {
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: "failed",
+            raw_status: "failed",
+            response_text: null,
+            conversation_id: null,
+            handoff_id: null,
+            error: err instanceof Error ? err.message : String(err),
+            findings: null,
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
+        }
+      }),
+    );
+
+    const severityMetrics = summarizeSeverityMetrics(personaResults);
+
+    const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
+    const { completedCount, failedCount, failedPersonas, outcome } =
+      summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
+    const partialBanner =
+      failedCount > 0
+        ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`
+        : "";
+
+    const completedResults = personaResults.filter(
+      (result) =>
+        result.status === "completed" &&
+        typeof result.response_text === "string" &&
+        result.response_text.length > 0,
+    );
+
+    if (completedResults.length === 0) {
+      reviewResult = {
+        ok: false,
+        ...severityMetrics,
+        out_dir: absoluteOutDir,
+        personas: personaResults.map((result) => ({
+          name: result.persona,
+          status: result.status,
+          conversation_id: result.conversation_id,
+          findings_count: Array.isArray(result.findings) ? result.findings.length : null,
+          cancel_requested: result.cancel_requested ?? false,
+          cancel_error: result.cancel_error,
+        })),
+        synthesis_path: null,
+        synthesizer_status: null,
+        synthesizer_cancel_requested: false,
+        error: "all_persona_dispatches_failed",
+        hint: "all persona dispatches failed or timed out",
+      };
+      return reviewResult;
+    }
+
+    let synthesisPath: string | null = null;
+    let synthStatus: "completed" | "failed" | "timeout" | null = null;
+    let synthHandoffId: string | null = null;
+    let synthRetryUsed = false;
+    let synthCancelRequested = false;
+    let synthCancelError: string | undefined;
+    const synthFailover: { value: SynthFailover | null } = { value: null };
+    let synthPoolExhausted = false;
+    let finalSynthAgentForFailure = synthAgent;
+    const attemptedSynthAgents = new Set<string>();
+    const personaHandoffIds: Record<string, string> = {};
+    for (const r of personaResults) {
+      if (r.handoff_id) {
+        personaHandoffIds[r.persona_key] = r.handoff_id;
+      }
+    }
+    const dispatchSynth = async (): Promise<{
+      agent: string;
+      dispatch: { conversation_id: string; handoff_id: string };
+      wait: {
+        status: "completed" | "failed" | "timeout";
+        final_agent: string | null;
+        response_text: string | null;
+      };
+    }> => {
+      let attempts = 0;
+      let currentAgent = synthAgent;
+      const markSynthPoolExhausted = (): void => {
+        if (
+          synthesizer.preferred_agent.kind === "pool" &&
+          attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length
+        ) {
+          synthPoolExhausted = true;
+        }
+      };
+      const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
+        synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
+      };
+      const failoverAgent = (): string | null => {
+        if (synthesizer.preferred_agent.kind !== "pool") return null;
+        if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
+        const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+          excludeAgents: Array.from(attemptedSynthAgents),
           fallback_role: "reviewer",
           tool_free: true,
         });
-        while (true) {
-          try {
-            dispatch = await ctx.dispatch({
-              agent: personaAgent,
-              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
-              task_type: "review_adversarial",
-              use_worktree: false,
-              task_class: "TRIVIAL",
-            });
-            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
-            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
-            break;
-          } catch (err) {
-            if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
-              retryCount = 1;
-              await sleep(RETRY_BACKOFF_MS);
-              continue;
-            }
-            throw err;
+        return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
+      };
+      while (true) {
+        let dispatchConversationId: string | null = null;
+        let attemptCancelled = false;
+        try {
+          attempts += 1;
+          finalSynthAgentForFailure = currentAgent;
+          attemptedSynthAgents.add(currentAgent);
+          const dispatch = await ctx.dispatch({
+            agent: currentAgent,
+            message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
+            task_type: "review_adversarial",
+            use_worktree: false,
+            task_class: "TRIVIAL",
+          });
+          dispatchConversationId = dispatch.conversation_id;
+          synthHandoffId = dispatch.handoff_id;
+          const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
+            timeoutMs: parsedArgs.timeout_ms,
+          });
+          // A wait that timed out or threw leaves a live chain behind; the helper
+          // already requested its cancel, so failover below must not repeat it.
+          attemptCancelled = awaited.cancel_requested;
+          if (awaited.cancel_requested) synthCancelRequested = true;
+          if (awaited.cancel_error !== undefined) synthCancelError = awaited.cancel_error;
+          if (awaited.wait === null) {
+            throw awaited.error instanceof Error ? awaited.error : new Error(String(awaited.error));
           }
+          const wait = awaited.wait;
+          if (wait.status === "completed" && isValidSynthesisOutput(wait.response_text)) {
+            return { agent: currentAgent, dispatch, wait };
+          }
+          const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
+          if (nextAgent) {
+            if (!attemptCancelled) {
+              const cancel = await cancelChainQuietly(ctx, dispatch.conversation_id);
+              if (cancel.cancel_requested) synthCancelRequested = true;
+              synthCancelError ??= cancel.cancel_error;
+            }
+            recordSynthFailover(currentAgent, nextAgent);
+            currentAgent = nextAgent;
+            continue;
+          }
+          markSynthPoolExhausted();
+          return { agent: currentAgent, dispatch, wait };
+        } catch (err) {
+          if (
+            attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT &&
+            !synthRetryUsed &&
+            shouldRetryWorkerUnavailable(err)
+          ) {
+            synthRetryUsed = true;
+            await sleep(RETRY_BACKOFF_MS);
+            continue;
+          }
+          const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
+          if (nextAgent) {
+            if (dispatchConversationId && !attemptCancelled) {
+              const cancel = await cancelChainQuietly(ctx, dispatchConversationId);
+              if (cancel.cancel_requested) synthCancelRequested = true;
+              synthCancelError ??= cancel.cancel_error;
+            }
+            recordSynthFailover(currentAgent, nextAgent);
+            currentAgent = nextAgent;
+            continue;
+          }
+          markSynthPoolExhausted();
+          throw err;
         }
-        const parsed = parseFindingsJson(wait.response_text);
-        let effectiveStatus = wait.status;
-        let trivialityReason: PersonaRunResult["triviality_reason"];
-        if (
-          effectiveStatus === "completed" &&
-          isTrivialResponse(wait.response_text) &&
-          parsed.findings === null
-        ) {
-          effectiveStatus = "failed";
-          trivialityReason = "trivial_response";
-        }
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: effectiveStatus,
-          raw_status: wait.status,
-          triviality_reason: trivialityReason,
-          response_text: wait.response_text,
-          conversation_id: dispatch.conversation_id,
-          handoff_id: dispatch.handoff_id,
-          findings: parsed.findings,
-          parse_error: parsed.parse_error,
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
-      } catch (err) {
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: "failed",
-          raw_status: "failed",
-          response_text: null,
-          conversation_id: null,
-          handoff_id: null,
-          error: err instanceof Error ? err.message : String(err),
-          findings: null,
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
       }
-    }),
-  );
+    };
 
-  const severityMetrics = summarizeSeverityMetrics(personaResults);
+    try {
+      const {
+        agent: finalSynthAgent,
+        dispatch: synthDispatch,
+        wait: synthWait,
+      } = await dispatchSynth();
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      const synthFailoverBanner = synthFailover.value
+        ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
+        : "";
+      synthHandoffId = synthDispatch.handoff_id;
+      synthStatus =
+        synthWait.status === "completed" && !isValidSynthesisOutput(synthWait.response_text)
+          ? "failed"
+          : synthWait.status;
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = buildSynthesisFrontmatter({
+        review_run_ts: reviewRunTs,
+        synthesis_handoff_id: synthHandoffId,
+        persona_handoff_ids: personaHandoffIds,
+        target_ref: parsedArgs.target_ref,
+        base_ref: parsedArgs.base_ref,
+        synthesizer_agent: finalSynthAgent,
+        synthesizer_failover_from: synthFailover.value?.from,
+        synthesizer_failover_to: synthFailover.value?.to,
+        pool_exhausted: synthPoolExhausted,
+      });
+      await ctx.fileWrite(
+        synthesisPath,
+        synthRetryBanner +
+          synthFailoverBanner +
+          partialBanner +
+          renderSynthesisBody(synthWait, frontmatter),
+      );
+    } catch (err) {
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      const synthFailoverBanner = synthFailover.value
+        ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
+        : "";
+      synthStatus = "failed";
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = synthHandoffId
+        ? buildSynthesisFrontmatter({
+            review_run_ts: reviewRunTs,
+            synthesis_handoff_id: synthHandoffId,
+            persona_handoff_ids: personaHandoffIds,
+            target_ref: parsedArgs.target_ref,
+            base_ref: parsedArgs.base_ref,
+            synthesizer_agent: finalSynthAgentForFailure,
+            synthesizer_failover_from: synthFailover.value?.from,
+            synthesizer_failover_to: synthFailover.value?.to,
+            pool_exhausted: synthPoolExhausted,
+          })
+        : "";
+      await ctx.fileWrite(
+        synthesisPath,
+        synthRetryBanner +
+          synthFailoverBanner +
+          partialBanner +
+          frontmatter +
+          `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      );
+    }
 
-  const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
-  const { completedCount, failedCount, failedPersonas, outcome } =
-    summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
-  const partialBanner =
-    failedCount > 0
-      ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`
-      : "";
+    const finalOutcome =
+      synthStatus !== "completed" && outcome !== "failed" ? "success_partial" : outcome;
 
-  const completedResults = personaResults.filter(
-    (result) =>
-      result.status === "completed" &&
-      typeof result.response_text === "string" &&
-      result.response_text.length > 0,
-  );
-
-  if (completedResults.length === 0) {
-    return {
-      ok: false,
+    reviewResult = {
+      ok: finalOutcome !== "failed" && synthStatus === "completed",
+      outcome: finalOutcome,
       ...severityMetrics,
+      ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
+      failed_personas: failedPersonas,
+      completed_personas: personaResults
+        .filter((r) => r.status === "completed")
+        .map((r) => r.persona),
       out_dir: absoluteOutDir,
       personas: personaResults.map((result) => ({
         name: result.persona,
         status: result.status,
         conversation_id: result.conversation_id,
         findings_count: Array.isArray(result.findings) ? result.findings.length : null,
+        cancel_requested: result.cancel_requested ?? false,
+        cancel_error: result.cancel_error,
       })),
-      synthesis_path: null,
-      synthesizer_status: null,
-      error: "all_persona_dispatches_failed",
-      hint: "all persona dispatches failed or timed out",
+      synthesis_path: synthesisPath,
+      synthesizer_status: synthStatus,
+      synthesizer_cancel_requested: synthCancelRequested,
+      ...(synthCancelError !== undefined ? { synthesizer_cancel_error: synthCancelError } : {}),
+      synth_failed: synthStatus !== "completed",
+      ...(synthPoolExhausted ? { pool_exhausted: true } : {}),
     };
-  }
-
-  let synthesisPath: string | null = null;
-  let synthStatus: "completed" | "failed" | "timeout" | null = null;
-  let synthHandoffId: string | null = null;
-  let synthRetryUsed = false;
-  const synthFailover: { value: SynthFailover | null } = { value: null };
-  let synthPoolExhausted = false;
-  let finalSynthAgentForFailure = synthAgent;
-  const attemptedSynthAgents = new Set<string>();
-  const personaHandoffIds: Record<string, string> = {};
-  for (const r of personaResults) {
-    if (r.handoff_id) {
-      personaHandoffIds[r.persona_key] = r.handoff_id;
+    return reviewResult;
+  } finally {
+    const tripwireReport = await tripwire.finish();
+    if (reviewResult !== undefined) {
+      reviewResult["home_checkout_tripwire"] = tripwireReport;
     }
   }
-  const dispatchSynth = async (): Promise<{
-    agent: string;
-    dispatch: { conversation_id: string; handoff_id: string };
-    wait: {
-      status: "completed" | "failed" | "timeout";
-      final_agent: string | null;
-      response_text: string | null;
-    };
-  }> => {
-    let attempts = 0;
-    let currentAgent = synthAgent;
-    const markSynthPoolExhausted = (): void => {
-      if (
-        synthesizer.preferred_agent.kind === "pool" &&
-        attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length
-      ) {
-        synthPoolExhausted = true;
-      }
-    };
-    const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
-      synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
-    };
-    const failoverAgent = (): string | null => {
-      if (synthesizer.preferred_agent.kind !== "pool") return null;
-      if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
-      const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
-        excludeAgents: Array.from(attemptedSynthAgents),
-        fallback_role: "reviewer",
-        tool_free: true,
-      });
-      return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
-    };
-    while (true) {
-      let dispatchConversationId: string | null = null;
-      try {
-        attempts += 1;
-        finalSynthAgentForFailure = currentAgent;
-        attemptedSynthAgents.add(currentAgent);
-        const dispatch = await ctx.dispatch({
-          agent: currentAgent,
-          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
-          task_type: "review_adversarial",
-          use_worktree: false,
-          task_class: "TRIVIAL",
-        });
-        dispatchConversationId = dispatch.conversation_id;
-        synthHandoffId = dispatch.handoff_id;
-        const wait = await ctx.awaitChain(dispatch.conversation_id, {
-          timeoutMs: parsedArgs.timeout_ms,
-        });
-        if (wait.status === "completed" && isValidSynthesisOutput(wait.response_text)) {
-          return { agent: currentAgent, dispatch, wait };
-        }
-        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
-        if (nextAgent) {
-          await ctx.cancel(dispatch.conversation_id).catch(() => {});
-          recordSynthFailover(currentAgent, nextAgent);
-          currentAgent = nextAgent;
-          continue;
-        }
-        markSynthPoolExhausted();
-        return { agent: currentAgent, dispatch, wait };
-      } catch (err) {
-        if (
-          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT &&
-          !synthRetryUsed &&
-          shouldRetryWorkerUnavailable(err)
-        ) {
-          synthRetryUsed = true;
-          await sleep(RETRY_BACKOFF_MS);
-          continue;
-        }
-        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
-        if (nextAgent) {
-          if (dispatchConversationId) await ctx.cancel(dispatchConversationId).catch(() => {});
-          recordSynthFailover(currentAgent, nextAgent);
-          currentAgent = nextAgent;
-          continue;
-        }
-        markSynthPoolExhausted();
-        throw err;
-      }
-    }
-  };
-
-  try {
-    const {
-      agent: finalSynthAgent,
-      dispatch: synthDispatch,
-      wait: synthWait,
-    } = await dispatchSynth();
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    const synthFailoverBanner = synthFailover.value
-      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
-      : "";
-    synthHandoffId = synthDispatch.handoff_id;
-    synthStatus =
-      synthWait.status === "completed" && !isValidSynthesisOutput(synthWait.response_text)
-        ? "failed"
-        : synthWait.status;
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = buildSynthesisFrontmatter({
-      review_run_ts: reviewRunTs,
-      synthesis_handoff_id: synthHandoffId,
-      persona_handoff_ids: personaHandoffIds,
-      target_ref: parsedArgs.target_ref,
-      base_ref: parsedArgs.base_ref,
-      synthesizer_agent: finalSynthAgent,
-      synthesizer_failover_from: synthFailover.value?.from,
-      synthesizer_failover_to: synthFailover.value?.to,
-      pool_exhausted: synthPoolExhausted,
-    });
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        synthFailoverBanner +
-        partialBanner +
-        renderSynthesisBody(synthWait, frontmatter),
-    );
-  } catch (err) {
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    const synthFailoverBanner = synthFailover.value
-      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
-      : "";
-    synthStatus = "failed";
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = synthHandoffId
-      ? buildSynthesisFrontmatter({
-          review_run_ts: reviewRunTs,
-          synthesis_handoff_id: synthHandoffId,
-          persona_handoff_ids: personaHandoffIds,
-          target_ref: parsedArgs.target_ref,
-          base_ref: parsedArgs.base_ref,
-          synthesizer_agent: finalSynthAgentForFailure,
-          synthesizer_failover_from: synthFailover.value?.from,
-          synthesizer_failover_to: synthFailover.value?.to,
-          pool_exhausted: synthPoolExhausted,
-        })
-      : "";
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        synthFailoverBanner +
-        partialBanner +
-        frontmatter +
-        `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
-    );
-  }
-
-  const finalOutcome =
-    synthStatus !== "completed" && outcome !== "failed" ? "success_partial" : outcome;
-
-  return {
-    ok: finalOutcome !== "failed" && synthStatus === "completed",
-    outcome: finalOutcome,
-    ...severityMetrics,
-    ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
-    failed_personas: failedPersonas,
-    completed_personas: personaResults
-      .filter((r) => r.status === "completed")
-      .map((r) => r.persona),
-    out_dir: absoluteOutDir,
-    personas: personaResults.map((result) => ({
-      name: result.persona,
-      status: result.status,
-      conversation_id: result.conversation_id,
-      findings_count: Array.isArray(result.findings) ? result.findings.length : null,
-    })),
-    synthesis_path: synthesisPath,
-    synthesizer_status: synthStatus,
-    synth_failed: synthStatus !== "completed",
-    ...(synthPoolExhausted ? { pool_exhausted: true } : {}),
-  };
 };
 
 export default spec;
