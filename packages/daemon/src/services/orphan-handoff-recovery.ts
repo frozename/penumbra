@@ -93,14 +93,17 @@ export class OrphanHandoffRecoveryService {
     }
   }
 
-  runOnce(workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
+  runOnce(
+    workerId?: string,
+    opts?: { workerKnownDead?: boolean; claimedBefore?: string },
+  ): RecoveryResult {
     const ts = this.services.clock().toISOString();
     if (workerId) {
       const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
       if (opts?.workerKnownDead) {
         deepStale.push(workerId);
       }
-      return this.recoverForWorkerIds([workerId], deepStale, ts);
+      return this.recoverForWorkerIds([workerId], deepStale, ts, opts?.claimedBefore);
     }
     return this.recoverAllInner(ts);
   }
@@ -109,6 +112,7 @@ export class OrphanHandoffRecoveryService {
     staleWorkerIds: string[],
     additionalVeryStaleWorkerIds: string[] = [],
     ts: string,
+    claimedBefore?: string,
   ): RecoveryResult {
     let requeued = 0;
     let exhausted = 0;
@@ -141,6 +145,7 @@ export class OrphanHandoffRecoveryService {
     const orphans = this.services.handoffReader.listOrphanedDispatches(
       staleWorkerIds,
       this.batchSize,
+      { claimedBefore },
     );
 
     // Handoffs already past dispatch.start only recover when their worker is

@@ -117,6 +117,7 @@ import {
   SILENT_RETRY_PREFIX,
   silentFailureRetrySuppressionReason,
 } from "../src/worker/silent-failure-retry.js";
+import { loggerFromPino, TerminalOutbox } from "../src/worker/terminal-outbox.js";
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
 import { ThoughtCapture } from "../src/worker/thought-capture.js";
 import { loadThoughtsConfig } from "../src/worker/thought-config.js";
@@ -455,7 +456,19 @@ const workerIsolation = ((): "hard" | "sticky" | "shared" => {
 })();
 
 const client = new PenumbraClient({ storageRoot, logger: log });
-await runWorkerBoot({ client, log, workerId });
+const terminalOutbox = new TerminalOutbox({
+  dir: join(storageRoot, "worker-outbox", workerId),
+  workerId,
+  observe: (event, init): Promise<{ event_id: string }> => client.observe(event, init),
+  postDispatchEvents: (events, signal): Promise<void> =>
+    client.postDispatchEventsStrict(events, signal),
+  complete: (id, init): Promise<{ handoff_id: string; status: string }> =>
+    client.completeHandoff(id, workerId, init),
+  markFailed: (id, reason, init): Promise<{ handoff_id: string; status: string }> =>
+    client.markFailed(id, reason, workerId, init),
+  log: loggerFromPino(log),
+});
+const workerBoot = await runWorkerBoot({ client, log, workerId, outbox: terminalOutbox });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events, signal): Promise<void> => client.postDispatchEvents(events, signal),
@@ -1655,8 +1668,11 @@ const dispatcher = createWorkerDispatcher({
       graceMs: CLAIM_AFFINITY_GRACE_MS,
     });
   },
-  postProgress: (id: string, payload: Record<string, unknown>): Promise<void> =>
-    client.postProgress(id, payload),
+  postProgress: (
+    id: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> => client.postProgress(id, payload, { signal }),
   complete: async (id): Promise<void> => {
     await client.completeHandoff(id, workerId);
   },
@@ -1702,6 +1718,7 @@ const dispatcher = createWorkerDispatcher({
     }
   },
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
+  reportTerminal: (report) => terminalOutbox.reportTerminal(report),
   dispatch: async (rawHandoff, onChunk, signal) => {
     const handoff = rawHandoff as HandoffRow & { hop_idx?: number };
     return await runDispatch(handoff, onChunk, signal);
@@ -1892,6 +1909,14 @@ const heartbeatLoop = startHeartbeatLoop({
   },
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
+  // Fire-and-forget: kick a terminal-outbox drain on every healthy beat so a
+  // recovered daemon sees replayed reports quickly. Never awaited — a slow
+  // drain must not delay the 15 s cadence.
+  onHealthy: () => {
+    void workerBoot.drainOutbox().catch((err: unknown) => {
+      log.warn({ err: String(err) }, "onHealthy outbox drain failed");
+    });
+  },
   schedule: (run, delayMs): { cancel: () => void } => {
     const timer = setTimeout(() => {
       void run();
@@ -1948,6 +1973,12 @@ const shutdown = createWorkerShutdown({
   shutdownAllAcpWarmPools,
   eventSource,
   permissionDaemonClient,
+  terminalOutbox: {
+    stop: () => {
+      workerBoot.stop();
+      terminalOutbox.stop();
+    },
+  },
   dispatcher,
   eventQueue,
   exit: (code) => process.exit(code),

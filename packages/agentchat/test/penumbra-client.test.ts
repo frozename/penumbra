@@ -1053,3 +1053,118 @@ describe("PenumbraClient permission methods", () => {
     }
   });
 });
+
+test("reconcileDispatchOrphans sends claimed_before after a capable registration", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-reconcile-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    let reconcileBody: unknown = null;
+    const fetchImpl: FetchImpl = async (input, init) => {
+      const req = toRequest(input, init);
+      if (req.url.endsWith("/worker/register")) {
+        return Response.json({
+          worker_token: "wt",
+          worker_id: "W",
+          capabilities: { reconcile_orphans_claimed_before: true },
+        });
+      }
+      reconcileBody = await req.json();
+      return Response.json({ requeued: 1, exhausted: 0 });
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+    await client.registerWorker({ worker_id: "W" });
+    const out = await client.reconcileDispatchOrphans("W", {
+      claimed_before: "2026-10-06T12:00:00.000Z",
+      require_claimed_before: true,
+    });
+    expect(out).toEqual({ requeued: 1, exhausted: 0 });
+    expect(reconcileBody).toEqual({
+      worker_id: "W",
+      claimed_before: "2026-10-06T12:00:00.000Z",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reconcileDispatchOrphans with require_claimed_before skips locally on a capability-less daemon", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-reconcile-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    let reconcileSent = false;
+    const fetchImpl: FetchImpl = (input, init) => {
+      const req = toRequest(input, init);
+      if (req.url.endsWith("/worker/register")) {
+        // A daemon older than claimed_before: no capabilities in the response.
+        return Promise.resolve(Response.json({ worker_token: "wt", worker_id: "W" }));
+      }
+      reconcileSent = true;
+      return Promise.resolve(Response.json({ requeued: 9, exhausted: 9 }));
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+    await client.registerWorker({ worker_id: "W" });
+    const out = await client.reconcileDispatchOrphans("W", {
+      claimed_before: "2026-10-06T12:00:00.000Z",
+      require_claimed_before: true,
+    });
+    expect(out).toEqual({ requeued: 0, exhausted: 0, skipped: "unsupported_daemon" });
+    expect(reconcileSent).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reconcileDispatchOrphans without require still sends claimed_before to an old daemon", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-reconcile-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    let reconcileBody: unknown = null;
+    const fetchImpl: FetchImpl = async (input, init) => {
+      const req = toRequest(input, init);
+      if (req.url.endsWith("/worker/register")) {
+        return Response.json({ worker_token: "wt", worker_id: "W" });
+      }
+      reconcileBody = await req.json();
+      return Response.json({ requeued: 0, exhausted: 0 });
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+    await client.registerWorker({ worker_id: "W" });
+    const out = await client.reconcileDispatchOrphans("W", {
+      claimed_before: "2026-10-06T12:00:00.000Z",
+    });
+    expect(out).toEqual({ requeued: 0, exhausted: 0 });
+    expect(reconcileBody).toEqual({
+      worker_id: "W",
+      claimed_before: "2026-10-06T12:00:00.000Z",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reconcileDispatchOrphans without opts posts {worker_id} exactly as before", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pen-reconcile-"));
+  writeFileSync(join(root, "port"), "1\n");
+  writeFileSync(join(root, "token"), "tk\n");
+  try {
+    let reconcileBody: unknown = null;
+    const fetchImpl: FetchImpl = async (input, init) => {
+      const req = toRequest(input, init);
+      if (req.url.endsWith("/worker/register")) {
+        return Response.json({ worker_token: "wt", worker_id: "W" });
+      }
+      reconcileBody = await req.json();
+      return Response.json({ requeued: 3, exhausted: 1 });
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl as typeof fetch });
+    await client.registerWorker({ worker_id: "W" });
+    const out = await client.reconcileDispatchOrphans("W");
+    expect(out).toEqual({ requeued: 3, exhausted: 1 });
+    expect(reconcileBody).toEqual({ worker_id: "W" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

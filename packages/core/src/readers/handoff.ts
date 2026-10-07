@@ -151,21 +151,31 @@ export class HandoffReader {
     return row?.n ?? 0;
   }
 
-  /** Returns dispatched rows whose worker_id is in the stale set. */
-  listOrphanedDispatches(staleWorkerIds: string[], limit?: number): HandoffRow[] {
+  /** Returns dispatched rows whose worker_id is in the stale set.
+   *  `claimedBefore` bounds to rows claimed strictly before it (ISO); rows
+   *  never stamped with last_dispatch_started_at predate the column and
+   *  still qualify. */
+  listOrphanedDispatches(
+    staleWorkerIds: string[],
+    limit?: number,
+    opts?: { claimedBefore?: string },
+  ): HandoffRow[] {
     if (staleWorkerIds.length === 0) return [];
     const placeholders = staleWorkerIds.map(() => "?").join(",");
-    let sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders}) ORDER BY ts ASC`;
+    const params: (string | number)[] = [...staleWorkerIds];
+    let sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders})`;
+    if (opts?.claimedBefore !== undefined) {
+      sql += " AND (last_dispatch_started_at IS NULL OR last_dispatch_started_at < ?)";
+      params.push(opts.claimedBefore);
+    }
+    sql += " ORDER BY ts ASC";
     if (limit !== undefined) {
       sql += " LIMIT ?";
-      return this.db
-        .query<HandoffRow, (string | number)[]>(sql)
-        .all(...staleWorkerIds, limit)
-        .map(normalizeHandoffRow);
+      params.push(limit);
     }
     return this.db
-      .query<HandoffRow, string[]>(sql)
-      .all(...staleWorkerIds)
+      .query<HandoffRow, (string | number)[]>(sql)
+      .all(...params)
       .map(normalizeHandoffRow);
   }
 

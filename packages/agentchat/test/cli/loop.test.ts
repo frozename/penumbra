@@ -5,6 +5,7 @@ import { expect, mock, test } from "bun:test";
 import { registerAdapter } from "@src/adapters/registry.js";
 import { resolveCaptureAttribution, runChatTurn } from "@src/cli/loop.js";
 import type { AgentChatConfig } from "@src/config/types.js";
+import { PenumbraHttpError } from "@src/penumbra-client.js";
 import type { Adapter, DispatchEvent, DispatchInput } from "@src/sdk/adapter.js";
 import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
@@ -804,4 +805,188 @@ test("resolveCaptureAttribution returns nulls when neither source is present", (
     provider: null,
     model: null,
   });
+});
+
+function makePendingObsHarness(opts: { failOn: (event: ObservedEvent) => Error | null }): {
+  calls: ObservedEvent[];
+  builds: string[];
+  dispatches: number;
+  cfg: AgentChatConfig;
+  observe: (event: unknown) => Promise<{ event_id: string }>;
+} {
+  const calls: ObservedEvent[] = [];
+  const builds: string[] = [];
+  const harness = {
+    calls,
+    builds,
+    dispatches: 0,
+    cfg: {
+      agents: [{ name: "echo-p10", adapter: "mock-p10-echo", options: {}, roles: ["planner"] }],
+      default_roles: { planner: "echo-p10" },
+    } as AgentChatConfig,
+    observe: (event: unknown): Promise<{ event_id: string }> => {
+      calls.push(event as ObservedEvent);
+      const err = opts.failOn(event as ObservedEvent);
+      if (err) return Promise.reject(err);
+      return Promise.resolve({ event_id: `e-${String(calls.length)}` });
+    },
+  };
+  registerAdapter("mock-p10-echo", () => {
+    builds.push("mock-p10-echo");
+    return {
+      kind: "mock-p10-echo",
+      dispatch({ prompt }: { prompt: string }): Promise<{ text: string }> {
+        harness.dispatches++;
+        return Promise.resolve({ text: `echo: ${prompt}` });
+      },
+    };
+  });
+  return harness;
+}
+
+test("runChatTurn surfaces pendingObservations when the agent-response observe fails transiently", async () => {
+  const h = makePendingObsHarness({
+    failOn: (event) =>
+      event.event_type === "agent-response"
+        ? new TypeError("The socket connection was closed unexpectedly")
+        : null,
+  });
+
+  const result = await runChatTurn({
+    config: h.cfg,
+    initialAgent: "echo-p10",
+    userMessage: "hello",
+    conversation: { id: "c-p10", project_id: null },
+    observe: h.observe,
+    handoff_id: "h-p10",
+  });
+
+  // The adapter ran exactly once and the finished turn is NOT re-run or thrown
+  // away just because the daemon call that reports it failed.
+  expect(h.builds).toHaveLength(1);
+  expect(h.dispatches).toBe(1);
+  expect(result.text).toBe("echo: hello");
+  expect(result.error).toBeUndefined();
+
+  expect(result.pendingObservations).toHaveLength(1);
+  const pending = result.pendingObservations![0]!;
+  expect(pending.event_type).toBe("agent-response");
+  expect(typeof pending.event_id).toBe("string");
+  expect((pending.event_id as string).length).toBeGreaterThan(0);
+  // The result's response_event_id is the pre-generated id — the observe never
+  // returned a server id — and it matches the replayable envelope.
+  expect(result.response_event_id).toBe(pending.event_id as string);
+  expect((pending.payload_json as { response?: string }).response).toBe("echo: hello");
+});
+
+test("runChatTurn stamps a pre-generated event_id on every post-adapter observe envelope", async () => {
+  const h = makePendingObsHarness({ failOn: () => null });
+
+  const result = await runChatTurn({
+    config: h.cfg,
+    initialAgent: "echo-p10",
+    userMessage: "hello",
+    conversation: { id: "c-p10-ids", project_id: null },
+    observe: h.observe,
+    handoff_id: "h-p10-ids",
+  });
+
+  const responseCall = h.calls.find((call) => call.event_type === "agent-response");
+  expect(responseCall).toBeDefined();
+  const envelopeId = (responseCall as unknown as { event_id?: string }).event_id;
+  expect(typeof envelopeId).toBe("string");
+  // The sent envelope carried the id; the fake observe still assigns its own
+  // returned id which the result reports on success.
+  expect(result.response_event_id).toBe(`e-${String(h.calls.length)}`);
+  expect(result.pendingObservations).toBeUndefined();
+});
+
+test("runChatTurn still surfaces the turn when the agent-response observe gets a daemon 400", async () => {
+  const h = makePendingObsHarness({
+    failOn: (event) =>
+      event.event_type === "agent-response"
+        ? new PenumbraHttpError("penumbra /observations: HTTP 400", 400, {
+            error: { code: "validation_error" },
+          })
+        : null,
+  });
+
+  const result = await runChatTurn({
+    config: h.cfg,
+    initialAgent: "echo-p10",
+    userMessage: "hello",
+    conversation: { id: "c-p10-400", project_id: null },
+    observe: h.observe,
+  });
+
+  // A terminal-class failure must not re-run the finished model turn either —
+  // transient-vs-terminal only decides whether the outbox keeps the envelope.
+  expect(h.dispatches).toBe(1);
+  expect(result.text).toBe("echo: hello");
+  expect(result.pendingObservations).toHaveLength(1);
+  expect(result.pendingObservations![0]!.event_type).toBe("agent-response");
+});
+
+test("runChatTurn keeps envelopes ordered: a failed redaction observe leaves the agent-response pending too", async () => {
+  registerAdapter("mock-p10-blocked", () => ({
+    kind: "mock-p10-blocked",
+    dispatch(): Promise<{ text: string }> {
+      return Promise.resolve({ text: "rm -rf /Volumes/WorkSSD --no-preserve-root" });
+    },
+  }));
+  const blockedCfg: AgentChatConfig = {
+    agents: [{ name: "blocky", adapter: "mock-p10-blocked", options: {}, roles: ["planner"] }],
+    default_roles: { planner: "blocky" },
+  };
+  const calls: ObservedEvent[] = [];
+  const observe = (event: unknown): Promise<{ event_id: string }> => {
+    calls.push(event as ObservedEvent);
+    const typed = event as ObservedEvent;
+    if (typed.event_type === "agent-response-blocked" || typed.event_type === "agent-response") {
+      return Promise.reject(new TypeError("The socket connection was closed unexpectedly"));
+    }
+    return Promise.resolve({ event_id: `e-${String(calls.length)}` });
+  };
+
+  const result = await runChatTurn({
+    config: blockedCfg,
+    initialAgent: "blocky",
+    userMessage: "please respond",
+    conversation: { id: "c-p10-blocked", project_id: null },
+    observe,
+    handoff_id: "h-p10-blocked",
+  });
+
+  expect(result.text).toBe("[maestro response withheld by output policy]");
+  const types = (result.pendingObservations ?? []).map((e) => e.event_type);
+  expect(types).toEqual(["agent-response-blocked", "agent-response"]);
+  const ids = (result.pendingObservations ?? []).map((e) => e.event_id);
+  expect(new Set(ids).size).toBe(2);
+  // The failed envelope itself is the first pending entry.
+  expect(calls.at(-1)?.event_type).toBe("agent-response-blocked");
+});
+
+test("runChatTurn still throws when the PRE-adapter observe fails (the turn never ran)", async () => {
+  const h = makePendingObsHarness({
+    failOn: (event) =>
+      event.event_type === "agent-prompt" ? new TypeError("socket closed") : null,
+  });
+
+  let thrown: unknown;
+  try {
+    await runChatTurn({
+      config: h.cfg,
+      initialAgent: "echo-p10",
+      userMessage: "hello",
+      conversation: { id: "c-p10-prompt", project_id: null },
+      observe: h.observe,
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toContain("socket closed");
+  // Re-running is safe: the adapter was never built or dispatched.
+  expect(h.builds).toHaveLength(0);
+  expect(h.dispatches).toBe(0);
 });

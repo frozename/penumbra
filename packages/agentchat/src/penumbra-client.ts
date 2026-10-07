@@ -154,6 +154,7 @@ export class PenumbraClient {
   private workerToken: string | null = null;
   private workerId: string | null = null;
   private workerMetadata: Record<string, unknown> | undefined;
+  private daemonSupportsClaimedBefore = false;
   private reregisterInFlight: Promise<void> | null = null;
   private rejectedDispatchEvents = 0;
 
@@ -167,17 +168,21 @@ export class PenumbraClient {
     return this.workerToken;
   }
 
-  async registerWorker(args: {
+  async registerWorker(args: { worker_id: string; metadata?: Record<string, unknown> }): Promise<{
+    worker_token: string;
     worker_id: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{ worker_token: string; worker_id: string }> {
-    const result = await this.post<{ worker_token: string; worker_id: string }>(
-      "/worker/register",
-      args,
-    );
+    capabilities?: Record<string, boolean>;
+  }> {
+    const result = await this.post<{
+      worker_token: string;
+      worker_id: string;
+      capabilities?: Record<string, boolean>;
+    }>("/worker/register", args);
     this.workerToken = result.worker_token;
     this.workerId = args.worker_id;
     this.workerMetadata = args.metadata;
+    this.daemonSupportsClaimedBefore =
+      result.capabilities?.["reconcile_orphans_claimed_before"] === true;
     return result;
   }
 
@@ -354,18 +359,24 @@ export class PenumbraClient {
   async completeHandoff(
     id: string,
     worker_id?: string,
+    init?: { signal?: AbortSignal },
   ): Promise<{ handoff_id: string; status: string }> {
-    return await this.postWorker(`/handoffs/${id}/complete`, { worker_id });
+    return await this.postWorker(`/handoffs/${id}/complete`, { worker_id }, init);
   }
   async markFailed(
     id: string,
     reason: string,
     worker_id?: string,
+    init?: { signal?: AbortSignal },
   ): Promise<{ handoff_id: string; status: string }> {
-    return await this.postWorker(`/handoffs/${id}/fail`, { reason, worker_id });
+    return await this.postWorker(`/handoffs/${id}/fail`, { reason, worker_id }, init);
   }
-  async postProgress(handoff_id: string, event: HandoffProgressEvent): Promise<void> {
-    await this.post(`/handoffs/${handoff_id}/progress`, event);
+  async postProgress(
+    handoff_id: string,
+    event: HandoffProgressEvent,
+    init?: { signal?: AbortSignal },
+  ): Promise<void> {
+    await this.post(`/handoffs/${handoff_id}/progress`, event, init);
   }
   async postDispatchEvents(events: DispatchEventInput[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
@@ -496,8 +507,19 @@ export class PenumbraClient {
   }
   async reconcileDispatchOrphans(
     worker_id: string,
-  ): Promise<{ requeued: number; exhausted: number }> {
-    return await this.postWorker("/worker/reconcile-orphans", { worker_id });
+    opts?: { claimed_before?: string; require_claimed_before?: boolean },
+  ): Promise<{ requeued: number; exhausted: number; skipped?: "unsupported_daemon" }> {
+    // A deferred reconcile must never reach a daemon that would ignore
+    // claimed_before: it would requeue dispatches this worker incarnation is
+    // actively running. No register capability bit means the daemon predates
+    // the bound — refuse the call locally instead of sending it unfiltered.
+    if (opts?.require_claimed_before === true && !this.daemonSupportsClaimedBefore) {
+      return { requeued: 0, exhausted: 0, skipped: "unsupported_daemon" };
+    }
+    return await this.postWorker("/worker/reconcile-orphans", {
+      worker_id,
+      ...(opts?.claimed_before !== undefined ? { claimed_before: opts.claimed_before } : {}),
+    });
   }
   async sendProbeAck(worker_id: string, probe_id: string): Promise<void> {
     await this.postWorkerNoContent("/worker/probe-ack", { worker_id, probe_id });
