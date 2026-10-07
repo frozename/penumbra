@@ -250,6 +250,81 @@ describe("GET /usage/quota_status", () => {
     const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(400);
   });
+
+  it("serves an identical repeat from cache inside the TTL and misses on a new since", async () => {
+    insertUsageRow(db, {
+      event_id: "1",
+      ts: "2026-04-28T12:00:00Z",
+      provider: "anthropic",
+      cost_usd: 5,
+      used: 1000,
+      handoff_id: "h1",
+      lane: "cloud",
+    });
+    const services = makeServices(db, [{ provider: "anthropic", quota_usd_per_24h: 50 }]);
+    const req = (): Request =>
+      new Request("http://x/usage/quota_status?since=2026-04-28T00:00:00Z");
+
+    const body1 = (await usageQuotaStatusRoute(req(), services).json()) as QuotaBody;
+    expect(body1.providers[0]?.used_usd).toBe(5);
+
+    insertUsageRow(db, {
+      event_id: "2",
+      ts: "2026-04-28T12:30:00Z",
+      provider: "anthropic",
+      cost_usd: 5,
+      used: 500,
+      handoff_id: "h2",
+      lane: "cloud",
+    });
+
+    const body2 = (await usageQuotaStatusRoute(req(), services).json()) as QuotaBody;
+    expect(body2.providers[0]?.used_usd).toBe(5);
+
+    const res3 = usageQuotaStatusRoute(
+      new Request("http://x/usage/quota_status?since=2026-04-27T00:00:00Z"),
+      services,
+    );
+    const body3 = (await res3.json()) as QuotaBody;
+    expect(body3.providers[0]?.used_usd).toBe(10);
+  });
+
+  it("expires the quota_status cache after the TTL", async () => {
+    let nowMs = Date.parse("2026-04-28T13:00:00Z");
+    const services = {
+      db,
+      clock: () => new Date(nowMs),
+      providerQuotas: [{ provider: "anthropic", quota_usd_per_24h: 50 }],
+    } as unknown as Services;
+    insertUsageRow(db, {
+      event_id: "1",
+      ts: "2026-04-28T12:00:00Z",
+      provider: "anthropic",
+      cost_usd: 5,
+      used: 1000,
+      handoff_id: "h1",
+      lane: "cloud",
+    });
+    const req = (): Request =>
+      new Request("http://x/usage/quota_status?since=2026-04-28T00:00:00Z");
+
+    const body1 = (await usageQuotaStatusRoute(req(), services).json()) as QuotaBody;
+    expect(body1.providers[0]?.used_usd).toBe(5);
+
+    insertUsageRow(db, {
+      event_id: "2",
+      ts: "2026-04-28T12:30:00Z",
+      provider: "anthropic",
+      cost_usd: 5,
+      used: 500,
+      handoff_id: "h2",
+      lane: "cloud",
+    });
+
+    nowMs += 121_000;
+    const body2 = (await usageQuotaStatusRoute(req(), services).json()) as QuotaBody;
+    expect(body2.providers[0]?.used_usd).toBe(10);
+  });
 });
 
 describe("GET /usage/subscription_pressure", () => {

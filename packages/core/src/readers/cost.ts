@@ -382,11 +382,14 @@ function pressureFor(
   return collectSubscriptionPressure(pressureByProvider.get(provider) ?? [], model);
 }
 
-export function recentCost(
+export function recentCostWithPressure(
   db: Database,
   input: RecentCostInput,
   now: () => Date,
-): RecentCostOutput {
+): {
+  recent: RecentCostOutput;
+  pressureByProvider: Map<string, SubscriptionPressureSnapshot[]>;
+} {
   const nowDate = now();
   const since = input.since
     ? new Date(input.since).toISOString()
@@ -405,7 +408,7 @@ export function recentCost(
   const byProviderSorted = [...byProvider.values()].sort(compareCostDesc);
   const byProviderModelSorted = [...byProviderModel.values()].sort(compareCostDesc);
 
-  return {
+  const recent: RecentCostOutput = {
     total_cost_usd: totals.totalWithCost > 0 ? totals.sumCost : null,
     total_cost_usd_billed: totals.totalWithCostBilled > 0 ? totals.sumCostBilled : null,
     total_cost_usd_synth: totals.totalWithCostSynth > 0 ? totals.sumCostSynth : null,
@@ -438,4 +441,13 @@ export function recentCost(
     })),
     window,
   };
+  return { recent, pressureByProvider };
+}
+
+export function recentCost(
+  db: Database,
+  input: RecentCostInput,
+  now: () => Date,
+): RecentCostOutput {
+  return recentCostWithPressure(db, input, now).recent;
 }

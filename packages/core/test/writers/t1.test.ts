@@ -346,6 +346,39 @@ test("rollupSession dispatch beats unknown", async () => {
   expect(row.origin).toBe("dispatch");
 });
 
+function seedWithIngest(sessionId: string, ts: string, ingestTs: string): void {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+      session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+      request_id, payload_json, payload_summary)
+     VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-prompt', 'local', null, null, null, null, null, null, null, '{}', ?)`,
+    [`e-${sessionId}-${ts}`, ts, ingestTs, sessionId, "prompt"],
+  );
+}
+
+test("detectIdleSessions bounds candidates to sessions with recent ingest when ingestedSince is set", () => {
+  const now = new Date("2026-04-23T12:30:00Z");
+  seedWithIngest("s-fresh-ingest", "2026-04-23T12:00:00Z", "2026-04-23T12:29:00Z");
+  seedWithIngest("s-stale-ingest", "2026-04-23T11:00:00Z", "2026-04-23T08:00:00Z");
+  seedWithIngest("s-live", "2026-04-23T12:29:30Z", "2026-04-23T12:29:30Z");
+  const roll = new T1Rollup({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => now,
+    uuid: (): string => "r-detect",
+  });
+
+  const bounded = roll.detectIdleSessions(10, now, { ingestedSince: "2026-04-23T11:30:00Z" });
+  expect(bounded).toContain("s-fresh-ingest");
+  expect(bounded).not.toContain("s-stale-ingest");
+  expect(bounded).not.toContain("s-live");
+
+  const unbounded = roll.detectIdleSessions(10, now);
+  expect(unbounded).toContain("s-fresh-ingest");
+  expect(unbounded).toContain("s-stale-ingest");
+  expect(unbounded).not.toContain("s-live");
+});
+
 test("rollupSession is concurrency-safe — racing calls fold to one row", async () => {
   seed("sR", 3);
   let uuidIdx = 0;
