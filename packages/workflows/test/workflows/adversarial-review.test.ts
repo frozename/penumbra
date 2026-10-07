@@ -2294,3 +2294,489 @@ test("content_path error hint advises an explicit cwd, not extending allowed_roo
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 20 commits with ~2KB bodies plus 40 added-file sections (~83KB diff): the
+// generic trimmer shrinks the commit bodies to their markers and still keeps
+// the diff whole, so the source cap must not cut it either.
+function makeLongBodyCommitRepo(opts: {
+  commits: number;
+  filesPerCommit: number;
+  linesPerFile: number;
+}): string {
+  const repoDir = makeFixtureRepo();
+  const commitBody = "detail ".repeat(285);
+  for (let i = 0; i < opts.commits; i += 1) {
+    for (let j = 0; j < opts.filesPerCommit; j += 1) {
+      const lines = Array.from(
+        { length: opts.linesPerFile },
+        (_, k) => `f${String(i)}_${String(j)} line ${String(k)} ${"x".repeat(28)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}-${String(j)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", ["-C", repoDir, "add", "-A"]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      `commit ${String(i)}: add files\n\n${commitBody}`,
+    ]);
+  }
+  return repoDir;
+}
+
+async function composeSpecRecall(
+  repoDir: string,
+  args: Record<string, unknown>,
+  budgetTokens?: number,
+): Promise<RecallBundle> {
+  const db = freshDb();
+  try {
+    return await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repoDir,
+      project: "demo",
+      sources: spec.recall,
+      budgetTokens: budgetTokens ?? spec.recall_budget_tokens ?? 24000,
+      templateCtx: {
+        now: () => new Date(),
+        project: "demo",
+        sessionStart: new Date().toISOString(),
+        tz: "UTC",
+        cwd: repoDir,
+        args,
+      },
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function diffSectionCount(diffText: string): number {
+  return diffText.split(/(?=^diff --git )/m).filter((s) => s.startsWith("diff --git")).length;
+}
+
+test("a diff the trimmer could keep whole is never section-capped", async () => {
+  const repoDir = makeLongBodyCommitRepo({ commits: 20, filesPerCommit: 2, linesPerFile: 45 });
+  try {
+    const bundle = await composeSpecRecall(repoDir, {
+      base_ref: "HEAD~20",
+      target_ref: "HEAD",
+    });
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    // Well past the round-1 cap (13400 tokens ~= 53.6K chars): this fixture
+    // proves the cap is sized off the trimmer's real floor, not git.show's
+    // untrimmed worst case.
+    expect(diffText.length).toBeGreaterThan(60000);
+    expect(diffSectionCount(diffText)).toBe(40);
+    expect(diffText).not.toContain("[recall budget: diff truncated to");
+    expect(bundle.warnings.some((w) => w.startsWith("git.diff: recall budget"))).toBe(false);
+    // The commit bodies did get trimmed — the diff surviving them is the point.
+    expect(bundle.warnings.some((w) => w.startsWith("recall budget exceeded: trimmed"))).toBe(true);
+
+    const { ctx, root } = makeCtx({ args: { base_ref: "HEAD~20", target_ref: "HEAD" } });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        synthesizer_status: string | null;
+      };
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.synthesizer_status).toBe("completed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+// 20 body-carrying commits with long subjects plus a far-over-cap diff of
+// mixed section sizes: first-fit packs the capped diff close to the cap, and
+// the commits' post-trim floor grows with subject length. The cap must leave
+// room for that floor or the trimmer drops the capped diff whole.
+test("a capped diff survives 20 long-subject commits instead of becoming empty_review_target", async () => {
+  const repoDir = makeFixtureRepo();
+  const sizes = [45, 3, 1, 20, 7, 2, 33, 1, 12, 5, 1, 26, 4];
+  const body = "detail ".repeat(68);
+  try {
+    for (let i = 0; i < 20; i += 1) {
+      for (const [j, lineCount] of sizes.entries()) {
+        const lines = Array.from(
+          { length: lineCount },
+          (_, k) => `c${String(i)}_${String(j)} line ${String(k)} ${"y".repeat(30)}`,
+        ).join("\n");
+        writeFileSync(join(repoDir, `mixed-${String(i)}-${String(j)}.ts`), `${lines}\n`);
+      }
+      const subject = `commit ${String(i)}: ${"s".repeat(188)}`;
+      execFileSync("git", ["-C", repoDir, "add", "-A"]);
+      execFileSync("git", [
+        "-C",
+        repoDir,
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-q",
+        "-m",
+        `${subject}\n\n${body}`,
+      ]);
+    }
+    const args = { base_ref: "HEAD~20", target_ref: "HEAD" };
+    const bundle = await composeSpecRecall(repoDir, args);
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    expect(diffText).toContain("diff --git ");
+    expect(diffText).toContain("[recall budget: diff truncated to");
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(24000);
+
+    const { ctx, root } = makeCtx({ args });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        error?: string;
+        diff_truncated?: boolean;
+      };
+      expect(result.error).not.toBe("empty_review_target");
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("an over-cap scratch-repo diff reaches personas as a partial diff, not empty_review_target", async () => {
+  const repoDir = makeFixtureRepo();
+  const db = freshDb();
+  const { ctx, root, dispatch } = makeCtx({
+    args: { base_ref: "HEAD~1", target_ref: "HEAD" },
+  });
+  ctx.cwd = repoDir;
+  try {
+    // ~40 files x ~2.7KB of added lines (~109KB, ~27K tokens) exceeds the
+    // whole 24K-token budget, so the generic trimmer would have dropped the
+    // diff string outright — the source cap is what produces partial coverage.
+    for (let i = 0; i < 40; i += 1) {
+      const lines = Array.from(
+        { length: 60 },
+        (_, j) => `line ${String(j)} ${"x".repeat(32)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "add",
+      "-A",
+    ]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      "big change",
+    ]);
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repoDir,
+      project: "demo",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens ?? 24000,
+      templateCtx: {
+        now: () => new Date(),
+        project: "demo",
+        sessionStart: new Date().toISOString(),
+        tz: "UTC",
+        cwd: repoDir,
+        args: { base_ref: "HEAD~1", target_ref: "HEAD" },
+      },
+    });
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    expect(diffText).toContain("diff --git ");
+    expect(diffText).toContain("[recall budget: diff truncated to");
+    const budgetWarning = bundle.warnings.find((w) => w.startsWith("git.diff: recall budget"));
+    expect(budgetWarning).toBeDefined();
+
+    const result = (await fn(ctx, bundle)) as {
+      ok: boolean;
+      error?: string;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      recall_warnings?: string[];
+      synthesis_path?: string | null;
+    };
+    expect(result.error).toBeUndefined();
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_dropped_files?.length).toBeGreaterThan(0);
+    expect(result.recall_warnings).toContain(budgetWarning);
+    expect(dispatch).toHaveBeenCalled();
+    const synthesisPath = result.synthesis_path;
+    expect(synthesisPath).not.toBeNull();
+    const synthesis = await readFile(synthesisPath ?? "", "utf8");
+    expect(synthesis).toContain(`> Partial diff: ${budgetWarning ?? ""}`);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+// diff_dropped_files comes from the machine-readable stats warning, not the
+// prose sentence — a path containing ", " must survive as one entry, and a
+// dropped list past the 20-name cap sets diff_dropped_more instead of gluing
+// "(+N more)" onto the last name.
+test("dropped-file parsing keeps ', ' paths whole and flags the capped overflow", async () => {
+  const dropped = ["dir/a, b.ts", ...Array.from({ length: 23 }, (_, i) => `f${String(i)}.ts`)];
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff": "diff --git a/keep.ts b/keep.ts\n+partial",
+    },
+    warnings: [
+      `git.diff: recall budget kept 1 of 25 file sections (200 of 90000 chars); dropped 24: dir/a, b.ts, f0.ts (+22 more)`,
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 1,
+        total: 25,
+        chars: 90000,
+        dropped: dropped.slice(0, 20),
+        overflow: 4,
+        cut_file: null,
+        whole_drop: false,
+      })}`,
+    ],
+  };
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      diff_dropped_more?: boolean;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_dropped_files).toEqual(dropped.slice(0, 20));
+    expect(result.diff_dropped_files?.[0]).toBe("dir/a, b.ts");
+    expect(result.diff_dropped_files?.[19]).toBe("f18.ts");
+    expect(result.diff_dropped_more).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A single oversized section cut at a line boundary is partial coverage of a
+// NAMED file — "kept 0 of 1" alone says which only inside the diff body.
+test("a single-section cut names the cut file and stays partial coverage", async () => {
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff":
+        "diff --git a/big.txt b/big.txt\n@@ -1 +1,2 @@\n one\n+partial\n… [recall budget: big.txt cut to 120 of 4400 chars]",
+    },
+    warnings: [
+      "git.diff: recall budget kept 0 of 1 file sections (140 of 4400 chars)",
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 0,
+        total: 1,
+        chars: 4400,
+        dropped: [],
+        overflow: 0,
+        cut_file: "big.txt",
+        whole_drop: false,
+      })}`,
+    ],
+  };
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      diff_cut_file?: string;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_cut_file).toBe("big.txt");
+    expect(result.diff_dropped_files).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// When the source cap (not the generic trimmer, not bad refs) dropped the
+// whole diff, the empty_review_target hint must say so — the cwd/refs advice
+// is actively misleading for a diff that was simply too large to keep.
+test("cap-dropped whole diff produces a cap-blaming empty_review_target hint", async () => {
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff": "",
+      "file.contents": { path: "", body: "", truncated: false, byte_size: 0 },
+    },
+    warnings: [
+      "git.diff: recall budget dropped the whole diff (40 file sections, 91010 chars)",
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 0,
+        total: 40,
+        chars: 91010,
+        dropped: ["f0.ts"],
+        overflow: 39,
+        cut_file: null,
+        whole_drop: true,
+      })}`,
+    ],
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: { base_ref: "main", target_ref: "HEAD" },
+  });
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      error?: string;
+      hint?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("empty_review_target");
+    expect(result.hint ?? "").toMatch(/cap/i);
+    expect(result.hint ?? "").toContain("91010");
+    expect(result.hint ?? "").not.toContain("Pass an explicit");
+    expect(result.hint ?? "").not.toContain("outside the allowed roots");
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Content mode: content_path is the authoritative review target, so the
+// refs-derived git.diff/git.show recall (which renderPersonaPrompt discards
+// anyway) must not consume budget the file body needs.
+test("content mode keeps the whole file body and never recalls the refs diff", async () => {
+  const repoDir = makeFixtureRepo();
+  try {
+    // ~22 added files -> ~46KB diff (~11.6K tokens), under the section cap but
+    // enough to squeeze a 56KB content body (~14K tokens) out of the 24K
+    // budget if the diff is recalled alongside it.
+    for (let i = 0; i < 22; i += 1) {
+      const lines = Array.from(
+        { length: 45 },
+        (_, j) => `f${String(i)} line ${String(j)} ${"x".repeat(28)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "add",
+      "-A",
+    ]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      "medium change",
+    ]);
+    const contentBody = Array.from(
+      { length: 1200 },
+      (_, i) => `Review paragraph ${String(i)}: prose content under test.`,
+    ).join("\n");
+    expect(contentBody.length).toBeGreaterThan(55000);
+    expect(contentBody.length).toBeLessThan(65536);
+    writeFileSync(join(repoDir, "review-doc.md"), contentBody);
+
+    const bundle = await composeSpecRecall(repoDir, {
+      content_path: "review-doc.md",
+      base_ref: "HEAD~1",
+      target_ref: "HEAD",
+    });
+    expect("git.diff" in bundle.byKey).toBe(false);
+    expect("git.show" in bundle.byKey).toBe(false);
+    const fileContents = bundle.byKey["file.contents"];
+    expect(fileContents && typeof fileContents === "object" && !Array.isArray(fileContents)).toBe(
+      true,
+    );
+    const record = fileContents as { body?: string; truncated?: boolean };
+    expect(record.truncated ?? false).toBe(false);
+    expect(record.body).toBe(contentBody);
+    expect(bundle.warnings.some((w) => w.startsWith("git.diff: recall budget"))).toBe(false);
+
+    const { ctx, root } = makeCtx({
+      args: { content_path: "review-doc.md", base_ref: "HEAD~1", target_ref: "HEAD" },
+    });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        error?: string;
+        diff_truncated?: boolean;
+        synthesizer_status: string | null;
+      };
+      expect(result.ok).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.synthesizer_status).toBe("completed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("a content body larger than the whole budget is still truncated with its marker", async () => {
+  const repoDir = makeFixtureRepo();
+  try {
+    const contentBody = Array.from(
+      { length: 200 },
+      (_, i) => `Review paragraph ${String(i)}: prose content under test.`,
+    ).join("\n");
+    writeFileSync(join(repoDir, "review-doc.md"), contentBody);
+
+    const bundle = await composeSpecRecall(
+      repoDir,
+      { content_path: "review-doc.md", base_ref: "HEAD~1", target_ref: "HEAD" },
+      400,
+    );
+    const fileContents = bundle.byKey["file.contents"];
+    const record = fileContents as { body?: string; truncated?: boolean };
+    expect(record.truncated).toBe(true);
+    expect(record.body ?? "").toContain("… [recall budget: body truncated to ");
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(400);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});

@@ -614,3 +614,296 @@ test("git.log rejects unsafe format strings", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── max_tokens section cap ──────────────────────────────────────────────────
+
+function initSectionedDiffRepo(bigFiles: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "git-"));
+  execSync("git init -q -b main", { cwd: dir });
+  execSync("git config user.email t@t", { cwd: dir });
+  execSync("git config user.name t", { cwd: dir });
+  execSync("git config gc.auto 0", { cwd: dir });
+  execSync("git config maintenance.auto false", { cwd: dir });
+  for (const name of ["f0.txt", "f1.txt", "f2.txt", "f3.txt"]) {
+    writeFileSync(join(dir, name), `${name} one\n`);
+  }
+  execSync('git add . && git commit -q -m "v1"', { cwd: dir, shell: "/bin/bash" });
+  for (const name of ["f0.txt", "f1.txt", "f2.txt", "f3.txt"]) {
+    const body = bigFiles.includes(name)
+      ? `${name} one\n${"padding line for a large section\n".repeat(80)}`
+      : `${name} one\n${name} two\n`;
+    writeFileSync(join(dir, name), body);
+  }
+  execSync('git add . && git commit -q -m "v2"', { cwd: dir, shell: "/bin/bash" });
+  return dir;
+}
+
+function initSingleFileDiffRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "git-"));
+  execSync("git init -q -b main", { cwd: dir });
+  execSync("git config user.email t@t", { cwd: dir });
+  execSync("git config user.name t", { cwd: dir });
+  execSync("git config gc.auto 0", { cwd: dir });
+  execSync("git config maintenance.auto false", { cwd: dir });
+  writeFileSync(join(dir, "big.txt"), "one\n");
+  execSync('git add big.txt && git commit -q -m "v1"', { cwd: dir, shell: "/bin/bash" });
+  const added = Array.from(
+    { length: 200 },
+    (_, i) => `added line ${String(i)} padding padding`,
+  ).join("\n");
+  writeFileSync(join(dir, "big.txt"), `one\n${added}\n`);
+  execSync('git add big.txt && git commit -q -m "v2"', { cwd: dir, shell: "/bin/bash" });
+  return dir;
+}
+
+// splitGitDiffSections drops the separator newline before each `diff --git`
+// header but keeps the file's own trailing newline on the LAST section; a
+// lookahead split keeps every separator on the previous section. Strip one
+// trailing newline from non-final sections to mirror the impl's bodies.
+function diffSections(text: string): string[] {
+  const parts = text.split(/(?=^diff --git )/m);
+  return parts.map((section, index) =>
+    index < parts.length - 1 && section.endsWith("\n") ? section.slice(0, -1) : section,
+  );
+}
+
+test("git.diff max_tokens keeps whole leading sections byte-identical and names the dropped files", async () => {
+  const dir = initSectionedDiffRepo(["f2.txt", "f3.txt"]);
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const [s0, s1, s2, s3] = diffSections(full.text) as [string, string, string, string];
+    const keepChars = s0.length + 1 + s1.length;
+    const maxTokens = Math.ceil((keepChars + 700) / 4);
+
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+    });
+    expect(out.text).toBe(
+      `${s0}\n${s1}\n… [recall budget: diff truncated to 2 of 4 file sections; dropped: f2.txt, f3.txt]`,
+    );
+    expect(out.text).not.toContain("padding line for a large section");
+    expect(out.warnings).toEqual([
+      `git.diff: recall budget kept 2 of 4 file sections (${String(out.text.length)} of ${String(full.text.length)} chars); dropped 2: f2.txt, f3.txt`,
+      `git.diff: truncation_stats=${JSON.stringify({ kept: 2, total: 4, chars: full.text.length, dropped: ["f2.txt", "f3.txt"], overflow: 0, cut_file: null, whole_drop: false })}`,
+    ]);
+    expect(s2).toContain("f2.txt");
+    expect(s3).toContain("f3.txt");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff max_tokens first-fit skips an oversize middle section instead of blanking later ones", async () => {
+  const dir = initSectionedDiffRepo(["f1.txt"]);
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const [s0, , s2, s3] = diffSections(full.text) as [string, string, string, string];
+    const keepChars = s0.length + 1 + s2.length + 1 + s3.length;
+    const maxTokens = Math.ceil((keepChars + 700) / 4);
+
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+    });
+    expect(out.text).toBe(
+      `${s0}\n${s2}\n${s3}… [recall budget: diff truncated to 3 of 4 file sections; dropped: f1.txt]`,
+    );
+    expect(out.warnings).toEqual([
+      `git.diff: recall budget kept 3 of 4 file sections (${String(out.text.length)} of ${String(full.text.length)} chars); dropped 1: f1.txt`,
+      `git.diff: truncation_stats=${JSON.stringify({ kept: 3, total: 4, chars: full.text.length, dropped: ["f1.txt"], overflow: 0, cut_file: null, whole_drop: false })}`,
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A dropped name is display-only in the prose warning — paths containing ", "
+// or an over-limit dropped list only survive round-trip through the JSON stats
+// line the cap emits alongside it.
+function initCommaPathDiffRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "git-"));
+  execSync("git init -q -b main", { cwd: dir });
+  execSync("git config user.email t@t", { cwd: dir });
+  execSync("git config user.name t", { cwd: dir });
+  execSync("git config gc.auto 0", { cwd: dir });
+  execSync("git config maintenance.auto false", { cwd: dir });
+  mkdirSync(join(dir, "dir"), { recursive: true });
+  writeFileSync(join(dir, "small.txt"), "small one\n");
+  writeFileSync(join(dir, "dir", "a, b.ts"), "comma one\n");
+  execSync('git add . && git commit -q -m "v1"', { cwd: dir, shell: "/bin/bash" });
+  writeFileSync(join(dir, "small.txt"), "small one\nsmall two\n");
+  writeFileSync(
+    join(dir, "dir", "a, b.ts"),
+    `comma one\n${"padding line for a large section\n".repeat(80)}`,
+  );
+  execSync('git add . && git commit -q -m "v2"', { cwd: dir, shell: "/bin/bash" });
+  return dir;
+}
+
+function initManyDroppedFilesRepo(dropped: number): string {
+  const dir = mkdtempSync(join(tmpdir(), "git-"));
+  execSync("git init -q -b main", { cwd: dir });
+  execSync("git config user.email t@t", { cwd: dir });
+  execSync("git config user.name t", { cwd: dir });
+  execSync("git config gc.auto 0", { cwd: dir });
+  execSync("git config maintenance.auto false", { cwd: dir });
+  writeFileSync(join(dir, "keep.txt"), "keep one\n");
+  for (let i = 0; i < dropped; i += 1) {
+    writeFileSync(join(dir, `drop-${String(i).padStart(2, "0")}.txt`), "drop one\n");
+  }
+  execSync('git add . && git commit -q -m "v1"', { cwd: dir, shell: "/bin/bash" });
+  writeFileSync(join(dir, "keep.txt"), "keep one\nkeep two\n");
+  for (let i = 0; i < dropped; i += 1) {
+    writeFileSync(
+      join(dir, `drop-${String(i).padStart(2, "0")}.txt`),
+      `drop one\n${"padding line for a large section\n".repeat(80)}`,
+    );
+  }
+  execSync('git add . && git commit -q -m "v2"', { cwd: dir, shell: "/bin/bash" });
+  return dir;
+}
+
+function parseStatsWarning(warnings: string[]): {
+  kept: number;
+  total: number;
+  chars: number;
+  dropped: string[];
+  overflow: number;
+  cut_file: string | null;
+  whole_drop: boolean;
+} {
+  const line = warnings.find((w) => w.startsWith("git.diff: truncation_stats="));
+  expect(line).toBeDefined();
+  return JSON.parse((line ?? "").slice("git.diff: truncation_stats=".length)) as ReturnType<
+    typeof parseStatsWarning
+  >;
+}
+
+test("git.diff max_tokens carries dropped names with ', ' intact in the stats warning", async () => {
+  const dir = initCommaPathDiffRepo();
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const sections = diffSections(full.text);
+    // Alphabetical order puts "dir/a, b.ts" first and small.txt last; size the
+    // cap so first-fit keeps only the small section.
+    const maxTokens = Math.ceil(((sections.at(-1)?.length ?? 0) + 700) / 4);
+
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+    });
+    const stats = parseStatsWarning(out.warnings);
+    expect(stats.dropped).toEqual(["dir/a, b.ts"]);
+    expect(stats.overflow).toBe(0);
+    expect(stats.kept).toBe(1);
+    expect(stats.total).toBe(2);
+    // The prose line is human display only; the JSON array is the contract.
+    expect(out.warnings.length).toBe(2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff max_tokens caps the stats dropped list at 20 and counts the overflow", async () => {
+  const dir = initManyDroppedFilesRepo(24);
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const sections = diffSections(full.text);
+    // keep.txt sorts after every drop-*.txt, so the last section is the only
+    // one first-fit can afford.
+    const maxTokens = Math.ceil(((sections.at(-1)?.length ?? 0) + 700) / 4);
+
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+    });
+    const stats = parseStatsWarning(out.warnings);
+    expect(stats.dropped.length).toBe(20);
+    expect(stats.overflow).toBe(4);
+    expect(stats.total).toBe(25);
+    // No "(+4 more)" suffix glued onto the last name.
+    expect(stats.dropped[19]).toBe("drop-19.txt");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff max_tokens cuts a single huge section at a line boundary through a hunk", async () => {
+  const dir = initSingleFileDiffRepo();
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const [section] = diffSections(full.text) as [string];
+    const maxTokens = Math.ceil((section.length / 2 + 400) / 4);
+
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+    });
+    const marker = /^… \[recall budget: big\.txt cut to (\d+) of (\d+) chars\]$/m.exec(out.text);
+    expect(marker).not.toBeNull();
+    const head = out.text.slice(0, out.text.indexOf("\n… [recall budget:"));
+    expect(Number(marker?.[1])).toBe(head.length);
+    expect(Number(marker?.[2])).toBe(section.length);
+    expect(head).toContain("@@");
+    expect(/^\+added line \d+ padding padding$/m.test(head)).toBe(true);
+    expect(head).not.toContain("added line 199");
+    expect(section.startsWith(`${head}\n`)).toBe(true);
+    expect(out.warnings).toEqual([
+      `git.diff: recall budget kept 0 of 1 file sections (${String(out.text.length)} of ${String(full.text.length)} chars)`,
+      `git.diff: truncation_stats=${JSON.stringify({ kept: 0, total: 1, chars: full.text.length, dropped: [], overflow: 0, cut_file: "big.txt", whole_drop: false })}`,
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff max_tokens returns an empty diff when the head cannot reach through one hunk line", async () => {
+  const dir = initSingleFileDiffRepo();
+  try {
+    const full = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const out = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: 20 },
+    });
+    expect(out.text).toBe("");
+    expect(out.warnings).toEqual([
+      `git.diff: recall budget dropped the whole diff (1 file sections, ${String(full.text.length)} chars)`,
+      `git.diff: truncation_stats=${JSON.stringify({ kept: 0, total: 1, chars: full.text.length, dropped: ["big.txt"], overflow: 0, cut_file: null, whole_drop: true })}`,
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff without max_tokens is byte-identical to today and a huge cap is a no-op", async () => {
+  const dir = initSectionedDiffRepo(["f1.txt", "f2.txt"]);
+  try {
+    const uncapped = await runGitDiff({ cwd: dir, args: { range: "HEAD~1..HEAD" } });
+    const capped = await runGitDiff({
+      cwd: dir,
+      args: { range: "HEAD~1..HEAD", max_tokens: 10_000_000 },
+    });
+    expect(capped.text).toBe(uncapped.text);
+    expect(capped.warnings).toEqual(uncapped.warnings);
+    expect(capped.text).not.toContain("[recall budget:");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.diff rejects a non-positive or non-integer max_tokens", async () => {
+  const dir = initSectionedDiffRepo([]);
+  try {
+    for (const maxTokens of [0, -5, 2.5]) {
+      const out = await runGitDiff({
+        cwd: dir,
+        args: { range: "HEAD~1..HEAD", max_tokens: maxTokens },
+      });
+      expect(out.text).toBe("");
+      expect(out.warnings).toEqual(["git.diff: invalid max_tokens"]);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

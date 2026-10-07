@@ -164,16 +164,41 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+// Source-level git.diff cap, sized off what the trimmer actually leaves: the
+// budget minus the post-trim floor of everything else in the bundle. The
+// generic trimmer (recall.ts compareSizedItems) shrinks ts-carrying git.show
+// commits first — each collapses to sha+subject+ts+truncation-marker, about
+// ceil((176 + subject chars) / 4) tokens, and subjects are never trimmed — while
+// no-ts strings like git.diff can only be dropped whole. The per-commit reserve
+// of 100 tokens covers subjects up to ~224 chars (this repo's history: median
+// 73, p99 137, max 216); a 60-token reserve let 20 commits with ordinary
+// 70-80 char subjects push a near-cap diff over budget so the trimmer dropped it
+// to empty_review_target. The file.contents stub for an unset content_path adds
+// ~15 tokens. A diff that can never fit gets section-capped instead of emptied.
+const GIT_SHOW_POST_TRIM_TOKENS_PER_COMMIT = 100;
+const GIT_DIFF_RECALL_MAX_TOKENS = 24000 - 20 * GIT_SHOW_POST_TRIM_TOKENS_PER_COMMIT - 15;
+
 const spec: WorkflowSpec = {
   name: "adversarial-review",
   description:
     "Fan out a code review across N reviewer personas with distinct biases; synthesize findings.",
   triggers: [{ kind: "manual" }, { kind: "slash", command: "adversarial-review" }],
   recall: [
-    { source: "git.diff", args: { range: "{{args.base_ref}}...{{args.target_ref}}" } },
+    {
+      source: "git.diff",
+      args: {
+        range: "{{args.base_ref}}...{{args.target_ref}}",
+        max_tokens: GIT_DIFF_RECALL_MAX_TOKENS,
+      },
+      // Content mode takes the file body as the review target; the refs diff
+      // and commit list render into nothing (renderPersonaPrompt drops them)
+      // and would only consume budget the body needs.
+      skip_if_arg: "content_path",
+    },
     {
       source: "git.show",
       args: { range: "{{args.base_ref}}..{{args.target_ref}}", max_commits: 20 },
+      skip_if_arg: "content_path",
     },
     {
       source: "file.contents",
@@ -386,6 +411,39 @@ function fileContentsError(recall: RecallBundle): string | null {
   if (!fileContents || typeof fileContents !== "object" || Array.isArray(fileContents)) return null;
   const error = (fileContents as Record<string, unknown>).error;
   return typeof error === "string" && error.length > 0 ? error : null;
+}
+
+function parseDiffDroppedFiles(warning: string | undefined): string[] {
+  const match = /; dropped \d+: (.+)$/.exec(warning ?? "");
+  if (match === null) return [];
+  return (match[1] ?? "")
+    .split(", ")
+    .filter((name) => name.length > 0 && !/^\(\+\d+ more\)$/.test(name));
+}
+
+// The git.diff cap emits a machine-readable `git.diff: truncation_stats={json}`
+// line next to the prose warning; the JSON is the contract (paths may contain
+// ", ", and the prose dropped list is capped with a glued "(+N more)" suffix).
+type DiffTruncationStats = {
+  kept?: number;
+  total?: number;
+  chars?: number;
+  dropped?: unknown[];
+  overflow?: number;
+  cut_file?: unknown;
+  whole_drop?: boolean;
+};
+
+function parseDiffTruncationStats(warnings: string[]): DiffTruncationStats | null {
+  const line = warnings.find((w) => w.startsWith("git.diff: truncation_stats="));
+  if (line === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(line.slice("git.diff: truncation_stats=".length));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 const RECALL_TRUNCATION_ONLY_RE = /^… \[recall budget: body truncated to \d+ of \d+ chars\]$/;
@@ -838,6 +896,41 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     (w) =>
       /^(?:git\.diff|git\.show|file\.contents):/.test(w) || w.startsWith("recall budget exceeded"),
   );
+  // A capped git.diff means reviewers saw only part of the change. Content
+  // mode is exempt: the content_path body is the authoritative target and the
+  // incidental refs diff being capped says nothing about review coverage.
+  const diffBudgetWarning = recallErrs.find((w) => w.startsWith("git.diff: recall budget"));
+  const diffStats = parseDiffTruncationStats(recallErrs);
+  const reviewIsContentMode = hasContentPath && contentText.trim().length > 0;
+  const diffTruncated = diffBudgetWarning !== undefined && !reviewIsContentMode;
+  const statsDropped = Array.isArray(diffStats?.dropped)
+    ? diffStats.dropped.filter((n): n is string => typeof n === "string" && n.length > 0)
+    : null;
+  const diffDroppedFiles = diffTruncated
+    ? (statsDropped ?? parseDiffDroppedFiles(diffBudgetWarning))
+    : [];
+  const diffDroppedMore =
+    diffTruncated &&
+    (diffStats !== null
+      ? typeof diffStats.overflow === "number" && diffStats.overflow > 0
+      : /\(\+\d+ more\)$/.test(diffBudgetWarning ?? ""));
+  const partialDiffBanner =
+    diffTruncated && diffBudgetWarning !== undefined
+      ? `> Partial diff: ${diffBudgetWarning}\n\n`
+      : "";
+  const recallMeta = {
+    ...(recallErrs.length > 0 ? { recall_warnings: recallErrs } : {}),
+    ...(diffTruncated
+      ? {
+          diff_truncated: true,
+          diff_dropped_files: diffDroppedFiles,
+          diff_dropped_more: diffDroppedMore,
+          ...(typeof diffStats?.cut_file === "string" && diffStats.cut_file.length > 0
+            ? { diff_cut_file: diffStats.cut_file }
+            : {}),
+        }
+      : {}),
+  };
   if (hasContentPath && contentText.trim().length === 0) {
     const fileError = fileContentsError(recall);
     const hint = contentIsBinary
@@ -861,9 +954,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
   if (diffText.trim().length === 0 && contentText.trim().length === 0) {
     const budgetTrimmed = recall.warnings.some((w) => w.startsWith("recall budget exceeded"));
-    const hint = budgetTrimmed
-      ? "The recall budget trim dropped every review input; raise the workflow's recall_budget_tokens or narrow the diff range / content_path."
-      : "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.";
+    const hint =
+      diffStats?.whole_drop === true
+        ? `The git.diff max_tokens cap dropped the whole diff (${String(diffStats.total ?? "?")} file sections, ${String(diffStats.chars ?? "?")} chars) — the diff is too large for the configured cap, not unresolvable refs. Narrow the diff range, pass a smaller target, or use content_path on a file containing the change.`
+        : budgetTrimmed
+          ? "The recall budget trim dropped every review input; raise the workflow's recall_budget_tokens or narrow the diff range / content_path."
+          : "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.";
     return {
       ok: false,
       outcome: "failed",
@@ -882,6 +978,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_personas_configured",
       hint: "add workloads.review_adversarial.eligible_agents to ~/.config/penumbra/routing.yaml",
+      ...recallMeta,
     };
   }
   if (!personaResolution.ok) {
@@ -891,6 +988,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       missing_persona: personaResolution.missing_persona,
       workload: personaResolution.workload,
       hint: personaResolution.hint,
+      ...recallMeta,
     };
   }
   const personasByKey = personaResolution.personas;
@@ -901,6 +999,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_synthesizer_configured",
       hint: "add workloads.review_adversarial.synthesizer to ~/.config/penumbra/routing.yaml",
+      ...recallMeta,
     };
   }
 
@@ -915,6 +1014,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       error: "unknown_personas",
       missing_personas: missing,
       hint: `available personas: ${personaKeys.join(", ")}`,
+      ...recallMeta,
     };
   }
   const selected = resolvedPersonas.resolved.map((key) => personasByKey[key]!).filter(Boolean);
@@ -923,6 +1023,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_personas_selected",
       hint: `available personas: ${personaKeys.join(", ")}`,
+      ...recallMeta,
     };
   }
   // tool_free:true — adversarial-review synthesizer dispatch is pure text
@@ -939,6 +1040,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: "out_dir_outside_allowed_roots",
+      ...recallMeta,
     };
   }
   const absoluteOutDir = outDirResolution.path;
@@ -1128,6 +1230,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       reviewResult = {
         ok: false,
         ...severityMetrics,
+        ...recallMeta,
         out_dir: absoluteOutDir,
         personas: personaResults.map((result) => ({
           name: result.persona,
@@ -1296,7 +1399,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       });
       await ctx.fileWrite(
         synthesisPath,
-        synthRetryBanner +
+        partialDiffBanner +
+          synthRetryBanner +
           synthFailoverBanner +
           partialBanner +
           renderSynthesisBody(synthWait, frontmatter),
@@ -1325,7 +1429,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         : "";
       await ctx.fileWrite(
         synthesisPath,
-        synthRetryBanner +
+        partialDiffBanner +
+          synthRetryBanner +
           synthFailoverBanner +
           partialBanner +
           frontmatter +
@@ -1340,6 +1445,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: finalOutcome !== "failed" && synthStatus === "completed",
       outcome: finalOutcome,
       ...severityMetrics,
+      ...recallMeta,
       ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
       failed_personas: failedPersonas,
       completed_personas: personaResults

@@ -424,6 +424,186 @@ describe("adversarial-review workflow", () => {
     }
   });
 
+  test("caps git.diff at the source just above the trimmer's post-trim floor", () => {
+    const gitDiff = workflowSpec.recall.find((entry) => entry.source === "git.diff");
+    // The generic trimmer shrinks ts-carrying git.show commits to
+    // sha+subject+marker before touching the no-ts diff; the cap reserves 100
+    // tokens per commit (subjects up to ~224 chars are never trimmed) plus the
+    // ~15-token file.contents stub, not git.show's untrimmed worst case.
+    expect(gitDiff?.args?.max_tokens).toBe(24000 - 20 * 100 - 15);
+  });
+
+  test("marks an over-cap git.diff as truncated, names dropped files, and banners the synthesis", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-truncated-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `conversation-${input.agent}`,
+          handoff_id: `handoff-${input.agent}`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "conversation-synth") {
+            return {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"low","category":"style","file":"a.ts","line":1,"title":"nit","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const budgetWarning =
+        "git.diff: recall budget kept 1 of 3 file sections (240 of 70000 chars); dropped 2: b.ts, c.ts";
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff":
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n… [recall budget: diff truncated to 1 of 3 file sections; dropped: b.ts, c.ts]",
+          "git.show": [],
+        },
+        warnings: [budgetWarning],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        diff_dropped_files?: string[];
+        recall_warnings?: string[];
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBe(true);
+      expect(result.diff_dropped_files).toEqual(["b.ts", "c.ts"]);
+      expect(result.recall_warnings).toContain(budgetWarning);
+      const synthesis = [...writes.entries()].find(([path]) => path.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toBeDefined();
+      expect(synthesis).toContain(`> Partial diff: ${budgetWarning}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("content-mode review does not mark a capped incidental git.diff as truncated", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-content-trunc-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "doc.md",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `conversation-${input.agent}`,
+          handoff_id: `handoff-${input.agent}`,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "conversation-synth") {
+            return {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"low","category":"style","file":"doc.md","line":1,"title":"nit","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff":
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n… [recall budget: diff truncated to 1 of 3 file sections; dropped: b.ts, c.ts]",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "doc.md"),
+            body: "Document under review. It proposes a direction worth critiquing.",
+            truncated: false,
+            byte_size: 66,
+          },
+        },
+        warnings: [
+          "git.diff: recall budget kept 1 of 3 file sections (240 of 70000 chars); dropped 2: b.ts, c.ts",
+        ],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        diff_dropped_files?: string[];
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.diff_dropped_files).toBeUndefined();
+      const synthesis = [...writes.entries()].find(([path]) => path.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toBeDefined();
+      expect(synthesis).not.toContain("> Partial diff:");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("reports failure when personas complete but synthesizer dispatch throws", async () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-review-workflow-"));
     try {

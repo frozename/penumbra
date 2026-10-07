@@ -7,7 +7,13 @@ const execFile = promisify(execFileCb);
 
 export type GitSourceInput = {
   cwd: string;
-  args: { range?: string; since?: string; format?: string; pathspec?: string };
+  args: {
+    range?: string;
+    since?: string;
+    format?: string;
+    pathspec?: string;
+    max_tokens?: number;
+  };
 };
 
 export type GitSourceOutput = { text: string; warnings: string[] };
@@ -144,6 +150,209 @@ function splitGitDiffSections(diff: string): string[] {
   }
   if (current.length > 0) sections.push(current.join("\n"));
   return sections;
+}
+
+const DIFF_TRUNCATED_NAME_LIMIT = 20;
+
+// Same raw estimate recall.ts computeSizes uses for strings (ceil(len * 0.25));
+// kept local to avoid a recall.ts <-> recall-sources/git.ts import cycle.
+function estTokens(s: string): number {
+  return Math.ceil(s.length * 0.25);
+}
+
+function isValidMaxTokens(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function diffSectionDisplayName(section: string): string {
+  const firstLine = section.split("\n", 1)[0] ?? "";
+  if (!firstLine.startsWith("diff --git ")) return firstLine;
+  const rest = firstLine.slice("diff --git ".length);
+  const match = /^a\/(.+) b\/(.+)$/.exec(rest);
+  const [, oldPath, newPath] = match ?? [];
+  return oldPath !== undefined && oldPath === newPath ? oldPath : rest;
+}
+
+function formatDroppedNames(droppedNames: string[]): string {
+  const shown = droppedNames.slice(0, DIFF_TRUNCATED_NAME_LIMIT);
+  const overflow = droppedNames.length - shown.length;
+  return shown.join(", ") + (overflow > 0 ? ` (+${String(overflow)} more)` : "");
+}
+
+function buildDiffTruncationMarker(kept: number, total: number, droppedNames: string[]): string {
+  return `… [recall budget: diff truncated to ${String(kept)} of ${String(total)} file sections; dropped: ${formatDroppedNames(droppedNames)}]`;
+}
+
+// Longest the truncation marker can get for this section set: every counter at
+// its widest digit width and the 20 longest section names standing in for the
+// dropped list, so first-fit can reserve marker room before knowing what drops.
+function diffTruncationMarkerBound(sectionNames: string[], total: number): number {
+  const width = String(total).length;
+  const longest = [...sectionNames]
+    .sort((a, b) => b.length - a.length)
+    .slice(0, DIFF_TRUNCATED_NAME_LIMIT);
+  const overflow = total > DIFF_TRUNCATED_NAME_LIMIT ? ` (+${"9".repeat(width)} more)` : "";
+  return `… [recall budget: diff truncated to ${"9".repeat(width)} of ${String(total)} file sections; dropped: ${longest.join(", ")}${overflow}]`
+    .length;
+}
+
+function headAtLineBoundary(body: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  const prefix = body.slice(0, maxChars);
+  const lastNewline = prefix.lastIndexOf("\n");
+  if (lastNewline > 0) return prefix.slice(0, lastNewline);
+  return maxChars >= body.length ? prefix : "";
+}
+
+function reachesThroughFirstHunk(head: string): boolean {
+  const lines = head.split("\n");
+  const hunkIndex = lines.findIndex((line) => line.startsWith("@@"));
+  if (hunkIndex === -1) return false;
+  return lines.slice(hunkIndex + 1).some((line) => /^[ +\-\\]/.test(line));
+}
+
+function appendTruncationMarker(body: string, marker: string): string {
+  return body.endsWith("\n") ? body + marker : `${body}\n${marker}`;
+}
+
+function keptSectionsWarning(
+  kept: number,
+  total: number,
+  resultChars: number,
+  originalChars: number,
+  droppedNames: string[],
+): string {
+  const base = `git.diff: recall budget kept ${String(kept)} of ${String(total)} file sections (${String(resultChars)} of ${String(originalChars)} chars)`;
+  return droppedNames.length > 0
+    ? `${base}; dropped ${String(droppedNames.length)}: ${formatDroppedNames(droppedNames)}`
+    : base;
+}
+
+// The prose warning is display text — paths containing ", " or a dropped list
+// over DIFF_TRUNCATED_NAME_LIMIT cannot be split back out of a sentence. The
+// stats line is the machine-readable contract consumers parse instead.
+export type DiffCapStats = {
+  kept: number;
+  total: number;
+  chars: number;
+  dropped: string[];
+  overflow: number;
+  cut_file: string | null;
+  whole_drop: boolean;
+};
+
+function capStatsWarning(stats: DiffCapStats): string {
+  return `git.diff: truncation_stats=${JSON.stringify(stats)}`;
+}
+
+function diffCapStats(opts: {
+  kept: number;
+  total: number;
+  chars: number;
+  dropped: string[];
+  cutFile?: string | null;
+  wholeDrop?: boolean;
+}): DiffCapStats {
+  const shown = opts.dropped.slice(0, DIFF_TRUNCATED_NAME_LIMIT);
+  return {
+    kept: opts.kept,
+    total: opts.total,
+    chars: opts.chars,
+    dropped: shown,
+    overflow: opts.dropped.length - shown.length,
+    cut_file: opts.cutFile ?? null,
+    whole_drop: opts.wholeDrop === true,
+  };
+}
+
+// Opt-in cap: without args.max_tokens the rendered diff is returned untouched.
+// With it, whole `diff --git` sections are kept first-fit in original order so
+// a large mid-diff file cannot blank everything behind it; when no whole
+// section fits, the first section is cut at a line boundary that still shows a
+// hunk, and failing that the diff returns empty (never a marker-only body).
+function capGitDiffToTokenBudget(text: string, maxTokens: number, warnings: string[]): string {
+  if (estTokens(text) <= maxTokens) return text;
+  const maxChars = maxTokens * 4;
+  const sections = splitGitDiffSections(text);
+  const names = sections.map(diffSectionDisplayName);
+  const keptBudget = maxChars - 1 - diffTruncationMarkerBound(names, sections.length);
+
+  const kept: string[] = [];
+  const keptIndexes = new Set<number>();
+  let used = 0;
+  for (const [index, section] of sections.entries()) {
+    const cost = section.length + (kept.length > 0 ? 1 : 0);
+    if (used + cost <= keptBudget) {
+      kept.push(section);
+      keptIndexes.add(index);
+      used += cost;
+    }
+  }
+
+  if (kept.length > 0) {
+    const droppedNames = names.filter((_, index) => !keptIndexes.has(index));
+    const result = appendTruncationMarker(
+      kept.join("\n"),
+      buildDiffTruncationMarker(kept.length, sections.length, droppedNames),
+    );
+    warnings.push(
+      keptSectionsWarning(kept.length, sections.length, result.length, text.length, droppedNames),
+    );
+    warnings.push(
+      capStatsWarning(
+        diffCapStats({
+          kept: kept.length,
+          total: sections.length,
+          chars: text.length,
+          dropped: droppedNames,
+        }),
+      ),
+    );
+    return result;
+  }
+
+  const first = sections[0];
+  if (first !== undefined) {
+    const cutMarkerBound =
+      `… [recall budget: ${names[0] ?? ""} cut to ${"9".repeat(String(first.length).length)} of ${String(first.length)} chars]`
+        .length;
+    const head = headAtLineBoundary(first, maxChars - 1 - cutMarkerBound);
+    if (reachesThroughFirstHunk(head)) {
+      const marker = `… [recall budget: ${names[0] ?? ""} cut to ${String(head.length)} of ${String(first.length)} chars]`;
+      const result = appendTruncationMarker(head, marker);
+      warnings.push(
+        keptSectionsWarning(0, sections.length, result.length, text.length, names.slice(1)),
+      );
+      warnings.push(
+        capStatsWarning(
+          diffCapStats({
+            kept: 0,
+            total: sections.length,
+            chars: text.length,
+            dropped: names.slice(1),
+            cutFile: names[0] ?? null,
+          }),
+        ),
+      );
+      return result;
+    }
+  }
+
+  warnings.push(
+    `git.diff: recall budget dropped the whole diff (${String(sections.length)} file sections, ${String(text.length)} chars)`,
+  );
+  warnings.push(
+    capStatsWarning(
+      diffCapStats({
+        kept: 0,
+        total: sections.length,
+        chars: text.length,
+        dropped: names,
+        wholeDrop: true,
+      }),
+    ),
+  );
+  return "";
 }
 
 type RawDiffEntry = {
@@ -515,6 +724,9 @@ export async function runGitDiff(
   if (hasInvalidGitInput(args)) {
     return { text: "", warnings: ["git.diff: invalid ref"] };
   }
+  if (args.max_tokens !== undefined && !isValidMaxTokens(args.max_tokens)) {
+    return { text: "", warnings: ["git.diff: invalid max_tokens"] };
+  }
   const gitArgs = ["-C", cwd, "diff"];
   if (args.range) gitArgs.push(args.range);
   try {
@@ -555,7 +767,13 @@ export async function runGitDiff(
     });
     const { text, escaped } = escapeNulChars(sections.join("\n"));
     if (escaped > 0) warnings.push(`git.diff: ${String(escaped)} NUL bytes escaped`);
-    return { text, warnings };
+    return {
+      text:
+        args.max_tokens === undefined
+          ? text
+          : capGitDiffToTokenBudget(text, args.max_tokens, warnings),
+      warnings,
+    };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { text: "", warnings: [`git.diff: ${msg}`] };
