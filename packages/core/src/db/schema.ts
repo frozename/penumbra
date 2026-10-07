@@ -87,6 +87,15 @@ const SCHEMA_DDL_BLOCK_01 = `
         )
         WHERE event_type = 'workflow.outcome';
 
+      -- aggregateHandoffUsage sums per-handoff usage-update deltas; the CASE
+      -- expression must match the query verbatim for SQLite to seek this
+      -- index instead of scanning every usage-update row via t0_by_type_ts.
+      CREATE INDEX IF NOT EXISTS t0_events_usage_update_handoff
+        ON t0_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.handoff_id') END
+        )
+        WHERE event_type = 'usage-update';
+
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,
         project_id              TEXT,
@@ -395,6 +404,9 @@ const SCHEMA_DDL_BLOCK_01 = `
       );
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
+      -- computeStateMetrics' latest-dispatch.end probe reverse-scans this
+      -- partial index instead of sorting the full dispatch_events table.
+      CREATE INDEX IF NOT EXISTS idx_dispatch_events_end_ts  ON dispatch_events(ts) WHERE kind = 'dispatch.end';
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff_kind ON dispatch_events(handoff_id, kind);
 
       CREATE TABLE IF NOT EXISTS session_events (
