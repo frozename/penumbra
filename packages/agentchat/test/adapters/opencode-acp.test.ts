@@ -4,7 +4,7 @@ import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AcpClient, AcpClientOptions } from "@src/adapters/acp-client.js";
+import { AcpClient, type AcpClientOptions } from "@src/adapters/acp-client.js";
 import type { AcpServerHandle, StartAcpServerOptions } from "@src/adapters/acp-server.js";
 import type {
   AcpCreateSessionRequest,
@@ -16,6 +16,8 @@ import type {
   McpServerStdio,
 } from "@src/adapters/acp-types.js";
 import { OpencodeAcpAdapter } from "@src/adapters/opencode-acp.js";
+import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import { runChatTurn as realRunChatTurn } from "@src/cli/loop.js";
 import type { DispatchInput } from "@src/sdk/adapter.js";
 
 type AcpClientLike = Pick<
@@ -742,7 +744,18 @@ function permissionAskedEvent(overrides: Record<string, unknown> = {}): unknown 
 test("opencode-acp rejects a permission ask by default and answers exactly once", async () => {
   const handle = createServerHandle();
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
-  const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
+  const client = createClient([
+    permissionAskedEvent(),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "answered-once" },
+    },
+    { type: "session.idle" },
+  ]);
   const adapter = new OpencodeAcpAdapter(
     { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
     {
@@ -754,7 +767,7 @@ test("opencode-acp rejects a permission ask by default and answers exactly once"
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "" });
+  expect(out).toEqual({ text: "answered-once" });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(client.replyPermission).toHaveBeenCalledWith(
     "per_abc123",
@@ -776,7 +789,18 @@ test("opencode-acp rejects a permission ask by default and answers exactly once"
 test("opencode-acp falls back to the session-scoped respond route when the request reply route fails", async () => {
   const handle = createServerHandle();
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
-  const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
+  const client = createClient([
+    permissionAskedEvent(),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "fallback-ok" },
+    },
+    { type: "session.idle" },
+  ]);
   client.replyPermission = mock(
     (_requestID: string, _reply: AcpPermissionReply): Promise<void> =>
       Promise.reject(new Error("HTTP 404")),
@@ -810,6 +834,14 @@ test("opencode-acp auto-approves permission kinds in autoApprovePermissions", as
   const client = createClient([
     permissionAskedEvent(),
     permissionAskedEvent({ id: "per_def456", permission: "bash" }),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "mixed" },
+    },
     { type: "session.idle" },
   ]);
   const adapter = new OpencodeAcpAdapter(
@@ -844,6 +876,14 @@ test("opencode-acp rejects a permission kind that is not in autoApprovePermissio
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
   const client = createClient([
     permissionAskedEvent({ id: "per_bash001", permission: "bash" }),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "bash-rejected" },
+    },
     { type: "session.idle" },
   ]);
   const adapter = new OpencodeAcpAdapter(
@@ -861,7 +901,7 @@ test("opencode-acp rejects a permission kind that is not in autoApprovePermissio
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "" });
+  expect(out).toEqual({ text: "bash-rejected" });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(client.replyPermission).toHaveBeenCalledWith(
     "per_bash001",
@@ -930,6 +970,14 @@ test("opencode-acp answers permission.v2.asked via the session permission reply 
         metadata: {},
       },
     },
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "v2-answered" },
+    },
     { type: "session.idle" },
   ]);
   const adapter = new OpencodeAcpAdapter(
@@ -967,6 +1015,14 @@ test("opencode-acp rejects a v2 permission kind that is not in autoApprovePermis
         metadata: {},
       },
     },
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "v2-rejected" },
+    },
     { type: "session.idle" },
   ]);
   const adapter = new OpencodeAcpAdapter(
@@ -984,7 +1040,7 @@ test("opencode-acp rejects a v2 permission kind that is not in autoApprovePermis
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "" });
+  expect(out).toEqual({ text: "v2-rejected" });
   expect(client.replySessionPermission).toHaveBeenCalledTimes(1);
   expect(client.replySessionPermission).toHaveBeenCalledWith(
     "sess-123",
@@ -1093,7 +1149,7 @@ test("opencode-acp does not throw or wedge on a malformed permission event", asy
   ).toHaveLength(2);
 });
 
-test("opencode-acp emits reply_failed telemetry when every reply route fails and still terminates", async () => {
+test("opencode-acp emits reply_failed telemetry when every reply route fails and the empty idle turn fails", async () => {
   const handle = createServerHandle();
   const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
   const client = createClient([permissionAskedEvent(), { type: "session.idle" }]);
@@ -1114,9 +1170,11 @@ test("opencode-acp emits reply_failed telemetry when every reply route fails and
   );
   const { input, events } = createObservedInput([]);
 
-  const out = await adapter.dispatch(input);
+  await expectRejectionMatching(
+    adapter.dispatch(input),
+    "opencode-acp: turn ended idle with empty text after 1 rejected permission ask(s) [doom_loop] (1 reply_failed); opencode halts the turn on a plain permission reject",
+  );
 
-  expect(out).toEqual({ text: "" });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(client.respondPermission).toHaveBeenCalledTimes(1);
   expect(
@@ -1124,6 +1182,370 @@ test("opencode-acp emits reply_failed telemetry when every reply route fails and
       (event) => event.kind === "http.session.permission" && event.meta?.outcome === "reply_failed",
     ),
   ).toBe(true);
+});
+
+test("opencode-acp permission events carry the reply route and the asked patterns", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const textThenIdle = [
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "done" },
+    },
+    { type: "session.idle" },
+  ];
+
+  const replyClient = createClient([permissionAskedEvent(), ...textThenIdle]);
+  const replyAdapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => replyClient),
+    },
+  );
+  const replyObserved = createObservedInput([]);
+  await replyAdapter.dispatch(replyObserved.input);
+  const replyEvent = replyObserved.events.find((e) => e.kind === "http.session.permission");
+  expect(replyEvent?.meta).toMatchObject({
+    outcome: "answered",
+    route: "reply",
+    patterns: ["read"],
+  });
+
+  const respondClient = createClient([permissionAskedEvent(), ...textThenIdle]);
+  respondClient.replyPermission = mock(
+    (_requestID: string, _reply: AcpPermissionReply): Promise<void> =>
+      Promise.reject(new Error("HTTP 404")),
+  );
+  const respondAdapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => respondClient),
+    },
+  );
+  const respondObserved = createObservedInput([]);
+  await respondAdapter.dispatch(respondObserved.input);
+  const respondEvent = respondObserved.events.find((e) => e.kind === "http.session.permission");
+  expect(respondEvent?.meta).toMatchObject({
+    outcome: "answered",
+    route: "respond",
+    patterns: ["read"],
+  });
+
+  const v2Client = createClient([
+    {
+      type: "permission.v2.asked",
+      properties: {
+        id: "per_v2_meta",
+        sessionID: "sess-123",
+        action: "edit",
+        resources: ["src/**", "docs/*.md"],
+        save: [],
+        metadata: {},
+      },
+    },
+    ...textThenIdle,
+  ]);
+  const v2Adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => v2Client),
+    },
+  );
+  const v2Observed = createObservedInput([]);
+  await v2Adapter.dispatch(v2Observed.input);
+  const v2Event = v2Observed.events.find((e) => e.kind === "http.session.permission");
+  expect(v2Event?.meta).toMatchObject({
+    outcome: "answered",
+    route: "v2",
+    patterns: ["src/**", "docs/*.md"],
+  });
+});
+
+test("opencode-acp truncates oversized permission patterns inside the meta_json cap", async () => {
+  const handle = createServerHandle();
+  const startServer = mock((_opts: StartAcpServerOptions) => Promise.resolve(handle));
+  const hugePatterns = [
+    "g".repeat(10_000),
+    ...Array.from({ length: 300 }, (_, i) => `src/${"x".repeat(80)}-${String(i)}`),
+  ];
+  const client = createClient([
+    permissionAskedEvent({ patterns: hugePatterns }),
+    {
+      type: "message.part.updated",
+      properties: { part: { id: "p-1", type: "text" } },
+    },
+    {
+      type: "message.part.delta",
+      properties: { partID: "p-1", field: "text", delta: "done" },
+    },
+    { type: "session.idle" },
+  ]);
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp" },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions): AcpClientLike => client),
+    },
+  );
+  const { input, events } = createObservedInput([]);
+
+  await adapter.dispatch(input);
+
+  const permissionEvent = events.find((e) => e.kind === "http.session.permission");
+  const meta = permissionEvent?.meta;
+  expect(meta).toBeDefined();
+  expect(JSON.stringify(meta).length).toBeLessThanOrEqual(4096);
+  expect(meta?.patterns_truncated).toBe(true);
+  const kept = meta?.patterns;
+  expect(Array.isArray(kept)).toBe(true);
+  expect((kept as string[]).length).toBeLessThan(hugePatterns.length);
+  expect((kept as string[]).every((pattern) => pattern.length <= 513)).toBe(true);
+  // An empty list would satisfy every() vacuously: pin that the oversized
+  // first pattern is cut to the per-entry cap rather than dropped.
+  const keptList = kept as string[];
+  expect(keptList.length).toBeGreaterThan(0);
+  expect(keptList[0]?.length).toBe(513);
+  expect(keptList[0]?.endsWith("…")).toBe(true);
+});
+
+function sseBody(events: readonly unknown[]): string {
+  return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function isRejectBody(body: unknown): boolean {
+  if (typeof body !== "string") return false;
+  try {
+    const parsed = JSON.parse(body) as { reply?: unknown; response?: unknown };
+    return parsed.reply === "reject" || parsed.response === "reject";
+  } catch {
+    return false;
+  }
+}
+
+// Emulates opencode 1.18.26's permission surface over the real AcpClient HTTP
+// parsing path: pending asks are tracked per POST /message (each retry gets a
+// fresh turn), and a plain "reject" reply cascades a RejectedError to every
+// sibling pending ask, so their reply routes then 404.
+function installOpencode11826FetchFake(script: { events: unknown[]; askIds: string[] }): {
+  calls: string[];
+  restore: () => void;
+} {
+  const calls: string[] = [];
+  let pending = new Set<string>();
+  const originalFetch = globalThis.fetch;
+
+  const answerAsk = (path: string, pattern: RegExp, body: unknown): Response | null => {
+    const match = pattern.exec(path);
+    if (!match) return null;
+    const id = decodeURIComponent(match[1] ?? "");
+    if (!pending.has(id)) return new Response("not found", { status: 404 });
+    pending.delete(id);
+    if (isRejectBody(body)) pending.clear();
+    return jsonResponse({});
+  };
+
+  const route = (path: string, method: string, body: unknown): Response => {
+    if (method === "POST" && path === "/session") {
+      return jsonResponse({ sessionID: "sess_fake" });
+    }
+    if (method === "GET" && path === "/event") {
+      return new Response(sseBody(script.events), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    if (method === "POST" && path.endsWith("/message")) {
+      pending = new Set(script.askIds);
+      return jsonResponse({});
+    }
+    return (
+      answerAsk(path, /^\/permission\/([^/]+)\/reply$/, body) ??
+      answerAsk(path, /^\/session\/[^/]+\/permissions\/([^/]+)$/, body) ??
+      new Response(`unhandled ${method} ${path}`, { status: 500 })
+    );
+  };
+
+  globalThis.fetch = mock(
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      return Promise.resolve(route(new URL(url).pathname, method, init?.body));
+    },
+  ) as unknown as typeof fetch;
+  return {
+    calls,
+    restore(): void {
+      globalThis.fetch = originalFetch;
+    },
+  };
+}
+
+function createHttpBackedAdapter(): OpencodeAcpAdapter {
+  const handle = createServerHandle();
+  return new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", requestTimeoutMs: 5_000 },
+    {
+      startServer: mock((_opts: StartAcpServerOptions) => Promise.resolve(handle)),
+      createClient: (opts: AcpClientOptions): AcpClientLike => new AcpClient(opts),
+    },
+  );
+}
+
+const cascadeAskScript = {
+  askIds: ["per_abc123", "per_def456"],
+  events: [
+    permissionAskedEvent(),
+    permissionAskedEvent({ id: "per_def456", permission: "edit", patterns: ["src/**"] }),
+    { type: "session.idle" },
+  ],
+};
+
+test("opencode-acp fails an idle empty-text turn after a rejected permission ask (opencode 1.18.26 cascade)", async () => {
+  const fake = installOpencode11826FetchFake(cascadeAskScript);
+  try {
+    const adapter = createHttpBackedAdapter();
+    const { input, events } = createObservedInput([]);
+
+    let caught: unknown;
+    try {
+      await adapter.dispatch(input);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe(
+      "opencode-acp: turn ended idle with empty text after 2 rejected permission ask(s) [doom_loop,edit] (1 reply_failed); opencode halts the turn on a plain permission reject",
+    );
+
+    const permissionEvents = events.filter((e) => e.kind === "http.session.permission");
+    expect(permissionEvents.map((e) => e.meta?.outcome)).toEqual(["answered", "reply_failed"]);
+    expect(permissionEvents.map((e) => e.meta?.permission)).toEqual(["doom_loop", "edit"]);
+    const failedReason = permissionEvents[1]?.meta?.reason;
+    expect(typeof failedReason === "string" && failedReason.includes("HTTP 404")).toBe(true);
+    // reply_failed reports the last route attempted, which says which route 404'd.
+    expect(permissionEvents.map((e) => e.meta?.route)).toEqual(["reply", "respond"]);
+
+    expect(fake.calls).toContain("POST http://127.0.0.1:4312/permission/per_def456/reply");
+    expect(fake.calls).toContain(
+      "POST http://127.0.0.1:4312/session/sess-123/permissions/per_def456",
+    );
+  } finally {
+    fake.restore();
+  }
+});
+
+test("opencode-acp keeps a rejected-ask turn alive when real text arrives before idle", async () => {
+  const fake = installOpencode11826FetchFake({
+    askIds: cascadeAskScript.askIds,
+    events: [
+      permissionAskedEvent(),
+      permissionAskedEvent({ id: "per_def456", permission: "edit", patterns: ["src/**"] }),
+      {
+        type: "message.part.updated",
+        properties: { part: { id: "p-1", type: "text" } },
+      },
+      {
+        type: "message.part.delta",
+        properties: { partID: "p-1", field: "text", delta: "verdict" },
+      },
+      { type: "session.idle" },
+    ],
+  });
+  try {
+    const { input, events } = createObservedInput([]);
+    const out = await createHttpBackedAdapter().dispatch(input);
+    expect(out).toEqual({ text: "verdict" });
+    const permissionEvents = events.filter((e) => e.kind === "http.session.permission");
+    expect(permissionEvents.map((e) => e.meta?.outcome)).toEqual(["answered", "reply_failed"]);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("opencode-acp still resolves an empty idle turn that saw no rejected permission asks", async () => {
+  const fake = installOpencode11826FetchFake({
+    askIds: [],
+    events: [{ type: "session.idle" }],
+  });
+  try {
+    const out = await createHttpBackedAdapter().dispatch(createInput());
+    expect(out).toEqual({ text: "" });
+  } finally {
+    fake.restore();
+  }
+});
+
+test("opencode-acp reject-idle-empty turn exhausts retries and fails the handoff via markFailed", async () => {
+  const fake = installOpencode11826FetchFake(cascadeAskScript);
+  try {
+    const adapter = createHttpBackedAdapter();
+    const markFailed = mock(
+      (_id: string, _reason: string): Promise<{ handoff_id: string; status: string }> =>
+        Promise.resolve({ handoff_id: "h-reject", status: "failed" }),
+    );
+    const delay = mock((_ms: number): Promise<void> => Promise.resolve());
+
+    const res = await dispatchHandoff({
+      handoff: {
+        handoff_id: "h-reject",
+        from_agent: "user",
+        to_agent: "reviewer",
+        message: "review this",
+      },
+      config: {
+        agents: [
+          {
+            name: "reviewer",
+            adapter: "opencode-acp",
+            options: { model: "deepseek-v4" },
+            roles: [],
+            auto_approve_to: [],
+          },
+        ],
+        default_roles: {},
+      },
+      conversation: { id: "conv-reject", project_id: null },
+      transcript: [],
+      transcriptBudget: 1000,
+      hopsSoFar: 0,
+      maxHops: 5,
+      trustMode: "all",
+      observe: () => Promise.resolve({ event_id: "e" }),
+      createHandoff: mock(),
+      approve: mock(),
+      markFailed,
+      delay,
+      runChatTurn: (input) => realRunChatTurn({ ...input, buildAdapterOverride: () => adapter }),
+    });
+
+    expect(res.terminatedReason).toBe("error");
+    expect(res.cappedHandoffId).toBe("h-reject");
+    expect(markFailed).toHaveBeenCalledTimes(1);
+    const reason: unknown = markFailed.mock.calls[0]?.[1];
+    expect(typeof reason).toBe("string");
+    expect(reason).toMatch(/empty text after .* rejected permission/);
+    const messagePosts = fake.calls.filter(
+      (call) => call.startsWith("POST") && call.endsWith("/message"),
+    );
+    expect(messagePosts).toHaveLength(4);
+  } finally {
+    fake.restore();
+  }
 });
 
 const integrationEnabled =

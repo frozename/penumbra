@@ -14,6 +14,13 @@ import { AcpClient, type AcpClientOptions } from "./acp-client.js";
 import { startAcpServer } from "./acp-server.js";
 import { createDispatchAbortSignal, type DispatchAbortHandle } from "./dispatch-abort.js";
 import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
+import {
+  capAskPatterns,
+  type PermissionAskOutcome,
+  readAskPatterns,
+  readPermissionAsk,
+  throwOnRejectedAskIdleEmpty,
+} from "./opencode-permission.js";
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
 // reliability classifier sees no `http.*` / `acp.*` / `proc.*` events and
@@ -162,6 +169,8 @@ interface OpencodeWireEventProps {
   sessionID?: unknown;
   permission?: unknown;
   action?: unknown;
+  patterns?: unknown;
+  resources?: unknown;
 }
 
 function asWireEvent(evt: unknown): OpencodeWireEvent {
@@ -209,34 +218,6 @@ function truncateReason(reason: string): string {
   return reason.length > 300 ? reason.slice(0, 300) : reason;
 }
 
-interface PermissionAsk {
-  requestID: string;
-  sessionID: string;
-  permission: string;
-}
-
-// `permission.asked` carries the v1 shape {id, sessionID, permission, ...};
-// `permission.v2.asked` carries {id, sessionID, action, ...}. Normalizing here
-// lets one policy answer both — an ask that reads cleanly but cannot be tied
-// to a request id is unanswerable and must not wedge the stream loop.
-function readPermissionAsk(
-  wireType: string,
-  props: OpencodeWireEventProps | undefined,
-  fallbackSessionId: string,
-): PermissionAsk | null {
-  const rawId = props?.id;
-  const rawKind = wireType === "permission.v2.asked" ? props?.action : props?.permission;
-  const rawSession = props?.sessionID;
-  if (typeof rawId !== "string" || rawId.length === 0) return null;
-  if (typeof rawKind !== "string" || rawKind.length === 0) return null;
-  return {
-    requestID: rawId,
-    sessionID:
-      typeof rawSession === "string" && rawSession.length > 0 ? rawSession : fallbackSessionId,
-    permission: rawKind,
-  };
-}
-
 // Every permission ask on the wire gets exactly one reply attempt chain —
 // leaving one unanswered stalls the dispatch until the outer request budget,
 // and the inactivity watchdog cannot rescue it because server.heartbeat keeps
@@ -254,7 +235,7 @@ async function answerPermissionAsk(args: {
   fallbackSessionId: string;
   autoApprove: ReadonlySet<string>;
   adapterKind: string;
-}): Promise<void> {
+}): Promise<PermissionAskOutcome | null> {
   const { input, client, wireType, props, fallbackSessionId, autoApprove, adapterKind } = args;
   const ask = readPermissionAsk(wireType, props, fallbackSessionId);
   if (!ask) {
@@ -263,11 +244,13 @@ async function answerPermissionAsk(args: {
       session_id: fallbackSessionId,
       wire_event: wireType,
       outcome: "unanswerable",
+      patterns: capAskPatterns(readAskPatterns(wireType, props)).list,
     });
-    return;
+    return null;
   }
   const approved = autoApprove.has(ask.permission);
   const reply: AcpPermissionReplyKind = approved ? "always" : "reject";
+  const cappedPatterns = capAskPatterns(ask.patterns);
   const meta: Record<string, unknown> = {
     adapter: adapterKind,
     session_id: ask.sessionID,
@@ -275,9 +258,13 @@ async function answerPermissionAsk(args: {
     permission: ask.permission,
     wire_event: wireType,
     reply,
+    patterns: cappedPatterns.list,
+    ...(cappedPatterns.truncated ? { patterns_truncated: true } : {}),
   };
+  let route: "reply" | "respond" | "v2" = "reply";
   try {
     if (wireType === "permission.v2.asked") {
+      route = "v2";
       await client.replySessionPermission(ask.sessionID, ask.requestID, {
         reply,
         ...(approved ? {} : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
@@ -291,18 +278,21 @@ async function answerPermissionAsk(args: {
             : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
         });
       } catch {
+        route = "respond";
         await client.respondPermission(ask.sessionID, ask.requestID, { response: reply });
       }
     }
   } catch (err) {
     emitLifecycle(input, "http.session.permission", {
       ...meta,
+      route,
       outcome: "reply_failed",
       reason: truncateReason(errorMessage(err)),
     });
-    return;
+    return { permission: ask.permission, reply, replyFailed: true };
   }
-  emitLifecycle(input, "http.session.permission", { ...meta, outcome: "answered" });
+  emitLifecycle(input, "http.session.permission", { ...meta, route, outcome: "answered" });
+  return { permission: ask.permission, reply, replyFailed: false };
 }
 
 function emitDispatchError(
@@ -651,6 +641,7 @@ export class OpencodeAcpAdapter implements Adapter {
     // Stream ends on session.idle (turn complete) or session.error.
     const partTypeById = new Map<string, string>();
     const autoApprovePermissions = new Set(this.opts.autoApprovePermissions ?? []);
+    const rejectedAsks: { permission: string; replyFailed: boolean }[] = [];
     let text = "";
     let sawIdle = false;
     let lastEventType = "none";
@@ -715,7 +706,7 @@ export class OpencodeAcpAdapter implements Adapter {
           }
           case "permission.asked":
           case "permission.v2.asked": {
-            await answerPermissionAsk({
+            const outcome = await answerPermissionAsk({
               input,
               client,
               wireType: evt.type,
@@ -724,6 +715,12 @@ export class OpencodeAcpAdapter implements Adapter {
               autoApprove: autoApprovePermissions,
               adapterKind: this.kind,
             });
+            if (outcome?.reply === "reject") {
+              rejectedAsks.push({
+                permission: outcome.permission,
+                replyFailed: outcome.replyFailed,
+              });
+            }
             break;
           }
           case "session.error": {
@@ -753,6 +750,8 @@ export class OpencodeAcpAdapter implements Adapter {
     if (!sawIdle && text.length === 0) {
       throw new Error(`opencode-acp: stream ended without session.idle after ${lastEventType}`);
     }
+
+    throwOnRejectedAskIdleEmpty(rejectedAsks, text);
 
     yield { type: "done", result: { text } };
   }
