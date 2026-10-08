@@ -1,5 +1,7 @@
 import type { WorkflowCtx } from "@penumbra/workflows";
 
+export const DEFAULT_WAIT_TIMEOUT_MS = 7_200_000;
+
 export type AwaitedChain = Awaited<ReturnType<WorkflowCtx["awaitChain"]>>;
 
 export type CancelOutcome = {
@@ -62,7 +64,9 @@ export async function awaitChainOrCancel(
 ): Promise<AwaitOrCancelOutcome> {
   let wait: AwaitedChain;
   try {
-    wait = await ctx.awaitChain(conversationId, opts);
+    wait = await ctx.awaitChain(conversationId, {
+      timeoutMs: opts?.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+    });
   } catch (error) {
     const cancel = await cancelChainQuietly(ctx, conversationId);
     return { wait: null, error, ...cancel };

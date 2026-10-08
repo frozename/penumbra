@@ -80,6 +80,7 @@ validateSpec({
     'base',
     'defaults',
     'dispatcherModel',
+    'agentType',
     'graderModel',
     'verifierModel',
     'project_id',
@@ -481,13 +482,18 @@ for (let i = 0; i < maxRounds; i++) {
 
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(input.repo !== undefined ? { repo: input.repo } : {}) },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(input.agentType !== undefined ? { agentType: input.agentType } : {}), ...(input.repo !== undefined ? { repo: input.repo } : {}) },
   )
   const r = ((fan && fan.results) || [])[0]
   let dispatchFailure = null
   if (!r) {
     dispatchFailure = 'agent_dropped'
-  } else if (r.reliability_trustworthy !== true) {
+  } else if (![r.conversation_id, r.root_handoff_id || r.handoff_id].some((id) => typeof id === 'string' && id.trim())) {
+    dispatchFailure = 'no_dispatch'
+  } else if (r.status === 'completed' && r.reliability_trustworthy !== true) {
+    // Fanout forces ok=false when its trust gate closes, so a completed chain
+    // that is distrusted or never audited must be named before !r.ok flattens
+    // it into chain_failed.
     dispatchFailure = 'untrustworthy_dispatch'
   } else if (!r.ok) {
     dispatchFailure = 'chain_failed'
@@ -496,8 +502,10 @@ for (let i = 0; i < maxRounds; i++) {
   }
   if (dispatchFailure) {
     const detail = dispatchFailure === 'untrustworthy_dispatch' ? (r.reliability_trustworthy === false ? 'audited and distrusted' : 'never audited') : ''
+    const status = dispatchFailure === 'chain_failed' && r && typeof r.status === 'string' && r.status ? ` status=${r.status}` : ''
+    const summary = r && typeof r.error_summary === 'string' && r.error_summary ? ` error_summary=${r.error_summary}` : ''
     rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r), ci_parity: false })
-    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}; stopping.`)
+    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}; stopping.`)
     break
   }
 

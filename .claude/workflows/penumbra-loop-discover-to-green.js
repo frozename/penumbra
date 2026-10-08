@@ -118,6 +118,7 @@ validateSpec({
     'maxFixRounds',
     'dryRunPlan',
     'dispatcherModel',
+    'agentType',
     'finderModel',
     'plannerModel',
     'graderModel',
@@ -529,7 +530,7 @@ for (let i = 0; i < maxFixRounds; i++) {
 
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, repo: a.repo },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(a.agentType !== undefined ? { agentType: a.agentType } : {}), repo: a.repo },
   );
   const r = ((fan && fan.results) || [])[0];
   if (!r || !r.ok || !r.branch) {

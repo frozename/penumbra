@@ -30,6 +30,23 @@ function context(overrides: Partial<FanoutCtx> = {}): FanoutCtx {
 }
 
 describe("runFanout CC default parity", () => {
+  test("defaults to 120 minutes and preserves task/default timeout overrides", async () => {
+    const timeouts: (number | undefined)[] = [];
+    const ctx = context({
+      awaitChain: async (_id, opts) => {
+        timeouts.push(opts?.timeoutMs);
+        return { status: "completed", final_agent: "worker", response_text: "done" };
+      },
+    });
+    await runFanout(ctx, { defaults: {}, tasks: [{ message: "work" }] });
+    await runFanout(ctx, { defaults: { timeout_ms: 1234 }, tasks: [{ message: "work" }] });
+    await runFanout(ctx, {
+      defaults: { timeout_ms: 1234 },
+      tasks: [{ message: "work", timeout_ms: 5678 }],
+    });
+    expect(timeouts).toEqual([7_200_000, 1234, 5678]);
+  });
+
   test("fills omitted task defaults to match the CC fanout script", async () => {
     const captured: ChainStartRequest[] = [];
     const ctx = context({

@@ -7,7 +7,12 @@ import type {
 import type { WorkflowCtx } from "@penumbra/workflows";
 import type { Database } from "bun:sqlite";
 
-import { awaitChainOrCancel, cancelChainQuietly, type CancelOutcome } from "./await-or-cancel.js";
+import {
+  awaitChainOrCancel,
+  cancelChainQuietly,
+  type CancelOutcome,
+  DEFAULT_WAIT_TIMEOUT_MS,
+} from "./await-or-cancel.js";
 import {
   type FanoutHop,
   type FanoutHopEvidence,
@@ -15,7 +20,6 @@ import {
   unknownFanoutHopEvidence,
 } from "./fanout-hop-evidence.js";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 1_800_000;
 const DEFAULT_RETRY_BACKOFF_MS = 5_000;
 const MAX_WORKER_UNAVAILABLE_RETRIES = 1;
 const WORKER_UNAVAILABLE_CODES = new Set(["no_worker_registered", "worker_heartbeats_stale"]);

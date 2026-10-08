@@ -22,6 +22,21 @@ function makeCtx(opts: {
 }
 
 describe("awaitChainOrCancel", () => {
+  test("omitted timeout uses 120 minutes and explicit budgets remain exact", async () => {
+    const budgets: (number | undefined)[] = [];
+    const { ctx, cancel } = makeCtx({
+      awaitImpl: async (_id, opts) => {
+        budgets.push(opts?.timeoutMs);
+        return { status: "completed", final_agent: "a", response_text: "ok" };
+      },
+    });
+    await awaitChainOrCancel(ctx, "default");
+    await awaitChainOrCancel(ctx, "empty", {});
+    await awaitChainOrCancel(ctx, "explicit", { timeoutMs: 1234 });
+    expect(budgets).toEqual([7_200_000, 7_200_000, 1234]);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   test("cancels a timed-out chain exactly once with its conversation_id", async () => {
     const { ctx, cancel } = makeCtx({
       awaitImpl: () =>

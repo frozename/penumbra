@@ -38,7 +38,7 @@ const WORKTREE_SEGMENT = `${sep}.claude${sep}worktrees${sep}`;
 // `.git`-file setup — has `.git` as a FILE containing a `gitdir:` pointer at its
 // root, while a main checkout has `.git` as a DIRECTORY. Find the nearest enclosing
 // `.git` and fail closed: non-directory or unreadable means linked — skip.
-function isLinkedCheckout(dir: string): boolean {
+export function isLinkedCheckout(dir: string): boolean {
   let current = dir;
   for (;;) {
     try {
