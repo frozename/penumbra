@@ -1141,6 +1141,21 @@ function readPackageJsonManifest(repoRoot: string, relDir: string): FileDependen
 
 export function materializeWorkspaceLinks(worktreeRoot: string): void {
   const rootPackageJson = readPackageJsonManifest(worktreeRoot, "");
+  const rootManifest = rootPackageJson.packageJson as Record<
+    string,
+    Record<string, unknown> | undefined
+  > | null;
+  const declaredPackages = new Set(
+    ["dependencies", "devDependencies", "optionalDependencies"]
+      .flatMap((field) => Object.entries(rootManifest?.[field] ?? {}))
+      .filter(
+        ([name, specifier]) =>
+          name.startsWith("@penumbra/") &&
+          typeof specifier === "string" &&
+          specifier.startsWith("workspace:"),
+      )
+      .map(([name]) => name),
+  );
   const packageLinks: { packageDir: string; packageName: string }[] = [];
 
   for (const pattern of extractWorkspacePatterns(rootPackageJson.packageJson)) {
@@ -1150,12 +1165,11 @@ export function materializeWorkspaceLinks(worktreeRoot: string): void {
 
       const manifest = readPackageJsonManifest(worktreeRoot, relDir);
       const packageName = packageNameForWorktreeLink(manifest.packageJson);
-      if (packageName === null) continue;
+      if (packageName === null || !declaredPackages.has(`@penumbra/${packageName}`)) continue;
       packageLinks.push({ packageDir: path.join(worktreeRoot, relDir), packageName });
     }
   }
 
-  if (packageLinks.length === 0) return;
   const nodeModulesRoot = path.join(worktreeRoot, "node_modules");
   ensureRealDirectory(nodeModulesRoot);
   const scopeDir = path.join(nodeModulesRoot, "@penumbra");

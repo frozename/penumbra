@@ -257,7 +257,11 @@ function ensureRepoFixture(root: string): void {
   mkdirSync(join(root, "packages", "config"), { recursive: true });
   writeFileSync(
     join(root, "package.json"),
-    JSON.stringify({ name: "fixture", workspaces: ["packages/*"] }),
+    JSON.stringify({
+      name: "fixture",
+      workspaces: ["packages/*"],
+      devDependencies: { "@penumbra/core": "workspace:*", "@penumbra/config": "workspace:*" },
+    }),
   );
   writeFileSync(
     join(root, "packages", "core", "package.json"),
