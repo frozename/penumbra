@@ -23,6 +23,13 @@ export interface BootReconcileDeps {
   claimedBefore?: string;
 }
 
+function failureMeta(err: unknown): Record<string, unknown> {
+  return {
+    err,
+    ...(err instanceof PenumbraHttpError ? { status: err.status, code: err.code } : {}),
+  };
+}
+
 export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Promise<void> {
   const sleep =
     deps.sleep ??
@@ -35,7 +42,7 @@ export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Pro
         return;
       } catch (err) {
         if (attempt === 0) {
-          deps.log.info({ err }, "daemon not ready; retrying heartbeat in 2s");
+          deps.log.info(failureMeta(err), "heartbeat call failed; retrying in 2s");
           await sleep(2000);
           continue;
         }
@@ -57,7 +64,7 @@ export async function reconcileOrphansAtWorkerBoot(deps: BootReconcileDeps): Pro
         return;
       } catch (err) {
         if (attempt === 0) {
-          deps.log.info({ err }, "daemon not ready; retrying long-lived orphan reconcile in 2s");
+          deps.log.info(failureMeta(err), "long-lived orphan reconcile failed; retrying in 2s");
           await sleep(2000);
           continue;
         }
@@ -116,11 +123,14 @@ export async function reconcileDispatchOrphansAtWorkerBoot(
         return;
       }
       if (attempt === 0) {
-        deps.log.info({ err }, "daemon not ready; retrying dispatch orphan reconcile in 2s");
+        deps.log.info(failureMeta(err), "dispatch orphan reconcile failed; retrying in 2s");
         await sleep(2000);
         continue;
       }
-      deps.log.warn({ err }, "dispatch orphan reconcile call failed at worker boot; continuing");
+      deps.log.warn(
+        { ...failureMeta(err), event: "boot_dispatch_reconcile_failed", deferred },
+        "dispatch orphan reconcile call failed at worker boot; continuing",
+      );
     }
   }
 }
@@ -130,9 +140,8 @@ function logDispatchReconciled(
   resp: { requeued: number; exhausted: number },
   deferred: boolean,
 ): void {
-  if (!deferred && resp.requeued === 0 && resp.exhausted === 0) return;
   log.info(
-    { ...resp, ...(deferred ? { event: "boot_dispatch_reconcile_resumed" } : {}) },
+    { ...resp, event: deferred ? "boot_dispatch_reconcile_resumed" : "boot_dispatch_reconcile_ok" },
     deferred
       ? "deferred dispatch orphan reconcile ran"
       : "dispatch orphans reconciled at worker boot",

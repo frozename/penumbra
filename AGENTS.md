@@ -224,7 +224,7 @@ After activating anything, prove it with an observation that would fail if the c
 - Log path: `~/.penumbra/workers/<id>.log` under storage root.
 - Reload flow: edit `~/.config/penumbra/workers.yaml`, run `penumbra daemon_reload_config` (or MCP `daemon.reload_config`), inspect `worker_extras`.
 - Probe: `PENUMBRA_WORKER_PROBE_ENABLED=0` disables probes; default is 15s probe interval via `PENUMBRA_WORKER_PROBE_INTERVAL_MS`; 3 misses triggers eviction + orphan requeue.
-- Boot recovery: managed extras get `PENUMBRA_BOOT_RECONCILE=0` so only daemon does all-workers orphan recovery and avoids duplicate reconcile races.
+- Boot recovery: managed extras still get `PENUMBRA_BOOT_RECONCILE=0`. Incarnation-aware recovery for extras remains deferred to F3b after a clean launchd-worker bounce; the daemon does not recover their previous incarnation on restart. Do not wire the supervisor's unbounded recovery callback: it cannot drain terminal outboxes before requeueing.
 - Kill-switch: `PENUMBRA_EXTRA_WORKERS_ENABLED=0` disables the supervisor.
 
 ## Devin CLI as a fleet agent

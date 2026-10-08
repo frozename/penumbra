@@ -478,6 +478,38 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
   });
 });
 
+test("POST /worker/reconcile-orphans resolves recovery attached to services after handler creation", async () => {
+  const services: Services & { orphanHandoffRecovery?: OrphanHandoffRecoveryService } =
+    tempServices();
+  const handler = createDaemonFetchHandler({ services, token: "test-token" });
+  try {
+    const { worker_token } = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "test-token",
+      worker_id: "w-late",
+      fetcher: makeFetcher(handler),
+    });
+    const request = (): Request =>
+      new Request("http://x/worker/reconcile-orphans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${worker_token}` },
+        body: JSON.stringify({ worker_id: "w-late", claimed_before: "2026-10-07T12:00:00.000Z" }),
+      });
+    expect((await handler(request())).status).toBe(503);
+    services.orphanHandoffRecovery = new OrphanHandoffRecoveryService(services, { intervalMs: 0 });
+    const response = await handler(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      requeued: 0,
+      exhausted: 0,
+      requeuedRowIds: [],
+      exhaustedRowIds: [],
+    });
+  } finally {
+    services.db.close();
+  }
+});
+
 // --- Phase 4.2 principal enforcement tests ---
 
 test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token_required", async () => {

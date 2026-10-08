@@ -919,8 +919,9 @@ const ROUTES: Route[] = [
   ),
   staticRoute("POST", "/worker/heartbeat", (req, ctx) => workerHeartbeatRoute(req, ctx.services)),
   staticRoute("POST", "/worker/reconcile-orphans", (req, ctx) => {
-    if (!ctx.orphanHandoffRecovery) return jsonError("recovery_service_unavailable", 503);
-    return workerReconcileOrphansRoute(req, ctx.services, ctx.orphanHandoffRecovery);
+    const recovery = ctx.orphanHandoffRecovery ?? ctx.daemonServices.orphanHandoffRecovery;
+    if (!recovery) return jsonError("recovery_service_unavailable", 503);
+    return workerReconcileOrphansRoute(req, ctx.services, recovery);
   }),
   staticRoute("POST", "/worker/probe-ack", (req, ctx) => {
     if (!ctx.workerHealthProbe) return jsonError("worker_health_probe_unavailable", 503);
@@ -1478,6 +1479,7 @@ interface HttpServerHandle {
 
 function startHttpServer(args: {
   opts: ServeOpts;
+  orphanHandoffRecovery: OrphanHandoffRecoveryService;
   taskEvents: TaskEventBus;
   taskWriter: TaskWriter;
   ghTaskSyncService: GhTaskSyncService;
@@ -1488,6 +1490,7 @@ function startHttpServer(args: {
 }): HttpServerHandle {
   const {
     opts,
+    orphanHandoffRecovery,
     taskEvents,
     taskWriter,
     ghTaskSyncService,
@@ -1500,6 +1503,7 @@ function startHttpServer(args: {
   const fetchHandler = createDaemonFetchHandler({
     services: opts.services,
     token: opts.token,
+    orphanHandoffRecovery,
     taskEvents,
     taskWriter,
     ghTaskSyncService,
@@ -2509,6 +2513,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const dreamingStops = setupDreamingCron(opts.services, runtimeDreamConfig);
   const { server, port } = startHttpServer({
     opts,
+    orphanHandoffRecovery: recovery.orphanHandoffRecovery,
     taskEvents: collaborators.taskEvents,
     taskWriter: collaborators.taskWriter,
     ghTaskSyncService: collaborators.ghTaskSyncService,
