@@ -331,7 +331,7 @@ test("inspection rejects an unavailable branch reflog before accepting an ABA-pr
   }
 });
 
-test("inspection keeps diff and log on the same captured main-to-HEAD range", async () => {
+test("inspection keeps diff and log on the same captured main and HEAD", async () => {
   const harness = createWorktreeInspectionHarness();
   let originalMain: string | undefined;
   let mainRefPath: string | undefined;
@@ -416,7 +416,7 @@ test("expired and mid-call workflow deadlines stop further Git reads", async () 
   }
 });
 
-test("command timeout, output overflow, and Git errors are explicit failures", async () => {
+test("snapshot command timeout, output overflow, and Git errors are explicit failures", async () => {
   const harness = createWorktreeInspectionHarness();
   try {
     const handle = await createInspectionWorktree(harness);
@@ -473,7 +473,7 @@ test("diff and log output are independently bounded with explicit truncation", a
   }
 });
 
-test("subprocess output beyond the hard capture cap fails closed", async () => {
+test("diff beyond the hard capture cap preserves bounded partial output", async () => {
   const harness = createWorktreeInspectionHarness();
   try {
     const handle = await createInspectionWorktree(harness, { commit: false });
@@ -484,7 +484,15 @@ test("subprocess output beyond the hard capture cap fails closed", async () => {
     const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
       expectedProjectId: "project-a",
     });
-    expect(result).toMatchObject({ ok: false, code: "inspection_failed" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.inspection.diff_against_main).toContain("overflow.txt");
+    expect(Buffer.byteLength(result.inspection.diff_against_main)).toBeLessThanOrEqual(10 * 1024);
+    expect(result.inspection.truncation).toEqual({
+      diff_against_main: true,
+      branch_log: false,
+      total: true,
+    });
   } finally {
     harness.cleanup();
   }

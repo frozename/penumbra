@@ -1,6 +1,6 @@
 import { expect, mock, test } from "bun:test";
 
-import type { DaemonClient } from "@src/daemon-client.js";
+import { type DaemonClient, DaemonHttpError } from "@src/daemon-client.js";
 import { chainStartHandler } from "@src/tools/chain-start.js";
 import { worktreeCleanupHandler } from "@src/tools/worktree-cleanup.js";
 import { worktreeInspectHandler } from "@src/tools/worktree-inspect.js";
@@ -52,6 +52,61 @@ test("worktree.inspect tool calls daemon", async () => {
   const handler = worktreeInspectHandler(daemon);
   await handler({ handoff_id: "h1" });
   expect(mocks.inspectWorktree).toHaveBeenCalledWith("h1");
+});
+
+test("worktree.inspect surfaces the daemon inspection error code and message", async () => {
+  const { daemon, mocks } = makeMocks();
+  mocks.inspectWorktree.mockRejectedValue(
+    new DaemonHttpError("daemon /worktrees/h1: HTTP 500", 500, {
+      error: { code: "inspection_failed", message: "x" },
+    }),
+  );
+  const result = await worktreeInspectHandler(daemon)({ handoff_id: "h1" }).catch(
+    (err: unknown) => err,
+  );
+  expect(result).toEqual({
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ error: { code: "inspection_failed", message: "x" } }),
+      },
+    ],
+  });
+});
+
+test("worktree.inspect preserves not_found for 404 errors", async () => {
+  const { daemon, mocks } = makeMocks();
+  mocks.inspectWorktree.mockRejectedValue(new DaemonHttpError("missing worktree", 404));
+  const res = await worktreeInspectHandler(daemon)({ handoff_id: "h1" });
+  expect(res.isError).toBe(true);
+  expect(JSON.parse(res.content[0]?.text ?? "null")).toEqual({
+    error: { code: "not_found", message: "missing worktree" },
+  });
+});
+
+test("worktree.inspect provides structured fallback for an unstructured HTTP error", async () => {
+  const { daemon, mocks } = makeMocks();
+  mocks.inspectWorktree.mockRejectedValue(new DaemonHttpError("HTTP 503", 503, "unavailable"));
+  const result = await worktreeInspectHandler(daemon)({ handoff_id: "h1" }).catch(
+    (err: unknown) => err,
+  );
+  expect(result).toEqual({
+    isError: true,
+    content: [
+      { type: "text", text: JSON.stringify({ error: { code: "unknown", message: "HTTP 503" } }) },
+    ],
+  });
+});
+
+test("worktree.inspect rethrows non-HTTP errors", async () => {
+  const { daemon, mocks } = makeMocks();
+  const error = new Error("transport failed");
+  mocks.inspectWorktree.mockRejectedValue(error);
+  const result = await worktreeInspectHandler(daemon)({ handoff_id: "h1" }).catch(
+    (err: unknown) => err,
+  );
+  expect(result).toBe(error);
 });
 
 test("worktree.cleanup tool calls daemon", async () => {

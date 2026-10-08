@@ -65,7 +65,7 @@ interface ChainsStartBody {
 }
 
 interface ErrorBody {
-  error: { code?: string } | string;
+  error: { code?: string; message?: string } | string;
   hint?: string;
 }
 
@@ -229,7 +229,11 @@ test("worktree.inspect rejects untrusted paths without shell interpretation", as
       );
       expect(res.status).toBe(500);
       const body = await readJson<ErrorBody>(res);
-      expect(typeof body.error === "object" ? body.error.code : body.error).toBe("internal_error");
+      expect(typeof body.error === "object" ? body.error.code : body.error).toBe(
+        "inspection_failed",
+      );
+      if (typeof body.error === "string") throw new Error("expected structured inspection error");
+      expect(body.error.message).toContain("ENOENT");
     }
 
     expect(canaries.every((file) => !existsSync(file))).toBe(true);

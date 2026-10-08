@@ -26,7 +26,7 @@ export async function worktreesInspectRoute(
     );
   }
   if (!result.ok) {
-    return json({ error: { code: "internal_error", message: result.message } }, 500);
+    return json({ error: { code: "inspection_failed", message: result.message } }, 500);
   }
   return json(result.inspection);
 }

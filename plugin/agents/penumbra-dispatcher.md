@@ -61,7 +61,7 @@ wins when both are present. Pass both verbatim when the spec includes them.
    object with a top-level `branch_name` field (and a nested `worktree.branchName` field)
    that reflects the actual git branch in the worktree, plus `branch_log`,
    `diff_against_main`, and `dirty`. If `branch_name` is present and the branch has at
-   least one commit ahead of base (`branch_log` has content or `diff_against_main` is
+   least one commit ahead of base (`branch_log` is
    non-empty) AND the tree is clean (`dirty` is false), treat the dispatch as COMPLETE:
    set `ok=true`, `status="completed_via_inspection"`, report `branch=<branch_name>`
    with the commit, and put "no terminal dispatch.end event; salvaged via worktree

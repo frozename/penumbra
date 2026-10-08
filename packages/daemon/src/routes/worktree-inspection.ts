@@ -208,6 +208,26 @@ export async function inspectWorktreeForHandoff(
     return result.stdout;
   };
 
+  const captureGitOutput = async (
+    args: readonly string[],
+  ): Promise<{ value: string; truncated: boolean }> => {
+    try {
+      return { value: await git(args), truncated: false };
+    } catch (err) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "code" in err &&
+        err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" &&
+        "stdout" in err &&
+        typeof err.stdout === "string"
+      ) {
+        return { value: err.stdout, truncated: true };
+      }
+      throw err;
+    }
+  };
+
   const readSnapshot = async (): Promise<GitSnapshot> => {
     const topLevel = (await git(["rev-parse", "--show-toplevel"])).trim();
     const canonicalTopLevel = await realpath(topLevel);
@@ -237,8 +257,13 @@ export async function inspectWorktreeForHandoff(
       return inspectionFailure("main is not a full Git object id");
     }
     const comparisonRange = `${baseSha}..${before.headSha}`;
-    const diff = await git(["diff", "--no-ext-diff", "--no-textconv", comparisonRange]);
-    const log = await git(["log", "--oneline", comparisonRange]);
+    const diff = await captureGitOutput([
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      `${baseSha}...${before.headSha}`,
+    ]);
+    const log = await captureGitOutput(["log", "--oneline", comparisonRange]);
     const after = await readSnapshot();
     const finalCanonicalPath = await realpath(worktree.path);
     if (snapshotChanged(before, after, canonicalPath, finalCanonicalPath)) {
@@ -256,10 +281,12 @@ export async function inspectWorktreeForHandoff(
       return inspectionFailure("worktree binding changed during inspection");
     }
 
-    const parts = [diff];
+    const parts = [diff.value];
     if (before.status.trim()) parts.push(`\n# git status --short\n${before.status}`);
     const boundedDiff = truncateUtf8(parts.join(""), DIFF_MAX_BYTES);
-    const boundedLog = truncateUtf8(log, LOG_MAX_BYTES);
+    const boundedLog = truncateUtf8(log.value, LOG_MAX_BYTES);
+    const diffTruncated = diff.truncated || boundedDiff.truncated;
+    const logTruncated = log.truncated || boundedLog.truncated;
     return {
       ok: true,
       inspection: {
@@ -270,9 +297,9 @@ export async function inspectWorktreeForHandoff(
         branch_name: before.branchName,
         dirty: before.status.trim().length > 0,
         truncation: {
-          diff_against_main: boundedDiff.truncated,
-          branch_log: boundedLog.truncated,
-          total: boundedDiff.truncated || boundedLog.truncated,
+          diff_against_main: diffTruncated,
+          branch_log: logTruncated,
+          total: diffTruncated || logTruncated,
         },
       },
     };
