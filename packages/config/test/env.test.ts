@@ -206,3 +206,20 @@ describe("isMcpInvocationLogEnabled", () => {
     expect(isMcpInvocationLogEnabled({})).toBe(false);
   });
 });
+
+describe("orphan lane grace registry", () => {
+  for (const [key, fallback] of [
+    ["PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES", 120],
+    ["PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES", 1440],
+  ] as const) {
+    test(`${key} registers a class default and integer override`, () => {
+      expect(parseEnv({})[key]).toBe(fallback);
+      expect(parseEnv({ [key]: "360" })[key]).toBe(360);
+    });
+    test(`${key} preserves settings fallback for invalid values`, () => {
+      for (const raw of ["0", "-1", "1.5", "banana", ""]) {
+        expect(parseEnv({ [key]: raw })[key]).toBe(fallback);
+      }
+    });
+  }
+});

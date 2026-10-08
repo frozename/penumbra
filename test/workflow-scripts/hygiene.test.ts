@@ -454,4 +454,38 @@ describe("land-and-close", () => {
     });
     expect(calls).toBe(3);
   });
+
+  test("STEP 3 names supersede_requires_review_evidence and never invites an override", async () => {
+    const prompts: string[] = [];
+    const agent: AgentFn = async (prompt, opts) => {
+      prompts.push(String(prompt));
+      if (opts.label === "land") return { commit_sha: "abc1234", error: "" };
+      if (opts.label === "verify")
+        return { head: "abc1234", commit_sha: "abc1234", files_changed: 1, verified: true };
+      if (opts.label === "close") return { lane_status: "closed", task_status: "skipped" };
+      return null;
+    };
+
+    const { result } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "msg", repo: "/abs/repo", lane_id: "l1" },
+      agent,
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    const closePrompt = prompts.find((p) => p.includes("STEP 3"));
+    expect(closePrompt).toBeDefined();
+    // A swept lane closed without reviewer evidence returns 400
+    // supersede_requires_review_evidence; the prompt must name it and tell the
+    // close agent to report the ledger row instead of retrying.
+    expect(closePrompt!).toContain("400 supersede_requires_review_evidence");
+    expect(closePrompt!).toContain("do NOT add an override_reason");
+    expect(closePrompt!).toContain("lane_ledger_recent");
+    expect(closePrompt!).toContain("NEVER retry");
+    // NEVER retry must apply to every lane_close error, not only the named ones.
+    expect(closePrompt!).toMatch(/any lane_close error/i);
+    // The close agent authoring its own override_reason could launder a
+    // review_debt sweeper stamp into passed — the prompt must not offer it.
+    expect(closePrompt!).not.toContain("explicit override_reason");
+  });
 });

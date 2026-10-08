@@ -831,6 +831,17 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: "Strict mode for orphan handoff recovery.",
   },
+  PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES: {
+    schema: PosInt.catch(120),
+    default: 120,
+    description: "TRIVIAL orphan lane grace in minutes; invalid values use the settings default.",
+  },
+  PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES: {
+    schema: PosInt.catch(1440),
+    default: 1440,
+    description:
+      "STANDARD/BOUNDARY orphan lane grace in minutes; invalid values use the settings default.",
+  },
   PENUMBRA_PR_ORPHAN_SWEEPER_DRY_RUN: {
     schema: Bool,
     default: false,

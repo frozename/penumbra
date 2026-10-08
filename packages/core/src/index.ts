@@ -34,10 +34,12 @@ export {
   type InsertLaneInput,
   type LaneGateStatus,
   type LaneRow,
+  ORPHAN_SWEEPER_REASON_PREFIX,
   type RecentLaneFilter,
   recentLanes,
   stampAgentPerformanceGateOutcome,
   stampAgentPerformanceGateOutcomeForHandoff,
+  supersedeSweeperClose,
 } from "./db/lane-ledger.js";
 export {
   assertEmbedderDim,

@@ -11,10 +11,13 @@ import {
   getOpenLaneForImplementer,
   insertLane,
   LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
+  type LaneRow,
+  ORPHAN_SWEEPER_REASON_PREFIX,
   RecallRequestSchema,
   type RecallResult,
   recentLanes,
   type Services,
+  supersedeSweeperClose,
   type TaskClass,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -294,6 +297,7 @@ function commitLaneClose(
   services: Services,
   body: CloseLaneBody,
   ts_closed: string,
+  superseding = false,
 ): Response | null {
   try {
     // The close commits atomically inside the transaction; closeLane stamps the
@@ -301,7 +305,8 @@ function commitLaneClose(
     // The live-bus override events publish AFTER the commit — event delivery
     // is not rollbackable and must not fire for a rolled-back close.
     services.db.transaction(() => {
-      closeLaneWithLog(
+      const close = superseding ? supersedeSweeperClose : closeLaneWithLog;
+      close(
         services.db,
         body.lane_id,
         {
@@ -333,6 +338,7 @@ function emitOverrideAuditEvents(
   body: CloseLaneBody,
   ts_closed: string,
   overriddenControls: readonly string[],
+  prior?: LaneRow,
 ): void {
   // Audit events publish after the commit (live-bus delivery is not
   // rollbackable, so it must never fire for a rolled-back close). The close is
@@ -350,6 +356,13 @@ function emitOverrideAuditEvents(
           lane_id: body.lane_id,
           gate_status: body.gate_status,
           override_reason: body.override_reason,
+          ...(control === "sweeper_close_superseded" && prior
+            ? {
+                prior_gate_status: prior.gate_status,
+                prior_ts_closed: prior.ts_closed,
+                prior_override_reason: prior.override_reason,
+              }
+            : {}),
         },
       });
     } catch (err) {
@@ -363,6 +376,49 @@ function emitOverrideAuditEvents(
       );
     }
   }
+}
+
+function isSweeperClosedLane(lane: LaneRow): boolean {
+  return (
+    lane.ts_closed !== null &&
+    (lane.override_reason?.startsWith(ORPHAN_SWEEPER_REASON_PREFIX) ?? false)
+  );
+}
+
+function checkSupersedeEvidence(body: CloseLaneBody, superseding: boolean): Response | null {
+  if (!superseding || (body.gate_status !== "passed" && body.gate_status !== "skipped"))
+    return null;
+  if (body.reviewer_handoff?.trim() || body.override_reason?.trim()) return null;
+  return routeError(
+    "supersede_requires_review_evidence",
+    "supersede requires reviewer_handoff or override_reason",
+  );
+}
+
+function applyLaneCloseChecks(
+  services: Services,
+  lane: LaneRow,
+  body: CloseLaneBody,
+  superseding: boolean,
+): { overrides: string[] } | { error: Response } {
+  const evidenceError = checkSupersedeEvidence(body, superseding);
+  if (evidenceError) return { error: evidenceError };
+  const roundCapResult = applyRoundCountCap(services, lane.implementer_handoff, body);
+  if ("error" in roundCapResult) return roundCapResult;
+  const reviewerResult = applyReviewerHandoffCheck(services, lane.implementer_handoff, body);
+  if ("error" in reviewerResult) return reviewerResult;
+  return { overrides: [...roundCapResult.overrides, ...reviewerResult.overrides] };
+}
+
+function fallbackClosedLane(lane: LaneRow, body: CloseLaneBody, ts_closed: string): LaneRow {
+  return {
+    ...lane,
+    ts_closed,
+    gate_status: body.gate_status,
+    reviewer_handoff: body.reviewer_handoff ?? lane.reviewer_handoff,
+    override_reason: body.override_reason ?? lane.override_reason,
+    metadata_json: body.metadata !== undefined ? JSON.stringify(body.metadata) : lane.metadata_json,
+  };
 }
 
 export async function lanesCloseRoute(req: Request, services: Services): Promise<Response> {
@@ -384,21 +440,19 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   if (!beforeClose) {
     return routeError("unknown_lane", "lane_id does not exist", 404);
   }
-  if (beforeClose.ts_closed !== null) {
+  const superseding = isSweeperClosedLane(beforeClose);
+  if (beforeClose.ts_closed !== null && !superseding) {
     return routeError("lane_already_closed", "lane is already closed", 409);
   }
-  const roundCapResult = applyRoundCountCap(services, beforeClose.implementer_handoff, parsed.data);
-  if ("error" in roundCapResult) return roundCapResult.error;
-  const reviewerResult = applyReviewerHandoffCheck(
-    services,
-    beforeClose.implementer_handoff,
-    parsed.data,
-  );
-  if ("error" in reviewerResult) return reviewerResult.error;
-  const overriddenControls = [...roundCapResult.overrides, ...reviewerResult.overrides];
+  const checks = applyLaneCloseChecks(services, beforeClose, parsed.data, superseding);
+  if ("error" in checks) return checks.error;
+  const overriddenControls = [
+    ...checks.overrides,
+    ...(superseding ? ["sweeper_close_superseded"] : []),
+  ];
 
   const ts_closed = services.clock().toISOString();
-  const commitErr = commitLaneClose(services, parsed.data, ts_closed);
+  const commitErr = commitLaneClose(services, parsed.data, ts_closed, superseding);
   if (commitErr) return commitErr;
 
   emitOverrideAuditEvents(
@@ -407,23 +461,21 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
     parsed.data,
     ts_closed,
     overriddenControls,
+    superseding ? beforeClose : undefined,
   );
 
-  const closedLane = getLane(services.db, parsed.data.lane_id);
-
-  const responseLane = closedLane ?? {
-    ...beforeClose,
-    ts_closed,
-    gate_status: parsed.data.gate_status,
-    reviewer_handoff: parsed.data.reviewer_handoff ?? beforeClose.reviewer_handoff,
-    override_reason: parsed.data.override_reason ?? beforeClose.override_reason,
-    metadata_json:
-      parsed.data.metadata !== undefined
-        ? JSON.stringify(parsed.data.metadata)
-        : beforeClose.metadata_json,
-  };
-
-  return json(responseLane);
+  const closedLane =
+    getLane(services.db, parsed.data.lane_id) ??
+    fallbackClosedLane(beforeClose, parsed.data, ts_closed);
+  if (!superseding) return json(closedLane);
+  return json({
+    ...closedLane,
+    superseded: {
+      gate_status: beforeClose.gate_status,
+      ts_closed: beforeClose.ts_closed,
+      override_reason: beforeClose.override_reason,
+    },
+  });
 }
 
 export function lanesRecentRoute(req: Request, services: Services): Response {

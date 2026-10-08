@@ -6,6 +6,8 @@ import type { LaneCloseMetadata } from "../schemas/lane-close-metadata.js";
 
 import { type TaskClass, TaskClassSchema } from "../schemas/task-class.js";
 
+export const ORPHAN_SWEEPER_REASON_PREFIX = "auto-closed by orphan-lane sweeper:";
+
 export type LaneGateStatus = "open" | "passed" | "failed" | "skipped" | "review_debt";
 export type ClosedLaneGateStatus = Exclude<LaneGateStatus, "open">;
 export const LaneGateStatusSchema = z.enum(["open", "passed", "failed", "skipped", "review_debt"]);
@@ -70,13 +72,15 @@ export type StampGateOutcomeLog = {
   warn?: (obj: Record<string, unknown>, msg: string) => void;
 };
 
+export type GateStampMode = "provisional" | "terminal" | "supersede";
+
 export function stampAgentPerformanceGateOutcomeForHandoff(
   db: Database,
   handoffId: string,
   gate_status: ClosedLaneGateStatus,
   log?: StampGateOutcomeLog,
   lane_id?: string,
-  allowTerminalClose = false,
+  mode: GateStampMode = "provisional",
 ): string | null {
   const current = db
     .query<
@@ -86,11 +90,17 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
     .get(handoffId);
   const suppressesStickyPassed =
     current?.gate_outcome === "passed" &&
-    (allowTerminalClose ? gate_status === "skipped" : gate_status !== "passed");
-  if (suppressesStickyPassed) {
+    (mode !== "provisional" ? gate_status === "skipped" : gate_status !== "passed");
+  const suppressesStickyFailure =
+    (current?.gate_outcome === "failed" &&
+      (gate_status === "passed" || gate_status === "skipped" || gate_status === "review_debt")) ||
+    (current?.gate_outcome === "review_debt" &&
+      mode !== "supersede" &&
+      (gate_status === "passed" || gate_status === "skipped"));
+  if (suppressesStickyPassed || suppressesStickyFailure) {
     log?.warn?.(
       { event: "gate_stamp.suppressed_downgrade", handoff_id: handoffId, lane_id, gate_status },
-      "gate stamp suppressed downgrade of sticky passed",
+      "gate stamp suppressed downgrade of sticky verdict",
     );
   }
   // Capture the UPDATE row count so a zero-row stamp (close fired before the
@@ -101,14 +111,17 @@ export function stampAgentPerformanceGateOutcomeForHandoff(
     `UPDATE agent_performance
      SET gate_outcome = CASE
        WHEN gate_outcome = 'passed' AND ?${
-         allowTerminalClose ? " = 'skipped'" : " != 'passed'"
+         mode !== "provisional" ? " = 'skipped'" : " != 'passed'"
        } THEN gate_outcome
-       WHEN gate_outcome IN ('failed', 'review_debt') AND ? IN ('skipped', 'passed') THEN gate_outcome
+       WHEN gate_outcome IN (${mode === "supersede" ? "'failed'" : "'failed', 'review_debt'"}) AND ? IN ('skipped', 'passed') THEN gate_outcome
+       WHEN gate_outcome = 'failed' AND ? = 'review_debt' THEN gate_outcome
        ELSE ?
      END
      WHERE handoff_id = ?`,
   );
-  const result = stmt.run(gate_status, gate_status, gate_status, handoffId) as { changes: number };
+  const result = stmt.run(gate_status, gate_status, gate_status, gate_status, handoffId) as {
+    changes: number;
+  };
   if (result.changes === 0) {
     log?.warn?.(
       { event: "gate_stamp.no_perf_row", handoff_id: handoffId, lane_id, gate_status },
@@ -129,7 +142,7 @@ export function stampAgentPerformanceGateOutcome(
   lane_id: string,
   gate_status: ClosedLaneGateStatus,
   log?: StampGateOutcomeLog,
-  allowTerminalClose = false,
+  mode: GateStampMode = "provisional",
 ): void {
   const row = db
     .query<
@@ -146,7 +159,7 @@ export function stampAgentPerformanceGateOutcome(
     gate_status,
     log,
     lane_id,
-    allowTerminalClose,
+    mode,
   );
 }
 
@@ -248,7 +261,59 @@ export function closeLane(
     }
     throw new Error(`not found: lane ${lane_id}`);
   }
-  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status, log, true);
+  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status, log, "terminal");
+}
+
+export function supersedeSweeperClose(
+  db: Database,
+  lane_id: string,
+  fields: CloseLaneInput,
+  log?: StampGateOutcomeLog,
+): Pick<LaneRow, "gate_status" | "ts_closed" | "override_reason"> {
+  if (!CLOSED_STATUSES.has(fields.gate_status)) {
+    throw new Error(`invalid lane gate_status: ${fields.gate_status}`);
+  }
+  const prior = getLane(db, lane_id);
+  if (!prior?.ts_closed || !prior.override_reason?.startsWith(ORPHAN_SWEEPER_REASON_PREFIX)) {
+    throw new Error(`conflict: lane ${lane_id} is already closed`);
+  }
+  if (
+    (fields.gate_status === "passed" || fields.gate_status === "skipped") &&
+    !fields.reviewer_handoff?.trim() &&
+    !fields.override_reason?.trim()
+  ) {
+    throw new Error("supersede requires reviewer_handoff or override_reason");
+  }
+  const note = `superseded orphan-lane sweeper close (${prior.gate_status} @ ${prior.ts_closed})`;
+  const reason = fields.override_reason ? `${note}; ${fields.override_reason}` : note;
+  const metadata = {
+    ...fields.metadata,
+    notes: fields.metadata?.notes ? `${note}; ${fields.metadata.notes}` : note,
+  };
+  const result = db
+    .query(
+      `UPDATE lane_ledger
+     SET ts_closed=?, gate_status=?, reviewer_handoff=?, override_reason=?, metadata_json=?
+     WHERE lane_id=? AND ts_closed IS NOT NULL
+       AND substr(override_reason, 1, length(?)) = ?`,
+    )
+    .run(
+      fields.ts_closed,
+      fields.gate_status,
+      fields.reviewer_handoff ?? null,
+      reason,
+      JSON.stringify(metadata),
+      lane_id,
+      ORPHAN_SWEEPER_REASON_PREFIX,
+      ORPHAN_SWEEPER_REASON_PREFIX,
+    );
+  if (result.changes === 0) throw new Error(`conflict: lane ${lane_id} is already closed`);
+  stampAgentPerformanceGateOutcome(db, lane_id, fields.gate_status, log, "supersede");
+  return {
+    gate_status: prior.gate_status,
+    ts_closed: prior.ts_closed,
+    override_reason: prior.override_reason,
+  };
 }
 
 export function getLane(db: Database, lane_id: string): LaneRow | null {
@@ -308,7 +373,7 @@ export function getClosedLaneRoundCountForHandoffLineage(
   implementer_handoff: string,
 ): number {
   const row = db
-    .query<{ count: number }, [string, string]>(
+    .query<{ count: number }, [string, string, string, string]>(
       `WITH target(root_id) AS (
          SELECT COALESCE(root_handoff_id, handoff_id)
          FROM handoffs
@@ -326,9 +391,15 @@ export function getClosedLaneRoundCountForHandoffLineage(
        SELECT COUNT(*) AS count
        FROM lane_ledger
        WHERE ts_closed IS NOT NULL
+         AND substr(COALESCE(override_reason, ''), 1, length(?)) != ?
          AND implementer_handoff IN (SELECT handoff_id FROM lineage_handoffs)`,
     )
-    .get(implementer_handoff, implementer_handoff);
+    .get(
+      implementer_handoff,
+      implementer_handoff,
+      ORPHAN_SWEEPER_REASON_PREFIX,
+      ORPHAN_SWEEPER_REASON_PREFIX,
+    );
   return row?.count ?? 0;
 }
 
