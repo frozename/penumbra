@@ -1544,3 +1544,64 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
   expect(seen.length).toBe(1);
   expect(seen[0].handoff_id).toBe("h-cs");
 });
+
+test("createApproved persists permission_profile inside the INSERT", () => {
+  writer.createApproved({
+    handoff_id: "h-prof-1",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "conv-prof",
+    from: "a",
+    to: "opencode-seat",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: null,
+    resolved_by: "u",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+  });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-1");
+  expect(row?.permission_profile).toBe("review_readonly");
+});
+
+test("createApproved defaults permission_profile to null", () => {
+  createApprovedHandoff("h-prof-null", { to: "seat-a" });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-null");
+  expect(row?.permission_profile).toBeNull();
+});
+
+test("create persists permission_profile on pending rows", () => {
+  writer.create({
+    handoff_id: "h-prof-pending",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "conv-pending",
+    from: "a",
+    to: "devin-seat",
+    to_role: null,
+    message: "m",
+    triggered_by_event_id: "evt-1",
+    permission_profile: "review_readonly",
+  });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-pending");
+  expect(row?.permission_profile).toBe("review_readonly");
+});

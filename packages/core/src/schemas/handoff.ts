@@ -1,3 +1,4 @@
+import { PermissionProfileSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
 import { AgentTaskTypeSchema } from "./agent-performance.js";
@@ -62,6 +63,8 @@ export const HandoffRowSchema = z.object({
   max_dispatch_attempts: z.number().int().positive().default(3),
   last_dispatch_started_at: z.string().nullable().optional(),
   workflow_run_id: z.string().nullable().optional(),
+  permission_profile: PermissionProfileSchema.nullable().optional(),
+  caller_cwd: z.string().nullable().optional(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 
@@ -90,5 +93,7 @@ export const CreateHandoffRequestSchema = z.object({
   parent_handoff_id: z.string().min(1).nullable().optional(),
   branch_base: z.string().min(1).nullable().optional(),
   branch_name: z.string().min(1).optional(),
+  permission_profile: PermissionProfileSchema.nullable().optional(),
+  caller_cwd: z.string().min(1).nullable().optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;

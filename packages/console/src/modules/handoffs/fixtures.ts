@@ -33,6 +33,7 @@ export function makeHandoffRow(overrides: Partial<HandoffRow> = {}): HandoffRow 
     cancel_requested_at: null,
     worker_id: null,
     parent_handoff_id: null,
+    permission_profile: null,
     ...overrides,
   };
 }

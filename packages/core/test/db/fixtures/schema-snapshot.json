@@ -128,6 +128,7 @@
     "handoffs": [
       "branch_base",
       "branch_name",
+      "caller_cwd",
       "cancel_requested_at",
       "chain_max_hops",
       "chain_task_type",
@@ -146,6 +147,7 @@
       "message",
       "open_pr_on_review",
       "parent_handoff_id",
+      "permission_profile",
       "project_id",
       "redirected_to",
       "requested_agent",

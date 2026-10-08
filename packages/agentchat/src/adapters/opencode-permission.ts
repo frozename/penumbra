@@ -1,4 +1,8 @@
-import type { AcpPermissionReplyKind } from "./acp-types.js";
+import type {
+  AcpPermissionReply,
+  AcpPermissionReplyKind,
+  AcpPermissionResponse,
+} from "./acp-types.js";
 
 export interface PermissionAskWireProps {
   id?: unknown;
@@ -83,6 +87,60 @@ export function capAskPatterns(patterns: readonly string[]): {
     jsonSize += entrySize;
   }
   return { list: kept, truncated };
+}
+
+export type AskReplyRoute = "reply" | "respond" | "v2";
+
+export interface PermissionReplyClient {
+  replyPermission(requestID: string, reply: AcpPermissionReply): Promise<void>;
+  respondPermission(
+    sessionID: string,
+    permissionID: string,
+    response: AcpPermissionResponse,
+  ): Promise<void>;
+  replySessionPermission(
+    sessionID: string,
+    requestID: string,
+    reply: AcpPermissionReply,
+  ): Promise<void>;
+}
+
+// v1 asks go to the request-keyed reply route first (it carries a rejection
+// message back to the model) and fall back to the deprecated session-scoped
+// respond route, which is the documented pairing for `permission.asked` and
+// stays mounted on builds where the experimental reply route is absent. The
+// returned route is the LAST route attempted so a failure event says which
+// route rejected.
+export async function sendAskReply(args: {
+  client: PermissionReplyClient;
+  wireType: string;
+  ask: PermissionAsk;
+  reply: AcpPermissionReplyKind;
+  approved: boolean;
+}): Promise<{ route: AskReplyRoute; error?: unknown }> {
+  const { client, wireType, ask, reply, approved } = args;
+  const rejection = approved
+    ? {}
+    : { message: `penumbra: permission '${ask.permission}' auto-rejected` };
+  if (wireType === "permission.v2.asked") {
+    try {
+      await client.replySessionPermission(ask.sessionID, ask.requestID, { reply, ...rejection });
+      return { route: "v2" };
+    } catch (err) {
+      return { route: "v2", error: err };
+    }
+  }
+  try {
+    await client.replyPermission(ask.requestID, { reply, ...rejection });
+    return { route: "reply" };
+  } catch {
+    try {
+      await client.respondPermission(ask.sessionID, ask.requestID, { response: reply });
+      return { route: "respond" };
+    } catch (err) {
+      return { route: "respond", error: err };
+    }
+  }
 }
 
 // opencode halts the turn on a plain permission reject (unless

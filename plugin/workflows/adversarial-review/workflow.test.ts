@@ -465,6 +465,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `conversation-${input.agent}`,
           handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "conversation-synth") {
@@ -549,6 +550,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `conversation-${input.agent}`,
           handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "conversation-synth") {
@@ -641,6 +643,7 @@ describe("adversarial-review workflow", () => {
           return {
             conversation_id: `conversation-${dispatchCount}`,
             handoff_id: `handoff-${dispatchCount}`,
+            permission_profile: input.permission_profile,
           };
         },
         awaitChain: async () => ({
@@ -704,6 +707,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `conversation-${input.agent}`,
           handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "conversation-bad-synth") {
@@ -810,6 +814,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: input.agent,
           handoff_id: input.agent,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "codex") {
@@ -900,6 +905,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: input.agent,
           handoff_id: input.agent,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "codex") {
@@ -980,6 +986,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) =>
           conversationId === "reviewer-agent-conv"
@@ -1049,6 +1056,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async () => ({
           status: "timeout" as const,
@@ -1106,6 +1114,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "reviewer-agent-conv") throw new Error("lost stream");
@@ -1165,6 +1174,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv-${cancelled.length}-${awaits}`,
           handoff_id: `${input.agent}-handoff-${awaits}`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId.startsWith("reviewer-agent")) {
@@ -1241,6 +1251,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "a-agent-conv") {
@@ -1308,6 +1319,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "synth-conv") {
@@ -1341,6 +1353,146 @@ describe("adversarial-review workflow", () => {
       expect(result.synthesizer_status).toBe("timeout");
       expect(result.synthesizer_cancel_requested).toBe(true);
       expect(result.ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("permission_profile dispatch contract", () => {
+  test("dispatches every persona and the synthesizer under review_readonly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-profile-"));
+    try {
+      const dispatched: {
+        agent: string;
+        message: string;
+        permission_profile?: string | null;
+        max_hops?: number;
+      }[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => {
+          dispatched.push(input);
+          return {
+            conversation_id: `${input.agent}-conv`,
+            handoff_id: `${input.agent}-handoff`,
+            permission_profile: input.permission_profile,
+          };
+        },
+        awaitChain: async (conversationId) =>
+          conversationId === "synth-conv"
+            ? {
+                status: "completed" as const,
+                final_agent: "synth",
+                response_text: WELL_FORMED_SYNTHESIS,
+              }
+            : {
+                status: "completed" as const,
+                final_agent: "reviewer-agent",
+                response_text:
+                  'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+              },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as { ok: boolean };
+
+      expect(result.ok).toBe(true);
+      expect(dispatched).toHaveLength(2);
+      for (const d of dispatched) {
+        expect(d.permission_profile).toBe("review_readonly");
+        expect(d.max_hops).toBe(1);
+        expect(d.message).toContain("read-only");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails every persona when chain_start does not echo the profile", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-noecho-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: null,
+        }),
+        awaitChain: async () => ({
+          status: "completed" as const,
+          final_agent: "reviewer-agent",
+          response_text: "unreachable",
+        }),
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as { error?: string };
+
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      const personaJson = [...writes.entries()].find(([path]) => path.endsWith(".json"))?.[1];
+      expect(personaJson).toContain("permission_profile");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

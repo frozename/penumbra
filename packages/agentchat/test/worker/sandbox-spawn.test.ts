@@ -1,9 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { spawnSandboxed, type SpawnSandboxedOpts } from "@src/worker/sandbox-spawn.js";
+import {
+  SandboxUnavailableError,
+  spawnSandboxed,
+  type SpawnSandboxedOpts,
+  wrapSandboxExecArgv,
+} from "@src/worker/sandbox-spawn.js";
 
 let cwd: string;
 
@@ -287,5 +292,74 @@ describe("spawnSandboxed", () => {
     expect(caught instanceof Error ? caught.message : String(caught)).toBe(
       "spawnSandboxed: argv or cmd required",
     );
+  });
+});
+
+describe("wrapSandboxExecArgv", () => {
+  const profile = "(version 1)\n(allow default)\n";
+
+  test("prepends sandbox-exec -p <profile> on darwin", () => {
+    const argv = wrapSandboxExecArgv(["bash", "-c", "echo hi"], profile, {
+      platform: "darwin",
+      exists: () => true,
+    });
+    expect(argv).toEqual(["/usr/bin/sandbox-exec", "-p", profile, "bash", "-c", "echo hi"]);
+  });
+
+  test("fails closed on non-darwin platforms", () => {
+    let caught: unknown;
+    try {
+      wrapSandboxExecArgv(["echo", "hi"], profile, { platform: "linux", exists: () => true });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(SandboxUnavailableError);
+    expect((caught as SandboxUnavailableError).code).toBe("sandbox_unavailable");
+  });
+
+  test("fails closed when sandbox-exec is absent on darwin", () => {
+    let caught: unknown;
+    try {
+      wrapSandboxExecArgv(["echo", "hi"], profile, { platform: "darwin", exists: () => false });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(SandboxUnavailableError);
+  });
+});
+
+describe.skipIf(process.platform !== "darwin")("spawnSandboxed sandboxProfile", () => {
+  const denyWriteProfile = (root: string): string =>
+    `(version 1)\n(allow default)\n(deny file-write* (subpath "${root}"))\n`;
+
+  test("denies file-write under the protected root while allowing reads", async () => {
+    const target = join(cwd, "denied-marker");
+    // SBPL subpath rules match resolved paths — /var is a /private/var symlink
+    // on macOS, so the protected root must be realpath'd or the deny misses.
+    const realRoot = await realpath(cwd);
+    const r = await spawnSandboxed({
+      cmd: `touch "${target}"`,
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 4096,
+      sandboxProfile: denyWriteProfile(realRoot),
+    });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.argv.slice(0, 2)).toEqual(["/usr/bin/sandbox-exec", "-p"]);
+    const exists = await readFile(target, "utf8").then(
+      () => true,
+      () => false,
+    );
+    expect(exists).toBe(false);
+
+    const read = await spawnSandboxed({
+      cmd: "echo still-works",
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 4096,
+      sandboxProfile: denyWriteProfile(realRoot),
+    });
+    expect(read.exitCode).toBe(0);
+    expect(read.output.trim()).toBe("still-works");
   });
 });

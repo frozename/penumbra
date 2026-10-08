@@ -133,6 +133,7 @@ export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js
 export { parseOtlpLogs } from "./otlp/parse.js";
 export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";
 export type { ParsedLogRecord } from "./otlp/types.js";
+export * from "./permissions/review-readonly.js";
 export { PidRegistry } from "./pid/registry.js";
 export { derivePlanId } from "./plans/plan-id.js";
 export {

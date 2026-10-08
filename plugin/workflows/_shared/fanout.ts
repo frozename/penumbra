@@ -2,6 +2,7 @@ import type {
   ChainStartRequest,
   DispatchRecommendedAction,
   DispatchReliabilityStatus,
+  PermissionProfile,
   TaskClass,
 } from "@penumbra/core";
 import type { WorkflowCtx } from "@penumbra/workflows";
@@ -44,6 +45,7 @@ export type FanoutTask = {
   branch_base?: string;
   isolated_install?: boolean;
   tool_free?: boolean;
+  permission_profile?: PermissionProfile;
 };
 
 export type FanoutDefaults = Omit<FanoutTask, "message" | "label">;
@@ -153,6 +155,10 @@ function resolveTask(
   setDefined(request, "branch_base", task.branch_base ?? defaults.branch_base);
   setDefined(request, "isolated_install", task.isolated_install ?? defaults.isolated_install);
   setDefined(request, "tool_free", task.tool_free ?? defaults.tool_free);
+  setDefined(request, "permission_profile", task.permission_profile ?? defaults.permission_profile);
+  // The workflow's cwd is the originating caller root: persist it so a
+  // profiled dispatch's write sandbox denies this repo too.
+  request.caller_cwd = ctx.cwd;
   return { request, label: task.label ?? `task-${String(index)}`, timeoutMs };
 }
 
@@ -211,6 +217,20 @@ async function startAttempt(ctx: FanoutCtx, request: ChainStartRequest): Promise
   const row = payload as Record<string, unknown>;
   if (typeof row.conversation_id !== "string" || typeof row.handoff_id !== "string") {
     return { ok: false, retryable: false, errorCode: null, errorSummary: "chain_start_malformed" };
+  }
+  // A profiled dispatch must never proceed when the daemon didn't echo the
+  // profile back — an unechoed profile means the row was persisted unprofiled
+  // and Layer A/B enforcement is absent.
+  if (
+    request.permission_profile !== undefined &&
+    row.permission_profile !== request.permission_profile
+  ) {
+    return {
+      ok: false,
+      retryable: false,
+      errorCode: "permission_profile_echo_mismatch",
+      errorSummary: `requested ${request.permission_profile} but chain_start echoed ${JSON.stringify(row.permission_profile)}`,
+    };
   }
   return {
     ok: true,

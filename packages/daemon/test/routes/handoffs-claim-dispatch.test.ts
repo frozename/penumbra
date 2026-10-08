@@ -130,6 +130,7 @@ function seedApprovedHandoff(
     dispatch_kind?: "workflow";
     workflow_run_id?: string;
     tsOffsetMs?: number;
+    permission_profile?: "review_readonly";
   } = {},
 ): void {
   const ts = new Date(
@@ -154,6 +155,7 @@ function seedApprovedHandoff(
     parent_handoff_id: null,
     dispatch_kind: opts.dispatch_kind ?? null,
     workflow_run_id: opts.workflow_run_id ?? null,
+    permission_profile: opts.permission_profile ?? null,
   });
 }
 
@@ -669,4 +671,81 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
     .get("h-6");
   expect(row?.status).toBe("approved");
   expect(row?.worker_id).toBeNull();
+});
+
+test("/handoffs/:id/claim refuses a worker that cannot enforce the handoff's permission_profile", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(403);
+  expect(await readErrorCode(res)).toBe("permission_profile_unenforceable");
+
+  const row = services.db
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")
+    .get("h-profiled");
+  expect(row?.status).toBe("approved");
+});
+
+test("/handoffs/:id/claim accepts a worker whose metadata declares the handoff's permission_profile", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled-ok", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    metadata: { enforces_permission_profiles: ["review_readonly"] },
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled-ok/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as ClaimResponse;
+  expect(body.status).toBe("dispatched");
+});
+
+test("/handoffs/:id/claim refuses a worker that declares a different profile set", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled-diff", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    metadata: { enforces_permission_profiles: [] },
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled-diff/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(403);
+  expect(await readErrorCode(res)).toBe("permission_profile_unenforceable");
 });

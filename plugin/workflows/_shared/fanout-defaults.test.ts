@@ -71,6 +71,7 @@ describe("runFanout CC default parity", () => {
       use_worktree: true,
       max_hops: 8,
       dispatch_kind: "workflow",
+      caller_cwd: "/repo",
     });
   });
 

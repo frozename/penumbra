@@ -1,6 +1,11 @@
-import type { Logger } from "@penumbra/core";
+import type { Logger, PermissionProfile } from "@penumbra/core";
 
-import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import {
+  FsPathError,
+  renderSandboxExecProfile,
+  resolveInsideWorktree,
+  resolveSandboxDenyRoots,
+} from "@penumbra/core";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path, { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -10,6 +15,7 @@ import type { PermissionCallback } from "./permission-callback.js";
 import type { SandboxConfig } from "./sandbox-config.js";
 
 import {
+  assertSandboxExecAvailable,
   computeSandboxEnvKeys,
   spawnSandboxed,
   type SpawnSandboxedResult,
@@ -38,6 +44,19 @@ export interface WriteToolsExecutorOpts {
   /** Dispatch + handoff identity for audit emission and one-shot terminal scoping */
   handoffId: string;
   dispatchId: string;
+  /**
+   * Active permission profile. When set, terminal spawns are wrapped in
+   * sandbox-exec with a write-deny SBPL profile over the worktree root — the
+   * Layer B OS backstop behind the Layer A tool-call classifier. Fails closed
+   * when sandbox-exec is unavailable.
+   */
+  permissionProfile?: PermissionProfile | null;
+  /**
+   * Extra mutable roots denied under the same profile (caller cwd, project
+   * root, worktree fleet base) — a profile dispatch must not be able to write
+   * outside the worktree just because terminal cwd resolution differs.
+   */
+  sandboxDenyRoots?: readonly string[];
 }
 
 export interface ExitStatus {
@@ -126,8 +145,28 @@ export class WriteToolsExecutor {
   private pendingReservations = 0;
   private readonly pathLocks = new Map<string, Promise<void>>();
   private disposed = false;
+  private terminalSandboxProfile: Promise<string | undefined> | undefined;
 
   constructor(private readonly opts: WriteToolsExecutorOpts) {}
+
+  private renderTerminalSandboxProfile(): Promise<string | undefined> {
+    if (this.opts.permissionProfile === undefined || this.opts.permissionProfile === null) {
+      return Promise.resolve(undefined);
+    }
+    // Assert here (not inside spawnSandboxed) so sandbox-exec unavailability
+    // rejects terminal/create itself instead of surfacing as a deferred
+    // terminal failure on the first wait/output read.
+    assertSandboxExecAvailable();
+    // SBPL subpath rules match resolved paths; every root (worktreeRoot under
+    // /var or any symlinked parent, plus caller/project extra roots) must be
+    // realpath'd or the deny rules silently miss.
+    this.terminalSandboxProfile ??= Promise.resolve(
+      renderSandboxExecProfile(
+        resolveSandboxDenyRoots(this.opts.worktreeRoot, this.opts.sandboxDenyRoots),
+      ),
+    );
+    return this.terminalSandboxProfile;
+  }
 
   async writeTextFile(
     args: { path: string; content: unknown },
@@ -342,6 +381,7 @@ export class WriteToolsExecutor {
         outputMaxBytes,
         signal: controller.signal,
         path: this.opts.sandboxConfig.path,
+        sandboxProfile: await this.renderTerminalSandboxProfile(),
       });
 
       const handle: TerminalHandle = {

@@ -102,6 +102,9 @@ export interface AgentRoutingConfig {
     // Adapter identifier (e.g. "stdio-acp", "claude-acp", "openai-compat-http").
     // Propagated to the scorer for tool_free-aware ranking.
     adapter?: string;
+    // Permission profiles this seat can enforce (e.g. ["review_readonly"]).
+    // Read by agentEnforcesPermissionProfile for profile-constrained routing.
+    enforces_permission_profiles?: readonly string[];
   }[];
   default_roles: Record<string, string>;
   role_exploration_policy?: "unsampled-first" | "ranked-first";
@@ -288,6 +291,7 @@ export interface Services {
       subscription_model?: string;
       api_provider?: string;
       pricing_mode?: "api" | "subscription";
+      enforces_permission_profiles?: readonly string[];
     }[];
   };
   providerQuotas: ProviderQuota[];

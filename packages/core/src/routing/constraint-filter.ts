@@ -10,6 +10,7 @@ export type CandidateConstraintFacts = {
   deniedByConfig?: boolean;
   roleRoutingRolesEmpty?: boolean;
   textOnlyAdapter?: boolean;
+  enforcesProfile?: boolean;
 };
 
 export type HardConstraintConfig = {
@@ -102,6 +103,13 @@ export function applyHardConstraints(
     // rather than unknown here.
     if (facts.deniedByConfig === true) {
       reasons.push("denied_by_config");
+    }
+
+    // Profiled dispatches fail closed like privacy: a seat must prove it can
+    // enforce the profile, so anything short of enforcesProfile === true is
+    // an exclusion.
+    if (harnessContext.permissionProfile !== undefined && facts.enforcesProfile !== true) {
+      reasons.push("permission_profile_unenforceable");
     }
 
     if (reasons.length === 0) {

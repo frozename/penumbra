@@ -7,6 +7,7 @@ import {
   ChainMessagesTailOptionsSchema,
   ChainSendMessageRequestSchema,
   ChainStartRequestSchema,
+  ChainStartResponseSchema,
   DispatchRefineRequestSchema,
   DispatchRefineResponseSchema,
 } from "../src/chains.js";
@@ -36,6 +37,7 @@ const allSupported = {
   task_class: "STANDARD" as const,
   tool_free: false,
   isolated_install: true,
+  permission_profile: "review_readonly" as const,
 };
 
 test("ChainStartRequestSchema strips unknown keys and preserves all supported fields", () => {
@@ -247,4 +249,39 @@ test("ChainMessagesTailOptionsSchema rejects unknown keys and optional offset de
   expect(parsedDefault.success).toBe(true);
   if (!parsedDefault.success) return;
   expect(parsedDefault.data.offset).toBe(0);
+});
+
+test("ChainStartRequestSchema accepts permission_profile 'review_readonly'", () => {
+  const parsed = ChainStartRequestSchema.safeParse({
+    ...minimal,
+    permission_profile: "review_readonly",
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.permission_profile).toBe("review_readonly");
+});
+
+test("ChainStartRequestSchema rejects unknown permission_profile values (closed enum)", () => {
+  for (const value of ["bogus", "review_exec", "readonly", "", 0, null, true]) {
+    const parsed = ChainStartRequestSchema.safeParse({ ...minimal, permission_profile: value });
+    expect(parsed.success).toBe(false);
+  }
+});
+
+test("ChainStartResponseSchema carries a typed permission_profile echo", () => {
+  const parsed = ChainStartResponseSchema.safeParse({
+    conversation_id: "c-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.permission_profile).toBe("review_readonly");
+  expect(
+    ChainStartResponseSchema.safeParse({
+      conversation_id: "c-1",
+      handoff_id: "h-1",
+      permission_profile: "bogus",
+    }).success,
+  ).toBe(false);
 });

@@ -1,3 +1,4 @@
+import type { PermissionProfile } from "@penumbra/api-contract";
 import type { Database } from "bun:sqlite";
 
 import type { RoutingBias } from "../readers/routing-bias.js";
@@ -79,6 +80,10 @@ export function pickFromPool(
   // tool-needing role to an HTTP seat breaks it.
   tool_free?: boolean,
   activeBiases?: RoutingBias[],
+  // Permission profile the dispatch will run under. Callers are expected to
+  // pre-filter `pool` to enforcing seats (see resolveAgent); the value is
+  // forwarded to routeAgent so the ranker applies the same constraint.
+  permission_profile?: PermissionProfile,
 ): string {
   if (pool.length === 0) throw new Error("pickFromPool: pool must not be empty");
 
@@ -147,6 +152,7 @@ export function pickFromPool(
     agentchatConfig: localConfig,
     tool_free,
     activeBiases,
+    permission_profile,
   });
 
   if (out.detail !== "rank") return firstAgent;

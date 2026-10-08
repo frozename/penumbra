@@ -1,4 +1,12 @@
-import { type DispatchEventInput, FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import {
+  type DispatchEventInput,
+  evaluateProfileToolCall,
+  FsPathError,
+  PERMISSION_PROFILE_MCP_ALLOWLIST,
+  renderSandboxExecProfile,
+  resolveInsideWorktree,
+  resolveSandboxDenyRoots,
+} from "@penumbra/core";
 import path from "node:path";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
@@ -6,6 +14,7 @@ import type { CapturePort } from "../worker/capture-port.js";
 import type { McpServer } from "./acp-types.js";
 
 import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifier-decline.js";
+import { SandboxUnavailableError } from "../worker/sandbox-spawn.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
 import {
   OperationRejectedError,
@@ -72,6 +81,7 @@ const ERROR_CODE_MAP: Record<string, number> = {
   terminal_cap_exceeded: -32006,
   edit_miss: -32010,
   edit_ambiguous: -32011,
+  sandbox_unavailable: -32012,
 };
 
 interface ErrorWithCode extends Error {
@@ -94,6 +104,7 @@ function isSafeInternalTerminalError(err: unknown): boolean {
     err instanceof TerminalNotFoundError ||
     err instanceof TerminalCapExceededError ||
     err instanceof OperationRejectedError ||
+    err instanceof SandboxUnavailableError ||
     err instanceof InternalTerminalHandlerError
   );
 }
@@ -122,7 +133,11 @@ function safeInternalTerminalMessage(err: unknown): string | null {
   if (err instanceof TerminalCapExceededError) {
     return `terminal cap exceeded (max=${String(err.max)})`;
   }
-  if (err instanceof OperationRejectedError || err instanceof InternalTerminalHandlerError) {
+  if (
+    err instanceof OperationRejectedError ||
+    err instanceof SandboxUnavailableError ||
+    err instanceof InternalTerminalHandlerError
+  ) {
     return err.message;
   }
   return null;
@@ -696,21 +711,38 @@ function buildMcpServersWithEnv(
   mergedEnv: Record<string, string>,
 ): McpServer[] {
   const longLivedEnv = buildLongLivedMcpEnv(input);
+  // A permission profile's allowlist is authoritative: it strips any
+  // yaml-level PENUMBRA_MCP_TOOL_ALLOWLIST on the server AND supersedes the
+  // long-lived tick allowlist, so exactly one allowlist entry is injected.
+  const profileEnv: EnvEntry[] =
+    input.permission_profile !== undefined && input.permission_profile !== null
+      ? [
+          {
+            name: "PENUMBRA_MCP_TOOL_ALLOWLIST",
+            value: PERMISSION_PROFILE_MCP_ALLOWLIST[input.permission_profile].join(","),
+          },
+        ]
+      : [];
   const storageRootEnv: EnvEntry[] =
     mergedEnv.PENUMBRA_STORAGE_ROOT !== undefined
       ? [{ name: "PENUMBRA_STORAGE_ROOT", value: mergedEnv.PENUMBRA_STORAGE_ROOT }]
       : [];
   const shouldInjectDispatchEnv =
-    input.handoff_id !== undefined || longLivedEnv.length > 0 || storageRootEnv.length > 0;
+    input.handoff_id !== undefined ||
+    longLivedEnv.length > 0 ||
+    storageRootEnv.length > 0 ||
+    profileEnv.length > 0;
   if (!shouldInjectDispatchEnv) return mcpServers;
 
   return mcpServers.map((server): McpServer => {
     if (!isPenumbraMcp(server)) return server;
     const candidate = server as McpServerWithEnv;
     const existingEnv = candidate.env ?? [];
-    const filtered = existingEnv.filter(
-      (entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(entry.name)),
-    );
+    const filtered = existingEnv.filter((entry) => {
+      const name = String(entry.name);
+      if (profileEnv.length > 0 && name === "PENUMBRA_MCP_TOOL_ALLOWLIST") return false;
+      return !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(name);
+    });
     const handoffEnv: EnvEntry[] =
       input.handoff_id !== undefined
         ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }]
@@ -720,7 +752,10 @@ function buildMcpServersWithEnv(
       ...handoffEnv,
       { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
       ...storageRootEnv,
-      ...longLivedEnv,
+      ...(profileEnv.length > 0
+        ? longLivedEnv.filter((entry) => entry.name !== "PENUMBRA_MCP_TOOL_ALLOWLIST")
+        : longLivedEnv),
+      ...profileEnv,
     ];
     return { ...server, env: nextEnv } as McpServer;
   });
@@ -831,6 +866,39 @@ interface DispatchTurnContext {
   toolNames: Map<string, string>;
 }
 
+// Profile gate for the executor-backed write surface. ACP agents address
+// fs/write_text_file and terminal/create directly on the adapter; the profile
+// is re-evaluated at this request boundary, ahead of the executor's own
+// permission-callback gate, so a profile deny holds even when the executor's
+// callback was built without profile awareness. Fail-closed: deny or
+// uninspectable input throws OperationRejectedError (maps to -32004).
+function assertProfileAllowsWriteTool(
+  input: DispatchInput,
+  toolName: string,
+  rawInput: unknown,
+): void {
+  const profile = input.permission_profile;
+  if (profile === undefined || profile === null) return;
+  const decision = evaluateProfileToolCall(profile, toolName, rawInput);
+  if (decision.decision === "deny") {
+    throw new OperationRejectedError(`permission_profile ${profile}: ${decision.reason}`);
+  }
+}
+
+// Render the Layer B sandbox-exec profile for a profile dispatch: deny
+// file-write under the resolved dispatch cwd (the worktree) plus every extra
+// mutable root the worker attached (caller cwd, project root, fleet base).
+// SBPL subpath rules match real paths, so all roots must be realpath'd —
+// /var→/private/var and symlinked parents otherwise let the deny silently
+// miss. startServer fails closed on platforms without sandbox-exec rather
+// than spawn unsandboxed. resolveSandboxDenyRoots is synchronous so the
+// unprofiled dispatch path gains no extra microtask hop.
+function resolveDispatchSandboxProfile(input: DispatchInput, cwd: string): string | undefined {
+  const profile = input.permission_profile;
+  if (profile === undefined || profile === null) return undefined;
+  return renderSandboxExecProfile(resolveSandboxDenyRoots(cwd, input.sandbox_deny_roots ?? []));
+}
+
 function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): void {
   if (opts.fsReadTextFile === true) {
     ctx.client.onRequest(
@@ -870,6 +938,11 @@ function registerFsHandlers(ctx: DispatchTurnContext, opts: StdioAcpOptions): vo
           throw new Error("fs/write_text_file: no executor in dispatch input");
         if (typeof params.path !== "string") throw new Error("fs/write_text_file: missing path");
         try {
+          assertProfileAllowsWriteTool(ctx.input, "fs.write_text_file", {
+            path: params.path,
+            content_bytes:
+              typeof params.content === "string" ? Buffer.byteLength(params.content, "utf8") : 0,
+          });
           await ctx.input.executor.writeTextFile(
             { path: params.path, content: params.content },
             {
@@ -961,6 +1034,10 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
       arm();
       try {
         if (!input.executor) throw new Error("terminal/create: no executor");
+        assertProfileAllowsWriteTool(input, "terminal.create", {
+          argv: params.args ?? null,
+          cmd: params.command ?? null,
+        });
         const resolvedCwd = await validateTerminalCwd(params.cwd, ctx.cwd);
         if (input.trust_mode === "all") {
           const command = commandStringFromParams(params);
@@ -1275,6 +1352,7 @@ export class StdioAcpAdapter implements Adapter {
     cwd: string,
     mergedEnv: Record<string, string>,
     signal: AbortSignal | undefined,
+    sandboxProfile?: string,
   ): Promise<{ server: StdioAcpHandle; client: StdioAcpClient }> {
     const server = await this.deps.startServer({
       binary: this.opts.binary,
@@ -1282,6 +1360,7 @@ export class StdioAcpAdapter implements Adapter {
       cwd,
       env: mergedEnv,
       signal,
+      sandboxProfile,
     });
     // Begin tracking process liveness as soon as the handle exists. The
     // registry installs the sole `exited` handler, and deferring it until
@@ -1472,11 +1551,7 @@ export class StdioAcpAdapter implements Adapter {
     }
   }
 
-  private acquireWarm(
-    poolKey: string,
-    specHash: string,
-    holderId: string,
-  ): { entry: AcpWarmPoolEntry | null; missReason?: string; poolKeys?: string[] } {
+  private acquireWarm(poolKey: string, specHash: string, holderId: string): WarmAcquire {
     if (this.opts.warmPool !== true || !this.deps.pool) return { entry: null };
     const missReason = this.deps.pool.peekMissReason?.(poolKey, specHash);
     const poolKeys = this.deps.pool.debugKeys?.();
@@ -1730,6 +1805,7 @@ export class StdioAcpAdapter implements Adapter {
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const { dispatchStartTs, cwd, requestTimeoutMs, warmPoolEnabled, poolKey, specHash, holderId } =
       computeDispatchConstants(this.opts, this.deps.pool, input);
+    const sandboxProfile = resolveDispatchSandboxProfile(input, cwd);
     const state = createDispatchState();
     let detachAbort: (() => void) | undefined;
     try {
@@ -1737,12 +1813,14 @@ export class StdioAcpAdapter implements Adapter {
       const mergedEnv = this.buildMergedEnv();
       const bootDeadline = this.createBootDeadline();
 
-      const warm = this.acquireWarm(poolKey, specHash, holderId);
+      const warm: WarmAcquire = warmPoolEnabled
+        ? this.acquireWarm(poolKey, specHash, holderId)
+        : { entry: null };
       const signal = warmPoolEnabled ? undefined : input.signal;
       const acquired: AcquireOrSpawnResult = warm.entry
         ? acquireReuseResult(warm.entry, input, this.kind, poolKey, dispatchStartTs)
         : buildSpawnResult({
-            spawned: await this.spawnAcpServer(cwd, mergedEnv, signal),
+            spawned: await this.spawnAcpServer(cwd, mergedEnv, signal, sandboxProfile),
             input,
             adapterKind: this.kind,
             binary: this.opts.binary,
@@ -2009,6 +2087,12 @@ function isTransportClosedError(err: unknown, pooledEntry: AcpWarmPoolEntry): bo
   );
 }
 
+interface WarmAcquire {
+  entry: AcpWarmPoolEntry | null;
+  missReason?: string;
+  poolKeys?: string[];
+}
+
 interface DispatchConstants {
   dispatchStartTs: number;
   cwd: string;
@@ -2030,7 +2114,13 @@ function computeDispatchConstants(
     dispatchStartTs: Date.now(),
     cwd,
     requestTimeoutMs: opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    warmPoolEnabled: opts.warmPool === true && pool !== undefined,
+    // Permission-profile dispatches never touch the warm pool: prewarmed
+    // servers were spawned unsandboxed (before any profile was known), and a
+    // sandboxed profile server must not be redeposited for unprofiled reuse.
+    warmPoolEnabled:
+      opts.warmPool === true &&
+      pool !== undefined &&
+      (input.permission_profile === undefined || input.permission_profile === null),
     poolKey: poolKeyFor({
       agent: opts.agentName ?? opts.model ?? opts.binary,
       cwd: poolScope,

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { applyHardConstraints } from "@src/routing/constraint-filter.js";
+import type { TaskProfile } from "@src/routing/schemas.js";
 
-function taskProfile(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function taskProfile(overrides: Partial<TaskProfile> = {}): TaskProfile {
   return {
     schemaVersion: "1" as const,
     taskTypes: ["coding" as const],
@@ -221,6 +222,40 @@ describe("applyHardConstraints", () => {
       admitted: [],
       excluded: [{ agent: "over-budget", reasons: ["hard_budget"] }],
     });
+  });
+
+  test("permission_profile excludes candidates that cannot enforce it, failing closed on unknown", () => {
+    const result = applyHardConstraints(
+      ["enforcing", "opted-out", "unknown"],
+      taskProfile(),
+      { permissionProfile: "review_readonly" },
+      {
+        enforcing: { enforcesProfile: true },
+        "opted-out": { enforcesProfile: false },
+        unknown: {},
+      },
+      {},
+    );
+
+    expect(result).toEqual({
+      admitted: ["enforcing"],
+      excluded: [
+        { agent: "opted-out", reasons: ["permission_profile_unenforceable"] },
+        { agent: "unknown", reasons: ["permission_profile_unenforceable"] },
+      ],
+    });
+  });
+
+  test("without a permission_profile, enforcement facts are inert", () => {
+    const result = applyHardConstraints(
+      ["alpha"],
+      taskProfile(),
+      {},
+      { alpha: { enforcesProfile: false } },
+      {},
+    );
+
+    expect(result).toEqual({ admitted: ["alpha"], excluded: [] });
   });
 
   test("a deniedByConfig candidate is excluded because denial is enumerated, while absence means not denied", () => {

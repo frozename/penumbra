@@ -1,5 +1,5 @@
 import { expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1568,3 +1568,197 @@ test.if(integrationEnabled)(
     expect(out.text.trim().length).toBeGreaterThan(0);
   },
 );
+
+// --- permission_profile enforcement ---
+const idleEvents = [
+  {
+    type: "message.part.delta",
+    properties: { partID: "p-1", field: "text", delta: "done" },
+  },
+  { type: "session.idle" },
+];
+
+function profileHarness(opts: {
+  adapterOpts?: Record<string, unknown>;
+  input?: Partial<DispatchInput>;
+  events?: readonly unknown[];
+  prepareMcpConfig?: OpencodeAcpDeps0["prepareMcpConfig"];
+}): {
+  adapter: OpencodeAcpAdapter;
+  startServer: ReturnType<typeof mock<(opts: StartAcpServerOptions) => Promise<AcpServerHandle>>>;
+  client: ClientMock;
+  input: DispatchInput;
+} {
+  const handle = createServerHandle();
+  const startServer = mock(
+    (_opts: StartAcpServerOptions): Promise<AcpServerHandle> => Promise.resolve(handle),
+  );
+  const client = createClient(opts.events ?? idleEvents);
+  const prepareMcpConfig = opts.prepareMcpConfig;
+  const adapter = new OpencodeAcpAdapter(
+    { model: "deepseek-v4", cwd: "/tmp/opencode-acp", ...opts.adapterOpts },
+    {
+      startServer,
+      createClient: mock((_o: AcpClientOptions): AcpClientLike => client),
+      ...(prepareMcpConfig ? { prepareMcpConfig } : {}),
+    },
+  );
+  return { adapter, startServer, client, input: { ...createInput(), ...opts.input } };
+}
+
+type OpencodeAcpDeps0 = NonNullable<ConstructorParameters<typeof OpencodeAcpAdapter>[1]>;
+
+test("sets OPENCODE_CONFIG_CONTENT and OPENCODE_DISABLE_PROJECT_CONFIG on the server env", async () => {
+  const { adapter, startServer, input } = profileHarness({
+    input: { permission_profile: "review_readonly" },
+    adapterOpts: { agent: "review" },
+  });
+
+  await adapter.dispatch(input);
+  const env = startServer.mock.calls[0]?.[0].env;
+  expect(env?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
+  expect(env?.OPENCODE_CONFIG_CONTENT).toBeDefined();
+  const rendered = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? "{}") as {
+    permission?: Record<string, unknown>;
+    experimental?: { continue_loop_on_deny?: boolean };
+    agent?: Record<string, { permission?: Record<string, unknown> }>;
+  };
+  expect(rendered.permission?.write).toBe("deny");
+  expect(rendered.permission?.edit).toBe("deny");
+  expect(rendered.experimental?.continue_loop_on_deny).toBe(true);
+  expect(rendered.agent?.review?.permission?.write).toBe("deny");
+});
+
+test("leaves the server env untouched when no profile is dispatched", async () => {
+  const { adapter, startServer } = profileHarness({});
+  await adapter.dispatch(createInput());
+  const opts = startServer.mock.calls[0]?.[0];
+  expect(opts !== undefined && Object.hasOwn(opts, "env")).toBe(false);
+});
+
+test("passes a sandboxProfile denying writes under the dispatch cwd to startServer", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "opencode-acp-sb-")));
+  try {
+    const { adapter, startServer, input } = profileHarness({
+      adapterOpts: { cwd },
+      input: { permission_profile: "review_readonly" },
+    });
+    await adapter.dispatch(input);
+    const opts = startServer.mock.calls[0]?.[0];
+    expect(opts?.sandboxProfile).toBeDefined();
+    expect(opts?.sandboxProfile).toContain("(allow default)");
+    expect(opts?.sandboxProfile).toContain(`(deny file-write* (subpath "${cwd}"))`);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sandboxProfile covers sandbox_deny_roots alongside the dispatch cwd", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "opencode-acp-sb-")));
+  const callerRoot = realpathSync(mkdtempSync(join(tmpdir(), "opencode-acp-caller-")));
+  try {
+    const { adapter, startServer, input } = profileHarness({
+      adapterOpts: { cwd },
+      input: {
+        permission_profile: "review_readonly",
+        sandbox_deny_roots: [callerRoot],
+      },
+    });
+    await adapter.dispatch(input);
+    const profile = startServer.mock.calls[0]?.[0].sandboxProfile ?? "";
+    expect(profile).toContain(`(subpath "${cwd}")`);
+    expect(profile).toContain(`(subpath "${callerRoot}")`);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(callerRoot, { recursive: true, force: true });
+  }
+});
+
+test("omits sandboxProfile when no profile is dispatched", async () => {
+  const { adapter, startServer } = profileHarness({});
+  await adapter.dispatch(createInput());
+  const opts = startServer.mock.calls[0]?.[0];
+  expect(opts !== undefined && Object.hasOwn(opts, "sandboxProfile")).toBe(false);
+});
+
+test("injects the review_readonly MCP allowlist into penumbra-mcp env, overriding any existing value", async () => {
+  let captured: McpServer[] = [];
+  const prepareMcpConfig = mock(
+    (servers: McpServer[]): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> => {
+      captured = servers;
+      return Promise.resolve({ xdgConfigHome: "/tmp/x", cleanup: () => Promise.resolve() });
+    },
+  );
+  const serverWithAllowlist: McpServerStdio = {
+    ...penumbraMcpServer,
+    env: [
+      ...penumbraMcpServer.env,
+      { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: "everything_under_the_sun" },
+    ],
+  };
+  const { adapter, input } = profileHarness({
+    input: { permission_profile: "review_readonly", handoff_id: "h1" },
+    adapterOpts: { mcpServers: [serverWithAllowlist] },
+    prepareMcpConfig,
+  });
+
+  await adapter.dispatch(input);
+
+  const penumbra = captured.find((s): s is McpServerStdio => !("type" in s));
+  const allowlistEntries = penumbra!.env.filter((e) => e.name === "PENUMBRA_MCP_TOOL_ALLOWLIST");
+  expect(allowlistEntries).toHaveLength(1);
+  expect(allowlistEntries[0]!.value).toContain("memory_search");
+  expect(allowlistEntries[0]!.value).toContain("fs_read");
+  expect(allowlistEntries[0]!.value).not.toContain("everything_under_the_sun");
+});
+
+test("prepareMcpConfig receives the rendered profile config for config.json merge", async () => {
+  let profileConfig: unknown;
+  const prepareMcpConfig = mock(
+    (
+      _servers: McpServer[],
+      opts?: { profileConfig?: Record<string, unknown> },
+    ): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> => {
+      profileConfig = opts?.profileConfig;
+      return Promise.resolve({ xdgConfigHome: "/tmp/x", cleanup: () => Promise.resolve() });
+    },
+  );
+  const { adapter, input } = profileHarness({
+    input: { permission_profile: "review_readonly" },
+    adapterOpts: { mcpServers: [penumbraMcpServer], agent: "review" },
+    prepareMcpConfig,
+  });
+
+  await adapter.dispatch(input);
+  const rendered = profileConfig as { permission?: Record<string, unknown> };
+  expect(rendered.permission?.write).toBe("deny");
+});
+
+test("a permission ask under a profile is rejected even when the seat opts into auto-approve, and is emitted as unexpected_ask", async () => {
+  const { adapter, client } = profileHarness({
+    input: { permission_profile: "review_readonly" },
+    adapterOpts: { autoApprovePermissions: ["doom_loop"] },
+    events: [
+      permissionAskedEvent(),
+      {
+        type: "message.part.delta",
+        properties: { partID: "p-1", field: "text", delta: "continued" },
+      },
+      { type: "session.idle" },
+    ],
+  });
+  const { input, events } = createObservedInput([]);
+  input.permission_profile = "review_readonly";
+
+  const out = await adapter.dispatch(input);
+
+  expect(out).toEqual({ text: "continued" });
+  expect(client.replyPermission).toHaveBeenCalledWith(
+    "per_abc123",
+    expect.objectContaining({ reply: "reject" }),
+  );
+  const permissionEvents = events.filter((e) => e.kind === "http.session.permission");
+  expect(permissionEvents).toHaveLength(1);
+  expect(permissionEvents[0]!.meta?.outcome).toBe("unexpected_ask");
+  expect(permissionEvents[0]!.meta?.reply).toBe("reject");
+});

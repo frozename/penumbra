@@ -1103,6 +1103,8 @@ const HANDOFFS_ADDITIVE_COLUMNS: [string, string][] = [
   ["max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 3"],
   ["last_dispatch_started_at", "TEXT"],
   ["workflow_run_id", "TEXT"],
+  ["permission_profile", "TEXT"],
+  ["caller_cwd", "TEXT"],
 ];
 
 const TASKS_ADDITIVE_COLUMNS: [string, string][] = [

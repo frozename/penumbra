@@ -1,6 +1,11 @@
 import { type ChainStartResponse, ChainStartResponseSchema } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
-import { ChainStartRequestSchema, TaskClassSchema } from "@penumbra/core";
+import {
+  ChainStartRequestSchema,
+  type PermissionProfile,
+  PermissionProfileSchema,
+  TaskClassSchema,
+} from "@penumbra/core";
 import { z } from "zod";
 
 import type { DaemonClient } from "../daemon-client.js";
@@ -128,6 +133,9 @@ export const ChainStartInputShape = {
     .boolean()
     .optional()
     .describe("Optional assertion that the dispatch will not call penumbra MCP tools."),
+  permission_profile: PermissionProfileSchema.optional().describe(
+    "Optional closed-enum permission profile for the dispatched seat. review_readonly denies file writes and mutating shell commands end-to-end (tool-call gate, MCP allowlist, sandbox-exec backstop). The daemon rejects profiles no routed seat can enforce with 422.",
+  ),
   task_class: TaskClassSchema.describe("Required task class for dispatch routing"),
   caller_cwd: z
     .string()
@@ -137,7 +145,7 @@ export const ChainStartInputShape = {
     })
     .optional()
     .describe(
-      "Optional absolute path the caller is working from; used to scope the dispatch via projects.yaml parent-walk when project_id is not provided",
+      "Optional absolute path the caller is working from; used to scope the dispatch via projects.yaml parent-walk when project_id is not provided, and persisted on the handoff so a permission_profiled dispatch's write sandbox also denies this root",
     ),
 };
 
@@ -214,6 +222,7 @@ interface ChainStartInput {
   open_pr_on_review?: boolean;
   isolated_install?: boolean;
   tool_free?: boolean;
+  permission_profile?: PermissionProfile;
   task_class?: z.input<typeof TaskClassSchema>;
   caller_cwd?: string;
 }
@@ -347,7 +356,9 @@ const OPTIONAL_BODY_FIELDS = [
   "open_pr_on_review",
   "isolated_install",
   "tool_free",
+  "permission_profile",
   "task_class",
+  "caller_cwd",
 ] as const satisfies readonly (keyof ChainStartInput)[];
 
 function buildDaemonBody(
@@ -405,6 +416,14 @@ export function chainStartHandler(
 
     const body = buildDaemonBody(input, effectiveProjectId, resolvedTaskType);
     const res: ChainStartResponse = ChainStartResponseSchema.parse(await daemon.startChain(body));
+    if (
+      input.permission_profile !== undefined &&
+      res.permission_profile !== input.permission_profile
+    ) {
+      throw new Error(
+        `permission_profile_echo_mismatch: requested ${input.permission_profile} but chain_start echoed ${JSON.stringify(res.permission_profile)} — the handoff may be unprofiled`,
+      );
+    }
     const response: ChainStartResult = {
       content: [
         {

@@ -722,8 +722,10 @@ const NOT_EXPOSED: Record<string, string> = {
   workflow_run_id: "server-issued exemption token per chain-start.ts — never allowlist",
   long_lived_agent_id: "server-issued identity",
   long_lived_tick_id: "server-issued identity",
+  permission_profile:
+    "native workflows set it via ctx.dispatch internally; no script caller — add on evidence",
 };
-const NOT_EXPOSED_EXPECTED_SIZE = 9;
+const NOT_EXPOSED_EXPECTED_SIZE = 10;
 
 const ALLOWLIST_NAMES = ["topLevelAllowedKeys", "defaultsAllowedKeys", "taskAllowedKeys"] as const;
 

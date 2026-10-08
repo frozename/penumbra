@@ -239,11 +239,12 @@ function makeReviewCtx(opts: {
       timeout_ms: 1000,
       out_dir: "review-out",
     },
-    dispatch: async () => {
+    dispatch: async (input) => {
       dispatchCount += 1;
       return {
         conversation_id: dispatchCount === 1 ? "persona-conv" : `synth-conv-${dispatchCount}`,
         handoff_id: `handoff-${dispatchCount}`,
+        permission_profile: input.permission_profile,
       };
     },
     awaitChain: async (conversationId) => {

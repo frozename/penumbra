@@ -1,6 +1,6 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test, vi } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -66,7 +66,9 @@ interface Harness {
 function createHarness(
   options: Partial<StdioAcpOptions> = {},
   executor: MockExecutor = {},
-  dispatchOverrides: Partial<Pick<DispatchInput, "trust_mode" | "onEvent">> = {},
+  dispatchOverrides: Partial<
+    Pick<DispatchInput, "trust_mode" | "onEvent" | "permission_profile">
+  > = {},
 ): Harness {
   const registeredMethods: string[] = [];
   const events: DispatchEventInput[] = [];
@@ -1543,5 +1545,67 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     } finally {
       await rm(worktreeRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("StdioAcpAdapter permission_profile handler gates", () => {
+  test("fs/write_text_file under review_readonly rejects before the executor", async () => {
+    const writeTextFile = vi.fn(() => Promise.resolve({ bytesWritten: 1, sha256: "x" }));
+    const harness = createHarness(
+      { fsWriteTextFile: true },
+      { writeTextFile },
+      { permission_profile: "review_readonly" },
+    );
+    await harness.runDispatch();
+    const handler = harness.getHandler("fs/write_text_file");
+
+    const outcome = await captureError(handler?.({ path: "x.txt", content: "data" }));
+    expect(errorCode(outcome.error)).toBe(-32004);
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  test("terminal/create under review_readonly rejects a mutating command", async () => {
+    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+    const harness = createHarness(
+      { terminal: true },
+      { terminalCreate },
+      { permission_profile: "review_readonly" },
+    );
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+
+    const outcome = await captureError(handler?.({ command: "rm -rf /tmp/victim", cwd: "." }));
+    expect(errorCode(outcome.error)).toBe(-32004);
+    expect(terminalCreate).not.toHaveBeenCalled();
+  });
+
+  test("terminal/create under review_readonly allows a read-only command", async () => {
+    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+    const harness = createHarness(
+      { terminal: true },
+      { terminalCreate },
+      { permission_profile: "review_readonly" },
+    );
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+
+    const outcome = await captureError(handler?.({ command: "git status", cwd: "." }));
+    expect(outcome.error).toBeNull();
+    expect(terminalCreate).toHaveBeenCalledTimes(1);
+  });
+
+  test("terminal/create under review_readonly fails closed on uninspectable input", async () => {
+    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+    const harness = createHarness(
+      { terminal: true },
+      { terminalCreate },
+      { permission_profile: "review_readonly" },
+    );
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+
+    const outcome = await captureError(handler?.({ cwd: "." }));
+    expect(errorCode(outcome.error)).toBe(-32004);
+    expect(terminalCreate).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,5 +127,52 @@ describe("startStdioAcpServer", () => {
 
     expect(exited).toBe(true);
     if (handle.pid) cleanupPids.delete(handle.pid);
+  });
+});
+
+describe.skipIf(process.platform !== "darwin")("startStdioAcpServer sandboxProfile", () => {
+  test("wraps the child in sandbox-exec and denies writes under the profile root", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "stdio-acp-sb-"));
+    const realRoot = realpathSync(fixtureDir);
+    const sentinelPath = join(fixtureDir, "spawned");
+    const profile = `(version 1)\n(allow default)\n(deny file-write* (subpath "${realRoot}"))\n`;
+    let handle: Awaited<ReturnType<typeof startStdioAcpServer>> | null = null;
+
+    try {
+      handle = await startStdioAcpServer({
+        binary: "sh",
+        args: ["-c", 'printf x > "$1"', "sh", sentinelPath],
+        sandboxProfile: profile,
+      });
+      if (handle.pid) cleanupPids.add(handle.pid);
+      const code = await handle.exited;
+
+      expect(code).not.toBe(0);
+      expect(existsSync(sentinelPath)).toBe(false);
+    } finally {
+      if (handle?.pid) cleanupPids.delete(handle.pid);
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("runs unsandboxed children identically when sandboxProfile is omitted", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "stdio-acp-nosb-"));
+    const sentinelPath = join(fixtureDir, "spawned");
+    let handle: Awaited<ReturnType<typeof startStdioAcpServer>> | null = null;
+
+    try {
+      handle = await startStdioAcpServer({
+        binary: "sh",
+        args: ["-c", 'printf x > "$1"', "sh", sentinelPath],
+      });
+      if (handle.pid) cleanupPids.add(handle.pid);
+      const code = await handle.exited;
+
+      expect(code).toBe(0);
+      expect(existsSync(sentinelPath)).toBe(true);
+    } finally {
+      if (handle?.pid) cleanupPids.delete(handle.pid);
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
   });
 });

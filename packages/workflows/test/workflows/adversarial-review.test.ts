@@ -159,14 +159,76 @@ function makeConfig(): AdvReviewConfig {
   };
 }
 
+// review_readonly dispatches only land on seats that opt into
+// enforces_permission_profiles. Production gets those entries from
+// agents.yaml; here the accessor re-derives them from the live config so
+// tests that mutate ctx.config personas/workloads after makeCtx still see
+// every referenced seat as enforcing. An explicit ctx.config.agents
+// assignment (or a pre-existing yaml list) merges: entries keep their
+// routing fields and gain the profile marker, plus any seat the config
+// references that the list omits.
+function installEnforcingAgents<T extends object>(config: T): T {
+  // Shallow-clone first: loader-produced configs may freeze `agents`.
+  const wrapped = { ...(config as Record<string, unknown>) } as Record<string, unknown>;
+  const seed = wrapped.agents;
+  let override: unknown = Array.isArray(seed) ? seed : undefined;
+  Object.defineProperty(wrapped, "agents", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const cfg = wrapped as {
+        personas?: Record<string, { preferred_agent?: unknown }>;
+        workloads?: Record<string, { eligible_agents?: unknown; synthesizer?: unknown }>;
+        default_roles?: Record<string, unknown>;
+      };
+      const names = new Set<string>();
+      const add = (v: unknown): void => {
+        for (const n of Array.isArray(v) ? v : [v]) {
+          if (typeof n === "string") names.add(n);
+        }
+      };
+      for (const p of Object.values(cfg.personas ?? {})) add(p.preferred_agent);
+      for (const w of Object.values(cfg.workloads ?? {})) {
+        add(w.eligible_agents);
+        add(w.synthesizer);
+      }
+      for (const roleAgent of Object.values(cfg.default_roles ?? {})) add(roleAgent);
+      // An explicit list is authoritative — including an [] opt-out, which a
+      // test may install precisely to exercise the fail-closed path. Only
+      // seats that never declared the field get the marker stamped.
+      const enforce = (entry: Record<string, unknown>): Record<string, unknown> =>
+        entry.enforces_permission_profiles === undefined
+          ? { ...entry, enforces_permission_profiles: ["review_readonly"] }
+          : entry;
+      const out = Array.isArray(override)
+        ? override.map((entry) => enforce(entry as Record<string, unknown>))
+        : [];
+      const seen = new Set(out.map((entry) => entry.name));
+      for (const name of names) {
+        if (!seen.has(name)) out.push(enforce({ name, roles: [] }));
+      }
+      return out;
+    },
+    set: (v) => {
+      override = v;
+    },
+  });
+  return wrapped as T;
+}
+
 type DispatchInputReview = {
   agent: string;
   message: string;
   task_type?: string;
   task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
+  permission_profile?: string | null;
 };
-type DispatchResultReview = { conversation_id: string; handoff_id: string };
+type DispatchResultReview = {
+  conversation_id: string;
+  handoff_id: string;
+  permission_profile?: string | null;
+};
 type AwaitResultReview = {
   status: "completed" | "failed" | "timeout";
   final_agent: string | null;
@@ -196,6 +258,11 @@ type AdversarialReviewWorkflowResult = {
   synthesizer_status: string | null;
   synth_failed?: boolean;
   pool_exhausted?: boolean;
+  personas?: {
+    name: string;
+    status: string;
+    error_code?: string;
+  }[];
 };
 
 function makeCtx(opts?: {
@@ -224,7 +291,12 @@ function makeCtx(opts?: {
           ? WELL_FORMED_SYNTHESIS
           : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
     });
-  const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
+  // ctx.dispatch echoes the granted permission_profile back to the caller —
+  // wrap impls so mocks honor the same contract the workflow asserts.
+  const dispatchImpl = opts?.dispatchImpl ?? defaultDispatch;
+  const dispatch = mock((input: DispatchInputReview) =>
+    dispatchImpl(input).then((r) => ({ ...r, permission_profile: input.permission_profile })),
+  );
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
   const cancel = mock(opts?.cancelImpl ?? ((): Promise<void> => Promise.resolve()));
 
@@ -240,7 +312,7 @@ function makeCtx(opts?: {
       await Bun.write(path, body);
       return path;
     },
-    config: makeConfig(),
+    config: installEnforcingAgents(makeConfig()),
     cwd: root,
     storageRoot: root,
     project: "penumbra",
@@ -642,11 +714,18 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
   const { ctx, root, dispatch } = makeCtx();
   try {
     dispatch.mockImplementation(
-      (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => {
+      (input: {
+        agent: string;
+        message: string;
+        task_type?: string;
+        use_worktree?: boolean;
+        permission_profile?: string | null;
+      }) => {
         dispatchCalls.push(input);
         return Promise.resolve({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         });
       },
     );
@@ -1028,7 +1107,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const withVision = makeCtx();
   try {
-    withVision.ctx.config = configured;
+    withVision.ctx.config = installEnforcingAgents(configured);
     const result = (await fn(withVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1041,7 +1120,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const nonUi = makeCtx();
   try {
-    nonUi.ctx.config = configured;
+    nonUi.ctx.config = installEnforcingAgents(configured);
     const result = (await fn(nonUi.ctx, recallWithDiff(nonUiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1054,12 +1133,12 @@ diff --git a/docs/review.md b/docs/review.md
 
   const withoutVision = makeCtx();
   try {
-    withoutVision.ctx.config = {
+    withoutVision.ctx.config = installEnforcingAgents({
       ...configured,
       personas: Object.fromEntries(
         Object.entries(configured.personas ?? {}).filter(([key]) => key !== "vision_verify"),
       ),
-    };
+    });
     const result = (await fn(withoutVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1086,7 +1165,7 @@ test("optional UI persona dispatch failure does not fail an otherwise successful
     },
   });
   try {
-    ctx.config = configured;
+    ctx.config = installEnforcingAgents(configured);
     const result = (await fn(ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       outcome: string;
@@ -1146,7 +1225,7 @@ workloads:
     },
   });
   try {
-    ctx.config = configured;
+    ctx.config = installEnforcingAgents(configured);
     const result = (await fn(ctx, {
       ...baseRecall(),
       byKey: {
@@ -2778,5 +2857,97 @@ test("a content body larger than the whole budget is still truncated with its ma
     expect(bundle.estimatedTokens).toBeLessThanOrEqual(400);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("installEnforcingAgents preserves an explicit enforces_permission_profiles opt-out", () => {
+  // A seat that opts out with [] must stay opted out — otherwise a test can
+  // never express a non-enforcing pin and the fail-closed path is untestable.
+  const configured = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "security",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+  const agents = (
+    configured as unknown as {
+      agents: { name: string; enforces_permission_profiles?: string[] }[];
+    }
+  ).agents;
+  expect(agents.find((a) => a.name === "security")?.enforces_permission_profiles).toEqual([]);
+});
+
+test("a persona pinned to a non-enforcing seat fails with the typed code and never dispatches", async () => {
+  const ctxParts = makeCtx();
+  // config.agents is authoritative when provided: security stays opted out
+  // while the getter appends enforcing entries for the other referenced seats.
+  ctxParts.ctx.config = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "security",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+
+  const result = (await fn(ctxParts.ctx, baseRecall())) as AdversarialReviewWorkflowResult;
+
+  try {
+    const security = result.personas?.find((p) => p.name === "security");
+    expect(security?.status).toBe("failed");
+    expect(security?.error_code).toBe("persona_seat_cannot_enforce_profile");
+    expect(ctxParts.dispatch.mock.calls.some(([input]) => input.agent === "security")).toBe(false);
+    const securityJson = ctxParts.writes.find((w) => w.path.endsWith("security.json"));
+    expect(securityJson?.body).toContain('"error_code": "persona_seat_cannot_enforce_profile"');
+  } finally {
+    rmSync(ctxParts.root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer failover pool exhaustion is reported when remaining seats cannot enforce", async () => {
+  const ctxParts = makeCtx({
+    awaitImpl: (conversationId) =>
+      Promise.resolve(
+        conversationId === "synth-a-conv"
+          ? { status: "failed" as const, final_agent: "synth-a", response_text: null }
+          : {
+              status: "completed" as const,
+              final_agent: "agent",
+              response_text: `review for ${conversationId}\n\n\`\`\`json\n[]\n\`\`\``,
+            },
+      ),
+  });
+  const configured = makeConfig();
+  configured.workloads.review_adversarial.synthesizer = ["synth-a", "synth-b"];
+  ctxParts.ctx.config = installEnforcingAgents({
+    ...configured,
+    agents: [
+      { name: "synth-a", roles: ["reviewer"], adapter: "openai-compat-http" },
+      {
+        name: "synth-b",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+
+  const result = (await fn(ctxParts.ctx, baseRecall())) as AdversarialReviewWorkflowResult;
+
+  try {
+    expect(result.synth_failed).toBe(true);
+    expect(result.synthesizer_status).toBe("failed");
+    expect(result.pool_exhausted).toBe(true);
+    expect(ctxParts.dispatch.mock.calls.some(([input]) => input.agent === "synth-b")).toBe(false);
+  } finally {
+    rmSync(ctxParts.root, { recursive: true, force: true });
   }
 });

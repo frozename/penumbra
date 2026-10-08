@@ -289,6 +289,7 @@ test("passes every supported chain field and preserves explicit false values", a
     parent_handoff_id: "parent-1",
     branch_base: "base-branch",
     dispatch_kind: "workflow",
+    caller_cwd: "/tmp/work",
   });
 });
 

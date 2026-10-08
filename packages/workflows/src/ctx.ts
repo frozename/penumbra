@@ -1,4 +1,4 @@
-import type { ChainStartRequest, Services, TaskClass } from "@penumbra/core";
+import type { ChainStartRequest, PermissionProfile, Services, TaskClass } from "@penumbra/core";
 
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
@@ -25,7 +25,13 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     branch_base?: string;
     project_id?: string;
     workflowRunId?: string;
-  }): Promise<{ conversation_id: string; handoff_id: string }>;
+    permission_profile?: PermissionProfile;
+    max_hops?: number;
+  }): Promise<{
+    conversation_id: string;
+    handoff_id: string;
+    permission_profile?: PermissionProfile | null;
+  }>;
   awaitChain(
     conversationId: string,
     opts?: { timeoutMs?: number; lateResponseGraceMs?: number },
@@ -260,8 +266,16 @@ function buildChainStartRequest<TArgs>(
   if (input.task_class !== undefined) req.task_class = input.task_class;
   if (input.branch_base) req.branch_base = input.branch_base;
   if (input.workflowRunId) req.workflow_run_id = input.workflowRunId;
+  if (input.permission_profile !== undefined) {
+    req.permission_profile = input.permission_profile;
+  }
+  if (input.max_hops !== undefined) req.max_hops = input.max_hops;
   const effectiveProjectId = input.project_id ?? deps.project;
   if (effectiveProjectId) req.project_id = effectiveProjectId;
+  // The workflow's own cwd is the originating caller root: persist it so a
+  // profiled dispatch's write sandbox denies it even when the dispatch cwd is
+  // elsewhere (or the workflow has no worktree at all).
+  req.caller_cwd = deps.cwd;
   return req;
 }
 
@@ -287,7 +301,19 @@ async function dispatchImpl<TArgs>(
   if (typeof conversationId !== "string" || typeof handoffId !== "string") {
     throw new Error("chain.start response missing conversation_id/handoff_id");
   }
-  return { conversation_id: conversationId, handoff_id: handoffId };
+  const profileEcho = payloadObj?.permission_profile;
+  if (input.permission_profile !== undefined && profileEcho !== input.permission_profile) {
+    throw new Error(
+      `permission_profile_echo_mismatch: requested ${input.permission_profile} but chain_start echoed ${JSON.stringify(profileEcho)}`,
+    );
+  }
+  return {
+    conversation_id: conversationId,
+    handoff_id: handoffId,
+    ...(profileEcho !== undefined
+      ? { permission_profile: profileEcho as PermissionProfile | null }
+      : {}),
+  };
 }
 
 async function cancelImpl<TArgs>(

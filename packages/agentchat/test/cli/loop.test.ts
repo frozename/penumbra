@@ -990,3 +990,58 @@ test("runChatTurn still throws when the PRE-adapter observe fails (the turn neve
   expect(h.builds).toHaveLength(0);
   expect(h.dispatches).toBe(0);
 });
+
+test("runChatTurn threads permission_profile through to adapter.dispatch input", async () => {
+  let seenInput: DispatchInput | null = null;
+
+  registerAdapter("mock-profile", () => ({
+    kind: "mock-profile",
+    dispatch(input): Promise<{ text: string }> {
+      seenInput = input;
+      return Promise.resolve({ text: "ok" });
+    },
+  }));
+
+  const cfgWithProfile: AgentChatConfig = {
+    agents: [{ name: "echo", adapter: "mock-profile", options: {}, roles: ["planner"] }],
+    default_roles: { planner: "echo" },
+  };
+
+  await runChatTurn({
+    config: cfgWithProfile,
+    initialAgent: "echo",
+    userMessage: "hello",
+    conversation: { id: "c-profile", project_id: null },
+    observe: fakeObserve,
+    permission_profile: "review_readonly",
+  });
+
+  expect(seenInput!.permission_profile).toBe("review_readonly");
+});
+
+test("runChatTurn leaves permission_profile unset for unprofiled turns", async () => {
+  let seenInput: DispatchInput | null = null;
+
+  registerAdapter("mock-profile-none", () => ({
+    kind: "mock-profile-none",
+    dispatch(input): Promise<{ text: string }> {
+      seenInput = input;
+      return Promise.resolve({ text: "ok" });
+    },
+  }));
+
+  const cfgNoProfile: AgentChatConfig = {
+    agents: [{ name: "echo", adapter: "mock-profile-none", options: {}, roles: ["planner"] }],
+    default_roles: { planner: "echo" },
+  };
+
+  await runChatTurn({
+    config: cfgNoProfile,
+    initialAgent: "echo",
+    userMessage: "hello",
+    conversation: { id: "c-no-profile", project_id: null },
+    observe: fakeObserve,
+  });
+
+  expect(seenInput!.permission_profile).toBeUndefined();
+});

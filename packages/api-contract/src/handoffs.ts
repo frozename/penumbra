@@ -4,6 +4,7 @@ import {
   DispatchRecommendedActionSchema,
   DispatchReliabilityStatusSchema,
 } from "./dispatch-audit.js";
+import { PermissionProfileSchema } from "./permissions.js";
 
 export const HandoffStatusSchema = z.enum([
   "pending",
@@ -49,6 +50,8 @@ export const HandoffRowSchema = z
     cancel_requested_at: z.string().nullable(),
     worker_id: z.string().nullable(),
     parent_handoff_id: z.string().nullable(),
+    permission_profile: PermissionProfileSchema.nullable().optional(),
+    caller_cwd: z.string().nullable().optional(),
   })
   .loose();
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;

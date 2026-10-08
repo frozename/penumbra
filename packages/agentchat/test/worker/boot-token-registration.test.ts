@@ -1055,3 +1055,40 @@ describe("401 auto-re-register + retry", () => {
     }
   });
 });
+
+test("runWorkerBoot forwards workerMetadata into registerWorker", async () => {
+  const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+  process.env.PENUMBRA_BOOT_RECONCILE = "0";
+  try {
+    let captured: Record<string, unknown> | undefined;
+    const client: WorkerBootClient = {
+      registerWorker: (args: {
+        worker_id: string;
+        metadata?: Record<string, unknown>;
+      }): Promise<{ worker_token: string; worker_id: string }> => {
+        captured = args.metadata;
+        return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+      },
+      postHeartbeat: (): Promise<void> => Promise.resolve(),
+      reconcileLongLivedOrphans: (): Promise<{ reconciled: number }> =>
+        Promise.resolve({ reconciled: 0 }),
+      reconcileDispatchOrphans: (): Promise<{ requeued: number; exhausted: number }> =>
+        Promise.resolve({ requeued: 0, exhausted: 0 }),
+    };
+
+    await runWorkerBoot({
+      client,
+      log: { info: noopVoid, warn: noopVoid, error: noopVoid },
+      workerId: "W-A",
+      workerMetadata: { enforces_permission_profiles: ["review_readonly"] },
+    });
+
+    expect(captured).toEqual({ enforces_permission_profiles: ["review_readonly"] });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_BOOT_RECONCILE;
+    } else {
+      process.env.PENUMBRA_BOOT_RECONCILE = previous;
+    }
+  }
+});

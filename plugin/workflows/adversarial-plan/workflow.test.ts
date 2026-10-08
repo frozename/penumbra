@@ -57,6 +57,7 @@ describe("adversarial-plan workflow", () => {
             dispatch: async (input) => ({
               conversation_id: `${input.agent}-conv`,
               handoff_id: `${input.agent}-handoff`,
+              permission_profile: input.permission_profile,
             }),
             awaitChain: async (conversationId) => {
               if (conversationId !== "synth-conv")
@@ -120,6 +121,7 @@ describe("adversarial-plan workflow", () => {
           return {
             conversation_id: `conversation-${dispatchCount}`,
             handoff_id: `handoff-${dispatchCount}`,
+            permission_profile: input.permission_profile,
           };
         },
         awaitChain: async () => ({
@@ -179,6 +181,7 @@ describe("adversarial-plan workflow", () => {
             conversation_id:
               input.agent === "synth" ? "synth-conversation" : `conversation-${dispatchCount}`,
             handoff_id: `handoff-${dispatchCount}`,
+            permission_profile: input.permission_profile,
           };
         },
         awaitChain: async (conversationId) =>
@@ -246,6 +249,7 @@ describe("adversarial-plan workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async () => ({
           status: "timeout" as const,
@@ -303,6 +307,7 @@ describe("adversarial-plan workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) =>
           conversationId === "synth-conv"
@@ -326,6 +331,69 @@ describe("adversarial-plan workflow", () => {
       expect(cancelled).toEqual(["synth-conv"]);
       expect(result.synthesizer_status).toBe("timeout");
       expect(result.synth_failed).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("permission_profile dispatch contract", () => {
+  test("dispatches every planner persona and the synthesizer under review_readonly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-plan-profile-"));
+    try {
+      const dispatched: {
+        agent: string;
+        message: string;
+        permission_profile?: string | null;
+        max_hops?: number;
+      }[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: { plan_refine: { eligible_agents: ["planner"], synthesizer: "synth" } },
+          personas: {
+            planner: {
+              bias: "Find gaps",
+              system_prompt: "Plan",
+              preferred_agent: "planner-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { topic: "Ship the feature", timeout_ms: 1000 },
+        dispatch: async (input) => {
+          dispatched.push(input);
+          return {
+            conversation_id: `${input.agent}-conv`,
+            handoff_id: `${input.agent}-handoff`,
+            permission_profile: input.permission_profile,
+          };
+        },
+        awaitChain: async (conversationId) =>
+          conversationId === "synth-conv"
+            ? {
+                status: "completed" as const,
+                final_agent: "synth",
+                response_text: "Merged plan.",
+              }
+            : {
+                status: "completed" as const,
+                final_agent: "planner-agent",
+                response_text: "Phase 1: write a failing test.",
+              },
+        fileWrite: async (path) => path,
+      });
+
+      const result = (await fn(ctx, emptyRecall())) as { ok: boolean };
+
+      expect(dispatched).toHaveLength(2);
+      for (const d of dispatched) {
+        expect(d.permission_profile).toBe("review_readonly");
+        expect(d.max_hops).toBe(1);
+        expect(d.message).toContain("read-only");
+      }
+      expect(result.ok).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

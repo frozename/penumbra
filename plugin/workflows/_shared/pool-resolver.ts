@@ -2,8 +2,10 @@ import type { WorkflowCtx } from "@penumbra/workflows";
 import type { Database } from "bun:sqlite";
 
 import {
+  agentEnforcesPermissionProfile,
   type AgentOutcome,
   type AgentTaskType,
+  type PermissionProfile,
   pickFromPool,
   readRoutingBiases,
   readSubscriptionPressure,
@@ -155,6 +157,18 @@ function hasRecentDeadPinFailures(db: Database, agent: string, taskType: string)
   }
 }
 
+export class PersonaSeatCannotEnforceProfileError extends Error {
+  readonly code = "persona_seat_cannot_enforce_profile";
+
+  constructor(
+    readonly agent: string,
+    readonly profile: string,
+  ) {
+    super(`persona_seat_cannot_enforce_profile: seat "${agent}" cannot enforce profile ${profile}`);
+    this.name = "PersonaSeatCannotEnforceProfileError";
+  }
+}
+
 export function resolveAgent(
   field: AgentField,
   taskType: string,
@@ -165,17 +179,65 @@ export function resolveAgent(
   // unset (false) keeps every existing caller byte-identical. ONLY set by
   // callers that have positively confirmed text-only behavior; routing a
   // tool-needing role to an HTTP seat breaks it.
-  opts: { excludeAgents?: string[]; fallback_role?: string; tool_free?: boolean } = {},
+  //
+  // permission_profile: the dispatch will run under this profile (e.g.
+  // review_readonly). Only seats that can enforce it are eligible — a pin or
+  // pool with no enforcing seat throws PersonaSeatCannotEnforceProfileError
+  // rather than silently dispatching unguarded.
+  opts: {
+    excludeAgents?: string[];
+    fallback_role?: string;
+    tool_free?: boolean;
+    permission_profile?: PermissionProfile;
+  } = {},
 ): string {
+  const agentchatConfig = {
+    ...ctx.config,
+    agents: Array.isArray(ctx.config.agents) ? ctx.config.agents : [],
+  } as NonNullable<RouteAgentInput["agentchatConfig"]>;
+  const profile = opts.permission_profile;
+  const enforces = (name: string): boolean => {
+    if (profile === undefined) return true;
+    const conf = agentchatConfig.agents.find((agent) => agent.name === name);
+    return agentEnforcesPermissionProfile(conf, profile);
+  };
+  const pinnedName = field.kind === "single" ? field.agent : null;
+  const fallbackSeatNames = (role: string): string[] =>
+    agentchatConfig.agents
+      .filter(
+        (agent) => agent.name !== pinnedName && agent.roles.includes(role) && enforces(agent.name),
+      )
+      .map((agent) => agent.name);
+
   let pool: string[] | undefined;
   if (field.kind === "pool") {
     const excluded = new Set(opts.excludeAgents ?? []);
     const agents = field.agents.filter((agent) => !excluded.has(agent));
-    pool = agents.length > 0 ? agents : field.agents;
+    const base = agents.length > 0 ? agents : field.agents;
+    const capable = base.filter(enforces);
+    if (profile !== undefined && capable.length === 0) {
+      throw new PersonaSeatCannotEnforceProfileError(base[0] ?? "unknown", profile);
+    }
+    pool = capable;
+  }
+
+  const pinExcludedByProfile =
+    field.kind === "single" && profile !== undefined && !enforces(field.agent);
+  // A pinned seat that cannot enforce the profile is a contract breach, not a
+  // liveness problem: fallback_role exists for bias/dead-pin substitution, and
+  // silently swapping seats under a pin dispatches a persona the operator did
+  // not choose. Fail closed with the typed error before any fallback logic.
+  if (pinExcludedByProfile) {
+    throw new PersonaSeatCannotEnforceProfileError(field.agent, profile);
   }
 
   const db = ctx.db?.();
-  if (!db) return field.kind === "single" ? field.agent : firstPoolAgent(pool ?? field.agents);
+  if (!db) {
+    if (field.kind === "single") {
+      return field.agent;
+    }
+    return firstPoolAgent(pool ?? field.agents);
+  }
 
   let activeBiases: RoutingBias[] | undefined;
   try {
@@ -184,24 +246,22 @@ export function resolveAgent(
     activeBiases = undefined;
   }
 
-  const agentchatConfig = {
-    ...ctx.config,
-    agents: Array.isArray(ctx.config.agents) ? ctx.config.agents : [],
-  } as NonNullable<RouteAgentInput["agentchatConfig"]>;
   if (field.kind === "single") {
     const preferredConfig = agentchatConfig.agents.find((agent) => agent.name === field.agent);
     const provider = preferredConfig ? resolveProvider(preferredConfig) : null;
     const fallbackRole = opts.fallback_role;
-    if (!fallbackRole) return field.agent;
+    if (!fallbackRole) {
+      return field.agent;
+    }
     const biasExcluded = resolveBiasEffect(field.agent, provider, activeBiases).exclude;
     const deadPinExcluded = hasRecentDeadPinFailures(db, field.agent, taskType);
     const pinExcluded = biasExcluded || deadPinExcluded;
     if (!pinExcluded) return field.agent;
 
-    const fallbackAgents = agentchatConfig.agents
-      .filter((agent) => agent.name !== field.agent && agent.roles.includes(fallbackRole))
-      .map((agent) => agent.name);
-    if (fallbackAgents.length === 0) return field.agent;
+    const fallbackAgents = fallbackSeatNames(fallbackRole);
+    if (fallbackAgents.length === 0) {
+      return field.agent;
+    }
 
     try {
       const pressure = readSubscriptionPressure(db);
@@ -222,6 +282,7 @@ export function resolveAgent(
         },
         tool_free: opts.tool_free,
         activeBiases,
+        permission_profile: profile,
       });
       if (out.detail === "rank") {
         const alternative = out.candidates.candidates[0]?.agent_name;
@@ -230,7 +291,9 @@ export function resolveAgent(
     } catch {
       // Preserve fallback behavior when pressure-aware routing cannot score candidates.
     }
-    if (deadPinExcluded && !biasExcluded) return firstPoolAgent(fallbackAgents);
+    if (deadPinExcluded && !biasExcluded) {
+      return firstPoolAgent(fallbackAgents);
+    }
     return field.agent;
   }
 
@@ -244,5 +307,6 @@ export function resolveAgent(
     taskType as AgentTaskType,
     opts.tool_free,
     activeBiases,
+    profile,
   );
 }

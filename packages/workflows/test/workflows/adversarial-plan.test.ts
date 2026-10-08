@@ -93,14 +93,70 @@ function makeConfig(): AdvPlanConfig {
   };
 }
 
+// review_readonly dispatches only land on seats that opt into
+// enforces_permission_profiles. Production gets those entries from
+// agents.yaml; here the lazy getter re-derives them from the live config so
+// tests that mutate ctx.config personas/workloads after makeCtx still see
+// every referenced seat as enforcing.
+function installEnforcingAgents<T extends object>(config: T): T {
+  // Shallow-clone first: loader-produced configs may freeze `agents`.
+  const wrapped = { ...(config as Record<string, unknown>) } as Record<string, unknown>;
+  const seed = wrapped.agents;
+  let override: unknown = Array.isArray(seed) ? seed : undefined;
+  Object.defineProperty(wrapped, "agents", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const cfg = wrapped as {
+        personas?: Record<string, { preferred_agent?: unknown }>;
+        workloads?: Record<string, { eligible_agents?: unknown; synthesizer?: unknown }>;
+        default_roles?: Record<string, unknown>;
+      };
+      const names = new Set<string>();
+      const add = (v: unknown): void => {
+        for (const n of Array.isArray(v) ? v : [v]) {
+          if (typeof n === "string") names.add(n);
+        }
+      };
+      for (const p of Object.values(cfg.personas ?? {})) add(p.preferred_agent);
+      for (const w of Object.values(cfg.workloads ?? {})) {
+        add(w.eligible_agents);
+        add(w.synthesizer);
+      }
+      for (const roleAgent of Object.values(cfg.default_roles ?? {})) add(roleAgent);
+      const enforce = (entry: Record<string, unknown>): Record<string, unknown> =>
+        entry.enforces_permission_profiles === undefined
+          ? { ...entry, enforces_permission_profiles: ["review_readonly"] }
+          : entry;
+      const out = Array.isArray(override)
+        ? override.map((entry) => enforce(entry as Record<string, unknown>))
+        : [];
+      const seen = new Set(out.map((entry) => entry.name));
+      for (const name of names) {
+        if (!seen.has(name)) out.push(enforce({ name, roles: [] }));
+      }
+      return out;
+    },
+    set: (v) => {
+      override = v;
+    },
+  });
+  return wrapped as T;
+}
+
 type DispatchInput = {
   agent: string;
   message: string;
   task_type?: string;
   task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
+  permission_profile?: string | null;
 };
-type DispatchResult = { conversation_id: string; handoff_id: string };
+type DispatchResult = {
+  conversation_id: string;
+  handoff_id: string;
+  permission_profile?: string | null;
+};
 type AwaitResult = {
   status: "completed" | "failed" | "timeout";
   response_text: string | null;
@@ -133,7 +189,12 @@ function makeCtx(opts?: {
       status: "completed" as const,
       response_text: `plan for ${conversationId}`,
     });
-  const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
+  // ctx.dispatch echoes the granted permission_profile back to the caller —
+  // wrap impls so mocks honor the same contract the workflow asserts.
+  const dispatchImpl = opts?.dispatchImpl ?? defaultDispatch;
+  const dispatch = mock((input: DispatchInput) =>
+    dispatchImpl(input).then((r) => ({ ...r, permission_profile: input.permission_profile })),
+  );
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
@@ -147,7 +208,7 @@ function makeCtx(opts?: {
       await Bun.write(path, body);
       return path;
     },
-    config: makeConfig(),
+    config: installEnforcingAgents(makeConfig()),
     cwd: root,
     storageRoot: root,
     project: "penumbra",
@@ -637,3 +698,23 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test("installEnforcingAgents preserves an explicit enforces_permission_profiles opt-out", () => {
+  const configured = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "architect",
+        roles: ["planner"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+  const agents = (
+    configured as unknown as {
+      agents: { name: string; enforces_permission_profiles?: string[] }[];
+    }
+  ).agents;
+  expect(agents.find((a) => a.name === "architect")?.enforces_permission_profiles).toEqual([]);
+});

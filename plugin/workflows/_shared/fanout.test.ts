@@ -119,6 +119,7 @@ describe("runFanout dispatch contract", () => {
       parent_handoff_id: "parent-1",
       branch_base: "base-branch",
       dispatch_kind: "workflow",
+      caller_cwd: "/repo",
     });
   });
 
@@ -608,5 +609,98 @@ describe("runFanout abandon-cancel contract", () => {
 
       expect(cancelled).toEqual([]);
     }
+  });
+});
+
+describe("runFanout permission_profile propagation", () => {
+  test("forwards task permission_profile and inherits it from defaults", async () => {
+    const captured: ChainStartRequest[] = [];
+    const ctx = context({
+      chainStart: async (input) => {
+        captured.push(input);
+        return response({ conversation_id: "conversation-1", handoff_id: "handoff-1" });
+      },
+    });
+
+    await runFanout(ctx, {
+      defaults: {
+        initial_agent: "executor",
+        task_type: "review_adversarial",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      },
+      tasks: [{ message: "first" }, { message: "second", permission_profile: "review_readonly" }],
+    });
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0]?.permission_profile).toBe("review_readonly");
+    expect(captured[1]?.permission_profile).toBe("review_readonly");
+  });
+
+  test("fails the task when chain_start does not echo the requested profile", async () => {
+    const ctx = context({
+      chainStart: async () =>
+        response({ conversation_id: "conversation-1", handoff_id: "handoff-1" }),
+    });
+
+    const result = await runFanout(ctx, {
+      defaults: {
+        initial_agent: "executor",
+        task_type: "review_adversarial",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      },
+      tasks: [{ message: "review this" }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0]?.error_code).toBe("permission_profile_echo_mismatch");
+    expect(result.results[0]?.ok).toBe(false);
+  });
+
+  test("accepts a matching permission_profile echo", async () => {
+    const ctx = context({
+      chainStart: async () =>
+        response({
+          conversation_id: "conversation-1",
+          handoff_id: "handoff-1",
+          permission_profile: "review_readonly",
+        }),
+    });
+
+    const result = await runFanout(ctx, {
+      defaults: {
+        initial_agent: "executor",
+        task_type: "review_adversarial",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      },
+      tasks: [{ message: "review this" }],
+    });
+
+    expect(result.results[0]?.error_code).not.toBe("permission_profile_echo_mismatch");
+    expect(result.results[0]?.conversation_id).toBe("conversation-1");
+  });
+});
+
+describe("runFanout caller_cwd propagation", () => {
+  test("stamps ctx.cwd as caller_cwd on every chain_start request", async () => {
+    const captured: ChainStartRequest[] = [];
+    const ctx = context({
+      cwd: "/repo/originating",
+      chainStart: async (input) => {
+        captured.push(input);
+        return response({ conversation_id: "conversation-1", handoff_id: "handoff-1" });
+      },
+    });
+
+    await runFanout(ctx, {
+      defaults: { initial_agent: "executor", use_worktree: false },
+      tasks: [{ message: "one" }, { message: "two" }],
+    });
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0]?.caller_cwd).toBe("/repo/originating");
+    expect(captured[1]?.caller_cwd).toBe("/repo/originating");
   });
 });

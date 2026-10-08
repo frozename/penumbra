@@ -56,6 +56,7 @@ export interface DispatchHandoffOpts {
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
     long_lived_tick_id?: string | null;
+    permission_profile?: ChatTurnInput["permission_profile"];
   };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
@@ -74,6 +75,12 @@ export interface DispatchHandoffOpts {
     reason: string,
   ) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
+  /**
+   * Worker-computed mutable roots for the Layer B sandbox when the handoff is
+   * profiled (caller cwd, project root, worktree fleet base). Forwarded onto
+   * DispatchInput so every spawn surface shares one deny set.
+   */
+  sandboxDenyRoots?: readonly string[];
   requestPermission?: ChatTurnInput["requestPermission"];
   eventContext?: ChatTurnInput["eventContext"];
   onEvent?: ChatTurnInput["onEvent"];
@@ -177,6 +184,8 @@ async function runTurnOnce(
       onChunk: opts.onChunk,
       requestPermission: opts.requestPermission,
       trust_mode: opts.trustMode,
+      permission_profile: opts.handoff.permission_profile,
+      sandbox_deny_roots: opts.sandboxDenyRoots,
       executor: opts.executor,
       eventContext: opts.eventContext,
       onEvent: opts.onEvent,

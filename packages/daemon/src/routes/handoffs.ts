@@ -1,10 +1,12 @@
 import { HandoffFailRequestSchema } from "@penumbra/api-contract";
 import {
+  agentEnforcesPermissionProfile,
   ApproveHandoffRequestSchema,
   classifyDispatchReliability,
   CreateHandoffRequestSchema,
   type HandoffStatus,
   HandoffStatusSchema,
+  type PermissionProfile,
   type Services,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -26,7 +28,17 @@ import { json } from "./_helpers.js";
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
-import { resolveSingleRoute, RoutingBiasExhaustedError } from "./role-routing.js";
+import {
+  resolveSingleRoute,
+  RouterHardConstraintExhaustedError,
+  RoutingBiasExhaustedError,
+} from "./role-routing.js";
+import {
+  profiledLiveWorkerGateResponse,
+  workerCanClaimProject,
+  workerHeartbeatStaleMs,
+  workerTokenMetadataDeclaresProfile,
+} from "./worker-profile-gate.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
   const meta = dispatchEnd?.meta;
@@ -94,19 +106,91 @@ interface CountRow {
   n: number;
 }
 
-function workerHeartbeatStaleMs(): number {
-  const configured = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : 90_000;
+interface WorkerTokenMetadataRow {
+  metadata_json: string | null;
 }
 
-function workerCanClaimProject(
-  authz: { project_id?: string; isolation: ExtraWorkerConfig["isolation"] } | undefined,
-  project_id: string | null,
+function workerDeclaresProfileEnforcement(
+  services: Services,
+  worker_id: string,
+  profile: PermissionProfile,
 ): boolean {
-  return !(
-    authz?.isolation === "hard" &&
-    authz.project_id !== undefined &&
-    project_id !== authz.project_id
+  const row = services.db
+    .query<WorkerTokenMetadataRow, [string]>(
+      `SELECT metadata_json
+         FROM worker_tokens
+        WHERE worker_id = ? AND revoked_at IS NULL
+        ORDER BY last_seen_at DESC
+        LIMIT 1`,
+    )
+    .get(worker_id);
+  return workerTokenMetadataDeclaresProfile(row?.metadata_json ?? null, profile);
+}
+
+// A chain hop inherits the parent's permission profile unless the hop names
+// one explicitly; a hop can never drop its parent's profile because null is
+// treated as "not specified".
+function resolveEffectivePermissionProfile(
+  input: { permission_profile?: PermissionProfile | null; parent_handoff_id?: string | null },
+  services: Services,
+): PermissionProfile | null {
+  const parentProfile = input.parent_handoff_id
+    ? (services.handoffReader.get(input.parent_handoff_id)?.permission_profile ?? null)
+    : null;
+  return input.permission_profile ?? parentProfile;
+}
+
+// caller_cwd follows the same inheritance as permission_profile: hops inherit
+// the chain root's caller cwd so the worker's Layer B deny set keeps covering
+// the originating repository across every hop.
+function resolveEffectiveCallerCwd(
+  input: { caller_cwd?: string | null; parent_handoff_id?: string | null },
+  services: Services,
+): string | null {
+  const parentCwd = input.parent_handoff_id
+    ? (services.handoffReader.get(input.parent_handoff_id)?.caller_cwd ?? null)
+    : null;
+  return input.caller_cwd ?? parentCwd;
+}
+
+function profiledSeatGateResponse(
+  services: Services,
+  agent: string,
+  profile: PermissionProfile,
+): Response | null {
+  const seat = services.agentchatConfig?.agents?.find((candidate) => candidate.name === agent);
+  if (agentEnforcesPermissionProfile(seat, profile)) return null;
+  services.log.warn(
+    {
+      event: "handoffs_create.permission_profile_unenforceable",
+      agent,
+      permission_profile: profile,
+    },
+    "handoff-create profiled hop rejected: seat cannot enforce the profile",
+  );
+  return json(
+    {
+      error: {
+        code: "permission_profile_unenforceable",
+        message: `agent '${agent}' cannot enforce permission_profile '${profile}'`,
+        agent,
+        permission_profile: profile,
+      },
+    },
+    422,
+  );
+}
+
+function profiledDispatchGateResponse(
+  services: Services,
+  routedAgent: string,
+  effectiveProfile: PermissionProfile | null,
+  projectId: string | null,
+): Response | null {
+  if (effectiveProfile === null) return null;
+  return (
+    profiledSeatGateResponse(services, routedAgent, effectiveProfile) ??
+    profiledLiveWorkerGateResponse(services, effectiveProfile, projectId)
   );
 }
 
@@ -328,6 +412,70 @@ function maybeTeardownLongLivedTick(params: {
   }
 }
 
+function resolveCreateRoute(
+  input: {
+    to_role?: string | null;
+    message: string;
+    chain_task_type?: Parameters<typeof resolveSingleRoute>[3] | null;
+  },
+  effectiveProfile: PermissionProfile | null,
+  services: Services,
+): { route: ReturnType<typeof resolveSingleRoute> | null; response: Response | null } {
+  try {
+    const route = input.to_role
+      ? resolveSingleRoute(
+          services,
+          input.to_role,
+          input.message,
+          input.chain_task_type ?? undefined,
+          // Hints only when the profile applies: passing an object at all
+          // engages the model task router (mode !== off), which must stay
+          // byte-identical to legacy routing for unprofiled hops.
+          effectiveProfile === null ? undefined : { permission_profile: effectiveProfile },
+        )
+      : null;
+    return { route, response: null };
+  } catch (err) {
+    if (err instanceof RouterHardConstraintExhaustedError) {
+      return {
+        route: null,
+        response: json(
+          {
+            error: {
+              code: "router_hard_constraint_exhausted",
+              message: "the model task router excluded every candidate via a hard constraint",
+              reasons: err.decision.alternatives
+                .filter((alternative) => alternative.excluded)
+                .map((alternative) => ({
+                  route_id: alternative.routeId,
+                  reasons: alternative.reasons,
+                })),
+            },
+          },
+          422,
+        ),
+      };
+    }
+    if (err instanceof RoutingBiasExhaustedError) {
+      return {
+        route: null,
+        response: json(
+          {
+            error: {
+              code: "routing_bias_exhausted",
+              message: "routing biases excluded every candidate for the requested role",
+              role: err.role,
+              task_type: err.taskType,
+            },
+          },
+          422,
+        ),
+      };
+    }
+    throw err;
+  }
+}
+
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null)
@@ -356,37 +504,27 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   const depthResponse = enforceRecursionDepthGuard(parsed.data, services);
   if (depthResponse) return depthResponse;
 
+  const effectiveProfile = resolveEffectivePermissionProfile(parsed.data, services);
+
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
-  let route: ReturnType<typeof resolveSingleRoute> | null = null;
-  try {
-    route = parsed.data.to_role
-      ? resolveSingleRoute(
-          services,
-          parsed.data.to_role,
-          parsed.data.message,
-          parsed.data.chain_task_type ?? undefined,
-        )
-      : null;
-  } catch (err) {
-    if (err instanceof RoutingBiasExhaustedError) {
-      return json(
-        {
-          error: {
-            code: "routing_bias_exhausted",
-            message: "routing biases excluded every candidate for the requested role",
-            role: err.role,
-            task_type: err.taskType,
-          },
-        },
-        422,
-      );
-    }
-    throw err;
-  }
+  const { route, response: routeResponse } = resolveCreateRoute(
+    parsed.data,
+    effectiveProfile,
+    services,
+  );
+  if (routeResponse) return routeResponse;
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;
   const routingTaskType = route?.taskType ?? parsed.data.chain_task_type ?? null;
+
+  const profileGateResponse = profiledDispatchGateResponse(
+    services,
+    routedAgent,
+    effectiveProfile,
+    parsed.data.project_id ?? null,
+  );
+  if (profileGateResponse) return profileGateResponse;
 
   // F6: phantom-seat rejection at the chain-HOP write boundary, mirroring the
   // chain_start rejectUnknownAgent shape so the two write paths agree on what
@@ -475,6 +613,8 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       parent_handoff_id: parsed.data.parent_handoff_id ?? null,
       branch_base: parsed.data.branch_base ?? null,
       chain_max_hops: parsed.data.chain_max_hops ?? null,
+      permission_profile: effectiveProfile,
+      caller_cwd: resolveEffectiveCallerCwd(parsed.data, services),
     });
   })();
 
@@ -994,6 +1134,27 @@ export async function handoffsClaimRoute(
           code: "project_mismatch",
           message: `handoff ${handoff_id} belongs to project ${String(cur.project_id)}`,
           project_id: authz.project_id,
+        },
+      },
+      403,
+    );
+  }
+
+  // A profiled handoff may only be claimed by a worker that declared
+  // enforcement at registration; otherwise it must stay unclaimed rather
+  // than run unconstrained.
+  if (
+    cur.permission_profile !== null &&
+    cur.permission_profile !== undefined &&
+    !workerDeclaresProfileEnforcement(services, body.data.worker_id, cur.permission_profile)
+  ) {
+    return json(
+      {
+        error: {
+          code: "permission_profile_unenforceable",
+          message: `worker '${body.data.worker_id}' does not enforce permission_profile '${cur.permission_profile}'`,
+          worker_id: body.data.worker_id,
+          permission_profile: cur.permission_profile,
         },
       },
       403,

@@ -126,3 +126,4 @@ export {
 export { type ConfigBundle, type ConfigSource, getConfig, resetConfigForTest } from "./load.js";
 export { CANONICAL_PROVIDER_VALUE_RE, isCanonicalProviderValue } from "./provider-format.js";
 export { formatEnvConfig, type FormatOptions } from "./show.js";
+export { EnforcesPermissionProfilesSchema } from "@penumbra/api-contract";

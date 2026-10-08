@@ -45,6 +45,7 @@ export interface RetryHandoffContext {
   chain_task_type?: string | null | undefined;
   branch_base?: string | null | undefined;
   chain_max_hops?: number | null | undefined;
+  permission_profile?: string | null | undefined;
 }
 
 export interface SilentRetryPayloadInput {
@@ -91,6 +92,7 @@ export interface RetryAgentCandidate {
 export type RoutingBiasLike = RoutingBiasEffectInput;
 
 export type SilentRetrySuppressionReason =
+  | "retry_suppressed_permission_profile"
   | "retry_suppressed_branch_base"
   | "retry_suppressed_single_shot";
 
@@ -183,6 +185,12 @@ export function shouldRetryHandoffForSilentFailure(
 export function silentFailureRetrySuppressionReason(
   handoff: RetryHandoffContext,
 ): SilentRetrySuppressionReason | null {
+  // A profiled dispatch can only run on a seat that proves enforcement; the
+  // retry selector has no enforcement data and the payload would drop the
+  // profile entirely, so the failure must surface instead of retrying.
+  if (handoff.permission_profile !== null && handoff.permission_profile !== undefined) {
+    return "retry_suppressed_permission_profile";
+  }
   if (typeof handoff.branch_base === "string" && handoff.branch_base.length > 0) {
     return "retry_suppressed_branch_base";
   }

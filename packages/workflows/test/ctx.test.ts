@@ -300,6 +300,44 @@ test("dispatch stamps workflow dispatch_kind on chainStart requests", async () =
   expect(captured?.workflow_run_id).toBe("wfrun-test-uuid");
 });
 
+test("dispatch stamps caller_cwd from deps.cwd so the sandbox denies the originating root", async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/repo/originating-cwd",
+    storageRoot: "/tmp/storage",
+    project: "sirius",
+    agentchatConfig: {},
+    workflowRunId: "wfrun-test-uuid",
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            conversation_id: "conv-4b",
+            handoff_id: "hand-4b",
+            permission_profile: "review_readonly",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({
+    agent: "reviewer-seat",
+    message: "adversarial review",
+    task_type: "review_adversarial",
+    permission_profile: "review_readonly",
+    use_worktree: false,
+  });
+  expect(out.conversation_id).toBe("conv-4b");
+  expect(captured?.caller_cwd).toBe("/repo/originating-cwd");
+});
+
 test("dispatch omits project_id when deps.project is falsy", async () => {
   let captured: ChainStartRequest | null = null;
   const ctx = buildWorkflowCtx({
@@ -1273,4 +1311,127 @@ test("unbounded awaitChain backoff sequence is unchanged with no runTimeoutMs", 
   expect(sleepCalls[3]).toBe(675);
   expect(sleepCalls[4]).toBeCloseTo(1012.5, 5);
   expect(sleepCalls[sleepCalls.length - 1]).toBe(2000);
+});
+
+test("dispatch forwards permission_profile and max_hops to chain.start requests", async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            conversation_id: "conv-p",
+            handoff_id: "hand-p",
+            permission_profile: "review_readonly",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({
+    agent: "opencode-seat",
+    message: "review this",
+    task_type: "review_adversarial",
+    permission_profile: "review_readonly",
+    max_hops: 1,
+  });
+  expect(captured?.permission_profile).toBe("review_readonly");
+  expect(captured?.max_hops).toBe(1);
+  expect(out).toEqual({
+    conversation_id: "conv-p",
+    handoff_id: "hand-p",
+    permission_profile: "review_readonly",
+  });
+});
+
+test("dispatch throws when chain_start response does not echo a requested profile", async () => {
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "conv-n", handoff_id: "hand-n" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+  });
+
+  let caught: unknown;
+  try {
+    await ctx.dispatch({
+      agent: "opencode-seat",
+      message: "review this",
+      permission_profile: "review_readonly",
+    });
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(String(caught)).toContain("permission_profile");
+});
+
+test("dispatch throws when chain_start echoes a different profile than requested", async () => {
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            conversation_id: "conv-m",
+            handoff_id: "hand-m",
+            permission_profile: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+  });
+
+  let caught: unknown;
+  try {
+    await ctx.dispatch({
+      agent: "opencode-seat",
+      message: "review this",
+      permission_profile: "review_readonly",
+    });
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(String(caught)).toContain("permission_profile");
+});
+
+test("dispatch result omits permission_profile key when no profile was requested", async () => {
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "conv-o", handoff_id: "hand-o" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+  });
+
+  const out = await ctx.dispatch({ agent: "codex", message: "plain" });
+  expect(out).toEqual({ conversation_id: "conv-o", handoff_id: "hand-o" });
 });

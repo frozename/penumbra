@@ -12,9 +12,16 @@ import { z } from "zod";
 import { awaitChainOrCancel, cancelChainQuietly } from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  type PermissionProfile,
+  READ_ONLY_REVIEW_INSTRUCTION,
+  requireDispatchProfileEcho,
+} from "../_shared/permission-profile.js";
+import {
   type AgentField,
   agentPoolToNames,
   parseAgentField,
+  PersonaSeatCannotEnforceProfileError,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
 import { beginCheckoutTripwire } from "./checkout-tripwire.js";
@@ -95,6 +102,7 @@ type PersonaRunResult = {
   conversation_id: string | null;
   handoff_id: string | null;
   error?: string;
+  error_code?: string;
   findings: unknown[] | null;
   parse_error?: "no_json_block" | "invalid_json";
   triviality_reason?: "trivial_response" | "no_findings";
@@ -581,6 +589,8 @@ substance, not the document.
 
 ${contentModePreamble}${persona.system_prompt}
 
+${READ_ONLY_REVIEW_INSTRUCTION}
+
 ## Review Target
 ${reviewTarget}
 ${focusSection}
@@ -828,6 +838,8 @@ function synthesisPrompt(
 
   return `${synth.system_prompt}
 
+${READ_ONLY_REVIEW_INSTRUCTION}
+
 You are synthesizing ${selected.length} adversarial reviews. Each persona reviewed the same diff with a different lens.
 
 ${focusPrefix}${priorFindingsSection}## Reviews
@@ -1033,6 +1045,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
     fallback_role: "reviewer",
     tool_free: true,
+    permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
   });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
@@ -1064,6 +1077,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           parse_error: result.parse_error,
           error: result.error,
+          error_code: result.error_code,
           retry_count: result.retry_count,
           cancel_requested: result.cancel_requested,
           cancel_error: result.cancel_error,
@@ -1110,7 +1124,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           cancelError ??= outcome.cancel_error;
         };
         try {
-          let dispatch: { conversation_id: string; handoff_id: string };
+          let dispatch: {
+            conversation_id: string;
+            handoff_id: string;
+            permission_profile?: PermissionProfile | null;
+          };
           let wait: {
             status: "completed" | "failed" | "timeout";
             final_agent: string | null;
@@ -1123,6 +1141,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
             fallback_role: "reviewer",
             tool_free: true,
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
           });
           for (;;) {
             try {
@@ -1132,7 +1151,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
                 task_type: "review_adversarial",
                 use_worktree: false,
                 task_class: "TRIVIAL",
+                permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+                max_hops: 1,
               });
+              requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
             } catch (err) {
               if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
                 retryCount = 1;
@@ -1198,6 +1220,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             conversation_id: null,
             handoff_id: null,
             error: err instanceof Error ? err.message : String(err),
+            // Typed failures (a pinned seat that cannot enforce the profile)
+            // keep their code so the failure stays distinguishable from a
+            // timeout or crash in the persona.json artifact.
+            error_code: err instanceof PersonaSeatCannotEnforceProfileError ? err.code : undefined,
             findings: null,
             retry_count: retryCount === 1 ? 1 : undefined,
             cancel_requested: cancelRequested,
@@ -1239,6 +1265,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           findings_count: Array.isArray(result.findings) ? result.findings.length : null,
           cancel_requested: result.cancel_requested ?? false,
           cancel_error: result.cancel_error,
+          ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
         })),
         synthesis_path: null,
         synthesizer_status: null,
@@ -1267,7 +1294,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }
     const dispatchSynth = async (): Promise<{
       agent: string;
-      dispatch: { conversation_id: string; handoff_id: string };
+      dispatch: {
+        conversation_id: string;
+        handoff_id: string;
+        permission_profile?: PermissionProfile | null;
+      };
       wait: {
         status: "completed" | "failed" | "timeout";
         final_agent: string | null;
@@ -1277,10 +1308,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       let attempts = 0;
       let currentAgent = synthAgent;
       const markSynthPoolExhausted = (): void => {
-        if (
-          synthesizer.preferred_agent.kind === "pool" &&
-          attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length
-        ) {
+        // Called only when failover produced no next seat. For a pool that
+        // means every enforceable member was already attempted — raw pool
+        // size over-counts because non-enforcing members are never eligible.
+        if (synthesizer.preferred_agent.kind === "pool") {
           synthPoolExhausted = true;
         }
       };
@@ -1290,12 +1321,21 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       const failoverAgent = (): string | null => {
         if (synthesizer.preferred_agent.kind !== "pool") return null;
         if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
-        const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
-          excludeAgents: Array.from(attemptedSynthAgents),
-          fallback_role: "reviewer",
-          tool_free: true,
-        });
-        return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
+        try {
+          const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+            excludeAgents: Array.from(attemptedSynthAgents),
+            fallback_role: "reviewer",
+            tool_free: true,
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          });
+          return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
+        } catch (err) {
+          // No remaining pool member can enforce the profile: that IS pool
+          // exhaustion, not a crash — report it as such instead of throwing
+          // past markSynthPoolExhausted.
+          if (err instanceof PersonaSeatCannotEnforceProfileError) return null;
+          throw err;
+        }
       };
       while (true) {
         let dispatchConversationId: string | null = null;
@@ -1310,7 +1350,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             task_type: "review_adversarial",
             use_worktree: false,
             task_class: "TRIVIAL",
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+            max_hops: 1,
           });
+          requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
           dispatchConversationId = dispatch.conversation_id;
           synthHandoffId = dispatch.handoff_id;
           const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
@@ -1459,6 +1502,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         findings_count: Array.isArray(result.findings) ? result.findings.length : null,
         cancel_requested: result.cancel_requested ?? false,
         cancel_error: result.cancel_error,
+        ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
       })),
       synthesis_path: synthesisPath,
       synthesizer_status: synthStatus,

@@ -508,6 +508,86 @@ test("chain.start resolves caller_cwd when project_id is null", async () => {
   });
 });
 
+test("chain.start forwards caller_cwd to the daemon for sandbox deny roots", async () => {
+  const { daemon, startChain } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    project_id: "penumbra",
+    caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+    permission_profile: "review_readonly",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+      permission_profile: "review_readonly",
+    }),
+  );
+});
+
+test("chain.start forwards caller_cwd alongside resolved project_id", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon, {
+    resolveProjectIdFromPath: () => "llamactl",
+  });
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    caller_cwd: "/Volumes/WorkSSD/repos/llamactl",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: "llamactl",
+      caller_cwd: "/Volumes/WorkSSD/repos/llamactl",
+    }),
+  );
+});
+
+test("chain.start throws when the daemon does not echo the requested permission_profile", async () => {
+  const { daemon } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: null,
+  });
+  const handler = chainStartHandler(daemon);
+
+  await expectRejectsWith(
+    handler({
+      initial_agent: "reviewer-seat",
+      message: "review",
+      project_id: "penumbra",
+      permission_profile: "review_readonly",
+    }),
+    /permission_profile_echo_mismatch/,
+  );
+});
+
+test("chain.start accepts a matching permission_profile echo", async () => {
+  const { daemon } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  const res = await handler({
+    initial_agent: "reviewer-seat",
+    message: "review",
+    project_id: "penumbra",
+    permission_profile: "review_readonly",
+  });
+  expect(res.content.length).toBeGreaterThan(0);
+});
+
 test("chain.start re-throws registry_unavailable when cwd resolver cannot load registry", async () => {
   const { daemon, startChain } = makeStartChain();
   const resolver = mock<() => string | undefined>(() => {
@@ -827,4 +907,46 @@ test("chain.start handler forwards isolated_install: false explicitly", async ()
       isolated_install: false,
     }),
   );
+});
+
+test("ChainStartInputShape accepts permission_profile review_readonly", () => {
+  expect(ChainStartInputShape.permission_profile.parse("review_readonly")).toBe("review_readonly");
+  expect(() => ChainStartInputShape.permission_profile.parse("unrestricted")).toThrow();
+  expect(ChainStartInputShape.permission_profile.parse(undefined)).toBeUndefined();
+});
+
+test("chain.start handler forwards permission_profile to daemon.startChain", async () => {
+  const { daemon, startChain } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "reviewer",
+    message: "review this diff",
+    task_class: "BOUNDARY",
+    permission_profile: "review_readonly",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      permission_profile: "review_readonly",
+    }),
+  );
+});
+
+test("chain.start handler omits permission_profile when unset", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "reviewer",
+    message: "review this diff",
+    task_class: "BOUNDARY",
+  });
+
+  const body = calls(startChain)[0];
+  expect(body).not.toHaveProperty("permission_profile");
 });

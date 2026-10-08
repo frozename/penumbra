@@ -7,9 +7,16 @@ import { z } from "zod";
 import { awaitChainOrCancel } from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  type PermissionProfile,
+  READ_ONLY_REVIEW_INSTRUCTION,
+  requireDispatchProfileEcho,
+} from "../_shared/permission-profile.js";
+import {
   type AgentField,
   agentPoolToNames,
   parseAgentField,
+  PersonaSeatCannotEnforceProfileError,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
 
@@ -64,6 +71,7 @@ type PersonaRunResult = {
   conversation_id: string | null;
   handoff_id: string | null;
   error?: string;
+  error_code?: string;
   retry_count?: 1;
   cancel_requested?: boolean;
   cancel_error?: string;
@@ -221,6 +229,8 @@ function renderPersonaPrompt(persona: PlannerPersona, args: Input, recall: Recal
 
   return `${persona.system_prompt}
 
+${READ_ONLY_REVIEW_INSTRUCTION}
+
 ## Topic
 
 ${topic}
@@ -263,6 +273,8 @@ as your entire response.
 ---
 
 ${synth.system_prompt}
+
+${READ_ONLY_REVIEW_INSTRUCTION}
 
 ---
 
@@ -368,6 +380,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "plan_refine", ctx, {
     fallback_role: "planner",
     tool_free: true,
+    permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
   });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
@@ -393,6 +406,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           handoff_id: result.handoff_id,
           error: result.error,
+          error_code: result.error_code,
           retry_count: result.retry_count,
           cancel_requested: result.cancel_requested,
           cancel_error: result.cancel_error,
@@ -423,7 +437,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         cancelError ??= outcome.cancel_error;
       };
       try {
-        let dispatch: { conversation_id: string; handoff_id: string };
+        let dispatch: {
+          conversation_id: string;
+          handoff_id: string;
+          permission_profile?: PermissionProfile | null;
+        };
         let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
         // tool_free:true — planner persona dispatch is pure text generation:
         // it receives topic + spec inlined in the prompt and emits a phased
@@ -431,6 +449,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx, {
           fallback_role: "planner",
           tool_free: true,
+          permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
         });
         for (;;) {
           try {
@@ -440,7 +459,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
               task_type: "plan_refine",
               use_worktree: false,
               task_class: "TRIVIAL",
+              permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+              max_hops: 1,
             });
+            requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
           } catch (err) {
             if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
               retryCount = 1;
@@ -488,6 +510,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: null,
           handoff_id: null,
           error: err instanceof Error ? err.message : String(err),
+          error_code: err instanceof PersonaSeatCannotEnforceProfileError ? err.code : undefined,
           retry_count: retryCount === 1 ? 1 : undefined,
           cancel_requested: cancelRequested,
           cancel_error: cancelError,
@@ -542,7 +565,11 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   }
 
   const dispatchSynth = async (): Promise<{
-    dispatch: { conversation_id: string; handoff_id: string };
+    dispatch: {
+      conversation_id: string;
+      handoff_id: string;
+      permission_profile?: PermissionProfile | null;
+    };
     wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
   }> => {
     let attempts = 0;
@@ -554,7 +581,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           task_type: "plan_refine",
           use_worktree: false,
           task_class: "TRIVIAL",
+          permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          max_hops: 1,
         });
+        requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
         const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
           timeoutMs: parsedArgs.timeout_ms,
         });

@@ -47,6 +47,11 @@ export interface ChatTurnInput {
   /** Plumbed from the worker's chain_trust_mode so adapters can short-circuit
    *  permission gates under "all" without consulting requestPermission. */
   trust_mode?: DispatchInput["trust_mode"];
+  /** Plumbed from the handoff row's permission_profile so natively enforcing
+   *  adapters can apply their own policy mechanism. */
+  permission_profile?: DispatchInput["permission_profile"];
+  /** Worker-computed Layer B deny roots accompanying permission_profile. */
+  sandbox_deny_roots?: DispatchInput["sandbox_deny_roots"];
   eventContext?: DispatchInput["eventContext"];
   onEvent?: DispatchInput["onEvent"];
   signal?: AbortSignal;
@@ -132,6 +137,8 @@ function buildDispatchInput(
     signal: input.signal ?? new AbortController().signal,
     requestPermission: input.requestPermission,
     trust_mode: input.trust_mode,
+    permission_profile: input.permission_profile,
+    sandbox_deny_roots: input.sandbox_deny_roots,
     handoff_id: input.handoff_id,
     executor: input.executor,
     eventContext: input.eventContext,

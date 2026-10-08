@@ -8,6 +8,7 @@ import {
   type AgentTaskType,
   loadSqliteVec,
   migrate,
+  PERMISSION_PROFILE_REVIEW_READONLY,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
@@ -17,6 +18,7 @@ import {
   DEAD_PIN_FAILURE_OUTCOMES,
   DEAD_PIN_NON_FAILURE_OUTCOMES,
   parseAgentField,
+  PersonaSeatCannotEnforceProfileError,
   resolveAgent,
 } from "./pool-resolver.js";
 import { testWorkflowCtx } from "./test-helpers.js";
@@ -1569,5 +1571,226 @@ describe("resolveAgent", () => {
         { tool_free: false },
       ),
     ).toBe("acp-twin");
+  });
+});
+
+describe("permission_profile seat filtering", () => {
+  test("pool: selects only a seat that can enforce review_readonly", () => {
+    const selected = resolveAgent(
+      { kind: "pool", agents: ["runner-seat", "enforcing-seat"] },
+      "review_adversarial",
+      ctx({
+        config: {
+          agents: [
+            { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+            {
+              name: "enforcing-seat",
+              roles: ["reviewer"],
+              adapter: "openai-compat-http",
+            },
+          ],
+        },
+      }),
+      { permission_profile: PERMISSION_PROFILE_REVIEW_READONLY },
+    );
+    expect(selected).toBe("enforcing-seat");
+  });
+
+  test("pool: throws persona_seat_cannot_enforce_profile when no member can enforce", () => {
+    let thrown: unknown;
+    try {
+      resolveAgent(
+        { kind: "pool", agents: ["runner-a", "runner-b"] },
+        "review_adversarial",
+        ctx({
+          config: {
+            agents: [
+              { name: "runner-a", roles: ["reviewer"], adapter: "stdio-acp" },
+              { name: "runner-b", roles: ["reviewer"], adapter: "claude-acp" },
+            ],
+          },
+        }),
+        { permission_profile: PERMISSION_PROFILE_REVIEW_READONLY },
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PersonaSeatCannotEnforceProfileError);
+    expect((thrown as PersonaSeatCannotEnforceProfileError).code).toBe(
+      "persona_seat_cannot_enforce_profile",
+    );
+  });
+
+  test("single: throws when the pin cannot enforce and no fallback role exists", () => {
+    let thrown: unknown;
+    try {
+      resolveAgent(
+        { kind: "single", agent: "runner-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            agents: [{ name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" }],
+          },
+        }),
+        { permission_profile: PERMISSION_PROFILE_REVIEW_READONLY },
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PersonaSeatCannotEnforceProfileError);
+  });
+
+  test("single: throws when the pin cannot enforce even with an enforcing fallback seat", () => {
+    // fallback_role exists for bias/dead-pin exclusions — seat-health problems
+    // where substitution is designed behavior. A pin that cannot enforce the
+    // profile is a contract breach: silently substituting another seat would
+    // dispatch a persona the operator did not choose, so it fails closed.
+    let thrown: unknown;
+    try {
+      resolveAgent(
+        { kind: "single", agent: "runner-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            agents: [
+              { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+              { name: "enforcing-seat", roles: ["reviewer"], adapter: "openai-compat-http" },
+            ],
+          },
+        }),
+        {
+          fallback_role: "reviewer",
+          permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+        },
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PersonaSeatCannotEnforceProfileError);
+    expect((thrown as PersonaSeatCannotEnforceProfileError).agent).toBe("runner-seat");
+  });
+
+  test("single (db path): pinned non-enforcing seat throws even with an enforcing fallback seat", () => {
+    const db = freshDb();
+    try {
+      let thrown: unknown;
+      try {
+        resolveAgent(
+          { kind: "single", agent: "runner-seat" },
+          "review_adversarial",
+          ctx({
+            db: () => db,
+            config: {
+              agents: [
+                { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+                { name: "enforcing-seat", roles: ["reviewer"], adapter: "openai-compat-http" },
+              ],
+            },
+          }),
+          {
+            fallback_role: "reviewer",
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          },
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(PersonaSeatCannotEnforceProfileError);
+      expect((thrown as PersonaSeatCannotEnforceProfileError).agent).toBe("runner-seat");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("single: throws when every fallback seat also cannot enforce", () => {
+    let thrown: unknown;
+    try {
+      resolveAgent(
+        { kind: "single", agent: "runner-seat" },
+        "review_adversarial",
+        ctx({
+          config: {
+            agents: [
+              { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+              { name: "other-runner", roles: ["reviewer"], adapter: "claude-acp" },
+            ],
+          },
+        }),
+        {
+          fallback_role: "reviewer",
+          permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+        },
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PersonaSeatCannotEnforceProfileError);
+  });
+
+  test("explicit enforces_permission_profiles opt-in makes an adapter seat eligible", () => {
+    const selected = resolveAgent(
+      { kind: "pool", agents: ["http-seat", "opted-in-runner"] },
+      "review_adversarial",
+      ctx({
+        config: {
+          agents: [
+            {
+              name: "http-seat",
+              roles: ["reviewer"],
+              adapter: "openai-compat-http",
+              enforces_permission_profiles: [],
+            },
+            {
+              name: "opted-in-runner",
+              roles: ["reviewer"],
+              adapter: "stdio-acp",
+              enforces_permission_profiles: [PERMISSION_PROFILE_REVIEW_READONLY],
+            },
+          ],
+        },
+      }),
+      { permission_profile: PERMISSION_PROFILE_REVIEW_READONLY },
+    );
+    expect(selected).toBe("opted-in-runner");
+  });
+
+  test("no profile: first seat wins unchanged regardless of enforcement", () => {
+    const selected = resolveAgent(
+      { kind: "pool", agents: ["runner-seat", "enforcing-seat"] },
+      "review_adversarial",
+      ctx({
+        config: {
+          agents: [
+            { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+            { name: "enforcing-seat", roles: ["reviewer"], adapter: "openai-compat-http" },
+          ],
+        },
+      }),
+    );
+    expect(selected).toBe("runner-seat");
+  });
+
+  test("db path: pickFromPool runs over only enforcing members", () => {
+    const db = freshDb();
+    try {
+      const selected = resolveAgent(
+        { kind: "pool", agents: ["runner-seat", "enforcing-seat"] },
+        "review_adversarial",
+        ctx({
+          db: () => db,
+          config: {
+            role_routing: { headroom_weighting: false },
+            agents: [
+              { name: "runner-seat", roles: ["reviewer"], adapter: "stdio-acp" },
+              { name: "enforcing-seat", roles: ["reviewer"], adapter: "openai-compat-http" },
+            ],
+          },
+        }),
+        { permission_profile: PERMISSION_PROFILE_REVIEW_READONLY, tool_free: true },
+      );
+      expect(selected).toBe("enforcing-seat");
+    } finally {
+      db.close();
+    }
   });
 });

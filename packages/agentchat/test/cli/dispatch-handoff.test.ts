@@ -1266,3 +1266,31 @@ test("pendingObservations from an earlier failed turn survive onto the successfu
   expect(res.terminatedReason).toBe("no_mention");
   expect(res.pendingObservations).toEqual([pendingEnvelope]);
 });
+
+test("handoff permission_profile is forwarded into the chat turn", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "done",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+  });
+
+  await dispatchHandoff({
+    handoff: { ...baseHandoff, permission_profile: "review_readonly" },
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  const call = runChatTurn.mock.calls[0]![0];
+  expect(call.permission_profile).toBe("review_readonly");
+});

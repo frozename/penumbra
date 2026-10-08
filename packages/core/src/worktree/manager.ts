@@ -287,6 +287,15 @@ export class WorktreeManager {
     return undefined;
   }
 
+  /**
+   * The fleet worktree base for a project (`<root>-worktrees`) — exposed for
+   * the permission-profile deny-root computation so a profiled dispatch
+   * cannot write into a sibling dispatch's worktree either.
+   */
+  public worktreeBaseFor(project_id?: string): string {
+    return this.baseFor(project_id);
+  }
+
   private branchNameFor(handoffId: string): string {
     return resolveHandoffBranchName({
       handoff_id: handoffId,

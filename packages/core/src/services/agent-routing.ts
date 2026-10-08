@@ -1,8 +1,10 @@
+import type { PermissionProfile } from "@penumbra/api-contract";
 import type { AgentPool } from "@penumbra/config";
 import type { Database } from "bun:sqlite";
 
 import type { RoutingBias } from "../readers/routing-bias.js";
 
+import { agentEnforcesPermissionProfile } from "../permissions/review-readonly.js";
 import { pressureSnapshotKey, type PressureWarning } from "../readers/subscription-pressure.js";
 import {
   type AgentKind,
@@ -158,6 +160,10 @@ type AgentRouteAgentchatConfig = {
     // tool-free penalty only fires when both adapter is populated AND
     // RouteAgentInput.tool_free === true.
     adapter?: string;
+    // Permission profiles this seat can enforce (e.g. ["review_readonly"]).
+    // Absent = no declared enforcement; [] opts the seat out entirely.
+    // Evaluated by agentEnforcesPermissionProfile.
+    enforces_permission_profiles?: readonly string[];
   }[];
   role_routing?: {
     headroom_weighting?: boolean;
@@ -251,6 +257,10 @@ export interface RouteAgentInput {
   // tool_free from use_worktree: a no-worktree task can still need non-file
   // MCP tools, so that proxy is unsafe.
   tool_free?: boolean;
+  // Permission profile the dispatch will run under. When set, candidate
+  // filtering and the daemon fail-closed constraint only admit seats that can
+  // enforce it (agentEnforcesPermissionProfile).
+  permission_profile?: PermissionProfile;
   now?: Date;
 }
 
@@ -902,6 +912,19 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
   } else {
     const registrySet = new Set(registryAgents);
     allowed = roleAgents.filter((name) => registrySet.has(name));
+  }
+  const profile = input.permission_profile;
+  if (profile !== undefined) {
+    // Fail closed: a profiled dispatch may only reach a seat that can prove
+    // enforcement. Without an agents config no seat is verifiable, so the
+    // constraint resolves to an empty set — never to "unconstrained".
+    const configAgents = input.agentchatConfig?.agents;
+    if (!configAgents || configAgents.length === 0) return [];
+    const confByName = new Map(configAgents.map((agent) => [agent.name, agent]));
+    const candidates = allowed ?? configAgents.map((agent) => agent.name);
+    allowed = candidates.filter((name) =>
+      agentEnforcesPermissionProfile(confByName.get(name), profile),
+    );
   }
   if (allowed === null) return allowed;
   if (input.unhealthyAgents && input.unhealthyAgents.size > 0) {

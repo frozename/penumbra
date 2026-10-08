@@ -96,6 +96,7 @@
       "name": "@penumbra/config",
       "version": "0.0.0",
       "dependencies": {
+        "@penumbra/api-contract": "workspace:*",
         "yaml": "^2.8.1",
         "zod": "^4.3.0",
       },

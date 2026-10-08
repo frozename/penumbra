@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { RoutingBias } from "../readers/routing-bias.js";
 import type { AgentTaskType } from "../schemas/agent-performance.js";
 
+import { agentEnforcesPermissionProfile } from "../permissions/review-readonly.js";
 import {
   buildPressureExcludedKeys,
   isTextOnlyAdapter,
@@ -518,6 +519,11 @@ function buildCandidateFacts(
         supplied.roleRoutingRolesEmpty ??
         (input.role ? agentConfig === undefined || agentConfig.roles.length === 0 : false),
       textOnlyAdapter: supplied.textOnlyAdapter ?? isTextOnlyAdapter(agentConfig?.adapter),
+      enforcesProfile:
+        supplied.enforcesProfile ??
+        (input.harnessContext.permissionProfile === undefined
+          ? undefined
+          : agentEnforcesPermissionProfile(agentConfig, input.harnessContext.permissionProfile)),
     };
   }
   return facts;

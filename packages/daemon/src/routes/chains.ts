@@ -5,6 +5,7 @@ import {
 } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
 import {
+  agentEnforcesPermissionProfile,
   type AgentRecommendation,
   type AgentTaskType,
   buildHandoffBranchName,
@@ -18,6 +19,9 @@ import {
   insertLane,
   inspectPromptVsProject,
   MaestroSessionWriter,
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  PERMISSION_PROFILES,
+  type PermissionProfile,
   RecallRequestSchema,
   type RecallResult,
   resolveBiasEffect,
@@ -46,6 +50,7 @@ import {
   RouterHardConstraintExhaustedError,
   RoutingBiasExhaustedError,
 } from "./role-routing.js";
+import { profiledLiveWorkerGateResponse } from "./worker-profile-gate.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -63,11 +68,14 @@ interface RouterHarnessHints {
   projectId?: string;
   dispatchKind?: string;
   tool_free?: boolean;
+  permission_profile?: PermissionProfile;
 }
 
 type AgentChatConfigLike = {
   agents?: {
     name: string;
+    adapter?: string;
+    enforces_permission_profiles?: readonly string[];
     pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
@@ -1222,6 +1230,99 @@ async function maybeRunAutoRecall(
   return { handoffMessage, recalled_memory_ids, recalled_memories, recalled_query };
 }
 
+// Review and plan personas inspect the repository without a worktree and must
+// never mutate it; when the caller didn't name a profile, no-worktree
+// review/plan dispatches default to the read-only profile so routing and the
+// seat gate below can fail closed instead of dispatching unconstrained.
+const PROFILE_DEFAULTING_TASK_TYPES: ReadonlySet<AgentTaskType> = new Set([
+  "review_adversarial",
+  "plan_refine",
+]);
+
+function applyPermissionProfileDefault(input: ChainStartRequestWithLongLived): void {
+  if (
+    input.permission_profile !== undefined ||
+    input.use_worktree !== false ||
+    input.task_type === undefined ||
+    !PROFILE_DEFAULTING_TASK_TYPES.has(input.task_type)
+  )
+    return;
+  input.permission_profile = PERMISSION_PROFILE_REVIEW_READONLY;
+}
+
+// A chain-start issued inside an existing chain is a hop, not a fresh root:
+// it inherits the parent's permission profile and caller_cwd so a profiled
+// persona cannot spawn an unprofiled child that mutates on its behalf. An
+// explicit value on the hop wins; nothing else may weaken the parent's.
+function applyParentProfileInheritance(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): void {
+  if (typeof input.parent_handoff_id !== "string") return;
+  const parent = services.handoffReader.get(input.parent_handoff_id);
+  if (!parent) return;
+  input.permission_profile ??= parent.permission_profile ?? undefined;
+  input.caller_cwd ??= parent.caller_cwd ?? undefined;
+}
+
+function rejectUnsupportedPermissionProfile(
+  input: ChainStartRequestWithLongLived,
+): Response | null {
+  const profile = input.permission_profile;
+  if (profile === undefined || (PERMISSION_PROFILES as readonly string[]).includes(profile))
+    return null;
+  return json(
+    {
+      error: {
+        code: "unsupported_permission_profile",
+        message: `permission_profile '${profile}' is not supported by this daemon`,
+      },
+    },
+    422,
+  );
+}
+
+function seatEnforcesInputProfile(
+  cfg: AgentChatConfigLike,
+  input: ChainStartRequestWithLongLived,
+  agentName: string,
+): boolean {
+  const profile = input.permission_profile;
+  if (profile === undefined) return true;
+  const seat = cfg.agents?.find((candidate) => candidate.name === agentName);
+  return agentEnforcesPermissionProfile(seat, profile);
+}
+
+function enforcePermissionProfileSeatGate(
+  services: Services,
+  routedAgent: string,
+  profile: PermissionProfile | undefined,
+): Response | null {
+  if (profile === undefined) return null;
+  const agents = (services.agentchatConfig as AgentChatConfigLike | undefined)?.agents;
+  const seat = agents?.find((candidate) => candidate.name === routedAgent);
+  if (agentEnforcesPermissionProfile(seat, profile)) return null;
+  services.log.warn(
+    {
+      event: "chain_start.permission_profile_unenforceable",
+      agent: routedAgent,
+      permission_profile: profile,
+    },
+    "chain-start profiled dispatch rejected: seat cannot enforce the profile",
+  );
+  return json(
+    {
+      error: {
+        code: "permission_profile_unenforceable",
+        message: `agent '${routedAgent}' cannot enforce permission_profile '${profile}'`,
+        agent: routedAgent,
+        permission_profile: profile,
+      },
+    },
+    422,
+  );
+}
+
 interface PersistChainStartArgs {
   services: Services;
   input: ChainStartRequestWithLongLived;
@@ -1317,6 +1418,8 @@ function persistChainStart(args: PersistChainStartArgs): void {
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
       branch_name: branchName,
+      permission_profile: input.permission_profile ?? null,
+      caller_cwd: input.caller_cwd ?? null,
     });
     if (openPrOnReviewBool !== undefined) {
       services.db
@@ -1373,6 +1476,7 @@ interface BuildChainStartResponseArgs {
   route: InitialRoute | null;
   routingWarning: RoutingWarningPayload | undefined;
   routingAdvisory: RoutingAdvisoryPayload | undefined;
+  permissionProfile: PermissionProfile | undefined;
 }
 
 function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
@@ -1380,6 +1484,7 @@ function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
     conversation_id: args.conversation_id,
     handoff_id: args.handoff_id,
     branch_name: args.branchName,
+    ...(args.permissionProfile !== undefined ? { permission_profile: args.permissionProfile } : {}),
     ...(args.taskClass !== undefined
       ? {
           task_class: args.taskClass,
@@ -1491,6 +1596,7 @@ function resolveRoutingWithFallbacks(
       projectId: input.project_id ?? undefined,
       dispatchKind: input.dispatch_kind,
       tool_free: input.tool_free,
+      permission_profile: input.permission_profile,
     },
   });
   let route = initialRoute;
@@ -1683,6 +1789,11 @@ export async function chainStartInternal(
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+  applyPermissionProfileDefault(input);
+  applyParentProfileInheritance(input, services);
+  const unsupportedProfileResponse = rejectUnsupportedPermissionProfile(input);
+  if (unsupportedProfileResponse) return unsupportedProfileResponse;
+
   const explicitProjectIdResponse = enforceExplicitProjectIdGate(input, services);
   if (explicitProjectIdResponse) return explicitProjectIdResponse;
 
@@ -1750,6 +1861,25 @@ export async function chainStartInternal(
     routingResolutionReason,
     routingDecision,
   } = routing;
+
+  const profileSeatResponse = enforcePermissionProfileSeatGate(
+    services,
+    routedAgent,
+    input.permission_profile,
+  );
+  if (profileSeatResponse) return profileSeatResponse;
+
+  // A profiled dispatch also requires at least one live worker that declared
+  // enforcement at registration — otherwise the approved handoff is
+  // unclaimable-by-design and starves in the queue instead of failing here.
+  if (input.permission_profile !== undefined) {
+    const profileWorkerResponse = profiledLiveWorkerGateResponse(
+      services,
+      input.permission_profile,
+      input.project_id ?? null,
+    );
+    if (profileWorkerResponse) return profileWorkerResponse;
+  }
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
@@ -1855,6 +1985,7 @@ export async function chainStartInternal(
     route,
     routingWarning,
     routingAdvisory,
+    permissionProfile: input.permission_profile,
   });
 }
 
@@ -1955,7 +2086,10 @@ function maybeSelectSubDispatchFallback(opts: {
   const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
   const rankedCandidates = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
-    .filter((recommendation) => configAgents.has(recommendation.agent_name));
+    .filter((recommendation) => configAgents.has(recommendation.agent_name))
+    .filter((recommendation) =>
+      seatEnforcesInputProfile(opts.cfg, opts.input, recommendation.agent_name),
+    );
 
   const syntheticCaps = collectSyntheticCaps(opts.services);
 
@@ -2106,7 +2240,11 @@ function maybeSelectClassifierDeclineFallback(opts: {
   );
   const fallback = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
-    .find((recommendation) => configAgents.has(recommendation.agent_name));
+    .find(
+      (recommendation) =>
+        configAgents.has(recommendation.agent_name) &&
+        seatEnforcesInputProfile(opts.cfg, opts.input, recommendation.agent_name),
+    );
   return fallback?.agent_name ?? null;
 }
 
