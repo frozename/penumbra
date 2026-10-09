@@ -50,7 +50,10 @@ import {
   RouterHardConstraintExhaustedError,
   RoutingBiasExhaustedError,
 } from "./role-routing.js";
-import { profiledLiveWorkerGateResponse } from "./worker-profile-gate.js";
+import {
+  profiledLiveWorkerGateResponse,
+  scratchLiveWorkerGateResponse,
+} from "./worker-profile-gate.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -447,7 +450,13 @@ function applyExtraFields(
 export async function chainStartFromInput(
   raw: unknown,
   services: Services,
-  opts?: { applyMaestroBudgetGate?: boolean; requireActiveWorker?: boolean },
+  opts?: {
+    applyMaestroBudgetGate?: boolean;
+    requireActiveWorker?: boolean;
+    // In-process workflow dispatch only (D8): the HTTP chain-start surface
+    // must not let callers smuggle a cwd override into a dispatch.
+    allowCwdOverride?: boolean;
+  },
 ): Promise<Response> {
   const requireActiveWorker = opts?.requireActiveWorker ?? true;
   if (requireActiveWorker) {
@@ -462,6 +471,17 @@ export async function chainStartFromInput(
   if (!parsed.success) {
     return validationErrorResponse(
       parsed.error.issues.map((i) => ({ path: i.path.map(String), message: i.message })),
+    );
+  }
+  if (opts?.allowCwdOverride !== true && parsed.data.cwd_override !== undefined) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_not_allowed",
+          message: "cwd_override is only accepted on the in-process workflow dispatch path",
+        },
+      },
+      400,
     );
   }
 
@@ -1252,17 +1272,33 @@ function applyPermissionProfileDefault(input: ChainStartRequestWithLongLived): v
 
 // A chain-start issued inside an existing chain is a hop, not a fresh root:
 // it inherits the parent's permission profile and caller_cwd so a profiled
-// persona cannot spawn an unprofiled child that mutates on its behalf. An
-// explicit value on the hop wins; nothing else may weaken the parent's.
+// persona cannot spawn an unprofiled child that mutates on its behalf. A hop
+// under a scratch-bound parent is rejected outright: scratch dispatches pin
+// max_hops:1, and a child row would carry a scratch root bound to a run id
+// the child does not own — there is no legitimate hop here.
 function applyParentProfileInheritance(
   input: ChainStartRequestWithLongLived,
   services: Services,
-): void {
-  if (typeof input.parent_handoff_id !== "string") return;
+): Response | null {
+  if (typeof input.parent_handoff_id !== "string") return null;
   const parent = services.handoffReader.get(input.parent_handoff_id);
-  if (!parent) return;
+  if (!parent) return null;
+  if (parent.cwd_override !== null && parent.cwd_override !== undefined) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_parent_scratch",
+          message:
+            "child handoffs are not allowed under a scratch-bound parent; scratch dispatches pin max_hops:1",
+          parent_cwd_override: parent.cwd_override,
+        },
+      },
+      400,
+    );
+  }
   input.permission_profile ??= parent.permission_profile ?? undefined;
   input.caller_cwd ??= parent.caller_cwd ?? undefined;
+  return null;
 }
 
 function rejectUnsupportedPermissionProfile(
@@ -1420,6 +1456,7 @@ function persistChainStart(args: PersistChainStartArgs): void {
       branch_name: branchName,
       permission_profile: input.permission_profile ?? null,
       caller_cwd: input.caller_cwd ?? null,
+      cwd_override: input.cwd_override ?? null,
     });
     if (openPrOnReviewBool !== undefined) {
       services.db
@@ -1790,7 +1827,8 @@ export async function chainStartInternal(
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
   applyPermissionProfileDefault(input);
-  applyParentProfileInheritance(input, services);
+  const parentInheritanceResponse = applyParentProfileInheritance(input, services);
+  if (parentInheritanceResponse) return parentInheritanceResponse;
   const unsupportedProfileResponse = rejectUnsupportedPermissionProfile(input);
   if (unsupportedProfileResponse) return unsupportedProfileResponse;
 
@@ -1887,6 +1925,80 @@ export async function chainStartInternal(
   const unknownProjectId = guardUnknownProjectId(input, services, projectRegistryEntries);
   if (unknownProjectId.response) return unknownProjectId.response;
   routingAdvisory = unknownProjectId.routingAdvisory ?? routingAdvisory;
+
+  // cwd_override binding (P6): only workflow-dispatched, no-worktree starts
+  // may carry one, and the path must be the daemon-owned scratch of this
+  // workflow_run_id under the resolved project's fleet base. Validated after
+  // guardUnknownProjectId because that gate may drop/normalize project_id.
+  if (input.cwd_override !== undefined) {
+    if (
+      input.use_worktree !== false ||
+      input.dispatch_kind !== "workflow" ||
+      typeof input.workflow_run_id !== "string" ||
+      input.workflow_run_id.length === 0
+    ) {
+      return json(
+        {
+          error: {
+            code: "cwd_override_requires_workflow_dispatch",
+            message:
+              "cwd_override requires dispatch_kind 'workflow', use_worktree false, and a workflow_run_id",
+          },
+        },
+        400,
+      );
+    }
+    // The override's git lineage is authoritative for the project when the
+    // request carries none — for example a synthetic caller-side id that the
+    // unknown-project gate dropped. Derive it from the scratch's common dir
+    // so a second registered project's scratch still validates; a repo the
+    // daemon does not know fails closed.
+    if (input.project_id === undefined || input.project_id === null) {
+      const derived = services.scratchWorktrees.scratchCwdProject(input.cwd_override);
+      if (derived.status === "unmatched") {
+        return json(
+          {
+            error: {
+              code: "scratch_cwd_unknown_project",
+              message:
+                "cwd_override scratch does not share a git common dir with the daemon's main repo or any registered project",
+            },
+          },
+          400,
+        );
+      }
+      if (
+        derived.status === "matched" &&
+        derived.project_id !== null &&
+        derived.project_id !== undefined
+      ) {
+        input.project_id = derived.project_id;
+      }
+    }
+    const scratchValidation = services.scratchWorktrees.validateCwdOverride({
+      cwd_override: input.cwd_override,
+      owner_run_id: input.workflow_run_id,
+      project_id: input.project_id ?? null,
+    });
+    if (!scratchValidation.ok) {
+      return json(
+        {
+          error: {
+            code: "invalid_scratch_cwd_override",
+            message: `cwd_override is not a valid daemon-owned scratch root for this run: ${scratchValidation.reason}`,
+            reason: scratchValidation.reason,
+          },
+        },
+        400,
+      );
+    }
+    // Persist the canonical realpath — the worker re-validates the stored
+    // string against the on-disk owner marker, so a symlinked spelling of the
+    // same dir must normalize to the same value here.
+    input.cwd_override = scratchValidation.path;
+    const scratchWorkerResponse = scratchLiveWorkerGateResponse(services, input.project_id ?? null);
+    if (scratchWorkerResponse) return scratchWorkerResponse;
+  }
 
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();

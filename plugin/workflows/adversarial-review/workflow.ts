@@ -1,3 +1,4 @@
+import { agentEnforcesPermissionProfile } from "@penumbra/core";
 import {
   BINARY_BODY_PLACEHOLDER,
   type RecallBundle,
@@ -5,7 +6,7 @@ import {
   type WorkflowFn,
   type WorkflowSpec,
 } from "@penumbra/workflows";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -865,6 +866,7 @@ function buildSynthesisFrontmatter(args: {
   synthesizer_failover_from?: string;
   synthesizer_failover_to?: string;
   pool_exhausted?: boolean;
+  attempt_cap_reached?: boolean;
 }): string {
   const lines = [
     "---",
@@ -877,6 +879,7 @@ function buildSynthesisFrontmatter(args: {
     lines.push(`synthesizer_failover_to: ${args.synthesizer_failover_to}`);
   }
   if (args.pool_exhausted) lines.push("pool_exhausted: true");
+  if (args.attempt_cap_reached) lines.push("attempt_cap_reached: true");
   lines.push("persona_handoff_ids:");
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
     lines.push(`  ${key}: ${id}`);
@@ -1056,6 +1059,36 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ...recallMeta,
     };
   }
+
+  // P6: every reviewer/synthesizer dispatch runs inside a daemon-owned
+  // detached scratch worktree, never the operator checkout. Acquisition
+  // failure is a run failure — silent fallback to ctx.cwd would put writes
+  // back in the operator's tree.
+  if (ctx.scratchWorktree === undefined) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: "ctx_missing_scratch_worktree",
+      hint: "workflow ctx has no scratchWorktree — runs on a daemon without P6 support",
+      ...recallMeta,
+    };
+  }
+  let scratch: Awaited<ReturnType<NonNullable<typeof ctx.scratchWorktree>["acquire"]>>;
+  try {
+    // The review target is parsedArgs.target_ref, not the caller's HEAD —
+    // reviewing a fleet branch from the home checkout must give personas the
+    // branch's tree.
+    scratch = await ctx.scratchWorktree.acquire({ ref: parsedArgs.target_ref });
+  } catch (err) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: `scratch_acquire_failed: ${err instanceof Error ? err.message : String(err)}`,
+      ...recallMeta,
+    };
+  }
   const absoluteOutDir = outDirResolution.path;
   const reviewRunTs = new Date().toISOString();
   await mkdir(absoluteOutDir, { recursive: true });
@@ -1098,9 +1131,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
 
   // Record-only tripwire: the before-snapshot lands just before personas are
   // dispatched; the after-snapshot runs in finally so every result produced
-  // past this point carries home_checkout_tripwire without changing it.
+  // past this point carries home_checkout_tripwire without changing it. With
+  // P6 the tripwire watches the scratch checkout AND the caller's cwd —
+  // a mutation in ctx.cwd means a persona escaped the scratch boundary.
   const tripwire = await beginCheckoutTripwire({
-    cwd: ctx.cwd,
+    cwd: scratch.path,
+    callerCwd: ctx.cwd,
     db: ctx.db,
     project: ctx.project,
     outDir: absoluteOutDir,
@@ -1147,12 +1183,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             try {
               dispatch = await ctx.dispatch({
                 agent: personaAgent,
-                message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
+                message: `cd ${scratch.path}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
                 task_type: "review_adversarial",
                 use_worktree: false,
                 task_class: "TRIVIAL",
                 permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
                 max_hops: 1,
+                cwd_override: scratch.path,
+                project_id: scratch.project_id ?? undefined,
               });
               requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
             } catch (err) {
@@ -1283,7 +1321,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     let synthCancelRequested = false;
     let synthCancelError: string | undefined;
     const synthFailover: { value: SynthFailover | null } = { value: null };
-    let synthPoolExhausted = false;
+    let synthStopReason: "pool_exhausted" | "attempt_cap_reached" | undefined;
     let finalSynthAgentForFailure = synthAgent;
     const attemptedSynthAgents = new Set<string>();
     const personaHandoffIds: Record<string, string> = {};
@@ -1307,13 +1345,27 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }> => {
       let attempts = 0;
       let currentAgent = synthAgent;
-      const markSynthPoolExhausted = (): void => {
-        // Called only when failover produced no next seat. For a pool that
-        // means every enforceable member was already attempted — raw pool
-        // size over-counts because non-enforcing members are never eligible.
-        if (synthesizer.preferred_agent.kind === "pool") {
-          synthPoolExhausted = true;
+      const markSynthStop = (): void => {
+        // Called only when failover produced no next seat. For a pool,
+        // pool_exhausted means every member that could enforce the profile
+        // was attempted — including when the final attempt lands exactly on
+        // the cap. Untried capable members mean the attempt limit cut the
+        // run short: attempt_cap_reached.
+        if (synthesizer.preferred_agent.kind !== "pool") {
+          if (attempts >= SYNTHESIS_DISPATCH_ATTEMPT_LIMIT) {
+            synthStopReason = "attempt_cap_reached";
+          }
+          return;
         }
+        const agentsList = Array.isArray(ctx.config.agents) ? ctx.config.agents : [];
+        const capableCount = synthesizer.preferred_agent.agents.filter((name) =>
+          agentEnforcesPermissionProfile(
+            agentsList.find((agent) => agent.name === name),
+            PERMISSION_PROFILE_REVIEW_READONLY,
+          ),
+        ).length;
+        synthStopReason =
+          attemptedSynthAgents.size >= capableCount ? "pool_exhausted" : "attempt_cap_reached";
       };
       const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
         synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
@@ -1346,12 +1398,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           attemptedSynthAgents.add(currentAgent);
           const dispatch = await ctx.dispatch({
             agent: currentAgent,
-            message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
+            message: `cd ${scratch.path}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
             task_type: "review_adversarial",
             use_worktree: false,
             task_class: "TRIVIAL",
             permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
             max_hops: 1,
+            cwd_override: scratch.path,
+            project_id: scratch.project_id ?? undefined,
           });
           requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
           dispatchConversationId = dispatch.conversation_id;
@@ -1382,7 +1436,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             currentAgent = nextAgent;
             continue;
           }
-          markSynthPoolExhausted();
+          markSynthStop();
           return { agent: currentAgent, dispatch, wait };
         } catch (err) {
           if (
@@ -1405,7 +1459,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             currentAgent = nextAgent;
             continue;
           }
-          markSynthPoolExhausted();
+          markSynthStop();
           throw err;
         }
       }
@@ -1438,7 +1492,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         synthesizer_agent: finalSynthAgent,
         synthesizer_failover_from: synthFailover.value?.from,
         synthesizer_failover_to: synthFailover.value?.to,
-        pool_exhausted: synthPoolExhausted,
+        pool_exhausted: synthStopReason === "pool_exhausted",
+        attempt_cap_reached: synthStopReason === "attempt_cap_reached",
       });
       await ctx.fileWrite(
         synthesisPath,
@@ -1467,7 +1522,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             synthesizer_agent: finalSynthAgentForFailure,
             synthesizer_failover_from: synthFailover.value?.from,
             synthesizer_failover_to: synthFailover.value?.to,
-            pool_exhausted: synthPoolExhausted,
+            pool_exhausted: synthStopReason === "pool_exhausted",
+            attempt_cap_reached: synthStopReason === "attempt_cap_reached",
           })
         : "";
       await ctx.fileWrite(
@@ -1509,14 +1565,40 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       synthesizer_cancel_requested: synthCancelRequested,
       ...(synthCancelError !== undefined ? { synthesizer_cancel_error: synthCancelError } : {}),
       synth_failed: synthStatus !== "completed",
-      ...(synthPoolExhausted ? { pool_exhausted: true } : {}),
+      ...(synthStopReason === "pool_exhausted" ? { pool_exhausted: true } : {}),
+      ...(synthStopReason === "attempt_cap_reached" ? { attempt_cap_reached: true } : {}),
     };
     return reviewResult;
   } finally {
     const tripwireReport = await tripwire.finish();
+    // Only a mutation of the scratch checkout itself (head/branch/path —
+    // i.e. a persona wrote inside the review worktree) is the review's own
+    // fault. Stash and worktree-list signals are shared through the repo's
+    // common dir, and home/caller-target mutations are someone else's — both
+    // stay record-only. The predicate is computed off report.mutations so an
+    // 'unavailable' verdict on another target can't hide a scratch mutation.
+    const scratchTarget = await realpath(scratch.path).catch(() => scratch.path);
+    const scratchMutated = tripwireReport.mutations.some(
+      (m) =>
+        m.level === "mutated" &&
+        m.target === scratchTarget &&
+        (m.kind === "head" || m.kind === "branch" || m.kind === "path"),
+    );
     if (reviewResult !== undefined) {
       reviewResult["home_checkout_tripwire"] = tripwireReport;
+      // Flag-gated hard check — record-only stays the default rollout; the
+      // env arm flips a scratch mutation into a run failure for eval rigs.
+      if (process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] === "1" && scratchMutated) {
+        reviewResult["ok"] = false;
+        reviewResult["outcome"] = "failed";
+        reviewResult["error"] = "review_worktree_mutated";
+      }
     }
+    // A scratch mutation keeps the scratch for forensics until the daemon's
+    // keep TTL expires; clean runs release immediately. The daemon also
+    // releases on run settle, so a throw past this block still frees it.
+    const keepReason = scratchMutated ? "tripwire_mutated" : undefined;
+    await scratch.release({ keep_reason: keepReason }).catch(() => undefined);
   }
 };
 

@@ -273,6 +273,6 @@ test("migrate() rebuilds v41 registrar_events with foreign_keys ON and preserves
   expect(db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()?.foreign_keys).toBe(1);
 });
 
-test("SCHEMA_VERSION is 46", () => {
-  expect(SCHEMA_VERSION).toBe(46);
+test("SCHEMA_VERSION is 47", () => {
+  expect(SCHEMA_VERSION).toBe(47);
 });

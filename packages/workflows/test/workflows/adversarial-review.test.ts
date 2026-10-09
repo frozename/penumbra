@@ -19,6 +19,7 @@ import { composeRecall } from "@src/recall.js";
 // tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
 // once and cast the exports to typed views, so the rest of the file lints
 // with real type info.
+import { stubScratchWorktree } from "../../../../plugin/workflows/_shared/test-helpers.js";
 import * as adversarialReviewModule from "../../../../plugin/workflows/adversarial-review/workflow.js";
 import {
   EMPTY_HEADING_SYNTHESIS,
@@ -248,6 +249,7 @@ type MakeReviewCtxResult = {
   dispatch: ReturnType<typeof mock<DispatchImplReview>>;
   awaitChain: ReturnType<typeof mock<AwaitImplReview>>;
   cancel: ReturnType<typeof mock<CancelImplReview>>;
+  scratchPath: string;
 };
 
 type AdversarialReviewWorkflowResult = {
@@ -299,6 +301,7 @@ function makeCtx(opts?: {
   );
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
   const cancel = mock(opts?.cancelImpl ?? ((): Promise<void> => Promise.resolve()));
+  const scratchPath = join(root, ".scratch-test");
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
@@ -316,10 +319,13 @@ function makeCtx(opts?: {
     cwd: root,
     storageRoot: root,
     project: "penumbra",
+    // The scratch path is a stub: the tripwire just reports unavailable on a
+    // non-git dir, matching the pre-P6 behavior of these mkdtemp roots.
+    scratchWorktree: stubScratchWorktree(scratchPath),
     args: parsedArgs,
     db: opts?.db,
   };
-  return { ctx, root, writes, dispatch, awaitChain, cancel };
+  return { ctx, root, writes, dispatch, awaitChain, cancel, scratchPath };
 }
 
 async function runWorkflowWithSynthResponse(responseText: string): Promise<{
@@ -711,7 +717,7 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     task_type?: string;
     use_worktree?: boolean;
   }[] = [];
-  const { ctx, root, dispatch } = makeCtx();
+  const { ctx, root, dispatch, scratchPath } = makeCtx();
   try {
     dispatch.mockImplementation(
       (input: {
@@ -744,10 +750,10 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(dispatchCalls).toHaveLength(3);
     expect(dispatchCalls[0]?.use_worktree).toBe(false);
     expect(dispatchCalls[0]?.task_class).toBe("TRIVIAL");
-    expect(dispatchCalls[0]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
+    expect(dispatchCalls[0]?.message.startsWith(`cd ${scratchPath}\n\n`)).toBe(true);
     expect(dispatchCalls[2]?.use_worktree).toBe(false);
     expect(dispatchCalls[2]?.task_class).toBe("TRIVIAL");
-    expect(dispatchCalls[2]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
+    expect(dispatchCalls[2]?.message.startsWith(`cd ${scratchPath}\n\n`)).toBe(true);
     await stat(join(result.out_dir, "security.json"));
     await stat(join(result.out_dir, "security.md"));
     await stat(join(result.out_dir, "performance.json"));

@@ -93,7 +93,7 @@ test("existing stores gain both indexes after additive handoff columns", () => {
   db.run("ALTER TABLE handoffs DROP COLUMN workflow_run_id");
   applySchema(db, { embeddingDim: 384 });
   applySchema(db, { embeddingDim: 384 });
-  expect(SCHEMA_VERSION).toBe(46);
+  expect(SCHEMA_VERSION).toBe(47);
   expect(plan(db, "SELECT handoff_id FROM handoffs WHERE workflow_run_id = ?", "run-1")).toContain(
     "handoffs_workflow_run_id",
   );

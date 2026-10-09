@@ -192,6 +192,13 @@ export const ChainStartRequestSchema = z.object({
    * repository the caller was sitting in just because its own cwd differs.
    */
   caller_cwd: z.string().min(1).optional(),
+  /**
+   * Daemon-owned scratch-worktree path the dispatch executes in (P6 review
+   * lane). Accepted only on the in-process workflow path — the HTTP route
+   * rejects it — and only alongside use_worktree:false + dispatch_kind
+   * 'workflow' + a workflow_run_id bound to the scratch's owner marker.
+   */
+  cwd_override: z.string().min(1).optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;
 

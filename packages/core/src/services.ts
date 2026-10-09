@@ -38,6 +38,7 @@ import { RegistrarReader } from "./registrar/reader.js";
 import { RegistrarWriter } from "./registrar/writer.js";
 import { type AaSnapshotStore, createAaSnapshotStore } from "./routing/aa-snapshot-store.js";
 import { DispatchEventLog } from "./services/dispatch-event-log.js";
+import { ScratchWorktreesService } from "./services/scratch-worktrees.js";
 import { SessionEventLog } from "./services/session-event-log.js";
 import { SessionNoteDrafts } from "./services/session-note-drafts.js";
 import { type Settings, SettingsDefaults, type SettingsInput } from "./settings.js";
@@ -256,6 +257,7 @@ export interface Services {
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
   worktreeManager: WorktreeManager;
+  scratchWorktrees: ScratchWorktreesService;
   watchdog: Watchdog;
   orphanHandoffRecovery?: {
     runOnce(workerId?: string): {
@@ -384,6 +386,16 @@ export function buildServices(opts: BuildServicesOpts): Services {
     getStaleHeartbeatAges: () => [],
     tick: () => Promise.resolve(),
   };
+  const dispatchEventLog = new DispatchEventLog(opts.db, dispatchEvents);
+  const scratchWorktrees = new ScratchWorktreesService({
+    db: opts.db,
+    worktreeManager,
+    projectRegistry: opts.projectRegistry,
+    dispatchEventLog,
+    log,
+    mainRepoDir: opts.mainRepoDir,
+    storageRoot: opts.storageRoot,
+  });
   return {
     settings,
     storageRoot: opts.storageRoot,
@@ -408,7 +420,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     permissionWriter: new PermissionWriter({ db: opts.db }),
     permissionReader: new PermissionReader({ db: opts.db }),
     permissionEvents,
-    dispatchEventLog: new DispatchEventLog(opts.db, dispatchEvents),
+    dispatchEventLog,
     sessionEventLog: new SessionEventLog(opts.db),
     sessionNoteDrafts: new SessionNoteDrafts(opts.db),
     dispatchEvents,
@@ -416,6 +428,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     conversationStream,
     workerControl,
     worktreeManager,
+    scratchWorktrees,
     watchdog,
     supervisor: new InProcessSupervisor({ log }),
     pidRegistry: new PidRegistry({

@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 46;
+export const SCHEMA_VERSION = 47;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -1105,6 +1105,7 @@ const HANDOFFS_ADDITIVE_COLUMNS: [string, string][] = [
   ["workflow_run_id", "TEXT"],
   ["permission_profile", "TEXT"],
   ["caller_cwd", "TEXT"],
+  ["cwd_override", "TEXT"],
 ];
 
 const TASKS_ADDITIVE_COLUMNS: [string, string][] = [

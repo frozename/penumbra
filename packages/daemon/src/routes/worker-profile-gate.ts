@@ -46,6 +46,16 @@ export function workerTokenMetadataDeclaresProfile(
   }
 }
 
+export function workerTokenMetadataDeclaresScratch(metadata_json: string | null): boolean {
+  if (!metadata_json) return false;
+  try {
+    const metadata = JSON.parse(metadata_json) as Record<string, unknown>;
+    return metadata.supports_scratch_worktrees === true;
+  } catch {
+    return false;
+  }
+}
+
 // A profiled dispatch must never be admitted when zero live workers could
 // claim it under the claim gate — the handoff would sit in `approved`
 // forever (fail-open starvation) instead of failing at creation.
@@ -100,6 +110,55 @@ export function profiledLiveWorkerGateResponse(
         code: "permission_profile_unenforceable",
         message: `no live worker declares enforcement of permission_profile '${profile}'`,
         permission_profile: profile,
+      },
+    },
+    503,
+  );
+}
+
+// Scratch-routed dispatches need the same no-capable-worker fail-closed
+// check as permission profiles: admitted while zero live workers can resolve
+// a scratch cwd, the handoff would idle in `approved` forever.
+export function countFreshScratchCapableWorkers(
+  services: WorkerGateServices,
+  project_id: string | null,
+): number {
+  const cutoff = Date.now() - workerHeartbeatStaleMs();
+  const rows = services.db
+    .query<WorkerTokenMetadataRow, [number]>(
+      `SELECT worker_id, metadata_json
+         FROM worker_tokens
+        WHERE revoked_at IS NULL
+          AND last_seen_at >= ?
+        ORDER BY last_seen_at DESC`,
+    )
+    .all(cutoff);
+  let n = 0;
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.worker_id)) continue;
+    seen.add(row.worker_id);
+    if (!workerCanClaimProject(services.workerAuthz?.get(row.worker_id), project_id)) continue;
+    if (!workerTokenMetadataDeclaresScratch(row.metadata_json)) continue;
+    n++;
+  }
+  return n;
+}
+
+export function scratchLiveWorkerGateResponse(
+  services: WorkerGateServices,
+  project_id: string | null,
+): Response | null {
+  if (countFreshScratchCapableWorkers(services, project_id) > 0) return null;
+  services.log.warn(
+    { event: "dispatch.scratch_no_capable_worker", project_id },
+    "scratch dispatch rejected: no live worker declares scratch-worktree support",
+  );
+  return json(
+    {
+      error: {
+        code: "scratch_capable_worker_unavailable",
+        message: "no live worker declares scratch-worktree support",
       },
     },
     503,

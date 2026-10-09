@@ -65,6 +65,7 @@ export const HandoffRowSchema = z.object({
   workflow_run_id: z.string().nullable().optional(),
   permission_profile: PermissionProfileSchema.nullable().optional(),
   caller_cwd: z.string().nullable().optional(),
+  cwd_override: z.string().nullable().optional(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 
@@ -95,5 +96,8 @@ export const CreateHandoffRequestSchema = z.object({
   branch_name: z.string().min(1).optional(),
   permission_profile: PermissionProfileSchema.nullable().optional(),
   caller_cwd: z.string().min(1).nullable().optional(),
+  // Chain hops inherit this from the parent row; a hop that sets a different
+  // scratch root than its parent's is rejected at chain_start.
+  cwd_override: z.string().min(1).nullable().optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;

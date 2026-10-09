@@ -65,10 +65,22 @@ export type ClassifyContext = {
 
 export type TripwireVerdict = "clean" | "drift" | "mutated" | "unavailable";
 
+export type TripwireMutationKind = "head" | "branch" | "stash" | "worktree" | "path";
+
+export type TripwireMutation = {
+  target: string;
+  kind: TripwireMutationKind;
+  level: "drift" | "mutated";
+  text: string;
+};
+
 export type TripwireReport = {
   verdict: TripwireVerdict;
   targets: string[];
   deltas: string[];
+  /** Per-target, per-class mutation detail — the `deltas` strings tagged so
+   *  downstream telemetry can aggregate without re-parsing prose. */
+  mutations: TripwireMutation[];
   reason?: string;
   hint?: string;
 };
@@ -91,12 +103,18 @@ export async function resolveTripwireTargets(
   cwd: string,
   runner: TripwireRunner,
   timeoutMs: number,
+  callerCwd?: string | null,
 ): Promise<TripwireTargets | null> {
-  const [topRes, commonRes] = await Promise.all([
+  const [topRes, commonRes, callerRes] = await Promise.all([
     runner(gitArgs(cwd, ["rev-parse", "--show-toplevel"]), { timeoutMs }).catch(() => null),
     runner(gitArgs(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), {
       timeoutMs,
     }).catch(() => null),
+    callerCwd !== undefined && callerCwd !== null && callerCwd.length > 0
+      ? runner(gitArgs(callerCwd, ["rev-parse", "--show-toplevel"]), { timeoutMs }).catch(
+          () => null,
+        )
+      : Promise.resolve(null),
   ]);
   if (topRes?.code !== 0 || commonRes?.code !== 0) return null;
   const top = topRes.stdout.trim();
@@ -106,9 +124,13 @@ export async function resolveTripwireTargets(
   const realTop = await realpathOrSelf(top);
   const realMain =
     mainCheckoutRaw.length > 0 ? dirname(await realpathOrSelf(mainCheckoutRaw)) : null;
+  const callerTop =
+    callerRes?.code === 0 && callerRes.stdout.trim().length > 0
+      ? await realpathOrSelf(callerRes.stdout.trim())
+      : null;
 
   const targets: string[] = [];
-  for (const target of [realTop, realMain]) {
+  for (const target of [realTop, realMain, callerTop]) {
     if (target === null) continue;
     if (!targets.includes(target)) targets.push(target);
   }
@@ -273,19 +295,30 @@ function statDelta(before: PathStat | undefined, after: PathStat | undefined): b
   return before.size !== after.size || before.mtimeMs !== after.mtimeMs;
 }
 
-type Delta = { level: "drift" | "mutated"; text: string };
+export type TripwireDeltaDetail = {
+  level: "drift" | "mutated";
+  kind: TripwireMutationKind;
+  text: string;
+};
+type Delta = TripwireDeltaDetail;
 
 const HEAD_MOVE_DELTAS: Record<Exclude<HeadMove["kind"], "same">, Delta> = {
-  appeared: { level: "mutated", text: "HEAD appeared (first commit created)" },
-  disappeared: { level: "mutated", text: "HEAD became unborn" },
-  non_descendant: { level: "mutated", text: "HEAD moved to a non-descendant commit" },
+  appeared: { level: "mutated", kind: "head", text: "HEAD appeared (first commit created)" },
+  disappeared: { level: "mutated", kind: "head", text: "HEAD became unborn" },
+  non_descendant: {
+    level: "mutated",
+    kind: "head",
+    text: "HEAD moved to a non-descendant commit",
+  },
   advanced_local_only: {
     level: "mutated",
+    kind: "head",
     text: "HEAD advanced to commits reachable from no other local ref",
   },
-  unknown: { level: "mutated", text: "HEAD moved; ancestry undetermined" },
+  unknown: { level: "mutated", kind: "head", text: "HEAD moved; ancestry undetermined" },
   reachable_elsewhere: {
     level: "drift",
+    kind: "head",
     text: "HEAD fast-forwarded; new head is reachable from another local ref",
   },
 };
@@ -295,6 +328,7 @@ function headDeltas(before: TargetSnapshot, after: TargetSnapshot, headMove: Hea
   if (before.branch !== after.branch) {
     deltas.push({
       level: "mutated",
+      kind: "branch",
       text:
         after.branch === null
           ? `HEAD detached (was branch ${before.branch ?? "detached"})`
@@ -312,6 +346,7 @@ function stashDeltas(before: TargetSnapshot, after: TargetSnapshot): Delta[] {
     .filter((stash) => !beforeShas.has(stash.sha))
     .map((stash) => ({
       level: stash.subject.startsWith(wipPrefix) ? ("mutated" as const) : ("drift" as const),
+      kind: "stash" as const,
       text: `new stash: ${stash.subject}`,
     }));
 }
@@ -332,12 +367,13 @@ function worktreeDeltas(
         isInsideFleetRoot(worktree, RECONCILER_SCRATCH_ROOT)
           ? "drift"
           : "mutated",
+      kind: "worktree",
       text: `worktree added: ${worktree}`,
     });
   }
   for (const worktree of before.worktrees) {
     if (!afterWorktrees.has(worktree)) {
-      deltas.push({ level: "drift", text: `worktree removed: ${worktree}` });
+      deltas.push({ level: "drift", kind: "worktree", text: `worktree removed: ${worktree}` });
     }
   }
   return deltas;
@@ -359,6 +395,7 @@ function statusDeltas(
     const reviewPath = ctx.reviewPaths.has(path);
     deltas.push({
       level: reviewPath ? "mutated" : "drift",
+      kind: "path",
       text: `${reviewPath ? "review " : ""}path changed: ${path}`,
     });
   }
@@ -370,7 +407,7 @@ export function classifyTargetSnapshots(args: {
   after: TargetSnapshot;
   headMove: HeadMove;
   ctx: ClassifyContext;
-}): { verdict: "clean" | "drift" | "mutated"; deltas: string[] } {
+}): { verdict: "clean" | "drift" | "mutated"; deltas: string[]; deltaDetails: Delta[] } {
   const { before, after, headMove, ctx } = args;
   const deltas = [
     ...headDeltas(before, after, headMove),
@@ -383,7 +420,7 @@ export function classifyTargetSnapshots(args: {
     : deltas.length > 0
       ? "drift"
       : "clean";
-  return { verdict, deltas: deltas.map((delta) => delta.text) };
+  return { verdict, deltas: deltas.map((delta) => delta.text), deltaDetails: deltas };
 }
 
 async function resolveReviewPaths(
@@ -417,16 +454,28 @@ function outDirRelFor(target: string, outDir: string | null): string | null {
   return rel;
 }
 
-function contentPathRelFor(
+// A relative content_path is meaningful in BOTH the scratch checkout (same
+// repo-relative path) and the caller's cwd (where the file actually was when
+// the caller named it) — resolve against each base and keep every rel that
+// lands inside this target. Bases are realpath'd first: targets are real
+// paths, and a raw /tmp-vs-/private/tmp spelling would otherwise escape.
+async function contentPathRelsFor(
   target: string,
-  cwd: string,
+  bases: string[],
   contentPath: string | null | undefined,
-): string | null {
-  if (typeof contentPath !== "string" || contentPath.length === 0) return null;
-  const abs = isAbsolute(contentPath) ? contentPath : resolve(cwd, contentPath);
-  const rel = relative(target, abs);
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel;
+): Promise<string[]> {
+  if (typeof contentPath !== "string" || contentPath.length === 0) return [];
+  const absPaths = isAbsolute(contentPath)
+    ? [await realpathOrSelf(contentPath)]
+    : await Promise.all(
+        bases.map(async (base) => resolve(await realpathOrSelf(base), contentPath)),
+      );
+  const rels = new Set<string>();
+  for (const abs of absPaths) {
+    const rel = relative(target, abs);
+    if (rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel)) rels.add(rel);
+  }
+  return [...rels];
 }
 
 const VERDICT_RANK: Record<TripwireVerdict, number> = {
@@ -460,6 +509,10 @@ function hasLandDuringWindow(
 
 type CheckoutTripwireOptions = {
   cwd: string;
+  /** The dispatching caller's checkout — resolved to a toplevel and watched
+   *  alongside `cwd`'s own top/main so a scratch-rooted run still covers the
+   *  operator checkout (P6). */
+  callerCwd?: string | null;
   outDir: string | null;
   baseRef: string;
   targetRef: string;
@@ -471,6 +524,99 @@ type CheckoutTripwireOptions = {
   project?: string;
 };
 
+type TargetClassification = {
+  verdict: TripwireVerdict;
+  deltas: string[];
+  mutations: TripwireMutation[];
+  reason?: string;
+};
+
+async function classifyOneTarget(args: {
+  target: string;
+  mainCheckout: string | null;
+  beforeSnap: TargetSnapshot | null;
+  afterSnap: TargetSnapshot | null;
+  reviewPaths: Set<string>;
+  fleetWorktreeRoot: string | null;
+  opts: CheckoutTripwireOptions;
+  startedAt: string;
+  runner: TripwireRunner;
+  timeout: () => number;
+}): Promise<TargetClassification> {
+  const {
+    target,
+    mainCheckout,
+    beforeSnap,
+    afterSnap,
+    reviewPaths,
+    fleetWorktreeRoot,
+    opts,
+    startedAt,
+    runner,
+    timeout,
+  } = args;
+  if (beforeSnap === null || afterSnap === null) {
+    return {
+      verdict: "unavailable",
+      deltas: [],
+      mutations: [],
+      reason: `snapshot failed for ${target} (git failed or timed out)`,
+    };
+  }
+  const headMove = await resolveHeadMove(
+    target,
+    beforeSnap,
+    afterSnap,
+    runner,
+    timeout(),
+    (sha) =>
+      target === mainCheckout &&
+      opts.project !== undefined &&
+      hasLandDuringWindow(
+        { db: opts.db, project: opts.project },
+        sha,
+        startedAt,
+        new Date().toISOString(),
+      ),
+  );
+  if (headMove.kind === "unknown") {
+    return {
+      verdict: "unavailable",
+      deltas: [],
+      mutations: [],
+      reason: `HEAD ancestry lookup failed for ${target}`,
+    };
+  }
+  const targetReviewPaths = new Set(reviewPaths);
+  const contentBases =
+    opts.callerCwd !== undefined && opts.callerCwd !== null && opts.callerCwd.length > 0
+      ? [opts.cwd, opts.callerCwd]
+      : [opts.cwd];
+  for (const rel of await contentPathRelsFor(target, contentBases, opts.contentPath)) {
+    targetReviewPaths.add(rel);
+  }
+  const classified = classifyTargetSnapshots({
+    before: beforeSnap,
+    after: afterSnap,
+    headMove,
+    ctx: {
+      reviewPaths: targetReviewPaths,
+      outDirRel: outDirRelFor(target, opts.outDir),
+      fleetWorktreeRoot,
+    },
+  });
+  return {
+    verdict: classified.verdict,
+    deltas: classified.deltas.map((delta) => `${target}: ${delta}`),
+    mutations: classified.deltaDetails.map((detail) => ({
+      target,
+      kind: detail.kind,
+      level: detail.level,
+      text: detail.text,
+    })),
+  };
+}
+
 export async function beginCheckoutTripwire(
   opts: CheckoutTripwireOptions,
 ): Promise<CheckoutTripwireSession> {
@@ -480,12 +626,19 @@ export async function beginCheckoutTripwire(
   let deadline = Date.now() + (opts.totalBudgetMs ?? TOTAL_BUDGET_MS);
   const timeout = (): number => Math.max(1, Math.min(perCall, deadline - Date.now()));
   const unavailable = (reason: string): CheckoutTripwireSession => ({
-    finish: () => Promise.resolve({ verdict: "unavailable", targets: [], deltas: [], reason }),
+    finish: () =>
+      Promise.resolve({
+        verdict: "unavailable",
+        targets: [],
+        deltas: [],
+        mutations: [],
+        reason,
+      }),
   });
 
   let resolved: TripwireTargets | null;
   try {
-    resolved = await resolveTripwireTargets(opts.cwd, runner, timeout());
+    resolved = await resolveTripwireTargets(opts.cwd, runner, timeout(), opts.callerCwd);
   } catch {
     resolved = null;
   }
@@ -517,11 +670,9 @@ export async function beginCheckoutTripwire(
   const finish = async (): Promise<TripwireReport> => {
     deadline = Date.now() + (opts.totalBudgetMs ?? TOTAL_BUDGET_MS);
     const deltas: string[] = [];
+    const mutations: TripwireMutation[] = [];
     const reasons: string[] = [];
     let verdict: TripwireVerdict = "clean";
-    const raise = (next: TripwireVerdict): void => {
-      if (VERDICT_RANK[next] > VERDICT_RANK[verdict]) verdict = next;
-    };
 
     const after = new Map<string, TargetSnapshot | null>();
     await Promise.all(
@@ -531,61 +682,37 @@ export async function beginCheckoutTripwire(
     );
 
     for (const target of targets) {
-      const beforeSnap = before.get(target) ?? null;
-      const afterSnap = after.get(target) ?? null;
-      if (beforeSnap === null || afterSnap === null) {
-        raise("unavailable");
-        reasons.push(`snapshot failed for ${target} (git failed or timed out)`);
-        continue;
-      }
-      const headMove = await resolveHeadMove(
+      const classified = await classifyOneTarget({
         target,
-        beforeSnap,
-        afterSnap,
+        mainCheckout,
+        beforeSnap: before.get(target) ?? null,
+        afterSnap: after.get(target) ?? null,
+        reviewPaths,
+        fleetWorktreeRoot,
+        opts,
+        startedAt,
         runner,
-        timeout(),
-        (sha) =>
-          target === mainCheckout &&
-          opts.project !== undefined &&
-          hasLandDuringWindow(
-            { db: opts.db, project: opts.project },
-            sha,
-            startedAt,
-            new Date().toISOString(),
-          ),
-      );
-      if (headMove.kind === "unknown") {
-        raise("unavailable");
-        reasons.push(`HEAD ancestry lookup failed for ${target}`);
-        continue;
-      }
-      const targetReviewPaths = new Set(reviewPaths);
-      const contentRel = contentPathRelFor(target, opts.cwd, opts.contentPath);
-      if (contentRel !== null) targetReviewPaths.add(contentRel);
-      const classified = classifyTargetSnapshots({
-        before: beforeSnap,
-        after: afterSnap,
-        headMove,
-        ctx: {
-          reviewPaths: targetReviewPaths,
-          outDirRel: outDirRelFor(target, opts.outDir),
-          fleetWorktreeRoot,
-        },
+        timeout,
       });
-      raise(classified.verdict);
-      for (const delta of classified.deltas) deltas.push(`${target}: ${delta}`);
+      if (VERDICT_RANK[classified.verdict] > VERDICT_RANK[verdict]) {
+        verdict = classified.verdict;
+      }
+      deltas.push(...classified.deltas);
+      mutations.push(...classified.mutations);
+      if (classified.reason !== undefined) reasons.push(classified.reason);
     }
 
-    const report: TripwireReport = { verdict, targets, deltas };
+    const report: TripwireReport = { verdict, targets, deltas, mutations };
     if (reasons.length > 0) report.reason = reasons.join("; ");
     if (
       VERDICT_RANK[verdict] >= VERDICT_RANK.drift &&
       VERDICT_RANK[verdict] < VERDICT_RANK.unavailable
     ) {
       report.hint =
-        `The home checkout changed during this review window (not necessarily because ` +
-        `of this review — concurrent reviews and plans share the checkout): ` +
-        `${deltas.join("; ")}. Inspect with \`git status\`, \`git stash list\`, ` +
+        `A checkout watched by this review changed during the window ` +
+        `(targets: ${targets.join(", ")}; not necessarily caused by the review — ` +
+        `concurrent reviews and plans share checkouts): ${deltas.join("; ")}. ` +
+        `Inspect each target with \`git status\`, \`git stash list\`, ` +
         `\`git worktree list\`.`;
     }
     return report;

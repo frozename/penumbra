@@ -38,6 +38,7 @@ import {
   workerCanClaimProject,
   workerHeartbeatStaleMs,
   workerTokenMetadataDeclaresProfile,
+  workerTokenMetadataDeclaresScratch,
 } from "./worker-profile-gate.js";
 function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
@@ -110,21 +111,33 @@ interface WorkerTokenMetadataRow {
   metadata_json: string | null;
 }
 
-function workerDeclaresProfileEnforcement(
-  services: Services,
-  worker_id: string,
-  profile: PermissionProfile,
-): boolean {
+// Capability gates key on the PRESENTING bearer token's registration row,
+// not the newest row for the worker_id: a rotated registration must not
+// silently grant (or strip) capabilities claimed by the token in hand.
+function presentingTokenMetadata(services: Services, token_hash: string): string | null {
   const row = services.db
     .query<WorkerTokenMetadataRow, [string]>(
       `SELECT metadata_json
          FROM worker_tokens
-        WHERE worker_id = ? AND revoked_at IS NULL
-        ORDER BY last_seen_at DESC
-        LIMIT 1`,
+        WHERE token_hash = ? AND revoked_at IS NULL`,
     )
-    .get(worker_id);
-  return workerTokenMetadataDeclaresProfile(row?.metadata_json ?? null, profile);
+    .get(token_hash);
+  return row?.metadata_json ?? null;
+}
+
+function workerDeclaresProfileEnforcement(
+  services: Services,
+  token_hash: string,
+  profile: PermissionProfile,
+): boolean {
+  return workerTokenMetadataDeclaresProfile(presentingTokenMetadata(services, token_hash), profile);
+}
+
+// Claim gate keyed on the presenting worker's registration metadata: a
+// scratch-routed handoff must stay unclaimable for workers that never
+// declared scratch support.
+function workerDeclaresScratchSupport(services: Services, token_hash: string): boolean {
+  return workerTokenMetadataDeclaresScratch(presentingTokenMetadata(services, token_hash));
 }
 
 // A chain hop inherits the parent's permission profile unless the hop names
@@ -151,6 +164,48 @@ function resolveEffectiveCallerCwd(
     ? (services.handoffReader.get(input.parent_handoff_id)?.caller_cwd ?? null)
     : null;
   return input.caller_cwd ?? parentCwd;
+}
+
+// cwd_override never crosses a hop boundary on the create route: scratch
+// roots are bound to the run that acquired them, scratch dispatches pin
+// max_hops:1, and a direct cwd_override is only legal on the in-process
+// chain_start path.
+function scratchBoundaryGateResponse(
+  data: {
+    cwd_override?: string | null;
+    parent_handoff_id?: string | null;
+    project_id?: string | null;
+  },
+  services: Services,
+): Response | null {
+  const parentCwdOverride = data.parent_handoff_id
+    ? (services.handoffReader.get(data.parent_handoff_id)?.cwd_override ?? null)
+    : null;
+  if (parentCwdOverride !== null) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_parent_scratch",
+          message:
+            "child handoffs are not allowed under a scratch-bound parent; scratch dispatches pin max_hops:1",
+          parent_cwd_override: parentCwdOverride,
+        },
+      },
+      400,
+    );
+  }
+  if (data.cwd_override !== undefined && data.cwd_override !== null) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_not_allowed",
+          message: "cwd_override is only accepted on the in-process workflow dispatch path",
+        },
+      },
+      400,
+    );
+  }
+  return null;
 }
 
 function profiledSeatGateResponse(
@@ -476,6 +531,21 @@ function resolveCreateRoute(
   }
 }
 
+// The create route cannot carry cwd_override at all — it is set only by the
+// in-process chain_start path — and a child under a scratch-bound parent is
+// rejected outright. What remains to gate is a live scratch-capable worker
+// whenever a scratch-bound hop somehow reaches the row level.
+function cwdOverrideGateResponse(
+  data: {
+    cwd_override?: string | null;
+    parent_handoff_id?: string | null;
+    project_id?: string | null;
+  },
+  services: Services,
+): Response | null {
+  return scratchBoundaryGateResponse(data, services);
+}
+
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null)
@@ -525,6 +595,9 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
     parsed.data.project_id ?? null,
   );
   if (profileGateResponse) return profileGateResponse;
+
+  const cwdOverrideResponse = cwdOverrideGateResponse(parsed.data, services);
+  if (cwdOverrideResponse) return cwdOverrideResponse;
 
   // F6: phantom-seat rejection at the chain-HOP write boundary, mirroring the
   // chain_start rejectUnknownAgent shape so the two write paths agree on what
@@ -615,6 +688,7 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       chain_max_hops: parsed.data.chain_max_hops ?? null,
       permission_profile: effectiveProfile,
       caller_cwd: resolveEffectiveCallerCwd(parsed.data, services),
+      cwd_override: null,
     });
   })();
 
@@ -1086,6 +1160,51 @@ function buildClaimConflictResponse(
   );
 }
 
+// Profile enforcement and scratch-worktree support are both
+// registration-declared capabilities; a handoff requiring either stays
+// unclaimed rather than run unconstrained.
+function claimCapabilityGateResponse(
+  services: DaemonServices,
+  cur: { permission_profile?: PermissionProfile | null; cwd_override?: string | null },
+  workerId: string,
+  tokenHash: string,
+): Response | null {
+  if (
+    cur.permission_profile !== null &&
+    cur.permission_profile !== undefined &&
+    !workerDeclaresProfileEnforcement(services, tokenHash, cur.permission_profile)
+  ) {
+    return json(
+      {
+        error: {
+          code: "permission_profile_unenforceable",
+          message: `worker '${workerId}' does not enforce permission_profile '${cur.permission_profile}'`,
+          worker_id: workerId,
+          permission_profile: cur.permission_profile,
+        },
+      },
+      403,
+    );
+  }
+  if (
+    cur.cwd_override !== null &&
+    cur.cwd_override !== undefined &&
+    !workerDeclaresScratchSupport(services, tokenHash)
+  ) {
+    return json(
+      {
+        error: {
+          code: "scratch_worker_not_capable",
+          message: `worker '${workerId}' does not declare scratch-worktree support`,
+          worker_id: workerId,
+        },
+      },
+      403,
+    );
+  }
+  return null;
+}
+
 export async function handoffsClaimRoute(
   req: Request,
   handoff_id: string,
@@ -1114,6 +1233,13 @@ export async function handoffsClaimRoute(
 
   const principalErr = requireWorkerPrincipalMatch(req, body.data.worker_id);
   if (principalErr !== null) return principalErr;
+  const principal = getPrincipal(req);
+  if (principal?.kind !== "worker") {
+    return json(
+      { error: { code: "worker_token_required", message: "claim requires a worker token" } },
+      403,
+    );
+  }
 
   const cur = services.handoffReader.get(handoff_id);
   if (!cur)
@@ -1140,26 +1266,16 @@ export async function handoffsClaimRoute(
     );
   }
 
-  // A profiled handoff may only be claimed by a worker that declared
-  // enforcement at registration; otherwise it must stay unclaimed rather
-  // than run unconstrained.
-  if (
-    cur.permission_profile !== null &&
-    cur.permission_profile !== undefined &&
-    !workerDeclaresProfileEnforcement(services, body.data.worker_id, cur.permission_profile)
-  ) {
-    return json(
-      {
-        error: {
-          code: "permission_profile_unenforceable",
-          message: `worker '${body.data.worker_id}' does not enforce permission_profile '${cur.permission_profile}'`,
-          worker_id: body.data.worker_id,
-          permission_profile: cur.permission_profile,
-        },
-      },
-      403,
-    );
-  }
+  // A profiled or scratch-routed handoff may only be claimed by a worker
+  // that declared the matching capability at registration; otherwise it must
+  // stay unclaimed rather than run unconstrained.
+  const capabilityGate = claimCapabilityGateResponse(
+    services,
+    cur,
+    body.data.worker_id,
+    principal.token_hash,
+  );
+  if (capabilityGate) return capabilityGate;
 
   const cap = enforceClaimSpreadCap(services, cur, body.data.worker_id, handoff_id);
   if (cap.response) return cap.response;

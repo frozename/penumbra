@@ -14,6 +14,7 @@ import { parse as parseYaml } from "yaml";
 // tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
 // once and cast the exports to the @penumbra/workflows types this test relies
 // on, so the rest of the file lints with real type info.
+import { stubScratchWorktree } from "../../../../plugin/workflows/_shared/test-helpers.js";
 import * as adversarialPlanModule from "../../../../plugin/workflows/adversarial-plan/workflow.js";
 
 const spec = (adversarialPlanModule as unknown as { default: WorkflowSpec }).default;
@@ -212,6 +213,9 @@ function makeCtx(opts?: {
     cwd: root,
     storageRoot: root,
     project: "penumbra",
+    // The scratch path is a stub — plan never trips a tripwire, and dispatch
+    // inputs just carry it through cwd_override.
+    scratchWorktree: stubScratchWorktree(join(root, ".scratch-test")),
     args: parsedArgs,
   };
 

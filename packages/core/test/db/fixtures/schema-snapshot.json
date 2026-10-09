@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 46,
+  "schemaVersion": 47,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -134,6 +134,7 @@
       "chain_task_type",
       "chain_trust_mode",
       "conversation_id",
+      "cwd_override",
       "dispatch_attempts",
       "dispatch_kind",
       "error_message",

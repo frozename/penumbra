@@ -1,3 +1,4 @@
+import type { ScratchWorktreeHandle } from "@penumbra/core";
 import type { RecallBundle, WorkflowCtx } from "@penumbra/workflows";
 
 import { agentPoolToNames } from "./pool-resolver.js";
@@ -44,6 +45,39 @@ function withEnforcingSeatDefaults(config: WorkflowCtx["config"]): WorkflowCtx["
   };
 }
 
+// Default scratch stub for P6 workflows: a fake daemon-owned checkout at a
+// fixed test path with a releaseCalls spy for the workflow's release path.
+export type StubScratchWorktree = NonNullable<WorkflowCtx["scratchWorktree"]> & {
+  acquireCalls: ({ ref?: string } | undefined)[];
+  releaseCalls: { keep_reason?: string }[];
+};
+
+export function stubScratchWorktree(
+  path = "/tmp/scratch",
+  opts?: { project_id?: string | null },
+): StubScratchWorktree {
+  const acquireCalls: ({ ref?: string } | undefined)[] = [];
+  const releaseCalls: { keep_reason?: string }[] = [];
+  return {
+    acquire: (acquireOpts?: { ref?: string }): Promise<ScratchWorktreeHandle> => {
+      acquireCalls.push(acquireOpts);
+      return Promise.resolve({
+        owner_run_id: "test-run",
+        path,
+        sha: "0".repeat(40),
+        repo_root: "/tmp/repo",
+        project_id: opts?.project_id ?? null,
+        release: (opts?: { keep_reason?: string }) => {
+          releaseCalls.push(opts ?? {});
+          return Promise.resolve({ kept: opts?.keep_reason !== undefined });
+        },
+      });
+    },
+    acquireCalls,
+    releaseCalls,
+  };
+}
+
 export function testWorkflowCtx<TArgs extends Record<string, unknown> = Record<string, unknown>>(
   overrides: WorkflowCtxOverrides<TArgs> = {},
 ): WorkflowCtx<TArgs> {
@@ -56,6 +90,7 @@ export function testWorkflowCtx<TArgs extends Record<string, unknown> = Record<s
     cwd: "/tmp/work",
     storageRoot: "/tmp/storage",
     project: "penumbra",
+    scratchWorktree: stubScratchWorktree(),
     args: {} as TArgs,
     ...overrides,
     config: withEnforcingSeatDefaults(overrides.config ?? {}),

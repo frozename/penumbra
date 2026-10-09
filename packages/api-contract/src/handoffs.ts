@@ -52,6 +52,7 @@ export const HandoffRowSchema = z
     parent_handoff_id: z.string().nullable(),
     permission_profile: PermissionProfileSchema.nullable().optional(),
     caller_cwd: z.string().nullable().optional(),
+    cwd_override: z.string().nullable().optional(),
   })
   .loose();
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;

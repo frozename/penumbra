@@ -268,6 +268,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       providerQuotas,
       workflowRegistry,
       projectRegistry,
+      mainRepoDir: repoRoot,
     });
     activeLog = services.log;
     logWorkflowRegistryErrors(services.log, workflowRegistry);
@@ -306,6 +307,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       token,
       port: opts.port ?? 0,
       hostname: resolveDaemonHost(opts.host),
+      bootScratchSweep: true,
       onStop: () => {
         stopShellSweeper?.();
         services.subscriptionPressureCache.stop();

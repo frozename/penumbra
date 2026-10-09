@@ -54,6 +54,7 @@ export interface CreateApprovedParams {
   max_dispatch_attempts?: number | null;
   permission_profile?: PermissionProfile | null;
   caller_cwd?: string | null;
+  cwd_override?: string | null;
 }
 export interface ApproveOpts {
   resolved_by: string;
@@ -102,12 +103,13 @@ export class HandoffWriter {
           string,
           string | null,
           string | null,
+          string | null,
         ]
       >(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
-          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, isolated_install, parent_handoff_id, chain_task_type, branch_base, chain_max_hops, branch_name, root_handoff_id, permission_profile, caller_cwd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, isolated_install, parent_handoff_id, chain_task_type, branch_base, chain_max_hops, branch_name, root_handoff_id, permission_profile, caller_cwd, cwd_override
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id,
@@ -129,6 +131,7 @@ export class HandoffWriter {
         root_handoff_id,
         params.permission_profile ?? null,
         params.caller_cwd ?? null,
+        params.cwd_override ?? null,
       );
     return params.handoff_id;
   }
@@ -172,13 +175,14 @@ export class HandoffWriter {
           number | null,
           string | null,
           string | null,
+          string | null,
         ]
       >(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, requested_agent, routing_resolution_reason, message, status,
-          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, isolated_install, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, branch_name, root_handoff_id, workflow_run_id, max_dispatch_attempts, permission_profile, caller_cwd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, isolated_install, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, branch_name, root_handoff_id, workflow_run_id, max_dispatch_attempts, permission_profile, caller_cwd, cwd_override
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id,
@@ -211,6 +215,7 @@ export class HandoffWriter {
         params.max_dispatch_attempts ?? 3,
         params.permission_profile ?? null,
         params.caller_cwd ?? null,
+        params.cwd_override ?? null,
       );
     if (this.events) {
       const row = this.db

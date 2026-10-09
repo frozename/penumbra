@@ -806,7 +806,7 @@ function buildDaemonTsWorkflowCtx(opts: WorkflowExecOpts): DaemonWorkflowCtx {
     chainStartFromInput(
       { ...input, workflow_run_id: opts.workflowRunId ?? undefined },
       opts.services,
-      { applyMaestroBudgetGate: true },
+      { applyMaestroBudgetGate: true, allowCwdOverride: true },
     );
   const base = buildWorkflowCtx({
     services: opts.services,
@@ -875,6 +875,30 @@ async function composeWorkflowBundle(
     templateCtx: opts.templateCtx,
     storageRoot: opts.services.storageRoot,
   });
+}
+
+// The run's scratch worktree is daemon-owned, not plugin-owned: release it
+// whenever the run settles (success, workflow throw, timeout-fired settle)
+// so a plugin that forgot to release — or died mid-run — doesn't leak a
+// checkout until GC. liveDispatches inside the service defer teardown while
+// post-run claims are still in flight.
+function attachScratchRelease(
+  runPromise: Promise<WorkflowExecutionResult>,
+  services: Services,
+  workflowRunId: string | null,
+): void {
+  if (workflowRunId === null) return;
+  const release = async (): Promise<void> => {
+    try {
+      await services.scratchWorktrees.release(workflowRunId);
+    } catch (err) {
+      services.log.warn(
+        { workflow_run_id: workflowRunId, err: String(err) },
+        "scratch release after run end failed; GC sweep owns the dir now",
+      );
+    }
+  };
+  void runPromise.then(release, release);
 }
 
 function startWorkflowExecution(
@@ -970,6 +994,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     });
     const bundle = await composeWorkflowBundle(execOpts);
     const runPromise = startWorkflowExecution(execOpts, bundle);
+    attachScratchRelease(runPromise, services, workflowRunId);
     const recordOnSuccess = buildRunContinuityRecorder({
       services,
       sessionId,

@@ -1,4 +1,10 @@
-import type { ChainStartRequest, PermissionProfile, Services, TaskClass } from "@penumbra/core";
+import type {
+  ChainStartRequest,
+  PermissionProfile,
+  ScratchWorktreeHandle,
+  Services,
+  TaskClass,
+} from "@penumbra/core";
 
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
@@ -27,6 +33,10 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     workflowRunId?: string;
     permission_profile?: PermissionProfile;
     max_hops?: number;
+    /** Daemon-owned scratch-worktree path the dispatch runs in (P6). Only
+     *  meaningful alongside use_worktree:false on the in-process daemon
+     *  path; the HTTP route rejects it. */
+    cwd_override?: string;
   }): Promise<{
     conversation_id: string;
     handoff_id: string;
@@ -50,6 +60,12 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   project: string;
   args: TArgs;
   deadline?(): { remaining_ms: number | null; expired: boolean };
+  /** Lazily acquires the run's daemon-owned scratch worktree; idempotent —
+   *  every call in a run returns the same handle. Absent when the hosting
+   *  services have no scratch service (test stubs, bare ctxs). */
+  scratchWorktree?: {
+    acquire(opts?: { ref?: string }): Promise<ScratchWorktreeHandle>;
+  };
   worktreeInspect?(handoffId: string): Promise<{
     worktree: {
       handoffId: string;
@@ -270,6 +286,7 @@ function buildChainStartRequest<TArgs>(
     req.permission_profile = input.permission_profile;
   }
   if (input.max_hops !== undefined) req.max_hops = input.max_hops;
+  if (input.cwd_override !== undefined) req.cwd_override = input.cwd_override;
   const effectiveProjectId = input.project_id ?? deps.project;
   if (effectiveProjectId) req.project_id = effectiveProjectId;
   // The workflow's own cwd is the originating caller root: persist it so a
@@ -514,6 +531,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
   };
   let workflowDb: Database | null = null;
   const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs, deadline };
+  let scratchPromise: Promise<ScratchWorktreeHandle> | null = null;
 
   const ctx: DisposableWorkflowCtx<TArgs> = {
     dispatch: async (input): Promise<DispatchResult> => {
@@ -540,6 +558,21 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     project: deps.project,
     args: deps.args ?? ({} as TArgs),
     deadline,
+    scratchWorktree: {
+      acquire: (acquireOpts): Promise<ScratchWorktreeHandle> => {
+        const runId = deps.workflowRunId;
+        if (typeof runId !== "string" || runId.length === 0) {
+          return Promise.reject(new Error("scratch worktree acquire requires a workflow_run_id"));
+        }
+        scratchPromise ??= deps.services.scratchWorktrees.acquire({
+          owner_run_id: runId,
+          cwd: deps.cwd,
+          project_id: deps.services.projectRegistry?.get(deps.project)?.project_id ?? undefined,
+          ref: acquireOpts?.ref,
+        });
+        return scratchPromise;
+      },
+    },
     dispose: (): void => {
       workflowDb?.close();
       workflowDb = null;

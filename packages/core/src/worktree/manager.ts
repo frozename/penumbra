@@ -6,6 +6,13 @@ import { promisify } from "node:util";
 import { createLogger, type Logger } from "../logger.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
+import {
+  resolveWorktreeGitDir as resolveScratchGitDir,
+  SCRATCH_OWNER_FILE,
+  type ScratchDaemonIdentity,
+  scratchDirName,
+  type ScratchOwnerRecord,
+} from "./scratch.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -296,6 +303,12 @@ export class WorktreeManager {
     return this.baseFor(project_id);
   }
 
+  /** Project repo root with the same fallback `repoRootFor` uses internally —
+   *  unknown/absent project ids resolve to the daemon main repo. */
+  public repoRootForProject(project_id?: string): string {
+    return this.repoRootFor(project_id);
+  }
+
   private branchNameFor(handoffId: string): string {
     return resolveHandoffBranchName({
       handoff_id: handoffId,
@@ -396,6 +409,9 @@ export class WorktreeManager {
   private rediscoverEntry(base: string, entry: fs.Dirent): void {
     if (!entry.isDirectory()) return;
     const handoffId = entry.name;
+    // Dot-prefixed fleet members (.scratch-* review worktrees, transient
+    // .stage-* merge sandboxes) are daemon internals — never tracked handles.
+    if (handoffId.startsWith(".")) return;
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return;
     const branchName = this.branchNameForWorktree(handoffId, wtPath);
@@ -539,6 +555,79 @@ export class WorktreeManager {
     } catch (err) {
       await this.removePartialWorktree(wtPath, repoRoot, createdBranchName);
       throw err;
+    }
+  }
+
+  /**
+   * Daemon-owned detached scratch worktree for review/plan workflow runs —
+   * keyed by workflow_run_id, no branch, no identity config, no readiness
+   * markers, and never entered into `worktrees` (it is not a handoff lane).
+   * The owner marker lands in the per-worktree git dir so a daemon that
+   * restarts mid-run can still prove the binding on reclaim.
+   */
+  async createScratchWorktree(opts: {
+    owner_run_id: string;
+    repoRoot: string;
+    sha: string;
+    daemon?: ScratchDaemonIdentity;
+  }): Promise<{ path: string }> {
+    const base = `${opts.repoRoot}-worktrees`;
+    const wtPath = path.join(base, scratchDirName(opts.owner_run_id));
+    if (!fs.existsSync(base)) {
+      fs.mkdirSync(base, { recursive: true });
+    }
+    if (fs.existsSync(wtPath)) {
+      throw new Error(`worktree_path_exists: ${wtPath}`);
+    }
+    await this.git(["worktree", "add", "--detach", wtPath, opts.sha], { cwd: opts.repoRoot });
+    try {
+      const gitDir = resolveScratchGitDir(wtPath);
+      if (gitDir === null) throw new Error(`scratch worktree missing .git pointer: ${wtPath}`);
+      const owner: ScratchOwnerRecord = {
+        owner_run_id: opts.owner_run_id,
+        sha: opts.sha,
+        created_at: new Date(this.now()).toISOString(),
+        ...(opts.daemon !== undefined ? { daemon: opts.daemon } : {}),
+      };
+      fs.writeFileSync(path.join(gitDir, SCRATCH_OWNER_FILE), `${JSON.stringify(owner)}\n`);
+      // An empty node_modules keeps bun's auto-install off without polluting
+      // `git status` — empty directories are never reported as untracked.
+      fs.mkdirSync(path.join(wtPath, "node_modules"), { recursive: true });
+      return { path: wtPath };
+    } catch (err) {
+      await this.removePartialWorktree(wtPath, opts.repoRoot, null);
+      throw err;
+    }
+  }
+
+  /**
+   * Tear down a scratch worktree by path: `git worktree remove --force` plus
+   * an fs-level fallback for half-registered directories. Deliberately does
+   * NOT prune: `git worktree prune` on the per-run release path can reap the
+   * half-created admin entry of a racing acquire — stale entries are pruned
+   * by the GC tick via pruneWorktrees instead. Fails when the path survives.
+   */
+  async removeScratchWorktree(opts: { path: string; repoRoot?: string }): Promise<void> {
+    const repoRoot = opts.repoRoot ?? this.#mainRepoDir;
+    try {
+      await this.git(["worktree", "remove", "--force", opts.path], { cwd: repoRoot });
+    } catch {
+      // The directory may be half-registered (creation died mid-add).
+    }
+    if (fs.existsSync(opts.path)) {
+      await fs.promises.rm(opts.path, { recursive: true, force: true });
+    }
+    if (fs.existsSync(opts.path)) {
+      throw new Error(`scratch_worktree_still_present: ${opts.path}`);
+    }
+  }
+
+  /** Prune stale .git/worktrees admin entries — GC tick only, never per-run. */
+  async pruneWorktrees(repoRoot?: string): Promise<void> {
+    try {
+      await this.git(["worktree", "prune"], { cwd: repoRoot ?? this.#mainRepoDir });
+    } catch {
+      // Best-effort — stale entries expire on their own regardless.
     }
   }
 

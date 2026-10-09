@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFile as execFileCb } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 
 import type { Input } from "./workflow.js";
 
-import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
+import { emptyRecall, stubScratchWorktree, testWorkflowCtx } from "../_shared/test-helpers.js";
 import workflowSpec, { fn, resolveRequestedPersonas } from "./workflow.js";
 
 const WELL_FORMED_SYNTHESIS = `Land as-is.
@@ -778,6 +780,122 @@ describe("adversarial-review workflow", () => {
     }
   });
 
+  function makeInvalidSynthCtx(opts: {
+    root: string;
+    synthesizer: unknown;
+    writes: Map<string, string>;
+    synthAgents?: string[];
+  }) {
+    return testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: {
+            eligible_agents: ["reviewer"],
+            synthesizer: opts.synthesizer,
+          },
+        },
+        personas: {
+          reviewer: {
+            bias: "Find correctness issues",
+            system_prompt: "Review the change.",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: opts.root,
+      storageRoot: opts.root,
+      project: "penumbra",
+      args: {
+        target_ref: "HEAD",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "review-out",
+      },
+      dispatch: async (input) => ({
+        conversation_id: `conv-${input.agent}`,
+        handoff_id: `handoff-${input.agent}`,
+        permission_profile: input.permission_profile,
+      }),
+      awaitChain: async (conversationId) => {
+        if (conversationId === "conv-reviewer-agent") {
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"high","category":"correctness","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+          };
+        }
+        return {
+          status: "completed" as const,
+          final_agent: conversationId.slice("conv-".length),
+          response_text: "invalid synthesis",
+        };
+      },
+      fileWrite: async (path, body) => {
+        opts.writes.set(path, body);
+        return path;
+      },
+    });
+  }
+
+  const INVALID_DIFF = emptyRecall({
+    byKey: {
+      "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+      "git.show": [],
+    },
+  });
+
+  test("marks attempt_cap_reached when the attempt cap stops a larger pool", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cap-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = makeInvalidSynthCtx({
+        root,
+        writes,
+        synthesizer: ["s1", "s2", "s3", "s4"],
+      });
+      const result = (await fn(ctx, INVALID_DIFF)) as {
+        ok: boolean;
+        synthesizer_status: string | null;
+        pool_exhausted?: boolean;
+        attempt_cap_reached?: boolean;
+      };
+      // The cap cut the run after 3 attempts; s4 was never tried — that is
+      // NOT pool exhaustion.
+      expect(result.attempt_cap_reached).toBe(true);
+      expect(result.pool_exhausted ?? false).toBe(false);
+      const synthesis = [...writes.entries()].find(([p]) => p.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toContain("attempt_cap_reached: true");
+      expect(synthesis).not.toContain("pool_exhausted: true");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("marks pool_exhausted when every pool member was attempted inside the cap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-exhausted-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = makeInvalidSynthCtx({
+        root,
+        writes,
+        synthesizer: ["s1", "s2"],
+      });
+      const result = (await fn(ctx, INVALID_DIFF)) as {
+        ok: boolean;
+        pool_exhausted?: boolean;
+        attempt_cap_reached?: boolean;
+      };
+      expect(result.pool_exhausted).toBe(true);
+      expect(result.attempt_cap_reached ?? false).toBe(false);
+      const synthesis = [...writes.entries()].find(([p]) => p.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toContain("pool_exhausted: true");
+      expect(synthesis).not.toContain("attempt_cap_reached: true");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("emits severity metrics from parsed persona findings", async () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-review-metrics-"));
     try {
@@ -1496,5 +1614,527 @@ describe("permission_profile dispatch contract", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("a persona pinned to a non-enforcing seat fails closed instead of dispatching unguarded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-nonenforcing-"));
+    try {
+      const dispatched: { agent: string }[] = [];
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          // Explicit agents list suppresses the enforcing-seat stub defaults:
+          // 'stdio-reviewer' rides an adapter with no native profile
+          // enforcement and no enforces_permission_profiles opt-in, so a pin
+          // under review_readonly must throw, not silently dispatch.
+          agents: [
+            { name: "stdio-reviewer", roles: ["reviewer"], adapter: "stdio-acp" },
+            { name: "synth", roles: ["reviewer"], adapter: "openai-compat-http" },
+          ],
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "stdio-reviewer",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => {
+          dispatched.push({ agent: input.agent });
+          return {
+            conversation_id: `${input.agent}-conv`,
+            handoff_id: `${input.agent}-handoff`,
+            permission_profile: input.permission_profile,
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas?: { name: string; status: string; error_code?: string }[];
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      // The non-enforcing seat was never dispatched, and neither was the
+      // synthesizer (no completed personas to merge).
+      expect(dispatched).toHaveLength(0);
+      expect(result.personas?.[0]?.status).toBe("failed");
+      expect(result.personas?.[0]?.error_code).toBe("persona_seat_cannot_enforce_profile");
+      const personaJson = [...writes.entries()].find(([path]) =>
+        path.endsWith("reviewer.json"),
+      )?.[1];
+      expect(personaJson).toContain("persona_seat_cannot_enforce_profile");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("scratch worktree dispatch contract", () => {
+  const scratchPath = "/tmp/p6-scratch-review";
+
+  function scratchCtx(dispatched: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
+    return testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: {
+            eligible_agents: ["reviewer"],
+            synthesizer: "synth",
+          },
+        },
+        personas: {
+          reviewer: {
+            bias: "Find correctness issues",
+            system_prompt: "Review the change.",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: "/tmp/operator-checkout",
+      storageRoot: "/tmp/review-store",
+      project: "penumbra",
+      args: {
+        target_ref: "HEAD",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "review-out",
+      },
+      scratchWorktree: stubScratchWorktree(scratchPath),
+      dispatch: async (input) => {
+        dispatched.push(input);
+        return {
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        };
+      },
+      awaitChain: async (conversationId) =>
+        conversationId === "synth-conv"
+          ? {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            }
+          : {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            },
+      ...extra,
+    });
+  }
+
+  test("every persona + synthesizer dispatch runs inside the scratch via cwd_override", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const ctx = scratchCtx(dispatched);
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+
+    expect(result.ok).toBe(true);
+    expect(dispatched.length).toBeGreaterThanOrEqual(2);
+    for (const d of dispatched) {
+      expect(d.cwd_override).toBe(scratchPath);
+      expect(d.use_worktree).toBe(false);
+      expect(d.permission_profile).toBe("review_readonly");
+      expect(String(d.message)).toContain(`cd ${scratchPath}`);
+      expect(String(d.message)).not.toContain("cd /tmp/operator-checkout");
+    }
+  });
+
+  test("every scratch-bound dispatch carries the scratch's project_id", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const ctx = scratchCtx(dispatched, {
+      // A registered non-home project: acquire() resolved the caller cwd's
+      // common dir to this id — every scratch-bound dispatch must forward it
+      // or chain_start validates the override against the wrong repo.
+      scratchWorktree: stubScratchWorktree(scratchPath, { project_id: "proj-uuid-9" }),
+    });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatched.length).toBeGreaterThanOrEqual(2);
+    for (const d of dispatched) {
+      expect(d.project_id).toBe("proj-uuid-9");
+    }
+  });
+
+  test("the run releases the scratch worktree on success", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx(dispatched, { scratchWorktree: stub });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+    await fn(ctx, recall);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the run releases the scratch worktree even when a persona dispatch throws", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+        },
+        personas: {
+          reviewer: {
+            bias: "b",
+            system_prompt: "p",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: "/tmp/operator-checkout",
+      storageRoot: "/tmp/review-store",
+      project: "penumbra",
+      args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "o" },
+      scratchWorktree: stub,
+      dispatch: async () => {
+        throw new Error("daemon down");
+      },
+      awaitChain: async () => ({
+        status: "failed" as const,
+        final_agent: null,
+        response_text: null,
+      }),
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    await fn(ctx, recall);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the run releases the scratch exactly once when the synthesizer throws", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx([], {
+      scratchWorktree: stub,
+      dispatch: async (input: { agent: string; permission_profile?: string | null }) => {
+        if (input.agent === "synth") throw new Error("synth dispatch boom");
+        return {
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        };
+      },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+    expect(result.ok).toBe(false);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the scratch is acquired at the review's target_ref", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx([], {
+      scratchWorktree: stub,
+      args: {
+        target_ref: "review-target-branch",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "o",
+      },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    await fn(ctx, recall);
+    expect(stub.acquireCalls).toHaveLength(1);
+    expect(stub.acquireCalls[0]?.ref).toBe("review-target-branch");
+  });
+
+  test("a ctx without scratchWorktree fails the run as review_worktree_unavailable", async () => {
+    const ctx = scratchCtx([], { scratchWorktree: undefined });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      outcome?: string;
+      error?: string;
+      detail?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("failed");
+    expect(result.error).toBe("review_worktree_unavailable");
+    expect(result.detail).toBe("ctx_missing_scratch_worktree");
+  });
+
+  test("an acquire failure fails the run as review_worktree_unavailable", async () => {
+    const ctx = scratchCtx([], {
+      scratchWorktree: { acquire: () => Promise.reject(new Error("repo missing")) },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      outcome?: string;
+      error?: string;
+      detail?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("failed");
+    expect(result.error).toBe("review_worktree_unavailable");
+    expect(result.detail).toContain("scratch_acquire_failed");
+    expect(result.detail).toContain("repo missing");
+  });
+});
+
+const execFile = promisify(execFileCb);
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFile("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  return stdout.trim();
+}
+
+describe("hard tripwire — scratch-only mutations fail; home/common-dir signals stay record-only", () => {
+  const temps: string[] = [];
+  async function makeRepo(prefix: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), `penumbra-tw-${prefix}-`));
+    temps.push(dir);
+    await git(dir, ["init", "-b", "main"]);
+    await git(dir, ["config", "user.email", "test@example.com"]);
+    await git(dir, ["config", "user.name", "test"]);
+    writeFileSync(join(dir, "README.md"), "# test\n");
+    await git(dir, ["add", "."]);
+    await git(dir, ["commit", "-m", "init"]);
+    return dir;
+  }
+
+  type TripwireMutation = { target: string; kind: string; level: string };
+  async function runReview(opts: {
+    hard?: boolean;
+    linkedCaller?: boolean;
+    mutate?: (dirs: { mainRepo: string; callerRepo: string; scratch: string }) => Promise<void>;
+  }): Promise<{
+    result: {
+      ok: boolean;
+      error?: string;
+      home_checkout_tripwire?: { mutations: TripwireMutation[] };
+    };
+    keepReasons: (string | undefined)[];
+    callerCwdReal: string;
+  }> {
+    const mainRepo = await makeRepo("main");
+    const callerRepo = await makeRepo("caller");
+    temps.push(`${mainRepo}-worktrees`);
+    let callerCwd = callerRepo;
+    if (opts.linkedCaller === true) {
+      // ctx.cwd as a linked worktree of the caller repo — the tripwire must
+      // watch it under its own realpath, not collapse it into the main root.
+      const linked = join(`${callerRepo}-worktrees`, "linked-caller");
+      temps.push(`${callerRepo}-worktrees`);
+      mkdirSync(dirname(linked), { recursive: true });
+      await git(callerRepo, ["worktree", "add", "--detach", linked, "HEAD"]);
+      callerCwd = linked;
+    }
+    const callerCwdReal = realpathSync(callerCwd);
+    const sha = await git(mainRepo, ["rev-parse", "HEAD"]);
+    const scratch = join(`${mainRepo}-worktrees`, ".scratch-run-review");
+    mkdirSync(dirname(scratch), { recursive: true });
+    await git(mainRepo, ["worktree", "add", "--detach", scratch, sha]);
+    const scratchReal = realpathSync(scratch);
+    const stub = stubScratchWorktree(scratchReal);
+
+    let n = 0;
+    const ctx = testWorkflowCtx<Input>({
+      config: {
+        workloads: { review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" } },
+        personas: {
+          reviewer: { bias: "b", system_prompt: "p", preferred_agent: "reviewer-agent" },
+        },
+      },
+      cwd: callerCwd,
+      storageRoot: callerRepo,
+      project: "penumbra",
+      args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+      scratchWorktree: stub,
+      dispatch: async (input) => {
+        n += 1;
+        if (n === 1 && opts.mutate !== undefined) {
+          await opts.mutate({ mainRepo, callerRepo: callerCwd, scratch: scratchReal });
+        }
+        return {
+          conversation_id: `conv-${n}`,
+          handoff_id: `h-${n}`,
+          permission_profile: input.permission_profile,
+        };
+      },
+      awaitChain: async (conversationId) =>
+        conversationId === "conv-2"
+          ? {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            }
+          : {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            },
+      fileWrite: async (p) => p,
+    });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+
+    const prior = process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+    if (opts.hard === true) process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] = "1";
+    else delete process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+    try {
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        home_checkout_tripwire?: { mutations: TripwireMutation[] };
+      };
+      return {
+        result,
+        keepReasons: stub.releaseCalls.map((c) => c.keep_reason),
+        callerCwdReal,
+      };
+    } finally {
+      if (prior === undefined) delete process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+      else process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] = prior;
+      for (const t of temps.splice(0)) rmSync(t, { recursive: true, force: true });
+    }
+  }
+
+  test("HARD=1: a 'WIP on' stash seen through the detached scratch stays ok (common-dir signal)", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ mainRepo }) => {
+        writeFileSync(join(mainRepo, "README.md"), "# dirty\n");
+        // No -m: the stash subject lands as 'WIP on main: …' — the exact
+        // mutated-level common-dir signal the detached scratch also sees.
+        await git(mainRepo, ["stash", "push"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("HARD=1: a caller/home-checkout mutation stays ok (record-only, never fails the review)", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ callerRepo }) => {
+        await git(callerRepo, ["commit", "--allow-empty", "-m", "moved caller HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("HARD=1: a scratch HEAD move fails review_worktree_mutated and keeps the scratch", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ scratch }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("review_worktree_mutated");
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("HARD=1: a scratch mutation still fails when another target is unavailable", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ scratch, callerRepo }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+        rmSync(callerRepo, { recursive: true, force: true });
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("review_worktree_mutated");
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("record-only mode keeps the scratch only on a scratch mutation, not on stash/home signals", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: false,
+      mutate: async ({ mainRepo }) => {
+        writeFileSync(join(mainRepo, "README.md"), "# dirty\n");
+        await git(mainRepo, ["stash", "push"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("record-only mode keeps the scratch on a real scratch mutation", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: false,
+      mutate: async ({ scratch }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("record-only: a caller cwd that is a linked worktree is watched under its own realpath", async () => {
+    const { result, callerCwdReal } = await runReview({
+      linkedCaller: true,
+      mutate: async ({ callerRepo }) => {
+        await git(callerRepo, ["commit", "--allow-empty", "-m", "moved linked caller HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    const mutation = result.home_checkout_tripwire?.mutations.find(
+      (m) => m.target === callerCwdReal,
+    );
+    expect(mutation).toBeDefined();
+    expect(mutation?.level).toBe("mutated");
   });
 });

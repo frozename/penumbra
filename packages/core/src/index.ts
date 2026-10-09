@@ -483,6 +483,13 @@ export {
   type MemoryEfficacyBucket,
 } from "./services/memory-efficacy-classifier.js";
 export {
+  type ScratchReleaseResult,
+  type ScratchSweepResult,
+  type ScratchWorktreeHandle,
+  type ScratchWorktreesOpts,
+  ScratchWorktreesService,
+} from "./services/scratch-worktrees.js";
+export {
   fetchServedModelEntries,
   fetchServedModels,
   type FetchServedModelsOpts,
@@ -634,6 +641,13 @@ export {
   WorktreeManager,
   type WorktreeMode,
 } from "./worktree/manager.js";
+export {
+  resolveCommonGitDir,
+  resolveWorktreeGitDir,
+  type ScratchCwdValidation,
+  type ScratchDaemonIdentity,
+  validateScratchCwd,
+} from "./worktree/scratch.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,

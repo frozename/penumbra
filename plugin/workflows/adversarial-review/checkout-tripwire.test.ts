@@ -5,7 +5,7 @@ import { realpath } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
+import { emptyRecall, stubScratchWorktree, testWorkflowCtx } from "../_shared/test-helpers.js";
 import {
   beginCheckoutTripwire,
   type ClassifyContext,
@@ -212,6 +212,7 @@ function makeReviewCtx(opts: {
   cwd: string;
   storageRoot: string;
   onPersonaWait?: () => Promise<void>;
+  scratchWorktree?: ReturnType<typeof stubScratchWorktree>;
 }) {
   let dispatchCount = 0;
   return testWorkflowCtx<Input>({
@@ -232,6 +233,9 @@ function makeReviewCtx(opts: {
     },
     cwd: opts.cwd,
     storageRoot: opts.storageRoot,
+    // The workflow dispatches inside the scratch and watches it — point the
+    // stub at the real test repo so tripwire probes hit a live checkout.
+    scratchWorktree: opts.scratchWorktree ?? stubScratchWorktree(opts.cwd),
     project: "penumbra",
     args: {
       target_ref: "HEAD",
@@ -646,9 +650,11 @@ describe("adversarial-review home checkout tripwire", () => {
   test("a persona git stash keeps the outcome but marks the result mutated", async () => {
     const repo = await makeRepo();
     try {
+      const scratch = stubScratchWorktree(repo);
       const ctx = makeReviewCtx({
         cwd: repo,
         storageRoot: join(repo, ".store"),
+        scratchWorktree: scratch,
         onPersonaWait: async () => {
           writeFileSync(join(repo, "a.txt"), "dirty\n");
           await git(repo, ["stash"]);
@@ -667,6 +673,9 @@ describe("adversarial-review home checkout tripwire", () => {
       expect(result.outcome).toBe("success");
       expect(result.home_checkout_tripwire?.verdict).toBe("mutated");
       expect(result.warnings ?? []).toEqual([]);
+      // A caller-side stash is a record-only signal: the scratch is kept for
+      // forensics only when the scratch checkout itself mutated.
+      expect(scratch.releaseCalls).toEqual([{ keep_reason: undefined }]);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
@@ -734,4 +743,131 @@ describe("adversarial-review home checkout tripwire", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("a relative content_path counts as a review path in the caller target", async () => {
+    const repo = await makeRepo();
+    const wt = `${repo}-scratch`;
+    try {
+      await git(repo, ["worktree", "add", "--detach", wt]);
+      const session = await beginCheckoutTripwire({
+        cwd: wt,
+        callerCwd: repo,
+        outDir: null,
+        baseRef: "HEAD",
+        targetRef: "HEAD",
+        contentPath: "a.txt",
+      });
+      writeFileSync(join(repo, "a.txt"), "caller-side edit\n");
+      const report = await session.finish();
+      expect(report.verdict).toBe("mutated");
+      const realRepo = await realpath(repo);
+      expect(
+        report.mutations.some(
+          (m) => m.target === realRepo && m.kind === "path" && m.text.includes("a.txt"),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  test("a relative content_path still counts as a review path in the scratch target", async () => {
+    const repo = await makeRepo();
+    const wt = `${repo}-scratch`;
+    try {
+      await git(repo, ["worktree", "add", "--detach", wt]);
+      const session = await beginCheckoutTripwire({
+        cwd: wt,
+        callerCwd: repo,
+        outDir: null,
+        baseRef: "HEAD",
+        targetRef: "HEAD",
+        contentPath: "a.txt",
+      });
+      writeFileSync(join(wt, "a.txt"), "scratch-side edit\n");
+      const report = await session.finish();
+      expect(report.verdict).toBe("mutated");
+      const realWt = await realpath(wt);
+      expect(
+        report.mutations.some(
+          (m) => m.target === realWt && m.kind === "path" && m.text.includes("a.txt"),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  test("the hint names the mutated target, not just 'the home checkout'", async () => {
+    const repo = await makeRepo();
+    const wt = `${repo}-scratch`;
+    try {
+      await git(repo, ["worktree", "add", "--detach", wt]);
+      const session = await beginCheckoutTripwire({
+        cwd: wt,
+        callerCwd: repo,
+        outDir: null,
+        baseRef: "HEAD",
+        targetRef: "HEAD",
+      });
+      const realWt = await realpath(wt);
+      await git(wt, ["checkout", "-b", "side-wip"]);
+      const report = await session.finish();
+      expect(report.verdict).toBe("mutated");
+      expect(report.hint).toBeDefined();
+      expect(report.hint).not.toContain("home checkout");
+      expect(report.hint).toContain(realWt);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  for (const where of ["scratch", "caller"] as const) {
+    test(`PENUMBRA_REVIEW_TRIPWIRE_HARD=1 ${where}-target mutation is ${where === "scratch" ? "a typed failure" : "record-only"}`, async () => {
+      const repo = await makeRepo();
+      const wt = `${repo}-scratch`;
+      const prior = process.env.PENUMBRA_REVIEW_TRIPWIRE_HARD;
+      process.env.PENUMBRA_REVIEW_TRIPWIRE_HARD = "1";
+      try {
+        await git(repo, ["worktree", "add", "--detach", wt]);
+        const ctx = makeReviewCtx({
+          cwd: repo,
+          storageRoot: join(repo, ".store"),
+          scratchWorktree: stubScratchWorktree(wt),
+          onPersonaWait: async () => {
+            if (where === "scratch") await git(wt, ["checkout", "-b", "side-wip"]);
+            else await git(repo, ["checkout", "-b", "caller-wip"]);
+          },
+        });
+        const result = (await fn(
+          ctx,
+          emptyRecall({ byKey: { "git.diff": "diff --git a/a.ts b/a.ts\n+changed\n" } }),
+        )) as {
+          ok: boolean;
+          outcome?: string;
+          error?: string;
+          home_checkout_tripwire?: { verdict: string };
+        };
+        expect(result.home_checkout_tripwire?.verdict).toBe("mutated");
+        if (where === "scratch") {
+          expect(result.ok).toBe(false);
+          expect(result.outcome).toBe("failed");
+          expect(result.error).toBe("review_worktree_mutated");
+        } else {
+          // Caller/home mutations are recorded, never failed — the review
+          // boundary is the scratch checkout only.
+          expect(result.ok).toBe(true);
+          expect(result.error).toBeUndefined();
+        }
+      } finally {
+        if (prior === undefined) delete process.env.PENUMBRA_REVIEW_TRIPWIRE_HARD;
+        else process.env.PENUMBRA_REVIEW_TRIPWIRE_HARD = prior;
+        rmSync(repo, { recursive: true, force: true });
+        rmSync(wt, { recursive: true, force: true });
+      }
+    });
+  }
 });

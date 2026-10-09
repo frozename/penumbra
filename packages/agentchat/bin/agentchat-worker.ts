@@ -98,6 +98,10 @@ import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
 import { WorkerProjectRegistry } from "../src/worker/project-registry.js";
 import { RecallEnricher } from "../src/worker/recall-enricher.js";
 import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
+import {
+  resolveScratchDispatch,
+  type ScratchDispatchResolution,
+} from "../src/worker/scratch-dispatch.js";
 import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
@@ -230,7 +234,12 @@ let config = loadConfigPathOrDir(configPath);
 // Declared at registration so the daemon claim gate can keep profiled
 // handoffs away from workers with no enforcing seat. Derived from the same
 // agents.yaml enforces_permission_profiles/adapter facts the seat gate reads.
-const workerMetadata = { enforces_permission_profiles: profilesEnforcedBySeats(config.agents) };
+const workerMetadata = {
+  enforces_permission_profiles: profilesEnforcedBySeats(config.agents),
+  // Scratch-worktree dispatches (P6 review lane): the claim gate refuses
+  // cwd_override rows to workers that never declared this.
+  supports_scratch_worktrees: true,
+};
 const workerBoot = await runWorkerBoot({
   client,
   log,
@@ -1208,6 +1217,67 @@ async function maybeApplyRecallEnrichment(
   return { ...dispatchedHandoff, message: enrichedMessage };
 }
 
+// A scratch-routed dispatch skips worktree creation entirely — the daemon
+// already owns the checkout. Rewrite cwd+repoRoot so the adapter AND its
+// MCP tools resolve inside the scratch, never the operator checkout.
+function setUpScratchDispatch(
+  handoff: HandoffRow,
+  scratch: Extract<ScratchDispatchResolution, { kind: "scratch" }>,
+  scopedConfig: AgentChatConfig,
+  agentOptions: AgentOptions,
+  requestPermission: ReturnType<typeof createPermissionCallback>,
+  worktreeSetupStart: number,
+): {
+  overrideConfig: AgentChatConfig;
+  dispatchedHandoff: HandoffRow;
+  executor: WriteToolsExecutor;
+  sandboxDenyRoots?: readonly string[];
+} {
+  const scratchConfig: AgentChatConfig = {
+    ...scopedConfig,
+    agents: scopedConfig.agents.map((a) =>
+      a.name === handoff.to_agent
+        ? {
+            ...a,
+            options: { ...(a.options ?? {}), cwd: scratch.cwd, repoRoot: scratch.repoRoot },
+          }
+        : a,
+    ),
+  };
+  const overrideConfig = applyOrchestrateToolsToConfig(
+    scratchConfig,
+    handoff.to_agent,
+    handoff.dispatch_kind ?? null,
+  );
+  onEvent({
+    handoff_id: handoff.handoff_id,
+    worker_id: workerId,
+    source: "worker",
+    kind: "dispatch.worktree_setup",
+    ts: new Date().toISOString(),
+    meta: {
+      scratch: true,
+      cwd_override: scratch.cwd,
+      workflow_run_id: handoff.workflow_run_id ?? null,
+      duration_ms: Date.now() - worktreeSetupStart,
+    },
+  });
+  const executor = buildDispatchExecutor(
+    handoff,
+    agentOptions,
+    scratch.executorRoot,
+    requestPermission,
+    scratch.sandboxDenyRoots,
+  );
+  registerExecutor(handoff.handoff_id, executor);
+  return {
+    overrideConfig,
+    dispatchedHandoff: handoff,
+    executor,
+    sandboxDenyRoots: scratch.sandboxDenyRoots,
+  };
+}
+
 async function setUpDispatchWorktree(
   handoff: HandoffRow,
   scopedConfig: AgentChatConfig,
@@ -1223,6 +1293,23 @@ async function setUpDispatchWorktree(
 }> {
   const worktreeSetupStart = Date.now();
   rememberHandoffBranchName(handoff);
+  const scratch = resolveScratchDispatch(handoff, {
+    worktreeManager,
+    workerCwd: process.cwd(),
+  });
+  if (scratch.kind === "invalid") {
+    throw new Error(`scratch dispatch validation failed: ${scratch.reason}`);
+  }
+  if (scratch.kind === "scratch") {
+    return setUpScratchDispatch(
+      handoff,
+      scratch,
+      scopedConfig,
+      agentOptions,
+      requestPermission,
+      worktreeSetupStart,
+    );
+  }
   const result = await applyWorktreeOverride(
     handoff,
     scopedConfig,

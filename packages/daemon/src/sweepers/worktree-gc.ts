@@ -52,6 +52,9 @@ export interface WorktreeGcTickResult {
   unlanded_skipped: string[];
   stage_reaped: string[];
   stage_deferred: string[];
+  scratch_reaped: string[];
+  scratch_kept: string[];
+  scratch_deferred: string[];
 }
 
 const TERMINAL_HANDOFF_STATUSES = new Set(["completed", "failed", "rejected", "expired"]);
@@ -351,6 +354,12 @@ export async function runWorktreeGcTick(
         opts.log,
       );
 
+  // Scratch worktrees (P6): the service's live set protects dirs owned by
+  // in-flight runs; keeps younger than their TTL are preserved.
+  const scratchResult = lifecycleLock.isHeld()
+    ? { reaped: [] as string[], kept: [] as string[], deferred: [] as string[] }
+    : await services.scratchWorktrees.sweepOrphans();
+
   return {
     candidates,
     removed,
@@ -359,6 +368,9 @@ export async function runWorktreeGcTick(
     unlanded_skipped,
     stage_reaped: stageResult.reaped,
     stage_deferred: stageResult.deferred,
+    scratch_reaped: scratchResult.reaped,
+    scratch_kept: scratchResult.kept,
+    scratch_deferred: scratchResult.deferred,
   };
 }
 

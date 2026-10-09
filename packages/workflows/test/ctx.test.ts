@@ -1435,3 +1435,133 @@ test("dispatch result omits permission_profile key when no profile was requested
   const out = await ctx.dispatch({ agent: "codex", message: "plain" });
   expect(out).toEqual({ conversation_id: "conv-o", handoff_id: "hand-o" });
 });
+
+test("dispatch forwards cwd_override to chain.start requests", async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    workflowRunId: "run-9",
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: "conv-c", handoff_id: "hand-c" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    },
+  });
+
+  await ctx.dispatch({
+    agent: "opencode-seat",
+    message: "review this",
+    use_worktree: false,
+    cwd_override: "/tmp/scratch-run-9",
+    max_hops: 1,
+  });
+  expect(captured?.cwd_override).toBe("/tmp/scratch-run-9");
+  expect(captured?.use_worktree).toBe(false);
+});
+
+test("scratchWorktree.acquire rejects without a workflow_run_id", async () => {
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: "/tmp/cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    chainStart: okChainStart(),
+  });
+  let caught: unknown;
+  try {
+    await ctx.scratchWorktree!.acquire();
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(String(caught)).toContain("workflow_run_id");
+});
+
+test("scratchWorktree.acquire is memoized and binds owner_run_id to the run", async () => {
+  const acquireCalls: { owner_run_id?: string; cwd?: string; project_id?: string }[] = [];
+  const handle = {
+    owner_run_id: "run-7",
+    path: "/tmp/scratch-run-7",
+    sha: "0".repeat(40),
+    repo_root: "/tmp/repo",
+    project_id: "proj-uuid",
+    release: (): Promise<{ kept: boolean }> => Promise.resolve({ kept: false }),
+  };
+  const services = {
+    ...fakeServices(),
+    scratchWorktrees: {
+      acquire: (input: {
+        owner_run_id?: string;
+        cwd?: string;
+        project_id?: string;
+      }): Promise<typeof handle> => {
+        acquireCalls.push(input);
+        return Promise.resolve(handle);
+      },
+    },
+    projectRegistry: { get: () => ({ project_id: "proj-uuid" }) },
+  } as unknown as Services;
+
+  const ctx = buildWorkflowCtx({
+    services,
+    cwd: "/tmp/caller-cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    workflowRunId: "run-7",
+    chainStart: okChainStart(),
+  });
+
+  const first = await ctx.scratchWorktree!.acquire();
+  const second = await ctx.scratchWorktree!.acquire();
+  expect(first).toBe(handle);
+  expect(second).toBe(first);
+  expect(acquireCalls).toHaveLength(1);
+  expect(acquireCalls[0].owner_run_id).toBe("run-7");
+  expect(acquireCalls[0].cwd).toBe("/tmp/caller-cwd");
+  expect(acquireCalls[0].project_id).toBe("proj-uuid");
+});
+
+test("scratchWorktree.acquire forwards ref to services.scratchWorktrees.acquire", async () => {
+  const acquireCalls: { owner_run_id?: string; ref?: string }[] = [];
+  const handle = {
+    owner_run_id: "run-8",
+    path: "/tmp/scratch-run-8",
+    sha: "0".repeat(40),
+    repo_root: "/tmp/repo",
+    project_id: null,
+    release: (): Promise<{ kept: boolean }> => Promise.resolve({ kept: false }),
+  };
+  const services = {
+    ...fakeServices(),
+    scratchWorktrees: {
+      acquire: (input: { owner_run_id?: string; ref?: string }): Promise<typeof handle> => {
+        acquireCalls.push(input);
+        return Promise.resolve(handle);
+      },
+    },
+  } as unknown as Services;
+
+  const ctx = buildWorkflowCtx({
+    services,
+    cwd: "/tmp/caller-cwd",
+    storageRoot: "/tmp/storage",
+    project: "proj-1",
+    agentchatConfig: {},
+    workflowRunId: "run-8",
+    chainStart: okChainStart(),
+  });
+
+  await ctx.scratchWorktree!.acquire({ ref: "target-branch-9" });
+  expect(acquireCalls).toHaveLength(1);
+  expect(acquireCalls[0].ref).toBe("target-branch-9");
+});
