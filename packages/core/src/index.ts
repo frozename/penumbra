@@ -641,13 +641,7 @@ export {
   WorktreeManager,
   type WorktreeMode,
 } from "./worktree/manager.js";
-export {
-  resolveCommonGitDir,
-  resolveWorktreeGitDir,
-  type ScratchCwdValidation,
-  type ScratchDaemonIdentity,
-  validateScratchCwd,
-} from "./worktree/scratch.js";
+export * from "./worktree/scratch.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,
