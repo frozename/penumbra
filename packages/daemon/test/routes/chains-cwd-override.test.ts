@@ -143,6 +143,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  fs.rmSync(`${repoDir}-alias`, { recursive: true, force: true });
   fs.rmSync(repoDir, { recursive: true, force: true });
   fs.rmSync(scratchBase, { recursive: true, force: true });
   db.close();
@@ -259,9 +260,12 @@ describe("chain_start cwd_override boundary", () => {
   test("happy path: valid scratch + capable worker persists cwd_override atomically", async () => {
     const wtPath = await makeScratch(RUN_ID);
     seedScratchCapableWorker();
-    // Feed the override through the non-realpath spelling of the fleet base —
-    // the stored value must be the canonical realpath the worker validates.
-    const aliasOverride = path.join(`${repoDir}-worktrees`, path.basename(wtPath));
+    // Feed the override through a symlinked spelling of the fleet base (on
+    // every platform, not only where tmpdir is itself a symlink) — the stored
+    // value must be the canonical realpath the worker validates.
+    const aliasBase = `${repoDir}-alias`;
+    fs.symlinkSync(path.dirname(wtPath), aliasBase);
+    const aliasOverride = path.join(aliasBase, path.basename(wtPath));
     expect(aliasOverride).not.toBe(fs.realpathSync(wtPath));
 
     const emitted: { cwd_override?: string | null }[] = [];
