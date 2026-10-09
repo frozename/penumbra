@@ -801,6 +801,41 @@ test("createApproved() persists workflow_run_id and max_dispatch_attempts", () =
   expect(row.max_dispatch_attempts).toBe(5);
 });
 
+test("createApproved() emits permission_profile and caller_cwd on the handoff row", () => {
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+  const seen: HandoffRow[] = [];
+  bus.subscribe((row) => {
+    seen.push(row);
+  });
+
+  writer.createApproved({
+    handoff_id: "h-create-approved-profile-emit",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "c1",
+    from: "a",
+    to: "b",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: "e",
+    resolved_by: "u",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+    caller_cwd: "/repos/caller",
+  });
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.handoff_id).toBe("h-create-approved-profile-emit");
+  expect(seen[0]?.permission_profile).toBe("review_readonly");
+  expect(seen[0]?.caller_cwd).toBe("/repos/caller");
+});
+
 test("createApproved() defaults max_dispatch_attempts to 3", () => {
   writer.createApproved({
     handoff_id: "h-create-approved-defaults",

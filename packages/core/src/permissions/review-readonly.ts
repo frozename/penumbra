@@ -133,31 +133,49 @@ const COMMAND_TOOL_NAMES: ReadonlySet<string> = new Set([
   "process",
 ]);
 
-type CommandCandidates = { shells: string[]; argvs: string[][] };
+type CommandCandidates = { shells: string[]; argvs: string[][]; malformedArgv: boolean };
 
 // ACP terminal/create-style input carries BOTH a display label (cmd/command)
 // and the real argv (args/argv). Classifying only the first non-empty string
 // lets {cmd:"ls", argv:["rm","-rf","."]} through — collect every candidate and
-// deny when any of them does.
+// deny when any of them does. A present argv/args key that is not a non-empty
+// all-string array is uninspectable rather than absent: silently dropping it
+// would let the unclassified vector still reach the executor.
+function collectArgvCandidates(input: Record<string, unknown>): {
+  argvs: string[][];
+  malformed: boolean;
+} {
+  const argvs: string[][] = [];
+  let malformed = false;
+  for (const key of ["argv", "args"]) {
+    const value = input[key];
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === "string")) {
+      argvs.push(value);
+    } else {
+      malformed = true;
+    }
+  }
+  return { argvs, malformed };
+}
+
 function commandCandidatesFromRawInput(rawInput: unknown): CommandCandidates {
   if (typeof rawInput === "string") {
-    return rawInput.length > 0 ? { shells: [rawInput], argvs: [] } : { shells: [], argvs: [] };
+    return rawInput.length > 0
+      ? { shells: [rawInput], argvs: [], malformedArgv: false }
+      : { shells: [], argvs: [], malformedArgv: false };
   }
-  if (typeof rawInput !== "object" || rawInput === null) return { shells: [], argvs: [] };
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return { shells: [], argvs: [], malformedArgv: false };
+  }
   const input = rawInput as Record<string, unknown>;
   const shells: string[] = [];
   for (const key of ["cmd", "command", "input", "code"]) {
     const value = input[key];
     if (typeof value === "string" && value.length > 0) shells.push(value);
   }
-  const argvs: string[][] = [];
-  for (const key of ["argv", "args"]) {
-    const value = input[key];
-    if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === "string")) {
-      argvs.push(value);
-    }
-  }
-  return { shells, argvs };
+  const { argvs, malformed } = collectArgvCandidates(input);
+  return { shells, argvs, malformedArgv: malformed };
 }
 
 function denyReasonForCommandCandidates(candidates: CommandCandidates): string | null {
@@ -182,7 +200,10 @@ function evaluateReviewReadonlyToolCall(
   }
   if (COMMAND_TOOL_NAMES.has(normalized)) {
     const candidates = commandCandidatesFromRawInput(rawInput);
-    if (candidates.shells.length === 0 && candidates.argvs.length === 0) {
+    if (
+      candidates.malformedArgv ||
+      (candidates.shells.length === 0 && candidates.argvs.length === 0)
+    ) {
       return { decision: "deny", reason: "review_readonly: uninspectable command input" };
     }
     const reason = denyReasonForCommandCandidates(candidates);

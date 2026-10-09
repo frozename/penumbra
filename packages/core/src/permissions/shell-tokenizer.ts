@@ -11,7 +11,20 @@ interface TokState {
   word: string;
 }
 
-const SUBST_PLACEHOLDER = " __SUB__ ";
+export const SUBST_MARKER = "__SUB__";
+const SUBST_PLACEHOLDER = ` ${SUBST_MARKER} `;
+
+// A '$' only opens an expansion when a name/special char follows it
+// ($x, ${x}, $1, $@, $$, $!, $-, $#, $?, $*, $(, $[, $', $"). A '$' from
+// single quotes, ANSI-C quoting, a backslash escape, or followed by any
+// other character is a literal byte — rewritten to a private-use sentinel
+// so downstream expansion checks can tell the two apart.
+export const LITERAL_DOLLAR = "\uE000";
+const EXPANSION_FOLLOW_RE = /[A-Za-z_0-9{([@*#?$!'"-]/;
+
+function expansionOrLiteralDollar(src: string, i: number): string {
+  return EXPANSION_FOLLOW_RE.test(src[i + 1] ?? "") ? "$" : LITERAL_DOLLAR;
+}
 
 // Longest-first multi-char operators. "|&" normalizes to "|"; fd-prefixed
 // redirects (2>, 1>>) are handled at scan time via the preceding digit word.
@@ -59,7 +72,31 @@ function readBalanced(src: string, start: number): number {
 function readSingleQuoted(src: string, start: number): { text: string; next: number } {
   const close = src.indexOf("'", start + 1);
   const end = close === -1 ? src.length : close;
-  return { text: src.slice(start + 1, end), next: close === -1 ? src.length : close + 1 };
+  return {
+    text: src.slice(start + 1, end).replaceAll("$", LITERAL_DOLLAR),
+    next: close === -1 ? src.length : close + 1,
+  };
+}
+
+function doubleQuotedStep(src: string, j: number, inner: string[]): { text: string; next: number } {
+  if (src[j] === "\\" && j + 1 < src.length) {
+    const esc = src[j + 1] ?? "";
+    return { text: esc === "$" ? LITERAL_DOLLAR : esc, next: j + 2 };
+  }
+  if (src[j] === "`") {
+    const bt = src.indexOf("`", j + 1);
+    if (bt !== -1) {
+      inner.push(src.slice(j + 1, bt));
+      return { text: "", next: bt + 1 };
+    }
+  }
+  if (src.slice(j, j + 2) === "$(") {
+    const end = readBalanced(src, j + 2);
+    inner.push(src.slice(j + 2, Math.max(j + 2, end - 1)));
+    return { text: "", next: end };
+  }
+  const ch = src[j] ?? "";
+  return { text: ch === "$" ? expansionOrLiteralDollar(src, j) : ch, next: j + 1 };
 }
 
 function readDoubleQuoted(
@@ -70,27 +107,9 @@ function readDoubleQuoted(
   let text = "";
   let j = start + 1;
   while (j < src.length && src[j] !== '"') {
-    if (src[j] === "\\" && j + 1 < src.length) {
-      text += src[j + 1] ?? "";
-      j += 2;
-      continue;
-    }
-    if (src[j] === "`") {
-      const bt = src.indexOf("`", j + 1);
-      if (bt !== -1) {
-        inner.push(src.slice(j + 1, bt));
-        j = bt + 1;
-        continue;
-      }
-    }
-    if (src.slice(j, j + 2) === "$(") {
-      const end = readBalanced(src, j + 2);
-      inner.push(src.slice(j + 2, Math.max(j + 2, end - 1)));
-      j = end;
-      continue;
-    }
-    text += src[j] ?? "";
-    j += 1;
+    const step = doubleQuotedStep(src, j, inner);
+    text += step.text;
+    j = step.next;
   }
   return { text, next: j + 1 };
 }
@@ -171,7 +190,7 @@ function readAnsiCQuoted(src: string, start: number): { text: string; next: numb
     text += src[j] ?? "";
     j += 1;
   }
-  return { text, next: j + 1 };
+  return { text: text.replaceAll("$", LITERAL_DOLLAR), next: j + 1 };
 }
 
 function stepQuoted(src: string, i: number, st: TokState): number | null {
@@ -192,7 +211,8 @@ function stepQuoted(src: string, i: number, st: TokState): number | null {
     return r.next;
   }
   if (ch === "\\") {
-    st.word += src[i + 1] ?? "";
+    const esc = src[i + 1];
+    st.word += esc === "$" ? LITERAL_DOLLAR : (esc ?? "");
     return i + 2;
   }
   if (ch === "`") return readBacktick(src, i, st);
@@ -233,7 +253,8 @@ function stepOperator(src: string, i: number, st: TokState): number | null {
 }
 
 function advanceWord(src: string, i: number, st: TokState): number {
-  st.word += src[i] ?? "";
+  const ch = src[i] ?? "";
+  st.word += ch === "$" ? expansionOrLiteralDollar(src, i) : ch;
   return i + 1;
 }
 

@@ -1034,6 +1034,20 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
       arm();
       try {
         if (!input.executor) throw new Error("terminal/create: no executor");
+        // A non-string argv is malformed JSON-RPC input (-32602), not a
+        // profile deny: validate before the gate and the executor so an
+        // uninspectable vector can never reach either.
+        const args: unknown = params.args;
+        if (
+          args !== undefined &&
+          !(Array.isArray(args) && args.every((a) => typeof a === "string"))
+        ) {
+          const invalid = new Error(
+            "terminal/create: args must be an array of strings",
+          ) as MappedError;
+          invalid.code = -32602;
+          throw invalid;
+        }
         assertProfileAllowsWriteTool(input, "terminal.create", {
           argv: params.args ?? null,
           cmd: params.command ?? null,

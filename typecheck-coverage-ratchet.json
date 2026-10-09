@@ -38,7 +38,7 @@
       "errorCount": 0
     },
     "packages/mcp": {
-      "errorCount": 173
+      "errorCount": 169
     },
     "packages/workflows": {
       "errorCount": 0
@@ -47,5 +47,5 @@
       "errorCount": 14
     }
   },
-  "total": 1296
+  "total": 1292
 }

@@ -658,6 +658,56 @@ describe("runFanout permission_profile propagation", () => {
     expect(result.results[0]?.ok).toBe(false);
   });
 
+  test("cancels the created conversation when the profile echo mismatches", async () => {
+    const cancelled: string[] = [];
+    const ctx = context({
+      chainStart: async () =>
+        response({ conversation_id: "mismatch-conv", handoff_id: "mismatch-h" }),
+      cancel: async (conversationId) => {
+        cancelled.push(conversationId);
+      },
+    });
+
+    const result = await runFanout(ctx, {
+      defaults: {
+        initial_agent: "executor",
+        task_type: "review_adversarial",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      },
+      tasks: [{ message: "review this" }],
+    });
+
+    expect(cancelled).toEqual(["mismatch-conv"]);
+    expect(result.results[0]?.error_code).toBe("permission_profile_echo_mismatch");
+    expect(result.results[0]?.error_summary).toContain("mismatch-conv");
+    expect(result.results[0]?.error_summary).toContain("mismatch-h");
+  });
+
+  test("surfaces permission_profile_echo_mismatch even when the cancel fails", async () => {
+    const ctx = context({
+      chainStart: async () =>
+        response({ conversation_id: "mismatch-conv", handoff_id: "mismatch-h" }),
+      cancel: async () => {
+        throw new Error("cancel down");
+      },
+    });
+
+    const result = await runFanout(ctx, {
+      defaults: {
+        initial_agent: "executor",
+        task_type: "review_adversarial",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      },
+      tasks: [{ message: "review this" }],
+    });
+
+    expect(result.results[0]?.error_code).toBe("permission_profile_echo_mismatch");
+    expect(result.results[0]?.error_summary).toContain("mismatch-conv");
+    expect(result.results[0]?.error_summary).toContain("mismatch-h");
+  });
+
   test("accepts a matching permission_profile echo", async () => {
     const ctx = context({
       chainStart: async () =>

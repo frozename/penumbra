@@ -41,6 +41,7 @@ import {
   handoffsLatestRoute,
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
+import type { WorkerAuthzMap } from "@src/routes/worker-profile-gate.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
@@ -4760,6 +4761,7 @@ type ProfileAwareServices = Services & {
       enforces_permission_profiles?: string[];
     }[];
   };
+  workerAuthz?: WorkerAuthzMap;
 };
 
 function seedLiveWorker(
@@ -4769,14 +4771,15 @@ function seedLiveWorker(
 ): void {
   const now = Date.now();
   const workerId = opts?.workerId ?? "w-live";
+  const staleMs = opts?.staleMs ?? 0;
   services.db.run(
     `INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at, revoked_at, metadata_json)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [
-      `th-${workerId}-${String(now)}`,
+      `th-${workerId}-${String(now)}-${String(staleMs)}`,
       workerId,
       now - 60_000,
-      now - (opts?.staleMs ?? 0),
+      now - staleMs,
       opts?.revoked ? now : null,
       metadata === null ? null : JSON.stringify(metadata),
     ],
@@ -5296,4 +5299,136 @@ test("chain_start does not require an enforcing worker when no profile applies",
     services,
   );
   expect(res.status).toBe(200);
+});
+
+test("chain_start 503s when the only fresh enforcing worker is hard-isolated to another project", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-isolated" },
+  );
+  (services as ProfileAwareServices).workerAuthz = new Map([
+    ["w-isolated", { project_id: "other-project", isolation: "hard" }],
+  ]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start admits a profiled dispatch when the enforcing worker's hard isolation matches the project", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-isolated" },
+  );
+  (services as ProfileAwareServices).workerAuthz = new Map([
+    ["w-isolated", { project_id: "penumbra", isolation: "hard" }],
+  ]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
+test("chain_start 503s when a worker's newest fresh token lacks the profile declaration", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  // Same worker, two fresh tokens: the older declares enforcement, the newer
+  // does not — the dedupe keeps the newest row, so this worker does not count.
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-flip", staleMs: 60_000 },
+  );
+  seedLiveWorker(services, { other: true }, { workerId: "w-flip", staleMs: 1_000 });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start admits a profiled dispatch when a worker's newest fresh token declares the profile", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  // Newest token wins the dedupe — the stale older row without the
+  // declaration must not mask it.
+  seedLiveWorker(services, { other: true }, { workerId: "w-flip", staleMs: 60_000 });
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-flip", staleMs: 1_000 },
+  );
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
 });

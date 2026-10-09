@@ -385,6 +385,32 @@ function buildDaemonBody(
   return body;
 }
 
+// A profiled dispatch must never proceed when the daemon didn't echo the
+// profile back — the chain was persisted unprofiled. Best-effort cancel it,
+// but only a conversation this call minted; a caller-supplied id belongs to
+// a conversation the caller may still be using, so surface the handoff_id
+// for a targeted cancel instead.
+async function throwEchoMismatch(
+  daemon: DaemonClient,
+  input: ChainStartInput,
+  res: ChainStartResponse,
+): Promise<never> {
+  let cancelNote: string;
+  if (input.conversation_id === undefined) {
+    try {
+      await daemon.cancelConversation(res.conversation_id);
+      cancelNote = "cancelled";
+    } catch (err) {
+      cancelNote = `cancel failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  } else {
+    cancelNote = "not cancelled: caller-supplied conversation";
+  }
+  throw new Error(
+    `permission_profile_echo_mismatch: requested ${String(input.permission_profile)} but chain_start echoed ${JSON.stringify(res.permission_profile)} (conversation_id=${res.conversation_id} handoff_id=${res.handoff_id} ${cancelNote}) — the handoff may be unprofiled`,
+  );
+}
+
 export function chainStartHandler(
   daemon: DaemonClient,
   opts: ChainStartHandlerOpts = {},
@@ -420,9 +446,7 @@ export function chainStartHandler(
       input.permission_profile !== undefined &&
       res.permission_profile !== input.permission_profile
     ) {
-      throw new Error(
-        `permission_profile_echo_mismatch: requested ${input.permission_profile} but chain_start echoed ${JSON.stringify(res.permission_profile)} — the handoff may be unprofiled`,
-      );
+      await throwEchoMismatch(daemon, input, res);
     }
     const response: ChainStartResult = {
       content: [

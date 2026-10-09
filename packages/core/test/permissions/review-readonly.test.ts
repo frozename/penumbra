@@ -11,7 +11,7 @@ import {
   REVIEW_READONLY_MCP_ALLOWLIST,
 } from "@penumbra/core";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -594,6 +594,269 @@ describe("classifyShellCommand (Layer A denylist)", () => {
 
       test.each(["echo $HOME", "git log --format=%s", "echo $1 $@"])("allow: %s", allow);
     });
+
+    describe("wrapper, glob, and versioned-interpreter smuggling", () => {
+      test.each([
+        "command -p rm -rf x",
+        "command -p git commit --allow-empty -m x",
+        "command -- rm -rf x",
+        "/bin/r? -rf x",
+        "/bin/r* -rf x",
+        "/bin/[r]m -rf x",
+        "/opt/x/b?n test",
+        "python3.13 -c 'x'",
+        "perl5.34 -e 'x'",
+        "ruby3.3 -e 1",
+        "node22 -e 1",
+        "luajit2 -e 'x'",
+        "php8.2 -r 'x'",
+        "deno2 run x.ts",
+        "bunx vite build",
+      ])("deny: %s", deny);
+
+      test.each(["command -v rm", "command -V rm", "[ -f file ]", "awk '{print $1}' file"])(
+        "allow: %s",
+        allow,
+      );
+    });
+
+    describe("scripted and batch writers denied", () => {
+      test.each([
+        "awk 'BEGIN{system(\"rm -rf x\")}'",
+        "awk 'BEGIN{system (\"id\")}'",
+        "awk 'BEGIN{print 1 > \"x\"}'",
+        "awk '{print $0 | \"sh\"}'",
+        "awk 'BEGIN{\"id\" | getline x}'",
+        'awk \'{print "a" | "sh"}\'',
+        'awk \'{printf "%s", x | "sh"}\'',
+        "awk '{print $1 > \"x\"}'",
+        "awk 'BEGIN{print 1 >> \"x\"}'",
+        "awk '{if (x) print y > \"f\"}'",
+        "awk '{print (a) > \"f\"}'",
+        "awk '{print a |& \"sh\"}'",
+        "awk 'BEGIN{\"id\" |& getline x}'",
+        "gawk 'BEGIN{system(\"id\")}'",
+        "mawk 'BEGIN{print 1 > \"x\"}'",
+        "nawk 'BEGIN{system(\"id\")}'",
+        "sort -o x y",
+        "sort --output=x y",
+        "sort --output x y",
+        "sort -ox y",
+        "uniq in out",
+        "uniq -c in out",
+        "uniq - out",
+        "bzip2 x",
+        "bunzip2 x.bz2",
+        "xz x",
+        "unxz x.xz",
+        "zstd --rm x",
+        "lz4 --rm x",
+        "lzma x",
+      ])("deny: %s", deny);
+
+      test.each([
+        "awk '{print $1}' file",
+        "awk -F: '{print $1}' /etc/passwd | head",
+        "awk '{print \"a>b\"}' file",
+        "awk '{print a} $1 > 3 {x}' file",
+        "awk '{print (a > b)}' file",
+        "awk '{print \"a|b\"}' file",
+        "awk '{print a >= b}' file",
+        "awk 'BEGIN{x = \"print > f\"}'",
+        'awk \'{n = split("a|b", p, "|")} {print n}\' file',
+        "awk '{print a} NR > 5 {print b} END {print c}' file",
+        "awk 'END{print NR}' file",
+        "xz -dc file.xz | head",
+        "zstd -dc file.zst | head",
+        "bzip2 -c file",
+        "lz4 -c file",
+        "sort file",
+        "sort -n file | head",
+        "uniq -c file",
+        "uniq -w 2 in",
+      ])("allow: %s", allow);
+    });
+
+    describe("git flag prefix and env smuggling denied", () => {
+      test.each([
+        "git grep -Oless foo",
+        "git grep --open-files-in-pager=vim foo",
+        "git ls-remote --upload-pack='touch /tmp/pwn' .",
+        "git ls-remote --upload-pack 'touch /tmp/pwn' .",
+        "git fsck --lost-found",
+        "GIT_EXTERNAL_DIFF=/tmp/x git diff",
+        "export GIT_EXTERNAL_DIFF=/tmp/x; git diff",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='touch y' git log",
+        "GIT_CONFIG_PARAMETERS='a' git log",
+        "GIT_DIR=../../penumbra/.git git log",
+        "GIT_WORK_TREE=/tmp/x git status",
+        "GIT_INDEX_FILE=/tmp/x git status",
+        "GIT_EXEC_PATH=/tmp/x git status",
+      ])("deny: %s", deny);
+
+      test.each([
+        "git log --format=%s",
+        "git -C /repo log --oneline -3",
+        "git fsck --connectivity-only",
+      ])("allow: %s", allow);
+    });
+
+    describe("runtime-expanded flag arguments denied", () => {
+      test.each([
+        "X=-delete; find . -name victim $X",
+        "find . -name victim $(printf -- -delete)",
+        "X=-exec; find . -name victim $X rm {} +",
+        "A=-i; sed $A s/v/w/ victim",
+        "X=--fix; eslint $X src/",
+        "X=-r; xxd $X f",
+        "git log $(printf -- --output=/tmp/pwn)",
+        "git -C $d log",
+      ])("deny: %s", deny);
+
+      test.each([
+        "sed 's/$/x/' file",
+        "rg 'foo$' src/",
+        "awk '{print $1}' file",
+        "git show $(git rev-parse HEAD):a.ts",
+      ])("allow: %s", allow);
+    });
+
+    describe("same-command literal bindings resolve expansions", () => {
+      test.each([
+        'for n in 185 191 197; do sed -n "${n}p" file; done',
+        "for d in /a /b; do git -C $d log -1; done",
+        "for d in /a /b; do git -C $d rev-parse HEAD 2>/dev/null; done",
+        "f=docs/plan.md && sed -n '1p' \"$f\"",
+        'f=docs/plan.md && grep -n x "$f" && wc -l "$f"',
+        "for c in abc123 def456; do git show --stat $c; done",
+        'for f in a.ts b.ts; do rg -n "x" "$f"; done',
+        "for v in --oneline --stat; do git log $v; done",
+        "for ref in origin/main fix/x; do git show $ref:src/a.ts; done",
+        'do n=5; sed -n "${n}p" f; done',
+      ])("allow: %s", allow);
+
+      test.each([
+        // a second binding of the same name disqualifies it
+        'for n in 1 2; do sed -n "${n}p" f; n=3; done',
+        'f=a && f=b && sed -n "${f}p" x',
+        "for n in 1 2; do sed -n ${n}p f; done; for n in 3 4; do echo $n; done",
+        // binding forms that never resolve to a literal
+        'while read n; do sed -n "${n}p" f; done < list',
+        'for n in $(seq 3); do sed -n "${n}p" f; done',
+        'for n in *.md; do sed -n "${n}p" f; done',
+        'for n; do sed -n "${n}p" f; done',
+        'f=docs/x && sed -n "${f%%.*}p" y',
+        'f=docs/x && sed -n "${f:-1}p" y',
+        'export n=5 && sed -n "${n}p" f',
+        'local n=5 && sed -n "${n}p" f',
+        'declare n=5 && sed -n "${n}p" f',
+        'n=5 && printf -v n "%s" x && sed -n "${n}p" f',
+        'while getopts ab n; do sed -n "${n}p" f; done',
+        'mapfile n < list && sed -n "${n}p" f',
+        'sed -n "${unset}p" f',
+        "sed $X f",
+        'sed -n "${n}p" f',
+      ])("deny: %s", deny);
+
+      test("any denying variant denies the command", () => {
+        deny("for f in -i -n; do sed $f 's/a/b/' victim; done");
+        deny("for s in show stash; do git $s; done");
+        deny("for x in -delete -name; do find . $x; done");
+        deny("x=-i && sed $x 's/a/b/' victim");
+      });
+
+      test("prefix-form assignments do not bind the expansion", () => {
+        // `f=x cmd` only sets f in cmd's environment — $f still expands from
+        // the shell's prior state, so it is not a literal binding.
+        deny("f=-i sed $f s/a/b/ victim");
+      });
+    });
+
+    describe("narrowed over-broad rules", () => {
+      test.each([
+        "xz -l file.xz",
+        "xz --list file.xz",
+        "xz -t file.xz",
+        "xz --test file.xz",
+        "zstd -t file.zst",
+        "bzip2 -t file.bz2",
+        "lz4 --test file.lz4",
+        // interpreter deny needs the bare or versioned name, not a prefix
+        "pythonista --version",
+        "bundle exec rspec",
+        "denon --version",
+        "nodepy -h",
+        // GIT_CONFIG_NOSYSTEM only suppresses the system config file
+        "GIT_CONFIG_NOSYSTEM=1 git log",
+        "GIT_CONFIG_NOSYSTEM=1 git status --short",
+        // basename '[' is the test builtin, not a glob
+        "/usr/bin/[ -f file ]",
+        // sort -o to stdout writes nothing to disk
+        "sort -o /dev/stdout file",
+        "sort -o- file",
+        "sort -o - file",
+        "sort --output=/dev/stdout file",
+        "sort --output - file",
+      ])("allow: %s", allow);
+
+      test.each([
+        "zstd --rm file",
+        "lz4 --rm file",
+        "zstd -t --rm file",
+        "xz file",
+        "bzip2 file",
+        "python3.13 -c 'x'",
+        "perl5.34 -e 'x'",
+        "ruby3.3 -e 1",
+        "node22 -e 1",
+        "luajit2 -e 'x'",
+        "php8.2 -r 'x'",
+        "deno2 run x.ts",
+        "bun1.2 test",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='touch y' git log",
+        "GIT_CONFIG_PARAMETERS='a' git log",
+        "/bin/[r]m -rf x",
+        "sort -o x y",
+        "sort --output=x y",
+        "sort --output x y",
+        "sort -ox y",
+        "sort -o /tmp/out file",
+      ])("deny: %s", deny);
+    });
+
+    describe("literal vs expansion-capable '$'", () => {
+      // A '$' from single quotes, ANSI-C quoting, a backslash escape, or one
+      // followed by a non-name character never starts an expansion — those
+      // words must not trip the runtime-expansion deny.
+      test.each([
+        "sed -n '$p' file",
+        "sed '$!d' file",
+        "awk '$3 > 1' file",
+        "awk '$1 > 204' file",
+        "awk '$0 ~ /a>b|a|b/ {print $1}' file",
+        "git log --grep='x$'",
+        "git log --format='%H $s'",
+        "rg '$x' src",
+        'rg -n "\\$var" src',
+        "find . -name '$*'",
+        "rg '\\$x' src",
+        "echo 'a$' '$b'",
+        "grep 'cost$' file",
+      ])("allow: %s", allow);
+
+      test.each([
+        "sed $X file",
+        "find . $F",
+        "git log $X",
+        "rg $(echo --pre=sh) x",
+        'rg "$P" x',
+        'sed -n "$p" file',
+        "sort $O file",
+        "git log --output=$x",
+        "sed -n $P f",
+        'git log --format="%H $s"',
+      ])("deny: %s", deny);
+    });
   });
 });
 
@@ -679,6 +942,38 @@ describe("evaluateProfileToolCall", () => {
         command: "rm -rf .",
       }).decision,
     ).toBe("deny");
+  });
+
+  test("a present-but-non-string argv/args is uninspectable, not ignored", () => {
+    for (const rawInput of [
+      { command: "ls", args: ["rm", "-rf", ".", 1] },
+      { args: [["rm"]] },
+      { args: [] },
+      { argv: ["ls", 1] },
+      { argv: "rm -rf ." },
+      { args: 42 },
+    ]) {
+      const result = evaluateProfileToolCall(profile, "terminal.create", rawInput);
+      expect(result).toEqual({
+        decision: "deny",
+        reason: "review_readonly: uninspectable command input",
+      });
+    }
+  });
+
+  test("absent or null argv/args still classify the command fields", () => {
+    expect(
+      evaluateProfileToolCall(profile, "terminal.create", {
+        cmd: "git log",
+        argv: null,
+      }).decision,
+    ).toBe("approve");
+    expect(
+      evaluateProfileToolCall(profile, "terminal.create", {
+        command: "git log",
+        args: ["git", "log"],
+      }).decision,
+    ).toBe("approve");
   });
 
   test("shell/fs.exec style tools classify command", () => {
@@ -976,4 +1271,42 @@ describe("profilesEnforcedBySeats", () => {
     const seats = [{ adapter: "openai-compat-http", enforces_permission_profiles: [] }];
     expect(profilesEnforcedBySeats(seats)).toEqual([]);
   });
+});
+
+describe("real reviewer corpus regression fixture", () => {
+  const corpus = JSON.parse(
+    readFileSync(join(import.meta.dir, "review-readonly-corpus.json"), "utf8"),
+  ) as string[];
+
+  // Commands that must stay denied, with the reason they are genuinely
+  // dynamic. Everything else in the corpus is a legitimate read-only
+  // reviewer command and must allow.
+  const expectedDenials = new Map<number, string>([
+    [0, "for-loop variable bound via $(...) command substitution — not a literal"],
+    [3, "${f%%:*} / ${rest##*:} parameter operators — uninspectable expansion"],
+    [18, "a second `for n in` binding disqualifies n — expansion stays uninspectable"],
+  ]);
+
+  test("corpus has 40 commands", () => {
+    expect(corpus.length).toBe(40);
+  });
+
+  test.each(corpus.map((command, index) => [index, command] as const))(
+    "corpus[%i] classifies as expected",
+    (index, command) => {
+      const result = classifyShellCommand(command);
+      const denial = expectedDenials.get(index);
+      const label = `corpus[${String(index)}]`;
+      if (denial === undefined) {
+        expect(
+          result.decision,
+          `${label} should allow but denied with: ${
+            result.decision === "deny" ? result.reason : ""
+          }`,
+        ).toBe("allow");
+      } else {
+        expect(result.decision, `${label} should deny (${denial}) but allowed`).toBe("deny");
+      }
+    },
+  );
 });

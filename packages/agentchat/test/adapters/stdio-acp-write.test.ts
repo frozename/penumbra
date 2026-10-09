@@ -1608,4 +1608,37 @@ describe("StdioAcpAdapter permission_profile handler gates", () => {
     expect(errorCode(outcome.error)).toBe(-32004);
     expect(terminalCreate).not.toHaveBeenCalled();
   });
+
+  test.each([
+    { command: "ls", args: ["rm", "-rf", ".", 1] },
+    { args: [["rm"]] },
+    { command: "ls", args: "rm -rf ." },
+  ])(
+    "terminal/create rejects non-string args with -32602 before gate and executor: %j",
+    async (params) => {
+      const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+      const harness = createHarness(
+        { terminal: true },
+        { terminalCreate },
+        { permission_profile: "review_readonly" },
+      );
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+
+      const outcome = await captureError(handler?.(params));
+      expect(errorCode(outcome.error)).toBe(-32602);
+      expect(terminalCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  test("terminal/create rejects non-string args with -32602 without a profile too", async () => {
+    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+    const harness = createHarness({ terminal: true }, { terminalCreate });
+    await harness.runDispatch();
+    const handler = harness.getHandler("terminal/create");
+
+    const outcome = await captureError(handler?.({ command: "ls", args: ["ls", 2] }));
+    expect(errorCode(outcome.error)).toBe(-32602);
+    expect(terminalCreate).not.toHaveBeenCalled();
+  });
 });

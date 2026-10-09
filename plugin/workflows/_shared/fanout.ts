@@ -220,16 +220,23 @@ async function startAttempt(ctx: FanoutCtx, request: ChainStartRequest): Promise
   }
   // A profiled dispatch must never proceed when the daemon didn't echo the
   // profile back — an unechoed profile means the row was persisted unprofiled
-  // and Layer A/B enforcement is absent.
+  // and Layer A/B enforcement is absent. The chain exists at that point, so
+  // best-effort cancel it before failing the task.
   if (
     request.permission_profile !== undefined &&
     row.permission_profile !== request.permission_profile
   ) {
+    const cancel = await cancelChainQuietly(ctx, row.conversation_id);
+    const cancelNote =
+      cancel.cancel_error !== undefined ? ` (cancel failed: ${cancel.cancel_error})` : "";
     return {
       ok: false,
       retryable: false,
       errorCode: "permission_profile_echo_mismatch",
-      errorSummary: `requested ${request.permission_profile} but chain_start echoed ${JSON.stringify(row.permission_profile)}`,
+      errorSummary:
+        `requested ${request.permission_profile} but chain_start echoed ` +
+        `${JSON.stringify(row.permission_profile)} ` +
+        `(conversation_id=${row.conversation_id} handoff_id=${row.handoff_id})${cancelNote}`,
     };
   }
   return {

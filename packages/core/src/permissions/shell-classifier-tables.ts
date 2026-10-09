@@ -49,6 +49,11 @@ export const DANGEROUS_ENV_NAMES = new Set([
   "EDITOR",
   "VISUAL",
   "GIT_EDITOR",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_EXEC_PATH",
   "GIT_SSH",
   "GIT_SSH_COMMAND",
   "BASH_ENV",
@@ -61,6 +66,54 @@ export const DANGEROUS_ENV_NAMES = new Set([
   "RUBYOPT",
   "NODE_OPTIONS",
 ]);
+
+// GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n + GIT_CONFIG_VALUE_n and
+// GIT_CONFIG_PARAMETERS inject arbitrary git config (core.pager, alias hooks)
+// into any read verb — deny the whole family by prefix.
+export const DANGEROUS_ENV_PREFIXES: readonly string[] = ["GIT_CONFIG_"];
+
+// Env names inside a dangerous prefix family that are provably benign —
+// GIT_CONFIG_NOSYSTEM is a boolean switch, not a config injector.
+export const BENIGN_ENV_NAMES: ReadonlySet<string> = new Set(["GIT_CONFIG_NOSYSTEM"]);
+
+// A program word containing glob metacharacters is uninspectable — the shell
+// expands it at exec time and basename normalization sees only the pattern.
+export const PROGRAM_GLOB_RE = /[*?[]/;
+
+// Versioned interpreter names (python3.13, perl5.34, node22, luajit2) evade
+// exact-name deny entries; match family + numeric suffix only so unrelated
+// programs sharing a prefix (bundle, pythonista, denon) keep working.
+export const INTERPRETER_NAME_RE =
+  /^(?:python|pypy|perl|ruby|node|nodejs|lua|luajit|php|deno|bun|tclsh)[0-9.]*$/;
+
+// awk is read-useful (awk '{print $1}') but its script language can exec
+// (system(), getline piping) and write files (print > "f") — the deny scan
+// itself lives in shell-classifier.ts because it is logic, not data.
+
+// Compressors mutate their input in place unless output is sent to stdout
+// (-c/--stdout) or the invocation is a pure read (list/test); deny every
+// other invocation form.
+export const ARCHIVE_STDOUT_FLAGS = new Set(["-c", "--stdout", "--to-stdout"]);
+export const ARCHIVE_STDOUT_SHORT_RE = /^-[a-bd-zA-BD-Z]*c[a-zA-Z]*$/;
+export const ARCHIVE_LIST_FLAGS = new Set(["-l", "--list", "-t", "--test"]);
+
+// uniq operands that take a following value so they don't count toward the
+// positional input/output pair.
+export const UNIQ_VALUE_FLAGS = new Set([
+  "-f",
+  "-s",
+  "-w",
+  "--skip-fields",
+  "--skip-chars",
+  "--check-chars",
+  "--group",
+]);
+
+// git read verbs that can exec a program or write files via flag values;
+// matched as prefixes because they accept both `-Oless` and `--flag=x` forms.
+export const GIT_GREP_EXEC_PREFIXES = ["-O", "--open-files-in-pager"];
+export const GIT_LS_REMOTE_EXEC_PREFIXES = ["--upload-pack"];
+export const GIT_FSCK_WRITE_PREFIXES = ["--lost-found"];
 
 export const DENY_PROGRAMS: ReadonlySet<string> = new Set([
   // fs mutators
