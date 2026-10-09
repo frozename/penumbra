@@ -641,7 +641,7 @@ export {
   WorktreeManager,
   type WorktreeMode,
 } from "./worktree/manager.js";
-export * from "./worktree/scratch.js";
+export * from "./worktree/scratch-public.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,
