@@ -97,9 +97,11 @@ export interface BuildRequiredLlmRoleFloorsOptions {
   dreamingAutoPromoteMinJudges?: number;
 }
 
+const ROLE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
 function envRole(env: Record<string, string | undefined>, key: string, fallback: string): string {
   const value = env[key]?.trim();
-  return value && value.length > 0 ? value : fallback;
+  return value !== undefined && ROLE_SLUG_RE.test(value) ? value : fallback;
 }
 
 function minimumHolders(value: number | undefined, fallback: number): number {
@@ -199,8 +201,16 @@ export function evaluateLlmRoleFloors(input: {
   return { ok: violations.length === 0, violations };
 }
 
+// Percent-encoding the role keeps `.` out of its segment and keeps distinct
+// roles distinct, so no role name can spell another role's alert ID.
+function escapeAlertSegment(value: string): string {
+  return value.replaceAll(/[^a-z0-9_-]/gu, (char) =>
+    Buffer.from(char).toString("hex").replaceAll(/../g, "%$&"),
+  );
+}
+
 function roleFloorAlert(violation: LlmRoleFloorViolation): string {
-  return `llm.role_floor.${violation.role}.required_${String(
+  return `llm.role_floor.${escapeAlertSegment(violation.role)}.required_${String(
     violation.requiredHolders,
   )}.actual_${String(violation.actualHolders)}`;
 }
