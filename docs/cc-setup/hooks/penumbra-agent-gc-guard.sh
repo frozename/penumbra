@@ -77,134 +77,177 @@ allow_override() {
   return 1
 }
 
-clean_ref_token() {
-  local ref=$1 prev
+# Sets $token to $1 minus the quotes, subshell parens and separators a word can
+# carry glued on: ("feat/x") and 'feat/x'; both give feat/x. It assigns rather
+# than prints so scanning every word of a long command forks nothing.
+clean_token() {
+  local prev
+  token=$1
   while :; do
-    prev=$ref
-    ref=${ref#\"}; ref=${ref%\"}
-    ref=${ref#\'}; ref=${ref%\'}
-    ref=${ref#\(}
-    case "$ref" in
-      *$'\r') ref=${ref%$'\r'} ;;
+    prev=$token
+    token=${token#\"}; token=${token%\"}
+    token=${token#\'}; token=${token%\'}
+    token=${token#\(}
+    case "$token" in
+      *$'\r') token=${token%$'\r'} ;;
     esac
-    case "$ref" in
-      *';'|*')'|*'&'|*'|'|*'`') ref=${ref%?} ;;
+    case "$token" in
+      *';'|*')'|*'&'|*'|'|*'`') token=${token%?} ;;
     esac
-    [ "$ref" = "$prev" ] && break
+    [ "$token" = "$prev" ] && break
   done
-  ref=${ref#:}
-  ref=${ref#refs/heads/}
-  printf '%s\n' "$ref"
 }
 
-split_ref_token() {
-  local token=$1
-  token=${token//&&/$'\n'}
-  token=${token//\|\|/$'\n'}
-  token=${token//;/$'\n'}
-  printf '%s\n' "$token"
+# Prints $cmd one simple command per line, so a delete flag is only read against
+# the git subcommand it belongs to: `git branch x <sha>; ... | tr -d ' '` deletes
+# nothing. Splits on unquoted ; & && || | |& and newlines; each $(...), <(...)
+# and `...` body is its own commands and leaves $() in the outer one; comments
+# are dropped. Quoting that does not balance only merges commands, which can add
+# a delete match but never hide one. Heredoc bodies are still scanned (a body fed
+# to a shell runs), one line at a time so an apostrophe in a commit message
+# cannot merge everything after it.
+simple_commands() {
+  printf '%s\n' "$cmd" | LC_ALL=C awk '
+    # stk has one letter per open context: q single quote, d double quote,
+    # s $( <( >(, b backtick, c ${, p a paren inside s. s and b bodies are
+    # printed on their own while saved[] holds the command around them.
+    BEGIN { SQ = "\047" }
+    function top() { return substr(stk, length(stk), 1) }
+    function flush() { if (cur ~ /[^ \t]/) print cur; cur = "" }
+    function take(i) { cur = cur substr(line, seg, i - seg); seg = i }
+    function enter(kind, i, w) {
+      if (kind == "s" || kind == "b") { take(i + w); saved[base + length(stk) + 1] = cur; cur = "" }
+      stk = stk kind
+    }
+    function leave(i) {
+      if (top() == "s" || top() == "b") { take(i); flush(); cur = saved[base + length(stk)] }
+      stk = substr(stk, 1, length(stk) - 1)
+    }
+    function unwind() { while (stk != "") leave(seg); flush() }
+    function heredoc(i, n,    j, ch, delim, strip) {
+      j = i + 2
+      if (substr(line, j, 1) == "-") { strip = 1; j++ }
+      while (j <= n && index(" \t", substr(line, j, 1))) j++
+      while (j <= n) {
+        ch = substr(line, j, 1)
+        if (index(" \t;|&<>()", ch)) break
+        if (ch == "\\") { j++; ch = substr(line, j, 1) }
+        else if (ch == SQ || ch == "\"") ch = ""
+        delim = delim ch; j++
+      }
+      if (delim !~ /^[A-Za-z_]/) return i + 2
+      hd[++hn] = delim; hs[hn] = strip
+      return j
+    }
+    function scan(text,    n, i, c, c2, t) {
+      line = text; seg = 1; n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1); c2 = substr(line, i, 2); t = top()
+        if (t == "q") { if (c == SQ) leave(i); i++; continue }
+        if (c == "\\") {
+          if (i == n) { take(i); seg = n + 1; return 1 }
+          i += 2; continue
+        }
+        if (c2 == "$(" || (t != "d" && (c2 == "<(" || c2 == ">("))) { enter("s", i, 2); i += 2; continue }
+        if (c2 == "${") { enter("c", i, 2); i += 2; continue }
+        if (c == "`") { if (t == "b") leave(i); else enter("b", i, 1); i++; continue }
+        if (t == "d") { if (c == "\"") leave(i); i++; continue }
+        if (c == SQ) { enter("q", i, 1); i++; continue }
+        if (c == "\"") { enter("d", i, 1); i++; continue }
+        if (t == "c") { if (c == "}") leave(i); i++; continue }
+        if (c == "(" && t != "") { enter("p", i, 1); i++; continue }
+        if (c == ")" && (t == "s" || t == "p")) { leave(i); i++; continue }
+        if (c == "#" && t != "p" && (i == 1 || index(" \t;|&()", substr(line, i - 1, 1)))) { take(i); seg = n + 1; return 0 }
+        if (c2 == "<<" && !hi && t != "p") {
+          if (substr(line, i + 2, 1) == "<") i += 3
+          else i = heredoc(i, n)
+          continue
+        }
+        if (c == ";" || c == "|" || c == "&") {
+          if (c == "&" && c2 != "&&" && ((i > 1 && index("<>", substr(line, i - 1, 1))) || substr(line, i + 1, 1) == ">")) { i++; continue }
+          take(i); flush()
+          i += (c2 == "&&" || c2 == "||" || c2 == "|&") ? 2 : 1
+          seg = i; continue
+        }
+        i++
+      }
+      take(n + 1)
+      return 0
+    }
+    {
+      if (hi) {
+        body = $0
+        if (hs[hi]) sub(/^\t+/, "", body)
+        if (body == hd[hi]) {
+          unwind(); bcont = 0
+          if (hi < hn) hi++
+          else { hi = hn = base = 0; stk = sstk; cur = scur }
+          next
+        }
+        if (!bcont) { stk = ""; cur = "" }
+        if (!(bcont = scan($0))) unwind()
+        next
+      }
+      if (!(more = scan($0))) {
+        t = top()
+        if (t == "" || t == "s" || t == "b" || t == "p") flush(); else cur = cur " "
+      }
+      if (hn && !more) { hi = 1; sstk = stk; scur = cur; base = length(stk) }
+    }
+    END { if (hi) { unwind(); stk = sstk; cur = scur; base = 0 } unwind() }
+  ' 2>/dev/null
 }
 
-has_command_separator() {
+# --- match destructive INTENT, not one surface spelling ------------------------
+# One simple command deletes a ref when it names git, then branch, push or
+# update-ref, then a delete flag (or, for push, a :<ref> refspec), or when it
+# runs git worktree remove.
+has_delete_intent() {
+  local raw token prev="" saw_git=0 branch=0 push=0 update_ref=0 restore_glob=0 found=1
   case "$1" in
-    *';'*|*'&&'*|*'||'*|*'|'*) return 0 ;;
+    *git*) : ;;
     *) return 1 ;;
   esac
-}
-
-has_git_branch_delete_intent() {
-  local token raw scan_cmd prev saw_git=0 branch_mode=0 restore_glob=0 found=1
   case $- in
     *f*) : ;;
     *) set -f; restore_glob=1 ;;
   esac
-  scan_cmd=$cmd
-  scan_cmd=${scan_cmd//&&/ ; }
-  scan_cmd=${scan_cmd//\|\|/ ; }
-  scan_cmd=${scan_cmd//;/ ; }
-  scan_cmd=${scan_cmd//|/ ; }
-  for raw in $scan_cmd; do
-    if [ "$raw" = ";" ]; then
-      saw_git=0
-      branch_mode=0
-      continue
-    fi
-
-    token=$raw
-    while :; do
-      prev=$token
-      token=${token#\"}; token=${token%\"}
-      token=${token#\'}; token=${token%\'}
-      token=${token#\(}
-      case "$token" in
-        *$'\r') token=${token%$'\r'} ;;
-      esac
-      case "$token" in
-        *')'|*'&'|*'|'|*'`') token=${token%?} ;;
-      esac
-      [ "$token" = "$prev" ] && break
-    done
-    token=${token#:}
-    token=${token#refs/heads/}
-    [ -n "$token" ] || continue
-
+  for raw in $1; do
+    clean_token "$raw"
     case "$token" in
-      git)
-        saw_git=1
-        branch_mode=0
-        ;;
-      branch)
-        if [ "$saw_git" = 1 ]; then
-          branch_mode=1
-          saw_git=0
-        fi
-        ;;
-      -d|-D|--delete)
-        if [ "$branch_mode" = 1 ]; then
-          found=0
-          break
-        fi
-        ;;
+      git) saw_git=1 ;;
+      branch) branch=$saw_git ;;
+      push) push=$saw_git ;;
+      update-ref) update_ref=$saw_git ;;
+      remove) [ "$saw_git$prev" = 1worktree ] && found=0 ;;
+      -D) [ "$branch" = 1 ] && found=0 ;;
+      -d|--delete) [ "$branch$push$update_ref" != 000 ] && found=0 ;;
+      :*) [ "$push" = 1 ] && found=0 ;;
     esac
-    if has_command_separator "$raw"; then
-      saw_git=0
-      branch_mode=0
-    fi
+    [ "$found" = 0 ] && break
+    prev=$token
   done
   [ "$restore_glob" = 1 ] && set +f
   return "$found"
 }
 
-# --- match destructive INTENT, not one surface spelling ------------------------
-# Covers branch force/normal delete, worktree removal, low-level ref deletion,
-# and remote ref deletion (git push origin :ref / --delete ref).
-has_non_branch_delete_intent() {
-  case "$cmd" in
-    *"git worktree remove"*|*"worktree remove --force"*) return 0 ;;
-    *"git update-ref -d"*|*"update-ref --delete"*) return 0 ;;
-    *"git push"*" --delete"*|*"git push"*" -d "*) return 0 ;;
-    *"git push"*" :"*) return 0 ;;   # refspec deletion form: push <remote> :<ref>
-    *) return 1 ;;
-  esac
-}
-
 case "$cmd" in
-  *branch*|*"git worktree remove"*|*"worktree remove --force"*|*"git update-ref -d"*|*"update-ref --delete"*|*"git push"*" --delete"*|*"git push"*" -d "*|*"git push"*" :"*) : ;;
+  *branch*|*push*|*worktree*|*update-ref*) : ;;
   *) exit 0 ;;
 esac
 
-branch_delete_intent=1
-case "$cmd" in
-  *branch*)
-    if has_git_branch_delete_intent; then
-      branch_delete_intent=0
-    fi
-    ;;
-esac
-
-if [ "$branch_delete_intent" != 0 ] && ! has_non_branch_delete_intent; then
-  exit 0
-fi
+# No awk, or awk failed: judge the whole string as one command (fail closed).
+simple_cmds="$(simple_commands)" || simple_cmds=${cmd//$'\n'/ }
+delete_cmds=""
+while IFS= read -r simple_cmd; do
+  if has_delete_intent "$simple_cmd"; then
+    delete_cmds="$delete_cmds$simple_cmd
+"
+  fi
+done <<EOF
+$simple_cmds
+EOF
+[ -n "$delete_cmds" ] || exit 0
 
 # --- resolve the repo dir (hook cwd, else the surrounding git checkout) -------
 repo="${cwd:-}"
@@ -213,16 +256,19 @@ repo="${cwd:-}"
 
 # --- which branch refs does the destructive command touch? --------------------
 extract_candidate_refs() {
-  local token raw prev="" branch_mode=0 push_delete_mode=0 worktree_path_next=0 restore_glob=0
+  local simple_cmd token raw prev branch_mode push_delete_mode worktree_path_next restore_glob=0
   case $- in
     *f*) : ;;
     *) set -f; restore_glob=1 ;;
   esac
-  for raw in $cmd; do
-    while IFS= read -r token; do
-      [ -n "$token" ] || continue
+  while IFS= read -r simple_cmd; do
+    prev="" branch_mode=0 push_delete_mode=0 worktree_path_next=0
+    for raw in $simple_cmd; do
+      clean_token "$raw"
       raw=$token
-      token="$(clean_ref_token "$token")"
+      token=${token#:}
+      token=${token#refs/heads/}
+      [ -n "$token" ] || continue
 
       if [ "$worktree_path_next" = 1 ]; then
         case "$token" in
@@ -270,7 +316,7 @@ extract_candidate_refs() {
           ;;
         *)
           case "$raw" in
-            :*) clean_ref_token "$raw" ;;
+            :*) printf '%s\n' "$token" ;;
           esac
           if [ "$prev" = "update-ref-delete" ]; then
             printf '%s\n' "$token"
@@ -280,10 +326,10 @@ extract_candidate_refs() {
           ;;
       esac
       prev="$token"
-    done <<EOF
-$(split_ref_token "$raw")
+    done
+  done <<EOF
+$delete_cmds
 EOF
-  done
   [ "$restore_glob" = 1 ] && set +f
 }
 
