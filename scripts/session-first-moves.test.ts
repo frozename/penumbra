@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,6 +55,83 @@ test("reads near-duplicate promotion gate counts from dream_actions payload sour
     expect((output as { gate_deltas?: unknown }).gate_deltas).toEqual({
       filtered: 1,
       neardup: 3,
+    });
+  } finally {
+    rmSync(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test("includes open PRs from gh and marks heads no handoff produced", () => {
+  const storageRoot = mkdtempSync(join(tmpdir(), "session-first-moves-"));
+  try {
+    writeFileSync(join(storageRoot, "port"), "9");
+    writeFileSync(join(storageRoot, "token"), "test-token");
+    const binDir = join(storageRoot, "bin");
+    mkdirSync(binDir);
+    const ghJson = JSON.stringify([
+      {
+        number: 74,
+        title: "Implement #71",
+        headRefName: "feat/other-account",
+        author: { login: "second-account" },
+        createdAt: "2026-09-21T10:00:00Z",
+        statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+      },
+      {
+        number: 78,
+        title: "Fix #71",
+        headRefName: "fix/issue-71_abcd1234",
+        author: { login: "frozename" },
+        createdAt: "2026-09-21T11:00:00Z",
+        statusCheckRollup: [],
+      },
+    ]);
+    writeFileSync(join(binDir, "gh"), `#!/bin/sh\ncat <<'JSON'\n${ghJson}\nJSON\n`);
+    chmodSync(join(binDir, "gh"), 0o755);
+
+    const db = new Database(join(storageRoot, "db.sqlite"));
+    try {
+      db.run("CREATE TABLE handoffs (handoff_id TEXT PRIMARY KEY, branch_name TEXT)");
+      db.run("INSERT INTO handoffs VALUES ('h-lane', 'fix/issue-71_abcd1234')");
+    } finally {
+      db.close();
+    }
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, SCRIPT],
+      env: {
+        ...process.env,
+        PENUMBRA_STORAGE_ROOT: storageRoot,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode, new TextDecoder().decode(result.stderr)).toBe(0);
+    const output = JSON.parse(new TextDecoder().decode(result.stdout)) as { open_prs?: unknown };
+    expect(output.open_prs).toEqual({
+      reason: null,
+      prs: [
+        {
+          number: 74,
+          title: "Implement #71",
+          head_ref: "feat/other-account",
+          author: "second-account",
+          created_at: "2026-09-21T10:00:00Z",
+          checks: "success",
+          not_from_known_lane: true,
+        },
+        {
+          number: 78,
+          title: "Fix #71",
+          head_ref: "fix/issue-71_abcd1234",
+          author: "frozename",
+          created_at: "2026-09-21T11:00:00Z",
+          checks: "none",
+          not_from_known_lane: false,
+        },
+      ],
     });
   } finally {
     rmSync(storageRoot, { recursive: true, force: true });

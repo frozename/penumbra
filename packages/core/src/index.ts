@@ -129,6 +129,7 @@ export {
   MemoryVerifyClaimInputShape,
 } from "./memory-verify/schemas.js";
 export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
+export { collectOpenPrs, type OpenPrsRunner } from "./open-prs.js";
 export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
 export { parseOtlpLogs } from "./otlp/parse.js";
 export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";

@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import type { OpenPr, OpenPrsResult } from "./open-prs.js";
+
 export type GateDeltas = { filtered: number | null; neardup: number | null };
 
 export type PinShare = {
@@ -10,6 +12,10 @@ export type PinShare = {
   steerable_role_7d: number | null;
   steerable_pinned_7d: number | null;
 };
+
+export type SessionOpenPr = OpenPr & { not_from_known_lane: boolean | null };
+
+export type SessionOpenPrs = { prs: SessionOpenPr[]; reason: null } | { prs: null; reason: string };
 
 export type SessionFirstMoves = {
   git_status_dirty_count: number | null;
@@ -24,6 +30,7 @@ export type SessionFirstMoves = {
   gate_deltas: GateDeltas;
   pin_share: PinShare | null;
   open_lanes: number | null;
+  open_prs: SessionOpenPrs;
 };
 
 export type CollectSessionFirstMovesInput = {
@@ -39,6 +46,7 @@ export type CollectSessionFirstMovesInput = {
   pending_task_drafts?: number | null;
   project_id?: string | null;
   open_lanes?: number | null;
+  open_prs?: OpenPrsResult;
 };
 
 function readCount(db: Database, sql: string): number | null {
@@ -109,6 +117,43 @@ function readPendingTaskDrafts(db: Database, projectId: string | null | undefine
   }
 }
 
+// Handoff worktrees push resolveHandoffBranchName(): branch_name, or agent/<handoff_id> for legacy rows.
+function readKnownLaneHeads(db: Database, heads: string[]): Set<string> | null {
+  try {
+    const rows = db
+      .query<{ head: string }, [string]>(
+        `SELECT branch_name AS head FROM handoffs
+          WHERE branch_name IN (SELECT value FROM json_each(?1))
+         UNION
+         SELECT 'agent/' || handoff_id AS head FROM handoffs
+          WHERE branch_name IS NULL
+            AND handoff_id IN (
+              SELECT substr(value, 7) FROM json_each(?1) WHERE value LIKE 'agent/%'
+            )`,
+      )
+      .all(JSON.stringify(heads));
+    return new Set(rows.map((row) => row.head));
+  } catch {
+    return null;
+  }
+}
+
+function markOpenPrLanes(db: Database, openPrs: OpenPrsResult | undefined): SessionOpenPrs {
+  if (!openPrs) return { prs: null, reason: "not collected" };
+  if (openPrs.prs === null) return openPrs;
+  const known = readKnownLaneHeads(
+    db,
+    openPrs.prs.map((pr) => pr.head_ref),
+  );
+  return {
+    prs: openPrs.prs.map((pr) => ({
+      ...pr,
+      not_from_known_lane: known === null ? null : !known.has(pr.head_ref),
+    })),
+    reason: null,
+  };
+}
+
 export function collectSessionFirstMoves(input: CollectSessionFirstMovesInput): SessionFirstMoves {
   const workerPids = input.worker_pids ?? [];
   const workerCount = Object.hasOwn(input, "worker_count") ? input.worker_count : workerPids.length;
@@ -131,5 +176,6 @@ export function collectSessionFirstMoves(input: CollectSessionFirstMovesInput): 
     open_lanes:
       input.open_lanes ??
       readCount(input.db, "SELECT COUNT(*) AS c FROM lane_ledger WHERE gate_status='open'"),
+    open_prs: markOpenPrLanes(input.db, input.open_prs),
   };
 }
