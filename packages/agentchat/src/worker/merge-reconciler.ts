@@ -20,6 +20,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 import { PenumbraHttpError } from "../penumbra-client.js";
+import { scopeDiffToPackages } from "./affected-packages.js";
 import {
   type BunTestReport,
   isKnownBunTeardownPanicPass,
@@ -107,91 +108,6 @@ class Mutex {
 
 const globalMergeLock = new Mutex();
 const testBaselineCache = new Map<string, Promise<BunTestCommandOutcome>>();
-
-/**
- * Returns true for repo-root paths covered by the root test shard
- * (`bun scripts/bun-test-gate.ts --path-ignore-patterns=packages/** ...`):
- * `scripts/` and `test/`. These are not package changes, but they carry real
- * test coverage, so they must not force the conservative full-suite fallback.
- */
-function isRootTestShardPath(path: string): boolean {
-  return (
-    path === "scripts" || path.startsWith("scripts/") || path === "test" || path.startsWith("test/")
-  );
-}
-
-function defaultIsWorkspacePackageDir(dir: string): boolean {
-  return existsSync(join(dir, "package.json"));
-}
-
-/**
- * Resolves a `packages/...` diff path to its package root. A
- * `packages/<group>/<name>/...` path maps to the nested root when
- * `packages/<group>` is not itself a workspace package (no package.json) —
- * e.g. `packages/integrations/typesafe`. Unresolvable shapes keep the
- * two-segment root, matching the pre-nesting behaviour.
- */
-function resolvePackageRoot(
-  path: string,
-  isPackageDir: (packageDir: string) => boolean,
-): string | null {
-  const segments = path.split("/");
-  const segment = segments[1];
-  if (!segment) return null;
-  const packageRoot = `packages/${segment}`;
-  if (isPackageDir(packageRoot)) return packageRoot;
-  const nested = segments[2];
-  const nestedRoot = nested ? `${packageRoot}/${nested}` : null;
-  return nestedRoot !== null && isPackageDir(nestedRoot) ? nestedRoot : packageRoot;
-}
-
-/**
- * Maps changed file paths to affected package roots.
- *
- * Returns:
- * - null for conservative full-suite fallback when any non-package path is touched
- * - [] when only docs/non-code paths changed
- * - a deduplicated sorted list of package roots otherwise
- *
- * Root `scripts/` and `test/` paths are not package changes: the tests stage
- * runs the repo root shard for them (see runTestsStage) instead of taking the
- * conservative fallback.
- */
-export function resolveAffectedPackages(
-  paths: string[],
-  isPackageDir: (packageDir: string) => boolean = defaultIsWorkspacePackageDir,
-): string[] | null {
-  const packageRoots = new Set<string>();
-  let docsOnly = true;
-
-  for (const p of paths) {
-    if (p.startsWith("packages/")) {
-      const packageRoot = resolvePackageRoot(p, isPackageDir);
-      if (packageRoot) {
-        packageRoots.add(packageRoot);
-        docsOnly = false;
-      }
-      continue;
-    }
-
-    if (p.startsWith("docs/") || p.startsWith(".github/")) {
-      continue;
-    }
-
-    if (isRootTestShardPath(p)) {
-      docsOnly = false;
-      continue;
-    }
-
-    return null;
-  }
-
-  if (packageRoots.size === 0 && docsOnly) {
-    return [];
-  }
-
-  return Array.from(packageRoots).sort();
-}
 
 export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
@@ -554,6 +470,7 @@ interface ReconcileState {
   diffStats: { filesChanged: number; linesAdded: number; linesDeleted: number };
   rebaseOutcome: RebaseOutcome;
   affectedPackages: string[] | null;
+  deletedPackages: string[];
   packagesToBuild: string[] | null;
   changedFiles: Set<string>;
   runRootTestShard: boolean;
@@ -937,8 +854,10 @@ async function loadWorkspacePackageJsons(
 }
 
 async function computeAffectedPackageClosure(ctx: ReconcileCtx): Promise<AffectedClosure> {
-  const { affectedPackages } = ctx.state;
-  if (affectedPackages === null) {
+  const { affectedPackages, deletedPackages } = ctx.state;
+  // A deleted package's dependents cannot be found through its removed
+  // package.json, so a deletion attributes every package diagnostic.
+  if (affectedPackages === null || deletedPackages.length > 0) {
     return { prefixes: ["packages/"], packages: [] };
   }
   if (affectedPackages.length === 0) {
@@ -1337,10 +1256,12 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
       .map((line) => line.trim())
       .filter(Boolean);
     state.changedFiles = new Set(diffFiles);
-    state.affectedPackages = resolveAffectedPackages(diffFiles, (dir) =>
+    const scope = scopeDiffToPackages(diffFiles, (dir) =>
       existsSync(join(wt.path, dir, "package.json")),
     );
-    state.runRootTestShard = diffFiles.some(isRootTestShardPath);
+    state.affectedPackages = scope.affectedPackages;
+    state.deletedPackages = scope.deletedPackages;
+    state.runRootTestShard = scope.runRootTestShard;
   } catch (err) {
     deps.log.warn(
       { handoffId, baseRef: ctx.baseRef, branch: wt.branchName, err: String(err) },
@@ -1495,7 +1416,7 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
   const timeout = ctx.deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   const affectedPackages = ctx.state.affectedPackages;
   try {
-    if (affectedPackages === null) {
+    if (affectedPackages === null || ctx.state.deletedPackages.length > 0) {
       return await runTypecheckOnAllPackages(ctx, timeout);
     }
     if (affectedPackages.length === 0) {
@@ -2151,6 +2072,7 @@ export function createMergeReconciler(
         diffStats: { filesChanged: 0, linesAdded: 0, linesDeleted: 0 },
         rebaseOutcome: { attempted: false, result: "skipped" },
         affectedPackages: null,
+        deletedPackages: [],
         packagesToBuild: null,
         changedFiles: new Set<string>(),
         runRootTestShard: false,

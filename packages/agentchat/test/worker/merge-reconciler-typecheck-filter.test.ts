@@ -372,6 +372,27 @@ test("full-tree fallback attributes any package diagnostic", async () => {
   expect(result.regression_summary).toContain("packages/daemon/src/routes/handoffs.ts:9:2 TS2339");
 });
 
+test("a diff that deletes a package typechecks the full tree and attributes its broken dependents", async () => {
+  diffOutput = "packages/gone/package.json\npackages/gone/src/index.ts\n";
+  execFailures.set(
+    "bun tsc -b",
+    new ExecCommandError({
+      stderr:
+        "packages/agentchat/src/worker/uses-gone.ts(3,22): error TS2307: Cannot find module '@penumbra/gone' or its corresponding type declarations.\n",
+    }),
+  );
+  const reconciler = makeReconciler();
+
+  const result = await reconciler("h1");
+
+  expect(execHistory).toContain("bun tsc -b");
+  expect(execHistory.some((cmd) => cmd.includes("packages/gone"))).toBe(false);
+  expect(result.status).toBe("typecheck_failed");
+  expect(result.regression_summary).toContain(
+    "packages/agentchat/src/worker/uses-gone.ts:3:22 TS2307",
+  );
+});
+
 test("includes malformed workspace packages in the scoped build set and logs an error", async () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "merge-reconciler-worktree-"));
   worktreePath = tmpRoot;

@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PenumbraHttpError } from "@src/penumbra-client.js";
+import { resolveAffectedPackages, scopeDiffToPackages } from "@src/worker/affected-packages.js";
 import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
 import {
   createMergeReconciler,
@@ -26,7 +27,6 @@ import {
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
-  resolveAffectedPackages,
 } from "@src/worker/merge-reconciler.js";
 import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
 import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
@@ -1746,6 +1746,54 @@ describe("resolveAffectedPackages", () => {
         isPackageDir,
       ),
     ).toEqual(["packages/daemon"]);
+  });
+});
+
+describe("scopeDiffToPackages", () => {
+  const isPackageDir = (dir: string): boolean =>
+    dir === "packages/core" || dir === "packages/daemon";
+
+  test("drops a package the diff deleted and runs the root shard in its place", () => {
+    expect(
+      scopeDiffToPackages(
+        ["packages/gone/package.json", "packages/gone/src/index.ts", "packages/daemon/src/x.ts"],
+        isPackageDir,
+      ),
+    ).toEqual({
+      affectedPackages: ["packages/daemon"],
+      deletedPackages: ["packages/gone"],
+      runRootTestShard: true,
+    });
+  });
+
+  test("drops a deleted package nested in a workspace group", () => {
+    expect(
+      scopeDiffToPackages(
+        ["packages/integrations/legacy/package.json", "packages/integrations/legacy/src/client.ts"],
+        isPackageDir,
+      ),
+    ).toEqual({
+      affectedPackages: [],
+      deletedPackages: ["packages/integrations/legacy"],
+      runRootTestShard: true,
+    });
+  });
+
+  test("keeps a live package whose own or fixture package.json changed", () => {
+    expect(
+      scopeDiffToPackages(
+        [
+          "packages/daemon/package.json",
+          "packages/core/fixtures/package.json",
+          "packages/core/test/fixtures/app/package.json",
+        ],
+        isPackageDir,
+      ),
+    ).toEqual({
+      affectedPackages: ["packages/core", "packages/daemon"],
+      deletedPackages: [],
+      runRootTestShard: false,
+    });
   });
 });
 

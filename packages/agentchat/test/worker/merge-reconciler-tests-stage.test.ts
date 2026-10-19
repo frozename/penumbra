@@ -241,6 +241,15 @@ Ran 0 tests across 1 files. [1.00ms]
 `;
 }
 
+const DELETED_PACKAGE_TEST_DIR = "packages/gone/test/";
+
+function noMatchingTestFilesOutput(cwd: string, filter: string): string {
+  return `The following filters did not match any test files in --cwd="${cwd}":
+ ${filter}
+2800 files were searched [10.00ms]
+`;
+}
+
 function panicOutput(): string {
   return `${passOutput()}
 panic(main thread): A C++ exception occurred
@@ -384,6 +393,16 @@ function execMock(argv: string[], opts: ExecOptions): Promise<ExecResult> {
   }
   if (cmd.startsWith("bun scripts/bun-test-gate.ts ")) {
     return Promise.resolve({ stdout: passOutput(), stderr: "" });
+  }
+  if (cmd === `bun test ${DELETED_PACKAGE_TEST_DIR}`) {
+    if (isBaselineCwd(opts.cwd)) return Promise.resolve({ stdout: passOutput(), stderr: "" });
+    return Promise.reject(
+      new ExecCommandError({
+        stdout: "bun test v1.4.2 (744846f84)\n",
+        stderr: noMatchingTestFilesOutput(opts.cwd, DELETED_PACKAGE_TEST_DIR),
+        code: 1,
+      }),
+    );
   }
   if (cmd === "bun test packages/daemon/test/") {
     if (holdBranchTestOpen && !isBaselineCwd(opts.cwd)) {
@@ -1013,6 +1032,26 @@ test("scripts diff alongside a package change runs both the package shard and th
   expect(execHistory.some(({ cmd }) => cmd === "bun test packages/daemon/test/")).toBe(true);
   expect(execHistory.some(({ cmd }) => cmd === ROOT_SHARD_CMD)).toBe(true);
   expect(execHistory.some(({ cmd }) => cmd === "bun test")).toBe(false);
+});
+
+test("a diff that deletes a package runs the root shard instead of the deleted package's tests", async () => {
+  diffOutput = [
+    "packages/gone/package.json",
+    "packages/gone/src/index.ts",
+    "packages/gone/test/index.test.ts",
+  ].join("\n");
+
+  const result = await makeReconciler()("h-deleted-package");
+
+  expect(result.status).toBe("verified");
+  expect(execHistory.some(({ cmd }) => cmd.includes("packages/gone"))).toBe(false);
+  expect(execHistory.some(({ cmd }) => cmd === ROOT_SHARD_CMD)).toBe(true);
+  expect(execHistory.some(({ cmd }) => cmd === "bun tsc -b")).toBe(true);
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-deleted-package",
+    typecheck: "pass",
+    tests: "pass",
+  });
 });
 
 test("bun.lock-only diff keeps the conservative full-suite test and typecheck path", async () => {
