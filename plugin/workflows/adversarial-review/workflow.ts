@@ -10,7 +10,13 @@ import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { awaitChainOrCancel, cancelChainQuietly } from "../_shared/await-or-cancel.js";
+import {
+  awaitChainOrCancel,
+  type AwaitedChain,
+  cancelChainQuietly,
+  type CancelOutcome,
+  failureReasonSummary,
+} from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
 import {
   PERMISSION_PROFILE_REVIEW_READONLY,
@@ -1152,10 +1158,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         let retryCount: 0 | 1 = 0;
         let cancelRequested = false;
         let cancelError: string | undefined;
-        const recordCancel = (outcome: {
-          cancel_requested: boolean;
-          cancel_error?: string;
-        }): void => {
+        const recordCancel = (outcome: CancelOutcome): void => {
           cancelRequested ||= outcome.cancel_requested;
           cancelError ??= outcome.cancel_error;
         };
@@ -1165,11 +1168,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             handoff_id: string;
             permission_profile?: PermissionProfile | null;
           };
-          let wait: {
-            status: "completed" | "failed" | "timeout";
-            final_agent: string | null;
-            response_text: string | null;
-          };
+          let wait: AwaitedChain;
           // tool_free:true — reviewer persona dispatch is pure text generation:
           // it receives the diff inlined in the prompt and emits a markdown
           // review with a trailing JSON findings block. No penumbra MCP tools,
@@ -1239,6 +1238,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
             response_text: wait.response_text,
             conversation_id: dispatch.conversation_id,
             handoff_id: dispatch.handoff_id,
+            error: failureReasonSummary(wait.failure_reason),
             findings: parsed.findings,
             parse_error: parsed.parse_error,
             retry_count: retryCount === 1 ? 1 : undefined,

@@ -471,6 +471,7 @@ test("awaitChain returns failed when handoff completed but zero responses", asyn
   expect(out.status).toBe("failed");
   expect(out.final_agent).toBeNull();
   expect(out.response_text).toBeNull();
+  expect(out.failure_reason).toBe("completed_without_final_response");
 });
 
 test("awaitChain waits for late agent-response stamped after handoff goes terminal", async () => {
@@ -631,7 +632,7 @@ test("awaitChain reads the terminal root response instead of a later child respo
 
     const out = await ctx.awaitChain(conversationId, { timeoutMs: 10 });
 
-    expect(out).toEqual({
+    expect(out).toStrictEqual({
       status: "completed",
       final_agent: "root-agent",
       response_text: "authoritative root result",
@@ -674,7 +675,12 @@ test("awaitChain does not let a later child response satisfy a completed root", 
       lateResponseGraceMs: 0,
     });
 
-    expect(out).toEqual({ status: "failed", final_agent: null, response_text: null });
+    expect(out).toEqual({
+      status: "failed",
+      final_agent: null,
+      response_text: null,
+      failure_reason: "completed_without_final_response",
+    });
   } finally {
     ctx.dispose();
     fixture.db.close();
@@ -718,7 +724,7 @@ test("awaitChain observes a root response that arrives during late-response grac
       lateResponseGraceMs: 50,
     });
 
-    expect(out).toEqual({
+    expect(out).toStrictEqual({
       status: "completed",
       final_agent: "root-agent",
       response_text: "late authoritative root result",
@@ -760,6 +766,41 @@ test("awaitChain preserves failed root status and its stamped response", async (
       status: "failed",
       final_agent: "root-agent",
       response_text: "partial failure detail",
+      failure_reason: "worker failed",
+    });
+  } finally {
+    ctx.dispose();
+    fixture.db.close();
+  }
+});
+
+test("awaitChain carries a failed root's resolution_reason when it has no response", async () => {
+  const fixture = realChainFixture();
+  const conversationId = "conv-real-failed-root-no-response";
+  const ctx = realAwaitCtx(fixture);
+  try {
+    createApprovedHandoff(fixture.handoffWriter, {
+      handoffId: "root-failed-silent",
+      conversationId,
+      ts: "2026-09-12T13:30:00.000Z",
+    });
+    expect(
+      fixture.handoffWriter.markFailed("root-failed-silent", {
+        reason: "claude-acp: authentication expired",
+        ts: "2026-09-12T13:31:00.000Z",
+      }),
+    ).toBe(true);
+
+    const out = await ctx.awaitChain(conversationId, {
+      timeoutMs: 10,
+      lateResponseGraceMs: 0,
+    });
+
+    expect(out).toEqual({
+      status: "failed",
+      final_agent: null,
+      response_text: null,
+      failure_reason: "claude-acp: authentication expired",
     });
   } finally {
     ctx.dispose();
@@ -801,7 +842,12 @@ test("awaitChain maps a rejected root to failed without borrowing conversation t
       lateResponseGraceMs: 0,
     });
 
-    expect(out).toEqual({ status: "failed", final_agent: null, response_text: null });
+    expect(out).toEqual({
+      status: "failed",
+      final_agent: null,
+      response_text: null,
+      failure_reason: "cancelled",
+    });
   } finally {
     ctx.dispose();
     fixture.db.close();
@@ -821,7 +867,7 @@ test("awaitChain times out when real storage has no root handoff", async () => {
   });
   try {
     const out = await ctx.awaitChain("conv-real-missing-root", { timeoutMs: 3 });
-    expect(out).toEqual({ status: "timeout", final_agent: null, response_text: null });
+    expect(out).toStrictEqual({ status: "timeout", final_agent: null, response_text: null });
   } finally {
     ctx.dispose();
     fixture.db.close();
