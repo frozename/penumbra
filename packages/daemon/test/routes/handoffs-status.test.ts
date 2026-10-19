@@ -272,6 +272,7 @@ function seedCompletedDispatch(
     request_id: null,
     payload_json: { response: opts.response },
     payload_summary: opts.response,
+    origin: null,
   });
 }
 
