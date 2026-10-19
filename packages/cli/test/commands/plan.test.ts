@@ -145,9 +145,11 @@ function planRecord(path: string, status: string, planId = "plan_123"): PlanReco
   };
 }
 
+const FRONT_MATTER = ["---", "plan_id: demo", "home_project: penumbra", "---", ""].join("\n");
+
 test("runPlanValidate returns 0 for two valid yaml meta blocks", async () => {
   const path = join(workDir, "plan.md");
-  const md = ["# Plan", "", validBlock("1.1"), "", validBlock("1.2"), ""].join("\n");
+  const md = [FRONT_MATTER, "# Plan", "", validBlock("1.1"), "", validBlock("1.2"), ""].join("\n");
   await writeFile(path, md, "utf8");
 
   const cap = captureStreams();
@@ -155,12 +157,52 @@ test("runPlanValidate returns 0 for two valid yaml meta blocks", async () => {
     path,
     repoRoot: workDir,
     knownAgents: KNOWN_AGENTS,
+    noRegistry: true,
     out: cap.write.out,
     err: cap.write.err,
   });
 
   expect(code).toBe(0);
   expect(cap.err.join("\n")).toBe("");
+});
+
+test("runPlanValidate returns 2 with header_missing for a plan without front matter", async () => {
+  const path = join(workDir, "headerless.md");
+  await writeFile(path, ["# Plan", "", validBlock("1.1"), ""].join("\n"), "utf8");
+
+  const cap = captureStreams();
+  const code = await runPlanValidate({
+    path,
+    repoRoot: workDir,
+    knownAgents: KNOWN_AGENTS,
+    noRegistry: true,
+    out: cap.write.out,
+    err: cap.write.err,
+  });
+
+  expect(code).toBe(2);
+  expect(cap.err.join("\n")).toContain("<plan>: header_missing:");
+});
+
+test("runPlanValidate returns 2 when the front matter lacks plan_id", async () => {
+  const path = join(workDir, "no-plan-id.md");
+  const md = ["---", "home_project: penumbra", "---", "", validBlock("1.1"), ""].join("\n");
+  await writeFile(path, md, "utf8");
+
+  const cap = captureStreams();
+  const code = await runPlanValidate({
+    path,
+    repoRoot: workDir,
+    knownAgents: KNOWN_AGENTS,
+    noRegistry: true,
+    out: cap.write.out,
+    err: cap.write.err,
+  });
+
+  expect(code).toBe(2);
+  const stderr = cap.err.join("\n");
+  expect(stderr).toContain("line 1: invalid plan header");
+  expect(stderr).toContain("plan_id");
 });
 
 test("runPlanValidate returns 2 with hint when file has no yaml meta blocks", async () => {
