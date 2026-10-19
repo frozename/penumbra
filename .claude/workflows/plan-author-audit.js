@@ -2,10 +2,21 @@
 //   Workflow({ scriptPath: '.claude/workflows/plan-author-audit.js',
 //              args: { phases: [{n, title, brief, claim_ids}], evidenceDir, repo,
 //                      runDir, planPath, homeProject, planId?, preamble?,
-//                      baselines?, authorModel?, auditModel? } })
+//                      baselines?, contracts?, foundationFirst?,
+//                      authorModel?, auditModel? } })
 //
 // Fans out one author agent per phase, assembles the document, applies the
 // DETERMINISTIC repairs in code, then audits and validates the assembled result.
+//
+// Authors cannot see each other's work, so a phase written in parallel with the
+// one that defines an API invents its own (in one run a later phase re-introduced
+// a dependency the foundation had banned). By default the lowest-numbered phase
+// is therefore authored alone first and must end its file with a delimited
+// exported-contracts section; the script cuts that section out of the author's
+// read-back and hands it to every later phase, which still run in parallel with
+// each other. args.foundationFirst: false restores the single parallel batch.
+// args.contracts is operator-written contract text added to every author prompt;
+// it is inline text, because the workflow sandbox cannot read a file path.
 //
 // The constraint block handed to every author agent is GENERATED at run time by
 // `bun scripts/plan-context.ts` — registered seat names, the phase-header regex,
@@ -36,10 +47,10 @@ export const meta = {
   description:
     'Author a phased TDD plan one agent per phase against a run-time-generated repo constraint block, assemble it, apply the deterministic validator repairs in code, then audit the assembled document and run the real plan validator.',
   whenToUse:
-    'Stage B of turning a source artifact into a dispatch-ready plan, after plan-verify-recon has produced the evidence and a human has done the triage and sequencing. Pass args.phases = [{n, title, brief, claim_ids}], args.evidenceDir, args.repo, args.runDir and args.planPath (all absolute), and args.homeProject (the projects.yaml id written into the front matter; args.planId defaults to the planPath basename). Registers nothing and dispatches nothing.',
+    'Stage B of turning a source artifact into a dispatch-ready plan, after plan-verify-recon has produced the evidence and a human has done the triage and sequencing. Pass args.phases = [{n, title, brief, claim_ids}], args.evidenceDir, args.repo, args.runDir and args.planPath (all absolute), and args.homeProject (the projects.yaml id written into the front matter; args.planId defaults to the planPath basename). Optional args.contracts is inline contract text every author must follow; args.foundationFirst: false authors all phases in one parallel batch instead of the lowest-numbered phase first. Registers nothing and dispatches nothing.',
   phases: [
     { title: 'Context', detail: 'shell out to scripts/plan-context.ts for the live seat list, phase-header regex, gate commands and validator rules; fail closed if it does not run' },
-    { title: 'Author', detail: 'one agent per plan phase, each given the generated constraint block and its own evidence slice' },
+    { title: 'Author', detail: 'one agent per plan phase, each given the generated constraint block and its own evidence slice; the foundation phase goes first and its exported contracts reach the rest' },
     { title: 'Assemble', detail: 'generated fixer program assembles the phases and applies the deterministic repairs on disk' },
     { title: 'Audit', detail: 'one audit agent over the ASSEMBLED document, plus the real plan validator' },
   ],
@@ -67,6 +78,8 @@ const ALLOWED_TOP_LEVEL = [
   'planId',
   'preamble',
   'baselines',
+  'contracts',
+  'foundationFirst',
   'authorModel',
   'auditModel',
 ]
@@ -164,6 +177,26 @@ if (/^\s*---\s*$/.test(preamble.trimStart().split('\n')[0] || '')) {
   )
 }
 
+// Repeated in every author prompt, so it is capped; and it is text, never a
+// path, because nothing here can open a file.
+const CONTRACTS_MAX_CHARS = 20000
+if (a.contracts != null && typeof a.contracts !== 'string') {
+  return scopeFailure('bad_contracts: args.contracts must be the contract text itself, as a string')
+}
+const operatorContracts = typeof a.contracts === 'string' ? a.contracts.trim() : ''
+if (operatorContracts.length > CONTRACTS_MAX_CHARS) {
+  return scopeFailure(
+    'bad_contracts: args.contracts is ' + operatorContracts.length + ' characters; the cap is ' + CONTRACTS_MAX_CHARS + ' because every author prompt carries it',
+  )
+}
+if (/^\/\S*$/.test(operatorContracts)) {
+  return scopeFailure('bad_contracts: args.contracts looks like a file path; the workflow sandbox cannot read files, so pass the contract text inline')
+}
+if (a.foundationFirst != null && typeof a.foundationFirst !== 'boolean') {
+  return scopeFailure('bad_foundation_first: args.foundationFirst must be a boolean')
+}
+const foundationFirst = a.foundationFirst !== false
+
 // ---------------------------------------------------------------- schemas ---
 const CONTEXT_SCHEMA = {
   type: 'object',
@@ -206,6 +239,18 @@ const AUTHOR_SCHEMA = {
     task_ids: { type: 'array', items: { type: 'string' }, description: 'every task id you emitted, in document order' },
     seats_used: { type: 'array', items: { type: 'string' }, description: 'every distinct preferred_agent / fallback_agent value you emitted' },
     evidence_claim_ids_used: { type: 'array', items: { type: 'string' } },
+  },
+}
+
+const FOUNDATION_AUTHOR_SCHEMA = {
+  ...AUTHOR_SCHEMA,
+  required: [...AUTHOR_SCHEMA.required, 'exported_contracts'],
+  properties: {
+    ...AUTHOR_SCHEMA.properties,
+    exported_contracts: {
+      type: 'string',
+      description: 'the sed read-back of the exported-contracts section of the file you wrote, markers included, copied verbatim; an empty string if the file has none',
+    },
   },
 }
 
@@ -395,50 +440,146 @@ const FORMAT_CONTRACT = [
   'End each task with an `Expected:` line stating the result as a DELTA against the recorded baseline ("baseline + 2 pass / 0 fail"), never as an absolute count.',
 ].join('\n')
 
-const authorThunks = phaseSpecs.map((p) => () =>
-  agent(
-    [
-      'You are authoring ONE phase of a phased TDD implementation plan for ' + REPO + '.',
-      '',
-      '## Phase ' + p.n + ': ' + p.title,
-      p.brief || '(no brief supplied — derive the scope from your evidence slice)',
-      '',
-      '## Generated repo constraints — these were read from the live repo and daemon at run time. They override anything you remember.',
-      constraintBlock,
-      '',
-      gateCommands.length ? '## Gate commands, verbatim\n' + gateCommands.map((g) => '    ' + g).join('\n') : '',
-      '',
-      '## Seats you may pin',
-      seats.map((s) => '- ' + s).join('\n'),
-      'Use no other name. A seat outside this list either fails validation or fails at run time.',
-      '',
-      '## Your evidence slice',
-      'Read ' + EVIDENCE_DIR + '/findings.json and use ONLY the entries whose claim_id is in this list:',
-      p.claim_ids.length ? p.claim_ids.map((c) => '  - ' + c).join('\n') : '  (none — this phase is derived from recon, not from verified claims)',
-      'Also read ' + EVIDENCE_DIR + '/recon.json (the traps arrays especially) and ' + EVIDENCE_DIR + '/critic.json (sequencing_hazards).',
-      'A finding with verdict REFUTED is a reason NOT to write a task. Say so in the phase prose instead of quietly dropping it.',
-      '',
-      '## Before you write a single code step',
-      'Open the real files named in your evidence and read them. Every file:line you cite must be one you read this turn; the evidence refs may already have moved. A step written against a remembered file shape is the failure mode this contract exists to stop.',
-      '',
-      FORMAT_CONTRACT,
-      '',
-      '## Write it to disk',
-      'Write your phase body to ' + RUN_DIR + '/phases/phase-' + p.n + '.md (mkdir -p first), then report `wc -c` of that file as bytes.',
-      'task_ids, seats_used and evidence_claim_ids_used must be read back off the file you wrote, not from what you intended to write.',
-    ].join('\n'),
-    { label: 'author:phase-' + p.n, phase: 'Author', schema: AUTHOR_SCHEMA, model: authorModel },
-  ).then((body) => ({ n: p.n, body })).catch(() => ({ n: p.n, body: null })),
-)
+const CONTRACTS_BEGIN = '<!-- BEGIN EXPORTED CONTRACTS -->'
+const CONTRACTS_END = '<!-- END EXPORTED CONTRACTS -->'
 
-const authored = await parallel(authorThunks)
+const EXPORT_CONTRACTS_RULES = [
+  '## End your phase with its exported contracts',
+  'Your phase is the foundation. It is authored alone and first; every later phase is authored after it, in parallel, and sees nothing of your work except this section. Whatever you leave out of it, each of them will invent on its own.',
+  'Make this section the LAST thing in your file, in exactly this shape, unindented (a `### ` heading, never `## `):',
+  '',
+  '    ### Exported contracts',
+  '',
+  '    ' + CONTRACTS_BEGIN,
+  '    - Modules: every repo-relative path a later phase imports, and what it exports',
+  '    - Types and data shapes: names and fields, exactly as your tasks define them',
+  '    - Function signatures: name, parameters and return type',
+  '    - Ruled out: every dependency, library or approach this phase rules out, and why',
+  '    ' + CONTRACTS_END,
+  '',
+  'List only what your tasks actually create or settle, named exactly as they name it. Write "none" on a line that has nothing.',
+].join('\n')
+
+const operatorContractSections = operatorContracts
+  ? [
+      [
+        '## Operator-supplied contracts — binding on every phase',
+        'Use the modules, types, signatures and data shapes below exactly as written, and nothing they rule out. They override your own design choices.',
+        '',
+        operatorContracts,
+      ].join('\n'),
+    ]
+  : []
+
+function foundationContractSection(p, text) {
+  return [
+    '## Foundation contracts — exported by Phase ' + p.n + ' (' + p.title + '), which was authored before you',
+    'Use every module path, type, signature and data shape below exactly as named; do not rename, re-declare or re-implement any of them. Anything it rules out is ruled out for your phase too. If you need something it does not export, add it in your own phase instead of reshaping what it exports.',
+    '',
+    text,
+  ].join('\n')
+}
+
+function authorPrompt(p, contractSections, exportsContracts) {
+  const phaseFile = RUN_DIR + '/phases/phase-' + p.n + '.md'
+  return [
+    'You are authoring ONE phase of a phased TDD implementation plan for ' + REPO + '.',
+    '',
+    '## Phase ' + p.n + ': ' + p.title,
+    p.brief || '(no brief supplied — derive the scope from your evidence slice)',
+    '',
+    '## Generated repo constraints — these were read from the live repo and daemon at run time. They override anything you remember.',
+    constraintBlock,
+    '',
+    gateCommands.length ? '## Gate commands, verbatim\n' + gateCommands.map((g) => '    ' + g).join('\n') : '',
+    '',
+    '## Seats you may pin',
+    seats.map((s) => '- ' + s).join('\n'),
+    'Use no other name. A seat outside this list either fails validation or fails at run time.',
+    '',
+    '## Your evidence slice',
+    'Read ' + EVIDENCE_DIR + '/findings.json and use ONLY the entries whose claim_id is in this list:',
+    p.claim_ids.length ? p.claim_ids.map((c) => '  - ' + c).join('\n') : '  (none — this phase is derived from recon, not from verified claims)',
+    'Also read ' + EVIDENCE_DIR + '/recon.json (the traps arrays especially) and ' + EVIDENCE_DIR + '/critic.json (sequencing_hazards).',
+    'A finding with verdict REFUTED is a reason NOT to write a task. Say so in the phase prose instead of quietly dropping it.',
+    '',
+    ...contractSections.flatMap((s) => [s, '']),
+    '## Before you write a single code step',
+    'Open the real files named in your evidence and read them. Every file:line you cite must be one you read this turn; the evidence refs may already have moved. A step written against a remembered file shape is the failure mode this contract exists to stop.',
+    '',
+    FORMAT_CONTRACT,
+    '',
+    ...(exportsContracts ? [EXPORT_CONTRACTS_RULES, ''] : []),
+    '## Write it to disk',
+    'Write your phase body to ' + phaseFile + ' (mkdir -p first), then report `wc -c` of that file as bytes.',
+    'task_ids, seats_used and evidence_claim_ids_used must be read back off the file you wrote, not from what you intended to write.',
+    ...(exportsContracts
+      ? ["exported_contracts is read back the same way: the output of  sed -n '/BEGIN EXPORTED CONTRACTS/,/END EXPORTED CONTRACTS/p' " + phaseFile + '  copied verbatim.']
+      : []),
+  ].join('\n')
+}
+
+function authorPhase(p, contractSections, exportsContracts) {
+  return agent(authorPrompt(p, contractSections, exportsContracts), {
+    label: 'author:phase-' + p.n,
+    phase: 'Author',
+    schema: exportsContracts ? FOUNDATION_AUTHOR_SCHEMA : AUTHOR_SCHEMA,
+    model: authorModel,
+  }).then((body) => ({ n: p.n, body })).catch(() => ({ n: p.n, body: null }))
+}
+
+function phaseAuthored(body) {
+  return !!body && typeof body === 'object' && !Array.isArray(body) && typeof body.bytes === 'number' && body.bytes > 0
+}
+
+// Cut out of the author's own read-back in code: a second agent asked to
+// summarize the contract would be one more place for the API to drift.
+function extractExportedContracts(body) {
+  if (!phaseAuthored(body)) return { text: '', reason: 'the foundation author produced nothing' }
+  const lines = String(body.exported_contracts || '').replace(/\r\n/g, '\n').split('\n')
+  const begin = lines.findIndex((l) => /^\s*<!--\s*BEGIN EXPORTED CONTRACTS\s*-->\s*$/i.test(l))
+  if (begin < 0) return { text: '', reason: 'no ' + CONTRACTS_BEGIN + ' line in the foundation read-back' }
+  const end = lines.findIndex((l, i) => i > begin && /^\s*<!--\s*END EXPORTED CONTRACTS\s*-->\s*$/i.test(l))
+  if (end < 0) return { text: '', reason: 'no ' + CONTRACTS_END + ' line after the begin marker' }
+  const text = lines.slice(begin + 1, end).join('\n').replace(/^\s*\n/, '').replace(/\s+$/, '')
+  return text ? { text, reason: null } : { text: '', reason: 'the exported-contracts section is empty' }
+}
+
+const foundation = foundationFirst && phaseSpecs.length > 1 ? phaseSpecs[0] : null
+const contractsReceipt = {
+  operator_chars: operatorContracts.length,
+  foundation_phase: foundation ? foundation.n : null,
+  foundation_chars: 0,
+  injected_into: [],
+  skipped: null,
+}
+
+let authored
+if (foundation) {
+  const first = await authorPhase(foundation, operatorContractSections, true)
+  const exported = extractExportedContracts(first.body)
+  const rest = phaseSpecs.slice(1)
+  let laterSections = operatorContractSections
+  if (exported.text) {
+    laterSections = [foundationContractSection(foundation, exported.text), ...operatorContractSections]
+    contractsReceipt.foundation_chars = exported.text.length
+    contractsReceipt.injected_into = rest.map((p) => p.n)
+    log('plan-author-audit: phase ' + foundation.n + ' authored first; its exported contracts (' + exported.text.length + ' chars) go to phases ' + contractsReceipt.injected_into.join(', '))
+  } else {
+    contractsReceipt.skipped = { phase: foundation.n, reason: exported.reason }
+    log('plan-author-audit: phase ' + foundation.n + ' exported no contracts (' + exported.reason + '); authoring the rest without them')
+  }
+  authored = [first, ...(await parallel(rest.map((p) => () => authorPhase(p, laterSections, false))))]
+} else {
+  authored = await parallel(phaseSpecs.map((p) => () => authorPhase(p, operatorContractSections, false)))
+}
 
 const phaseReports = []
 const phasesFailed = []
 const seatViolations = []
 for (const r of authored) {
   const body = r && r.body
-  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.bytes !== 'number' || body.bytes <= 0) {
+  if (!phaseAuthored(body)) {
     phasesFailed.push(r ? r.n : null)
     continue
   }
@@ -456,6 +597,7 @@ if (phaseReports.length === 0) {
     plan_path: null,
     context: { seats: seats.length },
     phases: { requested: phaseSpecs.length, authored: 0, failed: phasesFailed },
+    contracts: contractsReceipt,
     fixes: null,
     audit: null,
     validator: null,
@@ -810,6 +952,7 @@ if (!fixerOk) {
     plan_path: PLAN_PATH,
     context: { seats: seats.length },
     phases: { requested: phaseSpecs.length, authored: phaseReports.length, failed: phasesFailed },
+    contracts: contractsReceipt,
     fixer: {
       expected_bytes: FIXER_BYTES,
       reported_bytes: fixerRun ? fixerRun.fixer_bytes_written : null,
@@ -933,6 +1076,7 @@ return {
     baselines_used: fixReport.baselines_used,
     plan_bytes: fixReport.bytes,
   },
+  contracts: contractsReceipt,
   seat_violations: seatViolations,
   audit: audit
     ? {
