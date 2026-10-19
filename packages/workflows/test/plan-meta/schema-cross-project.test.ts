@@ -115,3 +115,52 @@ risk_class: paste-ready
   expect(r.header).toBeUndefined();
   expect(r.tasks.length).toBe(1);
 });
+
+const TASK_BLOCK = `\`\`\`yaml meta
+id: '1.1'
+files: [x.ts]
+file_scope: new
+depends_on: []
+parallel_with: []
+preferred_agent: codex-acp-fast
+fallback_agent: claude-acp-sonnet
+task_size: small
+risk_class: paste-ready
+\`\`\``;
+
+test("parser reports a header that fails the schema instead of dropping it", () => {
+  const md = `---
+home_project: penumbra
+---
+
+### Task 1.1
+
+${TASK_BLOCK}
+`;
+  const r = parsePlanMeta(md);
+  expect(r.header).toBeUndefined();
+  expect(r.errors).toHaveLength(1);
+  expect(r.errors[0]?.line).toBe(1);
+  expect(r.errors[0]?.reason).toContain("invalid plan header");
+  expect(r.errors[0]?.reason).toContain("plan_id");
+  expect(r.tasks.length).toBe(1);
+});
+
+test("parser reads --- after the first line as a thematic break, not a header", () => {
+  const md = `# Plan
+
+**Goal:** demo
+
+---
+
+### Task 1.1
+
+${TASK_BLOCK}
+
+---
+`;
+  const r = parsePlanMeta(md);
+  expect(r.header).toBeUndefined();
+  expect(r.errors).toEqual([]);
+  expect(r.tasks.map((task) => task.id)).toEqual(["1.1"]);
+});

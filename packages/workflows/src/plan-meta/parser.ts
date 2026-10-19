@@ -13,6 +13,13 @@ function errorReason(error: unknown): string {
   return String(error);
 }
 
+function invalidHeaderReason(issues: readonly { path: PropertyKey[]; message: string }[]): string {
+  const detail = issues
+    .map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`)
+    .join("; ");
+  return `invalid plan header: ${detail}`;
+}
+
 export function parsePlanMeta(markdown: string): ParseResult {
   let header: PlanHeader | undefined;
   const tasks: TaskMeta[] = [];
@@ -61,6 +68,8 @@ export function parsePlanMeta(markdown: string): ParseResult {
       const result = PlanHeaderSchema.safeParse(parsed);
       if (result.success) {
         header = result.data;
+      } else {
+        errors.push({ line: currentLine, reason: invalidHeaderReason(result.error.issues) });
       }
       currentBody = null;
       return;
@@ -97,7 +106,8 @@ export function parsePlanMeta(markdown: string): ParseResult {
   };
 
   const startBlockIfMatching = (line: string, index: number): boolean => {
-    if (!header && line === "---") {
+    // Front matter only opens a document; a later --- is a markdown thematic break.
+    if (index === 0 && line === "---") {
       currentLine = index + 1;
       currentKind = "header";
       currentBody = [];
