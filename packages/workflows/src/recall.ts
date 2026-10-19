@@ -14,6 +14,7 @@ import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
 import { runLatestContinuationNoteSource } from "./recall-sources/latest-continuation-note.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
+import { runPendingHandoffSource } from "./recall-sources/pending-handoff.js";
 import { runRegistrarStatusSource } from "./recall-sources/registrar-status.js";
 import { runRoutingBiasListSource } from "./recall-sources/routing-bias-list.js";
 import { runSessionEventsSource, type SessionEvent } from "./recall-sources/session-events.js";
@@ -73,7 +74,7 @@ function normalizeFileContentsArgs(args: Record<string, unknown>): {
     ? args.allowed_roots.filter((root): root is string => typeof root === "string")
     : undefined;
   return {
-    path: path === "~/.penumbra/pending-handoff.md" ? "penumbra-storage:pending-handoff.md" : path,
+    path,
     ...(maxBytes !== undefined ? { max_bytes: maxBytes } : {}),
     ...(allowedRoots !== undefined ? { allowed_roots: allowedRoots } : {}),
   };
@@ -172,6 +173,12 @@ async function runOneSource(
         "latest_continuation_note",
         out.result ?? { path: null, body: "no continuation note found", truncated: false },
       );
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "pending_handoff": {
+      const out = await runPendingHandoffSource({ storageRoot, project, now, args });
+      mergeBucket(byKey, "pending_handoff", out.result);
       warnings.push(...out.warnings);
       return;
     }

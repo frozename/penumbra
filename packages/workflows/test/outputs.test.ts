@@ -223,15 +223,16 @@ test("emitFileOutput on unwritable parent returns warning", async () => {
   expect(r.warnings.length).toBeGreaterThan(0);
 });
 
-test("emitNextSessionPromptOutput writes body in a keyed section to pending-handoff.md", async () => {
+test("emitNextSessionPromptOutput writes body in a keyed section to the project's pending-handoff file", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penum-"));
   try {
     const r = await emitNextSessionPromptOutput({
       body: "next prompt body",
       storageRoot: dir,
       workflowName: "wf-a",
+      project: "demo",
     });
-    const target = join(dir, "pending-handoff.md");
+    const target = join(dir, "pending-handoff.demo.md");
     expect(r.warnings).toEqual([]);
     expect(r.path).toBe(target);
     expect(existsSync(target)).toBe(true);
@@ -247,13 +248,14 @@ test("emitNextSessionPromptOutput writes body in a keyed section to pending-hand
 test("emitNextSessionPromptOutput skips write and returns warning when body is empty or whitespace", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penum-"));
   try {
-    const target = join(dir, "pending-handoff.md");
+    const target = join(dir, "pending-handoff.demo.md");
     await Bun.write(target, "existing content");
 
     const r1 = await emitNextSessionPromptOutput({
       body: "",
       storageRoot: dir,
       workflowName: "wf-a",
+      project: "demo",
     });
     expect(r1.warnings).toEqual([
       "output next-session-prompt: empty body — skipped write to preserve existing artifact",
@@ -265,6 +267,7 @@ test("emitNextSessionPromptOutput skips write and returns warning when body is e
       body: "   \n  \t ",
       storageRoot: dir,
       workflowName: "wf-a",
+      project: "demo",
     });
     expect(r2.warnings).toEqual([
       "output next-session-prompt: empty body — skipped write to preserve existing artifact",
@@ -279,12 +282,13 @@ test("emitNextSessionPromptOutput skips write and returns warning when body is e
 test("emitNextSessionPromptOutput preserves other workflows' sections when a second workflow writes", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penum-"));
   try {
-    const target = join(dir, "pending-handoff.md");
+    const target = join(dir, "pending-handoff.demo.md");
 
     const r1 = await emitNextSessionPromptOutput({
       body: "A body",
       storageRoot: dir,
       workflowName: "session-handoff-stop",
+      project: "demo",
     });
     expect(r1.warnings).toEqual([]);
 
@@ -292,6 +296,7 @@ test("emitNextSessionPromptOutput preserves other workflows' sections when a sec
       body: "B body",
       storageRoot: dir,
       workflowName: "session-memory-sweep",
+      project: "demo",
     });
     expect(r2.warnings).toEqual([]);
 
@@ -311,22 +316,25 @@ test("emitNextSessionPromptOutput preserves other workflows' sections when a sec
 test("emitNextSessionPromptOutput replaces its own section on re-emit without touching other sections", async () => {
   const dir = mkdtempSync(join(tmpdir(), "penum-"));
   try {
-    const target = join(dir, "pending-handoff.md");
+    const target = join(dir, "pending-handoff.demo.md");
 
     await emitNextSessionPromptOutput({
       body: "A v1",
       storageRoot: dir,
       workflowName: "wf-a",
+      project: "demo",
     });
     await emitNextSessionPromptOutput({
       body: "B v1",
       storageRoot: dir,
       workflowName: "wf-b",
+      project: "demo",
     });
     await emitNextSessionPromptOutput({
       body: "A v2",
       storageRoot: dir,
       workflowName: "wf-a",
+      project: "demo",
     });
 
     const content = readFileSync(target, "utf8");
