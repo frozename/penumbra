@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import type { HandoffRow } from "../schemas/handoff.js";
+
 // This exported source is compiled in consumer projects whose aliases resolve within those packages.
 import { ChainReader } from "../readers/chain.js";
 import { HandoffReader } from "../readers/handoff.js";
@@ -32,21 +34,14 @@ function lastDispatchEnd(
   return events.filter((event) => event.kind === "dispatch.end").at(-1);
 }
 
-function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
+function readDispatchEndFlag(
+  events: { kind: string; meta: unknown }[],
+  key: "committed" | "dirty" | "worktree_changed",
+): boolean | null {
   const dispatchEnd = lastDispatchEnd(events);
   const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "worktree_changed" in meta) {
-    const value = (meta as Record<string, unknown>).worktree_changed;
-    if (typeof value === "boolean") return value;
-  }
-  return null;
-}
-
-function readDispatchEndCommitted(events: { kind: string; meta: unknown }[]): boolean | null {
-  const dispatchEnd = lastDispatchEnd(events);
-  const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "committed" in meta) {
-    const value = (meta as Record<string, unknown>).committed;
+  if (meta && typeof meta === "object" && key in meta) {
+    const value = (meta as Record<string, unknown>)[key];
     if (typeof value === "boolean") return value;
   }
   return null;
@@ -72,8 +67,14 @@ export function buildDispatchAuditReport(
 ): DispatchReliabilityReport | null {
   const handoff = sources.handoffReader.get(handoff_id);
   if (!handoff) return null;
+  return buildDispatchAuditReportForHandoff(sources, handoff);
+}
 
-  const events = sources.dispatchEventLog.listByHandoff(handoff_id).map((event) => ({
+export function buildDispatchAuditReportForHandoff(
+  sources: Omit<DispatchAuditSources, "handoffReader">,
+  handoff: HandoffRow,
+): DispatchReliabilityReport {
+  const events = sources.dispatchEventLog.listByHandoff(handoff.handoff_id).map((event) => ({
     kind: event.kind,
     ts: event.ts,
     meta: parseMetaJson(event.meta_json),
@@ -82,8 +83,8 @@ export function buildDispatchAuditReport(
   const responseCount = responses.length;
   const finalResponseText = responses.at(-1)?.text ?? null;
 
-  const worktreeChanged = readWorktreeChangedSnapshot(events);
-  const dispatchEndCommitted = readDispatchEndCommitted(events);
+  const worktreeChanged = readDispatchEndFlag(events, "worktree_changed");
+  const dispatchEndCommitted = readDispatchEndFlag(events, "committed");
 
   const report = classifyDispatchReliability({
     handoff: {
@@ -102,6 +103,8 @@ export function buildDispatchAuditReport(
     dispatchEndCommitted,
     reconciled: null,
     adapterStreaming: null,
+    dispatchPrompt: handoff.message,
+    dispatchEndDirty: readDispatchEndFlag(events, "dirty"),
     now: sources.clock(),
   });
 

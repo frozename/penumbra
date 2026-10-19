@@ -2,7 +2,7 @@ import { HandoffFailRequestSchema } from "@penumbra/api-contract";
 import {
   agentEnforcesPermissionProfile,
   ApproveHandoffRequestSchema,
-  classifyDispatchReliability,
+  buildDispatchAuditReportForHandoff,
   CreateHandoffRequestSchema,
   type HandoffStatus,
   HandoffStatusSchema,
@@ -23,10 +23,6 @@ import {
   resolveProviderConcurrencyDecision,
 } from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
-// Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
-// getWorktreeSnapshot — we avoid live git probes because post-merge they
-// can no longer distinguish "agent did nothing" from "agent committed and
-// main moved forward to the same SHA".
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
 import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
 import {
@@ -41,28 +37,6 @@ import {
   workerTokenMetadataDeclaresProfile,
   workerTokenMetadataDeclaresScratch,
 } from "./worker-profile-gate.js";
-function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
-  const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
-  const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "worktree_changed" in meta) {
-    const v = (meta as Record<string, unknown>).worktree_changed;
-    if (typeof v === "boolean") return v;
-  }
-  return null;
-}
-
-function readDispatchEndCommittedFromEvents(
-  events: { kind: string; meta: unknown }[],
-): boolean | null {
-  const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
-  const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "committed" in meta) {
-    const v = (meta as Record<string, unknown>).committed;
-    if (typeof v === "boolean") return v;
-  }
-  return null;
-}
-
 // bun:sqlite returns 0/1 for BOOLEAN columns; coerce here so the JSON API
 // contract is boolean|null regardless of whether the reader layer already
 // normalised the value (belt-and-suspenders for legacy data paths).
@@ -1405,33 +1379,7 @@ export function handoffsStatusRoute(
     row.status === "failed" && row.resolution_reason
       ? (row.resolution_reason.split("\n")[0]?.slice(0, 200) ?? null)
       : null;
-  const events = services.dispatchEventLog.listByHandoff(handoff_id).map((event) => ({
-    kind: event.kind,
-    ts: event.ts,
-    meta: parseMeta(event.meta_json),
-  }));
-  const responses = services.chainReader.getResponses(row.conversation_id, "final");
-  const worktreeChanged = readWorktreeChangedSnapshot(events);
-  const dispatchEndCommitted = readDispatchEndCommittedFromEvents(events);
-  const reliability = classifyDispatchReliability({
-    handoff: {
-      handoff_id: row.handoff_id,
-      status: row.status,
-      ts: row.ts,
-      resolved_at: row.resolved_at,
-      cancel_requested_at: row.cancel_requested_at,
-      chain_task_type: row.chain_task_type,
-      use_worktree: row.use_worktree,
-    },
-    events,
-    responseCount: responses.length,
-    finalResponseText: responses.at(-1)?.text ?? null,
-    worktreeChanged,
-    dispatchEndCommitted,
-    reconciled: null,
-    adapterStreaming: null,
-    now: services.clock(),
-  });
+  const reliability = buildDispatchAuditReportForHandoff(services, row);
 
   return json({
     handoff_id,
@@ -1449,15 +1397,6 @@ export function handoffsStatusRoute(
       summary: reliability.summary,
     },
   });
-}
-
-function parseMeta(metaJson: string | null): unknown {
-  if (!metaJson) return null;
-  try {
-    return JSON.parse(metaJson);
-  } catch {
-    return null;
-  }
 }
 
 export async function handoffsFailRoute(

@@ -1,3 +1,4 @@
+import { classifyDispatchReliability } from "@penumbra/core";
 import { expect, test } from "bun:test";
 
 import {
@@ -220,6 +221,36 @@ test("roundMessage with parity still carries the previous failure output", () =>
   expect(msg).toContain("Last failure output:");
   expect(msg).toContain("parity_exit=1 lint:strict failed");
   expect(msg).toContain("bash -c 'bun run check:ci'");
+});
+
+test("dispatch_audit reads every roundMessage variant as prescribing the CHECK_RESULT line", () => {
+  for (const parityCheck of [undefined, "bun run check:ci"]) {
+    const report = classifyDispatchReliability({
+      handoff: {
+        handoff_id: "h-round",
+        status: "completed",
+        ts: "2026-05-01T00:00:00.000Z",
+        resolved_at: "2026-05-01T00:00:10.000Z",
+        cancel_requested_at: null,
+        chain_task_type: "implement_small",
+        use_worktree: true,
+      },
+      events: [
+        { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+        { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+        { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z" },
+      ],
+      responseCount: 1,
+      finalResponseText: "Now let me fix the remaining test.",
+      worktreeChanged: true,
+      dispatchEndCommitted: true,
+      reconciled: null,
+      adapterStreaming: null,
+      dispatchPrompt: roundMessage(0, "fix the bug", "bun run typecheck", null, null, parityCheck),
+      now: new Date("2026-05-01T00:00:20.000Z"),
+    });
+    expect(report.status).toBe("end_turn_without_return_block");
+  }
 });
 
 // ---------------------------------------------------------------------------

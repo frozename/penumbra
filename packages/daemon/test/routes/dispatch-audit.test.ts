@@ -34,14 +34,26 @@ function services(): Services {
   });
 }
 
-function createCompletedHandoff(svc: Services, handoffId = "h-1", conversationId = "c-1"): void {
+const CHECK_RESULT_PROMPT = [
+  "Task type: implement_small",
+  "",
+  "Implement the evidence renderer.",
+  "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+].join("\n");
+
+function createCompletedHandoff(
+  svc: Services,
+  handoffId = "h-1",
+  conversationId = "c-1",
+  message = "Task type: implement_small\n\nchange it",
+): void {
   svc.handoffWriter.create({
     handoff_id: handoffId,
     ts: "2026-05-01T00:00:00.000Z",
     from: "user",
     to: "codex",
     to_role: null,
-    message: "Task type: implement_small\n\nchange it",
+    message,
     conversation_id: conversationId,
     project_id: null,
     triggered_by_event_id: "e-1",
@@ -56,7 +68,11 @@ function createCompletedHandoff(svc: Services, handoffId = "h-1", conversationId
   svc.handoffWriter.markCompleted(handoffId, { ts: "2026-05-01T00:00:10.000Z" });
 }
 
-function recordCompleteTimeline(svc: Services, handoffId = "h-1"): void {
+function recordCompleteTimeline(
+  svc: Services,
+  handoffId = "h-1",
+  dispatchEndMeta?: Record<string, unknown>,
+): void {
   svc.dispatchEventLog.recordBatch([
     {
       handoff_id: handoffId,
@@ -85,6 +101,7 @@ function recordCompleteTimeline(svc: Services, handoffId = "h-1"): void {
       source: "worker",
       kind: "dispatch.end",
       ts: "2026-05-01T00:00:09.000Z",
+      ...(dispatchEndMeta ? { meta: dispatchEndMeta } : {}),
     },
   ]);
 }
@@ -365,6 +382,49 @@ describe("buildDispatchAuditReport", () => {
       if (writableDbOpen) writableDb.close();
       rmSync(fixtureDir, { recursive: true, force: true });
     }
+  });
+
+  test("flags a completed turn whose final response lacks the prompt's CHECK_RESULT line", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-mid", "c-mid", CHECK_RESULT_PROMPT);
+    recordCompleteTimeline(svc, "h-mid");
+    writeAgentResponse(svc, "c-mid", "Now let me write the evidence renderer file.");
+
+    const report = buildDispatchAuditReport(svc, "h-mid");
+
+    expect(report?.status).toBe("end_turn_without_return_block");
+    expect(report?.trustworthy).toBe(false);
+    expect(report?.recommended_action).toBe("retry");
+    expect(DispatchAuditResponseSchema.safeParse({ report }).success).toBe(true);
+  });
+
+  test("accepts a completed turn that returns the prompt's CHECK_RESULT line", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-pass", "c-pass", CHECK_RESULT_PROMPT);
+    recordCompleteTimeline(svc, "h-pass");
+    writeAgentResponse(svc, "c-pass", "CHECK_RESULT: PASS\nall green");
+
+    const report = buildDispatchAuditReport(svc, "h-pass");
+
+    expect(report?.status).toBe("complete");
+    expect(report?.recommended_action).toBe("accept");
+  });
+
+  test("flags an implementation turn whose dispatch.end recorded a dirty worktree", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-dirty", "c-dirty");
+    recordCompleteTimeline(svc, "h-dirty", {
+      status: "ok",
+      worktree_changed: true,
+      dirty: true,
+      committed: true,
+    });
+    writeAgentResponse(svc, "c-dirty", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-dirty");
+
+    expect(report?.status).toBe("end_turn_without_return_block");
+    expect(report?.recommended_action).toBe("retry");
   });
 
   test("no agent output stays untrustworthy and absent metadata stays null", () => {
