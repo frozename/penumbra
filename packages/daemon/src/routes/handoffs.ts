@@ -15,7 +15,7 @@ import type { DaemonServices } from "../serve.js";
 import type { ExtraWorkerConfig } from "../workers/config.js";
 
 import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
-import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
+import { maybeTeardownLongLivedTick } from "../long-lived/teardown.js";
 import {
   countProviderInFlight,
   type ProviderConcurrencyDecision,
@@ -28,6 +28,7 @@ import { json } from "./_helpers.js";
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
+import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
 import {
   resolveSingleRoute,
   RouterHardConstraintExhaustedError,
@@ -79,18 +80,6 @@ function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_rev
 
 const NULL_PROJECT_ID_SENTINEL = "__null__"; // Sentinel token that maps to SQL NULL.
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
-
-interface LongLivedTickRow {
-  id: string;
-  agent_id: string;
-  chain_id: string | null;
-  completed_at: number | null;
-  outcome: string | null;
-}
-
-interface AgentPerformanceCostRow {
-  cost_usd: number | null;
-}
 
 interface ClaimSpreadDecision {
   workflow_run_id: string;
@@ -403,68 +392,6 @@ function enforceProviderConcurrencyCap(
     };
   }
   return { decision };
-}
-
-function maybeTeardownLongLivedTick(params: {
-  services: Services;
-  handoff_id: string;
-  dispatch_kind: string | null | undefined;
-  long_lived_tick_id: string | null | undefined;
-  outcome: TickOutcome;
-  error?: string;
-  resolved_at_iso: string;
-}): void {
-  if (params.dispatch_kind !== "long_lived_tick") return;
-  if (!params.long_lived_tick_id) return;
-
-  try {
-    const tick = params.services.db
-      .query<
-        LongLivedTickRow,
-        [string]
-      >("SELECT id, agent_id, chain_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?")
-      .get(params.long_lived_tick_id);
-    if (!tick) return;
-    if (tick.completed_at !== null || tick.outcome !== null) return;
-
-    const resolvedAtMs = Date.parse(params.resolved_at_iso);
-    const costRows = tick.chain_id
-      ? params.services.db
-          .query<AgentPerformanceCostRow, [string]>(
-            `SELECT cost_usd
-             FROM agent_performance
-            WHERE conversation_id = ?
-              AND source <> 'manual_seed'
-              AND cost_usd IS NOT NULL`,
-          )
-          .all(tick.chain_id)
-      : [];
-    const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);
-    const cost_cents = costRows.length > 0 ? Math.round(totalCostUsd * 100) : null;
-    if (cost_cents === null) {
-      params.services.log.warn(
-        { handoff_id: params.handoff_id, long_lived_tick_id: params.long_lived_tick_id },
-        "long-lived tick teardown could not stamp cost_cents yet",
-      );
-    }
-    handleTickTeardown(params.services.db, {
-      tick_id: tick.id,
-      agent_id: tick.agent_id,
-      outcome: params.outcome,
-      error: params.error,
-      now: Number.isNaN(resolvedAtMs) ? Date.now() : resolvedAtMs,
-      cost_cents: cost_cents ?? undefined,
-    });
-  } catch (err) {
-    params.services.log.warn(
-      {
-        handoff_id: params.handoff_id,
-        long_lived_tick_id: params.long_lived_tick_id,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "long-lived tick teardown failed during terminal handoff transition",
-    );
-  }
 }
 
 function resolveCreateRoute(
@@ -1266,6 +1193,9 @@ export async function handoffsClaimRoute(
     );
   }
 
+  const cancelRequested = claimCancelRequestedResponse(services, cur);
+  if (cancelRequested) return cancelRequested;
+
   // A profiled or scratch-routed handoff may only be claimed by a worker
   // that declared the matching capability at registration; otherwise it must
   // stay unclaimed rather than run unconstrained.
@@ -1292,12 +1222,15 @@ export async function handoffsClaimRoute(
     maxProviderInFlight: providerDecision?.max_in_flight,
   });
   if (!won) {
-    return buildClaimConflictResponse(
-      services,
-      handoff_id,
-      body.data.worker_id,
-      spreadDecision,
-      providerDecision,
+    return (
+      claimCancelRequestedResponse(services, services.handoffReader.get(handoff_id)) ??
+      buildClaimConflictResponse(
+        services,
+        handoff_id,
+        body.data.worker_id,
+        spreadDecision,
+        providerDecision,
+      )
     );
   }
 
@@ -1375,28 +1308,6 @@ function resolveExpectedWorkerForCompletion(
     kind: "ok",
     expected_worker_id: body.success ? (body.data as { worker_id?: string }).worker_id : undefined,
   };
-}
-
-function completeCancelFallback(services: Services, handoff_id: string): Response {
-  const cancelledAtIso = services.clock().toISOString();
-  services.handoffWriter.markFailed(handoff_id, {
-    reason: "cancelled",
-    resolved_by: "cancel",
-    ts: cancelledAtIso,
-  });
-  const cancelled = services.handoffReader.get(handoff_id);
-  if (cancelled) {
-    maybeTeardownLongLivedTick({
-      services,
-      handoff_id,
-      dispatch_kind: cancelled.dispatch_kind,
-      long_lived_tick_id: cancelled.long_lived_tick_id,
-      outcome: "failed",
-      error: "cancelled",
-      resolved_at_iso: cancelledAtIso,
-    });
-  }
-  return json({ handoff_id, status: "failed", reason: "cancelled" });
 }
 
 export async function handoffsCompleteRoute(

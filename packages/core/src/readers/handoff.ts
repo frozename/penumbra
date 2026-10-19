@@ -255,6 +255,17 @@ export class HandoffReader {
       .all(...ACTIVE_CANCELLATION_STATUSES);
   }
 
+  listDispatchedCancellationsForWorker(
+    worker_id: string,
+  ): { conversation_id: string; handoff_id: string }[] {
+    return this.db
+      .query<{ conversation_id: string; handoff_id: string }, [string]>(
+        `SELECT conversation_id, handoff_id FROM handoffs
+         WHERE worker_id = ? AND status = 'dispatched' AND cancel_requested_at IS NOT NULL`,
+      )
+      .all(worker_id);
+  }
+
   /**
    * Walks parent_handoff_id upward, counting hops until a root handoff
    * (parent_handoff_id IS NULL) is reached. Caps at SPAWN_DEPTH_SANITY_CAP

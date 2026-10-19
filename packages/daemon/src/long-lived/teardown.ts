@@ -1,3 +1,4 @@
+import type { Services } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
 import { AgentPerformanceWriter, createLogger } from "@penumbra/core";
@@ -126,4 +127,78 @@ export function handleTickTeardown(db: Database, input: TeardownInput): void {
       );
     }
   })();
+}
+
+interface LongLivedTickRow {
+  id: string;
+  agent_id: string;
+  chain_id: string | null;
+  completed_at: number | null;
+  outcome: string | null;
+}
+
+interface AgentPerformanceCostRow {
+  cost_usd: number | null;
+}
+
+export function maybeTeardownLongLivedTick(params: {
+  services: Services;
+  handoff_id: string;
+  dispatch_kind: string | null | undefined;
+  long_lived_tick_id: string | null | undefined;
+  outcome: TickOutcome;
+  error?: string;
+  resolved_at_iso: string;
+}): void {
+  if (params.dispatch_kind !== "long_lived_tick") return;
+  if (!params.long_lived_tick_id) return;
+
+  try {
+    const tick = params.services.db
+      .query<
+        LongLivedTickRow,
+        [string]
+      >("SELECT id, agent_id, chain_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?")
+      .get(params.long_lived_tick_id);
+    if (!tick) return;
+    if (tick.completed_at !== null || tick.outcome !== null) return;
+
+    const resolvedAtMs = Date.parse(params.resolved_at_iso);
+    const costRows = tick.chain_id
+      ? params.services.db
+          .query<AgentPerformanceCostRow, [string]>(
+            `SELECT cost_usd
+             FROM agent_performance
+            WHERE conversation_id = ?
+              AND source <> 'manual_seed'
+              AND cost_usd IS NOT NULL`,
+          )
+          .all(tick.chain_id)
+      : [];
+    const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);
+    const cost_cents = costRows.length > 0 ? Math.round(totalCostUsd * 100) : null;
+    if (cost_cents === null) {
+      params.services.log.warn(
+        { handoff_id: params.handoff_id, long_lived_tick_id: params.long_lived_tick_id },
+        "long-lived tick teardown could not stamp cost_cents yet",
+      );
+    }
+    handleTickTeardown(params.services.db, {
+      tick_id: tick.id,
+      agent_id: tick.agent_id,
+      outcome: params.outcome,
+      error: params.error,
+      now: Number.isNaN(resolvedAtMs) ? Date.now() : resolvedAtMs,
+      cost_cents: cost_cents ?? undefined,
+    });
+  } catch (err) {
+    params.services.log.warn(
+      {
+        handoff_id: params.handoff_id,
+        long_lived_tick_id: params.long_lived_tick_id,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "long-lived tick teardown failed during terminal handoff transition",
+    );
+  }
 }
