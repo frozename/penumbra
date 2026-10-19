@@ -159,6 +159,55 @@ describe("computePrewarmTargets", () => {
     expect(out).toEqual([{ agent: "dup", repoRoot: "/repos/penumbra", slot: 0 }]);
   });
 
+  test("warns when the worker's project_id is unregistered and prewarm falls back to mainRepoPath", () => {
+    const warnings: { obj: Record<string, unknown>; msg: string }[] = [];
+    const out = computePrewarmTargets({
+      agents: [agent("x", { warm_pool: true, warm_pool_prewarm: true })],
+      isolation: "sticky",
+      workerProjectId: "llamactl",
+      resolveProjectRoot,
+      mainRepoPath,
+      cap: 10,
+      log: {
+        warn: (obj, msg) => {
+          warnings.push({ obj, msg });
+        },
+      },
+    });
+
+    expect(out).toEqual([{ agent: "x", repoRoot: "/repos/penumbra", slot: 0 }]);
+    expect(warnings).toEqual([
+      {
+        obj: {
+          worker_project_id: "llamactl",
+          isolation: "sticky",
+          fallback_repo_root: "/repos/penumbra",
+        },
+        msg: "prewarm-home-unresolved",
+      },
+    ]);
+  });
+
+  test("does not warn when the home resolves, the worker has no project, or nothing is prewarmed", () => {
+    const warnings: string[] = [];
+    const log = {
+      warn: (_obj: Record<string, unknown>, msg: string): void => {
+        warnings.push(msg);
+      },
+    };
+    const opted = [agent("x", { warm_pool: true, warm_pool_prewarm: true })];
+    const cases = [
+      { agents: opted, isolation: "hard", workerProjectId: "omlx" },
+      { agents: opted, isolation: "shared", workerProjectId: undefined },
+      { agents: [agent("x", { warm_pool: true })], isolation: "hard", workerProjectId: "llamactl" },
+    ] as const;
+    for (const c of cases) {
+      computePrewarmTargets({ ...c, resolveProjectRoot, mainRepoPath, cap: 10, log });
+    }
+
+    expect(warnings).toEqual([]);
+  });
+
   test("isolation-invariant property: result is bounded and repoRoot equals home across all isolation modes", () => {
     const agents = [
       agent("a1", { warm_pool: true, warm_pool_prewarm: true }),
