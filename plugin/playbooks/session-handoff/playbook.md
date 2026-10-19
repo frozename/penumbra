@@ -102,7 +102,7 @@ Unavailable: {{recall.session_first_moves.open_prs.reason}}
 {{#if recall.session_first_moves.open_prs.prs}}
 {{#each recall.session_first_moves.open_prs.prs}}
 
-- #{{number}} {{title}} — `{{head_ref}}` by {{author}}, opened {{created_at}}, checks {{checks}}{{#if not_from_known_lane}} — **not from a known lane**{{/if}}
+- #{{number}} {{title}} — `{{head_ref}}` by {{author}}, opened {{created_at}}, checks {{checks}}{{#if foreign_author}} — **not authored by this gh account**{{/if}}{{#if not_from_known_lane}} — **not from a known lane**{{/if}}
   {{/each}}
   {{/if}}
 

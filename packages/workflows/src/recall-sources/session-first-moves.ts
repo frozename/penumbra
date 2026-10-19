@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import {
   collectOpenPrs,
   collectSessionFirstMoves,
-  type OpenPrsRunner,
+  type GhRunner,
   type SessionFirstMoves,
 } from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
@@ -18,7 +18,7 @@ export type SessionFirstMovesSourceInput = {
   args: Record<string, unknown>;
   readDaemonPid?: () => number | null;
   readWorkerPids?: () => number[];
-  runGh?: OpenPrsRunner;
+  runGh?: GhRunner;
 };
 
 export type SessionFirstMovesSourceOutput = {

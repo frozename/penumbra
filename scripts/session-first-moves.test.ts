@@ -61,7 +61,7 @@ test("reads near-duplicate promotion gate counts from dream_actions payload sour
   }
 });
 
-test("includes open PRs from gh and marks heads no handoff produced", () => {
+test("includes open PRs from gh and marks foreign authors and heads no handoff produced", () => {
   const storageRoot = mkdtempSync(join(tmpdir(), "session-first-moves-"));
   try {
     writeFileSync(join(storageRoot, "port"), "9");
@@ -86,7 +86,10 @@ test("includes open PRs from gh and marks heads no handoff produced", () => {
         statusCheckRollup: [],
       },
     ]);
-    writeFileSync(join(binDir, "gh"), `#!/bin/sh\ncat <<'JSON'\n${ghJson}\nJSON\n`);
+    writeFileSync(
+      join(binDir, "gh"),
+      `#!/bin/sh\nif [ "$1" = api ]; then echo frozename; exit 0; fi\ncat <<'JSON'\n${ghJson}\nJSON\n`,
+    );
     chmodSync(join(binDir, "gh"), 0o755);
 
     const db = new Database(join(storageRoot, "db.sqlite"));
@@ -120,6 +123,7 @@ test("includes open PRs from gh and marks heads no handoff produced", () => {
           author: "second-account",
           created_at: "2026-09-21T10:00:00Z",
           checks: "success",
+          foreign_author: true,
           not_from_known_lane: true,
         },
         {
@@ -129,6 +133,7 @@ test("includes open PRs from gh and marks heads no handoff produced", () => {
           author: "frozename",
           created_at: "2026-09-21T11:00:00Z",
           checks: "none",
+          foreign_author: false,
           not_from_known_lane: false,
         },
       ],
