@@ -29,7 +29,7 @@ mcp__penumbra__workflow_run({ "name": "session-handoff" })
 The workflow returns:
 
 - A composed prompt (git.log subjects, t2 memory titles, dispatch event timeline)
-- Artifacts written to `docs/notes/maestro-continuation-{date}-{period}.md` (skip-if-exists) and `~/.penumbra/pending-handoff.md` (overwrite)
+- Artifacts written to `docs/notes/maestro-continuation-{date}-{period}.md` (skip-if-exists) and this project's `~/.penumbra/pending-handoff.<project>.md`, where only the workflow's own fenced section is rewritten; `nextSessionPrompt.mode` in the result says `created`, `section_appended` or `section_replaced`
 
 Treat the workflow's output as **scaffolding**, not the final note. It can aggregate facts but cannot tell the next maestro:
 

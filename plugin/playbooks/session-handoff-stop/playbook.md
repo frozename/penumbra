@@ -25,7 +25,7 @@ run:
 - repo: {{repo_root}}
 - generated_at: {{session_start}}
 
-Recent activity this session is tracked in `pending-handoff.md`. Full continuation
+Recent activity this session is tracked in this project's `pending-handoff.<project>.md`. Full continuation
 notes are produced by the full session-handoff workflow on pre-compact/manual paths.
 
 ### Commits since midnight

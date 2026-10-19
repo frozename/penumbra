@@ -88,6 +88,11 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
     ...OptionalSourceFlags,
   }),
   z.object({
+    source: z.literal("pending_handoff"),
+    args: ArgsRecord.optional(),
+    ...OptionalSourceFlags,
+  }),
+  z.object({
     source: z.literal("session_first_moves"),
     args: ArgsRecord.optional(),
     ...OptionalSourceFlags,

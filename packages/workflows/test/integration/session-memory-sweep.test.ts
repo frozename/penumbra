@@ -146,7 +146,7 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
       });
 
       expect(result.outcome).toBe("success");
-      const promptPath = join(root, "pending-handoff.md");
+      const promptPath = join(root, "pending-handoff.penumbra.md");
       expect(existsSync(promptPath)).toBe(true);
       const body = readFileSync(promptPath, "utf8");
       expect(
@@ -263,7 +263,7 @@ test("session-memory-sweep writes no-candidates next-session-prompt output", asy
       });
 
       expect(result.outcome).toBe("success");
-      const promptPath = join(root, "pending-handoff.md");
+      const promptPath = join(root, "pending-handoff.penumbra.md");
       expect(existsSync(promptPath)).toBe(true);
       const body = readFileSync(promptPath, "utf8");
       expect(body).toContain("no new candidates");
@@ -301,7 +301,7 @@ test("session-memory-sweep preserves existing next-session-prompt output when di
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
 
-    const promptPath = join(root, "pending-handoff.md");
+    const promptPath = join(root, "pending-handoff.penumbra.md");
     const existingPrompt = [
       "<!-- penumbra:section session-memory-sweep -->",
       "## Session memory candidates",
