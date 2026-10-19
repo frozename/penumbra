@@ -359,6 +359,7 @@ export class HandoffWriter {
     const whereClauses = [
       "handoff_id=?",
       "status IN ('approved','redirected')",
+      "cancel_requested_at IS NULL",
       "dispatch_attempts < max_dispatch_attempts",
     ];
     const params: (string | number)[] = [worker_id, last_dispatch_started_at, handoff_id];

@@ -28,6 +28,7 @@ import { json } from "./_helpers.js";
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
+import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
 import {
   resolveSingleRoute,
   RouterHardConstraintExhaustedError,
@@ -1192,6 +1193,9 @@ export async function handoffsClaimRoute(
     );
   }
 
+  const cancelRequested = claimCancelRequestedResponse(services, cur);
+  if (cancelRequested) return cancelRequested;
+
   // A profiled or scratch-routed handoff may only be claimed by a worker
   // that declared the matching capability at registration; otherwise it must
   // stay unclaimed rather than run unconstrained.
@@ -1218,12 +1222,15 @@ export async function handoffsClaimRoute(
     maxProviderInFlight: providerDecision?.max_in_flight,
   });
   if (!won) {
-    return buildClaimConflictResponse(
-      services,
-      handoff_id,
-      body.data.worker_id,
-      spreadDecision,
-      providerDecision,
+    return (
+      claimCancelRequestedResponse(services, services.handoffReader.get(handoff_id)) ??
+      buildClaimConflictResponse(
+        services,
+        handoff_id,
+        body.data.worker_id,
+        spreadDecision,
+        providerDecision,
+      )
     );
   }
 
@@ -1301,28 +1308,6 @@ function resolveExpectedWorkerForCompletion(
     kind: "ok",
     expected_worker_id: body.success ? (body.data as { worker_id?: string }).worker_id : undefined,
   };
-}
-
-function completeCancelFallback(services: Services, handoff_id: string): Response {
-  const cancelledAtIso = services.clock().toISOString();
-  services.handoffWriter.markFailed(handoff_id, {
-    reason: "cancelled",
-    resolved_by: "cancel",
-    ts: cancelledAtIso,
-  });
-  const cancelled = services.handoffReader.get(handoff_id);
-  if (cancelled) {
-    maybeTeardownLongLivedTick({
-      services,
-      handoff_id,
-      dispatch_kind: cancelled.dispatch_kind,
-      long_lived_tick_id: cancelled.long_lived_tick_id,
-      outcome: "failed",
-      error: "cancelled",
-      resolved_at_iso: cancelledAtIso,
-    });
-  }
-  return json({ handoff_id, status: "failed", reason: "cancelled" });
 }
 
 export async function handoffsCompleteRoute(

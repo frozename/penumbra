@@ -674,6 +674,23 @@ test("claimDispatch() rejects claim when dispatch_attempts >= max_dispatch_attem
   expect(success).toBe(false);
 });
 
+test("claimDispatch() refuses a cancel-requested approved row and leaves it unclaimed", () => {
+  createApprovedHandoff("h-claim-cancelled");
+  createApprovedHandoff("h-claim-live");
+  expect(writer.requestCancellation("conv-h-claim-cancelled", "cancel-ts")).toBe(true);
+
+  expect(writer.claimDispatch("h-claim-cancelled", "worker-1")).toBe(false);
+  expect(writer.claimDispatch("h-claim-live", "worker-1")).toBe(true);
+
+  const row = db
+    .query<
+      { status: string; worker_id: string | null; dispatch_attempts: number },
+      [string]
+    >("SELECT status, worker_id, dispatch_attempts FROM handoffs WHERE handoff_id=?")
+    .get("h-claim-cancelled");
+  expect(row).toEqual({ status: "approved", worker_id: null, dispatch_attempts: 0 });
+});
+
 test("claimDispatch() enforces provider in-flight cap across provider seats", () => {
   createApprovedHandoff("provider-running", { to: "claude-a" });
   createApprovedHandoff("provider-next", { to: "claude-b" });
