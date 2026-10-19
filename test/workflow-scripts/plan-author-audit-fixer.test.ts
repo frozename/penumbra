@@ -203,3 +203,67 @@ describe("plan-author-audit assembler front matter", () => {
     expect(run.agentCalls).toBe(0);
   });
 });
+
+describe("plan-author-audit rewriteExpectations", () => {
+  const baselines = { core: 1000, daemon: 3000, root: 1170 };
+
+  async function rewrite(line: string): Promise<{
+    out: string | undefined;
+    rewritten: Array<{ shard: string; from: string; to: string }>;
+    skipped: Array<{ reason: string; text: string }>;
+  }> {
+    const run = await runAssembler(taskBlock("1.1", line), { baselines });
+    expect(run.error).toBeUndefined();
+    expect(run.report).not.toBeNull();
+    const report = run.report as {
+      expectations_rewritten: Array<{ shard: string; from: string; to: string }>;
+      expectations_skipped: Array<{ reason: string; text: string }>;
+    };
+    return {
+      out: run.plan.split("\n").find((l) => l.startsWith("Expected:")),
+      rewritten: report.expectations_rewritten,
+      skipped: report.expectations_skipped,
+    };
+  }
+
+  test("reads each count against the shard named just before it", async () => {
+    const r = await rewrite("Expected: `packages/core` 1002 pass, `packages/daemon` 3005 pass.");
+
+    expect(r.out).toBe(
+      "Expected: `packages/core` baseline + 2 pass, `packages/daemon` baseline + 5 pass.",
+    );
+    expect(r.rewritten.map((e) => [e.shard, e.from, e.to])).toEqual([
+      ["core", "1002 pass", "baseline + 2 pass"],
+      ["daemon", "3005 pass", "baseline + 5 pass"],
+    ]);
+    expect(r.skipped).toEqual([]);
+  });
+
+  test("leaves a count that baseline already precedes alone", async () => {
+    const line = "Expected: `packages/daemon` baseline + 5 pass (baseline 3000 pass).";
+    const r = await rewrite(line);
+
+    expect(r.out).toBe(line);
+    expect(r.rewritten).toEqual([]);
+    expect(r.skipped.map((e) => e.reason)).toEqual([
+      "count 3000 is already stated against the baseline",
+    ]);
+  });
+
+  test("an explicit root shard wins over a package named in a later clause", async () => {
+    const r = await rewrite("Expected: root shard 1180 pass; see packages/core notes.");
+
+    expect(r.out).toBe("Expected: root shard baseline + 10 pass; see packages/core notes.");
+    expect(r.rewritten.map((e) => [e.shard, e.from, e.to])).toEqual([
+      ["root", "1180 pass", "baseline + 10 pass"],
+    ]);
+  });
+
+  test("leaves a count with no shard named before it unchanged and records it", async () => {
+    const r = await rewrite("Expected: 1234 pass overall, then `packages/core` 1002 pass.");
+
+    expect(r.out).toBe("Expected: 1234 pass overall, then `packages/core` baseline + 2 pass.");
+    expect(r.skipped.map((e) => e.reason)).toEqual(["no backticked shard precedes count 1234"]);
+    expect(r.rewritten.map((e) => [e.shard, e.from])).toEqual([["core", "1002 pass"]]);
+  });
+});
