@@ -240,8 +240,13 @@ describe("prepareOpencodeMcpConfigDir", () => {
         },
       },
     });
-    expect(warn).toHaveBeenCalledTimes(1);
+    // console.warn is process-global: async work left over from other test files
+    // can warn while this spy is installed, so count only this config's warning.
+    const configWarnings = warn.mock.calls.filter((args) =>
+      String(args[0]).includes(userConfigPath),
+    );
     warn.mockRestore();
+    expect(configWarnings).toHaveLength(1);
     await cleanup();
   });
 
