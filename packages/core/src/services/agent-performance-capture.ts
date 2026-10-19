@@ -354,11 +354,14 @@ function classifyDispatchReliabilityFromDb(
   }
   let worktreeChanged: boolean | null = null;
   let dispatchEndCommitted: boolean | null = null;
+  let dispatchEndDirty: boolean | null = null;
   if (parsedDispatchEndMeta) {
     if (typeof parsedDispatchEndMeta.worktree_changed === "boolean")
       worktreeChanged = parsedDispatchEndMeta.worktree_changed;
     if (typeof parsedDispatchEndMeta.committed === "boolean")
       dispatchEndCommitted = parsedDispatchEndMeta.committed;
+    if (typeof parsedDispatchEndMeta.dirty === "boolean")
+      dispatchEndDirty = parsedDispatchEndMeta.dirty;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
   return classifyDispatchReliability({
@@ -378,6 +381,9 @@ function classifyDispatchReliabilityFromDb(
     dispatchEndCommitted,
     reconciled: null,
     adapterStreaming: null,
+    // No dispatchPrompt: the worker usually sends a response summary, which
+    // replaces the final text with a placeholder the CHECK_RESULT rule would misread.
+    dispatchEndDirty,
   });
 }
 

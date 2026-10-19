@@ -33,6 +33,8 @@ export interface DispatchReliabilityInput {
   dispatchEndCommitted: boolean | null;
   reconciled: boolean | null;
   adapterStreaming: boolean | null;
+  dispatchPrompt?: string | null;
+  dispatchEndDirty?: boolean | null;
   now?: Date;
   staleAfterMs?: number;
   activityIdleMs?: number;
@@ -276,12 +278,52 @@ function classifyResultIntegrity(ctx: ClassificationContext): DispatchReliabilit
   return null;
 }
 
+// Keyed on the exact closing instruction of the fix-until-green round prompt
+// (plugin/workflows/penumbra-fix-until-green/check-parse.ts roundMessage); the
+// response pattern mirrors that workflow's own verdict parser.
+const CHECK_RESULT_PRESCRIPTION =
+  /^IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`/m;
+const CHECK_RESULT_LINE = /^ {0,3}CHECK_RESULT:[ \t]*(?:PASS|FAIL)\b/im;
+
+function lacksPrescribedReturnBlock(input: DispatchReliabilityInput): boolean {
+  if (!input.dispatchPrompt || !CHECK_RESULT_PRESCRIPTION.test(input.dispatchPrompt)) return false;
+  return !CHECK_RESULT_LINE.test(input.finalResponseText ?? "");
+}
+
+function classifyIncompleteTurn(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  if (ctx.input.handoff.status !== "completed") return null;
+  if (lacksPrescribedReturnBlock(ctx.input)) {
+    return makeReport(
+      ctx,
+      "end_turn_without_return_block",
+      false,
+      "final response lacks the CHECK_RESULT line the dispatch prompt prescribes",
+      "retry",
+      [],
+    );
+  }
+  if (ctx.input.dispatchEndDirty === true && isImplementationTask(ctx.input.handoff)) {
+    return makeReport(
+      ctx,
+      "end_turn_without_return_block",
+      false,
+      "implementation task ended its turn with uncommitted changes in the worktree",
+      "retry",
+      [],
+    );
+  }
+  return null;
+}
+
 export function classifyDispatchReliability(
   input: DispatchReliabilityInput,
 ): DispatchReliabilityReport {
   const ctx = buildClassificationContext(input);
   const earlyReport =
-    classifyStaleAndCancel(ctx) ?? classifyMissingLifecycle(ctx) ?? classifyResultIntegrity(ctx);
+    classifyStaleAndCancel(ctx) ??
+    classifyMissingLifecycle(ctx) ??
+    classifyResultIntegrity(ctx) ??
+    classifyIncompleteTurn(ctx);
   if (earlyReport) return earlyReport;
   if (!ctx.terminal) {
     return makeReport(ctx, "complete", false, "handoff is still running and not stale", "wait", []);

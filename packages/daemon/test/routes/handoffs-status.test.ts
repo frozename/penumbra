@@ -210,3 +210,125 @@ test("handoffsStatusRoute returns 404 for unknown handoff_id", () => {
   const res = handoffsStatusRoute(new Request("http://x/handoffs/nope/status"), "nope", services);
   expect(res.status).toBe(404);
 });
+
+function seedCompletedDispatch(
+  services: Services,
+  handoffId: string,
+  opts: { message: string; response: string; dispatchEndMeta: Record<string, unknown> },
+): void {
+  services.handoffWriter.create({
+    handoff_id: handoffId,
+    ts: "2026-04-28T00:00:00Z",
+    from: "user",
+    to: "codex",
+    to_role: null,
+    message: opts.message,
+    conversation_id: `c-${handoffId}`,
+    project_id: null,
+    triggered_by_event_id: `e-${handoffId}`,
+    use_worktree: true,
+    chain_task_type: "implement_small",
+  });
+  services.handoffWriter.approve(handoffId, {
+    resolved_by: "test",
+    resolved_at: "2026-04-28T00:00:01Z",
+  });
+  services.handoffWriter.claimDispatch(handoffId, "worker-1");
+  services.handoffWriter.markCompleted(handoffId, { ts: "2026-04-28T00:00:10Z" });
+  services.dispatchEventLog.recordBatch(
+    (
+      [
+        ["dispatch.start", "2026-04-28T00:00:02Z", undefined],
+        ["proc.spawn", "2026-04-28T00:00:03Z", undefined],
+        ["dispatch.end", "2026-04-28T00:00:09Z", opts.dispatchEndMeta],
+      ] as const
+    ).map(([kind, ts, meta]) => ({
+      handoff_id: handoffId,
+      worker_id: "worker-1",
+      source: "worker",
+      kind,
+      ts,
+      ...(meta ? { meta } : {}),
+    })),
+  );
+  services.t0Writer.write({
+    event_id: `r-${handoffId}`,
+    ts: "2026-04-28T00:00:11Z",
+    ingest_ts: "2026-04-28T00:00:11Z",
+    source: "agentchat",
+    source_detail: null,
+    project_id: null,
+    user_id: "codex",
+    machine_id: "machine-1",
+    session_id: `c-${handoffId}`,
+    event_type: "agent-response",
+    lane: "local",
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: { response: opts.response },
+    payload_summary: opts.response,
+  });
+}
+
+test("handoffsStatusRoute flags a turn that ended without the prompt's CHECK_RESULT line", async () => {
+  const services = tempServices();
+  seedCompletedDispatch(services, "h-mid", {
+    message:
+      "Implement it.\nIMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`.",
+    response: "Now let me write the evidence renderer file.",
+    dispatchEndMeta: { status: "ok", worktree_changed: true, committed: true },
+  });
+
+  const res = handoffsStatusRoute(new Request("http://x/handoffs/h-mid/status"), "h-mid", services);
+  const body = (await res.json()) as HandoffStatusResponse;
+
+  expect(body.reliability?.status).toBe("end_turn_without_return_block");
+  expect(body.reliability?.trustworthy).toBe(false);
+  expect(body.reliability?.recommended_action).toBe("retry");
+});
+
+test("handoffsStatusRoute flags an implementation turn that ended with a dirty worktree", async () => {
+  const services = tempServices();
+  seedCompletedDispatch(services, "h-dirty", {
+    message: "Implement it.",
+    response: "DONE",
+    dispatchEndMeta: { status: "ok", worktree_changed: true, dirty: true, committed: true },
+  });
+
+  const res = handoffsStatusRoute(
+    new Request("http://x/handoffs/h-dirty/status"),
+    "h-dirty",
+    services,
+  );
+  const body = (await res.json()) as HandoffStatusResponse;
+
+  expect(body.reliability?.status).toBe("end_turn_without_return_block");
+});
+
+test("handoffsStatusRoute accepts a clean completed implementation turn", async () => {
+  const services = tempServices();
+  seedCompletedDispatch(services, "h-clean", {
+    message: "Implement it.",
+    response: "DONE",
+    dispatchEndMeta: { status: "ok", worktree_changed: true, dirty: false, committed: true },
+  });
+
+  const res = handoffsStatusRoute(
+    new Request("http://x/handoffs/h-clean/status"),
+    "h-clean",
+    services,
+  );
+  const body = (await res.json()) as HandoffStatusResponse;
+
+  expect(body.reliability).toEqual({
+    status: "complete",
+    trustworthy: true,
+    recommended_action: "accept",
+    summary: "dispatch lifecycle and result evidence are complete",
+  });
+});
