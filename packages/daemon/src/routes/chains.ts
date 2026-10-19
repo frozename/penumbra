@@ -650,10 +650,10 @@ function isInternalHopForMismatch(
   );
 }
 
-function runProjectRegistryGuard(
+async function runProjectRegistryGuard(
   input: ChainStartRequestWithLongLived,
   services: Services,
-): ProjectRegistryGuardOutcome {
+): Promise<ProjectRegistryGuardOutcome> {
   const strictReject = maybeRejectMissingProjectIdForStrictWorkflow(input, services);
   if (strictReject) {
     return {
@@ -677,9 +677,10 @@ function runProjectRegistryGuard(
   }
   try {
     const projectRegistryEntries = services.projectRegistry.list();
-    const guardResult = inspectPromptVsProject({
+    const guardResult = await inspectPromptVsProject({
       prompt: input.message,
       project_id: input.project_id,
+      branch_base: input.branch_base,
       registry: projectRegistryEntries,
     });
     if (guardResult.status !== "mismatch") {
@@ -1835,7 +1836,7 @@ export async function chainStartInternal(
   const explicitProjectIdResponse = enforceExplicitProjectIdGate(input, services);
   if (explicitProjectIdResponse) return explicitProjectIdResponse;
 
-  const guardOutcome = runProjectRegistryGuard(input, services);
+  const guardOutcome = await runProjectRegistryGuard(input, services);
   if (guardOutcome.response) return guardOutcome.response;
   const { routingWarning, projectRegistryEntries } = guardOutcome;
   let routingAdvisory = guardOutcome.routingAdvisory;
