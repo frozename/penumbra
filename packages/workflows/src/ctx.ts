@@ -49,6 +49,9 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     status: "completed" | "failed" | "timeout";
     final_agent: string | null;
     response_text: string | null;
+    /** Why a failed chain failed: the root handoff's resolution_reason, or
+     *  completed_without_final_response. Absent on completed and timeout. */
+    failure_reason?: string;
   }>;
   cancel(conversationId: string): Promise<void>;
   fileWrite(relativePath: string, body: string): Promise<string>;
@@ -100,6 +103,7 @@ type ChainTerminalSnapshot = {
   status: "completed" | "failed";
   final_agent: string | null;
   response_text: string | null;
+  failure_reason?: string;
 };
 
 export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
@@ -180,7 +184,14 @@ async function readJsonBody(res: Response): Promise<unknown> {
   }
 }
 
-type HandoffLike = { handoff_id: string; status: string; resolved_at: string | null };
+type HandoffLike = {
+  handoff_id: string;
+  status: string;
+  resolved_at: string | null;
+  resolution_reason?: string | null;
+};
+
+const COMPLETED_WITHOUT_FINAL_RESPONSE = "completed_without_final_response";
 
 function snapshotFromHandoff(
   services: Services,
@@ -212,17 +223,20 @@ function snapshotFromHandoff(
       status: "failed",
       final_agent: null,
       response_text: null,
+      failure_reason: COMPLETED_WITHOUT_FINAL_RESPONSE,
     };
   }
 
   const status = handoff.status === "completed" ? "completed" : "failed";
   const responseText = hasResponse ? final.text : null;
+  const failureReason = status === "failed" ? handoff.resolution_reason : null;
 
   return {
     terminal: true,
     status,
     final_agent: final?.agent ?? null,
     response_text: responseText,
+    ...(failureReason ? { failure_reason: failureReason } : {}),
   };
 }
 
@@ -340,6 +354,15 @@ async function cancelImpl<TArgs>(
   await deps.chainCancel?.(conversationId);
 }
 
+function awaitResultFromSnapshot(snapshot: ChainTerminalSnapshot): AwaitChainResult {
+  return {
+    status: snapshot.status,
+    final_agent: snapshot.final_agent,
+    response_text: snapshot.response_text,
+    ...(snapshot.failure_reason !== undefined ? { failure_reason: snapshot.failure_reason } : {}),
+  };
+}
+
 type AwaitChainDeps = {
   readChainStatus: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   sleep: (ms: number) => Promise<void>;
@@ -372,21 +395,11 @@ async function awaitChainImpl(
     const status = await ac.readChainStatus(conversationId);
     if (status.terminal) {
       const hasResponse = status.response_text !== null && status.response_text.length > 0;
-      if (hasResponse) {
-        return {
-          status: status.status,
-          final_agent: status.final_agent,
-          response_text: status.response_text,
-        };
-      }
+      if (hasResponse) return awaitResultFromSnapshot(status);
       lastTerminalSnapshot = status;
       firstTerminalAt ??= ac.now();
       if (ac.now() - firstTerminalAt >= lateResponseGraceMs) {
-        return {
-          status: status.status,
-          final_agent: status.final_agent,
-          response_text: status.response_text,
-        };
+        return awaitResultFromSnapshot(status);
       }
     }
     const remainingCall = effectiveTimeout - (ac.now() - start);
@@ -396,13 +409,7 @@ async function awaitChainImpl(
     intervalMs = Math.min(intervalMs * 1.5, 2000);
   }
 
-  if (lastTerminalSnapshot) {
-    return {
-      status: lastTerminalSnapshot.status,
-      final_agent: lastTerminalSnapshot.final_agent,
-      response_text: lastTerminalSnapshot.response_text,
-    };
-  }
+  if (lastTerminalSnapshot) return awaitResultFromSnapshot(lastTerminalSnapshot);
 
   return {
     status: "timeout",

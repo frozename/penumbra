@@ -2,6 +2,8 @@ import type { WorkflowCtx } from "@penumbra/workflows";
 
 export const DEFAULT_WAIT_TIMEOUT_MS = 7_200_000;
 
+const FAILURE_REASON_MAX_CHARS = 300;
+
 export type AwaitedChain = Awaited<ReturnType<WorkflowCtx["awaitChain"]>>;
 
 export type CancelOutcome = {
@@ -14,6 +16,16 @@ export type AwaitOrCancelOutcome = CancelOutcome & {
   wait: AwaitedChain | null;
   error: unknown;
 };
+
+// A failed chain's reason is repeated into the synthesis prompt, and a worker
+// can record a whole adapter stderr dump as it: keep it one bounded line.
+export function failureReasonSummary(reason: string | undefined): string | undefined {
+  const line = reason?.replaceAll(/\s+/g, " ").trim();
+  if (!line) return undefined;
+  return line.length > FAILURE_REASON_MAX_CHARS
+    ? `${line.slice(0, FAILURE_REASON_MAX_CHARS)}…`
+    : line;
+}
 
 // ctx.cancel must never break the caller's own error path: a dispatch the
 // caller is abandoning is best-effort to stop, and a rejected cancel is data,

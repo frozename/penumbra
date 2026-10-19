@@ -234,6 +234,7 @@ type AwaitResultReview = {
   status: "completed" | "failed" | "timeout";
   final_agent: string | null;
   response_text: string | null;
+  failure_reason?: string;
 };
 type DispatchImplReview = (input: DispatchInputReview) => Promise<DispatchResultReview>;
 type AwaitImplReview = (
@@ -1043,6 +1044,66 @@ test("all persona awaits fail: synthesizer is not dispatched and synthesis_path 
     expect(result.synthesis_path).toBeNull();
     expect(result.error).toBe("all_persona_dispatches_failed");
     expect(dispatch).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed persona chains name their failure reason in the synthesis prompt and artifacts", async () => {
+  const failures: Record<string, string> = {
+    "security-conv": "claude-acp exited 1\n  stderr: authentication expired",
+    "simplicity-conv": "completed_without_final_response",
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security", "performance", "simplicity"] },
+    awaitImpl: (conversationId) => {
+      const failureReason = failures[conversationId];
+      if (failureReason !== undefined) {
+        return Promise.resolve({
+          status: "failed" as const,
+          final_agent: null,
+          response_text: null,
+          failure_reason: failureReason,
+        });
+      }
+      return Promise.resolve({
+        status: "completed" as const,
+        final_agent: "agent",
+        response_text:
+          conversationId === "codex-conv"
+            ? WELL_FORMED_SYNTHESIS
+            : `review for ${conversationId}\n\n\`\`\`json\n[]\n\`\`\``,
+      });
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.eligible_agents = ["security", "performance", "simplicity"];
+    reviewWorkload.fan_out = 3;
+    const result = (await fn(ctx, baseRecall())) as { out_dir: string };
+    const synthMessage = dispatch.mock.calls.find(([input]) => input.agent === "codex")?.[0]
+      .message;
+    expect(synthMessage).toContain(
+      "### security (security)\nDISPATCH FAILED: claude-acp exited 1 stderr: authentication expired",
+    );
+    expect(synthMessage).toContain(
+      "### simplicity (simplicity)\nDISPATCH FAILED: completed_without_final_response",
+    );
+    expect(synthMessage).toContain("### performance (performance)\nreview for performance-conv");
+
+    const security = JSON.parse(
+      await readFile(join(result.out_dir, "security.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(security.error).toBe("claude-acp exited 1 stderr: authentication expired");
+    expect(await readFile(join(result.out_dir, "simplicity.md"), "utf8")).toBe(
+      "<dispatch failed: completed_without_final_response>",
+    );
+    const performance = JSON.parse(
+      await readFile(join(result.out_dir, "performance.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(performance.status).toBe("completed");
+    expect(performance).not.toHaveProperty("error");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

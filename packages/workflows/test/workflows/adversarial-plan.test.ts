@@ -161,6 +161,7 @@ type DispatchResult = {
 type AwaitResult = {
   status: "completed" | "failed" | "timeout";
   response_text: string | null;
+  failure_reason?: string;
 };
 type DispatchImpl = (input: DispatchInput) => Promise<DispatchResult>;
 type AwaitImpl = (conversationId: string, opts?: { timeoutMs?: number }) => Promise<AwaitResult>;
@@ -496,6 +497,54 @@ test("one persona fails: synth still runs with surviving persona only", async ()
     const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
     expect(synthContent).toContain("synthesized plan");
     expect(synthContent).not.toContain("simplifier plan");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed persona chains name their failure reason in the synthesis prompt and artifacts", async () => {
+  const failures: Record<string, string> = {
+    "simplifier-conv": "codex-acp exited 1\n  stderr: quota exhausted",
+    "risk-conv": "completed_without_final_response",
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier", "risk"],
+    },
+    awaitImpl: (conversationId) => {
+      const failureReason = failures[conversationId];
+      return Promise.resolve(
+        failureReason === undefined
+          ? { status: "completed" as const, response_text: `plan for ${conversationId}` }
+          : { status: "failed" as const, response_text: null, failure_reason: failureReason },
+      );
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { out_dir: string };
+    const synthMessage = dispatch.mock.calls.find(([input]) => input.agent === "codex")?.[0]
+      .message;
+    expect(synthMessage).toContain(
+      "### simplifier (simplifier)\nDISPATCH FAILED: codex-acp exited 1 stderr: quota exhausted",
+    );
+    expect(synthMessage).toContain(
+      "### risk (risk)\nDISPATCH FAILED: completed_without_final_response",
+    );
+    expect(synthMessage).toContain("### architect (architect)\nplan for architect-conv");
+
+    const simplifier = JSON.parse(
+      await readFile(join(result.out_dir, "simplifier.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(simplifier.error).toBe("codex-acp exited 1 stderr: quota exhausted");
+    expect(await readFile(join(result.out_dir, "risk.md"), "utf8")).toBe(
+      "<dispatch failed: completed_without_final_response>",
+    );
+    const architect = JSON.parse(
+      await readFile(join(result.out_dir, "architect.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(architect.status).toBe("completed");
+    expect(architect).not.toHaveProperty("error");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@ import type { WorkflowCtx } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, test } from "bun:test";
 
-import { awaitChainOrCancel, cancelChainQuietly } from "./await-or-cancel.js";
+import { awaitChainOrCancel, cancelChainQuietly, failureReasonSummary } from "./await-or-cancel.js";
 
 type Ctx = Pick<WorkflowCtx, "awaitChain" | "cancel">;
 
@@ -158,5 +158,23 @@ describe("cancelChainQuietly", () => {
     const outcome = await cancelChainQuietly(ctx, "conv");
     expect(outcome.cancel_requested).toBe(false);
     expect(outcome.cancel_error).toBe("raw failure");
+  });
+});
+
+describe("failureReasonSummary", () => {
+  test("returns undefined when the chain carried no failure reason", () => {
+    expect(failureReasonSummary(undefined)).toBeUndefined();
+    expect(failureReasonSummary("  \n ")).toBeUndefined();
+  });
+
+  test("collapses a multi-line reason onto one line", () => {
+    expect(failureReasonSummary("claude-acp exited 1\n  stderr: authentication expired\n")).toBe(
+      "claude-acp exited 1 stderr: authentication expired",
+    );
+  });
+
+  test("caps an oversized reason at 300 characters with an ellipsis", () => {
+    const summary = failureReasonSummary("x".repeat(5000));
+    expect(summary).toBe(`${"x".repeat(300)}…`);
   });
 });
