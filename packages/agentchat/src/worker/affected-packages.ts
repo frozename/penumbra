@@ -1,5 +1,13 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+const PACKAGE_JSON_SUFFIX = "/package.json";
+
+export interface DiffPackageScope {
+  affectedPackages: string[] | null;
+  deletedPackages: string[];
+  runRootTestShard: boolean;
+}
 
 /**
  * Returns true for repo-root paths covered by the root test shard
@@ -7,7 +15,7 @@ import { join } from "node:path";
  * `scripts/` and `test/`. These are not package changes, but they carry real
  * test coverage, so they must not force the conservative full-suite fallback.
  */
-export function isRootTestShardPath(path: string): boolean {
+function isRootTestShardPath(path: string): boolean {
   return (
     path === "scripts" || path.startsWith("scripts/") || path === "test" || path.startsWith("test/")
   );
@@ -84,4 +92,45 @@ export function resolveAffectedPackages(
   }
 
   return Array.from(packageRoots).sort();
+}
+
+/**
+ * Package roots whose package.json the diff touched and head no longer has.
+ * Only the `packages/<name>` and `packages/<group>/<name>` shapes that
+ * resolvePackageRoot accepts count, so a fixture package.json inside a live
+ * package is not mistaken for a deleted package.
+ */
+function findDeletedPackageRoots(
+  paths: string[],
+  isPackageDir: (packageDir: string) => boolean,
+): string[] {
+  const deleted = new Set<string>();
+  for (const p of paths) {
+    if (!p.startsWith("packages/") || !p.endsWith(PACKAGE_JSON_SUFFIX)) continue;
+    const root = p.slice(0, -PACKAGE_JSON_SUFFIX.length);
+    const depth = root.split("/").length;
+    const isWorkspaceRoot = depth === 2 || (depth === 3 && !isPackageDir(dirname(root)));
+    if (isWorkspaceRoot && !isPackageDir(root)) deleted.add(root);
+  }
+  return Array.from(deleted).sort();
+}
+
+/**
+ * Scopes a diff to the packages it affects. A package the diff deleted has no
+ * test dir or tsconfig at head, so its paths stay out of affectedPackages and
+ * the root test shard runs in its place.
+ */
+export function scopeDiffToPackages(
+  paths: string[],
+  isPackageDir: (packageDir: string) => boolean,
+): DiffPackageScope {
+  const deletedPackages = findDeletedPackageRoots(paths, isPackageDir);
+  const survivingPaths = paths.filter(
+    (p) => !deletedPackages.some((root) => p.startsWith(`${root}/`)),
+  );
+  return {
+    affectedPackages: resolveAffectedPackages(survivingPaths, isPackageDir),
+    deletedPackages,
+    runRootTestShard: deletedPackages.length > 0 || paths.some(isRootTestShardPath),
+  };
 }

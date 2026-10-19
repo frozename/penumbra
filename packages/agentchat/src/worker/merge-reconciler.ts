@@ -20,7 +20,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 import { PenumbraHttpError } from "../penumbra-client.js";
-import { isRootTestShardPath, resolveAffectedPackages } from "./affected-packages.js";
+import { scopeDiffToPackages } from "./affected-packages.js";
 import {
   type BunTestReport,
   isKnownBunTeardownPanicPass,
@@ -470,6 +470,7 @@ interface ReconcileState {
   diffStats: { filesChanged: number; linesAdded: number; linesDeleted: number };
   rebaseOutcome: RebaseOutcome;
   affectedPackages: string[] | null;
+  deletedPackages: string[];
   packagesToBuild: string[] | null;
   changedFiles: Set<string>;
   runRootTestShard: boolean;
@@ -853,8 +854,10 @@ async function loadWorkspacePackageJsons(
 }
 
 async function computeAffectedPackageClosure(ctx: ReconcileCtx): Promise<AffectedClosure> {
-  const { affectedPackages } = ctx.state;
-  if (affectedPackages === null) {
+  const { affectedPackages, deletedPackages } = ctx.state;
+  // A deleted package's dependents cannot be found through its removed
+  // package.json, so a deletion attributes every package diagnostic.
+  if (affectedPackages === null || deletedPackages.length > 0) {
     return { prefixes: ["packages/"], packages: [] };
   }
   if (affectedPackages.length === 0) {
@@ -1253,10 +1256,12 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
       .map((line) => line.trim())
       .filter(Boolean);
     state.changedFiles = new Set(diffFiles);
-    state.affectedPackages = resolveAffectedPackages(diffFiles, (dir) =>
+    const scope = scopeDiffToPackages(diffFiles, (dir) =>
       existsSync(join(wt.path, dir, "package.json")),
     );
-    state.runRootTestShard = diffFiles.some(isRootTestShardPath);
+    state.affectedPackages = scope.affectedPackages;
+    state.deletedPackages = scope.deletedPackages;
+    state.runRootTestShard = scope.runRootTestShard;
   } catch (err) {
     deps.log.warn(
       { handoffId, baseRef: ctx.baseRef, branch: wt.branchName, err: String(err) },
@@ -1411,7 +1416,7 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
   const timeout = ctx.deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   const affectedPackages = ctx.state.affectedPackages;
   try {
-    if (affectedPackages === null) {
+    if (affectedPackages === null || ctx.state.deletedPackages.length > 0) {
       return await runTypecheckOnAllPackages(ctx, timeout);
     }
     if (affectedPackages.length === 0) {
@@ -2067,6 +2072,7 @@ export function createMergeReconciler(
         diffStats: { filesChanged: 0, linesAdded: 0, linesDeleted: 0 },
         rebaseOutcome: { attempted: false, result: "skipped" },
         affectedPackages: null,
+        deletedPackages: [],
         packagesToBuild: null,
         changedFiles: new Set<string>(),
         runRootTestShard: false,
