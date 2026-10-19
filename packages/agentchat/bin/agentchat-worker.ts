@@ -807,6 +807,7 @@ const computePrewarmTargetsNow = (): PrewarmTarget[] =>
     resolveProjectRoot: prewarmResolveProjectRoot,
     mainRepoPath: process.cwd(),
     cap: PREWARM_GLOBAL_CAP,
+    log,
   });
 
 // Aborted on shutdown to kill any in-flight pre-warm spawn before the pools are
