@@ -1,12 +1,19 @@
+import { execFile as execFileCb } from "node:child_process";
 import { existsSync as defaultExistsSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import type { ResolvedProjectEntry } from "../projects/schema.js";
+
+const execFile = promisify(execFileCb);
+
+const GIT_LOOKUP_TIMEOUT_MS = 2_000;
 
 export type DispatchRoutingGuardInput = {
   prompt: string;
   project_id: string;
   registry: ResolvedProjectEntry[];
+  branch_base?: string;
 };
 
 export type DispatchRoutingGuardResult =
@@ -91,20 +98,53 @@ function collectSuggestionsForToken(
   }
 }
 
-function analyzePackageTokens(
+async function runGit(root: string, args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFile("git", ["-C", root, ...args], {
+      encoding: "utf8",
+      timeout: GIT_LOOKUP_TIMEOUT_MS,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+// The home checkout's working tree can lag the dispatch base or have already
+// dropped a retired package, so a token absent on disk still belongs to the
+// target when the target's git knows the path.
+async function isKnownToProject(
+  root: string,
+  token: string,
+  branchBase: string | undefined,
+  memoizedExistsSync: (path: string) => boolean,
+): Promise<boolean> {
+  if (memoizedExistsSync(join(root, token))) return true;
+  if (branchBase !== undefined) {
+    const objectSpec = `${branchBase}:./${token}`;
+    const atBase = await runGit(root, ["cat-file", "-e", "--end-of-options", objectSpec]);
+    if (atBase !== null) return true;
+  }
+  const lastTouch = await runGit(root, ["rev-list", "-1", "--all", "--", token]);
+  return lastTouch !== null && lastTouch !== "";
+}
+
+async function analyzePackageTokens(
   packageTokens: string[],
   input: DispatchRoutingGuardInput,
   currentRoot: string | undefined,
   memoizedExistsSync: (path: string) => boolean,
-): PackageMismatchAnalysis {
-  const missing_in_project: string[] = [];
+): Promise<PackageMismatchAnalysis> {
   const suggestedCounts = new Map<string, number>();
-  for (const token of packageTokens) {
-    if (!currentRoot) {
-      missing_in_project.push(token);
-      continue;
-    }
-    if (memoizedExistsSync(join(currentRoot, token))) continue;
+  if (currentRoot === undefined) return { missing_in_project: packageTokens, suggestedCounts };
+  const known = await Promise.all(
+    packageTokens.map((token) =>
+      isKnownToProject(currentRoot, token, input.branch_base, memoizedExistsSync),
+    ),
+  );
+  const missing_in_project: string[] = [];
+  for (const [index, token] of packageTokens.entries()) {
+    if (known[index] === true) continue;
     missing_in_project.push(token);
     collectSuggestionsForToken(token, input, memoizedExistsSync, suggestedCounts);
   }
@@ -122,10 +162,10 @@ function makeMemoizedExists(existsSync: (p: string) => boolean): (path: string) 
   };
 }
 
-export function inspectPromptVsProject(
+export async function inspectPromptVsProject(
   input: DispatchRoutingGuardInput,
   opts?: { existsSync?: (p: string) => boolean },
-): DispatchRoutingGuardResult {
+): Promise<DispatchRoutingGuardResult> {
   const memoizedExistsSync = makeMemoizedExists(opts?.existsSync ?? defaultExistsSync);
   const mentioned_paths = collectMentionedPaths(input.prompt, input.registry);
   if (mentioned_paths.length === 0) return { status: "ok", mentioned_paths };
@@ -141,7 +181,7 @@ export function inspectPromptVsProject(
   const packageTokens = mentioned_paths.filter((value) => /^packages\/[A-Za-z0-9_-]+$/.test(value));
   if (packageTokens.length === 0) return { status: "ok", mentioned_paths };
 
-  const { missing_in_project, suggestedCounts } = analyzePackageTokens(
+  const { missing_in_project, suggestedCounts } = await analyzePackageTokens(
     packageTokens,
     input,
     currentRoot,
