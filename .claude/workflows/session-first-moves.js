@@ -1,7 +1,7 @@
 export const meta = {
   name: "session-first-moves",
   description:
-    "Collect session-start diagnostics: git status, daemon health, handoffs, task drafts, gate deltas, open lanes. Optionally run Phase-5 soak checks.",
+    "Collect session-start diagnostics: git status, daemon health, handoffs, task drafts, gate deltas, open lanes, open GitHub PRs. Optionally run Phase-5 soak checks.",
   whenToUse:
     "At session start to get a quick overview of workspace and daemon state, or as a Phase-5 soak verification step.",
   phases: [
@@ -25,6 +25,42 @@ if (typeof input === "string") {
 const soak = !!(input && input.soak);
 
 const nullable = ({ type, ...rest }) => ({ ...rest, type: [type, "null"] });
+
+const OPEN_PRS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["prs", "reason"],
+  description:
+    "Open GitHub PRs from `gh pr list`. prs is null and reason says why when gh is missing, the repo is not on GitHub, or the call fails or times out. not_from_known_lane is true when no handoff produced the head branch, null when handoffs could not be read. Return verbatim from the collector.",
+  properties: {
+    prs: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "number",
+          "title",
+          "head_ref",
+          "author",
+          "created_at",
+          "checks",
+          "not_from_known_lane",
+        ],
+        properties: {
+          number: { type: "integer" },
+          title: { type: "string" },
+          head_ref: { type: "string" },
+          author: nullable({ type: "string" }),
+          created_at: { type: "string" },
+          checks: { type: "string", enum: ["success", "failure", "pending", "none"] },
+          not_from_known_lane: nullable({ type: "boolean" }),
+        },
+      },
+    },
+    reason: nullable({ type: "string" }),
+  },
+};
 
 const SFM_SCHEMA = {
   type: "object",
@@ -59,6 +95,7 @@ const SFM_SCHEMA = {
       description: "Memory gate delta counts",
     },
     open_lanes: nullable({ type: "integer", description: "Count of open lanes" }),
+    open_prs: OPEN_PRS_SCHEMA,
     pin_share: {
       type: ["object", "null"],
       description: "Dispatch pin-share from handoffs: role_route vs pinned (NULL reason), 24h/7d, plus the steerable subset (dispatch_kind NULL/workflow). Return verbatim from the collector.",
@@ -89,6 +126,7 @@ const SOAK_SCHEMA = {
       },
     },
     open_lanes: nullable({ type: "integer" }),
+    open_prs: OPEN_PRS_SCHEMA,
     pin_share: {
       type: ["object", "null"],
       description: "Dispatch pin-share from handoffs: role_route vs pinned (NULL reason), 24h/7d, plus the steerable subset (dispatch_kind NULL/workflow). Return verbatim from the collector.",

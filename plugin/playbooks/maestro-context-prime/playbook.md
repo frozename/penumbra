@@ -95,5 +95,6 @@ First moves:
 - gate_deltas: {{recall.session_first_moves.gate_deltas}}
 - open_lanes: {{recall.session_first_moves.open_lanes}}
 - pin_share: {{recall.session_first_moves.pin_share}}
+- open_prs: {{recall.session_first_moves.open_prs}}
 
 If a workflow matches this prompt, prefer invoking it via `/<slash>` over hand-rolling the equivalent.

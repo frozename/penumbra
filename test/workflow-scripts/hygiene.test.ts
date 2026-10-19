@@ -489,3 +489,48 @@ describe("land-and-close", () => {
     expect(closePrompt!).not.toContain("explicit override_reason");
   });
 });
+
+describe("session-first-moves", () => {
+  const OPEN_PR_KEYS = [
+    "author",
+    "checks",
+    "created_at",
+    "head_ref",
+    "not_from_known_lane",
+    "number",
+    "title",
+  ];
+
+  for (const soak of [false, true]) {
+    test(`${soak ? "soak" : "default"} schema admits the collector's open_prs field`, async () => {
+      let schema: unknown;
+      const agent: AgentFn = async (_prompt, opts) => {
+        schema = opts.schema;
+        return {};
+      };
+
+      await runWorkflow(".claude/workflows/session-first-moves.js", { soak }, agent);
+
+      const root = schema as {
+        additionalProperties?: boolean;
+        properties?: Record<string, unknown>;
+      };
+      expect(root.additionalProperties).toBe(false);
+      const openPrs = root.properties?.["open_prs"] as
+        | {
+            additionalProperties?: boolean;
+            properties?: {
+              prs?: { type?: unknown; items?: { properties?: Record<string, unknown> } };
+              reason?: { type?: unknown };
+            };
+          }
+        | undefined;
+      expect(openPrs?.additionalProperties).toBe(false);
+      expect(openPrs?.properties?.prs?.type).toEqual(["array", "null"]);
+      expect(openPrs?.properties?.reason?.type).toEqual(["string", "null"]);
+      expect(Object.keys(openPrs?.properties?.prs?.items?.properties ?? {}).sort()).toEqual(
+        OPEN_PR_KEYS,
+      );
+    });
+  }
+});

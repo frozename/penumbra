@@ -94,6 +94,18 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 | -------------------------------------------------- | ----------------------------------------- | ------------------------------------------ | ---------------------------------------- |
 | {{recall.session_first_moves.pending_task_drafts}} | {{recall.session_first_moves.open_lanes}} | {{recall.session_first_moves.gate_deltas}} | {{recall.session_first_moves.pin_share}} |
 
+### Open PRs
+
+{{#if recall.session_first_moves.open_prs.reason}}
+Unavailable: {{recall.session_first_moves.open_prs.reason}}
+{{/if}}
+{{#if recall.session_first_moves.open_prs.prs}}
+{{#each recall.session_first_moves.open_prs.prs}}
+
+- #{{number}} {{title}} — `{{head_ref}}` by {{author}}, opened {{created_at}}, checks {{checks}}{{#if not_from_known_lane}} — **not from a known lane**{{/if}}
+  {{/each}}
+  {{/if}}
+
 ### Active biases
 
 {{#if recall.routing_bias_list}}

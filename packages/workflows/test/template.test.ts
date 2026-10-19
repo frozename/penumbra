@@ -112,6 +112,29 @@ function braceFreeFixtureScope(): TestScope {
         git_status_dirty_count: 0,
         head_sha: "abc1234",
         open_lanes: 0,
+        open_prs: {
+          prs: [
+            {
+              author: "second-account",
+              checks: "success",
+              created_at: "2026-09-21T10:00:00Z",
+              head_ref: "feat/other-account",
+              not_from_known_lane: true,
+              number: 74,
+              title: "Implement #71",
+            },
+            {
+              author: "maestro",
+              checks: "failure",
+              created_at: "2026-09-21T11:00:00Z",
+              head_ref: "fix/issue-71_abcd1234",
+              not_from_known_lane: false,
+              number: 78,
+              title: "Fix #71",
+            },
+          ],
+          reason: null,
+        },
         origin_main_sha: "def5678",
         pending_handoffs: 1,
         pending_task_drafts: 2,
@@ -234,4 +257,68 @@ test("matches historical output for real brace-free session playbooks", () => {
     expect(rendered).toBe(historical);
     expect(warnings).toEqual(historicalWarnings);
   }
+});
+
+function renderPlaybook(path: string, scope: TestScope, warnings: string[]): string {
+  const spec = loadMarkdownPlaybook(path);
+  if (spec.run.kind !== "markdown-template") {
+    throw new Error(`${path} is not a markdown template`);
+  }
+  return renderTemplate(spec.run.template, scope, { warnings });
+}
+
+function withOpenPrs(openPrs: unknown): TestScope {
+  const scope = braceFreeFixtureScope();
+  const recall = scope["recall"] as TestScope;
+  return {
+    ...scope,
+    recall: {
+      ...recall,
+      session_first_moves: {
+        ...(recall["session_first_moves"] as TestScope),
+        open_prs: openPrs,
+      },
+    },
+  };
+}
+
+test("session-handoff skeleton lists open PRs and flags heads not from a known lane", () => {
+  const warnings: string[] = [];
+  const rendered = renderPlaybook(
+    "plugin/playbooks/session-handoff/playbook.md",
+    braceFreeFixtureScope(),
+    warnings,
+  );
+
+  expect(rendered).toContain(
+    "- #74 Implement #71 — `feat/other-account` by second-account, opened 2026-09-21T10:00:00Z, checks success — **not from a known lane**\n",
+  );
+  expect(rendered).toContain(
+    "- #78 Fix #71 — `fix/issue-71_abcd1234` by maestro, opened 2026-09-21T11:00:00Z, checks failure\n",
+  );
+  expect(rendered).not.toContain("Unavailable:");
+  expect(warnings.filter((warning) => warning.includes("open_prs"))).toEqual([]);
+});
+
+test("session-handoff skeleton says why open PRs are unavailable", () => {
+  const warnings: string[] = [];
+  const rendered = renderPlaybook(
+    "plugin/playbooks/session-handoff/playbook.md",
+    withOpenPrs({ prs: null, reason: "gh not installed" }),
+    warnings,
+  );
+
+  expect(rendered).toContain("\nUnavailable: gh not installed\n");
+  expect(rendered).not.toContain("- #");
+  expect(warnings.filter((warning) => warning.includes("open_prs"))).toEqual([]);
+});
+
+test("maestro-context-prime first moves include open_prs", () => {
+  const rendered = renderPlaybook(
+    "plugin/playbooks/maestro-context-prime/playbook.md",
+    withOpenPrs({ prs: null, reason: "not a GitHub repository" }),
+    [],
+  );
+
+  expect(rendered).toContain('- open_prs: {"prs":null,"reason":"not a GitHub repository"}\n');
 });
