@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PenumbraHttpError } from "@src/penumbra-client.js";
+import { resolveAffectedPackages } from "@src/worker/affected-packages.js";
 import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
 import {
   createMergeReconciler,
@@ -26,7 +27,6 @@ import {
   type MergeResult,
   type ReconcilerDeps,
   type ReconcilerVerdict,
-  resolveAffectedPackages,
 } from "@src/worker/merge-reconciler.js";
 import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
 import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
