@@ -471,3 +471,45 @@ test("rewriteWorktreeHandoffMessage rewrites main-repo paths and adds isolation 
   expect(rewritten).toContain("Do not read, edit, or commit in the shared main checkout.");
   expect(rewritten).toContain("prepend `PYTHONPATH=$PWD`");
 });
+
+test("guard text warns only when the worktree's git hooks are not installed", async () => {
+  const wtm = asWorktreeManager({
+    createWorktree: (id) => {
+      const handle: WorktreeHandle = {
+        handoffId: id,
+        branchName: `agent/${id}`,
+        createdAt: "",
+        status: "created",
+        path: `/fake/worktree/${id}`,
+        storageRoot: `/fake/worktree/${id}/.test-storage`,
+        worktreeMode: "symlink_mirror",
+        gitHooks: {
+          status: id === "hooks-missing" ? "missing" : "installed",
+          configured: ".husky/_",
+        },
+      };
+      return Promise.resolve(handle);
+    },
+  });
+
+  const { worktreePromptRewrite: missingRewrite } = await applyWorktreeOverride(
+    { handoff_id: "hooks-missing", to_agent: "gemini", use_worktree: true },
+    baseConfig,
+    "/storage",
+    wtm,
+    mainRepoPath,
+  );
+  expect(missingRewrite).not.toBeNull();
+  expect(missingRewrite?.guardText).toContain("Git hooks are NOT installed in this worktree");
+  expect(missingRewrite?.guardText).toContain("core.hooksPath=.husky/_");
+
+  const { worktreePromptRewrite: okRewrite } = await applyWorktreeOverride(
+    { handoff_id: "hooks-ok", to_agent: "gemini", use_worktree: true },
+    baseConfig,
+    "/storage",
+    wtm,
+    mainRepoPath,
+  );
+  expect(okRewrite).not.toBeNull();
+  expect(okRewrite?.guardText).not.toContain("Git hooks are NOT installed");
+});

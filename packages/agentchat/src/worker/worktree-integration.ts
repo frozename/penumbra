@@ -140,6 +140,17 @@ interface CreateWorktreeOverrideArgs {
   deps: WorktreeOverrideDeps | undefined;
 }
 
+function gitHooksWarning(gitHooks: WorktreeHandle["gitHooks"]): string {
+  if (gitHooks === undefined) return "";
+  if (gitHooks.status !== "missing" && gitHooks.status !== "empty") return "";
+  return (
+    "\n\nGit hooks are NOT installed in this worktree " +
+    `(core.hooksPath=${gitHooks.configured ?? ""} does not resolve to hooks here), ` +
+    "so `git commit` will not run the repository's pre-commit checks. " +
+    "Before each commit, run the repository's formatter and linter on the files you changed and fix what they report."
+  );
+}
+
 async function createWorktreeOverride(
   args: CreateWorktreeOverrideArgs,
 ): Promise<WorktreeOverrideResult> {
@@ -166,7 +177,8 @@ async function createWorktreeOverride(
     "Do not read, edit, or commit in the shared main checkout.\n\n" +
     "When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. " +
     "A sibling checkout's .venv can otherwise shadow the worktree's source and make tests run against stale code. " +
-    'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".';
+    'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".' +
+    gitHooksWarning(handle.gitHooks);
 
   const overrideConfig: AgentChatConfig = {
     ...config,
