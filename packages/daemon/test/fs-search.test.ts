@@ -169,6 +169,16 @@ describe("executeGlob", () => {
     fs.writeFileSync(path.join(tmp, ".husky", "_", ".gitignore"), "*\n");
     fs.writeFileSync(path.join(tmp, ".husky", "_", "husky.sh"), "x");
     fs.writeFileSync(path.join(tmp, ".husky", "pre-commit"), "y");
+    // Bun 1.3's scan never enters a dot-directory, even one the pattern names, so
+    // yield what Bun 1.4 scans for ".husky/**" to reach the .gitignore filter.
+    Object.defineProperty(Bun.Glob.prototype, "scan", {
+      configurable: true,
+      value: async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield* [".husky/_/husky.sh", ".husky/pre-commit"];
+      },
+      writable: true,
+    });
 
     const r = await executeGlob({ pattern: ".husky/**" }, tmp);
     expect(r.results).toEqual([".husky/pre-commit"]);
