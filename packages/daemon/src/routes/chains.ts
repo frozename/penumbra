@@ -34,8 +34,6 @@ import {
   type TaskClass,
   writeRoutingDecision,
 } from "@penumbra/core";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -44,6 +42,7 @@ import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
 import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
+import { availableBranchNameBestEffort } from "./chains-branch-precheck.js";
 import {
   readActiveRoutingBiases,
   resolveSingleRoute,
@@ -1750,42 +1749,6 @@ function resolveRoutingWithFallbacks(
     routingResolutionReason,
     routingDecision,
   };
-}
-
-const execFile = promisify(execFileCb);
-
-async function gitBranchExists(repoRoot: string, branchName: string): Promise<boolean> {
-  try {
-    await execFile("git", [
-      "-C",
-      repoRoot,
-      "show-ref",
-      "--verify",
-      "--quiet",
-      `refs/heads/${branchName}`,
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function availableBranchNameBestEffort(
-  repoRoot: string | undefined,
-  requestedName: string,
-): Promise<string> {
-  if (repoRoot === undefined) return requestedName;
-  try {
-    await execFile("git", ["-C", repoRoot, "rev-parse", "--git-dir"]);
-    if (!(await gitBranchExists(repoRoot, requestedName))) return requestedName;
-    for (let suffix = 2; suffix <= 99; suffix += 1) {
-      const candidate = `${requestedName}-${String(suffix)}`;
-      if (!(await gitBranchExists(repoRoot, candidate))) return candidate;
-    }
-  } catch {
-    return requestedName;
-  }
-  throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
 }
 
 function projectRootForBranchPrecheck(
