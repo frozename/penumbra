@@ -22,8 +22,15 @@ export function resolveGitHooksDir(wtPath: string, configured: string): string {
 const CLIENT_HOOK_NAMES: ReadonlySet<string> = new Set([
   "applypatch-msg",
   "commit-msg",
+  "fsmonitor-watchman",
+  "p4-changelist",
+  "p4-post-changelist",
+  "p4-pre-submit",
+  "p4-prepare-changelist",
+  "post-applypatch",
   "post-checkout",
   "post-commit",
+  "post-index-change",
   "post-merge",
   "post-rewrite",
   "pre-applypatch",
@@ -33,6 +40,8 @@ const CLIENT_HOOK_NAMES: ReadonlySet<string> = new Set([
   "pre-push",
   "pre-rebase",
   "prepare-commit-msg",
+  "reference-transaction",
+  "sendemail-validate",
 ]);
 
 function isExecutableFile(filePath: string): boolean {
@@ -46,9 +55,9 @@ function isExecutableFile(filePath: string): boolean {
 }
 
 export function classifyGitHooks(wtPath: string, configured: string | null): WorktreeGitHooks {
-  if (configured === null || configured.trim().length === 0) {
-    return { status: "not_configured", configured: null };
-  }
+  if (configured === null) return { status: "not_configured", configured: null };
+  // git treats an empty core.hooksPath as set and then runs no hooks at all.
+  if (configured === "") return { status: "missing", configured };
   const dir = resolveGitHooksDir(wtPath, configured);
   let entries: string[];
   try {
