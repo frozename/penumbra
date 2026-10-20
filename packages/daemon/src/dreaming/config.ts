@@ -18,6 +18,29 @@ export interface DreamPhaseCostEstimatesUsd {
   p5ResearchUsd: number;
   p6BriefSynthLlmUsd: number;
   p7EmbedUsd: number;
+  p1JevShadowUsd?: number;
+}
+
+// Covers one full 64,000-token Jev request: 64,000 × $0.042 / 1e6 = $0.002688.
+export const DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD = 0.003;
+
+export function resolveP1JevShadowEstimateUsd(estimates?: DreamPhaseCostEstimatesUsd): number {
+  const configured = estimates?.p1JevShadowUsd;
+  return configured !== undefined && Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_P1_JEV_SHADOW_ESTIMATE_USD;
+}
+
+// The parsed PENUMBRA_TYPESAFE_* slice, typed exactly as Phase 2's
+// TypesafeEnvInput so the dreaming config can hand it to
+// resolveTypesafeSettings unchanged.
+export interface TypesafeEnvSlice {
+  readonly PENUMBRA_TYPESAFE_API_KEY?: string | undefined;
+  readonly PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN?: string | undefined;
+  readonly PENUMBRA_TYPESAFE_BASE_URL: string;
+  readonly PENUMBRA_TYPESAFE_MODEL: string;
+  readonly PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
+  readonly PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
 }
 
 function nonNegIntOr(value: number | undefined, fallback: number): number {
@@ -70,6 +93,8 @@ export interface DreamConfig {
   rewriterConcurrency: number;
   phaseBudgetFractions?: DreamPhaseBudgetFractions;
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
+  typesafeJudgePromotion?: "off" | "shadow" | "veto";
+  typesafeEnv?: TypesafeEnvSlice;
 }
 
 // Local typed view of the dreaming slice of EnvConfig (config-refactor F16):
@@ -92,6 +117,7 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD: number;
   PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD: number;
   PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD: number;
+  PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: number;
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_P1_BATCH_SIZE: number | undefined;
   PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS: number;
@@ -123,6 +149,31 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS: number;
   PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS: number;
   PENUMBRA_DREAMING_REWRITER_CONCURRENCY: number;
+  PENUMBRA_TYPESAFE_API_KEY: string | undefined;
+  PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: string | undefined;
+  PENUMBRA_TYPESAFE_BASE_URL: string;
+  PENUMBRA_TYPESAFE_MODEL: string;
+  PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
+}
+
+// Fail closed: only the exact literals shadow/veto arm a Jev lane; anything
+// else (including a value smuggled past the schema) resolves to "off".
+function resolveTypesafeJudgePromotion(
+  value: "off" | "shadow" | "veto",
+): "off" | "shadow" | "veto" {
+  return value === "veto" ? "veto" : value === "shadow" ? "shadow" : "off";
+}
+
+function typesafeEnvSlice(env: DreamingEnvSlice): TypesafeEnvSlice {
+  return {
+    PENUMBRA_TYPESAFE_API_KEY: env.PENUMBRA_TYPESAFE_API_KEY,
+    PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: env.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN,
+    PENUMBRA_TYPESAFE_BASE_URL: env.PENUMBRA_TYPESAFE_BASE_URL,
+    PENUMBRA_TYPESAFE_MODEL: env.PENUMBRA_TYPESAFE_MODEL,
+    PENUMBRA_TYPESAFE_TIMEOUT_MS: env.PENUMBRA_TYPESAFE_TIMEOUT_MS,
+    PENUMBRA_TYPESAFE_JUDGE_PROMOTION: env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
+  };
 }
 
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
@@ -242,6 +293,9 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
       p5ResearchUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P5_RESEARCH_USD,
       p6BriefSynthLlmUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P6_SYNTH_LLM_USD,
       p7EmbedUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P7_EMBED_USD,
+      p1JevShadowUsd: env.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD,
     },
+    typesafeJudgePromotion: resolveTypesafeJudgePromotion(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION),
+    typesafeEnv: typesafeEnvSlice(env),
   };
 }

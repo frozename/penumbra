@@ -8,6 +8,7 @@ interface FanoutArgs {
   tasks: Array<Record<string, unknown>>;
   defaults?: Record<string, unknown>;
   dispatcherModel?: string;
+  agentType?: string;
   repo?: string;
 }
 
@@ -20,6 +21,7 @@ interface Round {
   check_exit?: number;
   check_verify_status?: string;
   check_passed?: boolean;
+  ci_parity?: boolean;
 }
 
 interface FixUntilGreenResult {
@@ -100,6 +102,43 @@ async function runFixUntilGreen(
 }
 
 describe("penumbra-fix-until-green argument forwarding", () => {
+  for (const agentType of [undefined, "inherit", "penumbra:penumbra-fanout-proxy"]) {
+    test(`forwards agentType ${String(agentType)} only when supplied`, async () => {
+      const { workflowCalls, error } = await runWorkflowCapturingPrompts(FIX_UNTIL_GREEN, {
+        task: { message: "work" },
+        check: "true",
+        repo: "/repo",
+        ...(agentType !== undefined ? { agentType } : {}),
+      });
+      expect(error).toBeUndefined();
+      const forwarded = workflowCalls.find((call) => call.name === "penumbra-fanout")
+        ?.args as FanoutArgs;
+      expect(forwarded).toBeDefined();
+      if (agentType === undefined) expect(forwarded).not.toHaveProperty("agentType");
+      else expect(forwarded.agentType).toBe(agentType);
+    });
+  }
+
+  for (const [record, reason] of [
+    [{ ok: true, reliability_trustworthy: true, branch: "feat/x" }, "no_dispatch"],
+    [
+      { ok: false, conversation_id: "c", handoff_id: "h", error_summary: "worker failed" },
+      "chain_failed",
+    ],
+    [{ ok: false, status: "proxy_error", error_summary: "proxy_error: denied" }, "no_dispatch"],
+  ] as const) {
+    test(`dispatch classification gives ${reason} precedence`, async () => {
+      const { result, error } = await runFixUntilGreen(
+        { task: { message: "work" }, check: "true", repo: "/repo" },
+        {
+          workflow: async () => ({ results: [record] }),
+        },
+      );
+      expect(error).toBeUndefined();
+      expect((result?.rounds as Round[])?.[0]?.reason).toBe(reason);
+    });
+  }
+
   test("task.response_mode='full' reaches the dispatched task", async () => {
     const { workflowCalls, error } = await runWorkflowCapturingPrompts(FIX_UNTIL_GREEN, {
       task: { message: "m", response_mode: "full" },
@@ -198,7 +237,16 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
       },
       {
         workflow: async () => ({
-          results: [{ ok: false, reliability_trustworthy: true, label: "t0", index: 0 }],
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: false,
+              reliability_trustworthy: true,
+              label: "t0",
+              index: 0,
+            },
+          ],
         }),
       },
     );
@@ -218,7 +266,16 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
       },
       {
         workflow: async () => ({
-          results: [{ ok: true, reliability_trustworthy: true, label: "t0", index: 0 }],
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: true,
+              reliability_trustworthy: true,
+              label: "t0",
+              index: 0,
+            },
+          ],
         }),
       },
     );
@@ -228,7 +285,7 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
     expect(rounds?.[0]?.reason).toBe("completed_no_branch");
   });
 
-  test("untrustworthy_dispatch when reliability_trustworthy is false", async () => {
+  test("the stop log surfaces the dispatch error_summary when present", async () => {
     const { result, logs } = await runFixUntilGreen(
       {
         task: { message: "m" },
@@ -239,7 +296,50 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
       {
         workflow: async () => ({
           results: [
-            { ok: true, branch: "feat/x", reliability_trustworthy: false, label: "t0", index: 0 },
+            {
+              ok: false,
+              status: "no_dispatch",
+              error_summary: "no_dispatch: prompt_project_mismatch",
+              label: "t0",
+              index: 0,
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(result?.ok).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("no_dispatch");
+    expect(logs.some((log) => log.includes("prompt_project_mismatch"))).toBe(true);
+  });
+
+  test("untrustworthy_dispatch when reliability_trustworthy is false", async () => {
+    // The real fanout forces ok:false once its trust gate closes — feed the
+    // shape it actually emits, not an ok:true mock that can never reach us.
+    const { result, logs } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: false,
+              status: "completed",
+              branch: "feat/x",
+              reliability_status: "complete",
+              reliability_trustworthy: false,
+              reliability_action: "inspect_worktree",
+              error_summary: "reliability_untrustworthy",
+              label: "t0",
+              index: 0,
+            },
           ],
         }),
       },
@@ -261,7 +361,18 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
       },
       {
         workflow: async () => ({
-          results: [{ ok: true, branch: "feat/x", label: "t0", index: 0 }],
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: false,
+              status: "completed",
+              branch: "feat/x",
+              error_summary: "reliability_unverified",
+              label: "t0",
+              index: 0,
+            },
+          ],
         }),
       },
     );
@@ -270,6 +381,69 @@ describe("penumbra-fix-until-green dispatch failure reasons", () => {
     const rounds = result?.rounds as Round[] | undefined;
     expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
     expect(logs.some((log) => log.includes("never audited"))).toBe(true);
+  });
+
+  test("a handoff-id-only dispatch is not mislabeled no_dispatch", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: true,
+              status: "completed",
+              branch: "feat/x",
+              handoff_id: "h",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: PASS",
+            },
+          ],
+        }),
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBeUndefined();
+    expect(result?.green).toBe(true);
+  });
+
+  test("chain_failed logs the chain status and error_summary", async () => {
+    const { result, logs } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: false,
+              status: "failed",
+              conversation_id: "c",
+              handoff_id: "h",
+              error_summary: "worker exploded",
+              label: "t0",
+              index: 0,
+            },
+          ],
+        }),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("chain_failed");
+    const stopLog = logs.find((log) => log.includes("stopping")) ?? "";
+    expect(stopLog).toContain("status=failed");
+    expect(stopLog).toContain("worker exploded");
   });
 });
 
@@ -289,6 +463,8 @@ describe("penumbra-fix-until-green grader availability", () => {
             {
               ok: true,
               branch: "feat/x",
+              handoff_id: "h-123",
+              conversation_id: "c",
               reliability_trustworthy: true,
               check_line: "CHECK_RESULT: PASS",
             },
@@ -328,6 +504,7 @@ describe("penumbra-fix-until-green grader availability", () => {
             {
               ok: true,
               branch: "feat/x",
+              conversation_id: "c",
               reliability_trustworthy: true,
               check_line: "CHECK_RESULT: PASS",
               handoff_id: "h-123",
@@ -368,6 +545,8 @@ describe("penumbra-fix-until-green full response parsing", () => {
             {
               ok: true,
               branch: "feat/x",
+              handoff_id: "h-123",
+              conversation_id: "c",
               reliability_trustworthy: true,
               response: "Here is some narrative\n\nCHECK_RESULT: PASS\n",
             },
@@ -392,6 +571,7 @@ describe("penumbra-fix-until-green independent check verification", () => {
       {
         ok: true,
         branch: "feat/x",
+        conversation_id: "c",
         reliability_trustworthy: true,
         check_line: "CHECK_RESULT: PASS",
         handoff_id: "h-123",
@@ -517,6 +697,7 @@ describe("penumbra-fix-until-green independent check verification", () => {
             {
               ok: true,
               branch: "feat/x",
+              conversation_id: "c",
               reliability_trustworthy: true,
               check_line: "Let me inspect the file.",
               response: "Working...\nCHECK_RESULT: PASS\ndone",
@@ -545,6 +726,7 @@ describe("penumbra-fix-until-green independent check verification", () => {
             {
               ok: true,
               branch: "feat/x",
+              conversation_id: "c",
               reliability_trustworthy: true,
               check_line: "CHECK_RESULT: FAIL",
               response: "CHECK_RESULT: PASS",
@@ -732,5 +914,309 @@ describe("penumbra-fix-until-green independent check verification", () => {
     expect(fanoutCalls).toHaveLength(4);
     const rounds = result?.rounds as Round[] | undefined;
     expect(rounds).toHaveLength(4);
+  });
+});
+
+describe("penumbra-fix-until-green CI parity verification", () => {
+  const trustworthyPassFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        branch: "feat/x",
+        conversation_id: "c",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+        handoff_id: "h-123",
+      },
+    ],
+  });
+
+  test("a worker PASS with a verifier parity_exit nonzero is not green", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({
+          ran: true,
+          check_exit: 0,
+          parity_exit: 1,
+          failing_segment: "bun run check:ci",
+          output_tail: "lint:strict failed",
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_verify_status).toBe("failed");
+    expect(rounds?.[0]?.passed).toBe(false);
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+  });
+
+  test("a worker PASS with check_exit 0 and parity_exit 0 is green with ci_parity true", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+    expect(rounds?.[0]?.ci_parity).toBe(true);
+    expect(result?.ci_parity).toBe(true);
+  });
+
+  test("a verifier that omits parity_exit fails closed when parityCheck is set", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+  });
+
+  test("the verify prompt runs the parity command verbatim via bash -c", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("bash -c 'bun run check:ci'");
+    expect(verifyCall!.prompt).toContain("parity_exit");
+  });
+
+  test("without parityCheck the verifier prompt and results carry no parity state", async () => {
+    const { result, agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(true);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.ci_parity).toBe(false);
+    expect(result?.ci_parity).toBe(false);
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).not.toContain("parity_exit");
+    expect(verifyCall!.prompt).not.toContain("PARITY command");
+  });
+
+  test("parityCheck with verifyCheck:false is rejected before any dispatch", async () => {
+    const { result, error, workflowCalls, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        verifyCheck: false,
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toBe("parity_check_requires_verify_check");
+    expect(workflowCalls).toHaveLength(0);
+    expect(agentCalls).toHaveLength(0);
+  });
+
+  test("the round message includes the parity command when parityCheck is set", async () => {
+    const { workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      { workflow: async () => ({}) },
+    );
+
+    expect(error).toBeUndefined();
+    const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
+    expect(fanout).toBeDefined();
+    const message = (fanout!.args as FanoutArgs).tasks[0]?.message;
+    expect(message).toContain("bash -c 'bun run check:ci'");
+    expect(message).toContain("BOTH");
+  });
+
+  test("the round message is byte-for-byte unchanged when parityCheck is not set", async () => {
+    const { workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      { workflow: async () => ({}) },
+    );
+
+    expect(error).toBeUndefined();
+    const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
+    expect(fanout).toBeDefined();
+    const message = (fanout!.args as FanoutArgs).tasks[0]?.message;
+    expect(message).toBe(
+      [
+        "m",
+        "",
+        "When done, run this check in the repo by spawning bash with the command as a single argument:",
+        "    bash -c 'bun run typecheck'",
+        "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
+        "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+      ].join("\n"),
+    );
+  });
+
+  test("a parity failure's output reaches the next round message", async () => {
+    const verifierResults = [
+      {
+        ran: true,
+        check_exit: 0,
+        parity_exit: 1,
+        failing_segment: "bun run check:ci",
+        output_tail: "lint:strict failed",
+      },
+      { ran: true, check_exit: 0, parity_exit: 0 },
+    ];
+    let verifyCallIndex = 0;
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 2,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => verifierResults[Math.min(verifyCallIndex++, verifierResults.length - 1)],
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(true);
+    expect(result?.green).toBe(true);
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    const secondMessage = (fanoutCalls[1]!.args as FanoutArgs).tasks[0]?.message;
+    expect(secondMessage).toContain("Last failure output:");
+    expect(secondMessage).toContain("lint:strict failed");
+  });
+
+  test("the verifier prompt budgets the parity command's runtime", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("7 minutes");
+    expect(verifyCall!.prompt).toContain("background");
+    expect(verifyCall!.prompt).toContain("poll");
+    expect(verifyCall!.prompt).toContain("before the PARITY command has exited");
+    // A single Bash call is capped at 10 minutes; asking for a 15-minute
+    // timeout makes the verifier request something the tool cannot grant.
+    expect(verifyCall!.prompt).not.toContain("15 minutes");
+    expect(verifyCall!.prompt).not.toContain("timeout of at least");
+  });
+
+  test("the verifier prompt sources failure evidence from the parity run", async () => {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "bun run typecheck",
+        parityCheck: "bun run check:ci",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: trustworthyPassFanout,
+        agent: async () => ({ ran: true, check_exit: 0, parity_exit: 0 }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("PARITY run");
   });
 });

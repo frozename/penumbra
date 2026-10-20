@@ -14,11 +14,12 @@ import { runGitDiff, runGitLog, runGitShow } from "./recall-sources/git.js";
 import { type Handoff, runHandoffPendingSource } from "./recall-sources/handoff.js";
 import { runLatestContinuationNoteSource } from "./recall-sources/latest-continuation-note.js";
 import { type MemoryHit, runMemorySearchSource } from "./recall-sources/memory.js";
+import { runPendingHandoffSource } from "./recall-sources/pending-handoff.js";
 import { runRegistrarStatusSource } from "./recall-sources/registrar-status.js";
 import { runRoutingBiasListSource } from "./recall-sources/routing-bias-list.js";
 import { runSessionEventsSource, type SessionEvent } from "./recall-sources/session-events.js";
 import { runSessionFirstMovesSource } from "./recall-sources/session-first-moves.js";
-import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
+import { resolveArgsToken, resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
 
 export type RecallRequiredFailure = { source: string; message: string };
 
@@ -73,7 +74,7 @@ function normalizeFileContentsArgs(args: Record<string, unknown>): {
     ? args.allowed_roots.filter((root): root is string => typeof root === "string")
     : undefined;
   return {
-    path: path === "~/.penumbra/pending-handoff.md" ? "penumbra-storage:pending-handoff.md" : path,
+    path,
     ...(maxBytes !== undefined ? { max_bytes: maxBytes } : {}),
     ...(allowedRoots !== undefined ? { allowed_roots: allowedRoots } : {}),
   };
@@ -172,6 +173,12 @@ async function runOneSource(
         "latest_continuation_note",
         out.result ?? { path: null, body: "no continuation note found", truncated: false },
       );
+      warnings.push(...out.warnings);
+      return;
+    }
+    case "pending_handoff": {
+      const out = await runPendingHandoffSource({ storageRoot, project, now, args });
+      mergeBucket(byKey, "pending_handoff", out.result);
       warnings.push(...out.warnings);
       return;
     }
@@ -448,15 +455,19 @@ const RECALL_BUCKET_ALIASES: Record<string, string[]> = {
   dispatch_events: ["dispatch_events", "dispatch_summaries"],
 };
 
-export function resolveRecallSourceValue(
-  byKey: Record<string, unknown>,
-  source: string,
-): unknown {
+export function resolveRecallSourceValue(byKey: Record<string, unknown>, source: string): unknown {
   for (const key of RECALL_BUCKET_ALIASES[source] ?? [source]) {
     const value = byKey[key];
     if (!isEmptyRecallValue(value)) return value;
   }
   return null;
+}
+
+function isSourceSkipped(src: RecallSource, ctx: TemplateVarContext | undefined): boolean {
+  const skipIfArg = src.skip_if_arg;
+  if (typeof skipIfArg !== "string" || skipIfArg.length === 0) return false;
+  const resolved = resolveArgsToken(`args.${skipIfArg}`, ctx?.args);
+  return resolved !== undefined && resolved.length > 0;
 }
 
 async function runSourceWithRequiredCheck(
@@ -500,6 +511,9 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
 
   const requiredFailures: RecallRequiredFailure[] = [];
   for (const src of sources) {
+    // skip_if_arg drops mode-specific sources before they can spend budget —
+    // e.g. a refs diff when content_path names the real review target.
+    if (isSourceSkipped(src, opts.templateCtx)) continue;
     const rawArgs = (("args" in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
     const args = resolveArgs(rawArgs, opts.templateCtx);
     const failure = await runSourceWithRequiredCheck(src, args, deps, byKey, warnings);

@@ -2,8 +2,10 @@ import type { DispatchEventInput, Logger } from "@penumbra/core";
 
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
+import type { TerminalReport, TerminalReportStatus } from "./terminal-outbox.js";
 
 import { detectClassifierDecline } from "../classifier-decline.js";
+import { pendingObservationsOf } from "../cli/dispatch-handoff.js";
 import { isTerminalHttpStatus, PenumbraHttpError } from "../penumbra-client.js";
 
 /**
@@ -99,6 +101,17 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
    * destroying the signal.
    */
   getWorktreeSnapshot?: (handoffId: string) => Promise<SnapshotResult>;
+  /**
+   * Optional durable terminal reporter (the terminal outbox). When wired,
+   * finalizeDispatch hands it the pending observations, the dispatch.end
+   * event, and the complete/fail call as a single report instead of posting
+   * them through the lossy event queue + direct calls.
+   */
+  reportTerminal?: (report: TerminalReport) => Promise<TerminalReportStatus>;
+  /** Per-flight timeout for mid-turn token progress posts (test seam). */
+  progressPostTimeoutMs?: number;
+  /** Timeout for the post-turn progress posts (tail flush, hop-end, chain-end). */
+  postTurnProgressTimeoutMs?: number;
 }
 
 export interface WorkerDispatcher<H extends DispatcherHandoff = DispatcherHandoff> {
@@ -163,6 +176,8 @@ interface DispatchLifecycleContext {
   snapshot: DispatchSnapshotState;
   outcome: DispatchOutcomeState;
   progress: ProgressState;
+  /** Post-adapter observe envelopes salvaged from a thrown dispatch error. */
+  pendingObservations: Record<string, unknown>[];
 }
 
 interface Semaphore {
@@ -183,6 +198,7 @@ const CLAIM_BACKOFF_BASE_MS = 1_000;
 const PROGRESS_BATCH_MS = 100;
 const PROGRESS_COOLDOWN_MS = 100;
 const PROGRESS_POST_TIMEOUT_MS = 5_000;
+const POST_TURN_PROGRESS_TIMEOUT_MS = 5_000;
 const PROGRESS_BUFFER_MAX_BYTES = 16_384;
 const PROGRESS_BUFFER_MAX_CHUNKS = 64;
 const PROGRESS_BUFFER_TRUNCATION_MARKER = "[... truncated progress ...]\n";
@@ -598,7 +614,9 @@ async function runProgressFlight(
   delta: string,
   currentSeq: number,
 ): Promise<void> {
-  const { signal, cleanup } = createProgressTimeoutSignal(PROGRESS_POST_TIMEOUT_MS);
+  const { signal, cleanup } = createProgressTimeoutSignal(
+    deps.progressPostTimeoutMs ?? PROGRESS_POST_TIMEOUT_MS,
+  );
   try {
     await deps.postProgress(
       handoff.handoff_id,
@@ -611,13 +629,6 @@ async function runProgressFlight(
       signal,
     );
   } catch (err: unknown) {
-    if (signal.aborted) {
-      deps.log.warn(
-        { handoff_id: handoff.handoff_id, seq: currentSeq },
-        "postProgress timed out; aborting hop",
-      );
-      abort.abort();
-    }
     const status = err instanceof PenumbraHttpError ? err.status : null;
     if (status === 410) {
       deps.log.warn(
@@ -626,7 +637,13 @@ async function runProgressFlight(
       );
       abort.abort();
     } else {
-      deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, "postProgress failed");
+      // A slow or failed token post drops its delta — it must never abort an
+      // in-flight model turn (the 2026-10-06 incident: event-loop lag made
+      // token posts exceed the timeout mid-dispatch).
+      deps.log.debug(
+        { handoff_id: handoff.handoff_id, seq: currentSeq, err: String(err) },
+        signal.aborted ? "postProgress timed out; dropping delta" : "postProgress failed",
+      );
     }
   } finally {
     cleanup();
@@ -762,7 +779,7 @@ async function handleHopCompletion(
     return;
   }
   const reason = reasonForTerminated(result.terminatedReason);
-  await deps.postProgress(handoff.handoff_id, {
+  await postTurnProgress(deps, handoff.handoff_id, {
     type: "chain-end",
     chain_id: handoff.conversation_id,
     reason,
@@ -810,12 +827,35 @@ async function flushTailProgress(
   if (progress.bufferParts.length > 0) {
     const delta = progressBufferDrain(progress);
     progress.seq += 1;
-    await deps.postProgress(handoff.handoff_id, {
+    await postTurnProgress(deps, handoff.handoff_id, {
       type: "token",
       handoff_id: handoff.handoff_id,
       seq: progress.seq,
       delta,
     });
+  }
+}
+
+// Post-turn progress posts are best-effort with a bounded timeout: once the
+// dispatch result is known, a slow or failed daemon post must not flip the
+// outcome to 'error' or block finalization past the shutdown cap.
+async function postTurnProgress(
+  deps: WorkerDispatcherDeps,
+  handoffId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { signal, cleanup } = createProgressTimeoutSignal(
+    deps.postTurnProgressTimeoutMs ?? POST_TURN_PROGRESS_TIMEOUT_MS,
+  );
+  try {
+    await deps.postProgress(handoffId, payload, signal);
+  } catch (err: unknown) {
+    deps.log.debug(
+      { handoff_id: handoffId, type: payload.type, err: String(err) },
+      "post-turn progress post failed",
+    );
+  } finally {
+    cleanup();
   }
 }
 
@@ -866,7 +906,7 @@ async function runDispatchBody(
   ctx.outcome.result = result;
   classifyResult(deps, handoff, ctx, result);
   await flushTailProgress(deps, handoff, ctx.progress, ctx.abort);
-  await deps.postProgress(handoff.handoff_id, {
+  await postTurnProgress(deps, handoff.handoff_id, {
     type: "hop-end",
     handoff_id: handoff.handoff_id,
     chain_id: handoff.conversation_id,
@@ -874,7 +914,7 @@ async function runDispatchBody(
     next_handoff_id: result.next?.handoff_id ?? result.cappedHandoffId ?? null,
     error:
       result.terminatedReason === "error"
-        ? "dispatch error"
+        ? (result.adapterError?.message ?? "dispatch error")
         : result.terminatedReason === "handoff_creation_failed"
           ? (result.terminalError ?? "handoff creation failed")
           : null,
@@ -904,9 +944,9 @@ function classifyResult(
     ctx.outcome.errorText =
       result.terminatedReason === "handoff_creation_failed"
         ? terminalErrorMessageOf(result)
-        : "dispatch error";
+        : (result.adapterError?.message ?? "dispatch error");
     if (result.terminatedReason === "error") {
-      emitAdapterRetryExhausted(deps, handoff);
+      emitAdapterRetryExhausted(deps, handoff, result.adapterError?.message);
     }
   }
 }
@@ -919,6 +959,10 @@ function handleDispatchException(
 ): void {
   ctx.outcome.status = ctx.abort.signal.aborted ? "aborted" : "error";
   ctx.outcome.errorText = err instanceof Error ? err.message : String(err);
+  // A throw after the turn finished can still carry its undelivered observe
+  // envelopes (e.g. createHandoff hit a dead daemon) — salvage them for the
+  // terminal report.
+  ctx.pendingObservations.push(...pendingObservationsOf(err));
   const status = err instanceof PenumbraHttpError ? err.status : null;
   if (status === 410) {
     deps.log.debug(
@@ -984,14 +1028,19 @@ async function finalizeDispatch(
   // now (e.g. paths where the try block threw before reaching the chain-end
   // hook).
   await captureSnapshotOnce(deps, handoff, ctx.snapshot);
-  deps.onEvent?.({
+  const dispatchEnd: DispatchEventInput = {
     handoff_id: handoff.handoff_id,
     worker_id: deps.workerId,
     source: "worker",
     kind: "dispatch.end",
     ts: new Date().toISOString(),
     meta: buildDispatchEndMeta(ctx),
-  });
+  };
+  if (deps.reportTerminal) {
+    await reportTerminal(deps, handoff, ctx, dispatchEnd);
+    return;
+  }
+  deps.onEvent?.(dispatchEnd);
   // Fail closed: anything that is not a clean success routes through
   // markFailed. "aborted" used to fall through to complete(), which durably
   // masked an in-flight hop whose daemon row was still `dispatched` — a
@@ -1011,6 +1060,36 @@ async function finalizeDispatch(
       return;
     }
     deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, "completeHandoff failed");
+  }
+}
+
+// The durable reporter owns the terminal outcome: pending observations,
+// dispatch.end, and the complete/fail call travel as one persisted report so
+// a transient daemon outage cannot lose them. dispatch.end goes in the
+// report only, not the lossy in-memory queue.
+async function reportTerminal(
+  deps: WorkerDispatcherDeps,
+  handoff: DispatcherHandoff,
+  ctx: DispatchLifecycleContext,
+  dispatchEnd: DispatchEventInput,
+): Promise<void> {
+  const report: TerminalReport = {
+    handoff_id: handoff.handoff_id,
+    ...(deps.workerId ? { worker_id: deps.workerId } : {}),
+    // Fail closed: anything that is not a clean success reports 'fail' —
+    // a cancel must never be upgraded to a completion by the outbox.
+    outcome: ctx.outcome.status === "ok" ? "complete" : "fail",
+    ...(ctx.outcome.status !== "ok" ? { reason: failureReasonOf(ctx) } : {}),
+    observations: [...ctx.pendingObservations, ...(ctx.outcome.result?.pendingObservations ?? [])],
+    dispatch_end: dispatchEnd,
+  };
+  try {
+    await deps.reportTerminal?.(report);
+  } catch (err: unknown) {
+    deps.log.warn(
+      { handoff_id: handoff.handoff_id, err: String(err) },
+      "reportTerminal threw; terminal report may need sweeper recovery",
+    );
   }
 }
 
@@ -1133,6 +1212,7 @@ async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Pr
       dispatchStart: Date.now(),
       snapshot: { captured: null },
       outcome: { status: "ok", result: null, errorText: null },
+      pendingObservations: [],
       progress: {
         bufferParts: [],
         bufferBytes: 0,

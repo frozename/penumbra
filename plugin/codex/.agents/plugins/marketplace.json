@@ -1,0 +1,17 @@
+{
+  "name": "penumbra-local",
+  "plugins": [
+    {
+      "name": "penumbra",
+      "source": {
+        "source": "local",
+        "path": "./penumbra"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

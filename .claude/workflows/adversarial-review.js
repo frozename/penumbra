@@ -68,6 +68,8 @@ if (!REPO.startsWith("/")) {
     low_count: 0,
     completed_personas: [],
     failed_personas: ["no_repo_scope"],
+    diff_truncated: false,
+    diff_dropped_files: [],
     fix: null,
     fix_grade: null,
     fix_round_status: "NOT_RUN",
@@ -97,7 +99,15 @@ const FINDING = {
 const SYNTHESIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "high", "medium", "low", "completed_personas"],
+  required: [
+    "verdict",
+    "high",
+    "medium",
+    "low",
+    "completed_personas",
+    "diff_truncated",
+    "diff_dropped_files",
+  ],
   properties: {
     outcome: { type: "string" },
     verdict: {
@@ -125,6 +135,27 @@ const SYNTHESIS_SCHEMA = {
     review_cwd: {
       type: "string",
       description: "absolute cwd passed to workflow_run and workflow_wait",
+    },
+    diff_truncated: {
+      type: "boolean",
+      description:
+        "REQUIRED. verbatim diff_truncated from the runResult — the review diff was cut to fit the recall budget, so personas saw only part of the change. If the runResult omits it, set false explicitly; never omit this field.",
+    },
+    diff_dropped_files: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "REQUIRED. verbatim diff_dropped_files from the runResult — file sections the cap dropped. If the runResult omits it, set [] explicitly; never omit this field.",
+    },
+    diff_dropped_more: {
+      type: "boolean",
+      description:
+        "verbatim diff_dropped_more from the runResult — the dropped-file list itself was capped at 20 names",
+    },
+    diff_cut_file: {
+      type: "string",
+      description:
+        "verbatim diff_cut_file from the runResult — a single oversized file section cut at a line boundary",
     },
   },
 };
@@ -173,7 +204,7 @@ function reviewPrompt(ref) {
     `STEP 1: mcp__penumbra__workflow_run name="adversarial-review", wait=false, cwd="${REPO}", args={ base_ref: "${base_ref}", target_ref: "${ref}" }. Copy the workflow_run_id verbatim. If the response carries a resolution_warning field, copy it VERBATIM into the resolution_warning output field — a value of "workflow_cwd_inferred_from_mcp_cwd" means the run resolved to the daemon's own repo and every persona is reviewing the wrong tree, so apply the PROXY failure rule above (verdict="block") and return immediately. If this call itself errors, apply the PROXY failure rule above and return immediately.`,
     `  (This fans personas out on the penumbra fleet — preserving agent_performance capture + config personas. Do NOT reimplement personas.)`,
     `STEP 2 (watchdog-safe poll — do NOT use wait=true, it would block >180s and trip the workflow watchdog -> duplicate runs): loop mcp__penumbra__workflow_wait with timeout_ms=150000 and cwd="${REPO}" (one call per step) until status is terminal (completed/failed), for AT MOST 12 iterations (~30min). On timeout, call it again. If still not terminal after 12 polls, apply the PROXY failure rule (verdict="block", failed_personas=["daemon-review-timeout"]) and return. Never a single block longer than ~150s, and never substitute your own review for the daemon's.`,
-    `STEP 3: from the terminal result.runResult read: outcome, completed_personas, failed_personas, out_dir, synthesis_path, synthesis_handoff_id (if present).`,
+    `STEP 3: from the terminal result.runResult read: outcome, completed_personas, failed_personas, out_dir, synthesis_path, synthesis_handoff_id (if present), diff_truncated and diff_dropped_files — a capped diff means the review saw only part of the change; copy them verbatim, and when the runResult omits them report diff_truncated=false and diff_dropped_files=[] (both fields are REQUIRED — never omit).`,
     `STEP 4: read the synthesis markdown at synthesis_path. Parse YAML frontmatter for persona_handoff_ids + synthesis_handoff_id (verbatim). Parse the body: headline verdict (land / land with revisions / block), shared concerns, and EVERY finding under the HIGH / MEDIUM / LOW headings (id like F1, title, the personas that raised it, file, detail, fix).`,
     `STEP 5: return SYNTHESIS_SCHEMA. Place each finding in high/medium/low by its heading. completed_personas/failed_personas and outcome from STEP 3. Every handoff_id verbatim from a tool result. Set review_cwd to the cwd you passed to workflow_run (${REPO}) and resolution_warning verbatim from the workflow_run response when present.`,
   ].join("\n");
@@ -286,11 +317,20 @@ if (fixRound && review.high.length > 0) {
 }
 
 // Gate decision (2-round cap): clean -> passed; HIGH remain after the cap -> review_debt; else failed.
-// The workflow RECOMMENDS the close; the maestro stays the lane authority (and given the
-// lane_ledger_recent read quirk, lane mutation stays an explicit maestro step).
+// A diff the recall budget truncated is PARTIAL coverage — a zero-HIGH partial review is not
+// clean, so it recommends review_debt rather than passed. The workflow RECOMMENDS the close;
+// the maestro stays the lane authority (and given the lane_ledger_recent read quirk, lane
+// mutation stays an explicit maestro step).
 let laneRecommendation = null;
 if (laneId) {
-  const gate = review.high.length === 0 ? "passed" : rounds >= 2 ? "review_debt" : "failed";
+  const gate =
+    review.high.length === 0
+      ? review.diff_truncated === true
+        ? "review_debt"
+        : "passed"
+      : rounds >= 2
+        ? "review_debt"
+        : "failed";
   laneRecommendation = {
     laneId,
     gate_status: gate,
@@ -301,6 +341,12 @@ if (laneId) {
       low_findings: review.low.length,
       round_count: rounds,
       fix_round_status: fixRoundStatus,
+      ...(review.diff_truncated === true
+        ? {
+            diff_truncated: true,
+            diff_dropped_files: review.diff_dropped_files || [],
+          }
+        : {}),
     },
   };
   log(`lane recommendation: lane_close(${laneId}, gate_status=${gate}, round_count=${rounds})`);
@@ -322,6 +368,14 @@ return {
   failed_personas: review.failed_personas,
   synthesis_path: review.synthesis_path,
   persona_handoff_ids: review.persona_handoff_ids,
+  diff_truncated: review.diff_truncated === true,
+  diff_dropped_files: Array.isArray(review.diff_dropped_files)
+    ? review.diff_dropped_files
+    : [],
+  diff_dropped_more: review.diff_dropped_more === true,
+  ...(typeof review.diff_cut_file === "string" && review.diff_cut_file.length > 0
+    ? { diff_cut_file: review.diff_cut_file }
+    : {}),
   fix,
   fix_grade: fixGrade,
   fix_round_status: fixRoundStatus,
@@ -332,7 +386,13 @@ return {
   next:
     fixRoundStatus === "REJECTED" || fixRoundStatus === "GRADER_UNAVAILABLE"
       ? `Fix round ${fixRoundStatus} (independent grader); land candidate remains PRE-fix branch ${landCandidate}. Do not land ${fix && fix.branch ? fix.branch : "the fix branch"} without explicit override.`
-      : review.high.length === 0
-        ? `No HIGH findings outstanding — maestro may land ${landCandidate} (land -> verify HEAD+content in main -> push -> teardown).`
-        : `${review.high.length} HIGH finding(s) outstanding after ${rounds} round(s). 2-round cap reached if rounds==2 -> lane_close review_debt (or override with a written reason). A third fix round is NOT auto-run.`,
+      : review.high.length > 0
+        ? `${review.high.length} HIGH finding(s) outstanding after ${rounds} round(s). 2-round cap reached if rounds==2 -> lane_close review_debt (or override with a written reason). A third fix round is NOT auto-run.${
+            review.diff_truncated === true
+              ? ` Coverage is also PARTIAL — the recall budget dropped ${(Array.isArray(review.diff_dropped_files) && review.diff_dropped_files.join(", ")) || "unnamed"} file section(s); re-review on a narrower range / content_path after the findings are addressed.`
+              : ""
+          }`
+        : review.diff_truncated === true
+          ? `Partial diff coverage — the recall budget dropped ${(Array.isArray(review.diff_dropped_files) && review.diff_dropped_files.join(", ")) || "unnamed"} file section(s); high_count=0 here is NOT clean. Maestro: lane_close review_debt, or re-review on a narrower range / content_path before landing.`
+          : `No HIGH findings outstanding — maestro may land ${landCandidate} (land -> verify HEAD+content in main -> push -> teardown).`,
 };

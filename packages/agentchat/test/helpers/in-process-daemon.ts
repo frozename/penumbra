@@ -47,9 +47,17 @@ interface ShellRunResult {
   truncated: boolean;
 }
 
+export interface CapturedRequest {
+  url: string;
+  body: unknown;
+  status: number;
+  response: unknown;
+}
+
 export interface InProcessDaemonHarness {
   client: PenumbraClient;
   services: Services;
+  requests: CapturedRequest[];
   postDispatchEvent(event: DispatchEventInput): Promise<void>;
   getDispatchEvents(
     handoffId: string,
@@ -130,10 +138,73 @@ function jsonFetch<T>(
   }).then((response) => response.json() as Promise<T>);
 }
 
+function buildCapturingFetch(args: {
+  handler: (req: Request) => Promise<Response>;
+  requests: CapturedRequest[];
+  emulateOld: boolean;
+}): typeof fetch {
+  const { handler, requests, emulateOld } = args;
+  return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    let req = input instanceof Request ? input : new Request(String(input), init);
+    const path = new URL(req.url).pathname;
+    let body: unknown =
+      req.method === "POST"
+        ? await req
+            .clone()
+            .json()
+            .catch(() => null)
+        : null;
+    // An old daemon's non-strict body schema silently drops claimed_before;
+    // mirror that by rewriting the request before it reaches the route.
+    if (
+      emulateOld &&
+      path === "/worker/reconcile-orphans" &&
+      body !== null &&
+      typeof body === "object" &&
+      "claimed_before" in body
+    ) {
+      const stripped = { ...(body as Record<string, unknown>) };
+      delete stripped["claimed_before"];
+      body = stripped;
+      req = new Request(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: JSON.stringify(stripped),
+      });
+    }
+    let res = await handler(req);
+    let responseBody: unknown = await res
+      .clone()
+      .json()
+      .catch(() => null);
+    // An old register route has no capabilities field in its response.
+    if (
+      emulateOld &&
+      path === "/worker/register" &&
+      responseBody !== null &&
+      typeof responseBody === "object" &&
+      "capabilities" in responseBody
+    ) {
+      const stripped = { ...(responseBody as Record<string, unknown>) };
+      delete stripped["capabilities"];
+      responseBody = stripped;
+      res = Response.json(stripped, { status: res.status });
+    }
+    requests.push({ url: path, body, status: res.status, response: responseBody });
+    return res;
+  }) as typeof fetch;
+}
+
 export function startInProcessDaemon(
   opts: {
     shellEnabled?: boolean;
     autoApprovePermissions?: boolean;
+    /** Wire a real OrphanHandoffRecoveryService into the route table so
+     *  /worker/reconcile-orphans serves instead of returning 503. */
+    orphanRecovery?: boolean;
+    /** Emulate a pre-claimed_before daemon: strip the field from reconcile
+     *  requests and the capability flag from register responses. */
+    emulateDaemonWithoutClaimedBefore?: boolean;
   } = {},
 ): Promise<InProcessDaemonHarness> {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-int-"));
@@ -174,14 +245,20 @@ export function startInProcessDaemon(
   }
 
   const token = "tok";
-  const handler = createDaemonFetchHandler({ services, token });
-  const fetchImpl: typeof fetch = (async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const req = input instanceof Request ? input : new Request(String(input), init);
-    return await handler(req);
-  }) as typeof fetch;
+  const orphanRecovery = opts.orphanRecovery
+    ? new OrphanHandoffRecoveryService(services)
+    : undefined;
+  const handler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: orphanRecovery,
+  });
+  const requests: CapturedRequest[] = [];
+  const fetchImpl = buildCapturingFetch({
+    handler,
+    requests,
+    emulateOld: opts.emulateDaemonWithoutClaimedBefore === true,
+  });
 
   writeFileSync(join(dir, "port"), "1");
   writeFileSync(join(dir, "token"), token);
@@ -194,6 +271,7 @@ export function startInProcessDaemon(
   return Promise.resolve({
     client,
     services,
+    requests,
     postDispatchEvent: (event): Promise<void> => client.postDispatchEvents([event]),
     getDispatchEvents: async (
       handoffId,

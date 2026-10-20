@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "test": "bun test",
+    "check:ci": "bun scripts/check-ci.ts",
     "dist-check": "bun scripts/check-dist-freshness.ts",
     "deps-check": "bun scripts/check-external-deps.ts",
     "postinstall": "bun scripts/check-external-deps.ts",
@@ -18,7 +19,7 @@
     "typecheck": "bun scripts/check-dist-freshness.ts && tsc --build",
     "lint": "bun run lint:no-raw-env && bun run lint:no-sync-exec && NODE_OPTIONS=--max-old-space-size=8192 eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:strict": "NODE_OPTIONS=--max-old-space-size=8192 eslint packages/config packages/api-contract packages/agy-acp-shim packages/agentchat packages/e2e packages/workflows packages/cli packages/console packages/core packages/mcp packages/daemon packages/integrations/sirius-middleware plugin scripts --max-warnings=0",
+    "lint:strict": "NODE_OPTIONS=--max-old-space-size=8192 eslint packages/config packages/api-contract packages/agy-acp-shim packages/agentchat packages/e2e packages/workflows packages/cli packages/console packages/core packages/mcp packages/daemon packages/integrations/sirius-middleware packages/integrations/typesafe plugin scripts --max-warnings=0",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "prepare": "husky"

@@ -13,6 +13,9 @@ export interface WorkerShutdownDeps {
   shutdownAllAcpWarmPools: () => void;
   eventSource: { stop(): Promise<void> | void };
   permissionDaemonClient: { stop(): void };
+  // Stops the outbox's retry timer so no new drain starts while
+  // dispatcher.idle() waits; persisted records resume on next boot.
+  terminalOutbox?: { stop(): void };
   dispatcher: { stop(): void; idle(): Promise<void> | void };
   eventQueue: { stop(): Promise<void> | void };
   exit: (code: number) => void;
@@ -35,6 +38,7 @@ export function createWorkerShutdown(deps: WorkerShutdownDeps): (sig: string) =>
       deps.shutdownAllAcpWarmPools();
       await deps.eventSource.stop();
       deps.permissionDaemonClient.stop();
+      deps.terminalOutbox?.stop();
       deps.dispatcher.stop();
       await deps.dispatcher.idle();
       deps.heartbeatLoop.stop();

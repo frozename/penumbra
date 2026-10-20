@@ -1,7 +1,11 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
-import { recentCost } from "@src/readers/cost.js";
+import {
+  collectSubscriptionPressure,
+  readRecentSubscriptionPressureSnapshots,
+  recentCost,
+} from "@src/readers/cost.js";
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -439,7 +443,7 @@ describe("recentCost.by_provider_model", () => {
       model: "claude-sonnet",
       window_label: "five_hour",
       used_pct: 55,
-      resets_at: 1778166400,
+      resets_at: 1778252800,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -459,7 +463,7 @@ describe("recentCost.by_provider_model", () => {
       model: "gemini-3-flash-preview",
       window_label: "five_hour",
       used_pct: 25,
-      resets_at: 1778166600,
+      resets_at: 1778253000,
       source_kind: "local-state-gemini-statusline",
     });
 
@@ -473,6 +477,7 @@ describe("recentCost.by_provider_model", () => {
     const google = out.by_provider.find((row) => row.provider === "google");
     expect(anthropic?.subscription_pressure).toEqual([
       {
+        status: "fresh",
         window_label: "daily",
         used_pct: 72,
         observed_at: "2026-05-08T11:41:00Z",
@@ -480,20 +485,22 @@ describe("recentCost.by_provider_model", () => {
         resets_at: null,
       },
       {
+        status: "fresh",
         window_label: "five_hour",
         used_pct: 55,
         observed_at: "2026-05-08T11:40:00Z",
         source_kind: "local-state-claude-statusline",
-        resets_at: 1778166400,
+        resets_at: 1778252800,
       },
     ]);
     expect(google?.subscription_pressure).toEqual([
       {
+        status: "fresh",
         window_label: "five_hour",
         used_pct: 25,
         observed_at: "2026-05-08T11:45:00Z",
         source_kind: "local-state-gemini-statusline",
-        resets_at: 1778166600,
+        resets_at: 1778253000,
       },
     ]);
 
@@ -677,7 +684,7 @@ describe("recentCost.by_provider_model", () => {
       model: "claude-sonnet",
       window_label: "five_hour",
       used_pct: 63,
-      resets_at: 1778167200,
+      resets_at: 1778253600,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -688,12 +695,79 @@ describe("recentCost.by_provider_model", () => {
     );
     expect(out.by_provider[0]?.subscription_pressure).toEqual([
       {
+        status: "fresh",
         window_label: "five_hour",
         used_pct: 63,
         observed_at: "2026-05-08T11:50:00Z",
         source_kind: "local-state-claude-statusline",
-        resets_at: 1778167200,
+        resets_at: 1778253600,
       },
     ]);
   });
+});
+
+it("shows stale and expired subscription pressure windows flagged with status", () => {
+  const db = makeDb();
+  insertUsageRow(db, {
+    event_id: "usage",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    cost_usd: null,
+    used: 1,
+    handoff_id: null,
+  });
+  for (const [window_label, ts, resets_at] of [
+    ["five_hour", "2026-10-01T11:59:00Z", null],
+    ["seven_day", "2026-10-01T10:00:00Z", null],
+    ["daily", "2026-10-01T11:59:00Z", Date.parse("2026-10-01T11:59:30Z") / 1000],
+  ] as const)
+    insertSnapshotRow(db, {
+      event_id: window_label,
+      provider: "openai",
+      window_label,
+      ts,
+      resets_at,
+      used_pct: 98,
+      source_kind: "test",
+    });
+  const result = recentCost(
+    db,
+    { since: "2026-10-01T00:00:00Z" },
+    () => new Date("2026-10-01T12:00:00Z"),
+  );
+  expect(
+    result.by_provider[0]?.subscription_pressure
+      .map((row) => [row.window_label, row.status])
+      .sort(),
+  ).toEqual([
+    ["daily", "expired"],
+    ["five_hour", "fresh"],
+    ["seven_day", "stale"],
+  ]);
+  db.close();
+});
+it("collectSubscriptionPressure keeps the reader's newest-first order across mixed timestamp precision", () => {
+  const db = makeDb();
+  for (const [event_id, ts, used_pct, model] of [
+    ["new", "2026-10-01T12:00:00.500Z", 1, "new"],
+    ["old", "2026-10-01T12:00:00Z", 2, "old"],
+  ] as const) {
+    insertSnapshotRow(db, {
+      event_id,
+      ts,
+      used_pct,
+      model,
+      provider: "openai",
+      window_label: "primary",
+      resets_at: null,
+      source_kind: "test",
+    });
+  }
+  const ordered = readRecentSubscriptionPressureSnapshots(db, {
+    since: "2026-10-01T00:00:00Z",
+    now: () => new Date("2026-10-01T12:01:00Z"),
+  });
+  expect(ordered.map((row) => row.used_pct)).toEqual([1, 2]);
+  expect(collectSubscriptionPressure(ordered, null)[0]?.used_pct).toBe(1);
+  db.close();
 });

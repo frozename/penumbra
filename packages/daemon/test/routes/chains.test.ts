@@ -41,6 +41,7 @@ import {
   handoffsLatestRoute,
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
+import type { WorkerAuthzMap } from "@src/routes/worker-profile-gate.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
@@ -4747,4 +4748,687 @@ test("branch naming is unaffected by taskRouterConfig mode ('auto' vs 'off') for
 
   expect(autoBody.branch_name).not.toBeNull();
   expect(autoBody.branch_name).toBe(offBody.branch_name);
+});
+
+type PermissionProfileBody = { permission_profile?: string | null };
+
+type ProfileAwareServices = Services & {
+  agentchatConfig?: {
+    agents?: {
+      name: string;
+      roles?: string[];
+      adapter?: string;
+      enforces_permission_profiles?: string[];
+    }[];
+  };
+  workerAuthz?: WorkerAuthzMap;
+};
+
+function seedLiveWorker(
+  services: Services,
+  metadata: Record<string, unknown> | null,
+  opts?: { workerId?: string; staleMs?: number; revoked?: boolean },
+): void {
+  const now = Date.now();
+  const workerId = opts?.workerId ?? "w-live";
+  const staleMs = opts?.staleMs ?? 0;
+  services.db.run(
+    `INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at, revoked_at, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      `th-${workerId}-${String(now)}-${String(staleMs)}`,
+      workerId,
+      now - 60_000,
+      now - staleMs,
+      opts?.revoked ? now : null,
+      metadata === null ? null : JSON.stringify(metadata),
+    ],
+  );
+}
+
+function enforcingServices(
+  seats: { name: string; roles?: string[]; adapter?: string; enforces?: string[] }[],
+  routing?: AgentRoutingConfig,
+  opts?: { liveEnforcingWorker?: boolean },
+): Services {
+  const services = tempServices({
+    agentRegistry: seats.map((seat) => seat.name),
+    agentRouting: routing ?? null,
+  }) as ProfileAwareServices;
+  services.agentchatConfig = {
+    agents: seats.map((seat) => ({
+      name: seat.name,
+      roles: seat.roles ?? [],
+      adapter: seat.adapter,
+      enforces_permission_profiles: seat.enforces,
+    })),
+  };
+  // A profiled chain_start also requires a live worker declaring enforcement;
+  // every profiled fixture seeds one so the seat gate stays the testable gate.
+  if (opts?.liveEnforcingWorker !== false) {
+    seedLiveWorker(services, { enforces_permission_profiles: ["review_readonly"] });
+  }
+  return services;
+}
+
+function readHandoffProfile(services: Services, handoff_id: string): string | null {
+  return (
+    services.db
+      .query<
+        { permission_profile: string | null },
+        [string]
+      >("SELECT permission_profile FROM handoffs WHERE handoff_id = ?")
+      .get(handoff_id)?.permission_profile ?? null
+  );
+}
+
+test("chain_start defaults review_adversarial use_worktree:false to review_readonly, persists and echoes it", async () => {
+  const services = enforcingServices([{ name: "reviewer-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+  expect(readHandoffProfile(services, body.handoff_id!)).toBe("review_readonly");
+});
+
+test("chain_start defaults plan_refine use_worktree:false to review_readonly", async () => {
+  const services = enforcingServices([{ name: "planner-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner-seat",
+        task_type: "plan_refine",
+        message: "refine this plan",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+  expect(readHandoffProfile(services, body.handoff_id!)).toBe("review_readonly");
+});
+
+test("chain_start does not default the profile when use_worktree stays true", async () => {
+  const services = enforcingServices([{ name: "reviewer-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review in a worktree",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile === undefined || body.permission_profile === null).toBe(true);
+  expect(readHandoffProfile(services, body.handoff_id!)).toBeNull();
+});
+
+test("chain_start does not default the profile for non-review task types", async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "planner",
+        task_type: "implement_small",
+        message: "no-worktree implement task",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile === undefined || body.permission_profile === null).toBe(true);
+  expect(readHandoffProfile(services, body.handoff_id!)).toBeNull();
+});
+
+test("chain_start preserves an explicit permission_profile and echoes it", async () => {
+  const services = enforcingServices([{ name: "reviewer-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "implement_small",
+        message: "explicit profile dispatch",
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+  expect(readHandoffProfile(services, body.handoff_id!)).toBe("review_readonly");
+});
+
+test("chain_start rejects a profile dispatch when the routed seat cannot enforce it", async () => {
+  const services = enforcingServices([{ name: "cli-seat", adapter: "claude-cli" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "cli-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+});
+
+test("chain_start fails closed when a profile dispatch has no seat metadata", async () => {
+  const services = tempServices({ agentRegistry: ["reviewer-seat"] });
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start accepts a profile dispatch when the seat opts in via enforces_permission_profiles", async () => {
+  const services = enforcingServices([
+    { name: "cli-seat", adapter: "claude-cli", enforces: ["review_readonly"] },
+  ]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "cli-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+});
+
+test("chain_start role routing excludes non-enforcing role members under a profile dispatch", async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: "plain-review", roles: ["reviewer"], adapter: "claude-cli" },
+      {
+        name: "enforced-review",
+        roles: ["reviewer"],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+    default_roles: { reviewer: "plain-review" },
+    role_exploration_policy: "ranked-first",
+  };
+  const services = tempServices({
+    agentRegistry: ["plain-review", "enforced-review"],
+    agentRouting: routing,
+  }) as ProfileAwareServices;
+  services.agentchatConfig = {
+    agents: [
+      { name: "plain-review", roles: ["reviewer"], adapter: "claude-cli" },
+      {
+        name: "enforced-review",
+        roles: ["reviewer"],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  seedLiveWorker(services, { enforces_permission_profiles: ["review_readonly"] });
+  for (const agent of ["plain-review", "enforced-review"] as const) {
+    seedPerformance(services, {
+      performance_id: `p-profile-${agent}`,
+      handoff_id: `h-profile-${agent}`,
+      agent_name: agent,
+      task_type: "review_adversarial",
+      outcome: "merged",
+    });
+  }
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer",
+        task_type: "review_adversarial",
+        message: "adversarial review",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.routed_agent).toBe("enforced-review");
+  expect(readHandoffProfile(services, body.handoff_id!)).toBe("review_readonly");
+});
+
+function readHandoffCallerCwd(services: Services, handoff_id: string): string | null {
+  return (
+    services.db
+      .query<
+        { caller_cwd: string | null },
+        [string]
+      >("SELECT caller_cwd FROM handoffs WHERE handoff_id = ?")
+      .get(handoff_id)?.caller_cwd ?? null
+  );
+}
+
+test("chain_start persists caller_cwd on the handoff row", async () => {
+  const services = enforcingServices([{ name: "reviewer-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(readHandoffCallerCwd(services, body.handoff_id!)).toBe("/Volumes/WorkSSD/repos/penumbra");
+});
+
+test("chain_start leaves caller_cwd null when the caller omits it", async () => {
+  const services = enforcingServices([{ name: "reviewer-seat", adapter: "opencode-acp" }]);
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(readHandoffCallerCwd(services, body.handoff_id!)).toBeNull();
+});
+
+test("chain_start hop inherits the parent's permission_profile and caller_cwd", async () => {
+  const services = enforcingServices([
+    { name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] },
+  ]);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-profiled-parent",
+    ts: "2026-10-01T10:00:00.000Z",
+    project_id: "penumbra",
+    conversation_id: "conv-parent",
+    from: "user",
+    to: "reviewer-seat",
+    to_role: null,
+    message: "root",
+    triggered_by_event_id: "evt-parent",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 4,
+    chain_trust_mode: "all",
+    chain_task_type: "review_adversarial",
+    use_worktree: false,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+    caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+  });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        message: "follow-up hop",
+        conversation_id: "conv-hop",
+        task_type: "unknown",
+        use_worktree: true,
+        parent_handoff_id: "h-profiled-parent",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+  expect(readHandoffProfile(services, body.handoff_id!)).toBe("review_readonly");
+  expect(readHandoffCallerCwd(services, body.handoff_id!)).toBe("/Volumes/WorkSSD/repos/penumbra");
+});
+
+test("chain_start hop under a profiled parent fails closed when the hop seat cannot enforce", async () => {
+  const services = enforcingServices([
+    { name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] },
+    { name: "plain-seat", adapter: "claude-cli" },
+  ]);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-profiled-parent-2",
+    ts: "2026-10-01T10:00:00.000Z",
+    project_id: "penumbra",
+    conversation_id: "conv-parent",
+    from: "user",
+    to: "reviewer-seat",
+    to_role: null,
+    message: "root",
+    triggered_by_event_id: "evt-parent-2",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 4,
+    chain_trust_mode: "all",
+    chain_task_type: "review_adversarial",
+    use_worktree: false,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+  });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "plain-seat",
+        message: "hop to a non-enforcing seat",
+        conversation_id: "conv-hop-escape",
+        task_type: "implement_small",
+        parent_handoff_id: "h-profiled-parent-2",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start rejects a profiled dispatch when no live worker declares enforcement", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+});
+
+test("chain_start rejects a profiled dispatch when live workers are stale, revoked, or undeclared", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    {
+      workerId: "w-stale",
+      staleMs: 200_000,
+    },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    {
+      workerId: "w-revoked",
+      revoked: true,
+    },
+  );
+  seedLiveWorker(services, { some_other_metadata: true }, { workerId: "w-undeclared" });
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["some_other_profile"] },
+    { workerId: "w-wrong-profile" },
+  );
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start accepts a profiled dispatch when a live worker declares enforcement", async () => {
+  const services = enforcingServices([
+    { name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] },
+  ]);
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    {
+      workerId: "w-explicit",
+    },
+  );
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
+});
+
+test("chain_start does not require an enforcing worker when no profile applies", async () => {
+  const services = tempServices({ agentRegistry: ["worker-seat"] });
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "worker-seat",
+        task_type: "implement_small",
+        message: "unprofiled dispatch",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
+test("chain_start 503s when the only fresh enforcing worker is hard-isolated to another project", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-isolated" },
+  );
+  (services as ProfileAwareServices).workerAuthz = new Map([
+    ["w-isolated", { project_id: "other-project", isolation: "hard" }],
+  ]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start admits a profiled dispatch when the enforcing worker's hard isolation matches the project", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-isolated" },
+  );
+  (services as ProfileAwareServices).workerAuthz = new Map([
+    ["w-isolated", { project_id: "penumbra", isolation: "hard" }],
+  ]);
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+        project_id: "penumbra",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
+test("chain_start 503s when a worker's newest fresh token lacks the profile declaration", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  // Same worker, two fresh tokens: the older declares enforcement, the newer
+  // does not — the dedupe keeps the newest row, so this worker does not count.
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-flip", staleMs: 60_000 },
+  );
+  seedLiveWorker(services, { other: true }, { workerId: "w-flip", staleMs: 1_000 });
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.error?.code).toBe("permission_profile_unenforceable");
+});
+
+test("chain_start admits a profiled dispatch when a worker's newest fresh token declares the profile", async () => {
+  const services = enforcingServices(
+    [{ name: "reviewer-seat", adapter: "opencode-acp", enforces: ["review_readonly"] }],
+    undefined,
+    { liveEnforcingWorker: false },
+  );
+  // Newest token wins the dedupe — the stale older row without the
+  // declaration must not mask it.
+  seedLiveWorker(services, { other: true }, { workerId: "w-flip", staleMs: 60_000 });
+  seedLiveWorker(
+    services,
+    { enforces_permission_profiles: ["review_readonly"] },
+    { workerId: "w-flip", staleMs: 1_000 },
+  );
+
+  const res = await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "reviewer-seat",
+        task_type: "review_adversarial",
+        message: "review this diff",
+        use_worktree: false,
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody & PermissionProfileBody>(res);
+  expect(body.permission_profile).toBe("review_readonly");
 });

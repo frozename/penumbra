@@ -1,20 +1,109 @@
 import { reloadAgentChatConfig } from "@penumbra/config";
+import { applySchema, loadSqliteVec, type Logger } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DreamConfig } from "@src/dreaming/config.js";
+import type { DreamConfig, TypesafeEnvSlice } from "@src/dreaming/config.js";
+import type { DreamCycleDeps } from "@src/dreaming/cycle.js";
 import { buildDreamCycleDeps, createDreamingRewriterCandidates } from "@src/dreaming/deps.js";
+import { StubJudgePool } from "@src/dreaming/judge-pool.js";
+import {
+  createLazyShadowSeat,
+  createLazyTypesafeJudgeLoader,
+  isShadowComposedPool,
+  type JevShadowOutcome,
+  TYPESAFE_SHADOW_SUBSYSTEM,
+  type TypesafeModuleLike,
+  type TypesafeShadowSeat,
+} from "@src/dreaming/typesafe-judge-seat.js";
+import { readSubsystemHealth } from "@src/services/subsystem-health.js";
+
+// Compile-time pin: drift between the seat's structural type and the real
+// @penumbra/typesafe surface fails the daemon test program (tsconfig.test.json).
+const compat: typeof import("@penumbra/typesafe") extends TypesafeModuleLike ? true : never = true;
 
 const configDir = join(tmpdir(), `penumbra-rewriter-role-${crypto.randomUUID()}`);
+
+const TEST_ENV: TypesafeEnvSlice = {
+  PENUMBRA_TYPESAFE_BASE_URL: "https://api.typesafe.ai",
+  PENUMBRA_TYPESAFE_MODEL: "jev-1.13.0",
+  PENUMBRA_TYPESAFE_TIMEOUT_MS: 10_000,
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "shadow",
+};
+
+const TEST_ENV_VETO: TypesafeEnvSlice = {
+  ...TEST_ENV,
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "veto",
+};
+
+const TWO_JUDGE_SEATS =
+  "agents:\n" +
+  "  - name: judge-a\n    adapter: openai-compat-http\n    api_provider: local\n    roles: [dreaming-judge]\n    options:\n      baseUrl: http://localhost:1111/v1\n" +
+  "  - name: judge-b\n    adapter: openai-compat-http\n    api_provider: local\n    roles: [dreaming-judge]\n    options:\n      baseUrl: http://localhost:2222/v1\n";
+
+const NO_JUDGE_SEATS =
+  "agents:\n  - name: unrelated\n    adapter: openai-compat-http\n    roles: [other]\n    options:\n      baseUrl: http://localhost:8080/v1\n";
+
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded
+}
 
 afterEach(() => {
   delete process.env.PENUMBRA_CONFIG_DIR;
   delete process.env.PENUMBRA_DREAMING_REWRITER_ROLE;
   rmSync(configDir, { recursive: true, force: true });
 });
+
+function writeAgentsYaml(agentsYaml: string): void {
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, "agents.yaml"), agentsYaml);
+  writeFileSync(join(configDir, "routing.yaml"), "default_roles: {}\n");
+  writeFileSync(join(configDir, "quotas.yaml"), "providers: []\n");
+  process.env.PENUMBRA_CONFIG_DIR = configDir;
+  reloadAgentChatConfig();
+}
+
+function openSchemaDb(): Database {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  applySchema(db, { embeddingDim: 3 });
+  return db;
+}
+
+function makeWarnLog(): { log: Logger; warnCalls: [unknown, unknown][] } {
+  const warnCalls: [unknown, unknown][] = [];
+  const log = {
+    warn: (...args: unknown[]): void => {
+      warnCalls.push([args[0], args[1]]);
+    },
+  } as unknown as Logger;
+  return { log, warnCalls };
+}
+
+function enabledTypesafeModule(): TypesafeModuleLike {
+  return {
+    resolveTypesafeSettings: () => ({
+      enabled: true,
+      apiKey: "test-key",
+      keySource: "env",
+      baseUrl: "https://api.typesafe.ai",
+      model: "jev-1.13.0",
+      timeoutMs: 10_000,
+      judgePromotion: "shadow",
+    }),
+    createTypesafeClient: () => ({
+      evaluate: () => Promise.reject(new Error("unreachable in test")),
+    }),
+    judgePromotion: () => Promise.resolve({ ok: false, reason: "transport", status: null }),
+  };
+}
 
 test("falls back to the legacy dreaming rewriter environment candidate plus local secondary when no seat has its role", () => {
   mkdirSync(configDir, { recursive: true });
@@ -70,4 +159,468 @@ test("buildDreamCycleDeps constructs with partial dream config", () => {
   } finally {
     db.close();
   }
+});
+
+test("flag off leaves the incumbent pool untouched and never loads @penumbra/typesafe", () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  let loadCalls = 0;
+  const services = {
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => {
+      loadCalls += 1;
+      return Promise.resolve(enabledTypesafeModule());
+    },
+  };
+  const db = openSchemaDb();
+  try {
+    const deps = buildDreamCycleDeps(services, db, {} as DreamConfig);
+    expect(deps.judgePool).toBeDefined();
+    expect(isShadowComposedPool(deps.judgePool!)).toBe(false);
+    expect(loadCalls).toBe(0);
+
+    writeAgentsYaml(NO_JUDGE_SEATS);
+    const noSeatDeps = buildDreamCycleDeps(services, db, {} as DreamConfig);
+    expect(noSeatDeps.judgePool).toBeInstanceOf(StubJudgePool);
+    expect("judgeAll" in noSeatDeps.judgePool!).toBe(false);
+  } finally {
+    db.close();
+  }
+});
+
+test("shadow flag composes the pool and resolves the module once per services object", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  let loadCalls = 0;
+  const { log } = makeWarnLog();
+  const services = {
+    log,
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => {
+      loadCalls += 1;
+      return Promise.resolve(enabledTypesafeModule());
+    },
+  };
+  const dreamConfig = {
+    typesafeJudgePromotion: "shadow",
+    typesafeEnv: TEST_ENV,
+  } as DreamConfig;
+  const db = openSchemaDb();
+  try {
+    const deps = buildDreamCycleDeps(services, db, dreamConfig);
+    expect(isShadowComposedPool(deps.judgePool!)).toBe(true);
+    await Bun.sleep(0);
+    expect(loadCalls).toBe(1);
+
+    const rebuilt = buildDreamCycleDeps(services, db, dreamConfig);
+    expect(isShadowComposedPool(rebuilt.judgePool!)).toBe(true);
+    await Bun.sleep(0);
+    expect(loadCalls).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
+function vetoConfig(): DreamConfig {
+  return {
+    typesafeJudgePromotion: "veto",
+    typesafeEnv: TEST_ENV_VETO,
+  } as DreamConfig;
+}
+
+test("veto flag wires promotionVeto on top of the composed shadow pool", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  let loadCalls = 0;
+  const services = {
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => {
+      loadCalls += 1;
+      return Promise.resolve(enabledTypesafeModule());
+    },
+  };
+  const db = openSchemaDb();
+  try {
+    const deps = buildDreamCycleDeps(services, db, vetoConfig());
+    expect(isShadowComposedPool(deps.judgePool!)).toBe(true);
+    expect(typeof deps.promotionVeto).toBe("function");
+    await Bun.sleep(0);
+    expect(loadCalls).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
+test("shadow and off modes leave promotionVeto unwired", () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const services = {
+    loadTypesafeModule: (): Promise<TypesafeModuleLike> => Promise.resolve(enabledTypesafeModule()),
+  };
+  const db = openSchemaDb();
+  try {
+    const shadowDeps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    expect(isShadowComposedPool(shadowDeps.judgePool!)).toBe(true);
+    expect(shadowDeps.promotionVeto).toBeUndefined();
+
+    const offDeps = buildDreamCycleDeps(services, db, {} as DreamConfig);
+    expect(offDeps.promotionVeto).toBeUndefined();
+  } finally {
+    db.close();
+  }
+});
+
+function vetoJudgementOutcome(shadowPromote: boolean): JevShadowOutcome {
+  return {
+    ok: true,
+    judgement: {
+      model: "jev-1.13.0",
+      answers: { promote: shadowPromote ? 0.9 : 0.2 },
+      pPromote: shadowPromote ? 0.9 : 0.2,
+      shadowPromote,
+      usage: { inputTokens: 10, outputTokens: 1 },
+      usd: 0.001,
+    },
+  };
+}
+
+test("promotionVeto allows only an answered shadowPromote and reports why it blocked", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const db = openSchemaDb();
+  const affordMeter = { canAfford: (): boolean => true, record: (): void => undefined };
+  const build = (mod: TypesafeModuleLike): DreamCycleDeps =>
+    buildDreamCycleDeps({ loadTypesafeModule: () => Promise.resolve(mod) }, db, vetoConfig());
+  const verdict = async (deps: DreamCycleDeps): Promise<unknown> =>
+    (await deps.promotionVeto?.({ rollupId: "r1", body: "a durable finding body" })) ?? "unset";
+  try {
+    const allowDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    allowDeps.costMeter = affordMeter;
+    expect(await verdict(allowDeps)).toEqual({ decision: "allow", reason: "jev_promote" });
+
+    const holdDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(false)),
+    });
+    holdDeps.costMeter = affordMeter;
+    expect(await verdict(holdDeps)).toEqual({ decision: "block", reason: "jev_reject" });
+
+    const timeoutDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve({ ok: false, reason: "timeout", status: null }),
+    });
+    timeoutDeps.costMeter = affordMeter;
+    expect(await verdict(timeoutDeps)).toEqual({ decision: "block", reason: "timeout" });
+
+    const errorDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve({ ok: false, reason: "transport", status: null }),
+    });
+    errorDeps.costMeter = affordMeter;
+    expect(await verdict(errorDeps)).toEqual({ decision: "block", reason: "judge_failed" });
+
+    const throwingDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.reject(new Error("jev exploded")),
+    });
+    throwingDeps.costMeter = affordMeter;
+    expect(await verdict(throwingDeps)).toEqual({ decision: "block", reason: "judge_failed" });
+
+    const importFailDeps = buildDreamCycleDeps(
+      { loadTypesafeModule: () => Promise.reject(new Error("typesafe module missing")) },
+      db,
+      vetoConfig(),
+    );
+    importFailDeps.costMeter = affordMeter;
+    expect(await verdict(importFailDeps)).toEqual({
+      decision: "block",
+      reason: "loader_unavailable",
+    });
+
+    const disabledDeps = build({
+      ...enabledTypesafeModule(),
+      resolveTypesafeSettings: () => ({
+        enabled: false,
+        reason: "no_key",
+        judgePromotion: "veto",
+      }),
+    });
+    disabledDeps.costMeter = affordMeter;
+    expect(await verdict(disabledDeps)).toEqual({
+      decision: "block",
+      reason: "loader_unavailable",
+    });
+
+    const noMeterDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    expect(await verdict(noMeterDeps)).toEqual({ decision: "block", reason: "cost_gate" });
+
+    const refusedDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    refusedDeps.costMeter = { canAfford: (): boolean => false, record: (): void => undefined };
+    expect(await verdict(refusedDeps)).toEqual({ decision: "block", reason: "cost_gate" });
+
+    const explodingDeps = build({
+      ...enabledTypesafeModule(),
+      judgePromotion: () => Promise.resolve(vetoJudgementOutcome(true)),
+    });
+    Object.defineProperty(explodingDeps, "costMeter", {
+      configurable: true,
+      get: (): never => {
+        throw new Error("meter exploded");
+      },
+    });
+    expect(await verdict(explodingDeps)).toEqual({ decision: "block", reason: "exception" });
+  } finally {
+    db.close();
+  }
+});
+
+test("lazy loader memoizes a disabled resolution and the lazy seat stays unbuilt", async () => {
+  const db = openSchemaDb();
+  try {
+    let resolveCalls = 0;
+    let clientCalls = 0;
+    const { log, warnCalls } = makeWarnLog();
+    const mod: TypesafeModuleLike = {
+      resolveTypesafeSettings: () => {
+        resolveCalls += 1;
+        return { enabled: false, reason: "no_key", judgePromotion: "shadow" };
+      },
+      createTypesafeClient: () => {
+        clientCalls += 1;
+        return { evaluate: () => Promise.reject(new Error("unreachable in test")) };
+      },
+      judgePromotion: () => Promise.resolve({ ok: false, reason: "transport", status: null }),
+    };
+    const loader = createLazyTypesafeJudgeLoader(() => Promise.resolve(mod), {
+      env: TEST_ENV,
+      log,
+    });
+    expect(await loader()).toEqual({ disabled: "no_key" });
+    expect(await loader()).toEqual({ disabled: "no_key" });
+    expect(resolveCalls).toBe(1);
+    expect(clientCalls).toBe(0);
+    expect(warnCalls).toEqual([[{ reason: "no_key" }, "typesafe shadow judge disabled"]]);
+
+    let seatBuilds = 0;
+    const seat = createLazyShadowSeat(loader, (): TypesafeShadowSeat => {
+      seatBuilds += 1;
+      return { shadow: () => Promise.resolve() };
+    });
+    await seat.shadow(
+      {
+        body: "durable finding that must never reach a constructed seat",
+        kind: "promote_t1",
+        subjectId: "r1",
+      },
+      Promise.resolve(null),
+    );
+    expect(seatBuilds).toBe(0);
+    expect(readSubsystemHealth(db, TYPESAFE_SHADOW_SUBSYSTEM)).toBeNull();
+
+    const rejectingLoader = createLazyTypesafeJudgeLoader(
+      () => Promise.reject(new Error("module missing")),
+      { env: TEST_ENV },
+    );
+    expect(await rejectingLoader()).toEqual({ disabled: "import_failed" });
+  } finally {
+    db.close();
+  }
+});
+
+test("lazy loader resolves disabled and never builds the client when settings resolution throws", async () => {
+  let clientCalls = 0;
+  const { log, warnCalls } = makeWarnLog();
+  const baseMod = enabledTypesafeModule();
+  const mod: TypesafeModuleLike = {
+    ...baseMod,
+    resolveTypesafeSettings: () => {
+      throw new Error("boom");
+    },
+    createTypesafeClient: (options) => {
+      clientCalls += 1;
+      return baseMod.createTypesafeClient(options);
+    },
+  };
+  const loader = createLazyTypesafeJudgeLoader(() => Promise.resolve(mod), {
+    env: TEST_ENV,
+    log,
+  });
+  const first = await loader().catch((err: unknown) => ({ rejected: err }));
+  const second = await loader().catch((err: unknown) => ({ rejected: err }));
+  expect(first).toEqual({ disabled: "load_failed" });
+  expect(second).toEqual({ disabled: "load_failed" });
+  expect(warnCalls).toEqual([[{ reason: "load_failed" }, "typesafe shadow judge disabled"]]);
+  expect(JSON.stringify(warnCalls)).not.toContain("boom");
+  expect(clientCalls).toBe(0);
+});
+
+test("lazy loader resolves disabled when client construction throws", async () => {
+  const { log, warnCalls } = makeWarnLog();
+  const mod: TypesafeModuleLike = {
+    ...enabledTypesafeModule(),
+    createTypesafeClient: () => {
+      throw new Error("boom");
+    },
+  };
+  const loader = createLazyTypesafeJudgeLoader(() => Promise.resolve(mod), {
+    env: TEST_ENV,
+    log,
+  });
+  const first = await loader().catch((err: unknown) => ({ rejected: err }));
+  const second = await loader().catch((err: unknown) => ({ rejected: err }));
+  expect(first).toEqual({ disabled: "load_failed" });
+  expect(second).toEqual({ disabled: "load_failed" });
+  expect(warnCalls).toEqual([[{ reason: "load_failed" }, "typesafe shadow judge disabled"]]);
+  expect(JSON.stringify(warnCalls)).not.toContain("boom");
+});
+
+test("boot with a throwing settings resolution leaves no unhandled rejection and incumbent votes still flow", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const { log, warnCalls } = makeWarnLog();
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  const db = openSchemaDb();
+  try {
+    const services = {
+      log,
+      loadTypesafeModule: (): Promise<TypesafeModuleLike> =>
+        Promise.resolve({
+          ...enabledTypesafeModule(),
+          resolveTypesafeSettings: () => {
+            throw new Error("boom");
+          },
+        }),
+    };
+    const deps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(unhandled).toEqual([]);
+    expect(warnCalls).toContainEqual([{ reason: "load_failed" }, "typesafe shadow judge disabled"]);
+    const votes = await deps.judgePool!.judgeAll!({
+      body: "a durable finding worth keeping",
+      kind: "promote_t1",
+      subjectId: "r1",
+    });
+    expect(votes.map((vote) => vote.seat)).toEqual(["judge-a", "judge-b"]);
+    await Bun.sleep(0);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    db.close();
+  }
+});
+
+test("a rejected boot loader promise is logged once, class only, with no unhandled rejection", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  const warnCalls: [unknown, unknown][] = [];
+  // Force the lazy loader's own promise to reject: the only uncaught path out
+  // of loadTypesafeJudge is a log sink that throws on the disabled-reason warn.
+  const log = {
+    warn: (...args: unknown[]): void => {
+      if (args[1] === "typesafe shadow judge disabled") {
+        throw new Error("log sink exploded");
+      }
+      warnCalls.push([args[0], args[1]]);
+    },
+  } as unknown as Logger;
+  const db = openSchemaDb();
+  try {
+    const services = {
+      log,
+      loadTypesafeModule: (): Promise<TypesafeModuleLike> =>
+        Promise.reject(new Error("module missing; carries path details")),
+    };
+    const deps = buildDreamCycleDeps(services, db, {
+      typesafeJudgePromotion: "shadow",
+      typesafeEnv: TEST_ENV,
+    } as DreamConfig);
+    expect(deps.judgePool).toBeDefined();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    const loaderWarns = warnCalls.filter(
+      ([, msg]) => msg === "typesafe shadow judge loader rejected",
+    );
+    expect(loaderWarns).toEqual([
+      [{ reason: "loader_rejected" }, "typesafe shadow judge loader rejected"],
+    ]);
+    expect(JSON.stringify(warnCalls)).not.toContain("module missing");
+    expect(JSON.stringify(warnCalls)).not.toContain("log sink exploded");
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    db.close();
+  }
+});
+
+test("a malformed agents.yaml surfaces the judge-pool warn on services.log", () => {
+  writeAgentsYaml("agents: [unclosed\n");
+  const { log, warnCalls } = makeWarnLog();
+  const db = openSchemaDb();
+  try {
+    buildDreamCycleDeps({ log }, db, {} as DreamConfig);
+    expect(
+      warnCalls.some(([, msg]) =>
+        String(msg).includes("failed to load agentchat config for judge pool"),
+      ),
+    ).toBe(true);
+  } finally {
+    db.close();
+  }
+});
+
+const TYPESAFE_VALUE_IMPORT =
+  /^\s*(?:import\s*["']|(?:import|export)\s(?!type\b)[^;]*?from\s*["'])@penumbra\/typesafe/m;
+
+function staticallyValueImportsTypesafe(source: string): boolean {
+  return TYPESAFE_VALUE_IMPORT.test(source);
+}
+
+test("the value-import tripwire flags side-effect imports of @penumbra/typesafe", () => {
+  expect(staticallyValueImportsTypesafe('import "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe("import '@penumbra/typesafe'")).toBe(true);
+  expect(staticallyValueImportsTypesafe('import { x } from "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe('export * from "@penumbra/typesafe";')).toBe(true);
+  expect(staticallyValueImportsTypesafe('import type { X } from "@penumbra/typesafe";')).toBe(
+    false,
+  );
+  expect(staticallyValueImportsTypesafe('const m = () => import("@penumbra/typesafe");')).toBe(
+    false,
+  );
+});
+
+test("no file under packages/daemon/src statically value-imports @penumbra/typesafe", () => {
+  const srcRoot = join(import.meta.dir, "..", "..", "src");
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (
+        entry.isFile() &&
+        entry.name.endsWith(".ts") &&
+        staticallyValueImportsTypesafe(readFileSync(full, "utf8"))
+      ) {
+        offenders.push(full);
+      }
+    }
+  };
+  walk(srcRoot);
+  expect(offenders).toEqual([]);
+  expect(compat).toBe(true);
 });

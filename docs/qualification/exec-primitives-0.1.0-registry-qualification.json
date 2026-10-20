@@ -1,0 +1,464 @@
+{
+  "schema": "exec-primitives-registry-qualification/1",
+  "follow_up_event_id": 1830,
+  "decisions": [
+    1948,
+    2031
+  ],
+  "run_date": "2026-10-01",
+  "base_sha": "5583740f7126a4086f719f00566b07c7868058e1",
+  "ancestry_floor_sha": "f122106dc5e84849eba1ba415c0ae122a6e79338",
+  "head_sha": "b1ae7a09e48b0b0606828246bb7def72fc79bb9b",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v26.0.0",
+    "bun_node_compat": "v24.3.0"
+  },
+  "evidence_of_record": {
+    "tag": "qualification/sharedlib6-2026-09-24",
+    "tag_commit": "001e12fc79c40d6c3c3a5fdf106d96d420f4c997",
+    "head_sha": "fb4e560078baaf9177eb32a44ea0d29186edfa4a"
+  },
+  "artifact": {
+    "name": "@novaproto/exec-primitives",
+    "version": "0.1.0",
+    "channel": "registry",
+    "tarball_url": "https://registry.npmjs.org/@novaproto/exec-primitives/-/exec-primitives-0.1.0.tgz",
+    "sha256": "a3d6658b4d4e62479d2273d90fba8ccd3e09a51bd47d15acc79e9cb3d0e16881",
+    "sha1": "390a2ce6a57ea28f9eafdee0f886df96d537815f",
+    "integrity": "sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==",
+    "files": 19,
+    "unpacked_bytes": 83005,
+    "content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98",
+    "entries": [
+      "LICENSE",
+      "README.md",
+      "dist/src/acp-session.d.ts",
+      "dist/src/acp-session.js",
+      "dist/src/acp-warm-pool.d.ts",
+      "dist/src/acp-warm-pool.js",
+      "dist/src/host.d.ts",
+      "dist/src/host.js",
+      "dist/src/index.d.ts",
+      "dist/src/index.js",
+      "dist/src/process-supervisor.d.ts",
+      "dist/src/process-supervisor.js",
+      "dist/src/stdio-acp-client.d.ts",
+      "dist/src/stdio-acp-client.js",
+      "dist/src/stdio-acp-permission.d.ts",
+      "dist/src/stdio-acp-permission.js",
+      "dist/src/stdio-acp-server.d.ts",
+      "dist/src/stdio-acp-server.js",
+      "package.json"
+    ],
+    "source_identity": {
+      "nova_commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
+      "src_blobs_equal_to_evidence_of_record": true
+    }
+  },
+  "pin": {
+    "manifest": "packages/exec-primitives-consumer/package.json",
+    "section": "devDependencies",
+    "specifier": "0.1.0",
+    "lock_entry": "\"@novaproto/exec-primitives\": [\"@novaproto/exec-primitives@0.1.0\", \"\", {}, \"sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==\"]"
+  },
+  "consumers": {
+    "penumbra-host": {
+      "source": "qualification/sharedlib6-2026-09-24:packages/exec-primitives/qualification/consumers/penumbra-host",
+      "install_command": "bun add --exact @novaproto/exec-primitives@0.1.0",
+      "install_specifier": "0.1.0",
+      "lock_entry": "\"@novaproto/exec-primitives\": [\"@novaproto/exec-primitives@0.1.0\", \"\", {}, \"sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==\"]",
+      "copy_outside_repo": true,
+      "resolved_inside_copy": true,
+      "digest_equal": true,
+      "installed_content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98",
+      "home_entries_after": [],
+      "poison_run": {
+        "pass": 0,
+        "exit": 1
+      },
+      "guard": {
+        "exit": 0
+      },
+      "parity": {
+        "acp-warm-pool.test.ts": 22,
+        "cli-spawn.test.ts": 24,
+        "cli-spawn-stream.test.ts": 10,
+        "exports.test.ts": 1,
+        "guard.test.ts": 1,
+        "stdio-acp-client.test.ts": 11,
+        "stdio-acp-client-onrequest.test.ts": 6,
+        "stdio-acp-permission.test.ts": 28,
+        "stdio-acp-server.test.ts": 5
+      },
+      "bun_test": {
+        "pass": 178,
+        "fail": 0,
+        "files": 15
+      },
+      "fixture_toolchain": {
+        "typescript": "6.0.3",
+        "@types/node": "25.9.8"
+      },
+      "adaptations": [
+        {
+          "id": "src/shim/acp-warm-pool.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/shim/cli-spawn.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/shim/stdio-acp-client.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/shim/stdio-acp-permission.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/shim/stdio-acp-server.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/smoke.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/exports.test.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/guard.test.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/stdio-acp-permission.test.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/helpers.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/acp-transport.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/process-supervisor.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/acp-permission.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/acp-warm-pool.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/logging.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/acp-session.test.ts",
+          "change": "ported contract suite to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/contract/fixtures/fake-acp.ts",
+          "change": "ported contract fixture"
+        }
+      ],
+      "contract": {
+        "contract/acp-permission.test.ts": 9,
+        "contract/acp-session.test.ts": 7,
+        "contract/acp-transport.test.ts": 11,
+        "contract/acp-warm-pool.test.ts": 7,
+        "contract/logging.test.ts": 3,
+        "contract/process-supervisor.test.ts": 33
+      }
+    },
+    "infra-host": {
+      "source": "qualification/sharedlib6-2026-09-24:packages/exec-primitives/qualification/consumers/infra-host",
+      "install_command": "bun add --exact @novaproto/exec-primitives@0.1.0",
+      "install_specifier": "0.1.0",
+      "lock_entry": "\"@novaproto/exec-primitives\": [\"@novaproto/exec-primitives@0.1.0\", \"\", {}, \"sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==\"]",
+      "copy_outside_repo": true,
+      "resolved_inside_copy": true,
+      "digest_equal": true,
+      "installed_content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98",
+      "home_entries_after": [],
+      "poison_run": {
+        "pass": 0,
+        "exit": 1
+      },
+      "guard": {
+        "exit": 0
+      },
+      "parity": {
+        "infra.test.ts": 21
+      },
+      "bun_test": {
+        "pass": 21,
+        "fail": 0,
+        "files": 1
+      },
+      "fixture_toolchain": {
+        "typescript": "6.0.3",
+        "@types/node": "25.9.8"
+      },
+      "adaptations": [
+        {
+          "id": "src/acp.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/permission.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/smoke.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "src/spawn.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        },
+        {
+          "id": "test/infra.test.ts",
+          "change": "rewrote penumbra-exec-primitives to @novaproto/exec-primitives"
+        }
+      ],
+      "smoke_node": {
+        "exit": 0
+      }
+    }
+  },
+  "acp_primitives": [
+    {
+      "id": "stdio-json-rpc-client",
+      "primitive": "the stdio JSON-RPC client (with framing caps)",
+      "suites": [
+        {
+          "consumer": "penumbra-host",
+          "file": "stdio-acp-client.test.ts",
+          "pass": 11
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "stdio-acp-client-onrequest.test.ts",
+          "pass": 6
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "contract/acp-transport.test.ts",
+          "pass": 11
+        }
+      ],
+      "infra_host_ids": [
+        "[B8]",
+        "[ACP-CLIENTINFO]"
+      ]
+    },
+    {
+      "id": "process-server",
+      "primitive": "the process server (process-group supervision)",
+      "suites": [
+        {
+          "consumer": "penumbra-host",
+          "file": "stdio-acp-server.test.ts",
+          "pass": 5
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "cli-spawn.test.ts",
+          "pass": 24
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "cli-spawn-stream.test.ts",
+          "pass": 10
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "contract/process-supervisor.test.ts",
+          "pass": 33
+        }
+      ],
+      "infra_host_ids": [
+        "[T1]",
+        "[T4]",
+        "[T6]",
+        "[T7]"
+      ]
+    },
+    {
+      "id": "permission-context",
+      "primitive": "the permission context",
+      "suites": [
+        {
+          "consumer": "penumbra-host",
+          "file": "stdio-acp-permission.test.ts",
+          "pass": 28
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "contract/acp-permission.test.ts",
+          "pass": 9
+        }
+      ],
+      "infra_host_ids": [
+        "[PERM-DENY]",
+        "[PERM]"
+      ]
+    },
+    {
+      "id": "pool-credential-scope",
+      "primitive": "the pool (host key including a credential-scope digest)",
+      "suites": [
+        {
+          "consumer": "penumbra-host",
+          "file": "acp-warm-pool.test.ts",
+          "pass": 22
+        },
+        {
+          "consumer": "penumbra-host",
+          "file": "contract/acp-warm-pool.test.ts",
+          "pass": 7
+        }
+      ],
+      "infra_host_ids": [
+        "[SCOPE-2]",
+        "[WARM-POOL]"
+      ]
+    },
+    {
+      "id": "session-bootstrap",
+      "primitive": "a host-parameterized session bootstrap with host-supplied clientInfo",
+      "suites": [
+        {
+          "consumer": "penumbra-host",
+          "file": "contract/acp-session.test.ts",
+          "pass": 7
+        }
+      ],
+      "infra_host_ids": [
+        "[ACP-CLIENTINFO]",
+        "[B6]"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "gate": "L2",
+      "verdict": "PASS",
+      "verdict_scope": "registry",
+      "not_provable_here": [],
+      "evidence": [
+        {
+          "claim": "artifact hashes match the published tarball",
+          "status": "confirmed",
+          "pointer": "sha256=a3d6658b4d4e62479d2273d90fba8ccd3e09a51bd47d15acc79e9cb3d0e16881"
+        },
+        {
+          "claim": "installed content digest matches content_sha256",
+          "status": "confirmed",
+          "pointer": "content_sha256=0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+        },
+        {
+          "claim": "manifest exact-pins 0.1.0 in devDependencies",
+          "status": "confirmed",
+          "pointer": "packages/exec-primitives-consumer/package.json"
+        },
+        {
+          "claim": "registry dist-tags.latest is 0.1.0",
+          "status": "confirmed",
+          "pointer": "packument_http=200"
+        },
+        {
+          "claim": "llamactl-side install is in the llamactl record",
+          "status": "inferred",
+          "pointer": "docs/qualification/exec-primitives-0.1.0-test-consumer.json"
+        }
+      ]
+    },
+    {
+      "gate": "L3",
+      "verdict": "PASS",
+      "scope": "penumbra+synthetic",
+      "parts": {
+        "penumbra": "PASS",
+        "synthetic": "PASS"
+      },
+      "llamactl_part": {
+        "repo": "frozename/llamactl",
+        "record": "docs/qualification/exec-primitives-0.1.0-test-consumer.json"
+      },
+      "evidence": [
+        {
+          "claim": "penumbra-host parity suite and contract port pass",
+          "status": "confirmed",
+          "pointer": "penumbra-host parity=108 contract=70 total=178/0 across 15 files"
+        },
+        {
+          "claim": "infra-host parity suite passes",
+          "status": "confirmed",
+          "pointer": "infra-host 21/0 across 1 file"
+        },
+        {
+          "claim": "llamactl-side install is in the llamactl record",
+          "status": "inferred",
+          "pointer": "docs/qualification/exec-primitives-0.1.0-test-consumer.json"
+        }
+      ]
+    }
+  ],
+  "carried_forward": [
+    "L1",
+    "L4",
+    "L5",
+    "L6"
+  ],
+  "release": {
+    "published_event_id": 2024,
+    "dist_tags_latest": "0.1.0"
+  },
+  "blockers": {
+    "B1": {
+      "status": "resolved",
+      "restated": "B1 is resolved by the publication: the published manifest has no private field, no 0.0.0, no workspace dependencies, and ships dist."
+    }
+  },
+  "honesty": {
+    "channel": "registry",
+    "adoption_performed": false,
+    "penumbra_runtime_import": false
+  },
+  "claims_not_made": [
+    "adopted by llamactl",
+    "1830 closed",
+    "penumbra agentchat migrated",
+    "ACP fixture parity in the llamactl consumer"
+  ],
+  "open_findings": [
+    {
+      "item": "dist identity",
+      "status": "inferred",
+      "pointer": "closure verification V4b (a build of the tag's source compared file by file with the registry tarball's dist/src)",
+      "note": "pending the coordinator closure verification for the carried-forward L1/L4/L5/L6 bridge"
+    },
+    {
+      "item": "llamactl record pointer",
+      "status": "inferred",
+      "pointer": "check L item L-37 and closure verification V3 (cross-record pointers)",
+      "note": "docs/qualification/exec-primitives-0.1.0-test-consumer.json is named here before the llamactl-side record lands on main"
+    },
+    {
+      "item": "source identity against the nova release",
+      "status": "inferred",
+      "pointer": "closure verification V4a (a git ls-tree comparison against the nova release commit); check P2-28 re-derives only the tag side against the same constants",
+      "note": "the runner measures the tag side and carries the release-side blob ids as constants copied from check P2-28"
+    }
+  ]
+}

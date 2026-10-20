@@ -10,6 +10,7 @@ const TMP_NODE_MODULES = join(tmpdir(), "node_modules");
 const WORKFLOWS = [
   resolve(ROOT, "plugin/workflows/adversarial-review/workflow.ts"),
   resolve(ROOT, "plugin/workflows/adversarial-plan/workflow.ts"),
+  resolve(ROOT, "plugin/workflows/penumbra-swarm/workflow.ts"),
 ];
 
 test("loads adversarial plugin workflows through the ts loader", async () => {

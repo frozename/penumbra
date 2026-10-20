@@ -47,6 +47,11 @@ export interface ChatTurnInput {
   /** Plumbed from the worker's chain_trust_mode so adapters can short-circuit
    *  permission gates under "all" without consulting requestPermission. */
   trust_mode?: DispatchInput["trust_mode"];
+  /** Plumbed from the handoff row's permission_profile so natively enforcing
+   *  adapters can apply their own policy mechanism. */
+  permission_profile?: DispatchInput["permission_profile"];
+  /** Worker-computed Layer B deny roots accompanying permission_profile. */
+  sandbox_deny_roots?: DispatchInput["sandbox_deny_roots"];
   eventContext?: DispatchInput["eventContext"];
   onEvent?: DispatchInput["onEvent"];
   signal?: AbortSignal;
@@ -71,6 +76,11 @@ export interface ChatTurnResult {
   meta?: DispatchOutput["meta"];
   /** Set when the adapter dispatch threw. The error response is still observed in t0; the bin should not queue a handoff and should surface the error inline. */
   error?: { message: string };
+  /** Post-adapter observe envelopes that could not be delivered (each carries a
+   *  pre-generated event_id so a later outbox replay dedups at the daemon). Any
+   *  observe failure after the adapter finished keeps the turn instead of
+   *  re-running it. */
+  pendingObservations?: Record<string, unknown>[];
 }
 
 type AgentCfg = AgentChatConfig["agents"][number];
@@ -127,6 +137,8 @@ function buildDispatchInput(
     signal: input.signal ?? new AbortController().signal,
     requestPermission: input.requestPermission,
     trust_mode: input.trust_mode,
+    permission_profile: input.permission_profile,
+    sandbox_deny_roots: input.sandbox_deny_roots,
     handoff_id: input.handoff_id,
     executor: input.executor,
     eventContext: input.eventContext,
@@ -193,47 +205,80 @@ function applyMaestroRedaction(
   return base;
 }
 
-async function observeRedactionEvents(
+function buildRedactionEnvelopes(
   input: ChatTurnInput,
   baseEnvelope: Record<string, unknown>,
   redaction: RedactionOutcome,
-): Promise<string> {
+): Record<string, unknown>[] {
   if (redaction.blockedHits) {
     const hits = redaction.blockedHits;
-    await input.observe({
-      ...baseEnvelope,
-      event_type: "agent-response-blocked",
-      payload_json: {
-        handoff_id: input.handoff_id ?? null,
-        hits,
-        decision: "blocked",
-        redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
+    return [
+      {
+        ...baseEnvelope,
+        event_id: crypto.randomUUID(),
+        event_type: "agent-response-blocked",
+        payload_json: {
+          handoff_id: input.handoff_id ?? null,
+          hits,
+          decision: "blocked",
+          redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
+        },
+        payload_summary:
+          `maestro response blocked by ${hits.map((h) => h.rule_id).join(",")}`.slice(0, 240),
       },
-      payload_summary: `maestro response blocked by ${hits.map((h) => h.rule_id).join(",")}`.slice(
-        0,
-        240,
-      ),
-    });
-    return MAESTRO_RESPONSE_BLOCKED_SENTINEL;
+    ];
   }
   if (redaction.bypassHits) {
     const hits = redaction.bypassHits;
-    await input.observe({
-      ...baseEnvelope,
-      event_type: "agent-response-redaction-bypassed",
-      payload_json: { handoff_id: input.handoff_id ?? null, hits },
-      payload_summary: `bypass on (would-block=${String(hits.length)})`.slice(0, 240),
-    });
-  } else if (redaction.rewrittenHits) {
-    const hits = redaction.rewrittenHits;
-    await input.observe({
-      ...baseEnvelope,
-      event_type: "agent-response-redaction-hit",
-      payload_json: { handoff_id: input.handoff_id ?? null, hits },
-      payload_summary: `redaction hits: ${hits.map((h) => h.rule_id).join(",")}`.slice(0, 240),
-    });
+    return [
+      {
+        ...baseEnvelope,
+        event_id: crypto.randomUUID(),
+        event_type: "agent-response-redaction-bypassed",
+        payload_json: { handoff_id: input.handoff_id ?? null, hits },
+        payload_summary: `bypass on (would-block=${String(hits.length)})`.slice(0, 240),
+      },
+    ];
   }
-  return redaction.finalText;
+  if (redaction.rewrittenHits) {
+    const hits = redaction.rewrittenHits;
+    return [
+      {
+        ...baseEnvelope,
+        event_id: crypto.randomUUID(),
+        event_type: "agent-response-redaction-hit",
+        payload_json: { handoff_id: input.handoff_id ?? null, hits },
+        payload_summary: `redaction hits: ${hits.map((h) => h.rule_id).join(",")}`.slice(0, 240),
+      },
+    ];
+  }
+  return [];
+}
+
+// Sends the ordered post-adapter envelopes (redaction first, agent-response
+// last). The first failure stops the sequence and returns every unsent
+// envelope — including the failed one — so an outbox can replay them in order.
+async function sendPostTurnEnvelopes(
+  input: ChatTurnInput,
+  envelopes: Record<string, unknown>[],
+): Promise<{ pendingObservations: Record<string, unknown>[]; responseEventId: string }> {
+  const responseEnvelope = envelopes.at(-1);
+  const pendingObservations: Record<string, unknown>[] = [];
+  let responseEventId =
+    typeof responseEnvelope?.event_id === "string" ? responseEnvelope.event_id : "";
+  for (const envelope of envelopes) {
+    if (pendingObservations.length > 0) {
+      pendingObservations.push(envelope);
+      continue;
+    }
+    try {
+      const res = await input.observe(envelope);
+      if (envelope === responseEnvelope) responseEventId = res.event_id;
+    } catch {
+      pendingObservations.push(envelope);
+    }
+  }
+  return { pendingObservations, responseEventId };
 }
 
 function resolveNextMention(
@@ -323,7 +368,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     triggered_by_event_id: promptEvent.event_id,
   };
 
-  const finalText = await observeRedactionEvents(input, baseEnvelope, redaction);
+  const finalText = redaction.blockedHits ? MAESTRO_RESPONSE_BLOCKED_SENTINEL : redaction.finalText;
 
   const dispatchError = outcome.dispatchError;
   const responsePayload = dispatchError
@@ -333,12 +378,16 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     ? `error: ${dispatchError.message}`.slice(0, 240)
     : finalText.slice(0, 240);
 
-  const responseEvent = await input.observe({
-    ...baseEnvelope,
-    event_type: "agent-response",
-    payload_json: responsePayload,
-    payload_summary: responseSummary,
-  });
+  const { pendingObservations, responseEventId } = await sendPostTurnEnvelopes(input, [
+    ...buildRedactionEnvelopes(input, baseEnvelope, redaction),
+    {
+      ...baseEnvelope,
+      event_id: crypto.randomUUID(),
+      event_type: "agent-response",
+      payload_json: responsePayload,
+      payload_summary: responseSummary,
+    },
+  ]);
 
   // Don't parse mentions on an errored or blocked turn — the response text is
   // empty/garbage or intentionally withheld.
@@ -353,11 +402,12 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   return {
     text: finalText,
     prompt_event_id: promptEvent.event_id,
-    response_event_id: responseEvent.event_id,
+    response_event_id: responseEventId,
     next_mention: next,
     mentions,
     ...(meta ? { meta } : {}),
     ...(dispatchError ? { error: dispatchError } : {}),
+    ...(pendingObservations.length > 0 ? { pendingObservations } : {}),
   };
 }
 

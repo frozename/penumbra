@@ -2,12 +2,22 @@ import type { Readable, Writable } from "node:stream";
 
 import { spawn } from "node:child_process";
 
+import { wrapSandboxExecArgv } from "../worker/sandbox-spawn.js";
+
 export interface StartStdioAcpServerOptions {
   binary: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * Seatbelt (sandbox-exec -p) profile text. When set, the agent subprocess is
+   * spawned inside the profile — the OS-level write-deny backstop for
+   * permission-profile dispatches (covers native agent writes that bypass
+   * penumbra's executor, and propagates to agent-spawned MCP children). Throws
+   * SandboxUnavailableError rather than ever spawning unsandboxed.
+   */
+  sandboxProfile?: string;
   /**
    * Bytes of child stderr to retain for diagnostic surfacing in error paths.
    * The captured tail is exposed via `getStderrTail()` so callers can append
@@ -42,6 +52,7 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     env = process.env,
     signal,
     stderrTailBytes = 8192,
+    sandboxProfile,
   } = opts;
   if (signal?.aborted === true) {
     return Promise.reject(
@@ -49,7 +60,11 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     );
   }
 
-  const child = spawn(binary, args, {
+  const spawnArgv =
+    sandboxProfile !== undefined
+      ? wrapSandboxExecArgv([binary, ...args], sandboxProfile)
+      : [binary, ...args];
+  const child = spawn(spawnArgv[0] ?? binary, spawnArgv.slice(1), {
     cwd,
     env,
     // Pipe stderr (was 'inherit') so we can both tee bytes to the worker's

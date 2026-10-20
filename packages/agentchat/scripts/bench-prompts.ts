@@ -18,7 +18,7 @@ export interface BenchTask {
   maxTokens: number;
   groundTruth: string;
   schema?: "T2MemoryExtraction[]";
-  expected_extractions?: { title_substr: string; body_substr: string; kind: string }[];
+  expected_extractions?: { text_patterns: string[]; kind: string }[];
 }
 
 const FROM_SCRIPTS_TO_REPO = "../../..";
@@ -44,7 +44,7 @@ export const BENCH_TASKS: BenchTask[] = [
       "If deps.concurrency is 4 and four handoffs are currently in-flight, what happens to the 5th handle() call if it is for a NEW conversation_id? Answer in exactly 2 sentences. Mention which lock or queue applies.",
     maxTokens: 100,
     groundTruth:
-      "The 5th call acquires the conv lock for the new id (no existing holder) but blocks in the global semaphoreWaiters queue because concurrency is exhausted. It proceeds when one in-flight task releases the semaphore.",
+      "The 5th call immediately acquires the new conversation's lock via makeConvLocks, then blocks in semaphore.acquire() because all four semaphore slots are occupied; the semaphore queues its resolver in waiters. It proceeds when an in-flight dispatch calls semaphore.release(), which shifts and resolves the next waiter.",
   },
   {
     id: "T6",
@@ -62,9 +62,9 @@ export const BENCH_TASKS: BenchTask[] = [
     fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/worker/dispatcher.ts`,
     fixtureLabel: "dispatcher.ts",
     question:
-      'Exactly how many times does the literal string "releaseSemaphore" appear in this file (case-sensitive, count every occurrence)? Output only the integer.',
+      'Exactly how many times does the literal string "waiters" appear in this file (case-sensitive, count every occurrence)? Output only the integer.',
     maxTokens: 8,
-    groundTruth: "2",
+    groundTruth: "3",
   },
   {
     id: "T8",
@@ -91,9 +91,9 @@ Output ONLY a JSON array. No prose, no code fence, no commentary.`,
     groundTruth: "JSON array conforming to T2MemoryExtractionSchema",
     schema: "T2MemoryExtraction[]",
     expected_extractions: [
-      { title_substr: "Postgres", body_substr: "audit", kind: "decision" },
-      { title_substr: "write", body_substr: "50", kind: "fact" },
-      { title_substr: "retention", body_substr: "90", kind: "fact" },
+      { text_patterns: ["postgres", "audit"], kind: "decision" },
+      { text_patterns: ["writes?", "\\b50\\b"], kind: "fact" },
+      { text_patterns: ["ret(?:ain|ention)", "\\b90\\b"], kind: "fact" },
     ],
   },
   {
@@ -105,7 +105,7 @@ Output ONLY a JSON array. No prose, no code fence, no commentary.`,
     maxTokens: 400,
     groundTruth: "JSON array conforming to T2MemoryExtractionSchema",
     schema: "T2MemoryExtraction[]",
-    expected_extractions: [{ title_substr: "middleware", body_substr: "token", kind: "decision" }],
+    expected_extractions: [{ text_patterns: ["middleware", "token"], kind: "decision" }],
   },
   {
     id: "T11",
@@ -131,7 +131,9 @@ Output ONLY a JSON array. No prose, no code fence, no commentary.`,
     maxTokens: 400,
     groundTruth: "JSON array with the single buried decision",
     schema: "T2MemoryExtraction[]",
-    expected_extractions: [{ title_substr: "retry", body_substr: "3", kind: "decision" }],
+    expected_extractions: [
+      { text_patterns: ["retr(?:y|ies)", "(?:\\b3\\b|\\bthree\\b)"], kind: "decision" },
+    ],
   },
 ];
 

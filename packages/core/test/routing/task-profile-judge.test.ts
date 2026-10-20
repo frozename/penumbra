@@ -1,7 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { type TaskProfile } from "@src/routing/schemas.js";
-import { createTaskProfileJudgeAdapter } from "@src/routing/task-profile-judge.js";
+import {
+  createTaskProfileJudgeAdapter,
+  ROUTER_SCORED_AXES,
+} from "@src/routing/task-profile-judge.js";
 import type { JudgeChatFn } from "@src/services/judge-chat.js";
 
 type DeterministicFallback = (
@@ -178,4 +183,23 @@ describe("createTaskProfileJudgeAdapter", () => {
     expect("selected" in result.profile).toBe(false);
     expect("routeId" in result.profile).toBe(false);
   });
+});
+
+const UNIT_AXES = [
+  "complexity",
+  "risk",
+  "ambiguity",
+  "codingDemand",
+  "reasoningDemand",
+  "agenticDemand",
+  "contextDemand",
+  "latencySensitivity",
+  "costSensitivity",
+  "reliabilityDemand",
+];
+
+test("ROUTER_SCORED_AXES is exactly the set of unit axes router.ts reads", () => {
+  const source = readFileSync(join(import.meta.dir, "../../src/routing/router.ts"), "utf8");
+  const read = new Set([...source.matchAll(/\bprofile\.(\w+)/g)].map((m) => m[1]));
+  expect(UNIT_AXES.filter((axis) => read.has(axis)).sort()).toEqual([...ROUTER_SCORED_AXES].sort());
 });

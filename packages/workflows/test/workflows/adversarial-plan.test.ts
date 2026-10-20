@@ -14,6 +14,7 @@ import { parse as parseYaml } from "yaml";
 // tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
 // once and cast the exports to the @penumbra/workflows types this test relies
 // on, so the rest of the file lints with real type info.
+import { stubScratchWorktree } from "../../../../plugin/workflows/_shared/test-helpers.js";
 import * as adversarialPlanModule from "../../../../plugin/workflows/adversarial-plan/workflow.js";
 
 const spec = (adversarialPlanModule as unknown as { default: WorkflowSpec }).default;
@@ -93,17 +94,74 @@ function makeConfig(): AdvPlanConfig {
   };
 }
 
+// review_readonly dispatches only land on seats that opt into
+// enforces_permission_profiles. Production gets those entries from
+// agents.yaml; here the lazy getter re-derives them from the live config so
+// tests that mutate ctx.config personas/workloads after makeCtx still see
+// every referenced seat as enforcing.
+function installEnforcingAgents<T extends object>(config: T): T {
+  // Shallow-clone first: loader-produced configs may freeze `agents`.
+  const wrapped = { ...(config as Record<string, unknown>) } as Record<string, unknown>;
+  const seed = wrapped.agents;
+  let override: unknown = Array.isArray(seed) ? seed : undefined;
+  Object.defineProperty(wrapped, "agents", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const cfg = wrapped as {
+        personas?: Record<string, { preferred_agent?: unknown }>;
+        workloads?: Record<string, { eligible_agents?: unknown; synthesizer?: unknown }>;
+        default_roles?: Record<string, unknown>;
+      };
+      const names = new Set<string>();
+      const add = (v: unknown): void => {
+        for (const n of Array.isArray(v) ? v : [v]) {
+          if (typeof n === "string") names.add(n);
+        }
+      };
+      for (const p of Object.values(cfg.personas ?? {})) add(p.preferred_agent);
+      for (const w of Object.values(cfg.workloads ?? {})) {
+        add(w.eligible_agents);
+        add(w.synthesizer);
+      }
+      for (const roleAgent of Object.values(cfg.default_roles ?? {})) add(roleAgent);
+      const enforce = (entry: Record<string, unknown>): Record<string, unknown> =>
+        entry.enforces_permission_profiles === undefined
+          ? { ...entry, enforces_permission_profiles: ["review_readonly"] }
+          : entry;
+      const out = Array.isArray(override)
+        ? override.map((entry) => enforce(entry as Record<string, unknown>))
+        : [];
+      const seen = new Set(out.map((entry) => entry.name));
+      for (const name of names) {
+        if (!seen.has(name)) out.push(enforce({ name, roles: [] }));
+      }
+      return out;
+    },
+    set: (v) => {
+      override = v;
+    },
+  });
+  return wrapped as T;
+}
+
 type DispatchInput = {
   agent: string;
   message: string;
   task_type?: string;
   task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
+  permission_profile?: string | null;
 };
-type DispatchResult = { conversation_id: string; handoff_id: string };
+type DispatchResult = {
+  conversation_id: string;
+  handoff_id: string;
+  permission_profile?: string | null;
+};
 type AwaitResult = {
   status: "completed" | "failed" | "timeout";
   response_text: string | null;
+  failure_reason?: string;
 };
 type DispatchImpl = (input: DispatchInput) => Promise<DispatchResult>;
 type AwaitImpl = (conversationId: string, opts?: { timeoutMs?: number }) => Promise<AwaitResult>;
@@ -133,7 +191,12 @@ function makeCtx(opts?: {
       status: "completed" as const,
       response_text: `plan for ${conversationId}`,
     });
-  const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
+  // ctx.dispatch echoes the granted permission_profile back to the caller —
+  // wrap impls so mocks honor the same contract the workflow asserts.
+  const dispatchImpl = opts?.dispatchImpl ?? defaultDispatch;
+  const dispatch = mock((input: DispatchInput) =>
+    dispatchImpl(input).then((r) => ({ ...r, permission_profile: input.permission_profile })),
+  );
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
@@ -147,10 +210,13 @@ function makeCtx(opts?: {
       await Bun.write(path, body);
       return path;
     },
-    config: makeConfig(),
+    config: installEnforcingAgents(makeConfig()),
     cwd: root,
     storageRoot: root,
     project: "penumbra",
+    // The scratch path is a stub — plan never trips a tripwire, and dispatch
+    // inputs just carry it through cwd_override.
+    scratchWorktree: stubScratchWorktree(join(root, ".scratch-test")),
     args: parsedArgs,
   };
 
@@ -320,8 +386,18 @@ test("happy path: two personas complete, synthesizer runs, and synthesis is writ
     };
     expect(result.ok).toBe(true);
     expect(result.personas).toEqual([
-      { name: "architect", status: "completed", conversation_id: "architect-conv" },
-      { name: "simplifier", status: "completed", conversation_id: "simplifier-conv" },
+      {
+        name: "architect",
+        status: "completed",
+        conversation_id: "architect-conv",
+        cancel_requested: false,
+      },
+      {
+        name: "simplifier",
+        status: "completed",
+        conversation_id: "simplifier-conv",
+        cancel_requested: false,
+      },
     ]);
     expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
     expect(result.synthesizer_status).toBe("completed");
@@ -403,14 +479,72 @@ test("one persona fails: synth still runs with surviving persona only", async ()
     expect(result.outcome).toBe("success_partial");
     expect(result.failed_personas).toEqual(["simplifier"]);
     expect(result.personas).toEqual([
-      { name: "architect", status: "completed", conversation_id: "claude-conv" },
-      { name: "simplifier", status: "failed", conversation_id: "codex-conv" },
+      {
+        name: "architect",
+        status: "completed",
+        conversation_id: "claude-conv",
+        cancel_requested: false,
+      },
+      {
+        name: "simplifier",
+        status: "failed",
+        conversation_id: "codex-conv",
+        cancel_requested: false,
+      },
     ]);
     expect(result.synthesis_path).toBe(join(result.out_dir, "synthesis.md"));
     expect(result.synthesizer_status).toBe("completed");
     const synthContent = await readFile(join(result.out_dir, "synthesis.md"), "utf8");
     expect(synthContent).toContain("synthesized plan");
     expect(synthContent).not.toContain("simplifier plan");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed persona chains name their failure reason in the synthesis prompt and artifacts", async () => {
+  const failures: Record<string, string> = {
+    "simplifier-conv": "codex-acp exited 1\n  stderr: quota exhausted",
+    "risk-conv": "completed_without_final_response",
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: "Ship a planning workflow",
+      personas: ["architect", "simplifier", "risk"],
+    },
+    awaitImpl: (conversationId) => {
+      const failureReason = failures[conversationId];
+      return Promise.resolve(
+        failureReason === undefined
+          ? { status: "completed" as const, response_text: `plan for ${conversationId}` }
+          : { status: "failed" as const, response_text: null, failure_reason: failureReason },
+      );
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { out_dir: string };
+    const synthMessage = dispatch.mock.calls.find(([input]) => input.agent === "codex")?.[0]
+      .message;
+    expect(synthMessage).toContain(
+      "### simplifier (simplifier)\nDISPATCH FAILED: codex-acp exited 1 stderr: quota exhausted",
+    );
+    expect(synthMessage).toContain(
+      "### risk (risk)\nDISPATCH FAILED: completed_without_final_response",
+    );
+    expect(synthMessage).toContain("### architect (architect)\nplan for architect-conv");
+
+    const simplifier = JSON.parse(
+      await readFile(join(result.out_dir, "simplifier.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(simplifier.error).toBe("codex-acp exited 1 stderr: quota exhausted");
+    expect(await readFile(join(result.out_dir, "risk.md"), "utf8")).toBe(
+      "<dispatch failed: completed_without_final_response>",
+    );
+    const architect = JSON.parse(
+      await readFile(join(result.out_dir, "architect.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(architect.status).toBe("completed");
+    expect(architect).not.toHaveProperty("error");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -617,3 +751,23 @@ test("retries synthesizer once on 503 no_worker_registered and annotates synthes
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test("installEnforcingAgents preserves an explicit enforces_permission_profiles opt-out", () => {
+  const configured = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "architect",
+        roles: ["planner"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+  const agents = (
+    configured as unknown as {
+      agents: { name: string; enforces_permission_profiles?: string[] }[];
+    }
+  ).agents;
+  expect(agents.find((a) => a.name === "architect")?.enforces_permission_profiles).toEqual([]);
+});

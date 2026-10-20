@@ -674,6 +674,23 @@ test("claimDispatch() rejects claim when dispatch_attempts >= max_dispatch_attem
   expect(success).toBe(false);
 });
 
+test("claimDispatch() refuses a cancel-requested approved row and leaves it unclaimed", () => {
+  createApprovedHandoff("h-claim-cancelled");
+  createApprovedHandoff("h-claim-live");
+  expect(writer.requestCancellation("conv-h-claim-cancelled", "cancel-ts")).toBe(true);
+
+  expect(writer.claimDispatch("h-claim-cancelled", "worker-1")).toBe(false);
+  expect(writer.claimDispatch("h-claim-live", "worker-1")).toBe(true);
+
+  const row = db
+    .query<
+      { status: string; worker_id: string | null; dispatch_attempts: number },
+      [string]
+    >("SELECT status, worker_id, dispatch_attempts FROM handoffs WHERE handoff_id=?")
+    .get("h-claim-cancelled");
+  expect(row).toEqual({ status: "approved", worker_id: null, dispatch_attempts: 0 });
+});
+
 test("claimDispatch() enforces provider in-flight cap across provider seats", () => {
   createApprovedHandoff("provider-running", { to: "claude-a" });
   createApprovedHandoff("provider-next", { to: "claude-b" });
@@ -799,6 +816,41 @@ test("createApproved() persists workflow_run_id and max_dispatch_attempts", () =
     .get("h-create-approved-new-fields");
   expect(row.workflow_run_id).toBe("wf-123");
   expect(row.max_dispatch_attempts).toBe(5);
+});
+
+test("createApproved() emits permission_profile and caller_cwd on the handoff row", () => {
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+  const seen: HandoffRow[] = [];
+  bus.subscribe((row) => {
+    seen.push(row);
+  });
+
+  writer.createApproved({
+    handoff_id: "h-create-approved-profile-emit",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "c1",
+    from: "a",
+    to: "b",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: "e",
+    resolved_by: "u",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+    caller_cwd: "/repos/caller",
+  });
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.handoff_id).toBe("h-create-approved-profile-emit");
+  expect(seen[0]?.permission_profile).toBe("review_readonly");
+  expect(seen[0]?.caller_cwd).toBe("/repos/caller");
 });
 
 test("createApproved() defaults max_dispatch_attempts to 3", () => {
@@ -1543,4 +1595,65 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
   expect(row?.chain_task_type).toBe("implement_small");
   expect(seen.length).toBe(1);
   expect(seen[0].handoff_id).toBe("h-cs");
+});
+
+test("createApproved persists permission_profile inside the INSERT", () => {
+  writer.createApproved({
+    handoff_id: "h-prof-1",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "conv-prof",
+    from: "a",
+    to: "opencode-seat",
+    to_role: null,
+    message: "m",
+    project_id: null,
+    triggered_by_event_id: null,
+    resolved_by: "u",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    permission_profile: "review_readonly",
+  });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-1");
+  expect(row?.permission_profile).toBe("review_readonly");
+});
+
+test("createApproved defaults permission_profile to null", () => {
+  createApprovedHandoff("h-prof-null", { to: "seat-a" });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-null");
+  expect(row?.permission_profile).toBeNull();
+});
+
+test("create persists permission_profile on pending rows", () => {
+  writer.create({
+    handoff_id: "h-prof-pending",
+    ts: "2026-05-11T00:00:00Z",
+    conversation_id: "conv-pending",
+    from: "a",
+    to: "devin-seat",
+    to_role: null,
+    message: "m",
+    triggered_by_event_id: "evt-1",
+    permission_profile: "review_readonly",
+  });
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id=?")
+    .get("h-prof-pending");
+  expect(row?.permission_profile).toBe("review_readonly");
 });

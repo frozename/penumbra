@@ -2,9 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import {
   collectSubscriptionPressure,
-  indexSubscriptionPressureByProvider,
-  readRecentSubscriptionPressureSnapshots,
-  recentCost,
+  recentCostWithPressure,
   type SubscriptionPressureRow,
 } from "./cost.js";
 
@@ -138,10 +136,7 @@ export function quotaStatus(
   input: QuotaStatusInput,
   now: () => Date,
 ): QuotaStatusOutput {
-  const recent = recentCost(db, { since: input.since }, now);
-  const pressureByProvider = indexSubscriptionPressureByProvider(
-    readRecentSubscriptionPressureSnapshots(db, { since: recent.window.from }),
-  );
+  const { recent, pressureByProvider } = recentCostWithPressure(db, { since: input.since }, now);
 
   const usageByProvider = new Map<
     string,

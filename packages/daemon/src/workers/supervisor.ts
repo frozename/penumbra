@@ -67,6 +67,9 @@ export interface ExtraWorkerSupervisorOptions {
   spawn?: SpawnFunction;
   workerEntryPath?: string;
   onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
+  // Intentionally unwired in serve(): this callback has no boot bound or
+  // terminal-outbox drain and could rerun finished turns. F3b must use worker
+  // boot reconciliation before extra-worker recovery can be enabled.
   orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
 }
 

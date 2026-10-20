@@ -1,7 +1,9 @@
 import { DispatchLandAcceptedSchema, DispatchLandTaskSchema } from "@penumbra/api-contract";
 import {
   buildServices,
+  captureAgentPerformanceFromReconciler,
   closeLane,
+  getLane,
   insertLane,
   loadSqliteVec,
   type Logger,
@@ -23,7 +25,9 @@ import {
   dispatchLandRoute,
   dispatchLandTaskRoute,
 } from "@src/routes/dispatch-land.js";
+import { lanesCloseRoute } from "@src/routes/lanes.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
+import { runOrphanLanesSweep } from "@src/sweepers/orphan-lanes.js";
 
 // dispatch-land tests bypass the daemon fetch handler (they pass mocked deps
 // directly to dispatchLandRoute), so the auth middleware never runs. Stamp a
@@ -3813,4 +3817,108 @@ test("POST /dispatch/land rejects rebase with invalid_params", async () => {
   expect(response.status).toBe(400);
   const body = await readJsonAs<{ error: { code: string } }>(response);
   expect(body.error.code).toBe("invalid_params");
+});
+
+test("sweep -> land -> supersede -> reconciler re-capture preserves the real verdict", async () => {
+  const svc = services();
+  try {
+    seedHandoff(svc, "h-f2-lifecycle", "c-f2-lifecycle");
+    seedHandoff(svc, "h-f2-review", "c-f2-review");
+    svc.db.run(
+      "UPDATE handoffs SET status='completed', resolved_at='2026-05-08T00:00:00.000Z' WHERE handoff_id='h-f2-lifecycle'",
+    );
+    svc.db.run(
+      "UPDATE handoffs SET to_agent='independent-reviewer' WHERE handoff_id='h-f2-review'",
+    );
+    insertLane(svc.db, {
+      lane_id: "lane-f2-lifecycle",
+      ts_opened: "2026-05-08T00:00:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "h-f2-lifecycle",
+    });
+    const sweepTime = "2026-05-09T01:00:00.000Z";
+    expect(runOrphanLanesSweep(svc, { nowIso: sweepTime }).closed).toBe(1);
+    writeVerdictEvent(svc, {
+      eventId: "v-f2-lifecycle",
+      ts: "2026-05-09T01:01:00.000Z",
+      handoffId: "h-f2-lifecycle",
+      conversationId: "c-f2-lifecycle",
+      typecheck: "pass",
+      tests: "pass",
+    });
+    stubTeardownWorktree(svc, () =>
+      Promise.resolve({ worktreeRemoved: true, branchDeleted: false }),
+    );
+    const land = await dispatchLandRoute(
+      landReq("http://x/dispatch/land", {
+        method: "POST",
+        body: JSON.stringify({
+          handoff_id: "h-f2-lifecycle",
+          commit_message: "fix(core): record reviewed verdict",
+          mode: "squash",
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      landDeps({
+        now: () => new Date("2026-05-09T01:02:00.000Z"),
+        runGit: (args) => {
+          if (args[0] === "rev-parse") return { code: 0, stdout: "sha-f2-lifecycle\n", stderr: "" };
+          if (args[0] === "diff" && args[1] === "--cached" && args[2] === "--quiet")
+            return { code: 1, stdout: "", stderr: "" };
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      }),
+    );
+    expect(land.status).toBe(202);
+    const accepted = await readJsonAs<AcceptedBody>(land);
+    expect((await waitForLandTask(svc, accepted.task_id)).status).toBe("done");
+    const perf = (): unknown =>
+      svc.db
+        .query(
+          "SELECT outcome, gate_outcome FROM agent_performance WHERE handoff_id='h-f2-lifecycle'",
+        )
+        .get();
+    expect(perf()).toEqual({ outcome: "merged", gate_outcome: "review_debt" });
+    insertLane(svc.db, {
+      lane_id: "later-swept-duplicate",
+      ts_opened: sweepTime,
+      ts_closed: "2026-05-09T01:03:00.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "h-f2-lifecycle",
+      gate_status: "review_debt",
+      override_reason: getLane(svc.db, "lane-f2-lifecycle")!.override_reason,
+    });
+    svc.clock = (): Date => new Date("2026-05-09T01:04:00.000Z");
+    const close = await lanesCloseRoute(
+      new Request("http://x/lanes/close", {
+        method: "POST",
+        body: JSON.stringify({
+          lane_id: "lane-f2-lifecycle",
+          gate_status: "passed",
+          reviewer_handoff: "h-f2-review",
+        }),
+      }),
+      svc,
+    );
+    expect(close.status).toBe(200);
+    expect(await close.json()).toMatchObject({
+      superseded: { gate_status: "review_debt", ts_closed: sweepTime },
+    });
+    expect(perf()).toEqual({ outcome: "merged", gate_outcome: "passed" });
+    const recapture = (): ReturnType<typeof captureAgentPerformanceFromReconciler> =>
+      captureAgentPerformanceFromReconciler({
+        db: svc.db,
+        uuid: svc.uuid,
+        clock: svc.clock,
+        input: { handoff_id: "h-f2-lifecycle", result: { status: "merged" } },
+      });
+    expect(recapture().gate_outcome).toBe("passed");
+    svc.db.run("DELETE FROM agent_performance WHERE handoff_id='h-f2-lifecycle'");
+    expect(recapture().gate_outcome).toBe("passed");
+    expect(perf()).toEqual({ outcome: "merged", gate_outcome: "passed" });
+  } finally {
+    svc.supervisor.stopAll();
+    svc.db.close();
+  }
 });

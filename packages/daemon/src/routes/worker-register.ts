@@ -71,7 +71,14 @@ export async function workerRegisterRoute(
     { worker_id: parsed.data.worker_id, metadata: parsed.data.metadata },
     now,
   );
-  return Response.json({ worker_token: token, worker_id: parsed.data.worker_id });
+  // Workers read this bit before firing a deferred orphan reconcile: an absent
+  // capability means the daemon predates the claimed_before bound and would
+  // silently run the reconcile unfiltered, requeueing live dispatches.
+  return Response.json({
+    worker_token: token,
+    worker_id: parsed.data.worker_id,
+    capabilities: { reconcile_orphans_claimed_before: true },
+  });
 }
 
 async function safeJson(req: Request): Promise<unknown> {

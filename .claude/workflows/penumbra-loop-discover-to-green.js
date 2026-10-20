@@ -118,6 +118,7 @@ validateSpec({
     'maxFixRounds',
     'dryRunPlan',
     'dispatcherModel',
+    'agentType',
     'finderModel',
     'plannerModel',
     'graderModel',
@@ -529,7 +530,7 @@ for (let i = 0; i < maxFixRounds; i++) {
 
   const fan = await workflow(
     'penumbra-fanout',
-    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, repo: a.repo },
+    { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(a.agentType !== undefined ? { agentType: a.agentType } : {}), repo: a.repo },
   );
   const r = ((fan && fan.results) || [])[0];
   if (!r || !r.ok || !r.branch) {
@@ -602,13 +603,17 @@ const fixRejected = !!(review && review.fix_rejected);
 const reviewPersonas =
   review && Array.isArray(review.completed_personas) ? review.completed_personas.length : 0;
 const reviewRan = reviewPersonas > 0;
+// A diff the recall budget truncated is partial coverage: zero HIGH on a
+// partial diff is not clean either — the review must have seen the whole change.
+const diffTruncated = !!(review && review.diff_truncated === true);
 const reviewComplete = review
   ? review.outcome !== "failed" &&
-    ((review.failed_personas && review.failed_personas.length) || 0) === 0
+    ((review.failed_personas && review.failed_personas.length) || 0) === 0 &&
+    !diffTruncated
   : false;
 
 log(
-  `Review: verdict="${reviewVerdict}" high=${highCount} personas=${reviewPersonas} land_candidate=${landCandidate} fix_rejected=${fixRejected}`,
+  `Review: verdict="${reviewVerdict}" high=${highCount} personas=${reviewPersonas} land_candidate=${landCandidate} fix_rejected=${fixRejected} diff_truncated=${diffTruncated}`,
 );
 
 const clean = green && highCount === 0 && !fixRejected && reviewRan && reviewComplete;
@@ -633,6 +638,9 @@ return {
     review_complete: reviewComplete,
     verdict: reviewVerdict,
     ran: reviewRan,
+    diff_truncated: diffTruncated,
+    diff_dropped_files:
+      review && Array.isArray(review.diff_dropped_files) ? review.diff_dropped_files : [],
     completed_personas: reviewPersonas,
     high_count: highCount,
     medium_count: (review && review.medium_count) || 0,
@@ -647,9 +655,15 @@ return {
     ? `CLEAN: check green + review ran (${reviewPersonas} personas) + 0 HIGH findings. Maestro: run the authoritative land-check on ${landCandidate} (sibling-worktree/own-install if cross-package), then dispatch_land -> verify HEAD+content in main -> push -> teardown.`
     : !reviewRan
       ? `Check is green but the daemon adversarial-review did NOT run (0 personas) — the branch is UNREVIEWED. Maestro must review ${landCandidate} manually (or re-run the review) before landing; do NOT treat high_count=0 as clean.`
-      : !reviewComplete
-        ? `Check is green but the daemon adversarial-review was only PARTIALLY-REVIEWED (missing lenses: ${((review && review.failed_personas) || []).join(",") || "unknown"}). Maestro must review ${landCandidate} manually for the missing lenses (or re-run the review) before landing; do NOT treat high_count=0 as clean.`
-        : fixRejected
-          ? `Review fix-round was rejected by the independent grader; land candidate stays the pre-review branch ${landCandidate}. Maestro decides.`
-          : `${highCount} HIGH finding(s) remain after the review fix-round (2-round cap). Maestro: lane_close review_debt, or run another targeted fix round before landing.`,
+      : diffTruncated && highCount === 0
+        ? `Check is green but the review diff was TRUNCATED by the recall budget (dropped: ${((review && review.diff_dropped_files) || []).join(",") || "unnamed"}) — coverage is PARTIAL, so high_count=0 is NOT clean. Maestro: lane_close review_debt, or re-review ${landCandidate} on a narrower range / content_path before landing.`
+        : !reviewComplete && !diffTruncated
+          ? `Check is green but the daemon adversarial-review was only PARTIALLY-REVIEWED (missing lenses: ${((review && review.failed_personas) || []).join(",") || "unknown"}). Maestro must review ${landCandidate} manually for the missing lenses (or re-run the review) before landing; do NOT treat high_count=0 as clean.`
+          : fixRejected
+            ? `Review fix-round was rejected by the independent grader; land candidate stays the pre-review branch ${landCandidate}. Maestro decides.`
+            : `${highCount} HIGH finding(s) remain after the review fix-round (2-round cap). Maestro: lane_close review_debt, or run another targeted fix round before landing.${
+                diffTruncated
+                  ? ` Coverage is also PARTIAL — the review diff was truncated (dropped: ${((review && review.diff_dropped_files) || []).join(",") || "unnamed"}) — re-review ${landCandidate} on a narrower range / content_path after the findings are addressed.`
+                  : ""
+              }`,
 };

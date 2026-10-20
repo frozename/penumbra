@@ -2,7 +2,11 @@ import { Glob } from "bun";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { type FileContentsResult, runFileContents } from "./file-contents.js";
+import {
+  BINARY_BODY_PLACEHOLDER,
+  type FileContentsResult,
+  runFileContents,
+} from "./file-contents.js";
 
 export type LatestContinuationNoteInput = {
   cwd: string;
@@ -87,7 +91,7 @@ export async function runLatestContinuationNoteSource(
   });
   if (
     out.result.body === null ||
-    out.result.body === "<binary file omitted>" ||
+    out.result.body === BINARY_BODY_PLACEHOLDER ||
     (out.result.byte_size > 0 && out.result.body.length === 0)
   ) {
     return { result: null, warnings: [] };

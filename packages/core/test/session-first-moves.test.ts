@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 
 import { applySchema } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import type { OpenPr } from "@src/open-prs.js";
 import { collectSessionFirstMoves } from "@src/session-first-moves.js";
 
 try {
@@ -83,6 +84,7 @@ test("collectSessionFirstMoves reads gate deltas and pin share from the injected
         steerable_pinned_7d: 1,
       },
       open_lanes: 1,
+      open_prs: { prs: null, reason: "not collected" },
     });
   } finally {
     db.close();
@@ -150,6 +152,87 @@ test("collectSessionFirstMoves filters pending task drafts by project_id", () =>
     });
 
     expect(result.pending_task_drafts).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
+function openPr(number: number, head_ref: string): OpenPr {
+  return {
+    number,
+    title: `PR ${String(number)}`,
+    head_ref,
+    author: "someone",
+    created_at: "2026-09-21T10:00:00Z",
+    checks: "success",
+    foreign_author: number === 74,
+  };
+}
+
+test("collectSessionFirstMoves marks open PRs whose head branch no handoff produced", () => {
+  const db = freshDb();
+  try {
+    db.run(`
+      INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, branch_name)
+      VALUES
+        ('h-named', '2026-09-21T09:00:00.000Z', 'c1', 'maestro', 'worker', 'named', 'completed', 'fix/issue-71_abcd1234'),
+        ('h-legacy', '2026-09-21T09:00:00.000Z', 'c2', 'maestro', 'worker', 'legacy', 'completed', NULL),
+        ('h-renamed', '2026-09-21T09:00:00.000Z', 'c3', 'maestro', 'worker', 'renamed', 'completed', 'feat/renamed_ef567890')
+    `);
+
+    const result = collectSessionFirstMoves({
+      db,
+      open_prs: {
+        prs: [
+          openPr(74, "feat/other-account"),
+          openPr(78, "fix/issue-71_abcd1234"),
+          openPr(79, "agent/h-legacy"),
+          openPr(80, "agent/h-renamed"),
+        ],
+        reason: null,
+      },
+    });
+
+    expect(result.open_prs).toEqual({
+      reason: null,
+      prs: [
+        { ...openPr(74, "feat/other-account"), not_from_known_lane: true },
+        { ...openPr(78, "fix/issue-71_abcd1234"), not_from_known_lane: false },
+        { ...openPr(79, "agent/h-legacy"), not_from_known_lane: false },
+        { ...openPr(80, "agent/h-renamed"), not_from_known_lane: true },
+      ],
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("collectSessionFirstMoves leaves the lane mark null when handoffs cannot be read", () => {
+  const db = new Database(":memory:");
+  try {
+    const result = collectSessionFirstMoves({
+      db,
+      open_prs: { prs: [openPr(74, "feat/other-account")], reason: null },
+    });
+
+    expect(result.open_prs).toEqual({
+      reason: null,
+      prs: [{ ...openPr(74, "feat/other-account"), not_from_known_lane: null }],
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("collectSessionFirstMoves passes an unavailable open-PR result through with its reason", () => {
+  const db = freshDb();
+  try {
+    const result = collectSessionFirstMoves({
+      db,
+      open_prs: { prs: null, reason: "gh not installed" },
+    });
+
+    expect(result.open_prs).toEqual({ prs: null, reason: "gh not installed" });
   } finally {
     db.close();
   }

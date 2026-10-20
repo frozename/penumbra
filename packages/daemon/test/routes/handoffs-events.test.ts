@@ -195,3 +195,64 @@ test("GET /handoffs/events: cancelling the stream unsubscribes from the bus; lat
   // The bus is healthy AFTER the cancelled subscriber's enqueue would have been attempted —
   // i.e. unsubscribe ran cleanly rather than crashing on a closed controller.
 });
+
+test("GET /handoffs/events preserves permission_profile on emitted handoff rows", async () => {
+  const services = tempServices() as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+  };
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "reviewer-seat",
+        roles: [],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  // The profiled live-worker gate requires a fresh worker declaring enforcement.
+  const now = Date.now();
+  services.db.run(
+    `INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at, revoked_at, metadata_json)
+     VALUES ('th-sse', 'w-sse', ?, ?, NULL, ?)`,
+    [now - 60_000, now, JSON.stringify({ enforces_permission_profiles: ["review_readonly"] })],
+  );
+
+  const res = handoffsEventsRoute(new Request("http://x/handoffs/events"), services);
+  const stream = requireBody(res);
+
+  const createRes = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "reviewer-seat",
+        message: "m",
+        conversation_id: "c1",
+        triggered_by_event_id: "e1",
+        permission_profile: "review_readonly",
+      }),
+    }),
+    services,
+  );
+  expect(createRes.status).toBe(200);
+  const create = (await createRes.json()) as HandoffCreateBody;
+
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}/approve`, {
+      method: "POST",
+      body: "{}",
+    }),
+    create.handoff_id,
+    services,
+  );
+
+  const [event] = await readSseEvents(stream, 1);
+  expect(event).toMatchObject({
+    handoff_id: create.handoff_id,
+    status: "approved",
+    permission_profile: "review_readonly",
+  });
+});

@@ -1,6 +1,13 @@
-import type { ChainStartRequest, Services, TaskClass } from "@penumbra/core";
+import type {
+  ChainStartRequest,
+  PermissionProfile,
+  ScratchWorktreeHandle,
+  Services,
+  TaskClass,
+} from "@penumbra/core";
 
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -24,7 +31,17 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     branch_base?: string;
     project_id?: string;
     workflowRunId?: string;
-  }): Promise<{ conversation_id: string; handoff_id: string }>;
+    permission_profile?: PermissionProfile;
+    max_hops?: number;
+    /** Daemon-owned scratch-worktree path the dispatch runs in (P6). Only
+     *  meaningful alongside use_worktree:false on the in-process daemon
+     *  path; the HTTP route rejects it. */
+    cwd_override?: string;
+  }): Promise<{
+    conversation_id: string;
+    handoff_id: string;
+    permission_profile?: PermissionProfile | null;
+  }>;
   awaitChain(
     conversationId: string,
     opts?: { timeoutMs?: number; lateResponseGraceMs?: number },
@@ -32,18 +49,52 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     status: "completed" | "failed" | "timeout";
     final_agent: string | null;
     response_text: string | null;
+    /** Why a failed chain failed: the root handoff's resolution_reason, or
+     *  completed_without_final_response. Absent on completed and timeout. */
+    failure_reason?: string;
   }>;
   cancel(conversationId: string): Promise<void>;
   fileWrite(relativePath: string, body: string): Promise<string>;
   db?: () => Database;
+  progress?(message: string, meta?: Record<string, unknown>): void;
   config: AgentChatConfigLike;
   cwd: string;
   storageRoot: string;
   project: string;
   args: TArgs;
+  deadline?(): { remaining_ms: number | null; expired: boolean };
+  /** Lazily acquires the run's daemon-owned scratch worktree; idempotent —
+   *  every call in a run returns the same handle. Absent when the hosting
+   *  services have no scratch service (test stubs, bare ctxs). */
+  scratchWorktree?: {
+    acquire(opts?: { ref?: string }): Promise<ScratchWorktreeHandle>;
+  };
+  worktreeInspect?(handoffId: string): Promise<{
+    worktree: {
+      handoffId: string;
+      path: string;
+      branchName: string;
+      storageRoot: string;
+      createdAt: string;
+      status: "created" | "merged" | "failed" | "expired";
+      projectId?: string;
+      worktreeMode: "symlink_mirror" | "isolated_install";
+    };
+    diff_against_main: string;
+    branch_log: string;
+    head_sha: string;
+    branch_name: string;
+    dirty: boolean;
+    truncation: {
+      diff_against_main: boolean;
+      branch_log: boolean;
+      total: boolean;
+    };
+  } | null>;
 };
 
 type DisposableWorkflowCtx<TArgs = Record<string, unknown>> = WorkflowCtx<TArgs> & {
+  deadline(): { remaining_ms: number | null; expired: boolean };
   dispose: () => void;
 };
 
@@ -52,6 +103,7 @@ type ChainTerminalSnapshot = {
   status: "completed" | "failed";
   final_agent: string | null;
   response_text: string | null;
+  failure_reason?: string;
 };
 
 export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
@@ -63,12 +115,20 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   args?: TArgs;
   parentHandoffId?: string;
   workflowRunId?: string | null;
+  progressIdentity?: {
+    project: string;
+    sessionId: string | null;
+    userId: string;
+    machineId: string;
+    workflowRunId: string | null;
+  };
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
   chainCancel?: (conversationId: string) => Promise<void> | void;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   pollIntervalMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  runTimeoutMs?: number;
 };
 
 function resolveWritePath(inputPath: string, cwd: string, storageRoot: string): string {
@@ -124,7 +184,14 @@ async function readJsonBody(res: Response): Promise<unknown> {
   }
 }
 
-type HandoffLike = { status: string; resolved_at: string | null };
+type HandoffLike = {
+  handoff_id: string;
+  status: string;
+  resolved_at: string | null;
+  resolution_reason?: string | null;
+};
+
+const COMPLETED_WITHOUT_FINAL_RESPONSE = "completed_without_final_response";
 
 function snapshotFromHandoff(
   services: Services,
@@ -144,7 +211,9 @@ function snapshotFromHandoff(
     };
   }
 
-  const responses = services.chainReader.getResponses(conversationId, "final");
+  const responses = services.chainReader.getResponses(conversationId, "final", {
+    handoff_id: handoff.handoff_id,
+  });
   const final = responses[0] ?? null;
   const hasResponse = typeof final?.text === "string" && final.text.length > 0;
 
@@ -154,17 +223,20 @@ function snapshotFromHandoff(
       status: "failed",
       final_agent: null,
       response_text: null,
+      failure_reason: COMPLETED_WITHOUT_FINAL_RESPONSE,
     };
   }
 
   const status = handoff.status === "completed" ? "completed" : "failed";
   const responseText = hasResponse ? final.text : null;
+  const failureReason = status === "failed" ? handoff.resolution_reason : null;
 
   return {
     terminal: true,
     status,
     final_agent: final?.agent ?? null,
     response_text: responseText,
+    ...(failureReason ? { failure_reason: failureReason } : {}),
   };
 }
 
@@ -224,8 +296,17 @@ function buildChainStartRequest<TArgs>(
   if (input.task_class !== undefined) req.task_class = input.task_class;
   if (input.branch_base) req.branch_base = input.branch_base;
   if (input.workflowRunId) req.workflow_run_id = input.workflowRunId;
+  if (input.permission_profile !== undefined) {
+    req.permission_profile = input.permission_profile;
+  }
+  if (input.max_hops !== undefined) req.max_hops = input.max_hops;
+  if (input.cwd_override !== undefined) req.cwd_override = input.cwd_override;
   const effectiveProjectId = input.project_id ?? deps.project;
   if (effectiveProjectId) req.project_id = effectiveProjectId;
+  // The workflow's own cwd is the originating caller root: persist it so a
+  // profiled dispatch's write sandbox denies it even when the dispatch cwd is
+  // elsewhere (or the workflow has no worktree at all).
+  req.caller_cwd = deps.cwd;
   return req;
 }
 
@@ -251,7 +332,19 @@ async function dispatchImpl<TArgs>(
   if (typeof conversationId !== "string" || typeof handoffId !== "string") {
     throw new Error("chain.start response missing conversation_id/handoff_id");
   }
-  return { conversation_id: conversationId, handoff_id: handoffId };
+  const profileEcho = payloadObj?.permission_profile;
+  if (input.permission_profile !== undefined && profileEcho !== input.permission_profile) {
+    throw new Error(
+      `permission_profile_echo_mismatch: requested ${input.permission_profile} but chain_start echoed ${JSON.stringify(profileEcho)}`,
+    );
+  }
+  return {
+    conversation_id: conversationId,
+    handoff_id: handoffId,
+    ...(profileEcho !== undefined
+      ? { permission_profile: profileEcho as PermissionProfile | null }
+      : {}),
+  };
 }
 
 async function cancelImpl<TArgs>(
@@ -261,13 +354,24 @@ async function cancelImpl<TArgs>(
   await deps.chainCancel?.(conversationId);
 }
 
+function awaitResultFromSnapshot(snapshot: ChainTerminalSnapshot): AwaitChainResult {
+  return {
+    status: snapshot.status,
+    final_agent: snapshot.final_agent,
+    response_text: snapshot.response_text,
+    ...(snapshot.failure_reason !== undefined ? { failure_reason: snapshot.failure_reason } : {}),
+  };
+}
+
 type AwaitChainDeps = {
   readChainStatus: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   pollIntervalMs: number;
+  deadline: () => { remaining_ms: number | null; expired: boolean };
 };
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain awaiting under the shared run deadline while grandfathering its pre-existing complexity.
 async function awaitChainImpl(
   conversationId: string,
   opts: { timeoutMs?: number; lateResponseGraceMs?: number } | undefined,
@@ -276,42 +380,36 @@ async function awaitChainImpl(
   const timeoutMs = opts?.timeoutMs ?? 120000;
   const lateResponseGraceMs = opts?.lateResponseGraceMs ?? 90000;
   const start = ac.now();
+  const dl = ac.deadline();
+  const remaining = dl.remaining_ms;
+  const bounded = remaining !== null;
+  const effectiveTimeout = bounded ? Math.min(timeoutMs, remaining) : timeoutMs;
+  if (effectiveTimeout <= 0) {
+    return { status: "timeout", final_agent: null, response_text: null };
+  }
   let intervalMs = ac.pollIntervalMs;
   let firstTerminalAt: number | null = null;
   let lastTerminalSnapshot: ChainTerminalSnapshot | null = null;
 
-  while (ac.now() - start < timeoutMs) {
+  while (ac.now() - start < effectiveTimeout) {
     const status = await ac.readChainStatus(conversationId);
     if (status.terminal) {
       const hasResponse = status.response_text !== null && status.response_text.length > 0;
-      if (hasResponse) {
-        return {
-          status: status.status,
-          final_agent: status.final_agent,
-          response_text: status.response_text,
-        };
-      }
+      if (hasResponse) return awaitResultFromSnapshot(status);
       lastTerminalSnapshot = status;
       firstTerminalAt ??= ac.now();
       if (ac.now() - firstTerminalAt >= lateResponseGraceMs) {
-        return {
-          status: status.status,
-          final_agent: status.final_agent,
-          response_text: status.response_text,
-        };
+        return awaitResultFromSnapshot(status);
       }
     }
-    await ac.sleep(intervalMs);
+    const remainingCall = effectiveTimeout - (ac.now() - start);
+    if (remainingCall <= 0) break;
+    const sleepMs = bounded ? Math.min(intervalMs, remainingCall) : intervalMs;
+    await ac.sleep(sleepMs);
     intervalMs = Math.min(intervalMs * 1.5, 2000);
   }
 
-  if (lastTerminalSnapshot) {
-    return {
-      status: lastTerminalSnapshot.status,
-      final_agent: lastTerminalSnapshot.final_agent,
-      response_text: lastTerminalSnapshot.response_text,
-    };
-  }
+  if (lastTerminalSnapshot) return awaitResultFromSnapshot(lastTerminalSnapshot);
 
   return {
     status: "timeout",
@@ -332,9 +430,95 @@ async function fileWriteImpl(
   return path;
 }
 
+function safeProgressMeta(meta: Record<string, unknown> | undefined): unknown {
+  if (meta === undefined) return null;
+  try {
+    JSON.stringify(meta);
+    return meta;
+  } catch {
+    return null;
+  }
+}
+
+function recordProgress<TArgs = Record<string, unknown>>(
+  message: string,
+  meta: Record<string, unknown> | undefined,
+  deps: BuildWorkflowCtxDeps<TArgs>,
+): void {
+  const runId = deps.progressIdentity?.workflowRunId ?? deps.workflowRunId;
+  if (!runId) return;
+
+  const identity = deps.progressIdentity ?? {
+    project: deps.project,
+    sessionId: null,
+    userId: "penumbra",
+    machineId: "unknown",
+    workflowRunId: runId,
+  };
+
+  const db = (deps.services as { db?: Database }).db;
+  if (!db) return;
+
+  try {
+    const now = deps.now ?? ((): number => Date.now());
+    const ts = new Date(now()).toISOString();
+    const payload = {
+      workflow_run_id: runId,
+      message,
+      meta: safeProgressMeta(meta),
+    };
+    const eventId =
+      typeof (deps.services as { uuid?: () => string }).uuid === "function"
+        ? (deps.services as { uuid: () => string }).uuid()
+        : randomUUID();
+    db.prepare(
+      `
+      INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, source_detail, project_id,
+        user_id, machine_id, session_id, event_type, lane,
+        provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+        request_id, payload_json, payload_summary, origin
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?
+      )
+    `,
+    ).run(
+      eventId,
+      ts,
+      ts,
+      "agentchat",
+      "workflows",
+      identity.project,
+      identity.userId,
+      identity.machineId,
+      identity.sessionId,
+      "workflow.progress",
+      "local",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      JSON.stringify(payload),
+      message,
+      null,
+    );
+  } catch (err) {
+    (deps.services.log as { warn?: (...args: unknown[]) => void } | undefined)?.warn?.(
+      { err, workflow_run_id: runId },
+      "workflow progress event write failed",
+    );
+  }
+}
+
 export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
   deps: BuildWorkflowCtxDeps<TArgs>,
-): WorkflowCtx<TArgs> {
+): DisposableWorkflowCtx<TArgs> {
   const sleep =
     deps.sleep ??
     ((ms: number): Promise<void> =>
@@ -345,11 +529,24 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
     deps.readChainStatus ??
     ((conversationId: string): Promise<ChainTerminalSnapshot> =>
       defaultReadChainStatus(deps.services, conversationId));
+  const runTimeoutMs = deps.runTimeoutMs;
+  const runStart = now();
+  const deadline = (): { remaining_ms: number | null; expired: boolean } => {
+    if (runTimeoutMs === undefined) return { remaining_ms: null, expired: false };
+    const remaining = runTimeoutMs - (now() - runStart);
+    return { remaining_ms: remaining > 0 ? remaining : 0, expired: remaining <= 0 };
+  };
   let workflowDb: Database | null = null;
-  const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs };
+  const ac: AwaitChainDeps = { readChainStatus, sleep, now, pollIntervalMs, deadline };
+  let scratchPromise: Promise<ScratchWorktreeHandle> | null = null;
 
   const ctx: DisposableWorkflowCtx<TArgs> = {
-    dispatch: (input): Promise<DispatchResult> => dispatchImpl(input, deps),
+    dispatch: async (input): Promise<DispatchResult> => {
+      if (deadline().expired) {
+        throw new Error("workflow run deadline expired; dispatch rejected");
+      }
+      return await dispatchImpl(input, deps);
+    },
     awaitChain: (conversationId, opts): Promise<AwaitChainResult> =>
       awaitChainImpl(conversationId, opts, ac),
     cancel: (conversationId): Promise<CancelResult> => cancelImpl(conversationId, deps),
@@ -359,11 +556,30 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(
       workflowDb ??= new Database(join(deps.storageRoot, "db.sqlite"), { readonly: true });
       return workflowDb;
     },
+    progress: (message: string, meta?: Record<string, unknown>): void => {
+      recordProgress(message, meta, deps);
+    },
     config: deps.agentchatConfig,
     cwd: deps.cwd,
     storageRoot: deps.storageRoot,
     project: deps.project,
     args: deps.args ?? ({} as TArgs),
+    deadline,
+    scratchWorktree: {
+      acquire: (acquireOpts): Promise<ScratchWorktreeHandle> => {
+        const runId = deps.workflowRunId;
+        if (typeof runId !== "string" || runId.length === 0) {
+          return Promise.reject(new Error("scratch worktree acquire requires a workflow_run_id"));
+        }
+        scratchPromise ??= deps.services.scratchWorktrees.acquire({
+          owner_run_id: runId,
+          cwd: deps.cwd,
+          project_id: deps.services.projectRegistry?.get(deps.project)?.project_id ?? undefined,
+          ref: acquireOpts?.ref,
+        });
+        return scratchPromise;
+      },
+    },
     dispose: (): void => {
       workflowDb?.close();
       workflowDb = null;

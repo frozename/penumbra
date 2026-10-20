@@ -6,12 +6,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveDefaultWorkflowsSourceDir, runInit } from "../src/commands/init.js";
 
@@ -26,12 +28,17 @@ try {
 let dir = "";
 let claudeUserDir = "";
 let workflowsSourceDir = "";
+let oldAgentchatConfig: string | undefined;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "penumbra-cli-init-"));
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-init-")));
   claudeUserDir = mkdtempSync(join(tmpdir(), "penumbra-cli-claude-user-"));
   workflowsSourceDir = mkdtempSync(join(tmpdir(), "penumbra-cli-workflows-src-"));
+  oldAgentchatConfig = process.env.AGENTCHAT_CONFIG;
+  process.env.AGENTCHAT_CONFIG = join(dir, "agentchat.yaml");
 });
 afterEach(() => {
+  if (oldAgentchatConfig === undefined) delete process.env.AGENTCHAT_CONFIG;
+  else process.env.AGENTCHAT_CONFIG = oldAgentchatConfig;
   rmSync(dir, { recursive: true, force: true });
   rmSync(claudeUserDir, { recursive: true, force: true });
   rmSync(workflowsSourceDir, { recursive: true, force: true });
@@ -56,6 +63,63 @@ test("init is idempotent — running twice keeps the same token", async () => {
   await runInit({ storageRoot: dir, uuid: () => "tok-2", claudeUserDir, workflowsSourceDir });
   const second = readFileSync(join(dir, "token"), "utf8").trim();
   expect(second).toBe(first);
+});
+
+test("invalid harness is rejected before direct init side effects", async () => {
+  const storageRoot = join(dir, "storage");
+  const exit = await runInit({
+    storageRoot,
+    claudeUserDir,
+    workflowsSourceDir,
+    harness: "invalid" as "codex",
+  });
+  expect(exit).not.toBe(0);
+  expect(existsSync(storageRoot)).toBe(false);
+  expect(existsSync(join(claudeUserDir, "CLAUDE.md"))).toBe(false);
+  expect(existsSync(process.env.AGENTCHAT_CONFIG ?? "")).toBe(false);
+});
+
+test("direct Codex init installs Codex artifacts without Claude integration", async () => {
+  const codexDir = join(dir, "codex");
+  const skillsDir = join(dir, "skills");
+  const exit = await runInit({
+    storageRoot: dir,
+    claudeUserDir,
+    workflowsSourceDir,
+    harness: "codex",
+    codexSetup: {
+      mode: "standalone",
+      codexDir,
+      skillsDir,
+      packageDir: fileURLToPath(new URL("../../../plugin/codex/penumbra", import.meta.url)),
+      storageRoot: dir,
+      mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+    },
+  });
+  expect(exit).toBe(0);
+  expect(existsSync(join(codexDir, "penumbra", "installation.json"))).toBe(true);
+  expect(existsSync(join(skillsDir, "penumbra-memory", "SKILL.md"))).toBe(true);
+  expect(existsSync(join(claudeUserDir, "CLAUDE.md"))).toBe(false);
+});
+
+test("direct Codex init propagates setup failure", async () => {
+  const exit = await runInit({
+    storageRoot: dir,
+    claudeUserDir,
+    workflowsSourceDir,
+    harness: "codex",
+    codexSetup: {
+      mode: "plugin",
+      codexDir: join(dir, "codex"),
+      skillsDir: join(dir, "skills"),
+      packageDir: fileURLToPath(new URL("../../../plugin/codex/penumbra", import.meta.url)),
+      storageRoot: dir,
+      mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+    },
+  });
+  expect(exit).not.toBe(0);
+  expect(existsSync(join(dir, "token"))).toBe(true);
+  expect(existsSync(join(claudeUserDir, "CLAUDE.md"))).toBe(false);
 });
 
 test("init installs the dispatch-discipline CLAUDE.md block in the temp claudeUserDir", async () => {

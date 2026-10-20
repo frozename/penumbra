@@ -29,9 +29,11 @@ payload() {
     "$(json_str "$1")" "$(json_str "$2")"
 }
 json_str() {
-  # quote a string as a JSON scalar (escape backslash and double-quote)
+  # quote a string as a JSON scalar (escape backslash, double-quote, newline, tab)
   local s=${1//\\/\\\\}
   s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
   printf '"%s"' "$s"
 }
 
@@ -294,6 +296,38 @@ R=$(mk_repo_unlanded);  run_case "push colon-ref delete unlanded -> BLOCK" 2 "gi
 R=$(mk_repo_unlanded);  run_case "push --delete unlanded -> BLOCK" 2 "git push origin --delete agent/$UUID" "$R"; rm -rf "$R"
 # B5 must NOT over-block: the same vectors on a SAFE (ancestor) branch -> ALLOW
 R=$(mk_repo_ancestor);  run_case "update-ref -d ancestor -> ALLOW" 0 "git update-ref -d refs/heads/agent/$UUID" "$R"; rm -rf "$R"
+
+# --- #189: delete intent belongs to one simple command -------------------------
+# Creating a branch at an unlanded commit deletes nothing, even when a later
+# command in the same string carries -d or a ' :' word (tr -d, cut -d :, sort -d).
+R=$(mk_repo_unlanded); SHA=$(git -C "$R" rev-parse "agent/$UUID"); NEW="wp/55-artifact-receipt"; NL=$'\n'
+run_case "branch create; tr -d -> ALLOW" 0 "git branch $NEW $SHA; git log --oneline | wc -l | tr -d ' '" "$R"
+run_case "branch create && cut -d: -> ALLOW" 0 "git branch $NEW $SHA && git ls-remote origin | cut -d: -f1" "$R"
+run_case "branch create; sort -d -> ALLOW" 0 "git branch $NEW $SHA; ls | sort -d" "$R"
+run_case "branch create; push; tr -d -> ALLOW" 0 "git branch $NEW $SHA; git push -u origin $NEW 2>&1 | tail -1; git ls-remote origin | wc -l | tr -d ' '" "$R"
+run_case "branch create && push && cut -d : -> ALLOW" 0 "git branch $NEW $SHA && git push -u origin $NEW && git ls-remote origin | cut -d : -f1" "$R"
+run_case "branch create; push; sort -d -> ALLOW" 0 "git branch $NEW $SHA; git push -u origin $NEW; git branch | sort -d | head -5" "$R"
+run_case "branch create; push; quoted ' :' word -> ALLOW" 0 "git branch $NEW $SHA; git push -u origin $NEW; echo 'remote :done'" "$R"
+run_case "push && tr -d -> ALLOW" 0 "git push -u origin $NEW && git log --oneline | wc -l | tr -d ' '" "$R"
+run_case "branch create, newline, tr -d -> ALLOW" 0 "git branch $NEW $SHA${NL}tr -d ' ' < /dev/null" "$R"
+run_case "branch create, push, cut -d : on separate lines -> ALLOW" 0 "git branch $NEW $SHA${NL}git push -u origin $NEW${NL}git ls-remote origin | cut -d : -f1" "$R"
+run_case "branch listing with tr -d inside \$(...) -> ALLOW" 0 "git branch $NEW $SHA && echo \"\$(git branch --list 'wp/*' | wc -l | tr -d ' ')\"" "$R"
+run_case "heredoc message with apostrophe, push, tr -d -> ALLOW" 0 "git commit -m \"\$(cat <<'EOF'${NL}Don't break the branch -d path${NL}EOF${NL})\" && git push -u origin $NEW && git log --oneline | wc -l | tr -d ' '" "$R"
+run_case "comment with apostrophe, push, tr -d -> ALLOW" 0 "git branch $NEW $SHA # don't land yet${NL}git push -u origin $NEW${NL}git log --oneline | tr -d ' '" "$R"
+run_case "branch -d && echo -> BLOCK" 2 "git branch -d agent/$UUID && echo ok" "$R"
+run_case "echo; branch -D -> BLOCK" 2 "echo ok; git branch -D agent/$UUID" "$R"
+run_case "branch create; branch -D -> BLOCK" 2 "git branch $NEW $SHA; git branch -D agent/$UUID" "$R"
+run_case "push -d -> BLOCK" 2 "git push origin -d agent/$UUID" "$R"
+run_case "push && push colon-ref delete -> BLOCK" 2 "git push -u origin $NEW && git push origin :agent/$UUID" "$R"
+run_case "push, newline, push colon-ref delete -> BLOCK" 2 "git push -u origin $NEW${NL}git push origin :agent/$UUID" "$R"
+run_case "push glued && push --delete -> BLOCK" 2 "git push -u origin $NEW&&git push origin --delete agent/$UUID" "$R"
+run_case "git -C push colon-ref delete -> BLOCK" 2 "git -C $R push origin :agent/$UUID" "$R"
+run_case "quoted colon-ref delete -> BLOCK" 2 "git push origin ':agent/$UUID'" "$R"
+run_case "quoted separator before -D does not split -> BLOCK" 2 "git branch 'x|y' -D agent/$UUID" "$R"
+run_case "separator inside \$(...) before -D does not split -> BLOCK" 2 "git branch \"\$(echo x; echo y)\" -D agent/$UUID" "$R"
+run_case "branch -D inside \$(...) -> BLOCK" 2 "echo \"\$(git branch -D agent/$UUID)\"" "$R"
+run_case "branch -D in a heredoc fed to a shell -> BLOCK" 2 "bash <<'EOF'${NL}git branch -D agent/$UUID${NL}EOF" "$R"
+rm -rf "$R"
 
 # --- B4: override must be reachable WITHOUT relying on the hook's own env --------
 # inline token in the command string (the form an operator actually types)

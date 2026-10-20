@@ -71,9 +71,49 @@ async function readUserOpencodeConfig(userConfigPath: string): Promise<unknown> 
   }
 }
 
+export interface PrepareOpencodeMcpConfigOpts {
+  userConfigPath?: string;
+  /**
+   * Rendered permission-profile config (see renderOpencodeProfileConfig). When
+   * present it is merged LAST into config.json: top-level permission +
+   * experimental blocks replace ours wholesale, every user-merged agent entry
+   * loses its permission map (a named agent must not re-grant writes), and the
+   * profile's own agent entries land on top. OPENCODE_CONFIG_CONTENT carries
+   * the same payload as a final env-level merge in opencode-acp.
+   */
+  profileConfig?: Record<string, unknown>;
+}
+
+function asAgentMap(value: unknown): Record<string, Record<string, unknown>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, Record<string, unknown>>;
+}
+
+function applyProfileConfig(
+  config: Record<string, unknown>,
+  profileConfig: Record<string, unknown>,
+): void {
+  config.permission = profileConfig.permission;
+  const experimental = profileConfig.experimental;
+  if (experimental !== null && typeof experimental === "object") {
+    config.experimental = {
+      ...(config.experimental as Record<string, unknown> | undefined),
+      ...experimental,
+    };
+  }
+  const agents = asAgentMap(config.agent);
+  for (const entry of Object.values(agents)) {
+    delete entry.permission;
+  }
+  for (const [name, entry] of Object.entries(asAgentMap(profileConfig.agent))) {
+    agents[name] = { ...agents[name], ...entry };
+  }
+  if (Object.keys(agents).length > 0) config.agent = agents;
+}
+
 export async function prepareOpencodeMcpConfigDir(
   servers: McpServer[],
-  userConfigPath = path.join(os.homedir(), ".config", "opencode", "config.json"),
+  opts?: PrepareOpencodeMcpConfigOpts,
 ): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> {
   const mcp: Record<string, OpencodeLocalMcpConfig> = {};
   for (const server of servers) {
@@ -85,8 +125,13 @@ export async function prepareOpencodeMcpConfigDir(
     mcp,
   };
 
-  const userConfig = await readUserOpencodeConfig(userConfigPath);
+  const userConfig = await readUserOpencodeConfig(
+    opts?.userConfigPath ?? path.join(os.homedir(), ".config", "opencode", "config.json"),
+  );
   mergeUserConfigFields(config, userConfig);
+  if (opts?.profileConfig !== undefined) {
+    applyProfileConfig(config, opts.profileConfig);
+  }
 
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "penumbra-oc-mcp-"));
   let cleaned = false;

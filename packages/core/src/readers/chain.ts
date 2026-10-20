@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { ChainMessagesTailOptionsSchema } from "@penumbra/api-contract";
+
 import type { HandoffStatus } from "../schemas/handoff.js";
 
 export interface ChainTerminatedEvent {
@@ -280,10 +282,11 @@ export class ChainReader {
     });
   }
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   getMessages(
     conversation_id: string,
     types?: string[],
-    opts: { limit?: number; offset?: number; before_ts?: string } = {},
+    opts: { tail?: boolean; limit?: number; offset?: number; before_ts?: string } = {},
   ): {
     event_id: string;
     ts: string;
@@ -293,19 +296,33 @@ export class ChainReader {
     user_id: string | null;
     payload: unknown;
   }[] {
-    // High default so existing small-conversation reads remain functionally
-    // unchanged. Pathological conversations (thousands of events) were
-    // returning an unbounded result set and JSON.parsing every row — the
-    // cap bounds that worst case without truncating typical reads.
-    const DEFAULT_LIMIT = 1000;
-    const limit =
-      typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
-        ? Math.floor(opts.limit)
-        : DEFAULT_LIMIT;
-    const offset =
-      typeof opts.offset === "number" && Number.isFinite(opts.offset) && opts.offset >= 0
-        ? Math.floor(opts.offset)
-        : 0;
+    const tail: unknown = opts.tail;
+    const isTail = tail === true;
+    let limit: number;
+    let offset: number;
+    let before_ts: string | undefined;
+
+    if (tail !== undefined && tail !== false) {
+      const parsed = ChainMessagesTailOptionsSchema.parse(opts);
+      limit = parsed.limit;
+      offset = parsed.offset ?? 0;
+      before_ts = parsed.before_ts;
+    } else {
+      // High default so existing small-conversation reads remain functionally
+      // unchanged. Pathological conversations (thousands of events) were
+      // returning an unbounded result set and JSON.parsing every row — the
+      // cap bounds that worst case without truncating typical reads.
+      const DEFAULT_LIMIT = 1000;
+      limit =
+        typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
+          ? Math.floor(opts.limit)
+          : DEFAULT_LIMIT;
+      offset =
+        typeof opts.offset === "number" && Number.isFinite(opts.offset) && opts.offset >= 0
+          ? Math.floor(opts.offset)
+          : 0;
+      before_ts = opts.before_ts;
+    }
 
     let sql = `
       SELECT event_id, ts, event_type, source, source_detail, user_id, payload_json
@@ -320,12 +337,16 @@ export class ChainReader {
       params.push(...types);
     }
 
-    if (typeof opts.before_ts === "string" && opts.before_ts.length > 0) {
+    if (typeof before_ts === "string" && before_ts.length > 0) {
       sql += ` AND ts < ?`;
-      params.push(opts.before_ts);
+      params.push(before_ts);
     }
 
-    sql += ` ORDER BY ts ASC, ingest_ts ASC, event_id ASC`;
+    if (isTail) {
+      sql += ` ORDER BY ts DESC, ingest_ts DESC, event_id DESC`;
+    } else {
+      sql += ` ORDER BY ts ASC, ingest_ts ASC, event_id ASC`;
+    }
     sql += ` LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
@@ -344,7 +365,8 @@ export class ChainReader {
       >(sql)
       .all(...params);
 
-    return rows.map((row) => {
+    const orderedRows = isTail ? [...rows].reverse() : rows;
+    return orderedRows.map((row) => {
       let payload: unknown = null;
       try {
         payload = JSON.parse(row.payload_json) as unknown;

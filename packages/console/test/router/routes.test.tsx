@@ -2,7 +2,7 @@ import "../setup";
 import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 
@@ -10,6 +10,8 @@ import { MODULES, type ModuleSpec } from "@src/modules/manifest";
 import { buildRoutes } from "@src/router";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { useUIStore } from "@src/stores/ui-store";
+
+afterEach(cleanup);
 
 function makeWrapper(): ({ children }: { children: ReactNode }) => JSX.Element {
   const client = new QueryClient({

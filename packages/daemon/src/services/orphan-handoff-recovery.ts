@@ -93,14 +93,17 @@ export class OrphanHandoffRecoveryService {
     }
   }
 
-  runOnce(workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult {
+  runOnce(
+    workerId?: string,
+    opts?: { workerKnownDead?: boolean; claimedBefore?: string },
+  ): RecoveryResult {
     const ts = this.services.clock().toISOString();
     if (workerId) {
       const deepStale = this.listDeepStaleNeverHeartbeatWorkerIds().filter((id) => id === workerId);
       if (opts?.workerKnownDead) {
         deepStale.push(workerId);
       }
-      return this.recoverForWorkerIds([workerId], deepStale, ts);
+      return this.recoverForWorkerIds([workerId], deepStale, ts, opts?.claimedBefore);
     }
     return this.recoverAllInner(ts);
   }
@@ -109,6 +112,7 @@ export class OrphanHandoffRecoveryService {
     staleWorkerIds: string[],
     additionalVeryStaleWorkerIds: string[] = [],
     ts: string,
+    claimedBefore?: string,
   ): RecoveryResult {
     let requeued = 0;
     let exhausted = 0;
@@ -141,6 +145,7 @@ export class OrphanHandoffRecoveryService {
     const orphans = this.services.handoffReader.listOrphanedDispatches(
       staleWorkerIds,
       this.batchSize,
+      { claimedBefore },
     );
 
     // Handoffs already past dispatch.start only recover when their worker is
@@ -161,48 +166,29 @@ export class OrphanHandoffRecoveryService {
         if (this.hasDispatchStarted(orphan.handoff_id) && !veryStaleWorkers.has(orphan.worker_id)) {
           return "skip";
         }
-        if (failFastMode || attempt >= maxAttempts) {
-          const won = this.services.handoffWriter.failOrphanedDispatchExhausted(
-            orphan.handoff_id,
-            orphan.worker_id,
-          );
-          if (won) {
-            this.services.dispatchEventLog.record({
-              handoff_id: orphan.handoff_id,
-              source: "daemon",
-              kind: "worker.recovery.exhausted",
-              ts,
-              meta: {
-                attempt,
-                max_attempts: maxAttempts,
-                from_worker_id: orphan.worker_id,
-                handoff_id: orphan.handoff_id,
-              },
-            });
-            return "exhausted";
-          }
-        } else {
-          const won = this.services.handoffWriter.requeueOrphanedDispatch(
-            orphan.handoff_id,
-            orphan.worker_id,
-          );
-          if (won) {
-            this.services.dispatchEventLog.record({
-              handoff_id: orphan.handoff_id,
-              source: "daemon",
-              kind: "worker.recovery.requeued",
-              ts,
-              meta: {
-                attempt,
-                max_attempts: maxAttempts,
-                from_worker_id: orphan.worker_id,
-                handoff_id: orphan.handoff_id,
-              },
-            });
-            return "requeued";
-          }
-        }
-        return "skip";
+        const orphanedTick = orphan.dispatch_kind === "long_lived_tick";
+        const terminal = orphanedTick || failFastMode || attempt >= maxAttempts;
+        const won = terminal
+          ? this.failOrphanedDispatch(orphan, orphan.worker_id, ts)
+          : this.services.handoffWriter.requeueOrphanedDispatch(
+              orphan.handoff_id,
+              orphan.worker_id,
+            );
+        if (!won) return "skip";
+        this.services.dispatchEventLog.record({
+          handoff_id: orphan.handoff_id,
+          source: "daemon",
+          kind: terminal ? "worker.recovery.exhausted" : "worker.recovery.requeued",
+          ts,
+          meta: {
+            attempt,
+            max_attempts: maxAttempts,
+            from_worker_id: orphan.worker_id,
+            handoff_id: orphan.handoff_id,
+            ...(orphanedTick ? { reason: "orphaned_long_lived_tick" } : {}),
+          },
+        });
+        return terminal ? "exhausted" : "requeued";
       },
     );
 
@@ -235,6 +221,19 @@ export class OrphanHandoffRecoveryService {
 
     this.emitReoffers(reoffers, ts);
     return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
+  }
+
+  private failOrphanedDispatch(orphan: HandoffRow, workerId: string, ts: string): boolean {
+    // Tick rows are closed by the separate boot reconcile. Requeueing their
+    // handoffs would rerun a closed tick; the schedule supplies the next one.
+    if (orphan.dispatch_kind === "long_lived_tick") {
+      return this.services.handoffWriter.markFailed(orphan.handoff_id, {
+        reason: "failed_worker_restart: orphaned long-lived tick",
+        ts,
+        expected_worker_id: workerId,
+      });
+    }
+    return this.services.handoffWriter.failOrphanedDispatchExhausted(orphan.handoff_id, workerId);
   }
 
   private emitReoffers(reoffers: RequeuedReoffer[], ts: string): void {

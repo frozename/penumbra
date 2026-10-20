@@ -8,7 +8,12 @@ import {
 import { z } from "zod";
 
 export const TriggerSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("slash"), command: z.string().min(1) }),
+  // skill names a plugin skill such as penumbra:handoff for generated slash-command delegation.
+  z.object({
+    kind: z.literal("slash"),
+    command: z.string().min(1),
+    skill: z.string().min(1).optional(),
+  }),
   z.object({
     kind: z.literal("lifecycle"),
     event: z.enum([
@@ -47,16 +52,27 @@ const ArgsRecord = z.record(z.string(), z.unknown());
 
 // Any recall source may be marked required: composeRecall reports it in
 // RecallBundle.requiredFailures when it throws or yields nothing usable, and
-// executeWorkflow then fails the run closed instead of emitting a hollow artifact.
-const RequiredFlag = { required: z.boolean().optional() };
+// executeWorkflow then fails the run closed instead of emitting a hollow
+// artifact. `skip_if_arg` names an args.* path (dot-separated); composeRecall
+// drops the source entirely when it resolves to a non-empty value — for
+// inputs that only exist in one mode, like a refs diff under an explicit
+// content_path. Skip wins over required: a skipped source cannot fail.
+const OptionalSourceFlags = {
+  required: z.boolean().optional(),
+  skip_if_arg: z.string().min(1).optional(),
+};
 
 export const RecallSourceSchema = z.discriminatedUnion("source", [
-  z.object({ source: z.literal("memory_search"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("memory_timeline"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("memory_get_observations"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("git.log"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("git.show"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("git.diff"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("memory_search"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({ source: z.literal("memory_timeline"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({
+    source: z.literal("memory_get_observations"),
+    args: ArgsRecord,
+    ...OptionalSourceFlags,
+  }),
+  z.object({ source: z.literal("git.log"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({ source: z.literal("git.show"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({ source: z.literal("git.diff"), args: ArgsRecord, ...OptionalSourceFlags }),
   z.object({
     source: z.literal("file.contents"),
     args: z.object({
@@ -64,34 +80,47 @@ export const RecallSourceSchema = z.discriminatedUnion("source", [
       max_bytes: z.number().int().positive().optional(),
       allowed_roots: z.array(z.string()).optional(),
     }),
-    ...RequiredFlag,
+    ...OptionalSourceFlags,
   }),
   z.object({
     source: z.literal("latest_continuation_note"),
     args: ArgsRecord.optional(),
-    ...RequiredFlag,
+    ...OptionalSourceFlags,
+  }),
+  z.object({
+    source: z.literal("pending_handoff"),
+    args: ArgsRecord.optional(),
+    ...OptionalSourceFlags,
   }),
   z.object({
     source: z.literal("session_first_moves"),
     args: ArgsRecord.optional(),
-    ...RequiredFlag,
+    ...OptionalSourceFlags,
   }),
-  z.object({ source: z.literal("routing_bias_list"), args: ArgsRecord.optional(), ...RequiredFlag }),
-  z.object({ source: z.literal("registrar_status"), args: ArgsRecord.optional(), ...RequiredFlag }),
-  z.object({ source: z.literal("dispatch_events"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("session_events"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({
+    source: z.literal("routing_bias_list"),
+    args: ArgsRecord.optional(),
+    ...OptionalSourceFlags,
+  }),
+  z.object({
+    source: z.literal("registrar_status"),
+    args: ArgsRecord.optional(),
+    ...OptionalSourceFlags,
+  }),
+  z.object({ source: z.literal("dispatch_events"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({ source: z.literal("session_events"), args: ArgsRecord, ...OptionalSourceFlags }),
   z.object({
     source: z.literal("handoff_list_pending"),
     args: ArgsRecord.optional(),
-    ...RequiredFlag,
+    ...OptionalSourceFlags,
   }),
-  z.object({ source: z.literal("agents"), args: ArgsRecord.optional(), ...RequiredFlag }),
-  z.object({ source: z.literal("fs_glob"), args: ArgsRecord, ...RequiredFlag }),
-  z.object({ source: z.literal("fs_grep"), args: ArgsRecord, ...RequiredFlag }),
+  z.object({ source: z.literal("agents"), args: ArgsRecord.optional(), ...OptionalSourceFlags }),
+  z.object({ source: z.literal("fs_glob"), args: ArgsRecord, ...OptionalSourceFlags }),
+  z.object({ source: z.literal("fs_grep"), args: ArgsRecord, ...OptionalSourceFlags }),
   z.object({
     source: z.literal("daemon.endpoint"),
     args: z.object({ path: z.string() }),
-    ...RequiredFlag,
+    ...OptionalSourceFlags,
   }),
 ]);
 

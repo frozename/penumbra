@@ -16,6 +16,10 @@ export interface HeartbeatLoopDeps {
   log: HeartbeatLoopLogger;
   workerId: string;
   timeoutMs?: number;
+  // Invoked after each successful emit to kick background work (the terminal
+  // outbox drain). Must be fire-and-forget: the loop never awaits it, so a
+  // slow drain cannot delay the 15 s cadence. A throw is logged, not raised.
+  onHealthy?: () => void;
 }
 
 export interface HeartbeatLoopControl {
@@ -51,6 +55,15 @@ interface HeartbeatLoopState {
   retryAttempt: number;
   reregistrationRecoveryCount: number;
   scheduled: { cancel(): void } | null;
+}
+
+function fireOnHealthy(deps: HeartbeatLoopDeps): void {
+  if (deps.onHealthy === undefined) return;
+  try {
+    deps.onHealthy();
+  } catch (err) {
+    deps.log.warn({ err: String(err) }, "heartbeat onHealthy callback threw");
+  }
 }
 
 // Function indirection keeps the eslint/TS narrowing analysis from
@@ -161,6 +174,7 @@ export function startHeartbeatLoop(deps: HeartbeatLoopDeps): HeartbeatLoopContro
         if (isStopped(state)) return;
         state.retryAttempt = 0;
         state.reregistrationRecoveryCount = 0;
+        fireOnHealthy(deps);
         scheduleNext(HEARTBEAT_SUCCESS_DELAY_MS);
       } catch (err) {
         if (isStopped(state)) return;

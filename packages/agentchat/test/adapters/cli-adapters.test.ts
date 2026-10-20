@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { AgyCliAdapter } from "@src/adapters/agy-cli.js";
 import { ClaudeCliAdapter } from "@src/adapters/claude-cli.js";
@@ -130,3 +133,51 @@ test("registry resolves all four CLI adapters", () => {
   expect(() => buildAdapter("codex-cli", { command: "cat" })).not.toThrow();
   expect(() => buildAdapter("opencode-cli", { model: "gpt-5", command: "cat" })).not.toThrow();
 });
+
+test.skipIf(process.platform === "darwin")(
+  "cli adapters forward permission_profile — dispatch fails closed without sandbox-exec",
+  async () => {
+    const adapters = [
+      new ClaudeCliAdapter({ command: "cat", args: [] }),
+      new GeminiCliAdapter({ command: "cat", args: [] }),
+      new AgyCliAdapter({ command: "cat", args: [] }),
+      new CodexCliAdapter({ command: "cat", args: [] }),
+      new OpencodeCliAdapter({ model: "gpt-5", command: "cat", args: [], pass_via: "stdin" }),
+    ];
+    for (const adapter of adapters) {
+      await expectRejection(
+        adapter.dispatch({
+          prompt: "x",
+          conversation: { id: "c", project_id: null },
+          config: {},
+          signal: new AbortController().signal,
+          permission_profile: "review_readonly",
+        }),
+        /sandbox-exec unavailable/,
+      );
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin")(
+  "cli adapter permission_profile dispatch denies writes under the adapter cwd",
+  async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-adapter-sb-")));
+    const adapter = new ClaudeCliAdapter({
+      command: "sh",
+      args: ["-c", 'touch "$1"', "--", join(cwd, "denied.txt")],
+      cwd,
+    });
+    await expectRejection(
+      adapter.dispatch({
+        prompt: "x",
+        conversation: { id: "c", project_id: null },
+        config: {},
+        signal: new AbortController().signal,
+        permission_profile: "review_readonly",
+      }),
+      /exit code/,
+    );
+    expect(existsSync(join(cwd, "denied.txt"))).toBe(false);
+  },
+);

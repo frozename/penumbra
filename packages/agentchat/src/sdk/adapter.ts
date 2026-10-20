@@ -1,4 +1,4 @@
-import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchEventInput, PermissionProfile } from "@penumbra/core";
 
 import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 
@@ -31,6 +31,21 @@ export interface DispatchInput {
    * Absent on synthetic callers that haven't been plumbed (treat as "config").
    */
   trust_mode?: "all" | "config";
+  /**
+   * Permission profile the dispatch must run under (from the handoff row).
+   * Natively enforcing adapters apply their own mechanism (opencode-acp injects
+   * OPENCODE_CONFIG_CONTENT + disables project config); every other adapter is
+   * covered by the worker permission callback + the sandbox wrapper.
+   */
+  permission_profile?: PermissionProfile | null;
+  /**
+   * Extra mutable roots the Layer B sandbox must deny writes under alongside
+   * the dispatch cwd — the caller's working directory, the project root, the
+   * worktree fleet base. Computed once per dispatch by the worker (it owns the
+   * handoff row and project registry); adapters union it with their effective
+   * cwd when rendering the SBPL profile. Absent on synthetic callers.
+   */
+  sandbox_deny_roots?: readonly string[];
   handoff_id?: string;
   executor?: WriteToolsExecutor;
   eventContext?: { handoffId: string; workerId?: string };

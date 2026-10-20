@@ -6,6 +6,13 @@ import { promisify } from "node:util";
 import { createLogger, type Logger } from "../logger.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
+import {
+  resolveWorktreeGitDir as resolveScratchGitDir,
+  SCRATCH_OWNER_FILE,
+  type ScratchDaemonIdentity,
+  scratchDirName,
+  type ScratchOwnerRecord,
+} from "./scratch.js";
 
 const execFile = promisify(execFileCb);
 const NOOP_LOG = createLogger({ component: "worktree-manager", level: "silent" });
@@ -86,6 +93,11 @@ interface WorktreeManagerOpts {
   mainRepoDir?: string;
   log?: Logger;
   resolveProjectRoot?: ResolveProjectRoot;
+  // Consulted per createWorktree call: when it returns false an unresolvable
+  // project_id falls through to the default root instead of throwing
+  // unknown_project_id. Lets a live-reloaded registry treat "zero entries" as
+  // "no project mapping configured" without uninstalling the resolver.
+  requireKnownProjectId?: () => boolean;
   resolveBranchName?: ResolveHandoffBranchNameById;
   onBranchNameDrift?: BranchNameDriftHandler;
   runner?: WorktreeCommandRunner;
@@ -224,6 +236,7 @@ export class WorktreeManager {
   #mainRepoDir: string;
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
+  private requireKnownProjectId?: () => boolean;
   private resolveBranchName?: ResolveHandoffBranchNameById;
   private onBranchNameDrift?: BranchNameDriftHandler;
   private runner: WorktreeCommandRunner;
@@ -234,6 +247,7 @@ export class WorktreeManager {
     this.#mainRepoDir = opts?.mainRepoDir ?? process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
+    this.requireKnownProjectId = opts?.requireKnownProjectId;
     this.resolveBranchName = opts?.resolveBranchName;
     this.onBranchNameDrift = opts?.onBranchNameDrift;
     this.runner = opts?.runner ?? defaultRunner;
@@ -278,6 +292,21 @@ export class WorktreeManager {
       return this.resolveProjectRoot(project_id);
     }
     return undefined;
+  }
+
+  /**
+   * The fleet worktree base for a project (`<root>-worktrees`) — exposed for
+   * the permission-profile deny-root computation so a profiled dispatch
+   * cannot write into a sibling dispatch's worktree either.
+   */
+  public worktreeBaseFor(project_id?: string): string {
+    return this.baseFor(project_id);
+  }
+
+  /** Project repo root with the same fallback `repoRootFor` uses internally —
+   *  unknown/absent project ids resolve to the daemon main repo. */
+  public repoRootForProject(project_id?: string): string {
+    return this.repoRootFor(project_id);
   }
 
   private branchNameFor(handoffId: string): string {
@@ -380,6 +409,9 @@ export class WorktreeManager {
   private rediscoverEntry(base: string, entry: fs.Dirent): void {
     if (!entry.isDirectory()) return;
     const handoffId = entry.name;
+    // Dot-prefixed fleet members (.scratch-* review worktrees, transient
+    // .stage-* merge sandboxes) are daemon internals — never tracked handles.
+    if (handoffId.startsWith(".")) return;
     const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, ".git"))) return;
     const branchName = this.branchNameForWorktree(handoffId, wtPath);
@@ -453,6 +485,7 @@ export class WorktreeManager {
     if (
       project_id &&
       this.resolveProjectRoot &&
+      (this.requireKnownProjectId?.() ?? true) &&
       this.resolveProjectRoot(project_id) === undefined
     ) {
       throw new Error(`unknown_project_id: ${project_id}`);
@@ -522,6 +555,79 @@ export class WorktreeManager {
     } catch (err) {
       await this.removePartialWorktree(wtPath, repoRoot, createdBranchName);
       throw err;
+    }
+  }
+
+  /**
+   * Daemon-owned detached scratch worktree for review/plan workflow runs —
+   * keyed by workflow_run_id, no branch, no identity config, no readiness
+   * markers, and never entered into `worktrees` (it is not a handoff lane).
+   * The owner marker lands in the per-worktree git dir so a daemon that
+   * restarts mid-run can still prove the binding on reclaim.
+   */
+  async createScratchWorktree(opts: {
+    owner_run_id: string;
+    repoRoot: string;
+    sha: string;
+    daemon?: ScratchDaemonIdentity;
+  }): Promise<{ path: string }> {
+    const base = `${opts.repoRoot}-worktrees`;
+    const wtPath = path.join(base, scratchDirName(opts.owner_run_id));
+    if (!fs.existsSync(base)) {
+      fs.mkdirSync(base, { recursive: true });
+    }
+    if (fs.existsSync(wtPath)) {
+      throw new Error(`worktree_path_exists: ${wtPath}`);
+    }
+    await this.git(["worktree", "add", "--detach", wtPath, opts.sha], { cwd: opts.repoRoot });
+    try {
+      const gitDir = resolveScratchGitDir(wtPath);
+      if (gitDir === null) throw new Error(`scratch worktree missing .git pointer: ${wtPath}`);
+      const owner: ScratchOwnerRecord = {
+        owner_run_id: opts.owner_run_id,
+        sha: opts.sha,
+        created_at: new Date(this.now()).toISOString(),
+        ...(opts.daemon !== undefined ? { daemon: opts.daemon } : {}),
+      };
+      fs.writeFileSync(path.join(gitDir, SCRATCH_OWNER_FILE), `${JSON.stringify(owner)}\n`);
+      // An empty node_modules keeps bun's auto-install off without polluting
+      // `git status` — empty directories are never reported as untracked.
+      fs.mkdirSync(path.join(wtPath, "node_modules"), { recursive: true });
+      return { path: wtPath };
+    } catch (err) {
+      await this.removePartialWorktree(wtPath, opts.repoRoot, null);
+      throw err;
+    }
+  }
+
+  /**
+   * Tear down a scratch worktree by path: `git worktree remove --force` plus
+   * an fs-level fallback for half-registered directories. Deliberately does
+   * NOT prune: `git worktree prune` on the per-run release path can reap the
+   * half-created admin entry of a racing acquire — stale entries are pruned
+   * by the GC tick via pruneWorktrees instead. Fails when the path survives.
+   */
+  async removeScratchWorktree(opts: { path: string; repoRoot?: string }): Promise<void> {
+    const repoRoot = opts.repoRoot ?? this.#mainRepoDir;
+    try {
+      await this.git(["worktree", "remove", "--force", opts.path], { cwd: repoRoot });
+    } catch {
+      // The directory may be half-registered (creation died mid-add).
+    }
+    if (fs.existsSync(opts.path)) {
+      await fs.promises.rm(opts.path, { recursive: true, force: true });
+    }
+    if (fs.existsSync(opts.path)) {
+      throw new Error(`scratch_worktree_still_present: ${opts.path}`);
+    }
+  }
+
+  /** Prune stale .git/worktrees admin entries — GC tick only, never per-run. */
+  async pruneWorktrees(repoRoot?: string): Promise<void> {
+    try {
+      await this.git(["worktree", "prune"], { cwd: repoRoot ?? this.#mainRepoDir });
+    } catch {
+      // Best-effort — stale entries expire on their own regardless.
     }
   }
 
@@ -1133,6 +1239,21 @@ function readPackageJsonManifest(repoRoot: string, relDir: string): FileDependen
 
 export function materializeWorkspaceLinks(worktreeRoot: string): void {
   const rootPackageJson = readPackageJsonManifest(worktreeRoot, "");
+  const rootManifest = rootPackageJson.packageJson as Record<
+    string,
+    Record<string, unknown> | undefined
+  > | null;
+  const declaredPackages = new Set(
+    ["dependencies", "devDependencies", "optionalDependencies"]
+      .flatMap((field) => Object.entries(rootManifest?.[field] ?? {}))
+      .filter(
+        ([name, specifier]) =>
+          name.startsWith("@penumbra/") &&
+          typeof specifier === "string" &&
+          specifier.startsWith("workspace:"),
+      )
+      .map(([name]) => name),
+  );
   const packageLinks: { packageDir: string; packageName: string }[] = [];
 
   for (const pattern of extractWorkspacePatterns(rootPackageJson.packageJson)) {
@@ -1142,12 +1263,11 @@ export function materializeWorkspaceLinks(worktreeRoot: string): void {
 
       const manifest = readPackageJsonManifest(worktreeRoot, relDir);
       const packageName = packageNameForWorktreeLink(manifest.packageJson);
-      if (packageName === null) continue;
+      if (packageName === null || !declaredPackages.has(`@penumbra/${packageName}`)) continue;
       packageLinks.push({ packageDir: path.join(worktreeRoot, relDir), packageName });
     }
   }
 
-  if (packageLinks.length === 0) return;
   const nodeModulesRoot = path.join(worktreeRoot, "node_modules");
   ensureRealDirectory(nodeModulesRoot);
   const scopeDir = path.join(nodeModulesRoot, "@penumbra");
@@ -1649,12 +1769,7 @@ function globSegmentToRegExp(segment: string): RegExp {
 }
 
 function isValidGitIdentity(name: string, email: string): boolean {
-  return (
-    name.length > 0 &&
-    email.length > 0 &&
-    email.includes("@") &&
-    !email.endsWith(".local")
-  );
+  return name.length > 0 && email.length > 0 && email.includes("@") && !email.endsWith(".local");
 }
 
 function isMissingError(err: unknown): boolean {

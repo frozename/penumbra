@@ -30,6 +30,18 @@ export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
 export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 export const DEFAULT_T2_PROMOTION_MIN_EVENTS = 5;
 
+export const T2_EMPTY_EXTRACTION_SUBSYSTEM = "t2.promotion.empty_extraction";
+
+export function readT2EmptyExtractionStreak(db: Database): number {
+  const row = db
+    .query<
+      { consecutive_failures: number },
+      [string]
+    >("SELECT consecutive_failures FROM subsystem_health WHERE subsystem = ?")
+    .get(T2_EMPTY_EXTRACTION_SUBSYSTEM);
+  return row?.consecutive_failures ?? 0;
+}
+
 export type T2MemoryWriterInput = T2MemoryWriteInput;
 export type { T2MemoryWriteInput };
 
@@ -329,6 +341,7 @@ export interface T2PromotionOpts {
   clock: Clock;
   uuid: Uuid;
   llm: LLMJudge;
+  log?: { info: (...a: unknown[]) => void };
   retryLimit?: number;
   minEvents?: number;
   minTranscriptChars?: number;
@@ -411,9 +424,11 @@ export class T2Promotion {
     const rawExtractions = await this.opts.llm(llmTranscript);
     const extractions = parseExtractions(rawExtractions);
     if (extractions.length === 0) {
+      this.recordEmptyJudgeExtraction(rollupId, transcript.length);
       this.markPromoted(rollupId);
       return 0;
     }
+    this.resetEmptyExtractionStreak();
 
     const bodyGatedExtractions = applyBodyGate(rollupId, extractions);
     if (bodyGatedExtractions.length === 0) {
@@ -630,6 +645,31 @@ export class T2Promotion {
     this.opts.db.run(
       "UPDATE t1_rollups SET failed_promotion_attempts = failed_promotion_attempts + 1 WHERE rollup_id = ?",
       [rollupId],
+    );
+  }
+
+  private recordEmptyJudgeExtraction(rollupId: string, transcriptChars: number): void {
+    // Log only the rollup id and transcript length — never transcript or reply text.
+    this.opts.log?.info(
+      { rollupId, transcriptChars },
+      "t2 promotion: judge returned zero extractions",
+    );
+    const now = this.opts.clock().toISOString();
+    this.opts.db.run(
+      `INSERT INTO subsystem_health(subsystem, tier, consecutive_failures, last_skip_ts, updated_at)
+       VALUES (?, 'primary', 1, ?, ?)
+       ON CONFLICT(subsystem) DO UPDATE SET
+         consecutive_failures = consecutive_failures + 1,
+         last_skip_ts = excluded.last_skip_ts,
+         updated_at = excluded.updated_at`,
+      [T2_EMPTY_EXTRACTION_SUBSYSTEM, now, now],
+    );
+  }
+
+  private resetEmptyExtractionStreak(): void {
+    this.opts.db.run(
+      "UPDATE subsystem_health SET consecutive_failures = 0, updated_at = ? WHERE subsystem = ? AND consecutive_failures <> 0",
+      [this.opts.clock().toISOString(), T2_EMPTY_EXTRACTION_SUBSYSTEM],
     );
   }
 

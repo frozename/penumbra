@@ -225,6 +225,35 @@ describe("StatRow", () => {
     client.clear();
   });
 
+  test("does not fetch the quota_status endpoint", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const stubClient = {
+      getSession: mock(async () => ({
+        id: "no-session",
+        project: { id: "none", name: "none" },
+        started_at: new Date().toISOString(),
+        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0 },
+        dispatched: 0,
+        resolved: 0,
+        failed: 0,
+      })),
+      getQuotaStatus: mock(async () => ({})),
+    } as unknown as DaemonClient;
+
+    const { unmount } = render(
+      <Wrapper>
+        <StatRow client={stubClient} subscribeImpl={noopSubscribe()} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(stubClient.getSession).toHaveBeenCalled();
+    });
+    expect(stubClient.getQuotaStatus).not.toHaveBeenCalled();
+    unmount();
+    client.clear();
+  });
+
   test("renders placeholders when the session is absent", async () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {

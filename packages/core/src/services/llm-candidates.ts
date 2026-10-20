@@ -267,19 +267,26 @@ export function resolveLlmAuthorization(
   candidate: LlmCandidate,
   resolveKeychain: ResolveKeychainSecret = defaultResolveKeychainSecret,
 ): string | null {
-  if (candidate.auth.source === "none") return null;
-  if (candidate.auth.source === "bearer") return candidate.auth.token;
-  if (candidate.auth.source === "keychain") {
-    return resolveKeychain(candidate.auth.service, candidate.auth.account).trim();
+  return resolveAuthSecret(candidate.auth, resolveKeychain);
+}
+
+export function resolveAuthSecret(
+  auth: LlmAuthSource,
+  resolveKeychain: ResolveKeychainSecret = defaultResolveKeychainSecret,
+): string | null {
+  if (auth.source === "none") return null;
+  if (auth.source === "bearer") return auth.token;
+  if (auth.source === "keychain") {
+    return resolveKeychain(auth.service, auth.account).trim();
   }
-  if (candidate.auth.source === "env") {
-    const token = process.env[candidate.auth.variable]?.trim();
+  if (auth.source === "env") {
+    const token = process.env[auth.variable]?.trim();
     if (!token) {
-      throw new Error(`apiKeyEnv: env var ${candidate.auth.variable} is unset or empty`);
+      throw new Error(`apiKeyEnv: env var ${auth.variable} is unset or empty`);
     }
     return token;
   }
-  return readFileSync(candidate.auth.path, "utf8").trim();
+  return readFileSync(auth.path, "utf8").trim();
 }
 
 export function buildChatCompletionsUrl(baseUrl: string): string {
@@ -309,6 +316,12 @@ function resolveCandidateProvider(input: {
   return input.apiProvider ?? input.subscriptionProvider ?? "unknown";
 }
 
+export function parseKeychainRef(ref: string): { service: string; account: string } | null {
+  const slash = ref.indexOf("/");
+  if (slash <= 0 || slash >= ref.length - 1) return null;
+  return { service: ref.slice(0, slash), account: ref.slice(slash + 1) };
+}
+
 function resolveCandidateAuth(
   options: NonNullable<
     ResolveRoleLlmCandidatesInput["agentchatConfig"]["agents"]
@@ -320,14 +333,8 @@ function resolveCandidateAuth(
     return { source: "env", variable: apiKeyEnv };
   }
   if (typeof options?.apiKeyKeychain === "string" && options.apiKeyKeychain !== "") {
-    const slash = options.apiKeyKeychain.indexOf("/");
-    if (slash > 0 && slash < options.apiKeyKeychain.length - 1) {
-      return {
-        source: "keychain",
-        service: options.apiKeyKeychain.slice(0, slash),
-        account: options.apiKeyKeychain.slice(slash + 1),
-      };
-    }
+    const ref = parseKeychainRef(options.apiKeyKeychain);
+    if (ref) return { source: "keychain", ...ref };
   }
   if (typeof options?.apiKeyFile === "string" && options.apiKeyFile !== "") {
     return { source: "file", path: options.apiKeyFile };

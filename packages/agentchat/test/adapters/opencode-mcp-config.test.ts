@@ -22,7 +22,9 @@ interface OpencodeConfigFile {
   provider?: unknown;
   plugin?: unknown;
   keybinds?: unknown;
-  agent?: unknown;
+  agent?: Record<string, Record<string, unknown>>;
+  permission?: unknown;
+  experimental?: { continue_loop_on_deny?: boolean };
 }
 
 function readConfig(cfgPath: string): OpencodeConfigFile {
@@ -78,7 +80,12 @@ describe("prepareOpencodeMcpConfigDir", () => {
   it("writes a config.json with the translated mcp shape", async () => {
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      path.join(os.tmpdir(), `missing-opencode-config-${Date.now().toString()}.json`),
+      {
+        userConfigPath: path.join(
+          os.tmpdir(),
+          `missing-opencode-config-${Date.now().toString()}.json`,
+        ),
+      },
     );
     createdDirs.push(xdgConfigHome);
     const cfgPath = path.join(xdgConfigHome, "opencode", "config.json");
@@ -110,7 +117,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
 
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      userConfigPath,
+      { userConfigPath },
     );
     createdDirs.push(xdgConfigHome);
 
@@ -139,7 +146,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
 
       const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
         [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-        userConfigPath,
+        { userConfigPath },
       );
       createdDirs.push(xdgConfigHome);
 
@@ -169,7 +176,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
 
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      userConfigPath,
+      { userConfigPath },
     );
     createdDirs.push(xdgConfigHome);
 
@@ -191,7 +198,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
     const suffix = `${Date.now().toString()}-${Math.random().toString()}`;
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      path.join(os.tmpdir(), `missing-opencode-config-${suffix}.json`),
+      { userConfigPath: path.join(os.tmpdir(), `missing-opencode-config-${suffix}.json`) },
     );
     createdDirs.push(xdgConfigHome);
     const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
@@ -218,7 +225,7 @@ describe("prepareOpencodeMcpConfigDir", () => {
 
     const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
       [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
-      userConfigPath,
+      { userConfigPath },
     );
     createdDirs.push(xdgConfigHome);
     const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
@@ -233,8 +240,13 @@ describe("prepareOpencodeMcpConfigDir", () => {
         },
       },
     });
-    expect(warn).toHaveBeenCalledTimes(1);
+    // console.warn is process-global: async work left over from other test files
+    // can warn while this spy is installed, so count only this config's warning.
+    const configWarnings = warn.mock.calls.filter((args) =>
+      String(args[0]).includes(userConfigPath),
+    );
     warn.mockRestore();
+    expect(configWarnings).toHaveLength(1);
     await cleanup();
   });
 
@@ -260,6 +272,75 @@ describe("prepareOpencodeMcpConfigDir", () => {
     createdDirs.push(xdgConfigHome);
     const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
     expect(cfg.mcp).toEqual({});
+    await cleanup();
+  });
+});
+
+describe("prepareOpencodeMcpConfigDir (profile config)", () => {
+  let createdDirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of createdDirs) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failures in the test harness
+      }
+    }
+    createdDirs = [];
+  });
+
+  it("merges the profile config into the written config.json", async () => {
+    const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
+      [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
+      {
+        profileConfig: {
+          experimental: { continue_loop_on_deny: true },
+          permission: { write: "deny", edit: "deny", bash: { "*": "allow" } },
+        },
+      },
+    );
+    createdDirs.push(xdgConfigHome);
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
+    expect(cfg.permission).toEqual({ write: "deny", edit: "deny", bash: { "*": "allow" } });
+    expect(cfg.experimental).toEqual({ continue_loop_on_deny: true });
+    await cleanup();
+  });
+
+  it("scrubs permission from user-config agents and applies the profile agent permission", async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "penumbra-oc-user-"));
+    createdDirs.push(tmpDir);
+    const userConfigPath = path.join(tmpDir, "config.json");
+    const userConfig = {
+      agent: {
+        review: { prompt: "you review", permission: { write: "allow", bash: "allow" } },
+        other: { prompt: "other", permission: { write: "allow" } },
+      },
+    };
+    await fsp.writeFile(userConfigPath, `${JSON.stringify(userConfig, null, 2)}\n`);
+
+    const profilePermission = { write: "deny" };
+    const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(
+      [{ name: "st", command: "npx", args: ["-y", "pkg"], env: [] }],
+      {
+        userConfigPath,
+        profileConfig: {
+          experimental: { continue_loop_on_deny: true },
+          permission: profilePermission,
+          agent: { review: { permission: profilePermission } },
+        },
+      },
+    );
+    createdDirs.push(xdgConfigHome);
+
+    const cfg = readConfig(path.join(xdgConfigHome, "opencode", "config.json"));
+    const agents = cfg.agent ?? {};
+    // Non-target agents keep their config but lose any permission re-grant.
+    expect(agents.other?.permission).toBeUndefined();
+    expect(agents.other?.prompt).toBe("other");
+    // The target agent keeps its prompt but its permission is the profile's.
+    expect(agents.review?.prompt).toBe("you review");
+    expect(agents.review?.permission).toEqual(profilePermission);
     await cleanup();
   });
 });

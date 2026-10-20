@@ -9,6 +9,7 @@ interface BenchStartChainInput {
   initial_agent: string;
   message: string;
   task_type: string;
+  task_class: "TRIVIAL";
   use_worktree: boolean;
   trust_mode: "all" | "config";
   caller_cwd: string;
@@ -162,6 +163,7 @@ async function processItem(
     initial_agent: item.agent,
     message,
     task_type: "unknown",
+    task_class: "TRIVIAL",
     use_worktree: false,
     trust_mode: "all",
     caller_cwd: join(import.meta.dirname, REPO_ROOT_FROM_SCRIPTS),

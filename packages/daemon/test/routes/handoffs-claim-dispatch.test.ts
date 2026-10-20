@@ -130,6 +130,7 @@ function seedApprovedHandoff(
     dispatch_kind?: "workflow";
     workflow_run_id?: string;
     tsOffsetMs?: number;
+    permission_profile?: "review_readonly";
   } = {},
 ): void {
   const ts = new Date(
@@ -154,6 +155,7 @@ function seedApprovedHandoff(
     parent_handoff_id: null,
     dispatch_kind: opts.dispatch_kind ?? null,
     workflow_run_id: opts.workflow_run_id ?? null,
+    permission_profile: opts.permission_profile ?? null,
   });
 }
 
@@ -669,4 +671,250 @@ test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project hand
     .get("h-6");
   expect(row?.status).toBe("approved");
   expect(row?.worker_id).toBeNull();
+});
+
+test("/handoffs/:id/claim refuses a worker that cannot enforce the handoff's permission_profile", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(403);
+  expect(await readErrorCode(res)).toBe("permission_profile_unenforceable");
+
+  const row = services.db
+    .query<{ status: string }, [string]>("SELECT status FROM handoffs WHERE handoff_id = ?")
+    .get("h-profiled");
+  expect(row?.status).toBe("approved");
+});
+
+test("/handoffs/:id/claim accepts a worker whose metadata declares the handoff's permission_profile", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled-ok", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    metadata: { enforces_permission_profiles: ["review_readonly"] },
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled-ok/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as ClaimResponse;
+  expect(body.status).toBe("dispatched");
+});
+
+test("/handoffs/:id/claim refuses a worker that declares a different profile set", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-profiled-diff", null, { permission_profile: "review_readonly" });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    metadata: { enforces_permission_profiles: [] },
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-profiled-diff/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(res.status).toBe(403);
+  expect(await readErrorCode(res)).toBe("permission_profile_unenforceable");
+});
+
+type CancelledClaimRow = {
+  status: string;
+  worker_id: string | null;
+  dispatch_attempts: number;
+  resolution_reason: string | null;
+  resolved_by: string | null;
+};
+
+function readCancelledClaimRow(services: Services, handoff_id: string): CancelledClaimRow | null {
+  return services.db
+    .query<
+      CancelledClaimRow,
+      [string]
+    >("SELECT status, worker_id, dispatch_attempts, resolution_reason, resolved_by FROM handoffs WHERE handoff_id = ?")
+    .get(handoff_id);
+}
+
+function cancelConversation(
+  fetchHandler: (req: Request) => Promise<Response>,
+  conversation_id: string,
+): Promise<Response> {
+  return fetchHandler(
+    new Request(`http://x/conversations/${conversation_id}/cancel`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${SHARED_TOKEN}` },
+    }),
+  );
+}
+
+function claimAs(
+  fetchHandler: (req: Request) => Promise<Response>,
+  worker_token: string,
+  handoff_id: string,
+  worker_id: string,
+): Promise<Response> {
+  return fetchHandler(
+    new Request(`http://x/handoffs/${handoff_id}/claim`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id }),
+    }),
+  );
+}
+
+test("/handoffs/:id/claim refuses a handoff cancelled before any worker claimed it and resolves it as cancelled", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-cancel-pre");
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  expect((await cancelConversation(fetchHandler, "conv-h-cancel-pre")).status).toBe(200);
+  const res = await claimAs(fetchHandler, worker_token, "h-cancel-pre", "W-A");
+
+  expect(res.status).toBe(409);
+  const body = (await res.json()) as ErrorResponse & { current_status: string | null };
+  expect(body.error.code).toBe("cancel_requested");
+  expect(body.current_status).toBe("failed");
+  expect(readCancelledClaimRow(services, "h-cancel-pre")).toEqual({
+    status: "failed",
+    worker_id: null,
+    dispatch_attempts: 0,
+    resolution_reason: "cancelled",
+    resolved_by: "cancel",
+  });
+  const claimEvents = services.db
+    .query<
+      { n: number },
+      [string]
+    >("SELECT COUNT(*) AS n FROM dispatch_events WHERE handoff_id = ? AND kind = 'claim'")
+    .get("h-cancel-pre");
+  expect(claimEvents?.n).toBe(0);
+});
+
+test("/handoffs/:id/claim refuses a handoff whose cancel lands between the route's read and the claim write", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-cancel-race");
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET cancel_requested_at='2026-05-21T10:00:00.000Z' WHERE handoff_id='h-cancel-race'`,
+    );
+  });
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await claimAs(fetchHandler, worker_token, "h-cancel-race", "W-A");
+
+  expect(res.status).toBe(409);
+  expect(await readErrorCode(res)).toBe("cancel_requested");
+  expect(readCancelledClaimRow(services, "h-cancel-race")).toEqual({
+    status: "failed",
+    worker_id: null,
+    dispatch_attempts: 0,
+    resolution_reason: "cancelled",
+    resolved_by: "cancel",
+  });
+});
+
+test("/handoffs/:id/claim still claims a handoff whose conversation was not cancelled", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-cancel-other");
+  seedApprovedHandoff(services, "h-cancel-live");
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  expect((await cancelConversation(fetchHandler, "conv-h-cancel-other")).status).toBe(200);
+  const res = await claimAs(fetchHandler, worker_token, "h-cancel-live", "W-A");
+
+  expect(res.status).toBe(200);
+  expect(((await res.json()) as ClaimResponse).status).toBe("dispatched");
+  expect(readCancelledClaimRow(services, "h-cancel-live")).toEqual({
+    status: "dispatched",
+    worker_id: "W-A",
+    dispatch_attempts: 1,
+    resolution_reason: null,
+    resolved_by: "machine-test",
+  });
+});
+
+test("a cancel requested after the claim still resolves the dispatched handoff as cancelled on completion", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-cancel-post");
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  expect((await claimAs(fetchHandler, worker_token, "h-cancel-post", "W-A")).status).toBe(200);
+  expect((await cancelConversation(fetchHandler, "conv-h-cancel-post")).status).toBe(200);
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-cancel-post/complete", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    handoff_id: "h-cancel-post",
+    status: "failed",
+    reason: "cancelled",
+  });
+  expect(readCancelledClaimRow(services, "h-cancel-post")).toEqual({
+    status: "failed",
+    worker_id: "W-A",
+    dispatch_attempts: 1,
+    resolution_reason: "cancelled",
+    resolved_by: "cancel",
+  });
 });

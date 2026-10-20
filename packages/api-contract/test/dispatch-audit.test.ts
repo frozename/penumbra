@@ -7,7 +7,7 @@ import {
   DispatchReliabilityStatusSchema,
 } from "../src/index.js";
 
-test("DispatchReliabilityStatusSchema enumerates exactly 13 statuses in order", () => {
+test("DispatchReliabilityStatusSchema enumerates exactly 14 statuses in order", () => {
   expect(DispatchReliabilityStatusSchema.options).toEqual([
     "complete",
     "missing_dispatch_start",
@@ -19,13 +19,14 @@ test("DispatchReliabilityStatusSchema enumerates exactly 13 statuses in order", 
     "no_agent_output",
     "no_worktree_activity",
     "tool_failure_with_end_turn",
+    "end_turn_without_return_block",
     "reconcile_missing",
     "agent_declared_done_unverified",
     "timeline_inconsistent",
   ]);
 });
 
-test("DispatchReliabilityStatusSchema rejects a 14th status", () => {
+test("DispatchReliabilityStatusSchema rejects a 15th status", () => {
   expect(DispatchReliabilityStatusSchema.safeParse("unknown_status").success).toBe(false);
 });
 

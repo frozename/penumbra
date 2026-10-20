@@ -1,9 +1,11 @@
 import "../setup";
-import { render } from "@testing-library/react";
-import { describe, expect, test } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { EventTypeChip } from "@src/ui/EventTypeChip";
 import { PressureOrb, type PressureWindowSnapshot, providerLabel } from "@src/ui/PressureOrb";
+
+afterEach(cleanup);
 const C = 2 * Math.PI * 18;
 
 describe("PressureOrb", () => {

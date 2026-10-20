@@ -11,6 +11,7 @@ import {
   emitNextSessionPromptOutput,
   emitObservationOutput,
   emitSessionReminder,
+  type NextSessionPromptMode,
   taskOutput,
 } from "./outputs/index.js";
 import { resolveTemplateVars, type TemplateVarContext } from "./template-vars.js";
@@ -28,6 +29,7 @@ export type ExecuteResult = {
   latencyMs: number;
   gateEvidence?: Partial<Record<GateName, string>>;
   sessionReminder?: string;
+  nextSessionPrompt?: { path: string; mode: NextSessionPromptMode };
 };
 
 export type ExecuteOpts = {
@@ -182,7 +184,10 @@ type OutputCtx = {
   start: number;
 };
 
-type SinkOutcome = { requiredFailure?: { kind: string; reason: string } };
+type SinkOutcome = {
+  requiredFailure?: { kind: string; reason: string };
+  nextSessionPrompt?: ExecuteResult["nextSessionPrompt"];
+};
 
 async function handleObservationSink(
   sink: Extract<WorkflowSpec["output"][number], { kind: "observation" }>,
@@ -279,16 +284,18 @@ async function handleNextSessionPromptSink(
   artifacts: string[],
   warnings: string[],
 ): Promise<SinkOutcome> {
-  const { body, storageRoot } = octx;
+  const { body, storageRoot, tplCtx } = octx;
   const r = await emitNextSessionPromptOutput({
     body,
     storageRoot,
     workflowName: octx.spec.name,
+    project: tplCtx.project,
+    now: tplCtx.now,
   });
   warnings.push(...r.warnings);
-  if (r.path) {
+  if (r.path && r.mode) {
     artifacts.push(r.path);
-    return {};
+    return { nextSessionPrompt: { path: r.path, mode: r.mode } };
   }
   if (r.skipped) return {};
   if (sink.optional) return {};
@@ -469,6 +476,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       runResult,
       gateEvidence: gateEvidenceOut,
       sessionReminder,
+      ...(sinkRun.nextSessionPrompt ? { nextSessionPrompt: sinkRun.nextSessionPrompt } : {}),
       ...(sinkRun.requiredFailures.length > 0
         ? {
             errorMessage: `required output sink(s) failed — ${sinkRun.requiredFailures
@@ -488,14 +496,17 @@ async function runOutputSinks(
 ): Promise<{
   sessionReminderTexts: string[];
   requiredFailures: { kind: string; reason: string }[];
+  nextSessionPrompt?: ExecuteResult["nextSessionPrompt"];
 }> {
   const sessionReminderTexts: string[] = [];
   const requiredFailures: { kind: string; reason: string }[] = [];
+  let nextSessionPrompt: ExecuteResult["nextSessionPrompt"];
   for (const sink of spec.output) {
     const sinkResult = await emitOneSink(sink, octx, artifacts, warnings, sessionReminderTexts);
     if (sinkResult.requiredFailure) requiredFailures.push(sinkResult.requiredFailure);
+    if (sinkResult.nextSessionPrompt) nextSessionPrompt = sinkResult.nextSessionPrompt;
   }
-  return { sessionReminderTexts, requiredFailures };
+  return { sessionReminderTexts, requiredFailures, nextSessionPrompt };
 }
 
 async function runCapture(

@@ -82,6 +82,7 @@ class FakeJsonRpcChild {
 function makeInput(
   requestPermission: NonNullable<DispatchInput["requestPermission"]>,
   signal: AbortSignal = new AbortController().signal,
+  extra?: Partial<Pick<DispatchInput, "trust_mode" | "permission_profile">>,
 ): DispatchInput {
   return {
     prompt: "run the focused test",
@@ -90,6 +91,7 @@ function makeInput(
     signal,
     trust_mode: "config",
     requestPermission,
+    ...extra,
   };
 }
 
@@ -104,6 +106,8 @@ interface PermissionScenario {
   requestSessionId?: string;
   toolCall?: Record<string, unknown>;
   updates?: Record<string, unknown>[];
+  trust_mode?: DispatchInput["trust_mode"];
+  permission_profile?: DispatchInput["permission_profile"];
 }
 
 const DEFAULT_OPTIONS: PermissionOption[] = [
@@ -154,7 +158,15 @@ async function runPermissionScenario(scenario: PermissionScenario = {}): Promise
   const requestPermission = vi.fn<NonNullable<DispatchInput["requestPermission"]>>(() =>
     Promise.resolve(scenario.decision ?? "approve"),
   );
-  const { dispatch, promptId } = await beginDispatch(child, makeInput(requestPermission));
+  const { dispatch, promptId } = await beginDispatch(
+    child,
+    makeInput(requestPermission, new AbortController().signal, {
+      ...(scenario.trust_mode !== undefined ? { trust_mode: scenario.trust_mode } : {}),
+      ...(scenario.permission_profile !== undefined
+        ? { permission_profile: scenario.permission_profile }
+        : {}),
+    }),
+  );
   for (const update of scenario.updates ?? []) sendUpdate(child, update);
   sendPermissionRequest(
     child,
@@ -726,5 +738,106 @@ describe("StdioAcpPermissionContext bounds", () => {
     expect(
       context.resolve({ sessionId: "session-1", toolCall: { toolCallId: oversized } }),
     ).toBeNull();
+  });
+});
+
+describe("StdioAcpAdapter permission_profile gate", () => {
+  const WRITE_TOOL_CALL_UPDATE = {
+    sessionUpdate: "tool_call",
+    toolCallId: "tool-1",
+    title: "fs/write_text_file",
+    input: { path: "src/x.ts", content: "mutated" },
+  };
+  const RM_COMMAND_UPDATE = {
+    sessionUpdate: "tool_call",
+    toolCallId: "tool-1",
+    title: "terminal/create",
+    input: { command: "rm -rf /tmp/victim" },
+  };
+
+  test("profile deny wins over trust_mode all: fs write selects reject_once", async () => {
+    const result = await runPermissionScenario({
+      trust_mode: "all",
+      permission_profile: "review_readonly",
+      updates: [WRITE_TOOL_CALL_UPDATE],
+      toolCall: { toolCallId: "tool-1" },
+    });
+
+    expect(result.permissionResponse.result).toEqual({
+      outcome: { outcome: "selected", optionId: "reject_once" },
+    });
+  });
+
+  test("profile deny wins over trust_mode all: mutating shell selects reject_once", async () => {
+    const result = await runPermissionScenario({
+      trust_mode: "all",
+      permission_profile: "review_readonly",
+      updates: [RM_COMMAND_UPDATE],
+      toolCall: { toolCallId: "tool-1" },
+    });
+
+    expect(result.requestPermission).not.toHaveBeenCalled();
+    expect(result.permissionResponse.result).toEqual({
+      outcome: { outcome: "selected", optionId: "reject_once" },
+    });
+  });
+
+  test("profile approves a read-only command under trust_mode all (trust path preserved)", async () => {
+    const result = await runPermissionScenario({
+      trust_mode: "all",
+      permission_profile: "review_readonly",
+      updates: [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "terminal/create",
+          input: { command: "git status" },
+        },
+      ],
+      toolCall: { toolCallId: "tool-1" },
+    });
+
+    // Profile approved → falls through to the trust-all option picker.
+    expect(result.permissionResponse.result).toEqual({
+      outcome: { outcome: "selected", optionId: "switch_bypass" },
+    });
+  });
+
+  test("unresolvable tool call under a profile fails closed with reject_once", async () => {
+    const result = await runPermissionScenario({
+      trust_mode: "all",
+      permission_profile: "review_readonly",
+      toolCall: { toolCallId: "tool-1" },
+      updates: [],
+    });
+
+    expect(result.requestPermission).not.toHaveBeenCalled();
+    expect(result.permissionResponse.result).toEqual({
+      outcome: { outcome: "selected", optionId: "reject_once" },
+    });
+  });
+
+  test("profile approve under trust_mode config still defers to requestPermission", async () => {
+    const result = await runPermissionScenario({
+      trust_mode: "config",
+      permission_profile: "review_readonly",
+      updates: [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "terminal/create",
+          input: { command: "git status" },
+        },
+      ],
+      toolCall: { toolCallId: "tool-1" },
+    });
+
+    expect(result.requestPermission).toHaveBeenCalledTimes(1);
+    expect(result.requestPermission).toHaveBeenCalledWith({
+      toolName: "terminal/create",
+      rawInput: { command: "git status" },
+      dispatchId: "conversation-1",
+    });
+    expect(result.permissionResponse.result).toEqual(ALLOW_ONCE_RESULT);
   });
 });
