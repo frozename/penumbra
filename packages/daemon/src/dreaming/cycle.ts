@@ -37,6 +37,7 @@ import {
 } from "./config.js";
 import { runPC1Phase } from "./curator/pc1-ephemera.js";
 import { runPC2Phase } from "./curator/pc2-cluster.js";
+import { finalizeCycleAsCrashed } from "./cycle-crash.js";
 import { REWRITE_RESPONSE_SCHEMA } from "./dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "./dream-rewriter-prompt.js";
 import {
@@ -54,6 +55,7 @@ import { isWebSearchable } from "./query-rewriting.js";
 import { sanitizeTitleForQuery } from "./query-sanitize.js";
 import { runReembedPhase } from "./reembed.js";
 import { hashQuery, runP5Phase } from "./research.js";
+import { invokeRewriter, noEligibleCandidateMessage } from "./rewrite-invoke.js";
 import {
   type DreamingRewriterInventory,
   resolveRewriterCandidatesAgainstInventory,
@@ -291,6 +293,9 @@ export async function runDreamCycle(
 
     finalizeCycle(db, ctx, config);
     return ctx.cycleId;
+  } catch (err) {
+    finalizeCycleAsCrashed(db, ctx.cycleId, err);
+    throw err;
   } finally {
     delete deps.costMeter;
     dreamingCycleInFlight = false;
@@ -1487,6 +1492,7 @@ function recordRewriteFailure(
     status?: number;
     candidate?: LlmServingCandidate;
     candidateFailures?: LlmInvokeCandidateFailure[];
+    failureMessage?: string;
   },
 ): void {
   const ts = new Date().toISOString();
@@ -1501,6 +1507,7 @@ function recordRewriteFailure(
     ...(input.candidateFailures === undefined
       ? {}
       : { candidate_failures: input.candidateFailures }),
+    ...(input.failureMessage === undefined ? {} : { failure_message: input.failureMessage }),
   });
   recordSubsystemOutcome(db, {
     subsystem: "dream.query_rewrite",
@@ -1607,7 +1614,7 @@ async function fetchRewriteFromLlm(
   if (!primaryCandidate) return fallbackToMemoryTitle(ctx, memory, 0);
   const prompt = buildDreamQueryRewritePrompt({ title: memory.title, bodyFirst200: memory.body });
   const rewriteStart = Date.now();
-  const rewriteResult = await ctx.invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
+  const rewriteResult = await invokeRewriter<typeof REWRITE_RESPONSE_SCHEMA>(ctx.invokeLlm, {
     baseUrl: primaryCandidate.baseUrl,
     model: primaryCandidate.model,
     provider: primaryCandidate.provider,
@@ -1630,6 +1637,7 @@ async function fetchRewriteFromLlm(
       status: "status" in rewriteResult ? rewriteResult.status : undefined,
       candidate: rewriteResult.candidate ?? primaryRewriteCandidate(ctx),
       candidateFailures: rewriteResult.failures,
+      failureMessage: noEligibleCandidateMessage(rewriteResult),
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }
