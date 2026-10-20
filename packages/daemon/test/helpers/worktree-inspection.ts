@@ -180,7 +180,7 @@ export async function createInspectionWorktree(
 
 export function seedInspectionHandoff(
   services: Services,
-  input: { handoffId: string; projectId: string; branchName: string },
+  input: { handoffId: string; projectId: string; branchName: string; branchBase?: string | null },
 ): void {
   services.handoffWriter.createApproved({
     handoff_id: input.handoffId,
@@ -199,7 +199,7 @@ export function seedInspectionHandoff(
     chain_task_type: "implement_small",
     use_worktree: true,
     parent_handoff_id: null,
-    branch_base: "main",
+    branch_base: input.branchBase === undefined ? "main" : input.branchBase,
     branch_name: input.branchName,
   });
 }

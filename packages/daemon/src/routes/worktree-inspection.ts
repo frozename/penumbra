@@ -26,6 +26,8 @@ export type WorktreeInspection = {
   branch_name: string;
   base_ref: string;
   base_fallback: boolean;
+  base_attempted_ref: string;
+  base_fallback_reason: "unresolvable" | "rejected_ref" | "chain_limit" | null;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -68,19 +70,36 @@ function projectMatchesExpected(actual: string | null, expected: string | undefi
 const INSPECTION_BASE_REF_RE = /^[\w.][\w./+@-]{0,199}$/;
 const MAX_BASE_CHAIN = 16;
 
+type InspectionFallbackReason = "unresolvable" | "rejected_ref" | "chain_limit";
+
+type ResolvedInspectionBase = {
+  baseRef: string;
+  baseSha: string;
+  attemptedRef: string;
+  fallbackReason: InspectionFallbackReason | null;
+};
+
 // fix-until-green rounds and stacked plan tasks set branch_base to the previous
 // handoff's branch, which dispatch_land may later delete. Follow the chain to the
-// root dispatch base so inspection always sees the full task delta.
-function rootInspectionBase(services: Services, branchBase: string | null | undefined): string {
+// root dispatch base so inspection always sees the full task delta. Only follow an
+// owner in the same project (findByBranchName is unscoped, so a stray row from
+// another project must not redirect the diff); a cycle or chain-limit exhaustion is
+// reported as exhausted so the caller falls back to main rather than a still-owned ref.
+function rootInspectionBase(
+  services: Services,
+  branchBase: string | null | undefined,
+  projectId: string | null,
+): { ref: string; exhausted: boolean } {
   let ref = branchBase ?? "main";
   const seen = new Set<string>();
-  while (seen.size < MAX_BASE_CHAIN && !seen.has(ref)) {
+  while (!seen.has(ref)) {
+    if (seen.size >= MAX_BASE_CHAIN) return { ref, exhausted: true };
     seen.add(ref);
     const owner = services.handoffReader.findByBranchName(ref);
-    if (owner === null) break;
+    if (owner?.project_id !== projectId) return { ref, exhausted: false };
     ref = owner.branch_base ?? "main";
   }
-  return ref;
+  return { ref, exhausted: true };
 }
 
 function isInspectableRef(ref: string): boolean {
@@ -98,21 +117,46 @@ async function tryRevParse(
   }
 }
 
-async function resolveInspectionBase(
+async function resolveMainSha(
   git: (args: readonly string[]) => Promise<string>,
-  rootRef: string,
-): Promise<{ baseRef: string; baseSha: string; fallback: boolean }> {
-  if (rootRef !== "main" && isInspectableRef(rootRef)) {
-    const sha = await tryRevParse(git, rootRef);
-    if (sha !== undefined) {
-      return { baseRef: rootRef, baseSha: sha, fallback: false };
-    }
-  }
+  attemptedRef: string,
+): Promise<string> {
   const mainSha = await tryRevParse(git, "main");
   if (mainSha === undefined) {
-    throw new Error(`no inspection base resolves (tried ${rootRef}, main)`);
+    throw new Error(`no inspection base resolves (tried ${attemptedRef}, main)`);
   }
-  return { baseRef: "main", baseSha: mainSha, fallback: rootRef !== "main" };
+  return mainSha;
+}
+
+async function fallbackToMain(
+  git: (args: readonly string[]) => Promise<string>,
+  attemptedRef: string,
+  reason: InspectionFallbackReason,
+): Promise<ResolvedInspectionBase> {
+  const baseSha = await resolveMainSha(git, attemptedRef);
+  return { baseRef: "main", baseSha, attemptedRef, fallbackReason: reason };
+}
+
+async function resolveInspectionBase(
+  git: (args: readonly string[]) => Promise<string>,
+  root: { ref: string; exhausted: boolean },
+): Promise<ResolvedInspectionBase> {
+  const attemptedRef = root.ref;
+  if (root.exhausted) {
+    return await fallbackToMain(git, attemptedRef, "chain_limit");
+  }
+  if (root.ref === "main") {
+    const baseSha = await resolveMainSha(git, attemptedRef);
+    return { baseRef: "main", baseSha, attemptedRef, fallbackReason: null };
+  }
+  if (!isInspectableRef(root.ref)) {
+    return await fallbackToMain(git, attemptedRef, "rejected_ref");
+  }
+  const sha = await tryRevParse(git, root.ref);
+  if (sha !== undefined) {
+    return { baseRef: root.ref, baseSha: sha, attemptedRef, fallbackReason: null };
+  }
+  return await fallbackToMain(git, attemptedRef, "unresolvable");
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -304,9 +348,13 @@ export async function inspectWorktreeForHandoff(
     const initialFailure = initialSnapshotFailure(before, canonicalPath, worktree);
     if (initialFailure) return inspectionFailure(initialFailure);
 
-    const { baseRef, baseSha, fallback } = await resolveInspectionBase(
+    const { baseRef, baseSha, attemptedRef, fallbackReason } = await resolveInspectionBase(
       git,
-      rootInspectionBase(services, refreshedHandoff.branch_base),
+      rootInspectionBase(
+        services,
+        refreshedHandoff.branch_base,
+        refreshedHandoff.project_id ?? null,
+      ),
     );
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseSha)) {
       return inspectionFailure(`${baseRef} is not a full Git object id`);
@@ -351,7 +399,9 @@ export async function inspectWorktreeForHandoff(
         head_sha: before.headSha,
         branch_name: before.branchName,
         base_ref: baseRef,
-        base_fallback: fallback,
+        base_fallback: fallbackReason !== null,
+        base_attempted_ref: attemptedRef,
+        base_fallback_reason: fallbackReason,
         dirty: before.status.trim().length > 0,
         truncation: {
           diff_against_main: diffTruncated,
