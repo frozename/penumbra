@@ -24,7 +24,12 @@ export const FsGlobInputShape = {
     .max(5000)
     .optional()
     .describe("Soft cap; default 1000, hard ceiling 5000."),
-  include_ignored: z.boolean().optional().describe("When true, ignore .gitignore. Default false."),
+  include_ignored: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, ignore .gitignore; also required when `path` is inside a gitignored directory. Default false.",
+    ),
   handoff_id: z
     .string()
     .optional()
