@@ -118,6 +118,7 @@ function braceFreeFixtureScope(): TestScope {
               author: "second-account",
               checks: "success",
               created_at: "2026-09-21T10:00:00Z",
+              foreign_author: true,
               head_ref: "feat/other-account",
               not_from_known_lane: true,
               number: 74,
@@ -127,6 +128,7 @@ function braceFreeFixtureScope(): TestScope {
               author: "maestro",
               checks: "failure",
               created_at: "2026-09-21T11:00:00Z",
+              foreign_author: false,
               head_ref: "fix/issue-71_abcd1234",
               not_from_known_lane: false,
               number: 78,
@@ -282,7 +284,7 @@ function withOpenPrs(openPrs: unknown): TestScope {
   };
 }
 
-test("session-handoff skeleton lists open PRs and flags heads not from a known lane", () => {
+test("session-handoff skeleton lists open PRs and flags foreign authors and heads not from a known lane", () => {
   const warnings: string[] = [];
   const rendered = renderPlaybook(
     "plugin/playbooks/session-handoff/playbook.md",
@@ -291,7 +293,7 @@ test("session-handoff skeleton lists open PRs and flags heads not from a known l
   );
 
   expect(rendered).toContain(
-    "- #74 Implement #71 — `feat/other-account` by second-account, opened 2026-09-21T10:00:00Z, checks success — **not from a known lane**\n",
+    "- #74 Implement #71 — `feat/other-account` by second-account, opened 2026-09-21T10:00:00Z, checks success — **not authored by this gh account** — **not from a known lane**\n",
   );
   expect(rendered).toContain(
     "- #78 Fix #71 — `fix/issue-71_abcd1234` by maestro, opened 2026-09-21T11:00:00Z, checks failure\n",
@@ -321,4 +323,15 @@ test("maestro-context-prime first moves include open_prs", () => {
   );
 
   expect(rendered).toContain('- open_prs: {"prs":null,"reason":"not a GitHub repository"}\n');
+});
+
+test("maestro-context-prime first moves carry each open PR's foreign_author flag", () => {
+  const rendered = renderPlaybook(
+    "plugin/playbooks/maestro-context-prime/playbook.md",
+    braceFreeFixtureScope(),
+    [],
+  );
+
+  expect(rendered).toContain('"foreign_author":true,"head_ref":"feat/other-account"');
+  expect(rendered).toContain('"foreign_author":false,"head_ref":"fix/issue-71_abcd1234"');
 });

@@ -5,6 +5,7 @@ export {
   WorkerTokenStore,
 } from "./auth/worker-token-store.js";
 export { Branding } from "./branding.js";
+export { type ConcurrentPr, findConcurrentPrs } from "./concurrent-prs.js";
 export { ContextFileWriter, type ContextFileWriterOpts } from "./context-file/writer.js";
 export {
   type GlobalCrashHandlerOpts,
@@ -86,6 +87,7 @@ export {
 } from "./events/permission-events.js";
 export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
 export { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
+export { type GhRunner } from "./gh-runner.js";
 export { MachineId } from "./identity/machine-id.js";
 export { resolveProjectId } from "./identity/project-id.js";
 export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
@@ -129,7 +131,7 @@ export {
   MemoryVerifyClaimInputShape,
 } from "./memory-verify/schemas.js";
 export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
-export { collectOpenPrs, type OpenPrsRunner } from "./open-prs.js";
+export { collectOpenPrs } from "./open-prs.js";
 export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
 export { parseOtlpLogs } from "./otlp/parse.js";
 export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";

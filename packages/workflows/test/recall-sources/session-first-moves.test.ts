@@ -138,7 +138,7 @@ test("default launchctl reader spawns once and derives daemon plus worker pids f
   }
 });
 
-test("collects open PRs through the injected gh runner and marks heads no handoff produced", async () => {
+test("collects open PRs through the injected gh runner and marks foreign authors and heads no handoff produced", async () => {
   const db = freshDb();
   const repo = seedRepo();
   try {
@@ -156,6 +156,7 @@ test("collects open PRs through the injected gh runner and marks heads no handof
       readWorkerPids: () => [],
       runGh: (cmd, args, opts) => {
         calls.push({ cmd, args, cwd: opts.cwd });
+        if (args[0] === "api") return Promise.resolve({ stdout: "frozename\n", stderr: "" });
         return Promise.resolve({
           stdout: JSON.stringify([
             {
@@ -180,10 +181,10 @@ test("collects open PRs through the injected gh runner and marks heads no handof
       },
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.cmd).toBe("gh");
-    expect(calls[0]?.args.slice(0, 4)).toEqual(["pr", "list", "--state", "open"]);
-    expect(calls[0]?.cwd).toBe(repo);
+    expect(calls.map((call) => [call.cmd, ...call.args.slice(0, 2), call.cwd])).toEqual([
+      ["gh", "pr", "list", repo],
+      ["gh", "api", "user", repo],
+    ]);
     expect(out.result.open_prs).toEqual({
       reason: null,
       prs: [
@@ -194,6 +195,7 @@ test("collects open PRs through the injected gh runner and marks heads no handof
           author: "second-account",
           created_at: "2026-09-21T10:00:00Z",
           checks: "success",
+          foreign_author: true,
           not_from_known_lane: true,
         },
         {
@@ -203,6 +205,7 @@ test("collects open PRs through the injected gh runner and marks heads no handof
           author: "frozename",
           created_at: "2026-09-21T11:00:00Z",
           checks: "none",
+          foreign_author: false,
           not_from_known_lane: false,
         },
       ],

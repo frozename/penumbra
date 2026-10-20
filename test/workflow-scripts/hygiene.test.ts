@@ -490,11 +490,121 @@ describe("land-and-close", () => {
   });
 });
 
+describe("land-and-close concurrent PR warning", () => {
+  const OTHER_PR = {
+    number: 74,
+    title: "Implement #71",
+    head_ref: "feat/other-account",
+    author: "second-account",
+    url: "https://github.com/acme/repo/pull/74",
+    issue: 71,
+  };
+
+  function landAgent(land: Record<string, unknown>, seen: Map<string, AgentOpts> = new Map()) {
+    const agent: AgentFn = async (_prompt, opts) => {
+      seen.set(String(opts.label), opts);
+      if (opts.label === "land") return land;
+      if (opts.label === "verify")
+        return { head: "abc1234", commit_sha: "abc1234", files_changed: 1, verified: true };
+      if (opts.label === "close") return { lane_status: "closed", task_status: "skipped" };
+      return null;
+    };
+    return agent;
+  }
+
+  test("asks the land agent to copy dispatch_land's concurrent_prs verbatim as a warning only", async () => {
+    const seen = new Map<string, AgentOpts>();
+
+    const { prompts } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+      landAgent({ commit_sha: "abc1234", error: "", concurrent_prs: [] }, seen),
+    );
+
+    const landPrompt = prompts.find((p) => p.includes("STEP 1"));
+    expect(landPrompt).toContain("concurrent_prs");
+    expect(landPrompt).toMatch(/copy .*concurrent_prs.* verbatim/i);
+    expect(landPrompt).toContain("[]");
+    expect(landPrompt).toMatch(/never retry, force, or stop/i);
+    const schema = seen.get("land")?.schema as {
+      required?: string[];
+      properties?: Record<string, { items?: { properties?: Record<string, unknown> } }>;
+    };
+    expect(schema.required).toContain("concurrent_prs");
+    expect(
+      Object.keys(schema.properties?.["concurrent_prs"]?.items?.properties ?? {}).sort(),
+    ).toEqual(["author", "head_ref", "issue", "number", "title", "url"]);
+  });
+
+  test("lands, verifies and closes anyway, and surfaces the warning in the result", async () => {
+    const { result, calls } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo", lane_id: "l1" },
+      landAgent({ commit_sha: "abc1234", error: "", concurrent_prs: [OTHER_PR] }),
+    );
+
+    expect(calls).toBe(3);
+    expect(result).toMatchObject({
+      ok: true,
+      commit_sha: "abc1234",
+      head_verified: true,
+      lane_status: "closed",
+      concurrent_prs: [OTHER_PR],
+    });
+    const notes = (result as { notes: string }).notes;
+    expect(notes).toStartWith("WARNING: 1 other open PR references the same issue as this land:");
+    expect(notes).toContain(
+      "#74 (issue #71, feat/other-account by second-account) https://github.com/acme/repo/pull/74",
+    );
+    expect(notes).not.toContain("Implement #71");
+    expect(notes).toEndWith("Successfully landed, verified, and closed.");
+  });
+
+  test("keeps the warning when verification fails after the land", async () => {
+    const agent: AgentFn = async (_prompt, opts) => {
+      if (opts.label === "land")
+        return { commit_sha: "abc1234", error: "", concurrent_prs: [OTHER_PR] };
+      if (opts.label === "verify")
+        return { head: "fff0000", commit_sha: "abc1234", files_changed: 0, verified: false };
+      return null;
+    };
+
+    const { result } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+      agent,
+    );
+
+    expect(result).toMatchObject({ ok: false, concurrent_prs: [OTHER_PR] });
+    expect((result as { notes: string }).notes).toStartWith("WARNING: 1 other open PR");
+  });
+
+  test("reports no warning when dispatch_land returned none or the agent omitted the field", async () => {
+    for (const land of [
+      { commit_sha: "abc1234", error: "", concurrent_prs: [] },
+      { commit_sha: "abc1234", error: "" },
+    ]) {
+      const { result } = await runWorkflow(
+        ".claude/workflows/land-and-close.js",
+        { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+        landAgent(land),
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        concurrent_prs: [],
+        notes: "Successfully landed, verified, and closed.",
+      });
+    }
+  });
+});
+
 describe("session-first-moves", () => {
   const OPEN_PR_KEYS = [
     "author",
     "checks",
     "created_at",
+    "foreign_author",
     "head_ref",
     "not_from_known_lane",
     "number",

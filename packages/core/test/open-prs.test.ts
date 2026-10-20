@@ -1,10 +1,25 @@
 import { expect, test } from "bun:test";
 
-import { collectOpenPrs, type OpenPrsRunner } from "@src/open-prs.js";
+import type { GhRunner } from "@src/gh-runner.js";
+import { collectOpenPrs } from "@src/open-prs.js";
 
-function failingRunner(fields: Record<string, unknown>): OpenPrsRunner {
+function failingRunner(fields: Record<string, unknown>): GhRunner {
   return () => Promise.reject(Object.assign(new Error("gh failed"), fields));
 }
+
+type GhCall = { cmd: string; args: string[]; opts: { cwd: string; timeout: number } };
+
+function ghRunner(prList: string, login: GhRunner | string, calls: GhCall[] = []): GhRunner {
+  return (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    if (args[0] !== "api") return Promise.resolve({ stdout: prList, stderr: "" });
+    return typeof login === "string"
+      ? Promise.resolve({ stdout: login, stderr: "" })
+      : login(cmd, args, opts);
+  };
+}
+
+const hangingRunner: GhRunner = () => new Promise(() => undefined);
 
 const GH_PR_LIST = [
   {
@@ -47,12 +62,9 @@ const GH_PR_LIST = [
   },
 ];
 
-test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses the open PRs", async () => {
-  const calls: { cmd: string; args: string[]; opts: { cwd: string; timeout: number } }[] = [];
-  const run: OpenPrsRunner = (cmd, args, opts) => {
-    calls.push({ cmd, args, opts });
-    return Promise.resolve({ stdout: JSON.stringify(GH_PR_LIST), stderr: "" });
-  };
+test("collectOpenPrs runs gh pr list and gh api user concurrently in the given cwd with a timeout", async () => {
+  const calls: GhCall[] = [];
+  const run = ghRunner(JSON.stringify(GH_PR_LIST), "frozename\n", calls);
 
   const result = await collectOpenPrs({ cwd: "/repo", run, timeoutMs: 1234 });
 
@@ -69,6 +81,11 @@ test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses 
       ],
       opts: { cwd: "/repo", timeout: 1234 },
     },
+    {
+      cmd: "gh",
+      args: ["api", "user", "--jq", ".login"],
+      opts: { cwd: "/repo", timeout: 1234 },
+    },
   ]);
   expect(result).toEqual({
     reason: null,
@@ -80,6 +97,7 @@ test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses 
         author: "second-account",
         created_at: "2026-09-21T10:00:00Z",
         checks: "success",
+        foreign_author: true,
       },
       {
         number: 78,
@@ -88,6 +106,7 @@ test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses 
         author: "frozename",
         created_at: "2026-09-21T11:00:00Z",
         checks: "failure",
+        foreign_author: false,
       },
       {
         number: 79,
@@ -96,6 +115,7 @@ test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses 
         author: null,
         created_at: "2026-09-21T12:00:00Z",
         checks: "pending",
+        foreign_author: true,
       },
       {
         number: 80,
@@ -104,9 +124,48 @@ test("collectOpenPrs runs gh pr list in the given cwd with a timeout and parses 
         author: "frozename",
         created_at: "2026-09-21T13:00:00Z",
         checks: "none",
+        foreign_author: false,
       },
     ],
   });
+});
+
+test("collectOpenPrs compares the gh login case-insensitively", async () => {
+  const run = ghRunner(JSON.stringify(GH_PR_LIST), "FrozeName\n");
+
+  const result = await collectOpenPrs({ cwd: "/repo", run });
+
+  expect(result.prs?.map((pr) => [pr.number, pr.foreign_author])).toEqual([
+    [74, true],
+    [78, false],
+    [79, true],
+    [80, false],
+  ]);
+});
+
+test("collectOpenPrs leaves foreign_author null when the gh login cannot be resolved", async () => {
+  const unresolved: (GhRunner | string)[] = [
+    failingRunner({ code: 1, stderr: "HTTP 401\n" }),
+    "\n",
+    "not a login\n",
+  ];
+  for (const login of unresolved) {
+    const run = ghRunner(JSON.stringify(GH_PR_LIST), login);
+
+    const result = await collectOpenPrs({ cwd: "/repo", run });
+
+    expect(result.reason).toBeNull();
+    expect(result.prs?.map((pr) => pr.foreign_author)).toEqual([null, null, null, null]);
+  }
+});
+
+test("collectOpenPrs stops waiting for the gh login at the timeout and still returns the PRs", async () => {
+  const run = ghRunner(JSON.stringify(GH_PR_LIST), hangingRunner);
+
+  const result = await collectOpenPrs({ cwd: "/repo", run, timeoutMs: 20 });
+
+  expect(result.reason).toBeNull();
+  expect(result.prs?.map((pr) => pr.foreign_author)).toEqual([null, null, null, null]);
 });
 
 test("collectOpenPrs reads status-context state when CheckRun fields are empty strings", async () => {
@@ -119,7 +178,7 @@ test("collectOpenPrs reads status-context state when CheckRun fields are empty s
       ],
     },
   ]);
-  const run: OpenPrsRunner = () => Promise.resolve({ stdout, stderr: "" });
+  const run: GhRunner = () => Promise.resolve({ stdout, stderr: "" });
 
   const result = await collectOpenPrs({ cwd: "/repo", run });
 
@@ -127,7 +186,7 @@ test("collectOpenPrs reads status-context state when CheckRun fields are empty s
 });
 
 test("collectOpenPrs returns an empty list when no PRs are open", async () => {
-  const run: OpenPrsRunner = () => Promise.resolve({ stdout: "[]\n", stderr: "" });
+  const run: GhRunner = () => Promise.resolve({ stdout: "[]\n", stderr: "" });
 
   expect(await collectOpenPrs({ cwd: "/repo", run })).toEqual({ prs: [], reason: null });
 });
@@ -171,7 +230,7 @@ test("collectOpenPrs returns null when the runner kills gh at the timeout", asyn
 });
 
 test("collectOpenPrs stops waiting at the timeout even when the runner never settles", async () => {
-  const run: OpenPrsRunner = () => new Promise(() => undefined);
+  const run: GhRunner = () => new Promise(() => undefined);
 
   const result = await collectOpenPrs({ cwd: "/repo", run, timeoutMs: 20 });
 
@@ -180,7 +239,7 @@ test("collectOpenPrs stops waiting at the timeout even when the runner never set
 
 test("collectOpenPrs returns null when gh prints output it cannot parse", async () => {
   for (const stdout of ["not json", '{"number":1}', '[{"number":"1"}]']) {
-    const run: OpenPrsRunner = () => Promise.resolve({ stdout, stderr: "" });
+    const run: GhRunner = () => Promise.resolve({ stdout, stderr: "" });
 
     expect(await collectOpenPrs({ cwd: "/repo", run })).toEqual({
       prs: null,
@@ -190,7 +249,7 @@ test("collectOpenPrs returns null when gh prints output it cannot parse", async 
 });
 
 test("collectOpenPrs does not throw when the runner throws synchronously", async () => {
-  const run: OpenPrsRunner = () => {
+  const run: GhRunner = () => {
     throw new Error("spawn exploded");
   };
 

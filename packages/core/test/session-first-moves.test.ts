@@ -165,6 +165,7 @@ function openPr(number: number, head_ref: string): OpenPr {
     author: "someone",
     created_at: "2026-09-21T10:00:00Z",
     checks: "success",
+    foreign_author: number === 74,
   };
 }
 

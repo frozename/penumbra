@@ -31,7 +31,7 @@ const OPEN_PRS_SCHEMA = {
   additionalProperties: false,
   required: ["prs", "reason"],
   description:
-    "Open GitHub PRs from `gh pr list`. prs is null and reason says why when gh is missing, the repo is not on GitHub, or the call fails or times out. not_from_known_lane is true when no handoff produced the head branch, null when handoffs could not be read. Return verbatim from the collector.",
+    "Open GitHub PRs from `gh pr list`. prs is null and reason says why when gh is missing, the repo is not on GitHub, or the call fails or times out. foreign_author is true when the PR author is not the authenticated `gh api user` login, null when that login could not be resolved. not_from_known_lane is true when no handoff produced the head branch, null when handoffs could not be read. Return verbatim from the collector.",
   properties: {
     prs: {
       type: ["array", "null"],
@@ -45,6 +45,7 @@ const OPEN_PRS_SCHEMA = {
           "author",
           "created_at",
           "checks",
+          "foreign_author",
           "not_from_known_lane",
         ],
         properties: {
@@ -54,6 +55,7 @@ const OPEN_PRS_SCHEMA = {
           author: nullable({ type: "string" }),
           created_at: { type: "string" },
           checks: { type: "string", enum: ["success", "failure", "pending", "none"] },
+          foreign_author: nullable({ type: "boolean" }),
           not_from_known_lane: nullable({ type: "boolean" }),
         },
       },
