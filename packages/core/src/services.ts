@@ -338,6 +338,37 @@ export interface BuildServicesOpts {
   workflowRuns?: WorkflowRunsRegistry;
 }
 
+// chain_start falls back to the manager's mapping when the registry cannot be
+// read (daemon routes/chains.ts), so an unreadable live registry must not
+// break that fallback.
+function liveProjectRoot(
+  liveRegistry: () => ProjectRegistry | undefined,
+  bootRegistry: ProjectRegistry | undefined,
+  log: Logger,
+  id: string,
+): string | undefined {
+  try {
+    return liveRegistry()?.get(id)?.root_path;
+  } catch (err) {
+    log.warn(
+      { project_id: id, err: err instanceof Error ? err.message : String(err) },
+      "live project registry unreadable; resolving through the boot registry",
+    );
+    return bootRegistry?.get(id)?.root_path;
+  }
+}
+
+function liveRegistrySize(
+  liveRegistry: () => ProjectRegistry | undefined,
+  bootRegistry: ProjectRegistry | undefined,
+): number {
+  try {
+    return liveRegistry()?.size ?? 0;
+  } catch {
+    return bootRegistry?.size ?? 0;
+  }
+}
+
 function createServicesWorktreeManager(
   opts: BuildServicesOpts,
   log: Logger,
@@ -347,13 +378,10 @@ function createServicesWorktreeManager(
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
     log,
-    resolveProjectRoot: (id: string): string | undefined => {
-      const registry = liveRegistry();
-      return registry !== undefined && registry.list().length > 0
-        ? registry.get(id)?.root_path
-        : undefined;
-    },
-    requireKnownProjectId: (): boolean => (liveRegistry()?.list().length ?? 0) > 0,
+    resolveProjectRoot: (id: string): string | undefined =>
+      liveProjectRoot(liveRegistry, opts.projectRegistry, log, id),
+    requireKnownProjectId: (): boolean =>
+      liveRegistrySize(liveRegistry, opts.projectRegistry) > 0,
     resolveBranchName: (handoff_id: string): string | null | undefined =>
       opts.db
         .query<

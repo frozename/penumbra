@@ -154,7 +154,7 @@ test("buildServices wires resolveProjectRoot from projectRegistry", () => {
   expect(manager.repoRootFor("sirius")).toBe("/tmp/sirius-not-real");
 });
 
-test("buildServices without projectRegistry leaves resolveProjectRoot undefined", () => {
+test("buildServices without projectRegistry resolves no project roots", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -255,4 +255,56 @@ test("buildServices with an empty boot projectRegistry resolves projects added b
     new Map([["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }]]),
   );
   expect(manager.baseFor("vega")).toBe("/tmp/vega-not-real-worktrees");
+});
+
+test("buildServices worktree resolution falls back to the boot registry when the live registry cannot be read", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const reg = new ProjectRegistry(
+    new Map([["sirius", { project_id: "sirius", root_path: "/tmp/sirius-not-real" }]]),
+  );
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-boot-fallback-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: reg,
+  });
+
+  services.projectRegistry = {
+    list: () => {
+      throw new Error("registry unavailable");
+    },
+  } as unknown as ProjectRegistry;
+
+  expect(services.worktreeManager.projectRootFor("sirius")).toBe("/tmp/sirius-not-real");
+});
+
+test("buildServices requireKnownProjectId follows the live registry", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-require-known-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: new ProjectRegistry(new Map()),
+  });
+
+  const manager = services.worktreeManager as unknown as {
+    requireKnownProjectId?: () => boolean;
+  };
+  expect(manager.requireKnownProjectId?.()).toBe(false);
+
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }]]),
+  );
+  expect(manager.requireKnownProjectId?.()).toBe(true);
 });
