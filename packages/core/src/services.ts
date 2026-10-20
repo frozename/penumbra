@@ -338,27 +338,22 @@ export interface BuildServicesOpts {
   workflowRuns?: WorkflowRunsRegistry;
 }
 
-export function buildServices(opts: BuildServicesOpts): Services {
-  const settings = SettingsDefaults.build({ env: opts.env, input: opts.input });
-  const clock = opts.clock ?? systemClock;
-  const uuid = opts.uuid ?? systemUuid;
-  const log = createLogger({ component: "penumbra" });
-  const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
-  const handoffEvents = new HandoffEventBus();
-  const handoffTransitions = new HandoffTransitionBus();
-  const permissionEvents = new PermissionEventBus();
-  const conversationStream = new ConversationStreamBus();
-  const workerControl = new WorkerControlBus();
-  const dispatchEvents = new DispatchEventBus();
-  const shouldResolveProjectRoot =
-    opts.projectRegistry !== undefined && opts.projectRegistry.list().length > 0;
-  const worktreeManager = new WorktreeManager({
+function createServicesWorktreeManager(
+  opts: BuildServicesOpts,
+  log: Logger,
+  liveRegistry: () => ProjectRegistry | undefined,
+): WorktreeManager {
+  return new WorktreeManager({
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
     log,
-    resolveProjectRoot: shouldResolveProjectRoot
-      ? (id: string): string | undefined => opts.projectRegistry?.get(id)?.root_path
-      : undefined,
+    resolveProjectRoot: (id: string): string | undefined => {
+      const registry = liveRegistry();
+      return registry !== undefined && registry.list().length > 0
+        ? registry.get(id)?.root_path
+        : undefined;
+    },
+    requireKnownProjectId: (): boolean => (liveRegistry()?.list().length ?? 0) > 0,
     resolveBranchName: (handoff_id: string): string | null | undefined =>
       opts.db
         .query<
@@ -379,6 +374,27 @@ export function buildServices(opts: BuildServicesOpts): Services {
       );
     },
   });
+}
+
+export function buildServices(opts: BuildServicesOpts): Services {
+  const settings = SettingsDefaults.build({ env: opts.env, input: opts.input });
+  const clock = opts.clock ?? systemClock;
+  const uuid = opts.uuid ?? systemUuid;
+  const log = createLogger({ component: "penumbra" });
+  const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
+  const handoffEvents = new HandoffEventBus();
+  const handoffTransitions = new HandoffTransitionBus();
+  const permissionEvents = new PermissionEventBus();
+  const conversationStream = new ConversationStreamBus();
+  const workerControl = new WorkerControlBus();
+  const dispatchEvents = new DispatchEventBus();
+  // eslint-disable-next-line prefer-const -- closure reads before assignment; daemon reload mutates the returned object's projectRegistry in-place
+  let services: Services | undefined;
+  const worktreeManager = createServicesWorktreeManager(
+    opts,
+    log,
+    () => services?.projectRegistry ?? opts.projectRegistry,
+  );
   const watchdog: Watchdog = {
     recordHeartbeat: () => undefined,
     hasActiveWorker: () => false,
@@ -396,7 +412,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     mainRepoDir: opts.mainRepoDir,
     storageRoot: opts.storageRoot,
   });
-  return {
+  services = {
     settings,
     storageRoot: opts.storageRoot,
     reviewsDir: opts.reviewsDir ?? pathResolve(opts.storageRoot, "..", ".penumbra/reviews"),
@@ -456,4 +472,5 @@ export function buildServices(opts: BuildServicesOpts): Services {
     registrarReader: new RegistrarReader(opts.db),
     notificationOutbox: new NotificationOutboxWriter(opts.db),
   };
+  return services;
 }
