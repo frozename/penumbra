@@ -49,6 +49,7 @@ interface WorktreeInspectBody {
   head_sha: string;
   branch_name: string;
   base_ref: string;
+  base_fallback: boolean;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -195,6 +196,111 @@ test("worktree.inspect diffs against the handoff branch_base, not main", async (
     expect(body.diff_against_main).not.toContain("feature-only.txt");
     expect(body.branch_log).toContain("candidate");
     expect(body.branch_log).not.toContain("feature only");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect of a later round diffs against the first round's base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    gitOutput(harness, harness.repoRoot, ["checkout", "-b", "feature/base"]);
+    writeFileSync(join(harness.repoRoot, "feature-only.txt"), "feature only\n");
+    gitOutput(harness, harness.repoRoot, ["add", "feature-only.txt"]);
+    gitOutput(harness, harness.repoRoot, ["commit", "-m", "feature only"]);
+    gitOutput(harness, harness.repoRoot, ["checkout", "main"]);
+
+    await createInspectionWorktree(harness, {
+      handoffId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      branchBase: "feature/base",
+    });
+    const handleB = await createInspectionWorktree(harness, {
+      handoffId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      branchBase: "agent/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      commit: false,
+    });
+    writeFileSync(join(handleB.path, "round-two.txt"), "round two\n");
+    gitOutput(harness, handleB.path, ["add", "round-two.txt"]);
+    gitOutput(harness, handleB.path, ["commit", "-m", "round two"]);
+
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handleB.handoffId}`),
+      handleB.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("feature/base");
+    expect(body.base_fallback).toBe(false);
+    expect(body.diff_against_main).toContain("round-two.txt");
+    expect(body.diff_against_main).toContain("candidate.txt");
+    expect(body.diff_against_main).not.toContain("feature-only.txt");
+    expect(body.branch_log).toContain("round two");
+    expect(body.branch_log).toContain("candidate");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect falls back to main when the base branch was deleted", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    gitOutput(harness, harness.repoRoot, ["checkout", "-b", "feature/base"]);
+    writeFileSync(join(harness.repoRoot, "feature-only.txt"), "feature only\n");
+    gitOutput(harness, harness.repoRoot, ["add", "feature-only.txt"]);
+    gitOutput(harness, harness.repoRoot, ["commit", "-m", "feature only"]);
+    gitOutput(harness, harness.repoRoot, ["checkout", "main"]);
+
+    const handle = await createInspectionWorktree(harness, { branchBase: "feature/base" });
+    gitOutput(harness, harness.repoRoot, ["branch", "-D", "feature/base"]);
+
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("main");
+    expect(body.base_fallback).toBe(true);
+    expect(body.diff_against_main).toContain("candidate.txt");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect treats a null branch_base as main", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness, { branchBase: null });
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("main");
+    expect(body.base_fallback).toBe(false);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect never uses HEAD as the base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness, { branchBase: "HEAD" });
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("main");
+    expect(body.base_fallback).toBe(true);
+    expect(body.diff_against_main).toContain("candidate.txt");
   } finally {
     harness.cleanup();
   }

@@ -25,6 +25,7 @@ export type WorktreeInspection = {
   head_sha: string;
   branch_name: string;
   base_ref: string;
+  base_fallback: boolean;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -64,14 +65,54 @@ function projectMatchesExpected(actual: string | null, expected: string | undefi
   return expected === undefined || actual === expected;
 }
 
-const INSPECTION_BASE_REF_RE = /^[\w.][\w./-]{0,199}$/;
+const INSPECTION_BASE_REF_RE = /^[\w.][\w./+@-]{0,199}$/;
+const MAX_BASE_CHAIN = 16;
 
-function inspectionBaseRef(branchBase: string | null | undefined): string {
-  const ref = branchBase ?? "main";
-  if (!INSPECTION_BASE_REF_RE.test(ref) || ref.includes("..")) {
-    throw new Error(`handoff branch_base is not a valid git ref: ${ref}`);
+// fix-until-green rounds and stacked plan tasks set branch_base to the previous
+// handoff's branch, which dispatch_land may later delete. Follow the chain to the
+// root dispatch base so inspection always sees the full task delta.
+function rootInspectionBase(services: Services, branchBase: string | null | undefined): string {
+  let ref = branchBase ?? "main";
+  const seen = new Set<string>();
+  while (seen.size < MAX_BASE_CHAIN && !seen.has(ref)) {
+    seen.add(ref);
+    const owner = services.handoffReader.findByBranchName(ref);
+    if (owner === null) break;
+    ref = owner.branch_base ?? "main";
   }
   return ref;
+}
+
+function isInspectableRef(ref: string): boolean {
+  return INSPECTION_BASE_REF_RE.test(ref) && !ref.includes("..") && ref !== "HEAD" && ref !== "@";
+}
+
+async function tryRevParse(
+  git: (args: readonly string[]) => Promise<string>,
+  ref: string,
+): Promise<string | undefined> {
+  try {
+    return (await git(["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveInspectionBase(
+  git: (args: readonly string[]) => Promise<string>,
+  rootRef: string,
+): Promise<{ baseRef: string; baseSha: string; fallback: boolean }> {
+  if (rootRef !== "main" && isInspectableRef(rootRef)) {
+    const sha = await tryRevParse(git, rootRef);
+    if (sha !== undefined) {
+      return { baseRef: rootRef, baseSha: sha, fallback: false };
+    }
+  }
+  const mainSha = await tryRevParse(git, "main");
+  if (mainSha === undefined) {
+    throw new Error(`no inspection base resolves (tried ${rootRef}, main)`);
+  }
+  return { baseRef: "main", baseSha: mainSha, fallback: rootRef !== "main" };
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -263,8 +304,10 @@ export async function inspectWorktreeForHandoff(
     const initialFailure = initialSnapshotFailure(before, canonicalPath, worktree);
     if (initialFailure) return inspectionFailure(initialFailure);
 
-    const baseRef = inspectionBaseRef(refreshedHandoff.branch_base);
-    const baseSha = (await git(["rev-parse", "--verify", `${baseRef}^{commit}`])).trim();
+    const { baseRef, baseSha, fallback } = await resolveInspectionBase(
+      git,
+      rootInspectionBase(services, refreshedHandoff.branch_base),
+    );
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseSha)) {
       return inspectionFailure(`${baseRef} is not a full Git object id`);
     }
@@ -308,6 +351,7 @@ export async function inspectWorktreeForHandoff(
         head_sha: before.headSha,
         branch_name: before.branchName,
         base_ref: baseRef,
+        base_fallback: fallback,
         dirty: before.status.trim().length > 0,
         truncation: {
           diff_against_main: diffTruncated,
