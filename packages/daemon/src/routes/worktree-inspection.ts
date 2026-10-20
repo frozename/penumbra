@@ -24,6 +24,7 @@ export type WorktreeInspection = {
   branch_log: string;
   head_sha: string;
   branch_name: string;
+  base_ref: string;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -61,6 +62,16 @@ function inspectionFailure(message: string): WorktreeInspectionResult {
 
 function projectMatchesExpected(actual: string | null, expected: string | undefined): boolean {
   return expected === undefined || actual === expected;
+}
+
+const INSPECTION_BASE_REF_RE = /^[\w.][\w./-]{0,199}$/;
+
+function inspectionBaseRef(branchBase: string | null | undefined): string {
+  const ref = branchBase ?? "main";
+  if (!INSPECTION_BASE_REF_RE.test(ref) || ref.includes("..")) {
+    throw new Error(`handoff branch_base is not a valid git ref: ${ref}`);
+  }
+  return ref;
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -252,9 +263,10 @@ export async function inspectWorktreeForHandoff(
     const initialFailure = initialSnapshotFailure(before, canonicalPath, worktree);
     if (initialFailure) return inspectionFailure(initialFailure);
 
-    const baseSha = (await git(["rev-parse", "main"])).trim();
+    const baseRef = inspectionBaseRef(refreshedHandoff.branch_base);
+    const baseSha = (await git(["rev-parse", "--verify", `${baseRef}^{commit}`])).trim();
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseSha)) {
-      return inspectionFailure("main is not a full Git object id");
+      return inspectionFailure(`${baseRef} is not a full Git object id`);
     }
     const comparisonRange = `${baseSha}..${before.headSha}`;
     const diff = await captureGitOutput([
@@ -295,6 +307,7 @@ export async function inspectWorktreeForHandoff(
         branch_log: boundedLog.value,
         head_sha: before.headSha,
         branch_name: before.branchName,
+        base_ref: baseRef,
         dirty: before.status.trim().length > 0,
         truncation: {
           diff_against_main: diffTruncated,

@@ -48,6 +48,7 @@ interface WorktreeInspectBody {
   branch_log: string;
   head_sha: string;
   branch_name: string;
+  base_ref: string;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -167,6 +168,33 @@ test("worktree.inspect returns a measured immutable candidate snapshot", async (
     expect(body.head_sha).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
     expect(body.diff_against_main).toContain("candidate.txt");
     expect(body.branch_log).toContain("candidate");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect diffs against the handoff branch_base, not main", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    gitOutput(harness, harness.repoRoot, ["checkout", "-b", "feature/base"]);
+    writeFileSync(join(harness.repoRoot, "feature-only.txt"), "feature only\n");
+    gitOutput(harness, harness.repoRoot, ["add", "feature-only.txt"]);
+    gitOutput(harness, harness.repoRoot, ["commit", "-m", "feature only"]);
+    gitOutput(harness, harness.repoRoot, ["checkout", "main"]);
+
+    const handle = await createInspectionWorktree(harness, { branchBase: "feature/base" });
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("feature/base");
+    expect(body.diff_against_main).toContain("candidate.txt");
+    expect(body.diff_against_main).not.toContain("feature-only.txt");
+    expect(body.branch_log).toContain("candidate");
+    expect(body.branch_log).not.toContain("feature only");
   } finally {
     harness.cleanup();
   }

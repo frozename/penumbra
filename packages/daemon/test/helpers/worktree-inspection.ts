@@ -139,6 +139,7 @@ export async function createInspectionWorktree(
     handoffId?: string;
     projectId?: string;
     branchName?: string;
+    branchBase?: string;
     commit?: boolean;
   } = {},
 ): Promise<WorktreeHandle> {
@@ -162,11 +163,12 @@ export async function createInspectionWorktree(
     chain_task_type: "implement_small",
     use_worktree: true,
     parent_handoff_id: null,
-    branch_base: "main",
+    branch_base: input.branchBase ?? "main",
     branch_name: branchName,
   });
   const handle = await harness.services.worktreeManager.createWorktree(handoffId, {
     project_id: projectId,
+    ...(input.branchBase === undefined ? {} : { baseRef: input.branchBase }),
   });
   if (input.commit !== false) {
     writeFileSync(join(handle.path, "candidate.txt"), `candidate ${handoffId}\n`);
