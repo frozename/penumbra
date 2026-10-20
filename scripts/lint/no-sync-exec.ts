@@ -10,6 +10,7 @@ const DEFAULT_PATHS = ["packages/daemon/src/**/*.ts"];
 const PATTERNS = [
   /\bBun\.spawnSync\b/g,
   /\bexecSync\b/g,
+  /\bexecFileSync\b/g,
   /\bspawnSync\b/g,
   /\bimport\s+(?:\S.*)?from\s+["']child_process["']/g,
 ];
