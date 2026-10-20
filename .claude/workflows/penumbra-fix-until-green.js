@@ -263,10 +263,10 @@ function parseCheck(result, responseMode = 'first_line') {
     if (marker[1].toUpperCase() === 'PASS') sawPass = true
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
+  let fullSawPass = false
+  let fullSawFail = false
   if (useFirstLine && !sawFail && !sawPass && hasResponse) {
     const fullScan = stripFencedBlocks(String(result.response || ''))
-    let fullSawPass = false
-    let fullSawFail = false
     for (const line of fullScan.split('\n')) {
       const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
       if (!marker) continue
@@ -278,10 +278,12 @@ function parseCheck(result, responseMode = 'first_line') {
       return { passed: true, output: '' }
     }
   }
+  // No line-initial, unfenced marker anywhere: UNKNOWN, not FAIL.
+  const unknown = !sawPass && !sawFail && !fullSawPass && !fullSawFail
   if (useFirstLine) {
-    return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
+    return { passed: false, ...(unknown ? { unknown: true } : {}), output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
   }
-  return { passed: false, output: text.slice(-4000) }
+  return { passed: false, ...(unknown ? { unknown: true } : {}), output: text.slice(-4000) }
 }
 
 function stripFencedBlocks(text) {
