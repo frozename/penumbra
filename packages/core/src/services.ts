@@ -380,8 +380,7 @@ function createServicesWorktreeManager(
     log,
     resolveProjectRoot: (id: string): string | undefined =>
       liveProjectRoot(liveRegistry, opts.projectRegistry, log, id),
-    requireKnownProjectId: (): boolean =>
-      liveRegistrySize(liveRegistry, opts.projectRegistry) > 0,
+    requireKnownProjectId: (): boolean => liveRegistrySize(liveRegistry, opts.projectRegistry) > 0,
     resolveBranchName: (handoff_id: string): string | null | undefined =>
       opts.db
         .query<
