@@ -2,10 +2,15 @@ import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
+const BRANCH_PROBE_TIMEOUT_MS = 5_000;
 
-export type BranchProbeRunner = (args: readonly string[]) => Promise<unknown>;
+export type BranchProbeRunner = (
+  args: readonly string[],
+  opts: { timeout: number },
+) => Promise<unknown>;
 
-const defaultRunGit: BranchProbeRunner = async (args) => await execFile("git", [...args]);
+const defaultRunGit: BranchProbeRunner = async (args, opts) =>
+  await execFile("git", [...args], opts);
 
 async function gitBranchExists(
   runGit: BranchProbeRunner,
@@ -13,9 +18,13 @@ async function gitBranchExists(
   branchName: string,
 ): Promise<boolean> {
   try {
-    await runGit(["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`]);
+    await runGit(["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
+      timeout: BRANCH_PROBE_TIMEOUT_MS,
+    });
     return true;
   } catch {
+    // Failed, timed out or not a repo all count as free: WorktreeManager
+    // re-checks and suffixes at creation, so this precheck is best-effort.
     return false;
   }
 }

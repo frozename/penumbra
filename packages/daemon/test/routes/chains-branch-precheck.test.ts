@@ -73,3 +73,20 @@ test("throws once all 99 candidates exist", async () => {
 
   expect(error).toEqual(new Error(`branch_name_collision_exhausted: ${REQUESTED}`));
 });
+
+test("bounds every probe at 5s and treats a timed-out probe as free", async () => {
+  const timeouts: number[] = [];
+  const runGit: BranchProbeRunner = (args, opts) => {
+    timeouts.push(opts.timeout);
+    if (args.at(-1) === `refs/heads/${REQUESTED}`) return Promise.resolve();
+    const timedOut = Object.assign(new Error("Command failed: git show-ref"), {
+      killed: true,
+      signal: "SIGTERM",
+      code: null,
+    });
+    return Promise.reject(timedOut);
+  };
+
+  expect(await availableBranchNameBestEffort("/repo", REQUESTED, runGit)).toBe(`${REQUESTED}-2`);
+  expect(timeouts).toEqual([5_000, 5_000]);
+});

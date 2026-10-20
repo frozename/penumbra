@@ -520,11 +520,11 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
   services.recallReader.recall = (): Promise<[]> => Promise.resolve([]);
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
-  const handles: ReturnType<typeof setTimeout>[] = [];
+  const armed: { handle: ReturnType<typeof setTimeout>; timeout: number | undefined }[] = [];
   const cleared: ReturnType<typeof setTimeout>[] = [];
   globalThis.setTimeout = ((callback: TimerHandler, timeout?: number, ...args: unknown[]) => {
     const handle = originalSetTimeout(callback as (...args: never[]) => void, timeout, ...args);
-    handles.push(handle);
+    armed.push({ handle, timeout });
     return handle;
   }) as typeof setTimeout;
   globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
@@ -547,12 +547,12 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
     );
 
     expect(res.status).toBe(200);
-    expect(handles).toHaveLength(1);
-    expect(cleared).toContain(handles[0]);
+    expect(armed.filter(({ timeout }) => timeout === 1500)).toHaveLength(1);
+    expect(armed.filter(({ handle }) => !cleared.includes(handle))).toEqual([]);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
-    for (const handle of handles) originalClearTimeout(handle);
+    for (const { handle } of armed) originalClearTimeout(handle);
   }
 });
 
