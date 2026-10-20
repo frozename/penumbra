@@ -263,3 +263,40 @@ test("reports scoped typecheck failures with affected packages in the regression
   expect(result.regression_summary).toContain("packages/daemon");
   expect(result.regression_summary).toContain("packages/mcp");
 });
+
+test("scopes typecheck to a nested workspace package instead of its grouping directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-reconciler-nested-pkg-"));
+  temporaryRoots.push(root);
+  worktreePath = root;
+  mkdirSync(join(root, "packages", "core"), { recursive: true });
+  mkdirSync(join(root, "packages", "integrations", "typesafe"), { recursive: true });
+  writeFileSync(
+    join(root, "packages", "core", "package.json"),
+    JSON.stringify({ name: "@penumbra/core" }),
+  );
+  writeFileSync(
+    join(root, "packages", "integrations", "typesafe", "package.json"),
+    JSON.stringify({ name: "@penumbra/typesafe" }),
+  );
+  writeFileSync(
+    join(root, "packages", "core", "tsconfig.json"),
+    JSON.stringify({ references: [] }),
+  );
+  writeFileSync(
+    join(root, "packages", "integrations", "typesafe", "tsconfig.json"),
+    JSON.stringify({ references: [{ path: "../../core" }] }),
+  );
+  writeFileSync(
+    join(root, "tsconfig.json"),
+    JSON.stringify({
+      references: [{ path: "./packages/core" }, { path: "./packages/integrations/typesafe" }],
+    }),
+  );
+  diffOutput = "packages/integrations/typesafe/src/client.ts\n";
+
+  await makeReconciler()("h-nested-pkg");
+
+  const tscCmd = execHistory.find((cmd) => cmd.startsWith("bun tsc -b "));
+  expect(tscCmd).toBe("bun tsc -b packages/core packages/integrations/typesafe");
+  expect(tscCmd?.split(" ")).not.toContain("packages/integrations");
+});

@@ -2,7 +2,7 @@ import "../setup";
 import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import {
@@ -13,6 +13,8 @@ import {
 } from "@src/api/streams";
 import { useLiveQuery } from "@src/hooks/useLiveQuery";
 import { useUIStore } from "@src/stores/ui-store";
+
+afterEach(cleanup);
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,

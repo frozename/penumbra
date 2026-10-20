@@ -24,6 +24,8 @@ async function emptyRepoRoot(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "plan-meta-validator-"));
 }
 
+const HEADER = { plan_id: "demo", home_project: "penumbra" };
+
 describe("validatePlan", () => {
   test("happy path returns no errors", async () => {
     const repoRoot = await emptyRepoRoot();
@@ -35,6 +37,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([]);
@@ -47,6 +50,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([
@@ -65,6 +69,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([
@@ -83,6 +88,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([
@@ -108,6 +114,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([
@@ -126,6 +133,7 @@ describe("validatePlan", () => {
     const errors = await validatePlan(tasks, {
       repoRoot,
       knownAgents: new Set(["claude-acp-sonnet"]),
+      header: HEADER,
     });
 
     expect(errors).toEqual([
@@ -134,6 +142,39 @@ describe("validatePlan", () => {
         rule: "preferred_agent_unknown",
         message: 'preferred_agent "fake-bot" is not in the registry',
       },
+    ]);
+  });
+
+  test("flags a plan with no header", async () => {
+    const repoRoot = await emptyRepoRoot();
+
+    const errors = await validatePlan([task({ id: "A" })], {
+      repoRoot,
+      knownAgents: new Set(["claude-acp-sonnet"]),
+    });
+
+    expect(errors).toEqual([
+      {
+        task_id: "<plan>",
+        rule: "header_missing",
+        message:
+          "plan has no front-matter header; open the document with a --- block declaring plan_id and home_project",
+      },
+    ]);
+  });
+
+  test("flags a header without plan_id ahead of task errors", async () => {
+    const repoRoot = await emptyRepoRoot();
+
+    const errors = await validatePlan([task({ id: "A", preferred_agent: "fake-bot" })], {
+      repoRoot,
+      knownAgents: new Set(["claude-acp-sonnet"]),
+      header: { home_project: "penumbra" },
+    });
+
+    expect(errors.map((error) => [error.task_id, error.rule, error.message])).toEqual([
+      ["<plan>", "header_missing", "plan header is missing plan_id"],
+      ["A", "preferred_agent_unknown", 'preferred_agent "fake-bot" is not in the registry'],
     ]);
   });
 });

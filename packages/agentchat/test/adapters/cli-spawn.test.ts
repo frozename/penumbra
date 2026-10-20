@@ -2,6 +2,9 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   type CapacityError,
@@ -516,4 +519,83 @@ describe("spawnCliAdapter onCapacityError callback", () => {
     });
     expect(calls).toHaveLength(0);
   });
+});
+
+describe("spawnCliAdapter permission_profile sandbox", () => {
+  test.skipIf(process.platform === "darwin")(
+    "fails closed without sandbox-exec instead of running unsandboxed",
+    async () => {
+      await expectRejection(
+        spawnCliAdapter({
+          command: "cat",
+          args: [],
+          prompt: "x",
+          signal: new AbortController().signal,
+          permission_profile: "review_readonly",
+        }),
+        /sandbox-exec unavailable/,
+      );
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "denies writes under the dispatch cwd via sandbox-exec",
+    async () => {
+      const cwd = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-sb-")));
+      await expectRejection(
+        spawnCliAdapter({
+          command: "sh",
+          args: ["-c", 'touch "$1"', "--", join(cwd, "denied.txt")],
+          prompt: "",
+          signal: new AbortController().signal,
+          cwd,
+          permission_profile: "review_readonly",
+        }),
+        /exit code/,
+      );
+      expect(existsSync(join(cwd, "denied.txt"))).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "still runs read-only commands under permission_profile",
+    async () => {
+      const cwd = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-sb-")));
+      const out = await spawnCliAdapter({
+        command: "sh",
+        args: ["-c", "echo sb-ok"],
+        prompt: "",
+        signal: new AbortController().signal,
+        cwd,
+        permission_profile: "review_readonly",
+      });
+      expect(out.text.trim()).toBe("sb-ok");
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "denies writes under every sandbox_deny_roots entry, not just cwd",
+    async () => {
+      const cwd = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-sb-")));
+      const callerRoot = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-caller-")));
+      try {
+        await expectRejection(
+          spawnCliAdapter({
+            command: "sh",
+            args: ["-c", 'touch "$1"', "--", join(callerRoot, "denied.txt")],
+            prompt: "",
+            signal: new AbortController().signal,
+            cwd,
+            permission_profile: "review_readonly",
+            sandbox_deny_roots: [callerRoot],
+          }),
+          /exit code/,
+        );
+        expect(existsSync(join(callerRoot, "denied.txt"))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(callerRoot, { recursive: true, force: true });
+      }
+    },
+  );
 });

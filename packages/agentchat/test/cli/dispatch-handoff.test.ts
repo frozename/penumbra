@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
 
+import { registerAdapter } from "@src/adapters/registry.js";
 import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
 import type { ChatTurnInput, ChatTurnResult } from "@src/cli/loop.js";
 import { PenumbraHttpError } from "@src/penumbra-client.js";
@@ -944,4 +945,352 @@ test("abort signal is forwarded to runChatTurn", async () => {
   });
 
   expect(runChatTurn.mock.calls[0]![0].signal).toBe(controller.signal);
+});
+
+const pendingEnvelope = { event_id: "pre-gen-1", event_type: "agent-response" };
+
+function turnWithPending(text: string): ChatTurnResult {
+  return {
+    text,
+    prompt_event_id: "p",
+    response_event_id: "pre-gen-1",
+    next_mention: null,
+    mentions: [],
+    pendingObservations: [pendingEnvelope],
+  };
+}
+
+test("a turn carrying pendingObservations is not re-run and surfaces them on the result", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue(turnWithPending("done"));
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  // Mutation check: if pendingObservations surfaced through a throw were
+  // treated as a failed turn, runChatTurn would be called 4 times.
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(res.text).toBe("done");
+  expect(res.pendingObservations).toEqual([pendingEnvelope]);
+});
+
+test("a 400 from the agent-response observe runs the adapter exactly once (real runChatTurn)", async () => {
+  let dispatches = 0;
+  registerAdapter("mock-observe-400", () => ({
+    kind: "mock-observe-400",
+    dispatch({ prompt }: { prompt: string }): Promise<{ text: string }> {
+      dispatches++;
+      return Promise.resolve({ text: `echo: ${prompt}` });
+    },
+  }));
+  const observeCfg = {
+    agents: [{ name: "planner", adapter: "mock-observe-400", options: {}, roles: ["planner"] }],
+    default_roles: {},
+  };
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const observedTypes: string[] = [];
+
+  const res = await dispatchHandoff({
+    handoff: { ...baseHandoff, handoff_id: "h-observe-400" },
+    config: observeCfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: (event: Record<string, unknown>): Promise<ObserveResult> => {
+      observedTypes.push(event.event_type as string);
+      if (event.event_type === "agent-response") {
+        return Promise.reject(
+          new PenumbraHttpError("penumbra /observations: HTTP 400", 400, {
+            error: { code: "validation_error" },
+          }),
+        );
+      }
+      return Promise.resolve({ event_id: "e" });
+    },
+    createHandoff: mock(),
+    approve: mock(),
+    markFailed,
+    delay,
+    // runChatTurn deliberately omitted — exercise the real turn runner.
+  });
+
+  expect(dispatches).toBe(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(res.text).toBe("echo: hi");
+  expect(res.pendingObservations).toHaveLength(1);
+  expect(res.pendingObservations![0]!.event_type).toBe("agent-response");
+});
+
+test("a TypeError from createHandoff after a finished turn still carries pendingObservations", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    ...turnWithPending("ping @executor"),
+    next_mention: {
+      target: "executor",
+      resolution: { kind: "name", agent_name: "executor" },
+    },
+  });
+  const createHandoff = mock().mockRejectedValue(new TypeError("socket closed"));
+
+  let thrown: unknown;
+  try {
+    await dispatchHandoff({
+      handoff: baseHandoff,
+      config: cfg,
+      conversation: mockConv,
+      transcript: [],
+      transcriptBudget: 1000,
+      hopsSoFar: 0,
+      maxHops: 5,
+      trustMode: "all",
+      observe: observeStub,
+      createHandoff,
+      approve: mock(),
+      runChatTurn,
+      delay: mock<DelayMockFn>().mockResolvedValue(undefined),
+    });
+  } catch (err) {
+    thrown = err;
+  }
+
+  expect(thrown).toBeInstanceOf(TypeError);
+  expect((thrown as { pendingObservations?: unknown[] }).pendingObservations).toEqual([
+    pendingEnvelope,
+  ]);
+});
+
+test("a TypeError from approve after a finished turn still carries pendingObservations", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    ...turnWithPending("ping @executor"),
+    next_mention: {
+      target: "executor",
+      resolution: { kind: "name", agent_name: "executor" },
+    },
+  });
+  const createHandoff = mock().mockResolvedValue({ handoff_id: "h-next", status: "pending" });
+  const approve = mock().mockRejectedValue(new TypeError("socket closed"));
+
+  let thrown: unknown;
+  try {
+    await dispatchHandoff({
+      handoff: baseHandoff,
+      config: cfg,
+      conversation: mockConv,
+      transcript: [],
+      transcriptBudget: 1000,
+      hopsSoFar: 0,
+      maxHops: 5,
+      trustMode: "all",
+      observe: observeStub,
+      createHandoff,
+      approve,
+      runChatTurn,
+      delay: mock<DelayMockFn>().mockResolvedValue(undefined),
+    });
+  } catch (err) {
+    thrown = err;
+  }
+
+  expect(thrown).toBeInstanceOf(TypeError);
+  expect((thrown as { pendingObservations?: unknown[] }).pendingObservations).toEqual([
+    pendingEnvelope,
+  ]);
+});
+
+test("a successful next-hop result also carries pendingObservations", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    ...turnWithPending("ping @executor"),
+    next_mention: {
+      target: "executor",
+      resolution: { kind: "name", agent_name: "executor" },
+    },
+  });
+  const createHandoff = mock().mockResolvedValue({ handoff_id: "h-next", status: "pending" });
+  const approve = mock().mockResolvedValue({ handoff_id: "h-next", status: "approved" });
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve,
+    runChatTurn,
+    delay: mock<DelayMockFn>().mockResolvedValue(undefined),
+  });
+
+  expect(res.next?.handoff_id).toBe("h-next");
+  expect(res.pendingObservations).toEqual([pendingEnvelope]);
+});
+
+test("markFailed rejecting on retry exhaustion resolves an error result with the adapter error", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+    error: { message: "adapter blew up" },
+  });
+  const markFailed = mock().mockRejectedValue(new TypeError("penumbra is not running"));
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  // Instead of throwing, the error result lets the dispatcher's durable
+  // reporter own the terminal report.
+  expect(res.terminatedReason).toBe("error");
+  expect(res.cappedHandoffId).toBe("h0");
+  expect(res.adapterError).toEqual({ message: "adapter blew up" });
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
+});
+
+test("a later transport error cannot overwrite the tracked adapter error", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce({
+      text: "",
+      prompt_event_id: "p1",
+      response_event_id: "r1",
+      next_mention: null,
+      mentions: [],
+      error: { message: "adapter blew up" },
+    })
+    .mockRejectedValue(new TypeError("The socket connection was closed unexpectedly"));
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(res.adapterError).toEqual({ message: "adapter blew up" });
+  // markFailed reports the adapter error, not the later transport failure.
+  expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+});
+
+test("pendingObservations from an earlier failed turn survive onto the successful result", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce({
+      text: "",
+      prompt_event_id: "p1",
+      response_event_id: "r1",
+      next_mention: null,
+      mentions: [],
+      error: { message: "adapter blew up" },
+      pendingObservations: [pendingEnvelope],
+    })
+    .mockResolvedValueOnce({
+      text: "done",
+      prompt_event_id: "p2",
+      response_event_id: "r2",
+      next_mention: null,
+      mentions: [],
+    });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(res.pendingObservations).toEqual([pendingEnvelope]);
+});
+
+test("handoff permission_profile is forwarded into the chat turn", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "done",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+  });
+
+  await dispatchHandoff({
+    handoff: { ...baseHandoff, permission_profile: "review_readonly" },
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  const call = runChatTurn.mock.calls[0]![0];
+  expect(call.permission_profile).toBe("review_readonly");
 });

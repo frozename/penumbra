@@ -1,3 +1,4 @@
+import { pressureSnapshotKey } from "@penumbra/core";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
@@ -79,6 +80,7 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
   // Reassigned on machine-lock takeover so a new holder resumes from the shared
   // cursor file instead of re-reading the source from its own stale snapshot.
   let cursors = loadCursors(opts.cursorPath, opts.log);
+  const lastEmittedByGroup = new Map<string, string>();
   const lastEmittedIds = new Set<string>();
   const lastEmittedOrder: string[] = [];
   let stopped = false;
@@ -106,6 +108,7 @@ export function startUsagePoller(opts: PollerOptions): PollerHandle {
       opts.log,
       lastEmittedIds,
       lastEmittedOrder,
+      lastEmittedByGroup,
     );
     if (ok) {
       cursors[reader.id] = result.cursor;
@@ -219,6 +222,7 @@ async function emitResult(
   log: PollerOptions["log"],
   lastEmittedIds: Set<string>,
   lastEmittedOrder: string[],
+  lastEmittedByGroup: Map<string, string>,
 ): Promise<boolean> {
   let ok = true;
   for (const delta of result.usage_deltas) {
@@ -240,12 +244,15 @@ async function emitResult(
 
   for (const snapshot of result.rate_limit_snapshots) {
     const event = buildRateLimitEvent(readerId, snapshot);
-    if (lastEmittedIds.has(event.event_id)) {
+    const key =
+      readerId + "\u0000" + pressureSnapshotKey({ ...snapshot, model: snapshot.model ?? null });
+    // Per-group dedup suppresses only unchanged repeats; durable ingestion stays the authority.
+    if (lastEmittedByGroup.get(key) === event.event_id) {
       continue;
     }
     try {
-      const ack = await emit(event);
-      rememberEmittedId(ack.event_id, lastEmittedIds, lastEmittedOrder);
+      await emit(event);
+      lastEmittedByGroup.set(key, event.event_id);
     } catch (err) {
       ok = false;
       log.error(

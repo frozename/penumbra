@@ -11,6 +11,12 @@ import { lifecycleLock } from "../dispatch/lifecycle-lock.js";
 import { createGhCliClient, type GhClient, type GhPullRequestView } from "../services/gh-client.js";
 import { json } from "./_helpers.js";
 import { dispatchAuditRoute } from "./dispatch-audit.js";
+import {
+  checkLandConcurrentPrs,
+  type LandConcurrentPrsDeps,
+  landConcurrentPrsFinder,
+  type LandConcurrentPrsWarning,
+} from "./dispatch-land-concurrent-prs.js";
 import { memoryVerifyAuthorizeRoute } from "./memory-verify.js";
 
 interface GitExecResult {
@@ -31,7 +37,7 @@ interface DispatchLandTaskError {
   [key: string]: unknown;
 }
 
-interface DispatchLandSuccess {
+interface DispatchLandSuccess extends LandConcurrentPrsWarning {
   ok: true;
   commit_sha: string;
   message_subject: string;
@@ -59,7 +65,7 @@ interface DispatchLandTaskRecord {
   error: DispatchLandTaskError | null;
 }
 
-export interface DispatchLandDeps {
+export interface DispatchLandDeps extends LandConcurrentPrsDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
   gh: Pick<
     GhClient,
@@ -259,6 +265,7 @@ function createDefaultDeps(services: Services, repoDir: string): DispatchLandDep
       }),
     gh: createGhCliClient({ repoDir }),
     now: services.clock,
+    findConcurrentPrs: landConcurrentPrsFinder({ cwd: repoDir }),
   };
 }
 
@@ -1379,6 +1386,13 @@ async function executeLand(input: {
   if ("error" in messageResult) return messageResult;
   const resolvedCommitMessage = messageResult.message;
   const message_subject = subjectFromCommitMessage(resolvedCommitMessage);
+  const concurrentPrsCheck = checkLandConcurrentPrs({
+    deps,
+    log: services.log,
+    handoff_id,
+    branch,
+    commitMessage: resolvedCommitMessage,
+  });
 
   // Acquire the lifecycle lock before any git writes to main.
   // The lock serializes cross-call git writes; the dispatchLandQueue is the
@@ -1438,5 +1452,6 @@ async function executeLand(input: {
     worktree_torn_down,
     ...(already_landed ? { already_landed: true } : {}),
     ...(isGhMode ? { pr_merged: !already_landed, pr_number } : {}),
+    ...(await concurrentPrsCheck),
   };
 }

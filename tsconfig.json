@@ -12,10 +12,12 @@
     { "path": "./packages/mcp" },
     { "path": "./packages/cli" },
     { "path": "./packages/integrations/sirius-middleware" },
+    { "path": "./packages/integrations/typesafe" },
     { "path": "./packages/workflows" },
     { "path": "./packages/console" },
     { "path": "./packages/e2e" },
     { "path": "./packages/agy-acp-shim" },
+    { "path": "./packages/exec-primitives-consumer" },
     { "path": "./plugin" }
   ]
 }

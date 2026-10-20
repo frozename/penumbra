@@ -1,4 +1,4 @@
-import type { Logger } from "@penumbra/core";
+import { evaluateProfileToolCall, type Logger, type PermissionProfile } from "@penumbra/core";
 
 import type { PermissionDecision, ToolCallContext } from "../sdk/adapter.js";
 import type { PermissionDaemonClient } from "./permission-daemon-client.js";
@@ -14,6 +14,10 @@ export interface PermissionCallbackV2Opts {
   ttlSeconds: number;
   daemonClient: Pick<PermissionDaemonClient, "requestPermission">;
   perDispatchAllowlist: Set<string>;
+  /** When set, the profile's denylist runs BEFORE trust_mode/allowlist — a
+   *  profile deny wins over trust 'all'. Unknown tools fail open here; the
+   *  sandbox is the write guarantee. */
+  permissionProfile?: PermissionProfile | null;
   /** Optional logger to surface daemon round-trip failures. Without it, the
    *  catch-then-reject path is silent — operators debugging "why is every
    *  off-list call returning reject?" can't tell network blip from operator
@@ -39,6 +43,14 @@ export function createPermissionCallback(
 
   const opts = arg;
   return async (toolCall: ToolCallContext): Promise<PermissionDecision> => {
+    if (opts.permissionProfile !== undefined && opts.permissionProfile !== null) {
+      const profileDecision = evaluateProfileToolCall(
+        opts.permissionProfile,
+        toolCall.toolName,
+        toolCall.rawInput,
+      );
+      if (profileDecision.decision === "deny") return "reject";
+    }
     if (opts.trustMode === "all") return "approve";
     if (matchAllowlist(opts.allowedTools, opts.perDispatchAllowlist, toolCall.toolName))
       return "approve";

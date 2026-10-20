@@ -6,6 +6,7 @@ triggers:
     event: pre-compact
   - kind: slash
     command: handoff
+    skill: penumbra:handoff
   - kind: state-threshold
     metric: time-since-last-handoff-min
     op: ">"
@@ -92,6 +93,18 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 | Pending task drafts                                | Open lanes                                | Gate deltas                                | Pin share                                |
 | -------------------------------------------------- | ----------------------------------------- | ------------------------------------------ | ---------------------------------------- |
 | {{recall.session_first_moves.pending_task_drafts}} | {{recall.session_first_moves.open_lanes}} | {{recall.session_first_moves.gate_deltas}} | {{recall.session_first_moves.pin_share}} |
+
+### Open PRs
+
+{{#if recall.session_first_moves.open_prs.reason}}
+Unavailable: {{recall.session_first_moves.open_prs.reason}}
+{{/if}}
+{{#if recall.session_first_moves.open_prs.prs}}
+{{#each recall.session_first_moves.open_prs.prs}}
+
+- #{{number}} {{title}} — `{{head_ref}}` by {{author}}, opened {{created_at}}, checks {{checks}}{{#if foreign_author}} — **not authored by this gh account**{{/if}}{{#if not_from_known_lane}} — **not from a known lane**{{/if}}
+  {{/each}}
+  {{/if}}
 
 ### Active biases
 

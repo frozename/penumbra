@@ -311,7 +311,9 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
       "workflow.outcome",
     ]);
 
-    expect(existsSync(join(root, "pending-handoff.md"))).toBe(true);
+    const pendingHandoff = join(root, "pending-handoff.penumbra.md");
+    expect(existsSync(pendingHandoff)).toBe(true);
+    expect(result.nextSessionPrompt).toEqual({ path: pendingHandoff, mode: "created" });
 
     writeFileSync(join(notesDir, emittedNotes[0]!), "stale skeleton\n");
     const secondBundle = {
@@ -331,6 +333,10 @@ test("session-handoff playbook fires on pre-compact, renders file, captures outc
     });
 
     expect(secondResult.outcome).toBe("success");
+    expect(secondResult.nextSessionPrompt).toEqual({
+      path: pendingHandoff,
+      mode: "section_replaced",
+    });
     const refreshedBody = readFileSync(join(notesDir, emittedNotes[0]!), "utf8");
     expect(refreshedBody).toContain("second-run-marker");
     expect(refreshedBody).not.toBe("stale skeleton\n");
@@ -533,13 +539,13 @@ test("stop trigger writes lightweight checkpoint, while pre-compact keeps full h
     expect(fullResult.outcome).toBe("success");
     expect(stopResult.outcome).toBe("success");
     expect(existsSync(fullOut)).toBe(true);
-    expect(existsSync(join(root, "pending-handoff.md"))).toBe(true);
+    expect(existsSync(join(root, "pending-handoff.penumbra.md"))).toBe(true);
 
     const fullBody = readFileSync(fullOut, "utf8");
     expect(fullBody).toContain("Maestro continuation prompt");
     expect(fullBody).toContain("### Commits since midnight");
 
-    const stopBody = readFileSync(join(root, "pending-handoff.md"), "utf8");
+    const stopBody = readFileSync(join(root, "pending-handoff.penumbra.md"), "utf8");
     expect(stopBody).toContain("Session handoff checkpoint");
     expect(stopBody).toContain("### Pending handoffs");
     expect(stopBody).not.toContain("Maestro continuation prompt");
@@ -556,7 +562,7 @@ test("session-handoff sentinel output path still no-ops without clobbering", asy
   const root = mkdtempSync(join(tmpdir(), "sh-sentinel-"));
   const repo = seedRepo(mkdtempSync(join(tmpdir(), "sh-repo-")));
   try {
-    const preservedNote = join(root, "pending-handoff.md");
+    const preservedNote = join(root, "pending-handoff.penumbra.md");
     mkdirSync(root, { recursive: true });
     writeFileSync(preservedNote, "keep me\n");
 
@@ -564,6 +570,7 @@ test("session-handoff sentinel output path still no-ops without clobbering", asy
       body: PRESERVE_NEXT_SESSION_PROMPT,
       storageRoot: root,
       workflowName: "session-handoff",
+      project: "penumbra",
     });
 
     expect(result.skipped).toBe(true);

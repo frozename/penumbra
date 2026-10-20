@@ -81,6 +81,12 @@ const EXPECTED_OWNERS: Record<string, string> = {
   "penumbra-token-opt-batch": "codex-harness-parity/6.5",
 };
 
+// penumbra.js is a specifically named transport exemption: a generic CC bridge
+// to the Penumbra workflow runtime via MCP workflow_run/workflow_wait proxy.
+// It is not a 20th Codex capability and has its own existence/contract test
+// (test/workflow-scripts/penumbra-shim.test.ts) rather than a disposition row.
+const TRANSPORT_EXEMPTIONS = new Set(["penumbra"]);
+
 const TEST_PATH_PATTERN = /^(planned: )?([A-Za-z0-9][A-Za-z0-9._/-]*\.test\.ts)$/;
 
 async function isValidTestPath(testPath: string): Promise<boolean> {
@@ -105,6 +111,7 @@ test("every shipped CC script has one disposition with evidence requirements", a
   const scripts = (await readdir(".claude/workflows"))
     .filter((name) => name.endsWith(".js"))
     .map((name) => name.slice(0, -3))
+    .filter((name) => !TRANSPORT_EXEMPTIONS.has(name))
     .sort();
   const parsed: unknown = JSON.parse(
     await readFile("docs/codex-setup/workflow-disposition.json", "utf8"),
@@ -141,6 +148,43 @@ test("every shipped CC script has one disposition with evidence requirements", a
       expect(row.evidence.some(isFullCodexParityEvidence)).toBe(true);
     }
   }
+});
+
+test("transport exemption penumbra.js exists with its own contract test", async () => {
+  let scriptExists = false;
+  try {
+    scriptExists = (await stat(".claude/workflows/penumbra.js")).isFile();
+  } catch {
+    scriptExists = false;
+  }
+  expect(scriptExists, "penumbra.js transport exemption must exist").toBe(true);
+
+  let testExists = false;
+  try {
+    testExists = (await stat("test/workflow-scripts/penumbra-shim.test.ts")).isFile();
+  } catch {
+    testExists = false;
+  }
+  expect(testExists, "penumbra.js must have its own contract test").toBe(true);
+});
+
+test("unknown scripts beyond dispositions and transport exemptions still fail", async () => {
+  const allScripts = (await readdir(".claude/workflows"))
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => name.slice(0, -3))
+    .sort();
+  const parsed: unknown = JSON.parse(
+    await readFile("docs/codex-setup/workflow-disposition.json", "utf8"),
+  );
+  if (!Array.isArray(parsed) || !parsed.every(isDispositionRow)) {
+    throw new Error("workflow disposition ledger must contain valid rows");
+  }
+  const knownNames = new Set<string>([
+    ...(parsed as DispositionRow[]).map((row) => row.name),
+    ...TRANSPORT_EXEMPTIONS,
+  ]);
+  const unknown = allScripts.filter((name) => !knownNames.has(name));
+  expect(unknown, "unknown scripts beyond dispositions and transport exemptions").toEqual([]);
 });
 
 test("every workflow disposition test path is concrete or explicitly planned", async () => {

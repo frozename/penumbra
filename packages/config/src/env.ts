@@ -467,6 +467,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 0.005,
     description: "Estimated embedding USD per P7 re-embed call.",
   },
+  PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: {
+    schema: NonNegNum,
+    default: 0.003,
+    description: "Estimated USD per P1 Jev shadow ballot on the dream cost meter.",
+  },
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: {
     schema: NonNegNum,
     default: 0.75,
@@ -749,6 +754,41 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description: "Bearer token for the judge LLM.",
     isSensitive: true,
   },
+
+  // ── typesafe (Jev judge) ──────────────────────────────────────────────
+  PENUMBRA_TYPESAFE_API_KEY: {
+    schema: OptStr,
+    description: "TypeSafe API key. Wins over the keychain ref when non-empty.",
+    isSensitive: true,
+  },
+  PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN: {
+    schema: OptStr,
+    description:
+      "Keychain ref 'service/account' for the TypeSafe API key, e.g. llamactl/typesafe. Used only when PENUMBRA_TYPESAFE_API_KEY is empty.",
+  },
+  PENUMBRA_TYPESAFE_BASE_URL: {
+    schema: z.string(),
+    default: "https://api.typesafe.ai",
+    description: "TypeSafe API base URL. Must be https.",
+  },
+  PENUMBRA_TYPESAFE_MODEL: {
+    schema: z.string(),
+    default: "jev-1.13.0",
+    description:
+      "Pinned, versioned Jev model id. Aliases (jev-latest, jev-preview) move on release and are refused.",
+  },
+  PENUMBRA_TYPESAFE_TIMEOUT_MS: {
+    schema: PosInt,
+    default: 10_000,
+    description:
+      "TOTAL deadline in ms for one TypeSafe evaluation, across every attempt and backoff. Not per attempt.",
+  },
+  PENUMBRA_TYPESAFE_JUDGE_PROMOTION: {
+    schema: z.enum(["off", "shadow", "veto"]),
+    default: "off",
+    description:
+      "Judge-promotion mode: off | shadow | veto. Any other value (including on/true) fails the whole config parse at boot.",
+  },
   PENUMBRA_EMBEDDING_MODEL_VERSION: {
     schema: z.string(),
     default: "v1",
@@ -790,6 +830,17 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: Bool,
     default: false,
     description: "Strict mode for orphan handoff recovery.",
+  },
+  PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES: {
+    schema: PosInt.catch(120),
+    default: 120,
+    description: "TRIVIAL orphan lane grace in minutes; invalid values use the settings default.",
+  },
+  PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES: {
+    schema: PosInt.catch(1440),
+    default: 1440,
+    description:
+      "STANDARD/BOUNDARY orphan lane grace in minutes; invalid values use the settings default.",
   },
   PENUMBRA_PR_ORPHAN_SWEEPER_DRY_RUN: {
     schema: Bool,
@@ -1261,6 +1312,50 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_E2E_LLAMACTL_MANIFEST: {
     schema: OptStr,
     description: "Path to llamactl e2e manifest fixture.",
+  },
+
+  // ── codex safety hook ─────────────────────────────────────────────
+  PENUMBRA_ALLOW_AGENT_GC_SENTINEL: {
+    schema: OptStr,
+    description:
+      "Path of the agent-GC override sentinel read by the penumbra-agent-gc-guard hook (default ~/.claude/.penumbra-allow-agent-gc). The Codex safety hook sets it to its managed sentinel path.",
+  },
+  PENUMBRA_DB: {
+    schema: OptStr,
+    description:
+      "SQLite database the penumbra-agent-gc-guard hook queries for dispatch branches (default ~/.penumbra/db.sqlite). The Codex safety hook derives it from the storage root when unset.",
+  },
+
+  // ── codex safety hook test fixtures ───────────────────────────────
+  PENUMBRA_TEST_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where cli/test/commands/codex-safety-hooks.test.ts capture guards write the guard input. Not read outside tests.",
+  },
+  PENUMBRA_TEST_SENTINEL_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts capture guards record the sentinel path they received. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DB_CAPTURE_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts capture guards record the PENUMBRA_DB they received. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DB_CAPTURE: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where cli/test/commands/codex-safety-setup.test.ts records the PENUMBRA_DB seen by the installed hook. Not read outside tests.",
+  },
+  PENUMBRA_TEST_DELEGATE_GUARD: {
+    schema: OptStr,
+    description:
+      "Fixture-only guard path that the codex-safety-hooks.test.ts PENUMBRA_DB capture guard execs after recording PENUMBRA_DB. Not read outside tests.",
+  },
+  PENUMBRA_TEST_PID_PATH: {
+    schema: OptStr,
+    description:
+      "Fixture-only file where codex-safety-hooks.test.ts guards record their process ids so the deadline and oversized-output tests can check the owned process tree is reaped. Not read outside tests.",
   },
 
   // ── core test fixtures ────────────────────────────────────────────

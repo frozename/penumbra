@@ -1,29 +1,27 @@
-import { defaultProjectRegistryPath, loadProjectRegistry, WorktreeManager } from "@penumbra/core";
+import { WorktreeManager } from "@penumbra/core";
 
-export function createWorkerWorktreeManager(options?: {
+import type { WorkerProjectRegistry } from "./project-registry.js";
+
+export function createWorkerWorktreeManager(options: {
   rootDir?: string;
   mainRepoDir?: string;
   resolveBranchName?: (handoff_id: string) => string | null | undefined;
+  projectRegistry: WorkerProjectRegistry;
 }): WorktreeManager {
-  let projectRegistry: ReturnType<typeof loadProjectRegistry> | undefined;
-  try {
-    const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
-    projectRegistry = loadProjectRegistry(projectRegistryPath);
-  } catch (err) {
-    console.warn(
-      `agentchat-worker: failed to load project registry: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  const shouldResolveProjectRoot =
-    projectRegistry !== undefined && projectRegistry.list().length > 0;
+  const { projectRegistry } = options;
 
   return new WorktreeManager({
-    rootDir: options?.rootDir,
-    mainRepoDir: options?.mainRepoDir,
-    resolveProjectRoot: shouldResolveProjectRoot
-      ? (project_id: string): string | undefined => projectRegistry?.get(project_id)?.root_path
-      : undefined,
-    resolveBranchName: options?.resolveBranchName,
+    rootDir: options.rootDir,
+    mainRepoDir: options.mainRepoDir,
+    // Lookup goes through the registry per call so a post-construction reload
+    // (agentchat_reload) is visible without rebuilding the manager. An empty
+    // registry means no project mapping is configured: resolveProjectRoot
+    // reports unresolved and the unknown_project_id guard is disabled, so
+    // every consumer falls through to the default root as if no registry
+    // existed at all.
+    resolveProjectRoot: (project_id: string): string | undefined =>
+      projectRegistry.size === 0 ? undefined : projectRegistry.get(project_id)?.root_path,
+    requireKnownProjectId: () => projectRegistry.size > 0,
+    resolveBranchName: options.resolveBranchName,
   });
 }

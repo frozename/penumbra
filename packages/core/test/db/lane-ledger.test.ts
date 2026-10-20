@@ -7,8 +7,10 @@ import {
   getClosedLaneRoundCountForHandoffLineage,
   getLane,
   insertLane,
+  ORPHAN_SWEEPER_REASON_PREFIX,
   recentLanes,
   stampAgentPerformanceGateOutcomeForHandoff,
+  supersedeSweeperClose,
 } from "@src/db/lane-ledger.js";
 
 const CREATE_LANE_LEDGER_SQL = `
@@ -119,6 +121,61 @@ describe("lane-ledger dao", () => {
       recalled_memory_ids: [],
       recalled_query: null,
       override_reason: null,
+      metadata_json: "{}",
+    });
+  });
+
+  it("rejects a non-open gate_status on insert when ts_closed is missing", () => {
+    expect(() => {
+      insertLane(db, {
+        lane_id: "lane-closed-no-ts",
+        ts_opened: "2026-05-12T10:50:00.000Z",
+        task_class: "TRIVIAL",
+        implementer_handoff: "handoff-closed-no-ts",
+        gate_status: "skipped",
+      });
+    }).toThrow(/ts_closed/);
+    expect(getLane(db, "lane-closed-no-ts")).toBeNull();
+  });
+
+  it("rejects ts_closed on insert when gate_status is open", () => {
+    expect(() => {
+      insertLane(db, {
+        lane_id: "lane-open-with-ts",
+        ts_opened: "2026-05-12T10:55:00.000Z",
+        task_class: "STANDARD",
+        implementer_handoff: "handoff-open-with-ts",
+        gate_status: "open",
+        ts_closed: "2026-05-12T10:56:00.000Z",
+      });
+    }).toThrow(/ts_closed/);
+    expect(getLane(db, "lane-open-with-ts")).toBeNull();
+  });
+
+  it("inserts a born-closed lane with ts_closed and override_reason", () => {
+    insertLane(db, {
+      lane_id: "lane-born-closed",
+      ts_opened: "2026-05-12T11:00:00.000Z",
+      task_class: "TRIVIAL",
+      implementer_handoff: "handoff-born-closed",
+      gate_status: "skipped",
+      ts_closed: "2026-05-12T11:00:00.000Z",
+      override_reason:
+        "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
+    });
+
+    expect(getLane(db, "lane-born-closed")).toEqual({
+      lane_id: "lane-born-closed",
+      ts_opened: "2026-05-12T11:00:00.000Z",
+      ts_closed: "2026-05-12T11:00:00.000Z",
+      task_class: "TRIVIAL",
+      implementer_handoff: "handoff-born-closed",
+      reviewer_handoff: null,
+      gate_status: "skipped",
+      recalled_memory_ids: [],
+      recalled_query: null,
+      override_reason:
+        "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
       metadata_json: "{}",
     });
   });
@@ -298,6 +355,57 @@ describe("lane-ledger dao", () => {
     expect(row?.gate_outcome).toBe("review_debt");
   });
 
+  it("keeps a failed gate_outcome sticky when a terminal close stamps review_debt", () => {
+    insertLane(db, {
+      lane_id: "lane-perf-failed-debt",
+      ts_opened: "2026-05-12T10:26:30.000Z",
+      task_class: "BOUNDARY",
+      implementer_handoff: "handoff-perf-failed-debt",
+      gate_status: "open",
+    });
+    db.run(
+      `INSERT INTO agent_performance (
+         performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+         outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd,
+         tokens_used, latency_ms, source, notes, metadata_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "perf-handoff-perf-failed-debt",
+        "2026-05-12T10:26:31.000Z",
+        "handoff-perf-failed-debt",
+        "conv",
+        "proj",
+        "agent",
+        "implement_small",
+        "merged",
+        "failed",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "worker",
+        null,
+        "{}",
+      ],
+    );
+
+    closeLane(db, "lane-perf-failed-debt", {
+      ts_closed: "2026-05-12T10:27:30.000Z",
+      gate_status: "review_debt",
+    });
+
+    const row = db
+      .query<
+        { gate_outcome: string | null },
+        [string]
+      >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
+      .get("handoff-perf-failed-debt");
+    expect(row?.gate_outcome).toBe("failed");
+  });
+
   it("warns and preserves passed when a close is suppressed by monotonicity", () => {
     insertLane(db, {
       lane_id: "lane-perf-suppressed",
@@ -440,6 +548,7 @@ describe("lane-ledger dao", () => {
     insertLane(db, {
       lane_id: "lane-b",
       ts_opened: "2026-05-12T10:05:00.000Z",
+      ts_closed: "2026-05-12T10:06:00.000Z",
       task_class: "STANDARD",
       implementer_handoff: "handoff-b",
       gate_status: "passed",
@@ -447,6 +556,7 @@ describe("lane-ledger dao", () => {
     insertLane(db, {
       lane_id: "lane-c",
       ts_opened: "2026-05-12T10:10:00.000Z",
+      ts_closed: "2026-05-12T10:11:00.000Z",
       task_class: "STANDARD",
       implementer_handoff: "handoff-c",
       gate_status: "passed",
@@ -642,5 +752,197 @@ describe("lane-ledger dao", () => {
     expect(capturedSql).toContain(" IN ");
     expect(capturedSql).toContain("UNION");
     expect(capturedSql).not.toMatch(/\bOR\s+EXISTS\b/i);
+  });
+});
+
+describe("sweeper close supersede", () => {
+  let db: Database;
+  const sweepTime = "2026-05-12T12:00:00.000Z";
+  const closeTime = "2026-05-13T12:00:00.000Z";
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.run(CREATE_HANDOFFS_SQL);
+    db.run(CREATE_AGENT_PERFORMANCE_SQL);
+    db.run(CREATE_LANE_LEDGER_SQL);
+    db.run(
+      "INSERT INTO agent_performance (performance_id, ts, handoff_id, agent_name, task_type, gate_outcome) VALUES ('perf', ?, 'impl', 'worker', 'implement_small', 'review_debt')",
+      [sweepTime],
+    );
+    insertLane(db, {
+      lane_id: "swept",
+      ts_opened: "2026-05-12T09:00:00.000Z",
+      ts_closed: sweepTime,
+      implementer_handoff: "impl",
+      task_class: "BOUNDARY",
+      gate_status: "review_debt",
+      override_reason: `${ORPHAN_SWEEPER_REASON_PREFIX} implementer completed`,
+      metadata_json: JSON.stringify({ notes: "orphan-lane sweep on yesterday", high_findings: 99 }),
+    });
+  });
+
+  it("returns prior close and atomically replaces debt, reviewer, metadata and performance", () => {
+    const prior = getLane(db, "swept")!;
+    const superseded = db.transaction(() =>
+      supersedeSweeperClose(db, "swept", {
+        ts_closed: closeTime,
+        gate_status: "passed",
+        reviewer_handoff: "reviewer",
+      }),
+    )();
+    expect(superseded).toEqual({
+      gate_status: "review_debt",
+      ts_closed: sweepTime,
+      override_reason: prior.override_reason,
+    });
+    const lane = getLane(db, "swept")!;
+    expect(lane.gate_status).toBe("passed");
+    expect(lane.ts_closed).toBe(closeTime);
+    expect(lane.reviewer_handoff).toBe("reviewer");
+    expect(lane.override_reason).toBe(
+      `superseded orphan-lane sweeper close (review_debt @ ${sweepTime})`,
+    );
+    expect(JSON.parse(lane.metadata_json)).toEqual({ notes: lane.override_reason });
+    expect(db.query("SELECT gate_outcome FROM agent_performance").get()).toEqual({
+      gate_outcome: "passed",
+    });
+    expect(() =>
+      supersedeSweeperClose(db, "swept", { ts_closed: closeTime, gate_status: "failed" }),
+    ).toThrow("conflict: lane swept is already closed");
+  });
+
+  for (const marker of [
+    null,
+    "manual close",
+    "AUTO-CLOSED BY ORPHAN-LANE SWEEPER: completed",
+    `other ${ORPHAN_SWEEPER_REASON_PREFIX}`,
+  ]) {
+    it(`rejects non-exact sweeper marker ${String(marker)} without changing lane or performance`, () => {
+      db.run("UPDATE lane_ledger SET override_reason=?", [marker]);
+      const lane = getLane(db, "swept");
+      const perf = db.query("SELECT * FROM agent_performance").get();
+      expect(() =>
+        supersedeSweeperClose(db, "swept", {
+          ts_closed: closeTime,
+          gate_status: "passed",
+          reviewer_handoff: "reviewer",
+        }),
+      ).toThrow("conflict: lane swept is already closed");
+      expect(getLane(db, "swept")).toEqual(lane);
+      expect(db.query("SELECT * FROM agent_performance").get()).toEqual(perf);
+    });
+  }
+
+  for (const gate_status of ["passed", "skipped"] as const) {
+    it(`requires explicit evidence before superseding to ${gate_status}`, () => {
+      const prior = getLane(db, "swept");
+      expect(() =>
+        supersedeSweeperClose(db, "swept", { ts_closed: closeTime, gate_status }),
+      ).toThrow("supersede requires reviewer_handoff or override_reason");
+      expect(getLane(db, "swept")).toEqual(prior);
+    });
+  }
+
+  for (const [current, requested, expected] of [
+    ["failed", "passed", "failed"],
+    ["failed", "skipped", "failed"],
+    ["failed", "review_debt", "failed"],
+    ["review_debt", "failed", "failed"],
+    ["review_debt", "skipped", "skipped"],
+    ["passed", "skipped", "passed"],
+    ["review_debt", "review_debt", "review_debt"],
+  ] as const) {
+    it(`supersede stamp ${current} -> ${requested} keeps ${expected}`, () => {
+      db.run("UPDATE agent_performance SET gate_outcome=?", [current]);
+      const warnings: Record<string, unknown>[] = [];
+      supersedeSweeperClose(
+        db,
+        "swept",
+        {
+          ts_closed: closeTime,
+          gate_status: requested,
+          override_reason: "real gate evidence",
+          metadata: { high_findings: 0 },
+        },
+        {
+          warn: (obj: Record<string, unknown>): void => {
+            warnings.push(obj);
+          },
+        },
+      );
+      expect(db.query("SELECT gate_outcome FROM agent_performance").get()).toEqual({
+        gate_outcome: expected,
+      });
+      expect(getLane(db, "swept")?.override_reason).toEndWith("; real gate evidence");
+      const metadata = JSON.parse(getLane(db, "swept")!.metadata_json) as {
+        high_findings: number;
+        notes: string;
+      };
+      expect(metadata.high_findings).toBe(0);
+      expect(metadata.notes).toContain("superseded orphan-lane sweeper close");
+      if (current !== requested && expected === current)
+        expect(warnings.map((warning) => warning["event"])).toContain(
+          "gate_stamp.suppressed_downgrade",
+        );
+    });
+  }
+
+  it("retains zero-row stamp warning and caller transaction rollback", () => {
+    db.run("DELETE FROM agent_performance");
+    const warnings: Record<string, unknown>[] = [];
+    const prior = getLane(db, "swept");
+    expect(() =>
+      db.transaction(() => {
+        supersedeSweeperClose(
+          db,
+          "swept",
+          { ts_closed: closeTime, gate_status: "failed" },
+          {
+            warn: (obj: Record<string, unknown>): void => {
+              warnings.push(obj);
+            },
+          },
+        );
+        throw new Error("rollback");
+      })(),
+    ).toThrow("rollback");
+    expect(getLane(db, "swept")).toEqual(prior);
+    expect(warnings.map((warning) => warning["event"])).toContain("gate_stamp.no_perf_row");
+  });
+
+  it("excludes only never-superseded sweeper closes from lineage round count", () => {
+    insertLane(db, {
+      lane_id: "manual",
+      ts_opened: sweepTime,
+      ts_closed: closeTime,
+      task_class: "BOUNDARY",
+      implementer_handoff: "impl",
+      gate_status: "failed",
+    });
+    expect(getClosedLaneRoundCountForHandoffLineage(db, "impl")).toBe(1);
+    supersedeSweeperClose(db, "swept", { ts_closed: closeTime, gate_status: "failed" });
+    expect(getClosedLaneRoundCountForHandoffLineage(db, "impl")).toBe(2);
+  });
+
+  it("SQL guard matches the sweeper marker exactly after a stale pre-read", () => {
+    const originalQuery = db.query.bind(db);
+    db.query = (sql: string): ReturnType<typeof db.query> => {
+      if (sql.includes("UPDATE lane_ledger")) {
+        db.run("UPDATE lane_ledger SET override_reason=? WHERE lane_id='swept'", [
+          ORPHAN_SWEEPER_REASON_PREFIX.toUpperCase(),
+        ]);
+      }
+      return originalQuery(sql);
+    };
+    expect(() =>
+      supersedeSweeperClose(db, "swept", {
+        ts_closed: closeTime,
+        gate_status: "passed",
+        reviewer_handoff: "reviewer",
+      }),
+    ).toThrow("conflict: lane swept is already closed");
+    expect(getLane(db, "swept")?.gate_status).toBe("review_debt");
+    expect(db.query("SELECT gate_outcome FROM agent_performance").get()).toEqual({
+      gate_outcome: "review_debt",
+    });
   });
 });

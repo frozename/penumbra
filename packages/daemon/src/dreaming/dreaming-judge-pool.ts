@@ -27,6 +27,7 @@ interface DreamingVoteRaw {
   promote: boolean;
   confidence: number;
   rationale: string;
+  unparseable?: boolean;
 }
 
 interface ChatCompletionResponse {
@@ -45,6 +46,31 @@ Output ONLY valid JSON — no prose, no code fences, no wrapper tags:
 {"promote": <boolean>, "confidence": <number 0.0-1.0>, "rationale": "<one sentence>"}`.trim();
 }
 
+const UNPARSEABLE_VOTE: DreamingVoteRaw = {
+  promote: false,
+  confidence: 0,
+  rationale: "parse_error",
+  unparseable: true,
+};
+
+function parsePromote(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
+// An absent confidence reads as 0 (it never enters the quorum). A present
+// but unreadable one makes the whole ballot unreadable.
+function parseConfidence(value: unknown): number | null {
+  if (value === undefined) return 0;
+  let numeric = Number.NaN;
+  if (typeof value === "number") numeric = value;
+  else if (typeof value === "string" && value.trim() !== "") numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.min(1, Math.max(0, numeric));
+}
+
 export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
   try {
     const stripped = content
@@ -55,14 +81,33 @@ export function parseDreamingJudgeResponse(content: string): DreamingVoteRaw {
     const match = /\{[\s\S]*\}/.exec(stripped);
     if (!match) throw new Error("no_json_object");
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    const promote = parsePromote(parsed.promote);
+    const confidence = parseConfidence(parsed.confidence);
+    if (promote === null || confidence === null) return { ...UNPARSEABLE_VOTE };
     return {
-      promote: Boolean(parsed.promote),
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+      promote,
+      confidence,
       rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
     };
   } catch {
-    return { promote: false, confidence: 0, rationale: "parse_error" };
+    return { ...UNPARSEABLE_VOTE };
   }
+}
+
+export class DreamingJudgeHttpError extends Error {
+  readonly status: number;
+  constructor(judgeName: string, status: number, detail: string) {
+    super(`dreaming judge ${judgeName} returned ${String(status)}: ${detail}`);
+    this.name = "DreamingJudgeHttpError";
+    this.status = status;
+  }
+}
+
+// The loggable, persistable class of a judge failure: never the message.
+export function classifyDreamingJudgeError(err: unknown): string {
+  if (err instanceof DreamingJudgeHttpError) return `http_${String(err.status)}`;
+  if (err instanceof SyntaxError) return "invalid_response";
+  return "transport_error";
 }
 
 class DreamingJudgePoolImpl implements JudgePool {
@@ -108,9 +153,7 @@ class DreamingJudgePoolImpl implements JudgePool {
     if (judge.caPem) init.tls = { ca: judge.caPem };
     const res = await this.fetchImpl(url, init);
     if (!res.ok) {
-      throw new Error(
-        `dreaming judge ${judge.name} returned ${String(res.status)}: ${await res.text()}`,
-      );
+      throw new DreamingJudgeHttpError(judge.name, res.status, await res.text());
     }
     const json = (await res.json()) as ChatCompletionResponse;
     const content = json.choices?.[0]?.message?.content ?? "";
@@ -133,9 +176,17 @@ class DreamingJudgePoolImpl implements JudgePool {
       throw new Error("dreaming judge pool index out of range");
     }
     const raw = await this.callJudge(judge, prompt);
+    let verdict: "yes" | "no" | "unsure";
+    if (raw.unparseable === true) {
+      verdict = "unsure";
+    } else if (raw.promote) {
+      verdict = "yes";
+    } else {
+      verdict = "no";
+    }
     return {
       confidence: raw.confidence,
-      verdict: raw.promote ? "yes" : "no",
+      verdict,
       rationale: raw.rationale,
     };
   }
@@ -149,11 +200,35 @@ class DreamingJudgePoolImpl implements JudgePool {
       this.judges.map(async (judge): Promise<JudgeVote> => {
         try {
           const raw = await this.callJudge(judge, prompt);
-          return { promote: raw.promote, confidence: raw.confidence, rationale: raw.rationale };
-        } catch {
+          if (raw.unparseable === true) {
+            // A reply that never became a ballot is an abstention, not a NO
+            // vote: it leaves both quorum counters like a transport failure.
+            return {
+              promote: false,
+              confidence: 0,
+              rationale: "parse_error",
+              abstained: true,
+              seat: judge.name,
+              error_class: "parse_error",
+            };
+          }
+          return {
+            promote: raw.promote,
+            confidence: raw.confidence,
+            rationale: raw.rationale,
+            seat: judge.name,
+          };
+        } catch (err) {
           // An unreachable judge abstains — it must not count as a NO vote
           // in the quorum denominator.
-          return { promote: false, confidence: 0, rationale: "judge_error", abstained: true };
+          return {
+            promote: false,
+            confidence: 0,
+            rationale: "judge_error",
+            abstained: true,
+            seat: judge.name,
+            error_class: classifyDreamingJudgeError(err),
+          };
         }
       }),
     );

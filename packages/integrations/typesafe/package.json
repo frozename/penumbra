@@ -1,0 +1,14 @@
+{
+  "name": "@penumbra/typesafe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@penumbra/core": "workspace:*",
+    "zod": "^4.3.0"
+  }
+}

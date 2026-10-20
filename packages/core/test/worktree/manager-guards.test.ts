@@ -20,7 +20,10 @@ test("workspace link creation rejects a package whose real path escapes the work
     fs.mkdirSync(escapingTarget, { recursive: true });
     fs.writeFileSync(
       path.join(worktreeRoot, "package.json"),
-      JSON.stringify({ workspaces: ["packages/escape"] }),
+      JSON.stringify({
+        workspaces: ["packages/escape"],
+        devDependencies: { "@penumbra/escape": "workspace:*" },
+      }),
     );
     fs.writeFileSync(
       path.join(escapingTarget, "package.json"),
@@ -54,7 +57,10 @@ test("workspace link creation succeeds when the worktree root is reached through
     fs.mkdirSync(path.join(realRoot, "packages", "pkg"), { recursive: true });
     fs.writeFileSync(
       path.join(realRoot, "package.json"),
-      JSON.stringify({ workspaces: ["packages/pkg"] }),
+      JSON.stringify({
+        workspaces: ["packages/pkg"],
+        devDependencies: { "@penumbra/pkg": "workspace:*" },
+      }),
     );
     fs.writeFileSync(
       path.join(realRoot, "packages", "pkg", "package.json"),

@@ -289,7 +289,7 @@ describe("agent routes", () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as DispatchCaptureResponse;
-    expect(body.performance.reliability_status).toBe("no_worktree_activity");
+    expect(body.performance.reliability_status).toBe("complete");
   });
 
   it("returns 404 before dispatch performance capture when handoff is missing", async () => {

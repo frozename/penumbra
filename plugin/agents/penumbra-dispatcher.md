@@ -41,8 +41,9 @@ wins when both are present. Pass both verbatim when the spec includes them.
 1. Pass `initial_agent` verbatim to `chain_start`. Role names ("executor", "reviewer", "planner") are the default — the daemon's model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin: use it verbatim. Legacy `"AUTO"` means `"executor"`. Never call `agent_recommend` to pre-pick a seat — it is forensic/informational only.
 2. Call `mcp__penumbra__chain_start` with `initial_agent`, `message`, `task_class`,
    `task_type`, `trust_mode`, `use_worktree`, `max_hops`, `project_id`, `caller_cwd`,
-   and `branch_base` if the spec includes it. Capture whatever `conversation_id` and
-   `handoff_id` the result returns.
+   and `branch_base` if the spec includes it. Capture `conversation_id`, `handoff_id`,
+   and `branch_name` from the result. `branch_name` is the worktree branch the daemon
+   created (e.g. `feat/task-name_a1b2c3d4`) and is `null` when `use_worktree` is false.
 3. Wait for terminal with SHORT polls so you never stall. First compute a FINITE
    iteration budget `N = min(25, ceil((spec.timeout_ms || 1800000) / 240000))` — this is
    always a finite number even when the spec omits `timeout_ms`, so you NEVER loop
@@ -56,13 +57,16 @@ wins when both are present. Pass both verbatim when the spec includes them.
 4. SALVAGE a committed-but-eventless dispatch. A worker can finish the task and commit
    its branch WITHOUT the chain ever emitting a terminal `dispatch.end` event — so if
    the `N` iterations are exhausted with NO terminal state, do NOT hang and do NOT fail
-   blindly. Call `mcp__penumbra__worktree_inspect({ handoff_id })`. If it shows the
-   branch `agent/<handoff_id>` has at least one commit ahead of its base AND a clean
-   tree (no uncommitted changes), treat the dispatch as COMPLETE: set `ok=true`,
-   `status="completed_via_inspection"`, report `branch=agent/<handoff_id>` with the
-   commit, and put "no terminal dispatch.end event; salvaged via worktree inspection" in
-   `error_summary`. Only if inspection shows NO commits (or an unrecoverable dirty tree)
-   → `ok=false`, `status="stalled"`.
+   blindly. Call `mcp__penumbra__worktree_inspect({ handoff_id })`. The result is a JSON
+   object with a top-level `branch_name` field (and a nested `worktree.branchName` field)
+   that reflects the actual git branch in the worktree, plus `branch_log`,
+   `diff_against_main`, and `dirty`. If `branch_name` is present and the branch has at
+   least one commit ahead of base (`branch_log` is
+   non-empty) AND the tree is clean (`dirty` is false), treat the dispatch as COMPLETE:
+   set `ok=true`, `status="completed_via_inspection"`, report `branch=<branch_name>`
+   with the commit, and put "no terminal dispatch.end event; salvaged via worktree
+   inspection" in `error_summary`. Only if inspection shows no branch, no commits, or an
+   unrecoverable dirty tree → `ok=false`, `status="stalled"`.
 5. Response handling depends on `spec.response_mode || "full"`. For `"full"`, call
    `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })` for the
    worker's reported outcome. For `"first_line"`, call `chain_get_response` only on a
@@ -73,8 +77,13 @@ wins when both are present. Pass both verbatim when the spec includes them.
 6. Return StructuredOutput per schema. Set `ok=true` for a `completed` terminal state OR
    a `completed_via_inspection` salvage that found commits. On `failed` / `stalled` /
    transport error set `ok=false` with `status` and a short `error_summary`. Do NOT
-   retry — report and let the orchestrator decide. Always report the branch as
-   `agent/<handoff_id>` whenever a worktree was created.
+   retry — report and let the orchestrator decide. Always report `branch` with the
+   authoritative branch name: after the chain reaches terminal (or during salvage), call
+   `mcp__penumbra__worktree_inspect({ handoff_id })` and use the top-level `branch_name`
+   field from the result. If `worktree_inspect` returns no branch (or no worktree),
+   fall back to the `branch_name` captured from `chain_start` in step 2, which follows
+   `<branch_type>/<slug>_<shortid>` for worktree dispatches. Only as a last resort, for
+   legacy handoffs with a null `branch_name`, use `agent/<handoff_id>`.
 
 ## Hard rules
 

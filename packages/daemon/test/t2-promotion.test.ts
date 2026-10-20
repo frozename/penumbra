@@ -1,10 +1,20 @@
-import { type Services, type T2MemoryExtraction } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type T2MemoryExtraction,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { serve } from "bun";
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { healthRoute } from "../src/routes/health.js";
+import { readSubsystemHealth } from "../src/services/subsystem-health.js";
 import { createJudgePool, type JudgeEntry } from "../src/workers/t2-judge-pool.js";
 import {
   createDefaultLLMJudge,
@@ -1544,4 +1554,344 @@ test("pool not poisoned: a tiny transcript after overflows yields a real memory 
   const r4 = await judge("User: small");
   expect(r4.length).toBeGreaterThanOrEqual(1);
   expect(r4.some((m) => m.title === "Tiny Candidate")).toBe(true);
+});
+
+test("parseJudgeResponse throws on unparseable JSON", () => {
+  expect(() => parseJudgeResponse("definitely not json {{{")).toThrow();
+  expect(() => parseJudgeResponse('{"memories":[{"title":"x","body":"y"')).toThrow();
+});
+
+test("parseJudgeResponse throws when memories is missing or not an array", () => {
+  expect(() => parseJudgeResponse("{}")).toThrow();
+  expect(() => parseJudgeResponse('{"memories":null}')).toThrow();
+  expect(() => parseJudgeResponse('{"memories":"none"}')).toThrow();
+  expect(() => parseJudgeResponse('{"memories":{}}')).toThrow();
+});
+
+test("parseJudgeResponse returns [] for a well-formed empty memories array", () => {
+  expect(parseJudgeResponse('{"memories":[]}')).toEqual([]);
+  expect(parseJudgeResponse('{"memories": [], "other": 1}')).toEqual([]);
+});
+
+const WORKER_TEST_FIXED_NOW = "2026-04-27T10:00:00Z";
+const WORKER_TEST_ROLLUP_TS = "2026-04-20T00:00:00.000Z";
+const WORKER_TEST_TRANSCRIPT =
+  "Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.";
+
+interface WorkerTestFixture {
+  services: Services;
+  db: Database;
+  cleanup: () => void;
+}
+
+// buildServices alone binds no ports and registers no cron workers, so these
+// worker-level tests can run as plain `test` without the serviceTest gate.
+function makeWorkerServices(): WorkerTestFixture {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-t2-worker-"));
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: dir,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date(WORKER_TEST_FIXED_NOW),
+    uuid: ((): (() => string) => {
+      let n = 0;
+      return (): string => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`;
+    })(),
+  });
+  return {
+    services,
+    db,
+    cleanup: (): void => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+function seedPromotableRollup(db: Database, rollupId: string, transcriptSalt = ""): void {
+  db.run(
+    `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+     VALUES (?, 'p1', 'u1', ?, ?, ?, 5, '{}', '{}')`,
+    [rollupId, `s_${rollupId}`, WORKER_TEST_ROLLUP_TS, WORKER_TEST_ROLLUP_TS],
+  );
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', ?)`,
+    [
+      `e_${rollupId}`,
+      WORKER_TEST_ROLLUP_TS,
+      WORKER_TEST_ROLLUP_TS,
+      `s_${rollupId}`,
+      `${WORKER_TEST_TRANSCRIPT}${transcriptSalt}`,
+    ],
+  );
+}
+
+function readPromotionRow(db: Database, rollupId: string): PromotionRow | null {
+  return (
+    db
+      .query<
+        PromotionRow,
+        [string]
+      >("SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id = ?")
+      .get(rollupId) ?? null
+  );
+}
+
+function readEmptyStreak(db: Database): number | null {
+  return readSubsystemHealth(db, "t2.promotion.empty_extraction")?.consecutive_failures ?? null;
+}
+
+// The pool + parseJudgeResponse here are the production pair, so these tests
+// exercise the real boundary: raw HTTP reply -> judge pool -> chunking wrapper
+// -> T2Promotion -> t1_rollups row.
+function makePoolBackedJudge(response: () => Response): T2Judge {
+  // `typeof fetch` requires `preconnect`; a bare mock function doesn't satisfy it.
+  const fetchMock: NonNullable<Parameters<typeof createJudgePool>[0]["fetch"]> = Object.assign(
+    (): Promise<Response> => Promise.resolve(response()),
+    { preconnect: (): void => undefined },
+  );
+  const pool = createJudgePool({
+    judges: [{ name: "judge-a", baseUrl: "http://judge-a", apiKey: "", model: "m" }],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: fetchMock,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: parseJudgeResponse,
+  });
+  return (transcript) => pool.invoke(transcript);
+}
+
+function judgeResponseWith(content: string, finishReason?: string): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [
+        {
+          message: { content },
+          ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
+        },
+      ],
+    }),
+    { status: 200 },
+  );
+}
+
+test("worker: judge reply with empty content leaves the rollup unstamped and counts a failed attempt", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-empty-content");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: makePoolBackedJudge(() => judgeResponseWith("")),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-empty-content");
+    expect(row?.t2_promoted_at).toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: judge reply truncated at the token limit leaves the rollup unstamped and counts a failed attempt", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-length");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: makePoolBackedJudge(() =>
+        judgeResponseWith('{"memories":[{"title":"cut off mid-arr', "length"),
+      ),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-length");
+    expect(row?.t2_promoted_at).toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: unparseable judge JSON leaves the rollup unstamped and counts a failed attempt", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-bad-json");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: makePoolBackedJudge(() => judgeResponseWith("definitely not json {{{")),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-bad-json");
+    expect(row?.t2_promoted_at).toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: judge JSON without a memories array leaves the rollup unstamped and counts a failed attempt", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-no-memories");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: makePoolBackedJudge(() => judgeResponseWith('{"notes":"nothing"}')),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-no-memories");
+    expect(row?.t2_promoted_at).toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: a multi-chunk transcript whose chunks all fail leaves the rollup unstamped", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  const prevChunkEnv = process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK;
+  process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK = "50";
+  try {
+    seedPromotableRollup(db, "r-all-chunks-fail");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: (): Promise<T2MemoryExtraction[]> => Promise.reject(new Error("judge exploded")),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-all-chunks-fail");
+    expect(row?.t2_promoted_at).toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(1);
+  } finally {
+    if (prevChunkEnv === undefined) delete process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK;
+    else process.env.PENUMBRA_T2_JUDGE_MAX_CHARS_PER_CHUNK = prevChunkEnv;
+    cleanup();
+  }
+});
+
+test('worker: {"memories":[]} stamps the rollup and increments the empty streak', async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-legit-empty");
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: makePoolBackedJudge(() => judgeResponseWith('{"memories":[]}')),
+    });
+
+    await worker.tick();
+
+    const row = readPromotionRow(db, "r-legit-empty");
+    expect(row?.t2_promoted_at).not.toBeNull();
+    expect(row?.failed_promotion_attempts).toBe(0);
+    expect(readEmptyStreak(db)).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: an extraction that yields rows resets the empty streak", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    seedPromotableRollup(db, "r-streak-1");
+    seedPromotableRollup(db, "r-streak-2");
+    seedPromotableRollup(db, "r-streak-3");
+    const responses: T2MemoryExtraction[][] = [
+      [],
+      [],
+      [
+        {
+          title: "T",
+          body: "A successful promotion stores durable knowledge and resets the empty extraction streak after earlier judge responses produced no memories.",
+          kind: "fact",
+        },
+      ],
+    ];
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve(responses.shift() ?? []),
+    });
+
+    await worker.tick();
+
+    expect(readEmptyStreak(db)).toBe(0);
+    const memories = db.query<CountRow, []>("SELECT COUNT(*) c FROM t2_memories").get();
+    expect(memories?.c).toBe(1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: 50 consecutive judge-reached empties mark the t2 promotion health route unhealthy", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    // Distinct transcripts per rollup — identical transcripts hit the
+    // high-frequency shape/hash dedup before reaching the judge.
+    for (let i = 0; i < 50; i++) {
+      seedPromotableRollup(db, `r-streak50-${String(i)}`, ` Variant ${String(i)} of the work.`);
+    }
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
+    });
+
+    await worker.tick();
+    expect(readEmptyStreak(db)).toBe(50);
+
+    const payload = (await healthRoute({ db, t2Promotion: worker.status }).json()) as Record<
+      string,
+      unknown
+    >;
+    const t2Promotion = payload.t2Promotion as Record<string, unknown>;
+    expect(t2Promotion.enabled).toBe(true);
+    expect(t2Promotion.healthy).toBe(false);
+    expect(t2Promotion.empty_extraction_streak).toBe(50);
+  } finally {
+    cleanup();
+  }
+});
+
+test("worker: a short empty streak keeps the t2 promotion health route healthy", async () => {
+  const { services, db, cleanup } = makeWorkerServices();
+  try {
+    for (let i = 0; i < 3; i++) {
+      seedPromotableRollup(db, `r-streak3-${String(i)}`);
+    }
+    const worker = createT2PromotionWorker({
+      services,
+      delayHours: 24,
+      llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
+    });
+
+    await worker.tick();
+
+    const payload = (await healthRoute({ db, t2Promotion: worker.status }).json()) as Record<
+      string,
+      unknown
+    >;
+    const t2Promotion = payload.t2Promotion as Record<string, unknown>;
+    expect(t2Promotion.healthy).toBe(true);
+    expect(t2Promotion.empty_extraction_streak).toBe(3);
+  } finally {
+    cleanup();
+  }
 });

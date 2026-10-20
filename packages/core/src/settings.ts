@@ -15,6 +15,7 @@ export const SettingsSchema = z.object({
   prOrphanSweeperDryRun: z.boolean().default(true),
   prOrphanSweeperIntervalMs: z.number().int().positive().default(21_600_000),
   laneOrphanSweeperGraceMinutes: z.number().int().positive().default(120),
+  laneOrphanSweeperNonTrivialGraceMinutes: z.number().int().positive().default(1440),
   // gh-task-sync drains the gh_outbox every tick; the heavy full reconcile
   // (listLinkedTasks → per-task GitHub pull/drift correction) only runs this
   // often. Default 5min: status pushes stay prompt via the outbox, pulls lag ≤5min.
@@ -38,6 +39,7 @@ const envKeyFor: Record<keyof Settings, string> = {
   prOrphanSweeperDryRun: "PENUMBRA_PR_ORPHAN_SWEEPER_DRY_RUN",
   prOrphanSweeperIntervalMs: "PENUMBRA_PR_ORPHAN_SWEEPER_INTERVAL_MS",
   laneOrphanSweeperGraceMinutes: "PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES",
+  laneOrphanSweeperNonTrivialGraceMinutes: "PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES",
   ghTaskSyncFullReconcileIntervalMs: "PENUMBRA_GH_TASK_SYNC_FULL_RECONCILE_INTERVAL_MS",
   dreamModeStrategy: "PENUMBRA_DREAM_MODE_STRATEGY",
   reconcileTypecheckTimeoutSec: "PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S",
@@ -55,6 +57,7 @@ const parsers: Record<keyof Settings, (raw: string) => unknown> = {
   prOrphanSweeperDryRun: (s) => s === "true" || s === "1",
   prOrphanSweeperIntervalMs: Number,
   laneOrphanSweeperGraceMinutes: Number,
+  laneOrphanSweeperNonTrivialGraceMinutes: Number,
   ghTaskSyncFullReconcileIntervalMs: Number,
   dreamModeStrategy: (s) => s,
   reconcileTypecheckTimeoutSec: Number,

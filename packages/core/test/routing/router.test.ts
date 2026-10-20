@@ -466,6 +466,44 @@ describe("routing decide orchestrator", () => {
     });
   });
 
+  test("permission_profile constrains auto selection to enforcing seats", () => {
+    const decision = decide(
+      baseInput({
+        harnessContext: { permissionProfile: "review_readonly" },
+        agentchatConfig: {
+          ...AGENTCHAT_CONFIG,
+          agents: [
+            AGENTCHAT_CONFIG.agents[0]!,
+            { ...AGENTCHAT_CONFIG.agents[1]!, enforces_permission_profiles: ["review_readonly"] },
+          ],
+        },
+      }),
+      dependencies(),
+    );
+
+    // quality-seat would win unconstrained but cannot enforce the profile;
+    // the router must land on the seat that can.
+    expect(decision.selected?.agent).toBe("fast-seat");
+    expect(decision.alternatives).toContainEqual({
+      routeId: "openai:quality-seat",
+      excluded: true,
+      reasons: ["permission_profile_unenforceable"],
+    });
+  });
+
+  test("permission_profile with no enforcing seat yields a null selection, never a refill", () => {
+    const decision = decide(
+      baseInput({ harnessContext: { permissionProfile: "review_readonly" } }),
+      dependencies(),
+    );
+
+    expect(decision.selected).toBeNull();
+    for (const alternative of decision.alternatives) {
+      expect(alternative.excluded).toBe(true);
+      expect(alternative.reasons).toContain("permission_profile_unenforceable");
+    }
+  });
+
   test("a small formatting change selects the fast cheap candidate", () => {
     const decision = decide(
       baseInput({

@@ -9,6 +9,7 @@
     { "path": "../api-contract" },
     { "path": "../config" },
     { "path": "../core" },
+    { "path": "../integrations/typesafe" },
     { "path": "../workflows" }
   ],
   "include": ["src/**/*.ts"],

@@ -39,6 +39,7 @@ function makeHandoff(id: string, overrides: Partial<HandoffRow> = {}): HandoffRo
     cancel_requested_at: null,
     worker_id: null,
     parent_handoff_id: null,
+    permission_profile: null,
     ...overrides,
   };
 }

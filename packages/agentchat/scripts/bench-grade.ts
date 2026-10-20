@@ -126,9 +126,11 @@ export function gradeSchemaTask(
   for (const exp of expected) {
     const hit = actual.some(
       (a) =>
-        a.title.toLowerCase().includes(exp.title_substr.toLowerCase()) &&
-        a.body.toLowerCase().includes(exp.body_substr.toLowerCase()) &&
-        a.kind === exp.kind,
+        a.kind === exp.kind &&
+        // Intentional relaxation: a merged extraction can satisfy patterns across title and body.
+        exp.text_patterns.every((pattern) =>
+          new RegExp(pattern, "i").test(`${a.title}\n${a.body}`),
+        ),
     );
     if (hit) {
       matched++;

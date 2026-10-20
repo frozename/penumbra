@@ -316,3 +316,58 @@ test("CreateHandoffRequestSchema accepts optional parent_handoff_id", () => {
   });
   expect(okOmitted.success).toBe(true);
 });
+
+test("HandoffRowSchema accepts permission_profile 'review_readonly' and rejects unknown values", () => {
+  const base = {
+    handoff_id: "h-1",
+    ts: "2026-04-25T20:00:00.000Z",
+    project_id: null,
+    conversation_id: "conv-7",
+    from_agent: "claude",
+    to_agent: "opencode-acp-seat",
+    to_role: null,
+    message: "Run the plan",
+    status: "pending",
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  };
+  const withProfile = HandoffRowSchema.safeParse({
+    ...base,
+    permission_profile: "review_readonly",
+  });
+  expect(withProfile.success).toBe(true);
+  if (withProfile.success) expect(withProfile.data.permission_profile).toBe("review_readonly");
+  expect(HandoffRowSchema.safeParse({ ...base, permission_profile: null }).success).toBe(true);
+  expect(HandoffRowSchema.safeParse({ ...base, permission_profile: "bogus" }).success).toBe(false);
+});
+
+test("CreateHandoffRequestSchema accepts optional permission_profile and rejects unknown values", () => {
+  const base = {
+    from: "claude",
+    to: "opencode-acp-seat",
+    message: "go",
+    conversation_id: "conv-1",
+    triggered_by_event_id: "evt-1",
+  };
+  const ok = CreateHandoffRequestSchema.safeParse({
+    ...base,
+    permission_profile: "review_readonly",
+  });
+  expect(ok.success).toBe(true);
+  if (ok.success) expect(ok.data.permission_profile).toBe("review_readonly");
+  expect(CreateHandoffRequestSchema.safeParse(base).success).toBe(true);
+  expect(
+    CreateHandoffRequestSchema.safeParse({ ...base, permission_profile: "bogus" }).success,
+  ).toBe(false);
+});

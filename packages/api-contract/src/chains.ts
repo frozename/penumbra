@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AgentTaskTypeSchema } from "./agent-performance.js";
 import { HandoffStatusSchema } from "./handoffs.js";
 import { TaskClassSchema } from "./lanes.js";
+import { PermissionProfileSchema } from "./permissions.js";
 import { SafeProjectIdSchema } from "./project-id.js";
 
 export const ChainsListQuerySchema = z
@@ -73,6 +74,16 @@ export const ChainMessagesResponseSchema = z
   })
   .loose();
 export type ChainMessagesResponse = z.infer<typeof ChainMessagesResponseSchema>;
+
+export const ChainMessagesTailOptionsSchema = z
+  .object({
+    tail: z.literal(true),
+    limit: z.number().int().positive().max(500).default(500),
+    offset: z.literal(0).optional(),
+    before_ts: z.string().optional(),
+  })
+  .strict();
+export type ChainMessagesTailOptions = z.infer<typeof ChainMessagesTailOptionsSchema>;
 
 export const ChainAgentSchema = z.object({ name: z.string() }).loose();
 export type ChainAgent = z.infer<typeof ChainAgentSchema>;
@@ -173,6 +184,21 @@ export const ChainStartRequestSchema = z.object({
   task_class: TaskClassSchema.optional(),
   tool_free: z.boolean().optional(),
   isolated_install: z.boolean().optional(),
+  permission_profile: PermissionProfileSchema.optional(),
+  /**
+   * Absolute cwd of the dispatching caller (MCP server cwd, workflow project
+   * dir). Persisted on the handoff so the worker's Layer B sandbox can deny
+   * writes under it — a profiled dispatch must not be able to mutate the
+   * repository the caller was sitting in just because its own cwd differs.
+   */
+  caller_cwd: z.string().min(1).optional(),
+  /**
+   * Daemon-owned scratch-worktree path the dispatch executes in (P6 review
+   * lane). Accepted only on the in-process workflow path — the HTTP route
+   * rejects it — and only alongside use_worktree:false + dispatch_kind
+   * 'workflow' + a workflow_run_id bound to the scratch's owner marker.
+   */
+  cwd_override: z.string().min(1).optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;
 
@@ -204,6 +230,7 @@ export const ChainStartResponseSchema = z
     routing_task_type: z.string().nullable().optional(),
     routing_warning: ChainRoutingWarningSchema.optional(),
     routing_advisory: ChainRoutingAdvisorySchema.optional(),
+    permission_profile: PermissionProfileSchema.nullable().optional(),
   })
   .loose();
 export type ChainStartResponse = z.infer<typeof ChainStartResponseSchema>;

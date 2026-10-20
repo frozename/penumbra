@@ -10,6 +10,9 @@ coverage/
 
 # Bun
 bun.lockb
+# Install cache that `bun install` writes into the checkout root. Untracked, it
+# leaves every isolated-install worktree dirty after an install.
+.bun/
 
 # TypeScript
 *.tsbuildinfo

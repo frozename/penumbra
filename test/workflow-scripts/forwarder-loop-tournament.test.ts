@@ -267,3 +267,22 @@ describe("penumbra-tournament forwarding", () => {
     expect(result.prompts).toHaveLength(0);
   });
 });
+
+for (const [path, input] of [
+  [LOOP, { repo: "/repo", seedCandidates: [SEED] }],
+  [TOURNAMENT, { task: { message: "work" }, agents: ["executor"], repo: "/repo" }],
+] as const) {
+  for (const agentType of [undefined, "inherit", "penumbra:penumbra-fanout-proxy"]) {
+    test(`${path} forwards agentType ${String(agentType)} only when supplied`, async () => {
+      const { workflowCalls, error } = await runWorkflowCapturingPrompts(path, {
+        ...input,
+        ...(agentType !== undefined ? { agentType } : {}),
+      });
+      expect(error).toBeUndefined();
+      const forwarded = fanoutCall(workflowCalls)?.args as Record<string, unknown>;
+      expect(forwarded).toBeDefined();
+      if (agentType === undefined) expect(forwarded).not.toHaveProperty("agentType");
+      else expect(forwarded.agentType).toBe(agentType);
+    });
+  }
+}

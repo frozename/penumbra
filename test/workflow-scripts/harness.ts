@@ -134,6 +134,7 @@ async function baseRun(
   agentStub: AgentStub,
   workflowStub: WorkflowStub,
 ): Promise<{
+  result: unknown;
   agentCalls: number;
   prompts: string[];
   workflowCalls: Array<{ name: string; args: unknown }>;
@@ -190,11 +191,11 @@ async function baseRun(
   ) => Promise<unknown>;
 
   try {
-    await run(agent, parallel, pipeline, phase, log, args, budget, workflow);
+    const result = await run(agent, parallel, pipeline, phase, log, args, budget, workflow);
+    return { result, agentCalls, prompts, workflowCalls };
   } catch (error) {
-    return { agentCalls, prompts, workflowCalls, error };
+    return { result: undefined, agentCalls, prompts, workflowCalls, error };
   }
-  return { agentCalls, prompts, workflowCalls };
 }
 
 export async function runWorkflow(path: string, args: unknown): Promise<RunWorkflowResult> {
@@ -206,6 +207,25 @@ export async function runWorkflow(path: string, args: unknown): Promise<RunWorkf
     async () => ({}),
   );
   return { agentCalls, error };
+}
+
+// Generic driver for contract tests that need the script's return value AND
+// the captured agent/workflow traffic (e.g. asserting over a rubric prompt
+// that is only built deep inside a multi-step run).
+export async function runScript(
+  path: string,
+  args: unknown,
+  agentStub: AgentStub = async () => ({}),
+  workflowStub: WorkflowStub = async () => ({}),
+): Promise<{
+  result: unknown;
+  agentCalls: number;
+  prompts: string[];
+  workflowCalls: Array<{ name: string; args: unknown }>;
+  error?: unknown;
+}> {
+  const body = readRuntimeBody(path);
+  return await baseRun(body, args, agentStub, workflowStub);
 }
 
 const DEFAULT_AGENT_STUB: AgentStub = async () => ({

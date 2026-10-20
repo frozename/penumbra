@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync } from "node:fs";
+import { readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 import {
@@ -53,6 +54,10 @@ export class ProjectRegistry {
   list(): ResolvedProjectEntry[] {
     return [...this.#entries.values()];
   }
+
+  get size(): number {
+    return this.#entries.size;
+  }
 }
 
 export function defaultProjectRegistryPath(): string {
@@ -71,6 +76,25 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
       warnMissingRegistry(filePath);
       return new ProjectRegistry(Object.freeze(new Map<string, ResolvedProjectEntry>()));
     }
+    if (err instanceof ProjectRegistryDuplicateId) {
+      throw err;
+    }
+    throw new ProjectRegistryParseError(filePath, err);
+  }
+}
+
+// Unlike loadProjectRegistry, a missing or unreadable file throws (the fs error
+// propagates with its `code` intact) — callers decide whether ENOENT is benign.
+export async function loadProjectRegistryAsync(
+  filePath = defaultProjectRegistryPath(),
+): Promise<ProjectRegistry> {
+  const raw = await readFile(filePath, "utf8");
+  try {
+    const parsed = parseProjectRegistryYaml(raw);
+    const file = ProjectRegistryFileSchema.parse(parsed);
+    const entries = await buildResolvedEntriesAsync(file.projects, filePath);
+    return new ProjectRegistry(Object.freeze(entries));
+  } catch (err) {
     if (err instanceof ProjectRegistryDuplicateId) {
       throw err;
     }
@@ -99,6 +123,44 @@ function buildResolvedEntries(
     );
   }
   return entries;
+}
+
+async function buildResolvedEntriesAsync(
+  projects: ProjectEntry[],
+  filePath: string,
+): Promise<Map<string, ResolvedProjectEntry>> {
+  const resolved = await Promise.all(
+    projects.map(async (entry) => {
+      if (entry.remote && entry.gh_repo) {
+        throw new Error(
+          `entry ${entry.project_id} declares both legacy gh_repo and remote; pick one`,
+        );
+      }
+      const resolvedRoot = await canonicalizeRootAsync(entry, filePath);
+      return resolvedRoot ? { ...entry, canonical_root_path: resolvedRoot } : entry;
+    }),
+  );
+  const entries = new Map<string, ResolvedProjectEntry>();
+  for (const entry of resolved) {
+    if (entries.has(entry.project_id)) {
+      throw new ProjectRegistryDuplicateId(entry.project_id, filePath);
+    }
+    entries.set(entry.project_id, entry);
+  }
+  return entries;
+}
+
+async function canonicalizeRootAsync(
+  entry: ProjectEntry,
+  filePath: string,
+): Promise<string | undefined> {
+  try {
+    const resolved = await realpath(entry.root_path);
+    return resolved !== entry.root_path ? resolved : undefined;
+  } catch (err) {
+    warnCanonicalizationFailure(entry, filePath, err);
+    return undefined;
+  }
 }
 
 function canonicalizeRoot(entry: ProjectEntry, filePath: string): string | undefined {

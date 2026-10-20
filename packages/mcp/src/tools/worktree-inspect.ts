@@ -18,12 +18,21 @@ export function worktreeInspectHandler(daemon: DaemonClient): ToolHandler<{ hand
       const res = await daemon.inspectWorktree(resolved.handoff_id);
       return { content: [{ type: "text", text: JSON.stringify(res) }] };
     } catch (err) {
-      if (err instanceof DaemonHttpError && err.status === 404) {
+      if (err instanceof DaemonHttpError) {
+        const body = z
+          .object({ error: z.object({ code: z.string(), message: z.string() }) })
+          .safeParse(err.body);
+        const error =
+          err.status === 404
+            ? { code: "not_found", message: err.message }
+            : body.success
+              ? body.data.error
+              : { code: "unknown", message: err.message };
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ error: { code: "not_found", message: err.message } }),
+              text: JSON.stringify({ error }),
             },
           ],
           isError: true,

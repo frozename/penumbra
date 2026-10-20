@@ -1,9 +1,11 @@
+import type { PermissionProfile } from "@penumbra/api-contract";
 import type { AgentPool } from "@penumbra/config";
 import type { Database } from "bun:sqlite";
 
 import type { RoutingBias } from "../readers/routing-bias.js";
-import type { PressureWarning } from "../readers/subscription-pressure.js";
 
+import { agentEnforcesPermissionProfile } from "../permissions/review-readonly.js";
+import { pressureSnapshotKey, type PressureWarning } from "../readers/subscription-pressure.js";
 import {
   type AgentKind,
   type AgentRankOutput,
@@ -11,6 +13,13 @@ import {
   DEFAULT_AGENT_KIND,
   inferAgentTaskTypeForRole,
 } from "../schemas/agent-performance.js";
+
+export { pressureSnapshotKey } from "../readers/subscription-pressure.js";
+
+export const PRESSURE_EXCLUDING_WARNING_CODES = new Set<PressureWarning["code"]>([
+  "stale_snapshot",
+  "expired_window",
+]);
 
 type AgentRoutePressureSnapshot = {
   snapshots: {
@@ -22,11 +31,8 @@ type AgentRoutePressureSnapshot = {
     observed_at: string;
     source_kind: string;
   }[];
-  // Stale-snapshot warnings from readSubscriptionPressure. When present, the
-  // scorer filters snapshots with a matching (provider, window_label, model)
-  // key OUT before both exclusion and pressure-scaling — fail-OPEN so a stale
-  // 100% used_pct doesn't hard-throttle a provider indefinitely (mirrors the
-  // fail-open contract in packages/daemon/src/pressure.ts).
+  // Only allowlisted stale or expired warnings exclude matching group keys
+  // before admission and pressure scaling. Other warnings preserve throttling.
   warnings?: PressureWarning[];
 };
 
@@ -154,6 +160,10 @@ type AgentRouteAgentchatConfig = {
     // tool-free penalty only fires when both adapter is populated AND
     // RouteAgentInput.tool_free === true.
     adapter?: string;
+    // Permission profiles this seat can enforce (e.g. ["review_readonly"]).
+    // Absent = no declared enforcement; [] opts the seat out entirely.
+    // Evaluated by agentEnforcesPermissionProfile.
+    enforces_permission_profiles?: readonly string[];
   }[];
   role_routing?: {
     headroom_weighting?: boolean;
@@ -247,6 +257,10 @@ export interface RouteAgentInput {
   // tool_free from use_worktree: a no-worktree task can still need non-file
   // MCP tools, so that proxy is unsafe.
   tool_free?: boolean;
+  // Permission profile the dispatch will run under. When set, candidate
+  // filtering and the daemon fail-closed constraint only admit seats that can
+  // enforce it (agentEnforcesPermissionProfile).
+  permission_profile?: PermissionProfile;
   now?: Date;
 }
 
@@ -801,28 +815,22 @@ function getConfigMembershipAllowlist(input: RouteAgentInput): Set<string> | nul
   return null;
 }
 
-// Fail-OPEN stale-key set for pressure snapshots. Keys are triples of
+// Fail-OPEN stale and expired key set for pressure snapshots. Keys are triples of
 // (provider, window_label, model) — matching the reader's snapshot grouping
 // key exactly, so a stale per-model warning does NOT mask a fresh global
 // (model=null) snapshot and vice versa. Callers that pass no warnings behave
-// as though nothing is stale (byte-identical to pre-fix behavior).
-export function buildPressureStaleKeys(
+// as though nothing is excluded (byte-identical to pre-fix behavior).
+export function buildPressureExcludedKeys(
   pressureSnapshot: RouteAgentInput["applyPressure"] | undefined,
 ): Set<string> {
   if (!pressureSnapshot?.warnings || pressureSnapshot.warnings.length === 0) {
     return new Set();
   }
   return new Set(
-    pressureSnapshot.warnings.map((w) => `${w.provider} ${w.window_label} ${w.model ?? ""}`),
+    pressureSnapshot.warnings
+      .filter((warning) => PRESSURE_EXCLUDING_WARNING_CODES.has(warning.code))
+      .map(pressureSnapshotKey),
   );
-}
-
-export function pressureSnapshotKey(snapshot: {
-  provider: string;
-  window_label: string;
-  model: string | null;
-}): string {
-  return `${snapshot.provider} ${snapshot.window_label} ${snapshot.model ?? ""}`;
 }
 
 function isOverPressure(
@@ -830,14 +838,12 @@ function isOverPressure(
   pressureSnapshot?: RouteAgentInput["applyPressure"],
 ): boolean {
   if (!pressureSnapshot) return false;
-  const staleKeys = buildPressureStaleKeys(pressureSnapshot);
-  // Fail OPEN: stale snapshots must NOT throttle. A snapshot whose
-  // (provider, window_label, model) key is in the stale set is dropped from
-  // the exclusion check. If every snapshot for a provider is stale, the
-  // provider is treated as not-over-pressure.
+  const excludedKeys = buildPressureExcludedKeys(pressureSnapshot);
+  // Fail OPEN: allowlisted stale or expired groups do not throttle.
+  // If every group is excluded, the provider is treated as not-over-pressure.
   return pressureSnapshot.snapshots.some((snapshot) => {
     if (snapshot.provider !== provider) return false;
-    if (staleKeys.has(pressureSnapshotKey(snapshot))) return false;
+    if (excludedKeys.has(pressureSnapshotKey(snapshot))) return false;
     return snapshot.used_pct >= 90 || snapshot.source_kind === "cooldown";
   });
 }
@@ -907,6 +913,19 @@ function getAllowedAgents(input: RouteAgentInput): string[] | null {
     const registrySet = new Set(registryAgents);
     allowed = roleAgents.filter((name) => registrySet.has(name));
   }
+  const profile = input.permission_profile;
+  if (profile !== undefined) {
+    // Fail closed: a profiled dispatch may only reach a seat that can prove
+    // enforcement. Without an agents config no seat is verifiable, so the
+    // constraint resolves to an empty set — never to "unconstrained".
+    const configAgents = input.agentchatConfig?.agents;
+    if (!configAgents || configAgents.length === 0) return [];
+    const confByName = new Map(configAgents.map((agent) => [agent.name, agent]));
+    const candidates = allowed ?? configAgents.map((agent) => agent.name);
+    allowed = candidates.filter((name) =>
+      agentEnforcesPermissionProfile(confByName.get(name), profile),
+    );
+  }
   if (allowed === null) return allowed;
   if (input.unhealthyAgents && input.unhealthyAgents.size > 0) {
     allowed = allowed.filter((name) => !input.unhealthyAgents?.has(name));
@@ -962,13 +981,11 @@ function applyPressureFactor(
   const agentConf = input.agentchatConfig.agents.find((a) => a.name === summary.agent_name);
   const provider = agentConf ? resolveProvider(agentConf) : null;
   if (!provider) return score;
-  // Fail OPEN: drop stale snapshots (keyed on provider+window_label+model)
-  // before averaging used_pct. If every snapshot for this provider is stale,
-  // apply no penalty at all — a stale >=90% must never scale a score down
-  // indefinitely.
-  const staleKeys = buildPressureStaleKeys(input.applyPressure);
+  // Fail OPEN: exclude allowlisted stale or expired groups before taking
+  // max used_pct. If every group is excluded, apply no penalty.
+  const excludedKeys = buildPressureExcludedKeys(input.applyPressure);
   const snaps = input.applyPressure.snapshots.filter(
-    (snap) => snap.provider === provider && !staleKeys.has(pressureSnapshotKey(snap)),
+    (snap) => snap.provider === provider && !excludedKeys.has(pressureSnapshotKey(snap)),
   );
   if (snaps.length === 0) return score;
   const maxUsedPct = Math.max(...snaps.map((snap) => snap.used_pct));

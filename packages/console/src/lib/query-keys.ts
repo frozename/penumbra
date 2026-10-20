@@ -114,6 +114,14 @@ export function chainMessages(conversationId: string): readonly ["chains", "mess
   return ["chains", "messages", conversationId] as const;
 }
 
+/** Newest bounded tail of chain messages, scoped by conversation id and limit. */
+export function chainMessagesTail(
+  conversationId: string,
+  limit = 500,
+): readonly ["chains", "messages", string, { readonly tail: true; readonly limit: number }] {
+  return ["chains", "messages", conversationId, { tail: true, limit }] as const;
+}
+
 /** Chain responses for a conversation, scoped by conversation id. */
 export function chainResponses(conversationId: string): readonly ["chains", "responses", string] {
   return ["chains", "responses", conversationId] as const;
