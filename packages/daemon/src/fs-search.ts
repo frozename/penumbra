@@ -102,6 +102,37 @@ function rgBinary(): string {
   return process.env.PENUMBRA_RG_BINARY ?? "rg";
 }
 
+async function cacheGitignoresDownTo(
+  worktreeRoot: string,
+  dir: string,
+  cache: Map<string, IgnoreManager | null>,
+): Promise<void> {
+  const rel = path.relative(worktreeRoot, dir);
+  let current = worktreeRoot;
+  for (const segment of ["", ...(rel ? rel.split(path.sep) : [])]) {
+    current = path.join(current, segment);
+    if (!cache.has(current)) cache.set(current, await readGitignore(current));
+  }
+}
+
+async function isSearchRootIgnored(
+  worktreeRoot: string,
+  searchRoot: string,
+  cache: Map<string, IgnoreManager | null>,
+): Promise<boolean> {
+  const rel = path.relative(worktreeRoot, searchRoot);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+    return false;
+  }
+
+  await cacheGitignoresDownTo(worktreeRoot, path.dirname(searchRoot), cache);
+  const isDirectory = await fs.stat(searchRoot).then(
+    (stat) => stat.isDirectory(),
+    () => false,
+  );
+  return isIgnoredByGitignores(searchRoot, worktreeRoot, cache, isDirectory);
+}
+
 async function populateGitignoreCache(
   worktreeRoot: string,
   searchRoot: string,
@@ -112,13 +143,7 @@ async function populateGitignoreCache(
     return;
   }
 
-  cache.set(worktreeRoot, await readGitignore(worktreeRoot));
-  let current = worktreeRoot;
-  for (const segment of relSearch ? relSearch.split(path.sep) : []) {
-    current = path.join(current, segment);
-    cache.set(current, await readGitignore(current));
-  }
-
+  await cacheGitignoresDownTo(worktreeRoot, searchRoot, cache);
   await populateGitignoreCacheBelow(searchRoot, worktreeRoot, cache);
 }
 
@@ -135,7 +160,7 @@ async function populateGitignoreCacheBelow(
   }
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (!entry.isDirectory() || entry.name === ".git") continue;
     const child = path.join(dir, entry.name);
     if (isIgnoredByGitignores(child, worktreeRoot, cache, true)) continue;
     cache.set(child, await readGitignore(child));
@@ -279,11 +304,33 @@ export async function executeGlob(args: GlobArgs, worktree: string): Promise<Glo
   const searchRoot = args.path ? path.resolve(worktreeRoot, args.path) : worktreeRoot;
   const gitignoreCache = args.include_ignored ? null : new Map<string, IgnoreManager | null>();
   if (gitignoreCache) {
+    if (await isSearchRootIgnored(worktreeRoot, searchRoot, gitignoreCache)) {
+      return { results: [], truncated: false };
+    }
     await populateGitignoreCache(worktreeRoot, searchRoot, gitignoreCache);
   }
-  const glob = new Bun.Glob(args.pattern);
-  const collected: PathWithMtime[] = [];
+  const collected = await collectGlobMatches(
+    new Bun.Glob(args.pattern),
+    searchRoot,
+    worktreeRoot,
+    gitignoreCache,
+  );
 
+  collected.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const truncated = collected.length > cap;
+  return {
+    results: collected.slice(0, cap).map((entry) => entry.rel),
+    truncated,
+  };
+}
+
+async function collectGlobMatches(
+  glob: BunGlob,
+  searchRoot: string,
+  worktreeRoot: string,
+  gitignoreCache: Map<string, IgnoreManager | null> | null,
+): Promise<PathWithMtime[]> {
+  const collected: PathWithMtime[] = [];
   for await (const rel of scanGlob(glob, searchRoot)) {
     const abs = path.resolve(searchRoot, rel);
     const relFromWorktree = path.relative(worktreeRoot, abs);
@@ -302,13 +349,7 @@ export async function executeGlob(args: GlobArgs, worktree: string): Promise<Glo
     }
     collected.push({ rel: relFromWorktree, mtimeMs: stat.mtimeMs });
   }
-
-  collected.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const truncated = collected.length > cap;
-  return {
-    results: collected.slice(0, cap).map((entry) => entry.rel),
-    truncated,
-  };
+  return collected;
 }
 
 export async function executeGrep(args: GrepArgs, worktree: string): Promise<GrepResult> {
@@ -319,11 +360,14 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
   const worktreeRoot = await fs.realpath(worktree);
   const searchRoot = args.path ? path.resolve(worktreeRoot, args.path) : worktreeRoot;
   const rgTarget = path.relative(worktreeRoot, searchRoot) || ".";
+  if (!args.include_ignored && (await isSearchRootIgnored(worktreeRoot, searchRoot, new Map()))) {
+    return { results: [], truncated: false };
+  }
 
   const rgArgs: string[] = ["--no-config", "--json", "--with-filename"];
   if (args.case_insensitive) rgArgs.push("-i");
   if (args.glob) rgArgs.push("-g", args.glob);
-  rgArgs.push(args.include_ignored ? "--no-ignore" : "--no-require-git");
+  rgArgs.push(...(await rgIgnoreArgs(args.include_ignored === true, worktreeRoot)));
   rgArgs.push("--", args.pattern, rgTarget);
 
   if (outputMode === "content") {
@@ -352,6 +396,18 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
     },
     worktreeRoot,
   });
+}
+
+async function rgIgnoreArgs(includeIgnored: boolean, worktreeRoot: string): Promise<string[]> {
+  if (includeIgnored) return ["--no-ignore"];
+  // rg stops applying parent .gitignore files at the directory holding .git, which
+  // for a fleet worktree is its root. --no-require-git drops that stop and applies
+  // every .gitignore up to /, so a plain directory pairs it with --no-ignore-parent.
+  const isGitRoot = await fs.access(path.join(worktreeRoot, ".git")).then(
+    () => true,
+    () => false,
+  );
+  return isGitRoot ? [] : ["--no-require-git", "--no-ignore-parent"];
 }
 
 interface RipgrepCollectOptions<Result> {

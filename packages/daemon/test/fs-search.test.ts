@@ -4,7 +4,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { executeGlob, executeGrep } from "../src/fs-search.js";
+import { executeGlob, executeGrep, type GrepResult } from "../src/fs-search.js";
 
 const originalGlobScan = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scan");
 const originalGlobScanSync = Object.getOwnPropertyDescriptor(Bun.Glob.prototype, "scanSync");
@@ -30,6 +30,10 @@ function restoreEnv(key: "PENUMBRA_RG_BINARY" | "ARGS_FILE", value: string | und
   } else {
     process.env.ARGS_FILE = value;
   }
+}
+
+function resultPaths(r: GrepResult): string[] {
+  return r.results.map((x) => (typeof x === "string" ? x : x.path)).sort();
 }
 
 describe("executeGlob", () => {
@@ -155,6 +159,31 @@ describe("executeGlob", () => {
       const visited = spy.mock.calls.map((call) => String(call[0]));
       expect(visited.length).toBeGreaterThan(0);
       expect(visited.some((d) => d.includes(path.join("vendor", "deep")))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("applies .gitignore files inside dot-directories", async () => {
+    fs.mkdirSync(path.join(tmp, ".husky", "_"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, ".husky", "_", ".gitignore"), "*\n");
+    fs.writeFileSync(path.join(tmp, ".husky", "_", "husky.sh"), "x");
+    fs.writeFileSync(path.join(tmp, ".husky", "pre-commit"), "y");
+
+    const r = await executeGlob({ pattern: ".husky/**" }, tmp);
+    expect(r.results).toEqual([".husky/pre-commit"]);
+  });
+
+  it("does not descend into .git while collecting .gitignore files", async () => {
+    fs.mkdirSync(path.join(tmp, ".git", "objects"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "kept.ts"), "y");
+
+    const spy = spyOn(fsp, "readdir");
+    try {
+      const r = await executeGlob({ pattern: "*.ts" }, tmp);
+      expect(r.results).toEqual(["kept.ts"]);
+      const visited = spy.mock.calls.map((call) => String(call[0]));
+      expect(visited.some((d) => d.includes(".git"))).toBe(false);
     } finally {
       spy.mockRestore();
     }
@@ -361,6 +390,23 @@ describe("executeGrep", () => {
     ]);
   });
 
+  it("applies nested and ancestor .gitignore files to a scoped path", async () => {
+    fs.writeFileSync(path.join(tmp, ".git"), "gitdir: /nonexistent/worktrees/wt\n");
+    fs.writeFileSync(path.join(tmp, ".gitignore"), "*.log\n");
+    fs.mkdirSync(path.join(tmp, "pkg", "gen"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "pkg", "src", "gen"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "pkg", ".gitignore"), "/gen/\n");
+    for (const rel of ["pkg/gen/a.ts", "pkg/src/gen/b.ts", "pkg/x.log", "pkg/y.ts", "other.ts"]) {
+      fs.writeFileSync(path.join(tmp, rel), "TODO\n");
+    }
+
+    const r = await executeGrep(
+      { pattern: "TODO", path: "pkg", output_mode: "files_with_matches" },
+      tmp,
+    );
+    expect(resultPaths(r)).toEqual(["pkg/src/gen/b.ts", "pkg/y.ts"]);
+  });
+
   it("passes --no-config as the first rg flag", async () => {
     const argsFile = path.join(tmp, "rg-args.txt");
     const shim = path.join(tmp, "rg-shim.sh");
@@ -379,5 +425,55 @@ printf '%s\n' '{"type":"match","data":{"path":{"text":"a.txt"},"line_number":1,"
     const r = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
     expect(r.results).toEqual([{ path: "a.txt", line: 1, text: "TODO" }]);
     expect(fs.readFileSync(argsFile, "utf8").split("\n").find(Boolean)).toBe("--no-config");
+  });
+});
+
+describe("gitignore scope shared by executeGlob and executeGrep", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fs-search-scope-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("treats a path inside a gitignored directory as ignored unless include_ignored", async () => {
+    fs.writeFileSync(path.join(tmp, ".git"), "gitdir: /nonexistent/worktrees/wt\n");
+    fs.writeFileSync(path.join(tmp, ".gitignore"), "dist/\n");
+    fs.mkdirSync(path.join(tmp, "dist", "nested"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "dist", "nested", "out.js"), "TODO\n");
+
+    for (const scope of ["dist", "dist/nested"]) {
+      expect((await executeGlob({ pattern: "**/*", path: scope }, tmp)).results).toEqual([]);
+    }
+    for (const scope of ["dist", "dist/nested", "dist/nested/out.js"]) {
+      expect(resultPaths(await executeGrep({ pattern: "TODO", path: scope }, tmp))).toEqual([]);
+    }
+
+    const glob = await executeGlob({ pattern: "**/*", path: "dist", include_ignored: true }, tmp);
+    expect(glob.results).toEqual(["dist/nested/out.js"]);
+    const grep = await executeGrep({ pattern: "TODO", path: "dist", include_ignored: true }, tmp);
+    expect(resultPaths(grep)).toEqual(["dist/nested/out.js"]);
+  });
+
+  it("ignores .gitignore files above the worktree root", async () => {
+    fs.writeFileSync(path.join(tmp, ".gitignore"), "*.ts\n");
+    for (const kind of ["git-worktree", "plain-dir"]) {
+      const wt = path.join(tmp, kind);
+      fs.mkdirSync(path.join(wt, "sub"), { recursive: true });
+      if (kind === "git-worktree") {
+        fs.writeFileSync(path.join(wt, ".git"), "gitdir: /nonexistent/worktrees/wt\n");
+      }
+      fs.writeFileSync(path.join(wt, "sub", "a.ts"), "TODO\n");
+
+      for (const scope of [undefined, "sub"]) {
+        const glob = await executeGlob({ pattern: "**/*.ts", path: scope }, wt);
+        expect(glob.results).toEqual(["sub/a.ts"]);
+        const grep = await executeGrep({ pattern: "TODO", path: scope }, wt);
+        expect(resultPaths(grep)).toEqual(["sub/a.ts"]);
+      }
+    }
   });
 });
