@@ -9,6 +9,7 @@ const ADVERSARIAL = ".claude/workflows/adversarial-review.js";
 const FANOUT = ".claude/workflows/penumbra-fanout.js";
 
 type AgentStub = (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
+type WorkflowStub = (name: string, wargs: unknown) => Promise<unknown>;
 
 interface ReviewResultRecord {
   ok?: boolean;
@@ -33,6 +34,7 @@ async function runReturning(
   path: string,
   args: unknown,
   agentStub?: AgentStub,
+  workflowStub?: WorkflowStub,
 ): Promise<{
   result: unknown;
   prompts: string[];
@@ -60,7 +62,7 @@ async function runReturning(
   const phase = async (_name: string, fn?: () => unknown) => (fn ? fn() : undefined);
   const log = () => {};
   const budget = {};
-  const workflow = async () => ({});
+  const workflow: WorkflowStub = workflowStub ?? (async () => ({}));
 
   const run = new Function(
     "agent",
@@ -371,5 +373,419 @@ describe("adversarial-review repo scope", () => {
     expect(properties.resolution_warning).toBeDefined();
     expect(properties.review_cwd).toBeDefined();
     expect(reviewPrompt).toContain("workflow_cwd_inferred_from_mcp_cwd");
+  });
+});
+
+const LOOP = ".claude/workflows/penumbra-loop-discover-to-green.js";
+
+describe("partial diff coverage is never a passed review", () => {
+  const CLEAN_REVIEW = {
+    outcome: "success",
+    verdict: "land",
+    high: [],
+    medium: [],
+    low: [],
+    completed_personas: ["persona-a"],
+    failed_personas: [],
+  };
+
+  test("adversarial-review schema + prompt carry diff_truncated and diff_dropped_files", async () => {
+    const { prompts, schemas, error } = await runReturning(
+      ADVERSARIAL,
+      { repo: "/tmp/x", target_ref: "abc" },
+      async () => ({ ...CLEAN_REVIEW }),
+    );
+
+    expect(error).toBeUndefined();
+    const properties = schemaProperties(schemas[0]);
+    expect(properties.diff_truncated).toBeDefined();
+    expect(properties.diff_dropped_files).toBeDefined();
+    expect(prompts[0] ?? "").toContain("diff_truncated");
+    expect(prompts[0] ?? "").toContain("diff_dropped_files");
+  });
+
+  test("adversarial-review schema REQUIRES diff_truncated/diff_dropped_files with explicit defaults", async () => {
+    const { schemas, prompts, error } = await runReturning(
+      ADVERSARIAL,
+      { repo: "/tmp/x", target_ref: "abc" },
+      async () => ({ ...CLEAN_REVIEW }),
+    );
+
+    expect(error).toBeUndefined();
+    const schema = schemas[0] as {
+      required?: string[];
+      properties?: Record<string, { description?: string }>;
+    };
+    // Optional coverage fields let an omitting proxy pass a truncated review
+    // as clean — required with an explicit default makes omission impossible.
+    expect(schema.required).toContain("diff_truncated");
+    expect(schema.required).toContain("diff_dropped_files");
+    expect(schema.properties?.diff_truncated?.description ?? "").toContain("false");
+    expect(schema.properties?.diff_dropped_files?.description ?? "").toContain("[]");
+    expect(prompts.join("\n")).toContain("diff_truncated");
+  });
+
+  test("review-sweep schema REQUIRES diff_truncated/diff_dropped_files with explicit defaults", async () => {
+    const { schemas, prompts, error } = await runReturning(
+      SWEEP,
+      { repo: "/tmp/x", targets: [{ target_ref: "abc" }] },
+      async () => ({ ok: true, outcome: "success", diff_truncated: false }),
+    );
+
+    expect(error).toBeUndefined();
+    const schema = schemas[0] as {
+      required?: string[];
+      properties?: Record<string, { description?: string }>;
+    };
+    expect(schema.required).toContain("diff_truncated");
+    expect(schema.required).toContain("diff_dropped_files");
+    expect(schema.properties?.diff_truncated?.description ?? "").toContain("false");
+    expect(schema.properties?.diff_dropped_files?.description ?? "").toContain("[]");
+    expect(prompts.join("\n")).toContain("diff_truncated");
+  });
+
+  test("a diff_truncated review with zero HIGH recommends review_debt, not passed", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("review:")) {
+        return {
+          ...CLEAN_REVIEW,
+          diff_truncated: true,
+          diff_dropped_files: ["b.ts", "c.ts"],
+        };
+      }
+      return null;
+    };
+    const { result, error } = await runReturning(
+      ADVERSARIAL,
+      { repo: "/tmp/x", target_ref: "abc", laneId: "lane-1" },
+      agent,
+    );
+
+    expect(error).toBeUndefined();
+    const review = result as {
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      laneRecommendation?: { gate_status?: string };
+    };
+    expect(review.diff_truncated).toBe(true);
+    expect(review.diff_dropped_files).toEqual(["b.ts", "c.ts"]);
+    expect(review.laneRecommendation?.gate_status).toBe("review_debt");
+  });
+
+  test("a diff_truncated review WITH HIGH findings keeps the HIGH next message plus a coverage note", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("review:")) {
+        return {
+          ...CLEAN_REVIEW,
+          high: [
+            {
+              id: "H1",
+              severity: "HIGH",
+              title: "unchecked write",
+              detail: "detail",
+            },
+          ],
+          diff_truncated: true,
+          diff_dropped_files: ["b.ts"],
+        };
+      }
+      return null;
+    };
+    const { result, error } = await runReturning(
+      ADVERSARIAL,
+      { repo: "/tmp/x", target_ref: "abc", laneId: "lane-1" },
+      agent,
+    );
+
+    expect(error).toBeUndefined();
+    const review = result as {
+      diff_truncated?: boolean;
+      next?: string;
+      laneRecommendation?: { gate_status?: string };
+    };
+    // gate_status is driven by the HIGH findings (round 1 -> failed); `next` must
+    // agree: the HIGH message stays primary and partial coverage is a NOTE on it,
+    // never a bare "high_count=0 is NOT clean" that contradicts the gate.
+    expect(review.laneRecommendation?.gate_status).toBe("failed");
+    expect(review.next ?? "").toMatch(/HIGH finding/);
+    expect(review.next ?? "").not.toMatch(/high_count=0/);
+    expect(review.next ?? "").toMatch(/partial|truncat/i);
+  });
+
+  test("a full-coverage review with zero HIGH still recommends passed", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("review:")) {
+        return { ...CLEAN_REVIEW, diff_truncated: false };
+      }
+      return null;
+    };
+    const { result, error } = await runReturning(
+      ADVERSARIAL,
+      { repo: "/tmp/x", target_ref: "abc", laneId: "lane-1" },
+      agent,
+    );
+
+    expect(error).toBeUndefined();
+    const review = result as {
+      diff_truncated?: boolean;
+      laneRecommendation?: { gate_status?: string };
+    };
+    expect(review.diff_truncated).toBe(false);
+    expect(review.laneRecommendation?.gate_status).toBe("passed");
+  });
+
+  test("review-sweep never counts a diff_truncated result as ok", async () => {
+    const { result, prompts, schemas, error } = await runReturning(
+      SWEEP,
+      { repo: "/tmp/x", targets: [{ target_ref: "abc" }] },
+      async () => ({
+        ok: true,
+        outcome: "success",
+        diff_truncated: true,
+        diff_dropped_files: ["b.ts"],
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    const sweep = result as SweepReturn | undefined;
+    expect(sweep?.ok).toBe(false);
+    expect(sweep?.reviewed_ok).toBe(0);
+    expect(sweep?.results?.[0]).toMatchObject({
+      ok: false,
+      diff_truncated: true,
+      diff_dropped_files: ["b.ts"],
+    });
+    const properties = schemaProperties(schemas[0]);
+    expect(properties.diff_truncated).toBeDefined();
+    expect(properties.diff_dropped_files).toBeDefined();
+    expect(prompts[0] ?? "").toContain("diff_truncated");
+  });
+
+  test("review-sweep keeps a full-coverage ok result ok", async () => {
+    const { result, error } = await runReturning(
+      SWEEP,
+      { repo: "/tmp/x", targets: [{ target_ref: "abc" }] },
+      async () => ({ ok: true, outcome: "success", diff_truncated: false }),
+    );
+
+    expect(error).toBeUndefined();
+    const sweep = result as SweepReturn | undefined;
+    expect(sweep?.ok).toBe(true);
+    expect(sweep?.reviewed_ok).toBe(1);
+  });
+
+  test("discover-to-green does not mark a diff_truncated review clean", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label === "plan") {
+        return {
+          summary: "fix the bug",
+          files: "x.ts",
+          check_command: "bun test x.ts",
+          spec: "tdd spec",
+        };
+      }
+      return null;
+    };
+    const workflowStub: WorkflowStub = async (name) => {
+      if (name === "penumbra-fanout") {
+        return {
+          results: [
+            {
+              ok: true,
+              branch: "fix-b",
+              handoff_id: "h1",
+              response: "CHECK_RESULT: PASS\nall green",
+            },
+          ],
+        };
+      }
+      if (name === "adversarial-review") {
+        return {
+          outcome: "success",
+          verdict: "land",
+          high: [],
+          high_count: 0,
+          medium_count: 0,
+          low_count: 0,
+          completed_personas: ["persona-a"],
+          failed_personas: [],
+          land_candidate: "fix-b",
+          fix_rejected: false,
+          diff_truncated: true,
+          diff_dropped_files: ["b.ts"],
+        };
+      }
+      return {};
+    };
+    const { result, error } = await runReturning(
+      LOOP,
+      {
+        repo: "/tmp/x",
+        seedCandidates: [
+          {
+            title: "real bug",
+            severity: "HIGH",
+            file: "x.ts:1",
+            why_real: "concrete repro",
+            fix_sketch: "fix it",
+            suggested_check: "bun test x.ts",
+          },
+        ],
+      },
+      agent,
+      workflowStub,
+    );
+
+    expect(error).toBeUndefined();
+    const loop = result as {
+      green_for_land?: boolean;
+      review?: { diff_truncated?: boolean; diff_dropped_files?: string[] };
+      next?: string;
+    };
+    expect(loop.green_for_land).toBe(false);
+    expect(loop.review?.diff_truncated).toBe(true);
+    expect(loop.review?.diff_dropped_files).toEqual(["b.ts"]);
+    expect(loop.next ?? "").toMatch(/review_debt|TRUNCATED|partial/i);
+  });
+
+  test("discover-to-green leads with HIGH findings (partial-coverage note) when a truncated review has HIGH", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label === "plan") {
+        return {
+          summary: "fix the bug",
+          files: "x.ts",
+          check_command: "bun test x.ts",
+          spec: "tdd spec",
+        };
+      }
+      return null;
+    };
+    const workflowStub: WorkflowStub = async (name) => {
+      if (name === "penumbra-fanout") {
+        return {
+          results: [
+            {
+              ok: true,
+              branch: "fix-b",
+              handoff_id: "h1",
+              response: "CHECK_RESULT: PASS\nall green",
+            },
+          ],
+        };
+      }
+      if (name === "adversarial-review") {
+        return {
+          outcome: "success",
+          verdict: "changes",
+          high: [{ id: "H1", severity: "HIGH", title: "unchecked write" }],
+          high_count: 1,
+          medium_count: 0,
+          low_count: 0,
+          completed_personas: ["persona-a"],
+          failed_personas: [],
+          land_candidate: "fix-b",
+          fix_rejected: false,
+          diff_truncated: true,
+          diff_dropped_files: ["b.ts"],
+        };
+      }
+      return {};
+    };
+    const { result, error } = await runReturning(
+      LOOP,
+      {
+        repo: "/tmp/x",
+        seedCandidates: [
+          {
+            title: "real bug",
+            severity: "HIGH",
+            file: "x.ts:1",
+            why_real: "concrete repro",
+            fix_sketch: "fix it",
+            suggested_check: "bun test x.ts",
+          },
+        ],
+      },
+      agent,
+      workflowStub,
+    );
+
+    expect(error).toBeUndefined();
+    const loop = result as { green_for_land?: boolean; next?: string };
+    expect(loop.green_for_land).toBe(false);
+    expect(loop.next ?? "").toMatch(/HIGH finding/);
+    expect(loop.next ?? "").not.toMatch(/high_count=0/);
+    expect(loop.next ?? "").toMatch(/PARTIAL|truncat/i);
+  });
+
+  test("discover-to-green keeps a full-coverage zero-HIGH review clean", async () => {
+    const agent: AgentStub = async (_prompt, options) => {
+      const label = String(options?.label ?? "");
+      if (label === "plan") {
+        return {
+          summary: "fix the bug",
+          files: "x.ts",
+          check_command: "bun test x.ts",
+          spec: "tdd spec",
+        };
+      }
+      return null;
+    };
+    const workflowStub: WorkflowStub = async (name) => {
+      if (name === "penumbra-fanout") {
+        return {
+          results: [
+            {
+              ok: true,
+              branch: "fix-b",
+              handoff_id: "h1",
+              response: "CHECK_RESULT: PASS\nall green",
+            },
+          ],
+        };
+      }
+      if (name === "adversarial-review") {
+        return {
+          outcome: "success",
+          verdict: "land",
+          high: [],
+          high_count: 0,
+          medium_count: 0,
+          low_count: 0,
+          completed_personas: ["persona-a"],
+          failed_personas: [],
+          land_candidate: "fix-b",
+          fix_rejected: false,
+        };
+      }
+      return {};
+    };
+    const { result, error } = await runReturning(
+      LOOP,
+      {
+        repo: "/tmp/x",
+        seedCandidates: [
+          {
+            title: "real bug",
+            severity: "HIGH",
+            file: "x.ts:1",
+            why_real: "concrete repro",
+            fix_sketch: "fix it",
+            suggested_check: "bun test x.ts",
+          },
+        ],
+      },
+      agent,
+      workflowStub,
+    );
+
+    expect(error).toBeUndefined();
+    const loop = result as { green_for_land?: boolean };
+    expect(loop.green_for_land).toBe(true);
   });
 });

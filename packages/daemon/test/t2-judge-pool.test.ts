@@ -21,6 +21,13 @@ const okJudgeResponse = (): Response =>
     status: 200,
   });
 
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function asFetchMock(
+  impl: (input: FetchInput, init?: Parameters<FetchMock>[1]) => Promise<Response>,
+): FetchMock {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -561,6 +568,113 @@ test("overflow does not poison the single-judge pool", async () => {
   const result = await pool.invoke("3");
   expect(result).toEqual([]);
   expect(fetchCalls).toHaveLength(3);
+});
+
+test("judge reply with empty content throws instead of reading as zero extractions", async () => {
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: asFetchMock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
+          status: 200,
+        }),
+      ),
+    ),
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  let caught: unknown;
+  try {
+    await pool.invoke("x");
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toMatch(/no content/i);
+});
+
+test("judge reply missing the content field throws instead of reading as zero extractions", async () => {
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: asFetchMock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: {} }] }), { status: 200 }),
+      ),
+    ),
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  let caught: unknown;
+  try {
+    await pool.invoke("x");
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toMatch(/no content/i);
+});
+
+test("judge reply cut off at the token limit (finish_reason=length) throws", async () => {
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: asFetchMock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: '{"memories":[{"title":"truncated mid-arr' },
+                finish_reason: "length",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    ),
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  let caught: unknown;
+  try {
+    await pool.invoke("x");
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toMatch(/finish_reason|token limit|truncat/i);
+});
+
+test("empty content from one judge fails over to the next judge", async () => {
+  const seen: string[] = [];
+  const pool = createJudgePool({
+    judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: asFetchMock((url) => {
+      const which = fetchInputText(url).includes("http://a") ? "a" : "b";
+      seen.push(which);
+      if (which === "a") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(okJudgeResponse());
+    }),
+    unhealthyAfter: 2,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  expect(await pool.invoke("x")).toEqual([]);
+  expect(seen).toEqual(["a", "b"]);
 });
 
 test("sequential invocations after a failed retry start on the next seat, not the seat that just failed", async () => {

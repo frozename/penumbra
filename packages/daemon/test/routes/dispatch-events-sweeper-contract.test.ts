@@ -96,6 +96,9 @@ function makeServices(db: Database, worktreeHandles: WorktreeHandle[]): Services
         }),
       mainRepoDir: "/tmp/main-repo",
     },
+    scratchWorktrees: {
+      sweepOrphans: () => Promise.resolve({ reaped: [], kept: [], deferred: [] }),
+    },
   } as unknown as Services;
 }
 

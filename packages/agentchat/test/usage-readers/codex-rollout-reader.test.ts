@@ -1,4 +1,10 @@
-import { applySchema, loadSqliteVec, readSubscriptionPressure } from "@penumbra/core";
+import {
+  applySchema,
+  loadSqliteVec,
+  readSubscriptionPressure,
+  T0EventSchema,
+  T0Writer,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import {
@@ -51,6 +57,63 @@ const tokenCountLine = (
 });
 
 describe("CodexRolloutReader", () => {
+  it("chooses each group's newest timestamp within a file even when records arrive out of order", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-record-order-"));
+    const newer = tokenCountLine(20, 40);
+    newer.timestamp = "2026-10-01T12:00:00Z";
+    delete (newer.payload as { rate_limits: { secondary?: unknown } }).rate_limits.secondary;
+    const older = tokenCountLine(99, 60);
+    older.timestamp = "2026-10-01T11:00:00Z";
+    writeRollout(root, "rollout-order.jsonl", [newer, older]);
+    const result = await new CodexRolloutReader({ rootDir: root }).read(null);
+    expect(result.rate_limit_snapshots).toHaveLength(2);
+    expect(result.rate_limit_snapshots.find((s) => s.window_label === "primary")?.used_pct).toBe(
+      20,
+    );
+    expect(result.rate_limit_snapshots.find((s) => s.window_label === "secondary")?.used_pct).toBe(
+      60,
+    );
+  });
+
+  for (const oldName of ["rollout-a-old.jsonl", "rollout-z-old.jsonl"]) {
+    it(`chooses fresher live windows over stale retirement regardless of file order (${oldName})`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "codex-rollout-race-"));
+      const older = tokenCountLine(99, 0);
+      older.timestamp = "2026-10-01T11:00:00Z";
+      (older.payload as { rate_limits: { secondary: unknown } }).rate_limits.secondary = null;
+      const newer = tokenCountLine(20, 40);
+      newer.timestamp = "2026-10-01T12:00:00Z";
+      const oldPath = writeRollout(root, oldName, [older]);
+      const newPath = writeRollout(root, "rollout-m-new.jsonl", [newer]);
+      const now = Date.now() / 1000;
+      utimesSync(oldPath, now, now);
+      utimesSync(newPath, now - 1, now - 1);
+      const result = await new CodexRolloutReader({ rootDir: root }).read(null);
+      expect(result.rate_limit_snapshots).toHaveLength(2);
+      expect(result.rate_limit_snapshots.find((s) => s.window_label === "secondary")).toMatchObject(
+        { used_pct: 40 },
+      );
+      expect(result.rate_limit_snapshots.some((s) => s.retired)).toBe(false);
+    });
+  }
+
+  it("falls back to file mtime when rollout observation timestamps are missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-rollout-mtime-"));
+    const older = tokenCountLine(99, 0);
+    delete older.timestamp;
+    (older.payload as { rate_limits: { secondary: unknown } }).rate_limits.secondary = null;
+    const newer = tokenCountLine(20, 40);
+    delete newer.timestamp;
+    const oldPath = writeRollout(root, "rollout-z-old.jsonl", [older]);
+    const newPath = writeRollout(root, "rollout-a-new.jsonl", [newer]);
+    const now = Date.now() / 1000;
+    utimesSync(oldPath, now - 1, now - 1);
+    utimesSync(newPath, now, now);
+    const result = await new CodexRolloutReader({ rootDir: root }).read(null);
+    expect(result.rate_limit_snapshots).toHaveLength(2);
+    expect(result.rate_limit_snapshots.some((s) => s.retired)).toBe(false);
+  });
+
   it("emits one rate-limit-snapshot per window from the latest token_count event", async () => {
     const root = mkdtempSync(join(tmpdir(), "codex-rollout-"));
     const dayDir = join(root, "2026", "04", "28");
@@ -451,7 +514,7 @@ describe("CodexRolloutReader", () => {
           type: "token_count",
           rate_limits: {
             limit_id: "codex",
-            primary: { used_percent: 0.0, window_minutes: 300, resets_at: 1788798575 },
+            primary: { used_percent: 0.0, window_minutes: 300, resets_at: null },
             secondary: null,
             plan_type: "prolite",
           },
@@ -496,4 +559,178 @@ describe("CodexRolloutReader", () => {
     expect(out.snapshots.map((s) => s.window_label).sort()).toEqual(["primary"]);
     expect(out.warnings).toEqual([]);
   });
+  it("durably retires a window across fresh pollers, resurrection, and repeated null reports", async () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+    const root = mkdtempSync(join(tmpdir(), "codex-retirement-"));
+    const line = {
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          primary: { used_percent: 39, window_minutes: 10080, resets_at: null },
+          secondary: null,
+          plan_type: "prolite",
+        },
+      },
+    };
+    writeRollout(root, "rollout-retired.jsonl", [line]);
+    const active = T0EventSchema.parse({
+      event_id: "prior-secondary",
+      ts: "2026-09-14T21:28:11.000Z",
+      ingest_ts: "2026-09-14T21:28:11.000Z",
+      source: "agentchat",
+      source_detail: "usage-poller-codex-rollout",
+      project_id: null,
+      user_id: "u",
+      machine_id: "m",
+      session_id: null,
+      event_type: "rate-limit-snapshot",
+      lane: "cli-subscription",
+      provider: "openai",
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_summary: null,
+      origin: null,
+      payload_json: {
+        window_label: "secondary",
+        model: null,
+        used_pct: 98,
+        resets_at: null,
+        source_kind: "local-state-codex-rollout",
+      },
+    });
+    new T0Writer(db).write(active);
+    const errors: unknown[] = [];
+    const pollFresh = async (name: string): Promise<void> => {
+      const writer = new T0Writer(db);
+      const poller = startUsagePoller({
+        readers: [new CodexRolloutReader({ rootDir: root })],
+        cursorPath: join(root, `${name}.json`),
+        emit: (event) =>
+          Promise.resolve({
+            event_id: writer.write(
+              T0EventSchema.parse({
+                ...event,
+                ingest_ts: event.ts,
+                project_id: null,
+                origin: null,
+              }),
+            ),
+          }),
+        log: {
+          info: () => undefined,
+          error: (error) => {
+            errors.push(error);
+          },
+        },
+      });
+      try {
+        await poller.runOnce();
+      } finally {
+        poller.stop();
+      }
+      expect(errors).toEqual([]);
+    };
+    const tombstones = (): number =>
+      db
+        .query<
+          { n: number },
+          []
+        >("SELECT COUNT(*) AS n FROM t0_events WHERE json_extract(payload_json, '$.retired') = 1")
+        .get()!.n;
+    await pollFresh("first-process");
+    expect(readSubscriptionPressure(db).snapshots.map((s) => s.window_label)).toEqual(["primary"]);
+    expect(tombstones()).toBe(1);
+    await pollFresh("restarted-process");
+    expect(tombstones()).toBe(1);
+
+    db.run(
+      "UPDATE t0_events SET ts = '2026-09-15T00:00:00.000Z' WHERE json_extract(payload_json, '$.retired') = 1",
+    );
+    new T0Writer(db).write({
+      ...active,
+      event_id: "resurrected-secondary",
+      ts: "2026-09-16T00:00:00.000Z",
+    });
+    expect(readSubscriptionPressure(db).snapshots.some((s) => s.window_label === "secondary")).toBe(
+      true,
+    );
+    await pollFresh("fresh-process-after-resurrection");
+    expect(readSubscriptionPressure(db).snapshots.map((s) => s.window_label)).toEqual(["primary"]);
+    expect(tombstones()).toBe(2);
+    await pollFresh("another-process");
+    expect(tombstones()).toBe(2);
+    db.close();
+  });
+});
+
+function secondaryLine(timestamp: number, used_pct: number | null): Record<string, unknown> {
+  return {
+    type: "event_msg",
+    timestamp: new Date(timestamp).toISOString(),
+    payload: {
+      type: "token_count",
+      rate_limits: {
+        limit_id: "codex",
+        secondary: used_pct === null ? null : { used_percent: used_pct, window_minutes: 10080 },
+      },
+    },
+  };
+}
+
+for (const roundTrip of [false, true]) {
+  it(
+    "does not re-emit a pruned file's stale observation when its mtime is bumped back into the lookback window" +
+      (roundTrip ? " after a JSON cursor round-trip" : ""),
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "codex-high-water-"));
+      const t0 = Date.parse("2026-10-01T12:00:00Z");
+      let clock = t0 + 60_000;
+      const a = writeRollout(root, "rollout-a.jsonl", [secondaryLine(t0, 40)]);
+      const b = writeRollout(root, "rollout-b.jsonl", [secondaryLine(clock, null)]);
+      utimesSync(a, new Date(t0), new Date(t0));
+      utimesSync(b, new Date(clock), new Date(clock));
+      let reader = new CodexRolloutReader({ rootDir: root, now: (): number => clock });
+      const r1 = await reader.read(null);
+      expect(r1.rate_limit_snapshots).toMatchObject([{ window_label: "secondary", retired: true }]);
+      const cursor: unknown = roundTrip ? JSON.parse(JSON.stringify(r1.cursor)) : r1.cursor;
+      if (roundTrip) reader = new CodexRolloutReader({ rootDir: root, now: (): number => clock });
+      clock = t0 + 25 * 3600_000;
+      utimesSync(b, new Date(clock), new Date(clock));
+      const r2 = await reader.read(cursor);
+      expect(r2.rate_limit_snapshots).toEqual([]);
+      utimesSync(a, new Date(clock), new Date(clock));
+      const r3 = await reader.read(r2.cursor);
+      expect(
+        r3.rate_limit_snapshots.filter((snapshot) => snapshot.window_label === "secondary"),
+      ).toEqual([]);
+      clock += 60_000;
+      appendFileSync(a, JSON.stringify(secondaryLine(clock, 41)) + "\n");
+      utimesSync(a, new Date(clock), new Date(clock));
+      const r4 = await reader.read(r3.cursor);
+      expect(r4.rate_limit_snapshots).toMatchObject([{ window_label: "secondary", used_pct: 41 }]);
+    },
+  );
+}
+
+it("clamps future rollout observations so they cannot freeze a pressure group", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-future-water-"));
+  let clock = Date.parse("2026-10-01T12:00:00Z");
+  const path = writeRollout(root, "rollout-future.jsonl", [
+    secondaryLine(clock + 365 * 86400_000, 40),
+  ]);
+  utimesSync(path, new Date(clock), new Date(clock));
+  const reader = new CodexRolloutReader({ rootDir: root, now: (): number => clock });
+  const r1 = await reader.read(null);
+  expect(r1.cursor).toMatchObject({ groups: { "openai\u0000secondary\u0000": clock } });
+  clock += 60_000;
+  appendFileSync(path, JSON.stringify(secondaryLine(clock, null)) + "\n");
+  const r2 = await reader.read(r1.cursor);
+  expect(r2.rate_limit_snapshots).toMatchObject([{ window_label: "secondary", retired: true }]);
 });

@@ -25,11 +25,10 @@ recall:
       max_bytes: 32768
   - source: session_first_moves
     args: {}
-  - source: file.contents
+  - source: pending_handoff
     args:
-      path: ~/.penumbra/pending-handoff.md
-      allowed_roots: ["~/.penumbra"]
       max_bytes: 8192
+      max_age_days: 7
 # Budget math: note ~11k chars x 0.25 ~= 2.8k tokens; the note and first-moves
 # are the payload, while the pending-handoff draft is only a fallback.
 recall_budget_tokens: 12000
@@ -80,7 +79,7 @@ Newest continuation note:
 {{recall.latest_continuation_note.body}}
 
 Pending handoff draft:
-{{recall.file.contents.body}}
+{{recall.pending_handoff.body}}
 
 First moves:
 
@@ -96,5 +95,6 @@ First moves:
 - gate_deltas: {{recall.session_first_moves.gate_deltas}}
 - open_lanes: {{recall.session_first_moves.open_lanes}}
 - pin_share: {{recall.session_first_moves.pin_share}}
+- open_prs: {{recall.session_first_moves.open_prs}}
 
 If a workflow matches this prompt, prefer invoking it via `/<slash>` over hand-rolling the equivalent.

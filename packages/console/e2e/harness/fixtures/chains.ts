@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import { ChainMessagesTailOptionsSchema } from "@penumbra/api-contract";
 
 import type { FixtureRouter } from "../router";
 import { type HarnessState, corsHeaders, resolveConversationSseWaiters, sendJson } from "../server";
@@ -14,6 +15,78 @@ export function register(router: FixtureRouter, state: HarnessState): void {
       );
       return;
     }
+    const tailParam = ctx.query.get("tail");
+    if (tailParam === "true") {
+      const rawLimit = ctx.query.get("limit");
+      if (rawLimit !== null && !/^[1-9][0-9]*$/.test(rawLimit)) {
+        sendJson(
+          ctx.response,
+          { error: { code: "validation_error", message: "Invalid transcript tail options" } },
+          400,
+        );
+        return;
+      }
+      const rawOffset = ctx.query.get("offset");
+      if (rawOffset !== null && rawOffset !== "0") {
+        sendJson(
+          ctx.response,
+          { error: { code: "validation_error", message: "Invalid transcript tail options" } },
+          400,
+        );
+        return;
+      }
+
+      const parsedTail = ChainMessagesTailOptionsSchema.safeParse({
+        tail: true,
+        limit: rawLimit !== null ? Number(rawLimit) : undefined,
+        offset: rawOffset === "0" ? 0 : undefined,
+        before_ts: ctx.query.get("before_ts") ?? undefined,
+      });
+      if (!parsedTail.success) {
+        sendJson(
+          ctx.response,
+          { error: { code: "validation_error", message: "Invalid transcript tail options" } },
+          400,
+        );
+        return;
+      }
+
+      const allEvents = state.chainMessages.get(conversationId) ?? [];
+      const typesParam = ctx.query.get("types");
+      const types = typesParam
+        ? typesParam
+            .split(",")
+            .map((type) => type.trim())
+            .filter((type) => type.length > 0)
+        : undefined;
+
+      const beforeTsParam = parsedTail.data.before_ts;
+      const before_ts =
+        beforeTsParam !== undefined && beforeTsParam.length > 0 ? beforeTsParam : undefined;
+      const filteredEvents = allEvents.filter((event) => {
+        if (types && types.length > 0 && !types.includes(event.event_type)) {
+          return false;
+        }
+        if (before_ts && !(event.ts < before_ts)) {
+          return false;
+        }
+        return true;
+      });
+
+      const events = filteredEvents.slice(-parsedTail.data.limit);
+      sendJson(ctx.response, { events });
+      return;
+    }
+
+    if (tailParam !== null && tailParam !== "false") {
+      sendJson(
+        ctx.response,
+        { error: { code: "validation_error", message: "Invalid transcript tail options" } },
+        400,
+      );
+      return;
+    }
+
     const allEvents = state.chainMessages.get(conversationId) ?? [];
     const limitParam = ctx.query.get("limit");
     const parsedLimit = limitParam !== null ? Number.parseInt(limitParam, 10) : undefined;

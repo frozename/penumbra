@@ -48,7 +48,8 @@ test("maestro-context-prime recall budget covers protected payload byte caps", (
   const latestContinuation = frontmatter.recall?.find(
     (source) => source.source === "latest_continuation_note",
   );
-  const pendingDraft = frontmatter.recall?.find((source) => source.source === "file.contents");
+  const pendingDraft = frontmatter.recall?.find((source) => source.source === "pending_handoff");
+  expect(pendingDraft?.args?.max_bytes).toBeGreaterThan(0);
   const recallSource = readFileSync(
     resolve(import.meta.dir, "../../../workflows/src/recall.ts"),
     "utf8",

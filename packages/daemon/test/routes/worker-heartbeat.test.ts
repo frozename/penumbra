@@ -299,3 +299,61 @@ test("POST /worker/heartbeat without Authorization header returns 401 (not 403)"
   const body = (await res.json()) as ErrorBody;
   expect(body.error.code).toBe("unauthorized");
 });
+
+function seedApprovedHandoff(services: Services, handoff_id: string): void {
+  services.handoffWriter.createApproved({
+    handoff_id,
+    ts: "2026-04-26T00:00:00.000Z",
+    project_id: null,
+    conversation_id: `conv-${handoff_id}`,
+    from: "planner",
+    to: "worker",
+    to_role: null,
+    message: "go",
+    triggered_by_event_id: null,
+    resolved_by: "machine-test",
+    resolved_at: "2026-04-26T00:00:00.000Z",
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+  });
+}
+
+test("POST /worker/heartbeat re-sends cancel for the worker's dispatched handoffs that still carry a cancel request", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+  const fetchHandler = createDaemonFetchHandler({ services, token });
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  for (const [handoff_id, worker_id] of [
+    ["h-hb-cancel", "W-A"],
+    ["h-hb-live", "W-A"],
+    ["h-hb-other", "W-B"],
+  ] as const) {
+    seedApprovedHandoff(services, handoff_id);
+    expect(services.handoffWriter.claimDispatch(handoff_id, worker_id)).toBe(true);
+  }
+  services.handoffWriter.requestCancellation("conv-h-hb-cancel", "2026-04-26T00:00:01.000Z");
+  services.handoffWriter.requestCancellation("conv-h-hb-other", "2026-04-26T00:00:01.000Z");
+  const emitted: unknown[] = [];
+  services.workerControl.subscribe((event) => emitted.push(event));
+
+  const res = await fetchHandler(
+    new Request("http://x/worker/heartbeat", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+
+  expect(res.status).toBe(200);
+  expect(emitted).toEqual([
+    { type: "cancel", conversation_id: "conv-h-hb-cancel", handoff_id: "h-hb-cancel" },
+  ]);
+});

@@ -1,6 +1,11 @@
-import type { Logger } from "@penumbra/core";
+import type { Logger, PermissionProfile } from "@penumbra/core";
 
-import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import {
+  FsPathError,
+  renderSandboxExecProfile,
+  resolveInsideWorktree,
+  resolveSandboxDenyRoots,
+} from "@penumbra/core";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path, { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -10,6 +15,7 @@ import type { PermissionCallback } from "./permission-callback.js";
 import type { SandboxConfig } from "./sandbox-config.js";
 
 import {
+  assertSandboxExecAvailable,
   computeSandboxEnvKeys,
   spawnSandboxed,
   type SpawnSandboxedResult,
@@ -38,6 +44,19 @@ export interface WriteToolsExecutorOpts {
   /** Dispatch + handoff identity for audit emission and one-shot terminal scoping */
   handoffId: string;
   dispatchId: string;
+  /**
+   * Active permission profile. When set, terminal spawns are wrapped in
+   * sandbox-exec with a write-deny SBPL profile over the worktree root — the
+   * Layer B OS backstop behind the Layer A tool-call classifier. Fails closed
+   * when sandbox-exec is unavailable.
+   */
+  permissionProfile?: PermissionProfile | null;
+  /**
+   * Extra mutable roots denied under the same profile (caller cwd, project
+   * root, worktree fleet base) — a profile dispatch must not be able to write
+   * outside the worktree just because terminal cwd resolution differs.
+   */
+  sandboxDenyRoots?: readonly string[];
 }
 
 export interface ExitStatus {
@@ -64,6 +83,9 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+// An exited terminal whose output was never read may be reaped at the cap after this long.
+const STALE_EXITED_TERMINAL_MS = 5 * 60_000;
+
 interface TerminalHandle {
   terminal_id: string;
   argv: string[];
@@ -71,6 +93,8 @@ interface TerminalHandle {
   output: string;
   truncated: boolean;
   exitStatus?: ExitStatus;
+  exitedAt?: number;
+  outputReadAfterExit: boolean;
   done: Promise<SpawnSandboxedResult>;
   controller: AbortController;
   startedAt: number;
@@ -121,8 +145,28 @@ export class WriteToolsExecutor {
   private pendingReservations = 0;
   private readonly pathLocks = new Map<string, Promise<void>>();
   private disposed = false;
+  private terminalSandboxProfile: Promise<string | undefined> | undefined;
 
   constructor(private readonly opts: WriteToolsExecutorOpts) {}
+
+  private renderTerminalSandboxProfile(): Promise<string | undefined> {
+    if (this.opts.permissionProfile === undefined || this.opts.permissionProfile === null) {
+      return Promise.resolve(undefined);
+    }
+    // Assert here (not inside spawnSandboxed) so sandbox-exec unavailability
+    // rejects terminal/create itself instead of surfacing as a deferred
+    // terminal failure on the first wait/output read.
+    assertSandboxExecAvailable();
+    // SBPL subpath rules match resolved paths; every root (worktreeRoot under
+    // /var or any symlinked parent, plus caller/project extra roots) must be
+    // realpath'd or the deny rules silently miss.
+    this.terminalSandboxProfile ??= Promise.resolve(
+      renderSandboxExecProfile(
+        resolveSandboxDenyRoots(this.opts.worktreeRoot, this.opts.sandboxDenyRoots),
+      ),
+    );
+    return this.terminalSandboxProfile;
+  }
 
   async writeTextFile(
     args: { path: string; content: unknown },
@@ -313,9 +357,13 @@ export class WriteToolsExecutor {
     ctx: ToolCallContext,
   ): Promise<{ terminal_id: string }> {
     if (this.oneShots.size + this.pendingReservations >= this.opts.sandboxConfig.maxConcurrent) {
+      this.reapExitedTerminals();
+    }
+    if (this.oneShots.size + this.pendingReservations >= this.opts.sandboxConfig.maxConcurrent) {
       throw new TerminalCapExceededError(this.opts.sandboxConfig.maxConcurrent);
     }
     this.pendingReservations++;
+    let registeredId: string | undefined;
     try {
       await this.gate(ctx);
 
@@ -333,6 +381,7 @@ export class WriteToolsExecutor {
         outputMaxBytes,
         signal: controller.signal,
         path: this.opts.sandboxConfig.path,
+        sandboxProfile: await this.renderTerminalSandboxProfile(),
       });
 
       const handle: TerminalHandle = {
@@ -341,17 +390,20 @@ export class WriteToolsExecutor {
         cwd,
         output: "",
         truncated: false,
+        outputReadAfterExit: false,
         done,
         controller,
         startedAt: Date.now(),
       };
       this.oneShots.set(terminal_id, handle);
+      registeredId = terminal_id;
 
       void done
         .then(async (r) => {
           handle.output = r.output;
           handle.truncated = r.truncated;
           handle.exitStatus = { exitCode: r.exitCode, signal: r.signal };
+          handle.exitedAt = Date.now();
           await this.opts.auditEmitter.emit("terminal.exited", {
             terminal_id,
             exit_code: r.exitCode,
@@ -373,17 +425,47 @@ export class WriteToolsExecutor {
           this.opts.logger.error(`terminal tracking failed: ${errorMessage(err)}`);
         });
 
-      await this.opts.auditEmitter.emit("terminal.spawned", {
-        terminal_id,
-        argv,
-        cwd: cwd === this.opts.worktreeRoot ? "/" : path.relative(this.opts.worktreeRoot, cwd),
-        env_keys: computeSandboxEnvKeys(),
-        handoff_id: this.opts.handoffId,
-      });
+      // The child is already running and registered. Failing the create here
+      // would hand the caller no terminal_id, so the slot could never be
+      // released and the command would be reported as failed while it runs.
+      try {
+        await this.opts.auditEmitter.emit("terminal.spawned", {
+          terminal_id,
+          argv,
+          cwd: cwd === this.opts.worktreeRoot ? "/" : path.relative(this.opts.worktreeRoot, cwd),
+          env_keys: computeSandboxEnvKeys(),
+          handoff_id: this.opts.handoffId,
+        });
+      } catch (err) {
+        this.opts.logger.warn(`terminal.spawned audit emit failed: ${errorMessage(err)}`);
+      }
 
       return { terminal_id };
+    } catch (err) {
+      // Any throw after registration must not strand a slot the caller has no id for.
+      if (registeredId !== undefined) {
+        this.oneShots.get(registeredId)?.controller.abort();
+        this.oneShots.delete(registeredId);
+      }
+      throw err;
     } finally {
       this.pendingReservations--;
+    }
+  }
+
+  /**
+   * Drops exited, unreleased one-shot terminals whose output was read after
+   * exit or that exited at least STALE_EXITED_TERMINAL_MS ago. Unread output
+   * of a recently exited terminal is kept, so the caller hits the cap instead.
+   */
+  private reapExitedTerminals(): void {
+    const now = Date.now();
+    for (const [id, h] of this.oneShots) {
+      if (!h.exitStatus || h.exitedAt === undefined) continue;
+      if (h.outputReadAfterExit || now - h.exitedAt >= STALE_EXITED_TERMINAL_MS) {
+        this.oneShots.delete(id);
+        this.opts.logger.info(`reaped exited, unreleased terminal ${id}`);
+      }
     }
   }
 
@@ -401,6 +483,7 @@ export class WriteToolsExecutor {
   }): Promise<{ output: string; truncated: boolean; exit_status?: ExitStatus }> {
     const h = this.oneShots.get(args.terminal_id);
     if (!h) return Promise.reject(new TerminalNotFoundError(args.terminal_id));
+    if (h.exitStatus) h.outputReadAfterExit = true;
     return Promise.resolve({
       output: h.output,
       truncated: h.truncated,

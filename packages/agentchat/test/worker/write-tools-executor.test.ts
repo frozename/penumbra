@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "@src/worker/sandbox-config.js";
+import { SandboxUnavailableError } from "@src/worker/sandbox-spawn.js";
 import {
   EditAmbiguousError,
   EditMissError,
@@ -1052,6 +1053,105 @@ describe("WriteToolsExecutor.editTextFile", () => {
         },
       );
       expect(events.filter((e) => e.type === "fs.edit_applied").length).toBe(1);
+    });
+  });
+});
+
+describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
+  test.skipIf(process.platform !== "darwin")(
+    "terminal spawn under review_readonly cannot write inside the worktree",
+    async () => {
+      await withSandboxedExecutor(
+        async ({ executor, worktreeRoot }) => {
+          const { terminal_id } = await executor.terminalCreate(
+            { command: "touch denied-marker" },
+            { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
+          );
+          const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
+          expect(exit_status.exitCode).not.toBe(0);
+          const exists = await readFile(join(worktreeRoot, "denied-marker"), "utf8").then(
+            () => true,
+            () => false,
+          );
+          expect(exists).toBe(false);
+        },
+        { permissionProfile: "review_readonly" },
+      );
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "read-only terminal commands still run under review_readonly",
+    async () => {
+      await withSandboxedExecutor(
+        async ({ executor }) => {
+          const { terminal_id } = await executor.terminalCreate(
+            { command: "echo readonly-ok" },
+            { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
+          );
+          const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
+          expect(exit_status.exitCode).toBe(0);
+        },
+        { permissionProfile: "review_readonly" },
+      );
+    },
+  );
+
+  test.skipIf(process.platform === "darwin")(
+    "fails closed when sandbox-exec is unavailable for a profile dispatch",
+    async () => {
+      await withSandboxedExecutor(
+        async ({ executor }) => {
+          await expectRejection(
+            executor.terminalCreate(
+              { command: "echo hi" },
+              { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
+            ),
+            SandboxUnavailableError,
+          );
+        },
+        { permissionProfile: "review_readonly" },
+      );
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "terminal spawn under review_readonly cannot write under an extra deny root",
+    async () => {
+      const callerRoot = await mkdtemp(join(tmpdir(), "phase1d-caller-"));
+      try {
+        await withSandboxedExecutor(
+          async ({ executor }) => {
+            const { terminal_id } = await executor.terminalCreate(
+              { command: `touch ${callerRoot}/denied-marker` },
+              { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
+            );
+            const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
+            expect(exit_status.exitCode).not.toBe(0);
+            const exists = await readFile(join(callerRoot, "denied-marker"), "utf8").then(
+              () => true,
+              () => false,
+            );
+            expect(exists).toBe(false);
+          },
+          { permissionProfile: "review_readonly", sandboxDenyRoots: [callerRoot] },
+        );
+      } finally {
+        await rm(callerRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("unprofiled dispatch spawns without the sandbox wrapper", async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
+      const { terminal_id } = await executor.terminalCreate(
+        { command: "echo unsandboxed > allowed-marker" },
+        { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
+      );
+      const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
+      expect(exit_status.exitCode).toBe(0);
+      const content = await readFile(join(worktreeRoot, "allowed-marker"), "utf8");
+      expect(content.trim()).toBe("unsandboxed");
     });
   });
 });

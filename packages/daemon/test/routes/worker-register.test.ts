@@ -17,6 +17,7 @@ try {
 interface RegisterSuccessBody {
   worker_id: string;
   worker_token: string;
+  capabilities?: Record<string, boolean>;
 }
 interface RegisterErrorBody {
   error: { code: string };
@@ -106,6 +107,29 @@ test("POST /worker/register with shared bearer returns 200 + worker_token", asyn
   expect(row).not.toBeNull();
   expect(row?.worker_id).toBe("W-A");
   expect(row?.metadata_json).toBe(JSON.stringify({ host: "mac-mini" }));
+});
+
+test("POST /worker/register advertises claimed_before orphan-reconcile support", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  const res = await fetchHandler(
+    new Request("http://x/worker/register", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SHARED_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ worker_id: "W-CAP" }),
+    }),
+  );
+
+  expect(res.status).toBe(200);
+  const body = await readSuccess(res);
+  // New workers read this bit before ever firing a deferred orphan reconcile:
+  // a register response without it means the daemon predates the claimed_before
+  // bound, and an unfiltered reconcile from the live process must be refused.
+  expect(body.capabilities?.["reconcile_orphans_claimed_before"]).toBe(true);
 });
 
 test("POST /worker/register without metadata persists metadata_json NULL", async () => {

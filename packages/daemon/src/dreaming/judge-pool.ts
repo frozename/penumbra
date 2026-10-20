@@ -7,6 +7,23 @@ export interface JudgeVote {
   // True when the judge never produced a ballot (transport failure, throw).
   // Abstentions are excluded from the quorum numerator AND denominator.
   abstained?: boolean;
+  // Name of the seat that cast (or failed to cast) this ballot. Absent for
+  // pools that do not attribute ballots (stub and test pools).
+  seat?: string;
+  // Class of the failure behind an abstention (for example "http_502").
+  // Never an error message: messages can carry upstream response text.
+  error_class?: string;
+}
+
+// Persisted per-ballot shape in dream_actions.payload_json.votes. seat and
+// error_class are optional on purpose: rows written before per-ballot
+// attribution carry neither, and every reader must accept them.
+export interface SerializedJudgeVote {
+  seat?: string;
+  promote: boolean;
+  confidence: number;
+  abstained?: boolean;
+  error_class?: string;
 }
 
 export interface JudgePool {
@@ -18,6 +35,7 @@ export interface JudgePool {
   judgeAll?(args: {
     body: string;
     kind: "promote_t1" | "link" | "retire" | "rewrite";
+    subjectId?: string;
   }): Promise<JudgeVote[]>;
 }
 

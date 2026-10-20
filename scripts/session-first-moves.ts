@@ -1,4 +1,4 @@
-import { collectSessionFirstMoves } from "@penumbra/core";
+import { collectOpenPrs, collectSessionFirstMoves } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -119,6 +119,7 @@ async function main(): Promise<void> {
   const originMainSha = run("git rev-parse origin/main") || null;
   const daemonPid = readDaemonPid();
   const storageRoot = resolveStorageRoot();
+  const openPrs = await collectOpenPrs({ cwd: process.cwd() });
 
   let daemonState: DaemonSnapshot = {
     daemonHealthy: false,
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
       pending_task_drafts: daemonState.pendingTaskDrafts,
       project_id: resolveProjectId(),
       open_lanes: daemonState.openLanes,
+      open_prs: openPrs,
     });
     const scriptResult: Partial<typeof result> = { ...result };
     delete scriptResult.worker_pids;

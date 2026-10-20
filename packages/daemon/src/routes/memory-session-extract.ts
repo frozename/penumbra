@@ -9,6 +9,10 @@ import {
   wrapJudgeWithChunking,
 } from "../workers/t2-promotion.js";
 import { bodyJson, json } from "./_helpers.js";
+import {
+  type CodexTranscriptServerContext,
+  prepareCodexSessionTranscript,
+} from "./memory-session-extract-codex.js";
 
 const MAX_TRANSCRIPT_FILE_BYTES = 1_048_576;
 const MAX_TRANSCRIPT_FILE_TAIL_BYTES = 262_144;
@@ -18,6 +22,8 @@ const MemorySessionExtractSchema = z
     session_id: z.string().min(1).max(200),
     transcript_path: z.string().min(1).optional(),
     project_id: z.string().nullable().optional(),
+    harness: z.literal("codex").optional(),
+    transcript_format: z.string().max(128).nullable().optional(),
     max_candidates: z.number().int().min(1).max(50).optional(),
   })
   .strict();
@@ -26,6 +32,7 @@ const MemorySessionExtractSchema = z
 export async function memorySessionExtractRoute(
   req: Request,
   services: Services,
+  codexServerContext?: CodexTranscriptServerContext,
 ): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) {
@@ -49,6 +56,53 @@ export async function memorySessionExtractRoute(
       },
       400,
     );
+  }
+
+  let transcript = "";
+  let transcriptSource: "t0" | "transcript_path" = parsed.data.transcript_path
+    ? "transcript_path"
+    : "t0";
+  let sourceTruncated = false;
+  if (parsed.data.harness === "codex") {
+    if (!parsed.data.project_id) {
+      return json(
+        {
+          error: {
+            code: "validation_error",
+            message: "Codex session extraction requires an explicit project_id",
+          },
+        },
+        400,
+      );
+    }
+    const prepared = await prepareCodexSessionTranscript({
+      services,
+      sessionId: parsed.data.session_id,
+      projectId: parsed.data.project_id,
+      transcriptPath: parsed.data.transcript_path,
+      transcriptFormat: parsed.data.transcript_format,
+      serverContext: codexServerContext,
+    });
+    if (prepared.status === "error") {
+      return json(
+        { error: { code: prepared.code, message: prepared.message } },
+        prepared.httpStatus,
+      );
+    }
+    if (prepared.status === "insufficient_data") {
+      return json({
+        candidates: [],
+        insufficient_data: true,
+        reason: prepared.reason,
+        truncated: false,
+        chunks_judged: 0,
+        chunks_total: 0,
+        chunks_dropped: 0,
+      });
+    }
+    transcript = prepared.transcript;
+    transcriptSource = prepared.source;
+    sourceTruncated = prepared.truncated;
   }
 
   const rawJudge = resolveT2ExtractionJudge(services);
@@ -80,11 +134,13 @@ export async function memorySessionExtractRoute(
     },
   });
 
-  const transcript = readSessionTranscript(
-    services,
-    parsed.data.session_id,
-    parsed.data.transcript_path,
-  );
+  if (parsed.data.harness !== "codex") {
+    transcript = readSessionTranscript(
+      services,
+      parsed.data.session_id,
+      parsed.data.transcript_path,
+    );
+  }
   let candidates: Awaited<ReturnType<typeof extractSessionCandidates>>;
   try {
     candidates = await extractSessionCandidates(
@@ -103,7 +159,7 @@ export async function memorySessionExtractRoute(
         {
           err,
           transcriptLength: transcript.length,
-          source: parsed.data.transcript_path ? "transcript_path" : "t0",
+          source: transcriptSource,
         },
         "memory session extraction context overflow exhausted",
       );
@@ -122,7 +178,7 @@ export async function memorySessionExtractRoute(
       {
         err,
         transcriptLength: transcript.length,
-        source: parsed.data.transcript_path ? "transcript_path" : "t0",
+        source: transcriptSource,
       },
       "memory session extraction judge failed",
     );
@@ -139,7 +195,7 @@ export async function memorySessionExtractRoute(
 
   return json({
     candidates: candidates.map(({ embedding: _embedding, ...candidate }) => candidate),
-    truncated: chunkInfo.truncated,
+    truncated: sourceTruncated || chunkInfo.truncated,
     chunks_judged: chunkInfo.chunksJudged,
     chunks_total: chunkInfo.totalChunks,
     chunks_dropped: chunkInfo.chunksDropped,

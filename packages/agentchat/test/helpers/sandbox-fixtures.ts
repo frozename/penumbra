@@ -1,3 +1,5 @@
+import type { PermissionProfile } from "@penumbra/core";
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +21,11 @@ export async function withSandboxedExecutor(
     decisions: PermissionDecision[];
     pushDecision: (d: PermissionDecision) => void;
   }) => Promise<void>,
-  opts?: { permissionDefault?: PermissionDecision },
+  opts?: {
+    permissionDefault?: PermissionDecision;
+    permissionProfile?: PermissionProfile | null;
+    sandboxDenyRoots?: readonly string[];
+  },
 ): Promise<void> {
   const worktreeRoot = await mkdtemp(join(tmpdir(), "phase1d-x-"));
   const events: CapturedEvent[] = [];
@@ -50,6 +56,8 @@ export async function withSandboxedExecutor(
     logger: { warn: noop, info: noop, debug: noop, error: noop },
     handoffId: "h-test",
     dispatchId: "d-test",
+    permissionProfile: opts?.permissionProfile ?? null,
+    sandboxDenyRoots: opts?.sandboxDenyRoots,
   });
 
   try {

@@ -5,7 +5,11 @@ export const meta = {
   whenToUse:
     "When a fleet task branch is approved and needs to be landed onto main (and optionally close its lane and resolve its board task).",
   phases: [
-    { title: "Land", detail: "mcp__penumbra__dispatch_land to squash or ff the branch onto main" },
+    {
+      title: "Land",
+      detail:
+        "mcp__penumbra__dispatch_land to squash or ff the branch onto main; relays its concurrent_prs warning",
+    },
     { title: "Verify", detail: "check HEAD matches commit_sha and has non-empty diff" },
     {
       title: "Close",
@@ -45,10 +49,28 @@ const REPO = rawRepo;
 const LAND_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["commit_sha"],
+  required: ["commit_sha", "concurrent_prs"],
   properties: {
     commit_sha: { type: "string" },
     error: { type: "string" },
+    concurrent_prs: {
+      type: "array",
+      description:
+        "Other open PRs that reference the same issue number as this commit message, copied verbatim from the dispatch_land result; [] when it has none.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["number", "title", "head_ref", "author", "url", "issue"],
+        properties: {
+          number: { type: "integer" },
+          title: { type: "string" },
+          head_ref: { type: "string" },
+          author: { type: ["string", "null"] },
+          url: { type: "string" },
+          issue: { type: "integer" },
+        },
+      },
+    },
   },
 };
 
@@ -114,7 +136,8 @@ const landRes = await agent(
     `STEP 1: Call mcp__penumbra__dispatch_land(handoff_id=${JSON.stringify(safeHandoffId)}, mode="${mode}", commit_message=${JSON.stringify(safeCommitMessage)}, force=${a.force ? "true" : "false"}).`,
     `If successful, copy the commit_sha verbatim and set error to an empty string.`,
     `If it fails with an HTTP 409 error or any other error, set error to the verbatim error message and commit_sha to an empty string. DO NOT force retry unless args.force was true.`,
-    `Return { commit_sha, error }`,
+    `The dispatch_land result may carry concurrent_prs: other open PRs that reference the same issue number as this commit message. Copy result.concurrent_prs verbatim into concurrent_prs; use [] when the result has no concurrent_prs or the land failed. It is a warning only: never retry, force, or stop because of it.`,
+    `Return { commit_sha, error, concurrent_prs }`,
   ].join("\n"),
   {
     label: "land",
@@ -133,6 +156,23 @@ if (!landRes || landRes.error || !landRes.commit_sha) {
     task_status: null,
     notes: `Land failed: ${landRes ? landRes.error : "land agent returned no result"}`,
   };
+}
+
+// Warn-only: another open PR on the same issue never blocks the land, but
+// every post-land result carries it so a duplicate lane cannot go unnoticed.
+const concurrentPrs = Array.isArray(landRes.concurrent_prs) ? landRes.concurrent_prs : [];
+const concurrentList = concurrentPrs
+  .map((pr) => `#${pr.number} (issue #${pr.issue}, ${pr.head_ref} by ${pr.author || "unknown"}) ${pr.url}`)
+  .join("; ");
+const concurrentCount =
+  concurrentPrs.length === 1 ? "1 other open PR references" : `${concurrentPrs.length} other open PRs reference`;
+const concurrentWarning =
+  concurrentPrs.length === 0
+    ? ""
+    : `WARNING: ${concurrentCount} the same issue as this land: ${concurrentList}. Check for duplicate work before closing the issue. `;
+
+function landedResult(result) {
+  return { ...result, concurrent_prs: concurrentPrs, notes: concurrentWarning + result.notes };
 }
 
 phase("Verify");
@@ -156,14 +196,14 @@ const verifyRes = await agent(
 );
 
 if (!verifyRes || !verifyRes.verified) {
-  return {
+  return landedResult({
     ok: false,
     commit_sha: landRes.commit_sha,
     head_verified: false,
     lane_status: null,
     task_status: null,
     notes: `Verification failed: ${verifyRes ? `head=${verifyRes.head} expected=${landRes.commit_sha} files_changed=${verifyRes.files_changed}` : "verify agent returned no result — check the home repo manually."}`,
-  };
+  });
 }
 
 let closeRes = { lane_status: "skipped", task_status: "skipped" };
@@ -183,7 +223,7 @@ if (safeLaneId || safeBoardTaskId) {
   closeRes = await agent(
     [
       safeLaneId
-        ? `STEP 3: call mcp__penumbra__lane_close with lane_id=${JSON.stringify(safeLaneId)}, gate_status="${gateStatus}"${safeReviewerHandoffId ? `, reviewer_handoff_id=${JSON.stringify(safeReviewerHandoffId)}` : ""}${a.lane_metadata ? `, metadata=${JSON.stringify(a.lane_metadata)}` : ""}.\n  KNOWN BUG TOLERANCE: if the call errors with 'missing implementer_handoff or reviewer_handoff in response', the write almost certainly persisted; if it errors 409 lane_already_closed, the lane was closed earlier (daemon auto-close or a prior call). In BOTH cases verify via mcp__penumbra__lane_ledger_recent and report lane_status from the ledger row; NEVER retry the close.`
+        ? `STEP 3: call mcp__penumbra__lane_close with lane_id=${JSON.stringify(safeLaneId)}, gate_status="${gateStatus}"${safeReviewerHandoffId ? `, reviewer_handoff_id=${JSON.stringify(safeReviewerHandoffId)}` : ""}${a.lane_metadata ? `, metadata=${JSON.stringify(a.lane_metadata)}` : ""}.\n  KNOWN BUG TOLERANCE: if the call errors with 'missing implementer_handoff or reviewer_handoff in response', the write almost certainly persisted; if it errors 409 lane_already_closed, a real close is already recorded; if it errors 400 supersede_requires_review_evidence, the orphan-lane sweeper already closed the lane and your close carried no reviewer evidence — do NOT add an override_reason, do NOT retry; read lane_ledger_recent and report that lane_status. For ANY lane_close error, verify via mcp__penumbra__lane_ledger_recent and report lane_status from the ledger row; NEVER retry the close.`
         : `STEP 3: no lane to close — set lane_status to 'skipped'.`,
       safeBoardTaskId
         ? `STEP 4: call mcp__penumbra__task_complete with task_id=${JSON.stringify(safeBoardTaskId)}, result_summary=${JSON.stringify(boardTaskResultSummary)}, result_artifacts=[{ type: "commit", ref: ${JSON.stringify(String(landRes.commit_sha))} }]${safeBoardTaskLeaseId ? `, lease_id=${JSON.stringify(safeBoardTaskLeaseId)}` : ""}. If task_complete returns 400 (validation error for missing lease_id), 404, or 405 because the daemon is older and does not support this completion path, call mcp__penumbra__task_cancel with task_id=${JSON.stringify(safeBoardTaskId)}, reason=${JSON.stringify(boardTaskResultSummary)} as the compatibility fallback. If task_complete returns 409 (LeaseConflict — the task is actively leased), do NOT cancel and do NOT retry: set task_status to 'lease_conflict' and include the active lease id from the error if present. Do not use task_cancel for any other task_complete error.`
@@ -199,7 +239,7 @@ if (safeLaneId || safeBoardTaskId) {
   );
   if (!closeRes) {
     // The land already happened — surface the partial outcome instead of crashing.
-    return {
+    return landedResult({
       ok: false,
       commit_sha: landRes.commit_sha,
       head_verified: true,
@@ -207,15 +247,15 @@ if (safeLaneId || safeBoardTaskId) {
       task_status: "unknown",
       notes:
         "Landed and verified, but the close agent returned no result — close the lane/task manually.",
-    };
+    });
   }
 }
 
-return {
+return landedResult({
   ok: true,
   commit_sha: landRes.commit_sha,
   head_verified: verifyRes.verified,
   lane_status: closeRes.lane_status,
   task_status: closeRes.task_status,
   notes: "Successfully landed, verified, and closed.",
-};
+});

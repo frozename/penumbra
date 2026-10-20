@@ -8,6 +8,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Raised from 15 on 2026-09-04, when packages/e2e joined the sharded test
     # step. Measured: the first run carrying the e2e shard took 871s against a
     # 900s limit -- 29s of headroom. Runs without it had ranged 566-798s, so a
@@ -28,6 +30,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: install
         run: bun install --frozen-lockfile
+      # The upstream bucket returns 403; HF releases change vectors. Restore the
+      # exact model bytes that produced stored embeddings.
+      - name: embedder model (pinned release asset, sha256-verified)
+        run: bun scripts/fetch-embedder-model.ts
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: typecheck
         run: bun run typecheck
       - name: "typecheck coverage ratchet (blocking: floors fall, never rise)"

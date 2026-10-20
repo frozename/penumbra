@@ -11,6 +11,7 @@ export const DispatchReliabilityStatusSchema = z.enum([
   "no_agent_output",
   "no_worktree_activity",
   "tool_failure_with_end_turn",
+  "end_turn_without_return_block",
   "reconcile_missing",
   "agent_declared_done_unverified",
   "timeline_inconsistent",

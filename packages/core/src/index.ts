@@ -1,5 +1,3 @@
-import { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
-
 export {
   type IssueArgs,
   type IssueResult,
@@ -7,6 +5,7 @@ export {
   WorkerTokenStore,
 } from "./auth/worker-token-store.js";
 export { Branding } from "./branding.js";
+export { type ConcurrentPr, findConcurrentPrs } from "./concurrent-prs.js";
 export { ContextFileWriter, type ContextFileWriterOpts } from "./context-file/writer.js";
 export {
   type GlobalCrashHandlerOpts,
@@ -36,10 +35,12 @@ export {
   type InsertLaneInput,
   type LaneGateStatus,
   type LaneRow,
+  ORPHAN_SWEEPER_REASON_PREFIX,
   type RecentLaneFilter,
   recentLanes,
   stampAgentPerformanceGateOutcome,
   stampAgentPerformanceGateOutcomeForHandoff,
+  supersedeSweeperClose,
 } from "./db/lane-ledger.js";
 export {
   assertEmbedderDim,
@@ -63,10 +64,8 @@ export {
 export { type DispatchEvent, DispatchEventBus } from "./dispatch/event-bus.js";
 export { BundledEmbedder } from "./embedder/bundled.js";
 export type { Embedder } from "./embedder/interface.js";
-export type { RemoteEmbedderOpts } from "./embedder/openai-compat.js";
-export { OpenAICompatEmbedder } from "./embedder/openai-compat.js";
-export { resolveEmbedder } from "./embedder/resolve.js";
-export type { EmbedderMode } from "./embedder/resolve.js";
+export { OpenAICompatEmbedder, type RemoteEmbedderOpts } from "./embedder/openai-compat.js";
+export { type EmbedderMode, resolveEmbedder } from "./embedder/resolve.js";
 export {
   ConversationStreamBus,
   type ConversationStreamListener,
@@ -87,6 +86,8 @@ export {
   type PermissionEventListener,
 } from "./events/permission-events.js";
 export { WorkerControlBus, type WorkerControlListener } from "./events/worker-control.js";
+export { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
+export { type GhRunner } from "./gh-runner.js";
 export { MachineId } from "./identity/machine-id.js";
 export { resolveProjectId } from "./identity/project-id.js";
 export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
@@ -130,10 +131,12 @@ export {
   MemoryVerifyClaimInputShape,
 } from "./memory-verify/schemas.js";
 export { normalize, type NormalizeCtx } from "./normalize/ingest.js";
+export { collectOpenPrs } from "./open-prs.js";
 export { mapProvider, normalizeOtlpLogsToUsageEvents } from "./otlp/normalize.js";
 export { parseOtlpLogs } from "./otlp/parse.js";
 export { parseOtlpLogsProtobuf } from "./otlp/protobuf.js";
 export type { ParsedLogRecord } from "./otlp/types.js";
+export * from "./permissions/review-readonly.js";
 export { PidRegistry } from "./pid/registry.js";
 export { derivePlanId } from "./plans/plan-id.js";
 export {
@@ -157,12 +160,12 @@ export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
   defaultProjectRegistryPath,
   loadProjectRegistry,
+  loadProjectRegistryAsync,
   ProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from "./projects/registry.js";
-export { getGithubRepo } from "./projects/schema.js";
-export type { ProjectEntry, ProjectRegistryFile } from "./projects/schema.js";
+export { getGithubRepo, type ProjectEntry, type ProjectRegistryFile } from "./projects/schema.js";
 export {
   type AgentResponseEvent,
   ChainReader,
@@ -204,6 +207,7 @@ export {
 } from "./readers/fleet-latency.js";
 export { getObservations } from "./readers/get-observations.js";
 export { HandoffReader, type HandoffReaderOpts } from "./readers/handoff.js";
+export * from "./readers/judge-decisions.js";
 export {
   claimNextJob,
   completeJob,
@@ -240,8 +244,11 @@ export {
   type PressureResult,
   type PressureSnapshot,
   type PressureWarning,
+  type PressureWindow,
+  type PressureWindowStatus,
   readSubscriptionPressure,
   type ReadSubscriptionPressureOpts,
+  readSubscriptionPressureWindows,
 } from "./readers/subscription-pressure.js";
 export {
   getTaskDraftPromotionInfo,
@@ -405,31 +412,9 @@ export {
   renderAgentPerformanceMarkdown,
 } from "./services/agent-performance-markdown.js";
 export { recordOperatorAgentPerformance } from "./services/agent-performance-operator.js";
-export {
-  type AgentRecommendation,
-  type DetailMode,
-  type DroppedAgentPoolMember,
-  isTextOnlyAdapter,
-  type ResolvableAgentProviderInput,
-  resolveAgentPool,
-  type ResolveAgentPoolContext,
-  type ResolveAgentPoolResult,
-  resolveBiasEffect,
-  type ResolvedAgentPoolMember,
-  resolveGateOutcomeCutoverIso,
-  resolveProvider,
-  type RoleRoute,
-  routeAgent,
-  type RouteAgentInput,
-  type RouteAgentOutput,
-  type RoutingBiasEffectInput,
-} from "./services/agent-routing.js";
-export {
-  type DispatchEventInput,
-  type DispatchEventKind,
-  DispatchEventLog,
-  type DispatchEventRow,
-} from "./services/dispatch-event-log.js";
+export * from "./services/agent-routing.js";
+export * from "./services/dispatch-audit-report.js";
+export * from "./services/dispatch-event-log.js";
 export {
   refineDispatchPrompt,
   type RefineDispatchPromptOpts,
@@ -481,6 +466,8 @@ export {
   type LlmPurpose,
   type LlmRoutingBias,
   type LlmServingCandidate,
+  parseKeychainRef,
+  resolveAuthSecret,
   type ResolvedLlmCandidate,
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
@@ -494,7 +481,17 @@ export {
   type Classification,
   classifyFindings,
   type Finding,
+  MEMORY_EFFICACY_BUCKET_DEFINITIONS,
+  MEMORY_EFFICACY_BUCKETS,
+  type MemoryEfficacyBucket,
 } from "./services/memory-efficacy-classifier.js";
+export {
+  type ScratchReleaseResult,
+  type ScratchSweepResult,
+  type ScratchWorktreeHandle,
+  type ScratchWorktreesOpts,
+  ScratchWorktreesService,
+} from "./services/scratch-worktrees.js";
 export {
   fetchServedModelEntries,
   fetchServedModels,
@@ -616,7 +613,6 @@ export {
   isAncestorOf,
   isThreeDotDiffEmpty,
 } from "./worktree/branch-land-probe.js";
-export { FsPathError, resolveInsideWorktree };
 
 export {
   buildHandoffBranchName,
@@ -648,6 +644,7 @@ export {
   WorktreeManager,
   type WorktreeMode,
 } from "./worktree/manager.js";
+export * from "./worktree/scratch-public.js";
 export { AgentPerformanceWriter } from "./writers/agent-performance.js";
 export {
   type ApproveOpts,
@@ -656,6 +653,7 @@ export {
   type CreateHandoffParams,
   HandoffWriter,
 } from "./writers/handoff.js";
+export * from "./writers/judge-decisions.js";
 export {
   type NotificationOutboxEntry,
   type NotificationOutboxKind,

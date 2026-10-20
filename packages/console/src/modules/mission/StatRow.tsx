@@ -1,14 +1,11 @@
 import type { MissionSession } from "@penumbra/api-contract";
 
-import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import { DaemonClient } from "@src/api/client";
 import type { StreamMessage, StreamTopic, Subscription } from "@src/api/streams";
 import { useSession } from "@src/hooks/useSession";
 import { useStream } from "@src/hooks/useStream";
-import { usageQuotaStatus } from "@src/lib/query-keys";
-import { HEARTBEAT_MS } from "@src/lib/timing";
 import { useDaemonStore } from "@src/stores/daemon-store";
 import { StatCard } from "@src/ui/StatCard";
 
@@ -48,11 +45,6 @@ function formatSession(session: MissionSession | undefined): {
 export function StatRow(props: StatRowProps = {}): JSX.Element {
   const client = useMemo(() => props.client ?? makeDefaultClient(), [props.client]);
   const session = useSession({ client });
-  useQuery({
-    queryKey: usageQuotaStatus(),
-    queryFn: () => client.getQuotaStatus(),
-    refetchInterval: HEARTBEAT_MS,
-  });
   const stream = useStream(
     "dispatch-events",
     undefined,

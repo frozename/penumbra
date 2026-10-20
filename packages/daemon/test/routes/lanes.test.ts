@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createDaemonFetchHandler } from "@src/serve.js";
+import { runOrphanLanesSweep } from "@src/sweepers/orphan-lanes.js";
 
 try {
   if (process.platform === "darwin") {
@@ -1583,6 +1584,234 @@ test("POST /lanes/close rejects gate_status maybe with validation_error", async 
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
       "validation_error",
     );
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("real sweeper close can be superseded once with reviewer and audited prior verdict", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-swept", "codex");
+    insertHandoff(daemon, "rev-swept", "gemini");
+    insertPerformance(daemon, "h-swept", "codex");
+    expect(
+      (
+        await postJson(daemon, "/lanes/open", {
+          lane_id: "lane-swept",
+          implementer_handoff: "h-swept",
+          task_class: "BOUNDARY",
+        })
+      ).status,
+    ).toBe(200);
+    const sweepTime = "2026-04-25T12:00:00.000Z";
+    expect(runOrphanLanesSweep(daemon.services, { nowIso: sweepTime }).closed).toBe(1);
+    daemon.services.clock = (): Date => new Date("2026-04-25T13:00:00.000Z");
+    const prior = daemon.services.db
+      .query<
+        { gate_status: string; ts_closed: string; override_reason: string },
+        []
+      >("SELECT gate_status, ts_closed, override_reason FROM lane_ledger WHERE lane_id='lane-swept'")
+      .get();
+    const res = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-swept",
+      gate_status: "passed",
+      reviewer_handoff: "rev-swept",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as LaneRow & { superseded: unknown };
+    expect(body.superseded).toEqual(prior);
+    expect(body.gate_status).toBe("passed");
+    expect(body.reviewer_handoff).toBe("rev-swept");
+    expect(body.override_reason).toStartWith("superseded orphan-lane sweeper close (review_debt @");
+    const metadata = JSON.parse(body.metadata_json) as { notes: string };
+    expect(metadata.notes).toContain("superseded orphan-lane sweeper close");
+    expect(
+      daemon.services.db
+        .query("SELECT gate_outcome FROM agent_performance WHERE handoff_id='h-swept'")
+        .get(),
+    ).toEqual({ gate_outcome: "passed" });
+    const events = daemon.services.db
+      .query<
+        { meta_json: string },
+        []
+      >("SELECT meta_json FROM dispatch_events WHERE kind='lane.override'")
+      .all();
+    expect(events.map((e): unknown => JSON.parse(e.meta_json) as unknown)).toContainEqual(
+      expect.objectContaining({
+        control: "sweeper_close_superseded",
+        prior_gate_status: "review_debt",
+        prior_ts_closed: sweepTime,
+        prior_override_reason: (prior as { override_reason: string }).override_reason,
+      }),
+    );
+    const again = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-swept",
+      gate_status: "passed",
+      reviewer_handoff: "rev-swept",
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: { code: "lane_already_closed" } });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("a swept-then-superseded passed close cannot erase a real failed gate_outcome", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-failed-then-swept", "codex");
+    insertHandoff(daemon, "rev-failed-then-swept", "gemini");
+    insertPerformance(daemon, "h-failed-then-swept", "codex");
+
+    // Round 1 closes with a real failed verdict.
+    expect(
+      (
+        await postJson(daemon, "/lanes/open", {
+          lane_id: "lane-failed-first",
+          implementer_handoff: "h-failed-then-swept",
+          task_class: "BOUNDARY",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await postJson(daemon, "/lanes/close", {
+          lane_id: "lane-failed-first",
+          gate_status: "failed",
+        })
+      ).status,
+    ).toBe(200);
+    const outcomeAfterFail = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        []
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id='h-failed-then-swept'")
+      .get();
+    expect(outcomeAfterFail).toEqual({ gate_outcome: "failed" });
+
+    // Round 2's lane outlives the non-TRIVIAL grace and is swept to review_debt.
+    expect(
+      (
+        await postJson(daemon, "/lanes/open", {
+          lane_id: "lane-swept-after-failed",
+          implementer_handoff: "h-failed-then-swept",
+          task_class: "BOUNDARY",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      runOrphanLanesSweep(daemon.services, { nowIso: "2026-04-30T12:00:00.000Z" }).closed,
+    ).toBe(1);
+    const outcomeAfterSweep = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        []
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id='h-failed-then-swept'")
+      .get();
+    expect(outcomeAfterSweep).toEqual({ gate_outcome: "failed" });
+
+    // Superseding the sweeper close to passed must not lift the failed verdict —
+    // the same passed close on an un-swept lane would leave it failed.
+    daemon.services.clock = (): Date => new Date("2026-04-30T13:00:00.000Z");
+    const res = await postJson(daemon, "/lanes/close", {
+      lane_id: "lane-swept-after-failed",
+      gate_status: "passed",
+      reviewer_handoff: "rev-failed-then-swept",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ gate_status: "passed" });
+    const outcomeAfterSupersede = daemon.services.db
+      .query<
+        { gate_outcome: string | null },
+        []
+      >("SELECT gate_outcome FROM agent_performance WHERE handoff_id='h-failed-then-swept'")
+      .get();
+    expect(outcomeAfterSupersede).toEqual({ gate_outcome: "failed" });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test("two never-superseded swept lanes do not consume the real review round cap", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-two-sweeps", "codex");
+    insertHandoff(daemon, "rev-two-sweeps", "gemini");
+    for (const lane_id of ["swept-round-1", "swept-round-2"]) {
+      expect(
+        (
+          await postJson(daemon, "/lanes/open", {
+            lane_id,
+            implementer_handoff: "h-two-sweeps",
+            task_class: "BOUNDARY",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        runOrphanLanesSweep(daemon.services, { nowIso: "2026-04-25T12:00:00.000Z" }).closed,
+      ).toBe(1);
+    }
+    const res = await postJson(daemon, "/lanes/close", {
+      lane_id: "swept-round-2",
+      gate_status: "passed",
+      reviewer_handoff: "rev-two-sweeps",
+      metadata: { round_count: 1 },
+    });
+    expect(res.status).toBe(200);
+  } finally {
+    daemon.stop();
+  }
+});
+
+for (const gate_status of ["passed", "skipped"]) {
+  test(`supersede to ${gate_status} without review evidence fails closed`, async () => {
+    const daemon = startTestDaemon();
+    try {
+      insertHandoff(daemon, "h-no-evidence", "codex");
+      await postJson(daemon, "/lanes/open", {
+        lane_id: "swept-no-evidence",
+        implementer_handoff: "h-no-evidence",
+        task_class: "STANDARD",
+      });
+      expect(
+        runOrphanLanesSweep(daemon.services, { nowIso: "2026-04-25T12:00:00.000Z" }).closed,
+      ).toBe(1);
+      const res = await postJson(daemon, "/lanes/close", {
+        lane_id: "swept-no-evidence",
+        gate_status,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        error: { code: "supersede_requires_review_evidence" },
+      });
+    } finally {
+      daemon.stop();
+    }
+  });
+}
+
+test("whitespace override cannot launder a swept lane into passed", async () => {
+  const daemon = startTestDaemon();
+  try {
+    insertHandoff(daemon, "h-whitespace", "codex");
+    await postJson(daemon, "/lanes/open", {
+      lane_id: "swept-whitespace",
+      implementer_handoff: "h-whitespace",
+      task_class: "STANDARD",
+    });
+    expect(
+      runOrphanLanesSweep(daemon.services, { nowIso: "2026-04-25T12:00:00.000Z" }).closed,
+    ).toBe(1);
+    const res = await postJson(daemon, "/lanes/close", {
+      lane_id: "swept-whitespace",
+      gate_status: "passed",
+      override_reason: "   ",
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: { code: "supersede_requires_review_evidence" },
+    });
   } finally {
     daemon.stop();
   }

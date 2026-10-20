@@ -286,4 +286,70 @@ describe("startHeartbeatLoop", () => {
 
     loop.stop();
   });
+
+  test("onHealthy fires after each successful emit and never after failures", async () => {
+    const scheduler = createManualScheduler();
+    const healthyCalls: number[] = [];
+    const emitPlan: ("ok" | "fail" | "hang")[] = ["ok", "fail", "hang", "ok"];
+    const loop = startHeartbeatLoop({
+      emitHeartbeat: (): Promise<void> => {
+        const step = emitPlan.shift();
+        if (step === "fail") return Promise.reject(new Error("retryable"));
+        if (step === "hang") {
+          return new Promise<void>(() => {
+            /* hangs until the emit timeout fires */
+          });
+        }
+        return Promise.resolve();
+      },
+      reregisterWorker: (): Promise<void> => Promise.resolve(),
+      exit: noop,
+      schedule: scheduler.schedule,
+      timeoutMs: 1,
+      log: silentLog,
+      workerId: "W-A",
+      onHealthy: () => {
+        healthyCalls.push(healthyCalls.length + 1);
+      },
+    });
+
+    for (let i = 0; i < 4; i++) {
+      await runNextScheduled(scheduler.tasks);
+    }
+
+    // success, retryable failure, timed-out failure, success.
+    expect(healthyCalls).toEqual([1, 2]);
+
+    loop.stop();
+  });
+
+  test("a throwing onHealthy does not break the heartbeat cadence", async () => {
+    const scheduler = createManualScheduler();
+    let emits = 0;
+    const loop = startHeartbeatLoop({
+      emitHeartbeat: (): Promise<void> => {
+        emits++;
+        return Promise.resolve();
+      },
+      reregisterWorker: (): Promise<void> => Promise.resolve(),
+      exit: noop,
+      schedule: scheduler.schedule,
+      timeoutMs: 1,
+      log: silentLog,
+      workerId: "W-A",
+      onHealthy: () => {
+        throw new Error("drain exploded");
+      },
+    });
+
+    await runNextScheduled(scheduler.tasks);
+    await runNextScheduled(scheduler.tasks);
+
+    expect(emits).toBe(2);
+    // The next successful beat was still scheduled at the 15 s cadence.
+    expect(scheduler.tasks).toHaveLength(1);
+    expect(scheduler.tasks.at(0)?.delayMs).toBe(15_000);
+
+    loop.stop();
+  });
 });

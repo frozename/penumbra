@@ -1,11 +1,13 @@
 import "../setup";
-import { render, within } from "@testing-library/react";
-import { describe, expect, test } from "bun:test";
+import { cleanup, render, within } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { Badge } from "@src/ui/Badge";
 import { Button } from "@src/ui/Button";
 import { Card, CardHead } from "@src/ui/Card";
 import { StatusBadge } from "@src/ui/StatusBadge";
+
+afterEach(cleanup);
 
 describe("Badge", () => {
   test("renders all variants with default info", () => {

@@ -1,9 +1,11 @@
 import "../setup";
-import { act, render } from "@testing-library/react";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { Statusbar } from "@src/shell/Statusbar";
 import { useDaemonStore } from "@src/stores/daemon-store";
+
+afterEach(cleanup);
 
 beforeEach(() => {
   useDaemonStore.setState({

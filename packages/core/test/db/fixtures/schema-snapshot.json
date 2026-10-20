@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 45,
+  "schemaVersion": 47,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -128,11 +128,13 @@
     "handoffs": [
       "branch_base",
       "branch_name",
+      "caller_cwd",
       "cancel_requested_at",
       "chain_max_hops",
       "chain_task_type",
       "chain_trust_mode",
       "conversation_id",
+      "cwd_override",
       "dispatch_attempts",
       "dispatch_kind",
       "error_message",
@@ -146,6 +148,7 @@
       "message",
       "open_pr_on_review",
       "parent_handoff_id",
+      "permission_profile",
       "project_id",
       "redirected_to",
       "requested_agent",
@@ -162,6 +165,18 @@
       "use_worktree",
       "worker_id",
       "workflow_run_id"
+    ],
+    "judge_decisions": [
+      "applied",
+      "created_at",
+      "decision_id",
+      "incumbent_json",
+      "jev_json",
+      "mode",
+      "model",
+      "site",
+      "subject_id",
+      "usage_input_tokens"
     ],
     "lane_ledger": [
       "gate_status",
@@ -508,6 +523,7 @@
       "promotion_filtered_at",
       "promotion_retry_after",
       "promotion_retry_count",
+      "promotion_retry_exhausted_at",
       "promotion_unusable_excerpt_at",
       "provider_breakdown_json",
       "rollup_id",
@@ -703,6 +719,7 @@
     "handoffs_workflow_run_id",
     "idx_corpus_members_memory",
     "idx_curator_ephemera_status",
+    "idx_dispatch_events_end_ts",
     "idx_dispatch_events_handoff",
     "idx_dispatch_events_handoff_kind",
     "idx_dispatch_events_ts",
@@ -718,6 +735,8 @@
     "idx_dream_research_cache_negative",
     "idx_dream_research_cache_project",
     "idx_handoffs_root_status",
+    "idx_judge_decisions_site_created_at",
+    "idx_judge_decisions_subject_id",
     "idx_long_lived_action_audit_lookup",
     "idx_long_lived_pending_actions_lookup",
     "idx_long_lived_ticks_by_agent",
@@ -766,6 +785,7 @@
     "t0_by_type_ts",
     "t0_events_task_draft_id_lookup",
     "t0_events_task_draft_lookup",
+    "t0_events_usage_update_handoff",
     "t0_events_workflow_outcome_lookup",
     "t1_by_project",
     "t1_session",

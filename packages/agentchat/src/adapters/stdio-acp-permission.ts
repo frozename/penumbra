@@ -1,3 +1,5 @@
+import { evaluateProfileToolCall } from "@penumbra/core";
+
 import type { DispatchInput } from "../sdk/adapter.js";
 
 const MAX_TOOL_CALL_CONTEXTS = 64;
@@ -297,6 +299,43 @@ function isSignalAborted(signal: AbortSignal): boolean {
   return signal.aborted;
 }
 
+function rejectOrCancelOutcome(options: PermissionOption[]): PermissionResult {
+  const chosen = selectConfigOption(options, "reject");
+  return typeof chosen?.optionId === "string"
+    ? { outcome: { outcome: "selected", optionId: chosen.optionId } }
+    : cancelledOutcome();
+}
+
+// A permission profile evaluates BEFORE trust_mode: a profile deny must win
+// over the trust-all fast path, which otherwise picks an allow option without
+// ever consulting requestPermission. Unresolvable context and profile denies
+// both select reject_once (cancelled when the agent offers no reject option —
+// still not an approval). Returns the resolved context on approve so the
+// config path can reuse it; "rejected" means an outcome was already decided.
+function resolveProfileGate(
+  input: DispatchInput,
+  context: StdioAcpPermissionContext,
+  request: AcpPermissionRequest,
+  options: PermissionOption[],
+): { context: ResolvedPermissionContext | null; outcome: PermissionResult | null } {
+  const profile = input.permission_profile ?? null;
+  if (profile === null) return { context: null, outcome: null };
+  const permissionContext = context.resolve(request);
+  if (permissionContext === null) {
+    return { context: null, outcome: rejectOrCancelOutcome(options) };
+  }
+  const profileDecision = evaluateProfileToolCall(
+    profile,
+    permissionContext.toolName,
+    permissionContext.rawInput,
+  );
+  if (profileDecision.decision === "deny") {
+    context.finishDecision(permissionContext);
+    return { context: null, outcome: rejectOrCancelOutcome(options) };
+  }
+  return { context: permissionContext, outcome: null };
+}
+
 export async function handleStdioAcpPermissionRequest(
   input: DispatchInput,
   context: StdioAcpPermissionContext,
@@ -310,14 +349,32 @@ export async function handleStdioAcpPermissionRequest(
     return cancelledOutcome();
   }
   const options = permissionOptions(request.options);
+  const profileGate = resolveProfileGate(input, context, request, options);
+  if (profileGate.outcome !== null) return profileGate.outcome;
+  return await resolvePermissionOutcome(input, context, request, options, profileGate.context);
+}
+
+async function resolvePermissionOutcome(
+  input: DispatchInput,
+  context: StdioAcpPermissionContext,
+  request: AcpPermissionRequest,
+  options: PermissionOption[],
+  resolvedContext: ResolvedPermissionContext | null,
+): Promise<PermissionResult> {
   if (input.trust_mode === "all") {
+    // A resolved-but-profile-approved context is retired here; it was resolved
+    // only for profile evaluation and no requestPermission round-trip follows.
+    if (resolvedContext !== null) context.finishDecision(resolvedContext);
     const chosen = selectTrustAllOption(options);
     return typeof chosen?.optionId === "string"
       ? { outcome: { outcome: "selected", optionId: chosen.optionId } }
       : cancelledOutcome();
   }
-  if (!input.requestPermission) return cancelledOutcome();
-  const permissionContext = context.resolve(request);
+  if (!input.requestPermission) {
+    if (resolvedContext !== null) context.finishDecision(resolvedContext);
+    return cancelledOutcome();
+  }
+  const permissionContext = resolvedContext ?? context.resolve(request);
   if (permissionContext === null) return cancelledOutcome();
 
   let decision: "approve" | "reject" = "approve";

@@ -40,6 +40,8 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
       let n = 0;
       return (): string => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`;
     })(),
+    mainRepoDir: dir,
+    worktreeRootDir: join(dir, "worktrees"),
   });
   const token = opts.token ?? "test-token";
   const handle = serve({ services, token, port: 0 });

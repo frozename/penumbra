@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  type HandoffRow,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
@@ -21,8 +27,8 @@ interface RecoveryResult {
   exhausted: number;
   requeuedRowIds: string[];
   exhaustedRowIds: string[];
-  _requeuedRows: unknown[];
-  _exhaustedRows: unknown[];
+  _requeuedRows: HandoffRow[];
+  _exhaustedRows: HandoffRow[];
 }
 
 interface ErrorBody {
@@ -196,6 +202,191 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   expect(passedOptions).toEqual({ workerKnownDead: true });
 });
 
+test("POST /worker/reconcile-orphans forwards claimed_before to runOnce", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+
+  let passedOptions: { workerKnownDead?: boolean; claimedBefore?: string } | undefined;
+  const mockRecovery = asRecoveryService({
+    runOnce: (
+      _workerId?: string,
+      opts?: { workerKnownDead?: boolean; claimedBefore?: string },
+    ): RecoveryResult => {
+      passedOptions = opts;
+      return {
+        requeued: 1,
+        exhausted: 0,
+        requeuedRowIds: ["1"],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
+    },
+  });
+
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-bound",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const bound = "2026-10-06T12:00:00.000Z";
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "w-bound", claimed_before: bound }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  expect(passedOptions).toEqual({ workerKnownDead: true, claimedBefore: bound });
+});
+
+test("POST /worker/reconcile-orphans without claimed_before leaves opts unchanged", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+
+  let passedOptions: { workerKnownDead?: boolean; claimedBefore?: string } | undefined;
+  const mockRecovery = asRecoveryService({
+    runOnce: (
+      _workerId?: string,
+      opts?: { workerKnownDead?: boolean; claimedBefore?: string },
+    ): RecoveryResult => {
+      passedOptions = opts;
+      return {
+        requeued: 0,
+        exhausted: 0,
+        requeuedRowIds: [],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
+    },
+  });
+
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-plain",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "w-plain" }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  expect(passedOptions).toEqual({ workerKnownDead: true });
+});
+
+test.each([
+  ["a non-date string", "soon"],
+  ["a number", 42],
+  ["a date-only string", "2026-10-06"],
+])(
+  "POST /worker/reconcile-orphans rejects malformed claimed_before (%s) with 400",
+  async (_label, claimedBefore) => {
+    const services = tempServices();
+    const token = "secret-token";
+    let called = false;
+    const mockRecovery = asRecoveryService({
+      runOnce: (): RecoveryResult => {
+        called = true;
+        return {
+          requeued: 0,
+          exhausted: 0,
+          requeuedRowIds: [],
+          exhaustedRowIds: [],
+          _requeuedRows: [],
+          _exhaustedRows: [],
+        };
+      },
+    });
+    const fetchHandler = createDaemonFetchHandler({
+      services,
+      token,
+      orphanHandoffRecovery: mockRecovery,
+    });
+
+    const { worker_token } = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: token,
+      worker_id: "w-bad",
+      fetcher: makeFetcher(fetchHandler),
+    });
+
+    const res = await fetchHandler(
+      new Request("http://x/worker/reconcile-orphans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${worker_token}` },
+        body: JSON.stringify({ worker_id: "w-bad", claimed_before: claimedBefore }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await readJson<ErrorBody>(res);
+    expect(body.error.code).toBe("validation_error");
+    expect(called).toBe(false);
+  },
+);
+
+test("POST /worker/reconcile-orphans rejects unknown body keys with 400 (fail closed)", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+  let called = false;
+  const mockRecovery = asRecoveryService({
+    runOnce: (): RecoveryResult => {
+      called = true;
+      return {
+        requeued: 0,
+        exhausted: 0,
+        requeuedRowIds: [],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
+    },
+  });
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: mockRecovery,
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-xtra",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  // A worker-side typo (claimedBefore) must not silently disable the filter.
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "w-xtra", claimedBefore: "2026-10-06T12:00:00.000Z" }),
+    }),
+  );
+  expect(res.status).toBe(400);
+  expect(called).toBe(false);
+});
+
 test("POST /worker/reconcile-orphans auth boundary and service-unavailable", async () => {
   const services = tempServices();
   const token = "secret-token";
@@ -285,6 +476,38 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     requeuedRowIds: ["1"],
     exhaustedRowIds: [],
   });
+});
+
+test("POST /worker/reconcile-orphans resolves recovery attached to services after handler creation", async () => {
+  const services: Services & { orphanHandoffRecovery?: OrphanHandoffRecoveryService } =
+    tempServices();
+  const handler = createDaemonFetchHandler({ services, token: "test-token" });
+  try {
+    const { worker_token } = await registerWorkerForTest({
+      baseUrl: "http://x",
+      sharedBearer: "test-token",
+      worker_id: "w-late",
+      fetcher: makeFetcher(handler),
+    });
+    const request = (): Request =>
+      new Request("http://x/worker/reconcile-orphans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${worker_token}` },
+        body: JSON.stringify({ worker_id: "w-late", claimed_before: "2026-10-07T12:00:00.000Z" }),
+      });
+    expect((await handler(request())).status).toBe(503);
+    services.orphanHandoffRecovery = new OrphanHandoffRecoveryService(services, { intervalMs: 0 });
+    const response = await handler(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      requeued: 0,
+      exhausted: 0,
+      requeuedRowIds: [],
+      exhaustedRowIds: [],
+    });
+  } finally {
+    services.db.close();
+  }
 });
 
 // --- Phase 4.2 principal enforcement tests ---

@@ -29,6 +29,32 @@ import {
 
 export const MIN_RESPONSE_CHARS = 40;
 
+// usage-update events carry per-turn delta usage, not running totals
+// — taking MAX within a (provider, model) group loses every turn except
+// the largest. SUM aggregates the deltas correctly across multiple
+// turns of the same dispatch. The CASE/json_valid handoff_id predicate
+// must match the t0_events_usage_update_handoff expression index
+// verbatim; an unguarded json_extract misses the index and throws on
+// malformed payloads.
+export const AGGREGATE_HANDOFF_USAGE_SQL = `
+    WITH per_group AS (
+      SELECT
+        provider,
+        model,
+        SUM(cost_usd) AS group_cost,
+        SUM(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS group_tokens
+      FROM t0_events
+      WHERE event_type = 'usage-update'
+        AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.handoff_id') END = ?
+      GROUP BY provider, model
+    )
+    SELECT
+      SUM(group_cost) AS sum_cost,
+      SUM(group_tokens) AS sum_tokens,
+      SUM(CASE WHEN group_cost IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost
+    FROM per_group
+  `;
+
 export function meaningfulOutput(text: string | null | undefined): {
   chars: number;
   meaningful: boolean;
@@ -42,32 +68,7 @@ export function aggregateHandoffUsage(
   handoffId: string,
 ): { cost_usd: number | null; tokens_used: number | null } {
   type Row = { sum_cost: number | null; sum_tokens: number | null; n_with_cost: number };
-  const row = db
-    .prepare<Row, [string]>(
-      // usage-update events carry per-turn delta usage, not running totals
-      // — taking MAX within a (provider, model) group loses every turn except
-      // the largest. SUM aggregates the deltas correctly across multiple
-      // turns of the same dispatch.
-      `
-    WITH per_group AS (
-      SELECT
-        provider,
-        model,
-        SUM(cost_usd) AS group_cost,
-        SUM(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS group_tokens
-      FROM t0_events
-      WHERE event_type = 'usage-update'
-        AND json_extract(payload_json, '$.handoff_id') = ?
-      GROUP BY provider, model
-    )
-    SELECT
-      SUM(group_cost) AS sum_cost,
-      SUM(group_tokens) AS sum_tokens,
-      SUM(CASE WHEN group_cost IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost
-    FROM per_group
-  `,
-    )
-    .get(handoffId);
+  const row = db.prepare<Row, [string]>(AGGREGATE_HANDOFF_USAGE_SQL).get(handoffId);
   return {
     cost_usd: (row?.n_with_cost ?? 0) > 0 ? (row?.sum_cost ?? null) : null,
     tokens_used: row?.sum_tokens ?? null,
@@ -353,11 +354,14 @@ function classifyDispatchReliabilityFromDb(
   }
   let worktreeChanged: boolean | null = null;
   let dispatchEndCommitted: boolean | null = null;
+  let dispatchEndDirty: boolean | null = null;
   if (parsedDispatchEndMeta) {
     if (typeof parsedDispatchEndMeta.worktree_changed === "boolean")
       worktreeChanged = parsedDispatchEndMeta.worktree_changed;
     if (typeof parsedDispatchEndMeta.committed === "boolean")
       dispatchEndCommitted = parsedDispatchEndMeta.committed;
+    if (typeof parsedDispatchEndMeta.dirty === "boolean")
+      dispatchEndDirty = parsedDispatchEndMeta.dirty;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
   return classifyDispatchReliability({
@@ -377,6 +381,9 @@ function classifyDispatchReliabilityFromDb(
     dispatchEndCommitted,
     reconciled: null,
     adapterStreaming: null,
+    // No dispatchPrompt: the worker usually sends a response summary, which
+    // replaces the final text with a placeholder the CHECK_RESULT rule would misread.
+    dispatchEndDirty,
   });
 }
 

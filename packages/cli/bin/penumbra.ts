@@ -6,9 +6,20 @@ import {
   Branding,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runChainSendMessage } from "../src/commands/chain.js";
+import { loadCodexHookCapabilities } from "../src/commands/codex-hook-capabilities.js";
+import { createCodexPluginHost } from "../src/commands/codex-plugin-host.js";
+import { runCodexSafetyHook } from "../src/commands/codex-safety-hook.js";
+import {
+  type CodexSetupAction,
+  type CodexSetupMode,
+  type CodexSetupOptions,
+  runCodexSetup,
+} from "../src/commands/codex-setup.js";
 import { runConsole } from "../src/commands/console.js";
 import { runDispatchAudit } from "../src/commands/dispatch-audit.js";
 import {
@@ -17,6 +28,7 @@ import {
   runDispatchTimeline,
 } from "../src/commands/dispatch.js";
 import { runExport } from "../src/commands/export.js";
+import { runCodexHook } from "../src/commands/hook-codex.js";
 import { runHook } from "../src/commands/hook.js";
 import { runImport } from "../src/commands/import.js";
 import { runInit } from "../src/commands/init.js";
@@ -69,13 +81,59 @@ function resolveLiveRoot(): string {
 
 switch (cmd) {
   case "init":
-    process.exit(
-      await runInit({
-        storageRoot: bootstrapRoot,
-        forceAgentchat:
-          process.argv.includes("--force-agentchat") || process.argv.includes("--reset-agentchat"),
-      }),
-    );
+    {
+      const harnessRaw = readCommandFlagValue("penumbra init", "--harness");
+      if (harnessRaw !== undefined && harnessRaw !== "claude-code" && harnessRaw !== "codex") {
+        exitWithUsage("penumbra init", `unsupported harness: ${harnessRaw}`);
+      }
+      const harness = harnessRaw ?? "claude-code";
+      const hasCodexOptions = [
+        "--codex-dir",
+        "--skills-dir",
+        "--codex-mode",
+        "--capability-report",
+      ].some((flag) => process.argv.includes(flag));
+      if (harness !== "codex" && hasCodexOptions) {
+        exitWithUsage("penumbra init", "Codex options require --harness codex");
+      }
+      const codexSetup =
+        harness === "codex"
+          ? await codexSetupOptions("penumbra init", "--codex-mode", bootstrapRoot)
+          : undefined;
+      process.exit(
+        await runInit({
+          storageRoot: bootstrapRoot,
+          harness,
+          codexSetup,
+          forceAgentchat:
+            process.argv.includes("--force-agentchat") ||
+            process.argv.includes("--reset-agentchat"),
+        }),
+      );
+    }
+    break;
+  case "codex-setup":
+    {
+      const actionRaw = process.argv[3];
+      if (!isCodexSetupAction(actionRaw)) {
+        exitWithUsage(
+          "penumbra codex-setup",
+          `unknown action: ${actionRaw ?? "<missing>"}; expected install, status, repair, or uninstall`,
+        );
+      }
+      const result = await runCodexSetup({
+        action: actionRaw,
+        ...(await codexSetupOptions("penumbra codex-setup", "--mode", bootstrapRoot)),
+      });
+      if (process.argv.includes("--json")) emit(JSON.stringify(result));
+      else {
+        emit(
+          `penumbra codex-setup: ${actionRaw} ${result.ok ? "complete" : "failed"} (${result.mode})`,
+        );
+        if (result.reason) console.error(result.reason);
+      }
+      process.exit(result.ok ? 0 : 1);
+    }
     break;
   case "start":
     {
@@ -767,14 +825,85 @@ switch (cmd) {
       // Designed for use in ~/.claude/settings.json hooks (PreToolUse, PostToolUse,
       // UserPromptSubmit). Best-effort — never blocks the hook on observation failures.
       const subtype = process.argv[3];
-      if (subtype !== "claude-code") {
-        console.error("usage: penumbra hook claude-code [--project <id>] [--session <id>]");
+      if (subtype === "codex-safety") {
+        const args = process.argv.slice(4);
+        let guardPath: string | null = null;
+        let sentinelPath: string | null = null;
+        let valid = args.length === 4;
+        for (let index = 0; valid && index < args.length; index += 2) {
+          const flag = args[index];
+          const value = args[index + 1];
+          if (!value || value.startsWith("-")) {
+            valid = false;
+          } else if (flag === "--guard-path" && guardPath === null) {
+            guardPath = value;
+          } else if (flag === "--sentinel-path" && sentinelPath === null) {
+            sentinelPath = value;
+          } else {
+            valid = false;
+          }
+        }
+        if (
+          !valid ||
+          !guardPath ||
+          !sentinelPath ||
+          !isAbsolute(guardPath) ||
+          !isAbsolute(sentinelPath)
+        ) {
+          console.error("usage: penumbra hook codex-safety --guard-path ABS --sentinel-path ABS");
+          process.exit(1);
+        }
+        const rawEvent = (await readBoundedStdin(256 * 1024)) ?? "";
+        process.exit(
+          await runCodexSafetyHook({
+            rawEvent,
+            guardPath,
+            sentinelPath,
+            storageRoot: resolveLiveRoot(),
+          }),
+        );
+      }
+      if (subtype !== "claude-code" && subtype !== "codex") {
+        console.error("usage: penumbra hook <claude-code|codex> [--project <id>] [--session <id>]");
         process.exit(1);
       }
       const projectFlagIdx = process.argv.indexOf("--project");
       const project = projectFlagIdx >= 0 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
       const sessionFlagIdx = process.argv.indexOf("--session");
       const sessionId = sessionFlagIdx >= 0 ? (process.argv[sessionFlagIdx + 1] ?? null) : null;
+      if (subtype === "codex") {
+        const storageFlagIdx = process.argv.indexOf("--storage-root");
+        const storageRoot =
+          storageFlagIdx >= 0
+            ? (process.argv[storageFlagIdx + 1] ?? bootstrapRoot)
+            : resolveLiveRoot();
+        let emitted = false;
+        const write = (value: string): void => {
+          if (emitted) return;
+          emitted = true;
+          process.stdout.write(value);
+        };
+        try {
+          const rawEvent = (await readBoundedStdin(256 * 1024)) ?? "";
+          process.exit(
+            await runCodexHook({
+              storageRoot,
+              rawEvent,
+              project,
+              sessionId,
+              env: process.env,
+              write,
+            }),
+          );
+        } catch {
+          try {
+            await runCodexHook({ storageRoot, rawEvent: "", write });
+          } catch {
+            // The hook is best-effort even when stdout is unavailable.
+          }
+          process.exit(0);
+        }
+      }
       const rawEvent = await Bun.stdin.text();
       try {
         const root = resolveLiveRoot();
@@ -1216,7 +1345,7 @@ switch (cmd) {
   case "-h":
   case undefined:
     emit(
-      "usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
+      "usage: penumbra <init|codex-setup|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
     );
     process.exit(0);
     break;
@@ -1229,6 +1358,28 @@ function emit(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+async function readBoundedStdin(maxBytes: number): Promise<string | null> {
+  const reader = Bun.stdin.stream().getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) return new TextDecoder().decode(Buffer.concat(chunks));
+      size += next.value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function readOptionalFlagValue(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   if (idx < 0) return undefined;
@@ -1238,6 +1389,96 @@ function readOptionalFlagValue(flag: string): string | undefined {
     process.exit(1);
   }
   return value;
+}
+
+function readCommandFlagValue(command: string, flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx < 0) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith("-")) exitWithUsage(command, `${flag} requires a value`);
+  return value;
+}
+
+function exitWithUsage(command: string, message: string): never {
+  console.error(`${command}: ${message}`);
+  console.error(`usage: ${command} [options]`);
+  process.exit(2);
+}
+
+function isCodexSetupAction(value: string | undefined): value is CodexSetupAction {
+  return value === "install" || value === "status" || value === "repair" || value === "uninstall";
+}
+
+function readCodexMode(command: string, flag: string): CodexSetupMode {
+  const value = readCommandFlagValue(command, flag);
+  if (value === undefined) {
+    exitWithUsage(
+      command,
+      `Codex plugin support is unavailable; pass ${flag} standalone explicitly`,
+    );
+  }
+  if (value !== "standalone" && value !== "plugin") {
+    exitWithUsage(command, `unsupported mode: ${value}; expected standalone or plugin`);
+  }
+  return value;
+}
+
+function readAbsolutePathFlag(command: string, flag: string, fallback: string): string {
+  const value = readCommandFlagValue(command, flag);
+  if (value !== undefined && !isAbsolute(value)) {
+    exitWithUsage(command, `${flag} must be an absolute path: ${value}`);
+  }
+  return value ?? fallback;
+}
+
+async function codexSetupOptions(
+  command: string,
+  modeFlag: string,
+  storageRoot: string,
+): Promise<Omit<CodexSetupOptions, "action">> {
+  const mode = readCodexMode(command, modeFlag);
+  const codexDir = readAbsolutePathFlag(
+    command,
+    "--codex-dir",
+    process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  );
+  const skillsDir = readAbsolutePathFlag(
+    command,
+    "--skills-dir",
+    join(homedir(), ".agents/skills"),
+  );
+  const reportPath = readCommandFlagValue(command, "--capability-report");
+  if (reportPath !== undefined && !isAbsolute(reportPath)) {
+    exitWithUsage(command, `--capability-report must be an absolute path: ${reportPath}`);
+  }
+  let capabilities: Pick<CodexSetupOptions, "hookCapabilities" | "observedCodexBuild"> = {};
+  if (reportPath !== undefined) {
+    try {
+      const loaded = await loadCodexHookCapabilities({ reportPath });
+      capabilities = {
+        hookCapabilities: loaded.report,
+        observedCodexBuild: loaded.observedBuild,
+      };
+    } catch (error) {
+      exitWithUsage(command, error instanceof Error ? error.message : String(error));
+    }
+  }
+  const marketplaceRoot = fileURLToPath(new URL("../../../plugin/codex", import.meta.url));
+  const packageDir = join(marketplaceRoot, "penumbra");
+  const host =
+    mode === "plugin"
+      ? await createCodexPluginHost({ codexDir, marketplaceRoot, pluginRoot: packageDir })
+      : undefined;
+  return {
+    mode,
+    codexDir,
+    skillsDir,
+    packageDir,
+    storageRoot,
+    mcpEntrypoint: fileURLToPath(new URL("../../mcp/bin/penumbra-mcp.ts", import.meta.url)),
+    ...(host ? { host } : {}),
+    ...capabilities,
+  };
 }
 
 function formatHostForUrl(host: string): string {

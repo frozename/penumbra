@@ -1,8 +1,10 @@
 import "../../setup";
-import { render, within } from "@testing-library/react";
-import { describe, expect, mock, test } from "bun:test";
+import { cleanup, render, within } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import { PressureGrid } from "@src/modules/mission/PressureGrid";
+
+afterEach(cleanup);
 
 describe("PressureGrid", () => {
   test("renders first four orbs and collapses overflow", () => {

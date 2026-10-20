@@ -106,6 +106,8 @@ export interface T2PromotionStatus {
   enabled: boolean;
   reason: "judge_configured" | "judge_unconfigured";
   judge_env: "PENUMBRA_JUDGE_BASE_URL";
+  healthy?: boolean;
+  empty_extraction_streak?: number;
 }
 
 export interface T2PromotionWorker {
@@ -115,6 +117,7 @@ export interface T2PromotionWorker {
 
 interface JudgeChoice {
   message?: { content?: string };
+  finish_reason?: string;
 }
 
 interface JudgeResponse {
@@ -153,6 +156,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
     judge: rawJudge,
     log: opts.services.log,
     embedder: opts.services.embedder,
+    failWhenAllChunksFail: true,
   });
 
   const t2 = new T2Promotion({
@@ -161,6 +165,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
     clock: opts.services.clock,
     uuid: opts.services.uuid,
     llm: judge,
+    log: opts.services.log,
   });
 
   const minEvents = opts.minEvents ?? 5;
@@ -713,21 +718,22 @@ function cosineSim(a: Float32Array, b: Float32Array, na: number, nb: number): nu
 }
 
 export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
-  // Some transcripts produce structurally invalid JSON from the judge
-  // (duplicate keys with mismatched closing braces, unbalanced arrays from
-  // mid-output truncation, etc). Returning [] on parse failure marks the
-  // rollup promoted with 0 extractions instead of failed-and-retried; we
-  // accept that some transcripts are unparseable rather than burning the
-  // 5-attempt retry budget on each one.
+  // A reply we cannot parse is a judge failure, not "nothing durable here":
+  // throwing routes the rollup through failed_promotion_attempts + the retry
+  // budget instead of stamping it done with zero extractions.
   let parsed: { memories?: unknown };
   try {
     parsed = JSON.parse(stripJsonFence(content)) as { memories?: unknown };
   } catch {
-    return [];
+    throw new JudgeError("t2 judge response was not valid JSON", {
+      isContextOverflow: false,
+    });
   }
   const extractions = parsed.memories;
   if (!Array.isArray(extractions)) {
-    return [];
+    throw new JudgeError("t2 judge response missing memories array", {
+      isContextOverflow: false,
+    });
   }
   return extractions as T2MemoryExtraction[];
 }
@@ -772,8 +778,21 @@ export function createDefaultLLMJudge(
       }
 
       const json = (await res.json()) as JudgeResponse;
-      const content = json.choices?.[0]?.message?.content;
-      if (!content) return [];
+      const choice = json.choices?.[0];
+      const content = choice?.message?.content;
+      if (choice?.finish_reason === "length") {
+        throw new JudgeError(
+          "judge default reply truncated by the token limit (finish_reason=length)",
+          {
+            isContextOverflow: false,
+          },
+        );
+      }
+      if (!content) {
+        throw new JudgeError("judge default reply had no content", {
+          isContextOverflow: false,
+        });
+      }
       return parseJudgeResponse(content);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "TimeoutError") {

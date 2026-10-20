@@ -672,6 +672,65 @@ describe("resolveSingleRoute — model task router modes", () => {
     }
   });
 
+  test("mode:'auto' with a permission_profile hint selects only a seat that can enforce it", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+    writePerf(db, "beta");
+    const svc = services(db, {
+      agents: [
+        {
+          name: "alpha",
+          roles: ["reviewer"],
+          pricing_mode: "subscription",
+          subscription_provider: "anthropic",
+        },
+        {
+          name: "beta",
+          roles: ["reviewer"],
+          pricing_mode: "subscription",
+          subscription_provider: "openai",
+          enforces_permission_profiles: ["review_readonly"],
+        },
+      ],
+      default_roles: {},
+      role_exploration_policy: "ranked-first",
+    });
+    svc.taskRouterConfig = routerConfig("auto");
+    svc.modelAliasMap = {};
+
+    // alpha outranks beta unconstrained, but cannot enforce the profile.
+    expect(
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+        permission_profile: "review_readonly",
+      }),
+    ).toEqual({ agent: "beta", role: "reviewer", taskType: "review_adversarial" });
+  });
+
+  test("mode:'auto' with a permission_profile hint throws when no seat can enforce it", () => {
+    const db = freshDb();
+    writePerf(db, "alpha");
+    writePerf(db, "beta");
+    const svc = services(db);
+    svc.taskRouterConfig = routerConfig("auto");
+    svc.modelAliasMap = {};
+
+    let caught: unknown;
+    try {
+      resolveSingleRoute(svc, "reviewer", "review this", "review_adversarial", {
+        permission_profile: "review_readonly",
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(RouterHardConstraintExhaustedError);
+    const err = caught as RouterHardConstraintExhaustedError;
+    expect(err.decision.selected).toBeNull();
+    for (const alternative of err.decision.alternatives) {
+      expect(alternative.reasons).toContain("permission_profile_unenforceable");
+    }
+  });
+
   test("mode:'auto' throws a legible hard-constraint error when routing biases empty the pool", () => {
     const db = freshDb();
     writePerf(db, "alpha");

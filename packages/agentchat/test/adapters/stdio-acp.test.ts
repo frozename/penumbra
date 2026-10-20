@@ -2049,6 +2049,130 @@ describe("StdioAcpAdapter", () => {
     ]);
   });
 
+  it("injects the review_readonly MCP allowlist, replacing any yaml-level allowlist", async () => {
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
+
+    const capturedRef = mutableRef<CapturedSessionParams | null>(null);
+    const mockClientRequest = makeStandardClientRequest({
+      onSessionNew: (params: unknown): void => {
+        capturedRef.value = asCapturedSessionParams(params);
+      },
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: "mock-acp",
+        mcpServers: [
+          {
+            name: "penumbra-mcp",
+            command: "/bin/penumbra-mcp",
+            args: [],
+            env: [
+              { name: "PENUMBRA_MCP_TOOL_ALLOWLIST", value: "fs_write,shell_run" },
+              { name: "TOKEN", value: "abc123" },
+            ],
+          },
+          {
+            name: "github-mcp",
+            command: "/bin/github-mcp",
+            args: [],
+            env: [{ name: "TOKEN", value: "xyz" }],
+          },
+        ],
+      },
+      {
+        startServer,
+        createClient: (h: StdioAcpHandle): StdioAcpClient => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      },
+    );
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      conversation: { id: "c1", project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      handoff_id: "HANDOFF_PROFILE",
+      permission_profile: "review_readonly",
+    });
+
+    const captured = capturedRef.value;
+    const env = captured?.mcpServers?.[0]?.env ?? [];
+    const allowlistEntries = env.filter((entry) => entry.name === "PENUMBRA_MCP_TOOL_ALLOWLIST");
+    expect(allowlistEntries).toHaveLength(1);
+    expect(allowlistEntries[0]?.value).toContain("memory_search");
+    expect(allowlistEntries[0]?.value).toContain("fs_read");
+    expect(allowlistEntries[0]?.value).not.toContain("fs_write");
+    expect(captured?.mcpServers?.[1]?.env).toEqual([{ name: "TOKEN", value: "xyz" }]);
+  });
+
+  it("passes a rendered sandbox-exec profile to startServer under permission_profile", async () => {
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
+
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp" },
+      {
+        startServer,
+        createClient: makeCreateClientWithStandardRequest(),
+      },
+    );
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      handoff_id: "HANDOFF_SANDBOX",
+      permission_profile: "review_readonly",
+    });
+
+    expect(startServer).toHaveBeenCalledTimes(1);
+    const spawnOpts = startServer.mock.calls[0]?.[0];
+    const profile = (spawnOpts as { sandboxProfile?: string }).sandboxProfile;
+    expect(profile).toContain("(deny file-write*");
+    expect(profile).toContain("(allow default)");
+  });
+
+  it("omits sandboxProfile on unprofiled dispatches", async () => {
+    const handle = makeMockAcpHandle();
+    const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+    startServer.mockResolvedValue(handle);
+
+    const adapter = new StdioAcpAdapter(
+      { binary: "mock-acp" },
+      {
+        startServer,
+        createClient: makeCreateClientWithStandardRequest(),
+      },
+    );
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      handoff_id: "HANDOFF_PLAIN",
+    });
+
+    const spawnOpts = startServer.mock.calls[0]?.[0];
+    expect((spawnOpts as { sandboxProfile?: string }).sandboxProfile).toBeUndefined();
+  });
+
+  it("bypasses the warm pool under permission_profile (prewarmed servers are unsandboxed)", async () => {
+    const { adapter, pool } = createWarmPoolHarness({ warmPool: true });
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      handoff_id: "HANDOFF_PROFILE_NOPOOL",
+      permission_profile: "review_readonly",
+    });
+    expect(pool.acquire).not.toHaveBeenCalled();
+    expect(pool.deposit).not.toHaveBeenCalled();
+  });
+
   it("emits agent.heartbeat when subprocess is alive and no session/update for >=45s", async () => {
     vi.useFakeTimers();
     try {

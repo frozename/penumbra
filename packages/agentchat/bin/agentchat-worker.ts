@@ -3,13 +3,13 @@ import type { AgentOptions, AgentPool } from "@penumbra/config";
 
 import {
   createLogger,
-  defaultProjectRegistryPath,
   type DispatchEventInput,
   fetchServedModels,
   type HandoffRow,
   installGlobalCrashHandlers,
-  loadProjectRegistry,
   meaningfulOutput,
+  profilesEnforcedBySeats,
+  resolveSandboxDenyRoots,
   SettingsDefaults,
   systemUuid,
   waitForDaemonStorageRoot,
@@ -18,11 +18,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { McpServer } from "../src/adapters/acp-types.js";
 import type { AgentChatConfig } from "../src/config/types.js";
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../src/sdk/adapter.js";
+import type { Adapter, DispatchInput } from "../src/sdk/adapter.js";
 import type { UsageReader } from "../src/usage-readers/index.js";
-import type { CapturePort } from "../src/worker/capture-port.js";
 
 import {
   acpWarmPoolLiveEntryCount,
@@ -31,15 +29,8 @@ import {
   totalAcpWarmPoolEntryCount,
 } from "../src/adapters/acp-warm-pool-registry.js";
 import { poolKeyFor } from "../src/adapters/acp-warm-pool.js";
-import {
-  type CapacityError,
-  spawnCliAdapter,
-  spawnCliAdapterStream,
-  type SpawnOpts,
-} from "../src/adapters/cli-spawn.js";
-import { prepareOpencodeMcpConfigDir } from "../src/adapters/opencode-mcp-config.js";
-import { buildAdapter, createStdioAcpAdapter, registerAdapter } from "../src/adapters/registry.js";
-import { resolveAdapterApiKey } from "../src/adapters/secret.js";
+import { registerThoughtAwareAdapters } from "../src/adapters/cli-spawn-adapters.js";
+import { buildAdapter } from "../src/adapters/registry.js";
 import { normalizeAdapterOptions } from "../src/cli/adapter-options.js";
 import { dispatchHandoff } from "../src/cli/dispatch-handoff.js";
 import { loadConfigPathOrDir } from "../src/config/load.js";
@@ -72,11 +63,13 @@ import {
   shouldCheckWorkerCodeStaleness,
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
 } from "../src/worker/code-staleness.js";
+import { handleAgentchatReload } from "../src/worker/config-reload.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
 import { postToDiscord } from "../src/worker/discord-notifier.js";
 import { createDiscordRateLimiter } from "../src/worker/discord-rate-limit.js";
 import { buildDispatchHandoffInput } from "../src/worker/dispatch-handoff-input.js";
+import { assertProfileDispatchSeat } from "../src/worker/dispatch-profile-gate.js";
 import { createWorkerDispatcher } from "../src/worker/dispatcher.js";
 import { DispatchEventQueue } from "../src/worker/event-queue.js";
 import { startEventSource } from "../src/worker/event-source.js";
@@ -102,8 +95,13 @@ import {
 import { createPrewarmLoop, type PrewarmLoop } from "../src/worker/prewarm-loop.js";
 import { computePrewarmTargets, type PrewarmTarget } from "../src/worker/prewarm-targets.js";
 import { resolveDispatchCwd } from "../src/worker/project-cwd.js";
+import { WorkerProjectRegistry } from "../src/worker/project-registry.js";
 import { RecallEnricher } from "../src/worker/recall-enricher.js";
 import { resolveSandboxConfig } from "../src/worker/sandbox-config.js";
+import {
+  resolveScratchDispatch,
+  type ScratchDispatchResolution,
+} from "../src/worker/scratch-dispatch.js";
 import { createWorkerShutdown } from "../src/worker/shutdown.js";
 import {
   buildRetryPayloadOrNull,
@@ -117,6 +115,7 @@ import {
   SILENT_RETRY_PREFIX,
   silentFailureRetrySuppressionReason,
 } from "../src/worker/silent-failure-retry.js";
+import { loggerFromPino, TerminalOutbox } from "../src/worker/terminal-outbox.js";
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "../src/worker/thought-analyzer.js";
 import { ThoughtCapture } from "../src/worker/thought-capture.js";
 import { loadThoughtsConfig } from "../src/worker/thought-config.js";
@@ -141,242 +140,6 @@ function flag(name: string, fallback?: string): string | undefined {
     }
   }
   return fallback;
-}
-
-interface CliSpawnAdapterOptions {
-  command?: string;
-  args?: string[];
-  cwd?: string;
-  pass_via?: "stdin" | "argv";
-  env?: Record<string, string>;
-  unset_env?: string[];
-  strip_patterns?: string[];
-  capturePort?: CapturePort;
-  emit_stdout_thoughts?: boolean;
-}
-
-interface OpencodeCliAdapterOptions extends CliSpawnAdapterOptions {
-  model?: string;
-  mcpServers?: McpServer[];
-}
-
-function cleanGeminiCliOutput(text: string): string {
-  return text
-    .replaceAll("MCP issues detected. Run /mcp list for status.", "")
-    .split("\n")
-    .filter(
-      (line) =>
-        !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(
-          line,
-        ),
-    )
-    .join("\n");
-}
-
-function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityError): void {
-  capturePort?.emit({
-    kind: "capacity_error",
-    provider: err.provider,
-    model: err.model,
-    raw: err.raw,
-  });
-}
-
-type CliKind = "claude-cli" | "gemini-cli" | "agy-cli" | "codex-cli";
-
-function buildCliSpawnOpts(
-  kind: CliKind,
-  opts: CliSpawnAdapterOptions,
-  defaultArgs: string[],
-  command: string,
-  thoughtCapture: ThoughtCapture | null,
-  input: DispatchInput,
-): SpawnOpts {
-  void kind;
-  return {
-    command,
-    args: opts.args ?? defaultArgs,
-    prompt: input.prompt,
-    signal: input.signal,
-    cwd: opts.cwd,
-    pass_via: opts.pass_via,
-    env: opts.env,
-    unset_env: opts.unset_env,
-    strip_patterns: opts.strip_patterns,
-    emit_stdout_thoughts: opts.emit_stdout_thoughts,
-    thoughtCapture: thoughtCapture ?? undefined,
-    onCapacityError: (err): void => {
-      emitCapacityError(opts.capturePort, err);
-    },
-    eventContext: input.eventContext as SpawnOpts["eventContext"],
-    onEvent: input.onEvent,
-  };
-}
-
-function makeCliSpawnAdapter(
-  kind: CliKind,
-  opts: CliSpawnAdapterOptions,
-  defaultArgs: string[],
-  transformText: (text: string) => string,
-  thoughtCapture: ThoughtCapture | null,
-): Adapter {
-  const command = opts.command;
-  if (!command) {
-    throw new Error(`${kind}: command is required`);
-  }
-  const spawnOptsFor = (input: DispatchInput): SpawnOpts =>
-    buildCliSpawnOpts(kind, opts, defaultArgs, command, thoughtCapture, input);
-  return {
-    kind,
-    async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-      const { text } = await spawnCliAdapter(spawnOptsFor(input));
-      return { text: transformText(text) };
-    },
-    async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
-      for await (const event of spawnCliAdapterStream(spawnOptsFor(input))) {
-        if (event.type === "done") {
-          yield {
-            ...event,
-            result: {
-              ...event.result,
-              text: transformText(event.result.text),
-            },
-          };
-          continue;
-        }
-        yield event;
-      }
-    },
-  };
-}
-
-async function buildOpencodeCliSpawnOpts(
-  opts: OpencodeCliAdapterOptions,
-  command: string,
-  baseArgs: string[],
-  thoughtCapture: ThoughtCapture | null,
-  input: DispatchInput,
-): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> {
-  let apiKey = "";
-  try {
-    apiKey = resolveAdapterApiKey({ apiKeyKeychain: "llamactl/opencode" });
-  } catch {
-    // Graceful degradation: let the CLI handle missing credentials.
-  }
-
-  const env: Record<string, string> = { ...opts.env, OPENCODE_API_KEY: apiKey };
-  let cleanup: (() => Promise<void>) | undefined;
-  if (opts.mcpServers && opts.mcpServers.length > 0) {
-    const prepared = await prepareOpencodeMcpConfigDir(opts.mcpServers);
-    env.XDG_CONFIG_HOME = prepared.xdgConfigHome;
-    cleanup = prepared.cleanup;
-  }
-
-  return {
-    command,
-    args: baseArgs,
-    prompt: input.prompt,
-    signal: input.signal,
-    cwd: opts.cwd,
-    pass_via: opts.pass_via ?? "argv",
-    env,
-    unset_env: opts.unset_env,
-    strip_patterns: opts.strip_patterns,
-    emit_stdout_thoughts: opts.emit_stdout_thoughts,
-    thoughtCapture: thoughtCapture ?? undefined,
-    onCapacityError: (err): void => {
-      emitCapacityError(opts.capturePort, err);
-    },
-    eventContext: input.eventContext as SpawnOpts["eventContext"],
-    onEvent: input.onEvent,
-    cleanup,
-  };
-}
-
-function makeOpencodeCliAdapter(
-  rawOptions: unknown,
-  thoughtCapture: ThoughtCapture | null,
-): Adapter {
-  const opts = rawOptions as OpencodeCliAdapterOptions;
-  if (!opts.model) {
-    throw new Error("opencode-cli: model is required");
-  }
-
-  const model = opts.model.includes("/") ? opts.model : `opencode/${opts.model}`;
-  const command = opts.command ?? "~/.opencode/bin/opencode".replace(/^~/, process.env.HOME ?? "");
-  const baseArgs = opts.args ?? ["run", "--model", model];
-
-  const spawnOptsFor = (
-    input: DispatchInput,
-  ): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> =>
-    buildOpencodeCliSpawnOpts(opts, command, baseArgs, thoughtCapture, input);
-
-  return {
-    kind: "opencode-cli",
-    async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-      const spawnOpts = await spawnOptsFor(input);
-      try {
-        const { text, stderr } = await spawnCliAdapter(spawnOpts);
-        if (!text.trim()) {
-          const markers = [
-            "ProviderModelNotFoundError",
-            "Error: Model not found",
-            "AuthenticationError",
-            "Error: API key",
-          ];
-          const matched = markers.find((marker) => stderr.includes(marker));
-          if (matched || stderr.trim()) {
-            const msg = stderr.trim().slice(0, 500);
-            throw new Error(`opencode-cli error: ${msg || "empty output"}`);
-          }
-        }
-        return { text };
-      } finally {
-        await spawnOpts.cleanup?.();
-      }
-    },
-    async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
-      const spawnOpts = await spawnOptsFor(input);
-      try {
-        yield* spawnCliAdapterStream(spawnOpts);
-      } finally {
-        await spawnOpts.cleanup?.();
-      }
-    },
-  };
-}
-
-function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): void {
-  const registerCli = (
-    kind: CliKind,
-    defaultArgs: string[],
-    transformText: (text: string) => string = (text) => text,
-  ): void => {
-    registerAdapter(
-      kind,
-      (rawOptions): Adapter =>
-        makeCliSpawnAdapter(kind, rawOptions, defaultArgs, transformText, thoughtCapture),
-    );
-  };
-
-  registerCli("claude-cli", ["code", "--no-tty"]);
-  registerCli("gemini-cli", [], cleanGeminiCliOutput);
-  registerCli("agy-cli", [], (text) => text);
-  registerCli("codex-cli", []);
-
-  registerAdapter(
-    "opencode-cli",
-    (rawOptions): Adapter => makeOpencodeCliAdapter(rawOptions, thoughtCapture),
-  );
-
-  // HIGH-1: route the worker's thought-aware stdio-acp registration through the
-  // SAME factory as the registry builtin. The previous hand-rolled construction
-  // here omitted the warm-pool opts + pool injection, so `warm_pool: true` was a
-  // silent no-op in the real worker. The factory wires warm pool AND
-  // thoughtCapture together; do not reintroduce a parallel opts map.
-  registerAdapter("stdio-acp", (rawOptions) =>
-    createStdioAcpAdapter(rawOptions, { thoughtCapture: thoughtCapture ?? undefined }),
-  );
 }
 
 // Single source of truth: default to the split config DIR the daemon already
@@ -455,16 +218,43 @@ const workerIsolation = ((): "hard" | "sticky" | "shared" => {
 })();
 
 const client = new PenumbraClient({ storageRoot, logger: log });
-await runWorkerBoot({ client, log, workerId });
+const terminalOutbox = new TerminalOutbox({
+  dir: join(storageRoot, "worker-outbox", workerId),
+  workerId,
+  observe: (event, init): Promise<{ event_id: string }> => client.observe(event, init),
+  postDispatchEvents: (events, signal): Promise<void> =>
+    client.postDispatchEventsStrict(events, signal),
+  complete: (id, init): Promise<{ handoff_id: string; status: string }> =>
+    client.completeHandoff(id, workerId, init),
+  markFailed: (id, reason, init): Promise<{ handoff_id: string; status: string }> =>
+    client.markFailed(id, reason, workerId, init),
+  log: loggerFromPino(log),
+});
+let config = loadConfigPathOrDir(configPath);
+// Declared at registration so the daemon claim gate can keep profiled
+// handoffs away from workers with no enforcing seat. Derived from the same
+// agents.yaml enforces_permission_profiles/adapter facts the seat gate reads.
+const workerMetadata = {
+  enforces_permission_profiles: profilesEnforcedBySeats(config.agents),
+  // Scratch-worktree dispatches (P6 review lane): the claim gate refuses
+  // cwd_override rows to workers that never declared this.
+  supports_scratch_worktrees: true,
+};
+const workerBoot = await runWorkerBoot({
+  client,
+  log,
+  workerId,
+  workerMetadata,
+  outbox: terminalOutbox,
+});
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events, signal): Promise<void> => client.postDispatchEvents(events, signal),
 });
-let config = loadConfigPathOrDir(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
-const projectRegistry = loadProjectRegistry(
-  process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath(),
-);
+const projectRegistry = new WorkerProjectRegistry(undefined, (msg) => {
+  log.warn({ worker_id: workerId }, msg);
+});
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
@@ -804,6 +594,7 @@ async function maybeCaptureDispatchOutcome(
             reliability_status: perf.reliability_status ?? null,
             branch_base: handoff.branch_base ?? null,
             chain_max_hops: handoff.chain_max_hops ?? null,
+            permission_profile: handoff.permission_profile ?? null,
             reason: suppressionReason,
           },
           "silent-failure retry suppressed by chain boundary",
@@ -973,6 +764,7 @@ function rememberHandoffBranchName(handoff: Pick<HandoffRow, "handoff_id" | "bra
 }
 
 const worktreeManager = createWorkerWorktreeManager({
+  projectRegistry,
   resolveBranchName: (handoffId) => handoffBranchNameCache.get(handoffId),
 });
 
@@ -1015,6 +807,7 @@ const computePrewarmTargetsNow = (): PrewarmTarget[] =>
     resolveProjectRoot: prewarmResolveProjectRoot,
     mainRepoPath: process.cwd(),
     cap: PREWARM_GLOBAL_CAP,
+    log,
   });
 
 // Aborted on shutdown to kill any in-flight pre-warm spawn before the pools are
@@ -1372,10 +1165,12 @@ function buildDispatchExecutor(
   agentOptions: AgentOptions,
   worktreeRoot: string,
   requestPermission: ReturnType<typeof createPermissionCallback>,
+  sandboxDenyRoots?: readonly string[],
 ): WriteToolsExecutor {
   const sandboxConfig = resolveSandboxConfig(agentOptions);
   return new WriteToolsExecutor({
     worktreeRoot,
+    sandboxDenyRoots,
     permissionCallback: requestPermission,
     auditEmitter: {
       emit: async (eventType, payload): Promise<void> => {
@@ -1397,6 +1192,7 @@ function buildDispatchExecutor(
     logger: log,
     handoffId: handoff.handoff_id,
     dispatchId: handoff.handoff_id,
+    permissionProfile: handoff.permission_profile ?? null,
   });
 }
 
@@ -1422,19 +1218,99 @@ async function maybeApplyRecallEnrichment(
   return { ...dispatchedHandoff, message: enrichedMessage };
 }
 
+// A scratch-routed dispatch skips worktree creation entirely — the daemon
+// already owns the checkout. Rewrite cwd+repoRoot so the adapter AND its
+// MCP tools resolve inside the scratch, never the operator checkout.
+function setUpScratchDispatch(
+  handoff: HandoffRow,
+  scratch: Extract<ScratchDispatchResolution, { kind: "scratch" }>,
+  scopedConfig: AgentChatConfig,
+  agentOptions: AgentOptions,
+  requestPermission: ReturnType<typeof createPermissionCallback>,
+  worktreeSetupStart: number,
+): {
+  overrideConfig: AgentChatConfig;
+  dispatchedHandoff: HandoffRow;
+  executor: WriteToolsExecutor;
+  sandboxDenyRoots?: readonly string[];
+} {
+  const scratchConfig: AgentChatConfig = {
+    ...scopedConfig,
+    agents: scopedConfig.agents.map((a) =>
+      a.name === handoff.to_agent
+        ? {
+            ...a,
+            options: { ...(a.options ?? {}), cwd: scratch.cwd, repoRoot: scratch.repoRoot },
+          }
+        : a,
+    ),
+  };
+  const overrideConfig = applyOrchestrateToolsToConfig(
+    scratchConfig,
+    handoff.to_agent,
+    handoff.dispatch_kind ?? null,
+  );
+  onEvent({
+    handoff_id: handoff.handoff_id,
+    worker_id: workerId,
+    source: "worker",
+    kind: "dispatch.worktree_setup",
+    ts: new Date().toISOString(),
+    meta: {
+      scratch: true,
+      cwd_override: scratch.cwd,
+      workflow_run_id: handoff.workflow_run_id ?? null,
+      duration_ms: Date.now() - worktreeSetupStart,
+    },
+  });
+  const executor = buildDispatchExecutor(
+    handoff,
+    agentOptions,
+    scratch.executorRoot,
+    requestPermission,
+    scratch.sandboxDenyRoots,
+  );
+  registerExecutor(handoff.handoff_id, executor);
+  return {
+    overrideConfig,
+    dispatchedHandoff: handoff,
+    executor,
+    sandboxDenyRoots: scratch.sandboxDenyRoots,
+  };
+}
+
 async function setUpDispatchWorktree(
   handoff: HandoffRow,
   scopedConfig: AgentChatConfig,
   agentOptions: AgentOptions,
+  dispatchCwd: string,
   requestPermission: ReturnType<typeof createPermissionCallback>,
   signal: AbortSignal,
 ): Promise<{
   overrideConfig: AgentChatConfig;
   dispatchedHandoff: HandoffRow;
   executor: WriteToolsExecutor;
+  sandboxDenyRoots?: readonly string[];
 }> {
   const worktreeSetupStart = Date.now();
   rememberHandoffBranchName(handoff);
+  const scratch = resolveScratchDispatch(handoff, {
+    worktreeManager,
+    workerCwd: process.cwd(),
+  });
+  if (scratch.kind === "invalid") {
+    throw new Error(`scratch dispatch validation failed: ${scratch.reason}`);
+  }
+  if (scratch.kind === "scratch") {
+    return setUpScratchDispatch(
+      handoff,
+      scratch,
+      scopedConfig,
+      agentOptions,
+      requestPermission,
+      worktreeSetupStart,
+    );
+  }
   const result = await applyWorktreeOverride(
     handoff,
     scopedConfig,
@@ -1470,14 +1346,32 @@ async function setUpDispatchWorktree(
       ? { message: rewriteWorktreeHandoffMessage(handoff.message, result.worktreePromptRewrite) }
       : {}),
   };
+  const dispatchRoot = result.handle?.path ?? dispatchCwd;
+  // Layer B deny set for profiled dispatches: the effective dispatch root
+  // (worktree or project root), the caller's original cwd, the project root,
+  // the fleet worktree base (sibling dispatches' worktrees), and the worker's
+  // own checkout. Every spawn surface (cli-spawn, stdio-acp, opencode-acp,
+  // WriteToolsExecutor terminals) renders one SBPL profile from this set.
+  const sandboxDenyRoots =
+    handoff.permission_profile !== undefined && handoff.permission_profile !== null
+      ? resolveSandboxDenyRoots(dispatchRoot, [
+          worktreeManager.projectRootFor(handoff.project_id ?? undefined),
+          worktreeManager.worktreeBaseFor(handoff.project_id ?? undefined),
+          handoff.caller_cwd ?? undefined,
+          process.cwd(),
+        ])
+      : undefined;
   const executor = buildDispatchExecutor(
     handoff,
     agentOptions,
-    result.handle?.path ?? process.cwd(),
+    // No-worktree dispatches jail write/exec tools in the dispatched project's
+    // root, not whatever directory the worker process happened to launch from.
+    dispatchRoot,
     requestPermission,
+    sandboxDenyRoots,
   );
   registerExecutor(handoff.handoff_id, executor);
-  return { overrideConfig, dispatchedHandoff, executor };
+  return { overrideConfig, dispatchedHandoff, executor, sandboxDenyRoots };
 }
 
 async function runDispatch(
@@ -1512,6 +1406,14 @@ async function runDispatch(
   const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
   const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
   const agentOptions = agentCfg?.options ?? {};
+  const permissionProfile = handoff.permission_profile ?? null;
+  // Final fail-closed check after the daemon claim gate: a stale claim or a
+  // config reload must never run a profiled handoff on a non-enforcing seat.
+  assertProfileDispatchSeat({
+    agentName: handoff.to_agent,
+    permissionProfile,
+    seat: agentCfg,
+  });
   // Orchestrate-maestro dispatches get the task-board resolution tools
   // (task.get/complete/fail) injected so the worker can self-complete its
   // task; no-op for every other dispatch kind. Mirrored into overrideConfig
@@ -1533,6 +1435,7 @@ async function runDispatch(
     ttlSeconds,
     daemonClient: permissionDaemonClient,
     perDispatchAllowlist,
+    permissionProfile,
     log,
   });
 
@@ -1540,12 +1443,14 @@ async function runDispatch(
     overrideConfig: AgentChatConfig;
     dispatchedHandoff: HandoffRow;
     executor: WriteToolsExecutor;
+    sandboxDenyRoots?: readonly string[];
   };
   try {
     setup = await setUpDispatchWorktree(
       handoff,
       scopedConfig,
       agentOptions,
+      dispatchCwd,
       requestPermission,
       signal,
     );
@@ -1574,6 +1479,7 @@ async function runDispatch(
       requestPermission,
       projectContext,
       executor: setup.executor,
+      sandboxDenyRoots: setup.sandboxDenyRoots,
       observe: (e: Record<string, unknown>) => client.observe(e),
       createHandoff: (body: Parameters<typeof client.createHandoff>[0]) =>
         client.createHandoff(body),
@@ -1585,7 +1491,7 @@ async function runDispatch(
         handoffId: handoff.handoff_id,
         workerId,
         agentName: handoff.to_agent,
-      } as SpawnOpts["eventContext"],
+      } as DispatchInput["eventContext"],
       onEvent,
       signal,
     });
@@ -1654,8 +1560,11 @@ const dispatcher = createWorkerDispatcher({
       graceMs: CLAIM_AFFINITY_GRACE_MS,
     });
   },
-  postProgress: (id: string, payload: Record<string, unknown>): Promise<void> =>
-    client.postProgress(id, payload),
+  postProgress: (
+    id: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> => client.postProgress(id, payload, { signal }),
   complete: async (id): Promise<void> => {
     await client.completeHandoff(id, workerId);
   },
@@ -1701,6 +1610,7 @@ const dispatcher = createWorkerDispatcher({
     }
   },
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
+  reportTerminal: (report) => terminalOutbox.reportTerminal(report),
   dispatch: async (rawHandoff, onChunk, signal) => {
     const handoff = rawHandoff as HandoffRow & { hop_idx?: number };
     return await runDispatch(handoff, onChunk, signal);
@@ -1891,6 +1801,14 @@ const heartbeatLoop = startHeartbeatLoop({
   },
   reregisterWorker: () => client.reregisterWorker(),
   exit: (code) => process.exit(code),
+  // Fire-and-forget: kick a terminal-outbox drain on every healthy beat so a
+  // recovered daemon sees replayed reports quickly. Never awaited — a slow
+  // drain must not delay the 15 s cadence.
+  onHealthy: () => {
+    void workerBoot.drainOutbox().catch((err: unknown) => {
+      log.warn({ err: String(err) }, "onHealthy outbox drain failed");
+    });
+  },
   schedule: (run, delayMs): { cancel: () => void } => {
     const timer = setTimeout(() => {
       void run();
@@ -1915,13 +1833,23 @@ void runWorkerControlListener({
   workerId,
   onEvent,
   onConfigReload: () => {
-    const previousConfig = config;
-    config = loadConfigPathOrDir(configPath);
-    invalidateChangedWarmPools(previousConfig.agents, config.agents, drainAgent);
-    // Recompute pre-warm targets against the new config: start the loop if an
-    // agent just opted in, stop it if the last one opted out, otherwise refresh.
-    refreshPrewarmLoop();
-    log.info({ agent_count: config.agents.length }, "agentchat-config-reloaded-from-control-bus");
+    handleAgentchatReload({
+      loadConfig: () => {
+        const previous = config;
+        config = loadConfigPathOrDir(configPath);
+        return { previous, next: config };
+      },
+      // Recompute pre-warm targets against the new config: start the loop if
+      // an agent just opted in, stop it if the last one opted out, else
+      // refresh. Deferred until the registry reload settles so the first pass
+      // resolves current roots.
+      invalidateWarmPools: (previous, next) => {
+        invalidateChangedWarmPools(previous.agents, next.agents, drainAgent);
+      },
+      refreshPrewarm: refreshPrewarmLoop,
+      projectRegistry,
+      log,
+    });
   },
 });
 
@@ -1937,6 +1865,12 @@ const shutdown = createWorkerShutdown({
   shutdownAllAcpWarmPools,
   eventSource,
   permissionDaemonClient,
+  terminalOutbox: {
+    stop: () => {
+      workerBoot.stop();
+      terminalOutbox.stop();
+    },
+  },
   dispatcher,
   eventQueue,
   exit: (code) => process.exit(code),

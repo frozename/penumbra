@@ -60,6 +60,13 @@ export async function workerHeartbeatRoute(req: Request, services: Services): Pr
     ts: new Date().toISOString(),
   });
 
+  // The live cancel event is fire-and-forget; re-send it while this worker
+  // still holds a cancel-requested dispatch so a missed event cannot strand it.
+  const cancels = services.handoffReader.listDispatchedCancellationsForWorker(body.data.worker_id);
+  for (const { conversation_id, handoff_id } of cancels) {
+    services.workerControl.emit({ type: "cancel", conversation_id, handoff_id });
+  }
+
   return json({ ok: true });
 }
 

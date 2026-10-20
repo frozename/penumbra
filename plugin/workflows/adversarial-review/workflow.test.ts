@@ -1,12 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFile as execFileCb } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 
 import type { Input } from "./workflow.js";
 
-import { emptyRecall, testWorkflowCtx } from "../_shared/test-helpers.js";
-import { fn, resolveRequestedPersonas } from "./workflow.js";
+import { emptyRecall, stubScratchWorktree, testWorkflowCtx } from "../_shared/test-helpers.js";
+import workflowSpec, { fn, resolveRequestedPersonas } from "./workflow.js";
+
+const WELL_FORMED_SYNTHESIS = `Land as-is.
+
+## Shared concerns
+none - single persona
+
+## Contradictions
+none
+
+## Severity-ranked findings
+none
+
+## Recommended actions
+none
+
+## Skipped/failed personas
+none`;
 
 describe("resolveRequestedPersonas", () => {
   const available = ["security-paranoid", "performance-hawk", "ui-pragmatist"];
@@ -62,6 +81,533 @@ describe("resolveRequestedPersonas", () => {
 });
 
 describe("adversarial-review workflow", () => {
+  test("fails closed without dispatching when content_path resolves to the binary placeholder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-binary-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "blob.bin",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "blob.bin"),
+            body: "<binary file omitted>",
+            truncated: false,
+            byte_size: 5,
+          },
+        },
+        warnings: [
+          `file.contents: ${join(root, "blob.bin")} 1 NUL bytes escaped`,
+          `file.contents: ${join(root, "blob.bin")} binary content omitted`,
+          "git.diff: 2 NUL bytes escaped",
+        ],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        recall_warnings?: string[];
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("binary");
+      expect(result.recall_warnings).toEqual([
+        `file.contents: ${join(root, "blob.bin")} 1 NUL bytes escaped`,
+        `file.contents: ${join(root, "blob.bin")} binary content omitted`,
+        "git.diff: 2 NUL bytes escaped",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not raise the file.contents max_bytes above the source default", () => {
+    const fileContents = workflowSpec.recall.find((entry) => entry.source === "file.contents");
+    expect(fileContents?.args?.max_bytes).toBeUndefined();
+  });
+
+  test("fails closed without dispatching when content_path is binary even if git.diff is non-empty", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-binary-diff-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "blob.bin",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "blob.bin"),
+            body: "<binary file omitted>",
+            truncated: false,
+            byte_size: 200000,
+          },
+        },
+        warnings: [`file.contents: ${join(root, "blob.bin")} binary content omitted`],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("binary");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed without dispatching when the recall budget trims content_path to a marker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-marker-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "big.md",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "big.md"),
+            body: "\n… [recall budget: body truncated to 0 of 180000 chars]",
+            truncated: true,
+            byte_size: 180000,
+          },
+        },
+        warnings: ["recall budget exceeded: trimmed 1 items (target 24000 tokens)"],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.hint).toContain("budget");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed with allowed-roots hint when content_path is outside allowed roots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-roots-"));
+    try {
+      let dispatchCount = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "/etc/hosts",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async () => {
+          dispatchCount += 1;
+          return {
+            conversation_id: `conversation-${dispatchCount}`,
+            handoff_id: `handoff-${dispatchCount}`,
+          };
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+          "file.contents": {
+            path: "/etc/hosts",
+            body: null,
+            error: "path_outside_allowed_roots",
+          },
+        },
+        warnings: [],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        hint?: string;
+        file_contents_error?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(dispatchCount).toBe(0);
+      expect(result.file_contents_error).toBe("path_outside_allowed_roots");
+      expect(result.hint).toContain("allowed roots");
+      expect(result.hint).toContain("cwd");
+      expect(result.hint).toContain("DAEMON");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("recall budget warnings reach recall_warnings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-budget-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "",
+          "git.show": [],
+        },
+        warnings: ["recall budget exceeded: trimmed 9 items (target 24000 tokens)"],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error: string;
+        recall_warnings?: string[];
+        hint?: string;
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("empty_review_target");
+      expect(result.recall_warnings).toContain(
+        "recall budget exceeded: trimmed 9 items (target 24000 tokens)",
+      );
+      expect(result.hint).toContain("budget");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("caps git.diff at the source just above the trimmer's post-trim floor", () => {
+    const gitDiff = workflowSpec.recall.find((entry) => entry.source === "git.diff");
+    // The generic trimmer shrinks ts-carrying git.show commits to
+    // sha+subject+marker before touching the no-ts diff; the cap reserves 100
+    // tokens per commit (subjects up to ~224 chars are never trimmed) plus the
+    // ~15-token file.contents stub, not git.show's untrimmed worst case.
+    expect(gitDiff?.args?.max_tokens).toBe(24000 - 20 * 100 - 15);
+  });
+
+  test("marks an over-cap git.diff as truncated, names dropped files, and banners the synthesis", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-truncated-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `conversation-${input.agent}`,
+          handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "conversation-synth") {
+            return {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"low","category":"style","file":"a.ts","line":1,"title":"nit","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const budgetWarning =
+        "git.diff: recall budget kept 1 of 3 file sections (240 of 70000 chars); dropped 2: b.ts, c.ts";
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff":
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n… [recall budget: diff truncated to 1 of 3 file sections; dropped: b.ts, c.ts]",
+          "git.show": [],
+        },
+        warnings: [budgetWarning],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        diff_dropped_files?: string[];
+        recall_warnings?: string[];
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBe(true);
+      expect(result.diff_dropped_files).toEqual(["b.ts", "c.ts"]);
+      expect(result.recall_warnings).toContain(budgetWarning);
+      const synthesis = [...writes.entries()].find(([path]) => path.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toBeDefined();
+      expect(synthesis).toContain(`> Partial diff: ${budgetWarning}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("content-mode review does not mark a capped incidental git.diff as truncated", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-content-trunc-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          content_path: "doc.md",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `conversation-${input.agent}`,
+          handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "conversation-synth") {
+            return {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"low","category":"style","file":"doc.md","line":1,"title":"nit","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff":
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n… [recall budget: diff truncated to 1 of 3 file sections; dropped: b.ts, c.ts]",
+          "git.show": [],
+          "file.contents": {
+            path: join(root, "doc.md"),
+            body: "Document under review. It proposes a direction worth critiquing.",
+            truncated: false,
+            byte_size: 66,
+          },
+        },
+        warnings: [
+          "git.diff: recall budget kept 1 of 3 file sections (240 of 70000 chars); dropped 2: b.ts, c.ts",
+        ],
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        diff_dropped_files?: string[];
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.diff_dropped_files).toBeUndefined();
+      const synthesis = [...writes.entries()].find(([path]) => path.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toBeDefined();
+      expect(synthesis).not.toContain("> Partial diff:");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("reports failure when personas complete but synthesizer dispatch throws", async () => {
     const root = mkdtempSync(join(tmpdir(), "penumbra-review-workflow-"));
     try {
@@ -99,6 +645,7 @@ describe("adversarial-review workflow", () => {
           return {
             conversation_id: `conversation-${dispatchCount}`,
             handoff_id: `handoff-${dispatchCount}`,
+            permission_profile: input.permission_profile,
           };
         },
         awaitChain: async () => ({
@@ -162,6 +709,7 @@ describe("adversarial-review workflow", () => {
         dispatch: async (input) => ({
           conversation_id: `conversation-${input.agent}`,
           handoff_id: `handoff-${input.agent}`,
+          permission_profile: input.permission_profile,
         }),
         awaitChain: async (conversationId) => {
           if (conversationId === "conversation-bad-synth") {
@@ -230,5 +778,1363 @@ describe("adversarial-review workflow", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  function makeInvalidSynthCtx(opts: {
+    root: string;
+    synthesizer: unknown;
+    writes: Map<string, string>;
+    synthAgents?: string[];
+  }) {
+    return testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: {
+            eligible_agents: ["reviewer"],
+            synthesizer: opts.synthesizer,
+          },
+        },
+        personas: {
+          reviewer: {
+            bias: "Find correctness issues",
+            system_prompt: "Review the change.",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: opts.root,
+      storageRoot: opts.root,
+      project: "penumbra",
+      args: {
+        target_ref: "HEAD",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "review-out",
+      },
+      dispatch: async (input) => ({
+        conversation_id: `conv-${input.agent}`,
+        handoff_id: `handoff-${input.agent}`,
+        permission_profile: input.permission_profile,
+      }),
+      awaitChain: async (conversationId) => {
+        if (conversationId === "conv-reviewer-agent") {
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'Review complete.\n\n```json\n[{"persona":"reviewer","severity":"high","category":"correctness","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+          };
+        }
+        return {
+          status: "completed" as const,
+          final_agent: conversationId.slice("conv-".length),
+          response_text: "invalid synthesis",
+        };
+      },
+      fileWrite: async (path, body) => {
+        opts.writes.set(path, body);
+        return path;
+      },
+    });
+  }
+
+  const INVALID_DIFF = emptyRecall({
+    byKey: {
+      "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+      "git.show": [],
+    },
+  });
+
+  test("marks attempt_cap_reached when the attempt cap stops a larger pool", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cap-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = makeInvalidSynthCtx({
+        root,
+        writes,
+        synthesizer: ["s1", "s2", "s3", "s4"],
+      });
+      const result = (await fn(ctx, INVALID_DIFF)) as {
+        ok: boolean;
+        synthesizer_status: string | null;
+        pool_exhausted?: boolean;
+        attempt_cap_reached?: boolean;
+      };
+      // The cap cut the run after 3 attempts; s4 was never tried — that is
+      // NOT pool exhaustion.
+      expect(result.attempt_cap_reached).toBe(true);
+      expect(result.pool_exhausted ?? false).toBe(false);
+      const synthesis = [...writes.entries()].find(([p]) => p.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toContain("attempt_cap_reached: true");
+      expect(synthesis).not.toContain("pool_exhausted: true");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("marks pool_exhausted when every pool member was attempted inside the cap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-exhausted-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = makeInvalidSynthCtx({
+        root,
+        writes,
+        synthesizer: ["s1", "s2"],
+      });
+      const result = (await fn(ctx, INVALID_DIFF)) as {
+        ok: boolean;
+        pool_exhausted?: boolean;
+        attempt_cap_reached?: boolean;
+      };
+      expect(result.pool_exhausted).toBe(true);
+      expect(result.attempt_cap_reached ?? false).toBe(false);
+      const synthesis = [...writes.entries()].find(([p]) => p.endsWith("synthesis.md"))?.[1];
+      expect(synthesis).toContain("pool_exhausted: true");
+      expect(synthesis).not.toContain("attempt_cap_reached: true");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("emits severity metrics from parsed persona findings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-metrics-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["security", "performance"],
+              fan_out: 2,
+              synthesizer: "codex",
+            },
+          },
+          personas: {
+            security: {
+              bias: "security",
+              system_prompt: "Find security issues.",
+              preferred_agent: "security-agent",
+            },
+            performance: {
+              bias: "performance",
+              system_prompt: "Find performance issues.",
+              preferred_agent: "perf-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+        },
+        dispatch: async (input) => ({
+          conversation_id: input.agent,
+          handoff_id: input.agent,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "codex") {
+            return {
+              status: "completed" as const,
+              final_agent: "codex",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          if (conversationId === "security-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "security-agent",
+              response_text: `review for security\n\n\`\`\`json\n[{"persona":"security","severity":"high","category":"bug","file":"x.ts","line":1,"title":"h1","details":"d","suggestion":"s"},{"persona":"security","severity":"medium","category":"bug","file":"x.ts","line":2,"title":"m1","details":"d","suggestion":"s"}]\n\`\`\``,
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "perf-agent",
+            response_text: `review for performance\n\n\`\`\`json\n[{"persona":"performance","severity":"low","category":"bug","file":"x.ts","line":1,"title":"l1","details":"d","suggestion":"s"},{"persona":"performance","severity":"info","category":"docs","file":"x.ts","line":2,"title":"i1","details":"d","suggestion":"s"}]\n\`\`\``,
+          };
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        high_count: number;
+        medium_count: number;
+        low_count: number;
+        severity_unparsed_personas: number;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.high_count).toBe(1);
+      expect(result.medium_count).toBe(1);
+      expect(result.low_count).toBe(1);
+      expect(result.severity_unparsed_personas).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("counts malformed and failed persona findings as unparsed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-unparsed-"));
+    try {
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["security", "performance", "simplicity"],
+              fan_out: 3,
+              synthesizer: "codex",
+            },
+          },
+          personas: {
+            security: {
+              bias: "security",
+              system_prompt: "Find security issues.",
+              preferred_agent: "security-agent",
+            },
+            performance: {
+              bias: "performance",
+              system_prompt: "Find performance issues.",
+              preferred_agent: "perf-agent",
+            },
+            simplicity: {
+              bias: "simplicity",
+              system_prompt: "Find simplicity issues.",
+              preferred_agent: "simplicity-agent",
+            },
+          },
+          review_min_personas_pass_pct: 50,
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+        },
+        dispatch: async (input) => ({
+          conversation_id: input.agent,
+          handoff_id: input.agent,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "codex") {
+            return {
+              status: "completed" as const,
+              final_agent: "codex",
+              response_text: WELL_FORMED_SYNTHESIS,
+            };
+          }
+          if (conversationId === "security-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "security-agent",
+              response_text: `review for security\n\n\`\`\`json\n[{"persona":"security","severity":"high","category":"bug","file":"x.ts","line":1,"title":"h1","details":"d","suggestion":"s"},{"persona":"security","severity":"critical","category":"bug","file":"x.ts","line":2,"title":"c1","details":"d","suggestion":"s"}]\n\`\`\``,
+            };
+          }
+          if (conversationId === "perf-agent") {
+            return {
+              status: "completed" as const,
+              final_agent: "perf-agent",
+              response_text: "No findings to report.",
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "simplicity-agent",
+            response_text: `review for simplicity\n\n\`\`\`json\n[{"persona":"simplicity","severity":"low","category":"bug","file":"x.ts","line":1,"title":"l1","details":"d","suggestion":"s"}]\n\`\`\``,
+          };
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        high_count: number;
+        medium_count: number;
+        low_count: number;
+        severity_unparsed_personas: number;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.high_count).toBe(1);
+      expect(result.medium_count).toBe(0);
+      expect(result.low_count).toBe(1);
+      expect(result.severity_unparsed_personas).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels a timed-out persona exactly once and surfaces cancel_requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-timeout-"));
+    try {
+      const cancelled: string[] = [];
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) =>
+          conversationId === "reviewer-agent-conv"
+            ? { status: "timeout" as const, final_agent: null, response_text: null }
+            : {
+                status: "completed" as const,
+                final_agent: "synth",
+                response_text: WELL_FORMED_SYNTHESIS,
+              },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas: { name: string; cancel_requested?: boolean; cancel_error?: string }[];
+      };
+
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(result.personas[0]?.name).toBe("reviewer");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+      expect(result.personas[0]?.cancel_error).toBeUndefined();
+      const personaJson = JSON.parse(
+        [...writes.entries()].find(([path]) => path.endsWith("reviewer.json"))?.[1] ?? "{}",
+      ) as { status?: string; cancel_requested?: boolean; cancel_error?: string };
+      expect(personaJson.status).toBe("timeout");
+      expect(personaJson.cancel_requested).toBe(true);
+      expect(personaJson.cancel_error).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("records cancel_error but still resolves when a persona cancel rejects", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-reject-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async () => ({
+          status: "timeout" as const,
+          final_agent: null,
+          response_text: null,
+        }),
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+          throw new Error("cancel endpoint down");
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas: { name: string; cancel_requested?: boolean; cancel_error?: string }[];
+      };
+
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.personas[0]?.cancel_requested).toBe(false);
+      expect(result.personas[0]?.cancel_error).toBe("cancel endpoint down");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels the persona chain when awaitChain throws after dispatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-throw-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "reviewer-agent-conv") throw new Error("lost stream");
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        error?: string;
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      expect(cancelled).toEqual(["reviewer-agent-conv"]);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      expect(result.personas[0]?.status).toBe("failed");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels the first persona chain before a worker-unavailable re-dispatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-redispatch-"));
+    try {
+      const cancelled: string[] = [];
+      let awaits = 0;
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv-${cancelled.length}-${awaits}`,
+          handoff_id: `${input.agent}-handoff-${awaits}`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId.startsWith("reviewer-agent")) {
+            awaits += 1;
+            if (awaits === 1) throw new Error("503 no_worker_registered");
+            return {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review complete\n\n```json\n[{"persona":"reviewer","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      // First dispatch's await threw a retryable worker-unavailable error: the
+      // abandoned chain must be cancelled before the retry dispatch lands.
+      expect(cancelled).toHaveLength(1);
+      expect(cancelled[0]).toStartWith("reviewer-agent-conv-");
+      expect(result.ok).toBe(true);
+      expect(result.personas[0]?.status).toBe("completed");
+      expect(result.personas[0]?.cancel_requested).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test("never cancels personas that completed or failed on their own", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-no-cancel-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["a-rev", "b-rev"], synthesizer: "synth" },
+          },
+          personas: {
+            "a-rev": {
+              bias: "bias a",
+              system_prompt: "Review a.",
+              preferred_agent: "a-agent",
+            },
+            "b-rev": {
+              bias: "bias b",
+              system_prompt: "Review b.",
+              preferred_agent: "b-agent",
+            },
+          },
+          review_min_personas_pass_pct: 50,
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "a-agent-conv") {
+            return {
+              status: "completed" as const,
+              final_agent: "a-agent",
+              response_text:
+                'review a\n\n```json\n[{"persona":"a","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            };
+          }
+          if (conversationId === "b-agent-conv") {
+            return { status: "failed" as const, final_agent: "b-agent", response_text: null };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "synth",
+            response_text: WELL_FORMED_SYNTHESIS,
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        personas: { name: string; status: string; cancel_requested?: boolean }[];
+      };
+
+      expect(cancelled).toEqual([]);
+      for (const persona of result.personas) {
+        expect(persona.cancel_requested).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels a timed-out non-pool synthesizer and marks synthesizer_cancel_requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-cancel-synth-"));
+    try {
+      const cancelled: string[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        }),
+        awaitChain: async (conversationId) => {
+          if (conversationId === "synth-conv") {
+            return { status: "timeout" as const, final_agent: null, response_text: null };
+          }
+          return {
+            status: "completed" as const,
+            final_agent: "reviewer-agent",
+            response_text:
+              'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+          };
+        },
+        cancel: async (conversationId) => {
+          cancelled.push(conversationId);
+        },
+        fileWrite: async (path) => path,
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        synthesizer_status: string | null;
+        synthesizer_cancel_requested?: boolean;
+      };
+
+      expect(cancelled).toEqual(["synth-conv"]);
+      expect(result.synthesizer_status).toBe("timeout");
+      expect(result.synthesizer_cancel_requested).toBe(true);
+      expect(result.ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("permission_profile dispatch contract", () => {
+  test("dispatches every persona and the synthesizer under review_readonly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-profile-"));
+    try {
+      const dispatched: {
+        agent: string;
+        message: string;
+        permission_profile?: string | null;
+        max_hops?: number;
+      }[] = [];
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => {
+          dispatched.push(input);
+          return {
+            conversation_id: `${input.agent}-conv`,
+            handoff_id: `${input.agent}-handoff`,
+            permission_profile: input.permission_profile,
+          };
+        },
+        awaitChain: async (conversationId) =>
+          conversationId === "synth-conv"
+            ? {
+                status: "completed" as const,
+                final_agent: "synth",
+                response_text: WELL_FORMED_SYNTHESIS,
+              }
+            : {
+                status: "completed" as const,
+                final_agent: "reviewer-agent",
+                response_text:
+                  'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+              },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as { ok: boolean };
+
+      expect(result.ok).toBe(true);
+      expect(dispatched).toHaveLength(2);
+      for (const d of dispatched) {
+        expect(d.permission_profile).toBe("review_readonly");
+        expect(d.max_hops).toBe(1);
+        expect(d.message).toContain("read-only");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails every persona when chain_start does not echo the profile", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-noecho-"));
+    try {
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "reviewer-agent",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => ({
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: null,
+        }),
+        awaitChain: async () => ({
+          status: "completed" as const,
+          final_agent: "reviewer-agent",
+          response_text: "unreachable",
+        }),
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as { error?: string };
+
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      const personaJson = [...writes.entries()].find(([path]) => path.endsWith(".json"))?.[1];
+      expect(personaJson).toContain("permission_profile");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a persona pinned to a non-enforcing seat fails closed instead of dispatching unguarded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "penumbra-review-nonenforcing-"));
+    try {
+      const dispatched: { agent: string }[] = [];
+      const writes = new Map<string, string>();
+      const ctx = testWorkflowCtx<Input>({
+        config: {
+          // Explicit agents list suppresses the enforcing-seat stub defaults:
+          // 'stdio-reviewer' rides an adapter with no native profile
+          // enforcement and no enforces_permission_profiles opt-in, so a pin
+          // under review_readonly must throw, not silently dispatch.
+          agents: [
+            { name: "stdio-reviewer", roles: ["reviewer"], adapter: "stdio-acp" },
+            { name: "synth", roles: ["reviewer"], adapter: "openai-compat-http" },
+          ],
+          workloads: {
+            review_adversarial: {
+              eligible_agents: ["reviewer"],
+              synthesizer: "synth",
+            },
+          },
+          personas: {
+            reviewer: {
+              bias: "Find correctness issues",
+              system_prompt: "Review the change.",
+              preferred_agent: "stdio-reviewer",
+            },
+          },
+        },
+        cwd: root,
+        storageRoot: root,
+        project: "penumbra",
+        args: {
+          target_ref: "HEAD",
+          base_ref: "main",
+          timeout_ms: 1000,
+          out_dir: "review-out",
+        },
+        dispatch: async (input) => {
+          dispatched.push({ agent: input.agent });
+          return {
+            conversation_id: `${input.agent}-conv`,
+            handoff_id: `${input.agent}-handoff`,
+            permission_profile: input.permission_profile,
+          };
+        },
+        fileWrite: async (path, body) => {
+          writes.set(path, body);
+          return path;
+        },
+      });
+      const recall = emptyRecall({
+        byKey: {
+          "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+          "git.show": [],
+        },
+      });
+
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        personas?: { name: string; status: string; error_code?: string }[];
+      };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("all_persona_dispatches_failed");
+      // The non-enforcing seat was never dispatched, and neither was the
+      // synthesizer (no completed personas to merge).
+      expect(dispatched).toHaveLength(0);
+      expect(result.personas?.[0]?.status).toBe("failed");
+      expect(result.personas?.[0]?.error_code).toBe("persona_seat_cannot_enforce_profile");
+      const personaJson = [...writes.entries()].find(([path]) =>
+        path.endsWith("reviewer.json"),
+      )?.[1];
+      expect(personaJson).toContain("persona_seat_cannot_enforce_profile");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("scratch worktree dispatch contract", () => {
+  const scratchPath = "/tmp/p6-scratch-review";
+
+  function scratchCtx(dispatched: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
+    return testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: {
+            eligible_agents: ["reviewer"],
+            synthesizer: "synth",
+          },
+        },
+        personas: {
+          reviewer: {
+            bias: "Find correctness issues",
+            system_prompt: "Review the change.",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: "/tmp/operator-checkout",
+      storageRoot: "/tmp/review-store",
+      project: "penumbra",
+      args: {
+        target_ref: "HEAD",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "review-out",
+      },
+      scratchWorktree: stubScratchWorktree(scratchPath),
+      dispatch: async (input) => {
+        dispatched.push(input);
+        return {
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        };
+      },
+      awaitChain: async (conversationId) =>
+        conversationId === "synth-conv"
+          ? {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            }
+          : {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            },
+      ...extra,
+    });
+  }
+
+  test("every persona + synthesizer dispatch runs inside the scratch via cwd_override", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const ctx = scratchCtx(dispatched);
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+
+    expect(result.ok).toBe(true);
+    expect(dispatched.length).toBeGreaterThanOrEqual(2);
+    for (const d of dispatched) {
+      expect(d.cwd_override).toBe(scratchPath);
+      expect(d.use_worktree).toBe(false);
+      expect(d.permission_profile).toBe("review_readonly");
+      expect(String(d.message)).toContain(`cd ${scratchPath}`);
+      expect(String(d.message)).not.toContain("cd /tmp/operator-checkout");
+    }
+  });
+
+  test("every scratch-bound dispatch carries the scratch's project_id", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const ctx = scratchCtx(dispatched, {
+      // A registered non-home project: acquire() resolved the caller cwd's
+      // common dir to this id — every scratch-bound dispatch must forward it
+      // or chain_start validates the override against the wrong repo.
+      scratchWorktree: stubScratchWorktree(scratchPath, { project_id: "proj-uuid-9" }),
+    });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatched.length).toBeGreaterThanOrEqual(2);
+    for (const d of dispatched) {
+      expect(d.project_id).toBe("proj-uuid-9");
+    }
+  });
+
+  test("the run releases the scratch worktree on success", async () => {
+    const dispatched: Record<string, unknown>[] = [];
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx(dispatched, { scratchWorktree: stub });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+    await fn(ctx, recall);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the run releases the scratch worktree even when a persona dispatch throws", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = testWorkflowCtx<Input>({
+      config: {
+        workloads: {
+          review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" },
+        },
+        personas: {
+          reviewer: {
+            bias: "b",
+            system_prompt: "p",
+            preferred_agent: "reviewer-agent",
+          },
+        },
+      },
+      cwd: "/tmp/operator-checkout",
+      storageRoot: "/tmp/review-store",
+      project: "penumbra",
+      args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "o" },
+      scratchWorktree: stub,
+      dispatch: async () => {
+        throw new Error("daemon down");
+      },
+      awaitChain: async () => ({
+        status: "failed" as const,
+        final_agent: null,
+        response_text: null,
+      }),
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    await fn(ctx, recall);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the run releases the scratch exactly once when the synthesizer throws", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx([], {
+      scratchWorktree: stub,
+      dispatch: async (input: { agent: string; permission_profile?: string | null }) => {
+        if (input.agent === "synth") throw new Error("synth dispatch boom");
+        return {
+          conversation_id: `${input.agent}-conv`,
+          handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
+        };
+      },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as { ok: boolean };
+    expect(result.ok).toBe(false);
+    expect(stub.releaseCalls.length).toBe(1);
+  });
+
+  test("the scratch is acquired at the review's target_ref", async () => {
+    const stub = stubScratchWorktree(scratchPath);
+    const ctx = scratchCtx([], {
+      scratchWorktree: stub,
+      args: {
+        target_ref: "review-target-branch",
+        base_ref: "main",
+        timeout_ms: 1000,
+        out_dir: "o",
+      },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    await fn(ctx, recall);
+    expect(stub.acquireCalls).toHaveLength(1);
+    expect(stub.acquireCalls[0]?.ref).toBe("review-target-branch");
+  });
+
+  test("a ctx without scratchWorktree fails the run as review_worktree_unavailable", async () => {
+    const ctx = scratchCtx([], { scratchWorktree: undefined });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      outcome?: string;
+      error?: string;
+      detail?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("failed");
+    expect(result.error).toBe("review_worktree_unavailable");
+    expect(result.detail).toBe("ctx_missing_scratch_worktree");
+  });
+
+  test("an acquire failure fails the run as review_worktree_unavailable", async () => {
+    const ctx = scratchCtx([], {
+      scratchWorktree: { acquire: () => Promise.reject(new Error("repo missing")) },
+    });
+    const recall = emptyRecall({
+      byKey: { "git.diff": "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b" },
+    });
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      outcome?: string;
+      error?: string;
+      detail?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe("failed");
+    expect(result.error).toBe("review_worktree_unavailable");
+    expect(result.detail).toContain("scratch_acquire_failed");
+    expect(result.detail).toContain("repo missing");
+  });
+});
+
+const execFile = promisify(execFileCb);
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFile("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  return stdout.trim();
+}
+
+describe("hard tripwire — scratch-only mutations fail; home/common-dir signals stay record-only", () => {
+  const temps: string[] = [];
+  async function makeRepo(prefix: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), `penumbra-tw-${prefix}-`));
+    temps.push(dir);
+    await git(dir, ["init", "-b", "main"]);
+    await git(dir, ["config", "user.email", "test@example.com"]);
+    await git(dir, ["config", "user.name", "test"]);
+    writeFileSync(join(dir, "README.md"), "# test\n");
+    await git(dir, ["add", "."]);
+    await git(dir, ["commit", "-m", "init"]);
+    return dir;
+  }
+
+  type TripwireMutation = { target: string; kind: string; level: string };
+  async function runReview(opts: {
+    hard?: boolean;
+    linkedCaller?: boolean;
+    mutate?: (dirs: { mainRepo: string; callerRepo: string; scratch: string }) => Promise<void>;
+  }): Promise<{
+    result: {
+      ok: boolean;
+      error?: string;
+      home_checkout_tripwire?: { mutations: TripwireMutation[] };
+    };
+    keepReasons: (string | undefined)[];
+    callerCwdReal: string;
+  }> {
+    const mainRepo = await makeRepo("main");
+    const callerRepo = await makeRepo("caller");
+    temps.push(`${mainRepo}-worktrees`);
+    let callerCwd = callerRepo;
+    if (opts.linkedCaller === true) {
+      // ctx.cwd as a linked worktree of the caller repo — the tripwire must
+      // watch it under its own realpath, not collapse it into the main root.
+      const linked = join(`${callerRepo}-worktrees`, "linked-caller");
+      temps.push(`${callerRepo}-worktrees`);
+      mkdirSync(dirname(linked), { recursive: true });
+      await git(callerRepo, ["worktree", "add", "--detach", linked, "HEAD"]);
+      callerCwd = linked;
+    }
+    const callerCwdReal = realpathSync(callerCwd);
+    const sha = await git(mainRepo, ["rev-parse", "HEAD"]);
+    const scratch = join(`${mainRepo}-worktrees`, ".scratch-run-review");
+    mkdirSync(dirname(scratch), { recursive: true });
+    await git(mainRepo, ["worktree", "add", "--detach", scratch, sha]);
+    const scratchReal = realpathSync(scratch);
+    const stub = stubScratchWorktree(scratchReal);
+
+    let n = 0;
+    const ctx = testWorkflowCtx<Input>({
+      config: {
+        workloads: { review_adversarial: { eligible_agents: ["reviewer"], synthesizer: "synth" } },
+        personas: {
+          reviewer: { bias: "b", system_prompt: "p", preferred_agent: "reviewer-agent" },
+        },
+      },
+      cwd: callerCwd,
+      storageRoot: callerRepo,
+      project: "penumbra",
+      args: { target_ref: "HEAD", base_ref: "main", timeout_ms: 1000, out_dir: "review-out" },
+      scratchWorktree: stub,
+      dispatch: async (input) => {
+        n += 1;
+        if (n === 1 && opts.mutate !== undefined) {
+          await opts.mutate({ mainRepo, callerRepo: callerCwd, scratch: scratchReal });
+        }
+        return {
+          conversation_id: `conv-${n}`,
+          handoff_id: `h-${n}`,
+          permission_profile: input.permission_profile,
+        };
+      },
+      awaitChain: async (conversationId) =>
+        conversationId === "conv-2"
+          ? {
+              status: "completed" as const,
+              final_agent: "synth",
+              response_text: WELL_FORMED_SYNTHESIS,
+            }
+          : {
+              status: "completed" as const,
+              final_agent: "reviewer-agent",
+              response_text:
+                'review done\n\n```json\n[{"persona":"reviewer","severity":"low","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+            },
+      fileWrite: async (p) => p,
+    });
+    const recall = emptyRecall({
+      byKey: {
+        "git.diff": "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new",
+        "git.show": [],
+      },
+    });
+
+    const prior = process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+    if (opts.hard === true) process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] = "1";
+    else delete process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+    try {
+      const result = (await fn(ctx, recall)) as {
+        ok: boolean;
+        error?: string;
+        home_checkout_tripwire?: { mutations: TripwireMutation[] };
+      };
+      return {
+        result,
+        keepReasons: stub.releaseCalls.map((c) => c.keep_reason),
+        callerCwdReal,
+      };
+    } finally {
+      if (prior === undefined) delete process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"];
+      else process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] = prior;
+      for (const t of temps.splice(0)) rmSync(t, { recursive: true, force: true });
+    }
+  }
+
+  test("HARD=1: a 'WIP on' stash seen through the detached scratch stays ok (common-dir signal)", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ mainRepo }) => {
+        writeFileSync(join(mainRepo, "README.md"), "# dirty\n");
+        // No -m: the stash subject lands as 'WIP on main: …' — the exact
+        // mutated-level common-dir signal the detached scratch also sees.
+        await git(mainRepo, ["stash", "push"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("HARD=1: a caller/home-checkout mutation stays ok (record-only, never fails the review)", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ callerRepo }) => {
+        await git(callerRepo, ["commit", "--allow-empty", "-m", "moved caller HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("HARD=1: a scratch HEAD move fails review_worktree_mutated and keeps the scratch", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ scratch }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("review_worktree_mutated");
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("HARD=1: a scratch mutation still fails when another target is unavailable", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: true,
+      mutate: async ({ scratch, callerRepo }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+        rmSync(callerRepo, { recursive: true, force: true });
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("review_worktree_mutated");
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("record-only mode keeps the scratch only on a scratch mutation, not on stash/home signals", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: false,
+      mutate: async ({ mainRepo }) => {
+        writeFileSync(join(mainRepo, "README.md"), "# dirty\n");
+        await git(mainRepo, ["stash", "push"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(keepReasons).toEqual([undefined]);
+  });
+
+  test("record-only mode keeps the scratch on a real scratch mutation", async () => {
+    const { result, keepReasons } = await runReview({
+      hard: false,
+      mutate: async ({ scratch }) => {
+        await git(scratch, ["commit", "--allow-empty", "-m", "moved scratch HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(keepReasons).toEqual(["tripwire_mutated"]);
+  });
+
+  test("record-only: a caller cwd that is a linked worktree is watched under its own realpath", async () => {
+    const { result, callerCwdReal } = await runReview({
+      linkedCaller: true,
+      mutate: async ({ callerRepo }) => {
+        await git(callerRepo, ["commit", "--allow-empty", "-m", "moved linked caller HEAD"]);
+      },
+    });
+    expect(result.ok).toBe(true);
+    const mutation = result.home_checkout_tripwire?.mutations.find(
+      (m) => m.target === callerCwdReal,
+    );
+    expect(mutation).toBeDefined();
+    expect(mutation?.level).toBe("mutated");
   });
 });

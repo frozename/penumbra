@@ -3,7 +3,12 @@ import { describe, expect, it } from "bun:test";
 
 import { applySchema } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
-import { readSubscriptionPressure } from "@src/readers/subscription-pressure.js";
+import { readRecentSubscriptionPressureSnapshots } from "@src/readers/cost.js";
+import {
+  readSubscriptionPressure as readPressure,
+  type ReadSubscriptionPressureOpts,
+} from "@src/readers/subscription-pressure.js";
+import { buildPressureExcludedKeys } from "@src/services/agent-routing.js";
 
 try {
   if (process.platform === "darwin") {
@@ -11,6 +16,13 @@ try {
   }
 } catch {
   // already loaded in this process
+}
+
+function readSubscriptionPressure(
+  db: Database,
+  opts: ReadSubscriptionPressureOpts = {},
+): ReturnType<typeof readPressure> {
+  return readPressure(db, { now: () => new Date("2026-05-08T01:00:00Z"), ...opts });
 }
 
 function makeDb(): Database {
@@ -58,6 +70,186 @@ function insertSnapshotRow(
 }
 
 describe("readSubscriptionPressure", () => {
+  it("reports elapsed reset time separately from observation age without rounding", () => {
+    const db = makeDb();
+    const now = new Date("2026-10-01T12:00:00.500Z");
+    insertSnapshotRow(db, {
+      event_id: "elapsed-reset",
+      ts: "2026-10-01T11:59:00Z",
+      provider: "openai",
+      window_label: "primary",
+      used_pct: 99,
+      resets_at: now.getTime() / 1000 - 0.5,
+      source_kind: "local-state-codex-rollout",
+    });
+    const result = readSubscriptionPressure(db, { now: () => now });
+    expect(result.snapshots).toEqual([]);
+    expect(result.warnings[0]).toMatchObject({ age_seconds: 60, expired_for_seconds: 0.5 });
+    db.close();
+  });
+
+  it("agrees with the cost reader on retirement, expiry, model groups and rowid ties", () => {
+    const db = makeDb();
+    const now = new Date("2026-10-01T12:00:00Z");
+    const base = {
+      ts: now.toISOString(),
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 98,
+      resets_at: null,
+      source_kind: "local-state-codex-rollout",
+    };
+    insertSnapshotRow(db, { ...base, event_id: "old-live" });
+    insertSnapshotRow(db, { ...base, event_id: "retirement", retired: true });
+    insertSnapshotRow(db, {
+      ...base,
+      event_id: "expired",
+      model: "expired",
+      resets_at: now.getTime() / 1000,
+    });
+    insertSnapshotRow(db, { ...base, event_id: "tie-first", model: "live", used_pct: 20 });
+    insertSnapshotRow(db, { ...base, event_id: "tie-last", model: "live", used_pct: 30 });
+    const pressure = readSubscriptionPressure(db, { now: () => now });
+    expect(pressure.snapshots).toHaveLength(1);
+    expect(pressure.snapshots[0]).toMatchObject({ model: "live", used_pct: 30 });
+    const reported = readRecentSubscriptionPressureSnapshots(db, {
+      since: "2026-10-01T00:00:00Z",
+      now: () => now,
+    });
+    expect(
+      reported
+        .filter((window) => window.status !== "expired")
+        .map(({ status: _status, ...snapshot }) => snapshot),
+    ).toEqual(pressure.snapshots);
+    db.close();
+  });
+
+  for (const [offset, counts] of [
+    [0, false],
+    [1, true],
+  ] as const) {
+    it(`counts resets_at == now + ${String(offset)} as ${counts ? "live" : "expired"}`, () => {
+      const db = makeDb();
+      const now = new Date("2026-10-01T12:00:00Z");
+      insertSnapshotRow(db, {
+        event_id: "boundary",
+        ts: now.toISOString(),
+        provider: "openai",
+        window_label: "primary",
+        used_pct: 99,
+        resets_at: now.getTime() / 1000 + offset,
+        source_kind: "local-state-codex-rollout",
+      });
+      const result = readSubscriptionPressure(db, { now: () => now });
+      expect(result.snapshots).toHaveLength(counts ? 1 : 0);
+      expect(result.warnings).toHaveLength(counts ? 0 : 1);
+      db.close();
+    });
+  }
+
+  it("normalizes millisecond resets before expiry and in live snapshots", () => {
+    const db = makeDb();
+    const now = new Date("2026-10-01T12:00:00Z");
+    const base = {
+      ts: "2026-10-01T11:59:00Z",
+      provider: "openai",
+      used_pct: 99,
+      source_kind: "local-state-codex-rollout",
+    };
+    insertSnapshotRow(db, {
+      ...base,
+      event_id: "expired-ms",
+      window_label: "secondary",
+      resets_at: now.getTime() - 2000,
+    });
+    insertSnapshotRow(db, {
+      ...base,
+      event_id: "live-ms",
+      window_label: "primary",
+      resets_at: now.getTime() + 1000,
+    });
+    const result = readSubscriptionPressure(db, { now: () => now });
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0]?.resets_at).toBe(now.getTime() / 1000 + 1);
+    expect(result.warnings).toEqual([
+      {
+        code: "expired_window",
+        provider: "openai",
+        window_label: "secondary",
+        model: null,
+        age_seconds: 60,
+        expired_for_seconds: 2,
+      },
+    ]);
+    db.close();
+  });
+
+  it("excludes expired latest windows without reviving older usage and preserves warning identity", () => {
+    const db = makeDb();
+    const now = new Date("2026-10-01T12:00:00.000Z");
+    const snapshot = {
+      event_id: "older",
+      ts: "2026-10-01T10:00:00.000Z",
+      provider: "openai",
+      window_label: "secondary",
+      model: "codex",
+      used_pct: 98,
+      resets_at: now.getTime() / 1000 + 3600,
+      source_kind: "local-state-codex-rollout",
+    };
+    insertSnapshotRow(db, snapshot);
+    insertSnapshotRow(db, {
+      ...snapshot,
+      event_id: "expired",
+      ts: "2026-10-01T11:00:00.000Z",
+      resets_at: now.getTime() / 1000,
+    });
+    insertSnapshotRow(db, {
+      ...snapshot,
+      event_id: "expired-global",
+      model: null,
+      resets_at: now.getTime() / 1000 - 1,
+    });
+    insertSnapshotRow(db, {
+      ...snapshot,
+      event_id: "no-reset",
+      window_label: "primary",
+      resets_at: null,
+    });
+    insertSnapshotRow(db, {
+      ...snapshot,
+      event_id: "future",
+      provider: "other",
+      resets_at: now.getTime() / 1000 + 1,
+    });
+    const out = readSubscriptionPressure(db, { now: () => now });
+    expect(out.snapshots.map((s) => [s.provider, s.window_label]).sort()).toEqual([
+      ["openai", "primary"],
+      ["other", "secondary"],
+    ]);
+    expect(
+      out.warnings.filter((w) => w.window_label === "secondary" && w.provider === "openai"),
+    ).toEqual([
+      {
+        code: "expired_window",
+        provider: "openai",
+        window_label: "secondary",
+        model: "codex",
+        age_seconds: 3600,
+        expired_for_seconds: 0,
+      },
+      {
+        code: "expired_window",
+        provider: "openai",
+        window_label: "secondary",
+        model: null,
+        age_seconds: 7200,
+        expired_for_seconds: 1,
+      },
+    ]);
+    db.close();
+  });
+
   it("returns empty snapshots and warnings for an empty database", () => {
     const db = makeDb();
     expect(readSubscriptionPressure(db)).toEqual({ snapshots: [], warnings: [] });
@@ -71,7 +263,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -80,7 +272,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 20,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -89,7 +281,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 30,
-      resets_at: 300,
+      resets_at: 1778285100,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -99,7 +291,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 30,
-      resets_at: 300,
+      resets_at: 1778285100,
       observed_at: "2026-05-08T00:20:00Z",
       source_kind: "local-state-claude-statusline",
     });
@@ -113,7 +305,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -122,7 +314,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "seven_day",
       used_pct: 50,
-      resets_at: 500,
+      resets_at: 1778285300,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -139,7 +331,7 @@ describe("readSubscriptionPressure", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 20,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-google-otlp-synth",
     });
     insertSnapshotRow(db, {
@@ -149,7 +341,7 @@ describe("readSubscriptionPressure", () => {
       window_label: "daily",
       model: "gemini-3-flash-preview",
       used_pct: 40,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-google-otlp-synth",
     });
 
@@ -168,7 +360,7 @@ describe("readSubscriptionPressure", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 20,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-google-otlp-synth",
     });
     insertSnapshotRow(db, {
@@ -178,7 +370,7 @@ describe("readSubscriptionPressure", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 25,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-google-otlp-synth",
     });
 
@@ -201,7 +393,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -210,7 +402,7 @@ describe("readSubscriptionPressure", () => {
       provider: "openai",
       window_label: "five_hour",
       used_pct: 50,
-      resets_at: 500,
+      resets_at: 1778285300,
       source_kind: "local-state-codex-rollout",
     });
 
@@ -227,7 +419,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -292,7 +484,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -371,7 +563,7 @@ describe("readSubscriptionPressure", () => {
       provider: "openai",
       window_label: "secondary",
       used_pct: 12,
-      resets_at: 500,
+      resets_at: 1788826100,
       source_kind: "local-state-codex-rollout",
     });
 
@@ -384,7 +576,7 @@ describe("readSubscriptionPressure", () => {
     expect(secondary).toMatchObject({
       provider: "openai",
       used_pct: 12,
-      resets_at: 500,
+      resets_at: 1788826100,
       observed_at: "2026-09-07T00:00:00Z",
     });
     expect(out.warnings).toEqual([]);
@@ -408,7 +600,7 @@ describe("readSubscriptionPressure", () => {
       provider: "anthropic-claude",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -451,7 +643,7 @@ describe("readSubscriptionPressure", () => {
       JSON.stringify({
         window_label: "five_hour",
         used_pct: 20,
-        resets_at: 100,
+        resets_at: 1778284900,
         source_kind: "legacy-reader",
       }),
     );
@@ -460,4 +652,161 @@ describe("readSubscriptionPressure", () => {
     expect(out.snapshots).toHaveLength(1);
     expect(out.snapshots[0]?.model).toBeNull();
   });
+});
+
+it("buildPressureExcludedKeys ignores warning codes outside the fail-open allowlist", () => {
+  expect(
+    buildPressureExcludedKeys({
+      snapshots: [],
+      warnings: [
+        {
+          code: "implausible_resets_at",
+          provider: "openai",
+          window_label: "secondary",
+          model: null,
+          age_seconds: 60,
+          raw_resets_at: 3600,
+        },
+      ],
+    }).size,
+  ).toBe(0);
+});
+
+function checkReset(raw: number, ts = "2026-10-01T11:59:00Z"): ReturnType<typeof readPressure> {
+  const db = makeDb();
+  insertSnapshotRow(db, {
+    event_id: "reset",
+    ts,
+    provider: "openai",
+    window_label: "secondary",
+    used_pct: 98,
+    resets_at: raw,
+    source_kind: "test",
+  });
+  const result = readSubscriptionPressure(db, { now: () => new Date("2026-10-01T12:00:00Z") });
+  db.close();
+  return result;
+}
+
+it("quarantines a far-past resets_at and keeps the fresh window live", () => {
+  for (const raw of [3600, 0, -5]) {
+    const result = checkReset(raw);
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0]?.resets_at).toBeNull();
+    expect(result.warnings).toEqual([
+      {
+        code: "implausible_resets_at",
+        provider: "openai",
+        window_label: "secondary",
+        model: null,
+        age_seconds: 60,
+        raw_resets_at: raw,
+      },
+    ]);
+  }
+});
+it("quarantines microsecond and nanosecond resets_at", () => {
+  const reset = Date.parse("2026-10-01T11:00:00Z") / 1000;
+  expect([1e6, 1e9].map((scale) => checkReset(reset * scale).snapshots[0]?.resets_at)).toEqual([
+    null,
+    null,
+  ]);
+});
+it("bounds reset plausibility relative to observation time inclusively", () => {
+  const obsS = Date.parse("2026-10-01T11:59:00Z") / 1000;
+  expect(checkReset(obsS - 366 * 86400).warnings[0]?.code).toBe("expired_window");
+  expect(checkReset(obsS - 366 * 86400 - 1).warnings[0]?.code).toBe("implausible_resets_at");
+  expect(checkReset(obsS + 32 * 86400).snapshots[0]?.resets_at).toBe(obsS + 32 * 86400);
+  expect(checkReset(obsS + 32 * 86400 + 1).snapshots[0]?.resets_at).toBeNull();
+});
+it("admits a plausible elapsed reset from a ten-day-old observation", () => {
+  const result = checkReset(Date.parse("2026-09-22T12:00:00Z") / 1000, "2026-09-21T12:00:00Z");
+  expect(result.snapshots).toEqual([]);
+  expect(result.warnings).toEqual([
+    {
+      code: "expired_window",
+      provider: "openai",
+      window_label: "secondary",
+      model: null,
+      age_seconds: 864000,
+      expired_for_seconds: 9 * 86400,
+    },
+  ]);
+});
+
+it("routing view excludes expired windows while the cost view includes them flagged", () => {
+  const db = makeDb();
+  const now = (): Date => new Date("2026-10-01T12:00:00Z");
+  insertSnapshotRow(db, {
+    event_id: "expired",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    window_label: "daily",
+    used_pct: 98,
+    resets_at: Date.parse("2026-10-01T11:59:30Z") / 1000,
+    source_kind: "test",
+  });
+  expect(readSubscriptionPressure(db, { now }).snapshots).toEqual([]);
+  expect(
+    readRecentSubscriptionPressureSnapshots(db, { now, since: "2026-10-01T00:00:00Z" }),
+  ).toMatchObject([{ status: "expired", used_pct: 98 }]);
+  db.close();
+});
+it("groups subscription pressure by payload_json.model, matching the routing gate", () => {
+  const db = makeDb();
+  insertSnapshotRow(db, {
+    event_id: "divergent",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    model: "gpt-payload",
+    window_label: "daily",
+    used_pct: 98,
+    resets_at: null,
+    source_kind: "test",
+  });
+  db.run("UPDATE t0_events SET model = 'gpt-col'");
+  const opts = { now: (): Date => new Date("2026-10-01T12:00:00Z"), since: "2026-10-01T00:00:00Z" };
+  expect(readSubscriptionPressure(db, opts).snapshots[0]?.model).toBe("gpt-payload");
+  expect(readRecentSubscriptionPressureSnapshots(db, opts)[0]?.model).toBe("gpt-payload");
+  db.close();
+});
+
+it("preserves serialized stale and expired routing warnings", () => {
+  const db = makeDb();
+  const base = { provider: "openai", model: null, used_pct: 99, source_kind: "test" };
+  insertSnapshotRow(db, {
+    ...base,
+    event_id: "expired-order",
+    window_label: "primary",
+    ts: "2026-10-01T11:59:00Z",
+    resets_at: Date.parse("2026-10-01T12:00:00Z") / 1000,
+  });
+  insertSnapshotRow(db, {
+    ...base,
+    event_id: "stale-order",
+    window_label: "secondary",
+    ts: "2026-10-01T11:00:00Z",
+    resets_at: null,
+  });
+  const result = readSubscriptionPressure(db, { now: () => new Date("2026-10-01T12:00:00.500Z") });
+  expect(JSON.stringify(result.warnings)).toBe(
+    JSON.stringify([
+      {
+        code: "expired_window",
+        expired_for_seconds: 0.5,
+        provider: "openai",
+        window_label: "primary",
+        model: null,
+        age_seconds: 60,
+      },
+      {
+        code: "stale_snapshot",
+        provider: "openai",
+        window_label: "secondary",
+        model: null,
+        age_seconds: 3600,
+      },
+    ]),
+  );
+  db.close();
 });

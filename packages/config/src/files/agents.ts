@@ -1,3 +1,4 @@
+import { EnforcesPermissionProfilesSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
 import { CANONICAL_PROVIDER_VALUE_RE } from "../provider-format.js";
@@ -365,6 +366,7 @@ export const AgentConfigSchema = z
     provenance: AgentProvenanceSchema.optional(),
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
+    enforces_permission_profiles: EnforcesPermissionProfilesSchema,
   })
   .strict()
   .superRefine((data, ctx) => {

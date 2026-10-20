@@ -75,7 +75,6 @@ export interface RunPlanValidateOpts {
   repoRoot?: string;
   knownAgents?: Set<string>;
   projectRegistry?: { has(project_id: string): boolean };
-  header?: { home_project?: string };
   storageRoot?: string;
   noRegistry?: boolean;
   out: Out;
@@ -111,7 +110,7 @@ export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number
     repoRoot,
     knownAgents,
     projectRegistry,
-    header: header ? { home_project: header.home_project } : undefined,
+    header,
   });
   if (validationErrors.length > 0) {
     hasIssue = true;

@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import {
   HandoffDetailResponseSchema,
   HandoffFailRequestSchema,
+  HandoffRowSchema,
   HandoffsListQuerySchema,
   HandoffStatusResponseSchema,
 } from "../src/index.js";
@@ -153,4 +154,39 @@ test("handoff reliability rejects unknown statuses and actions", () => {
 
 test("HandoffFailRequestSchema strips unknown request fields", () => {
   expect(HandoffFailRequestSchema.parse({ reason: "x", extra: true })).toEqual({ reason: "x" });
+});
+
+test("HandoffRowSchema accepts permission_profile 'review_readonly' and rejects unknown values", () => {
+  const base = {
+    handoff_id: "h1",
+    ts: "2026-01-01T00:00:00.000Z",
+    project_id: null,
+    conversation_id: "c1",
+    from_agent: "claude",
+    to_agent: "opencode-acp-seat",
+    to_role: null,
+    message: "go",
+    status: "pending",
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  };
+  const withProfile = HandoffRowSchema.safeParse({
+    ...base,
+    permission_profile: "review_readonly",
+  });
+  expect(withProfile.success).toBe(true);
+  if (withProfile.success) expect(withProfile.data.permission_profile).toBe("review_readonly");
+  expect(HandoffRowSchema.safeParse({ ...base, permission_profile: null }).success).toBe(true);
+  expect(HandoffRowSchema.safeParse({ ...base, permission_profile: "bogus" }).success).toBe(false);
 });

@@ -1,42 +1,45 @@
 {
   "schemaVersion": 1,
-  "status": "unavailable",
+  "status": "captured",
   "surface": "cli",
   "build": "0.153.4",
-  "observedAt": "2026-09-11",
+  "observedAt": "2026-09-12T18:33:16Z",
   "capture": {
-    "origin": "fresh disposable CODEX_HOME and temporary Git repository",
-    "commandSurface": "codex exec",
+    "origin": "fresh read-only codex exec in owned temporary Git repository using user-signed-in disposable CODEX_HOME",
+    "commandSurface": "codex exec --ignore-user-config --sandbox read-only --json",
     "authenticationCopied": false,
     "trustBypassUsed": false,
-    "completed": false,
-    "failureReason": "network_unavailable_before_assistant_response",
-    "rawSha256": "e6546994f505700ff38fdf9a44347ff08dff5df78bc5d5de6b853c4b79d348a6",
-    "rawBytes": 37304,
-    "rawLines": 10,
+    "completed": true,
+    "exitCode": 0,
+    "elapsedSeconds": 5.51,
+    "rawSha256": "ef70a9153a48184fa4deddb30882eb615ecffe9a95ce1228863902c1ac88d2a1",
+    "rawBytes": 44011,
+    "rawLines": 15,
     "rawCommitted": false
   },
   "observedRecordShapes": [
-    "session_meta.payload.{session_id,id,cwd,originator,cli_version,source}",
+    "session_meta.payload.{id,session_id,cwd,originator,cli_version,source}",
     "response_item.payload.{type:message,role:user,content:[{type:input_text,text}]}",
-    "event_msg.payload.{type:item_completed,item:{type:UserMessage,content:[{type:text,text}]}}"
+    "response_item.payload.{type:message,role:assistant,content:[{type:output_text,text}],phase:final_answer}",
+    "event_msg.payload.{type:item_completed,item:{type:UserMessage|AgentMessage,...}}"
   ],
-  "observedMessageRoles": ["developer", "user"],
-  "assistantMessageObserved": false,
+  "observedMessageRoles": ["developer", "user", "assistant"],
+  "assistantMessageObserved": true,
   "sanitization": {
-    "status": "not_committed",
-    "reason": "capture lacked an assistant response and cannot qualify a two-role reader",
+    "selectedRawRecords": 5,
+    "fixtureSha256": "46331e9326e7950fc9a10068ebbd1c222429c0c9c1f6f1d00edbf915248af46c",
+    "replaced": "disposable session/turn IDs and repository cwd",
+    "omitted": "session_meta base instructions and nonidentity metadata; system/developer/turn_context records; injected recommended_plugins/environment user context; usage/rate limits and task lifecycle duplicates",
     "userWorkSessionsRead": false,
     "syntheticRowsAdded": false
   },
   "format": {
     "fingerprint": "penumbra-codex-rollout-fixture-v1",
-    "status": "unsupported",
-    "enabled": false,
-    "reason": "no complete disposable two-role capture"
+    "status": "supported",
+    "enabled": true
   },
   "coverage": {
-    "cli": "partial disposable capture",
+    "cli": "complete disposable user and assistant capture at0.153.4",
     "desktop": "unverified"
   }
 }

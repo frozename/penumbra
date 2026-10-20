@@ -1,21 +1,33 @@
-import { expect } from "bun:test";
+import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
 
 import { createRollupWorker } from "../src/workers/t1-rollup.js";
 import { makeTempDaemon } from "./helpers.js";
 import { serviceTest } from "./helpers/service-gates.js";
 
+try {
+  if (process.platform === "darwin") {
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
+  }
+} catch {
+  // already loaded in this process
+}
+
 serviceTest("rollup worker rolls idle sessions and rewrites the context file", async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    // Seed a T0 event in an old session (past idle threshold).
+    // Seed a T0 event in an old session (past idle threshold). ingest_ts stays
+    // inside the bounded-tick lookback so the session is visible on every tick.
     const oldTs = "2026-04-22T00:00:00Z";
+    const ingestTs = "2026-04-23T11:55:00Z";
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
         session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
         request_id, payload_json, payload_summary)
        VALUES(?, ?, ?, 'mcp', null, 'pA', 'u', 'm', ?, 'agent-prompt', 'local', null, null, null, null, null, null, null, '{}', ?)`,
-      ["e1", oldTs, oldTs, "old-session", "hello"],
+      ["e1", oldTs, ingestTs, "old-session", "hello"],
     );
 
     const worker = createRollupWorker({
@@ -40,10 +52,11 @@ serviceTest("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async 
   d.services.supervisor.stopAll();
   try {
     const oldTs = "2026-04-22T00:00:00Z";
+    const ingestTs = "2026-04-23T11:55:00Z";
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, session_id, event_type, lane, project_id, user_id, machine_id, payload_json, payload_summary)
        VALUES('e1', ?, ?, 'mcp', 's1', 'agent-prompt', 'local', 'p1', 'u1', 'm1', '{}', 'hello')`,
-      [oldTs, oldTs],
+      [oldTs, ingestTs],
     );
 
     const worker = createRollupWorker({
@@ -63,7 +76,7 @@ serviceTest("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async 
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, session_id, event_type, lane, project_id, user_id, machine_id, payload_json, payload_summary)
        VALUES('e2', ?, ?, 'mcp', 's1', 'agent-prompt', 'local', 'p1', 'u1', 'm1', '{}', 'world')`,
-      [newTs, newTs],
+      [newTs, ingestTs],
     );
 
     // 2. Set env to true - should overwrite
@@ -81,7 +94,7 @@ serviceTest("rollup worker re-reads MEMORY_OVERWRITE_ON_REROLL per tick", async 
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, session_id, event_type, lane, project_id, user_id, machine_id, payload_json, payload_summary)
        VALUES('e3', ?, ?, 'mcp', 's1', 'agent-prompt', 'local', 'p1', 'u1', 'm1', '{}', 'again')`,
-      [newerTs, newerTs],
+      [newerTs, ingestTs],
     );
     await worker.tick();
     const rollupId3 = d.services.db
@@ -99,10 +112,11 @@ serviceTest("rollup worker opts take precedence over MEMORY_OVERWRITE_ON_REROLL 
   d.services.supervisor.stopAll();
   try {
     const oldTs = "2026-04-22T00:00:00Z";
+    const ingestTs = "2026-04-23T11:55:00Z";
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, session_id, event_type, lane, project_id, user_id, machine_id, payload_json, payload_summary)
        VALUES('e1', ?, ?, 'mcp', 's1', 'agent-prompt', 'local', 'p1', 'u1', 'm1', '{}', 'hello')`,
-      [oldTs, oldTs],
+      [oldTs, ingestTs],
     );
 
     process.env.MEMORY_OVERWRITE_ON_REROLL = "true";
@@ -122,7 +136,7 @@ serviceTest("rollup worker opts take precedence over MEMORY_OVERWRITE_ON_REROLL 
     d.services.db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, session_id, event_type, lane, project_id, user_id, machine_id, payload_json, payload_summary)
        VALUES('e2', ?, ?, 'mcp', 's1', 'agent-prompt', 'local', 'p1', 'u1', 'm1', '{}', 'world')`,
-      [newTs, newTs],
+      [newTs, ingestTs],
     );
     await worker.tick();
     const rollupId2 = d.services.db
@@ -132,5 +146,43 @@ serviceTest("rollup worker opts take precedence over MEMORY_OVERWRITE_ON_REROLL 
   } finally {
     delete process.env.MEMORY_OVERWRITE_ON_REROLL;
     d.stop();
+  }
+});
+
+test("rollup worker scans unbounded on the first tick and every 60th tick only", async () => {
+  const calls: ({ ingestedSince?: string } | undefined)[] = [];
+  const stubT1 = {
+    detectIdleSessions(
+      _idleMinutes: number,
+      _now: Date,
+      opts?: { ingestedSince?: string },
+    ): string[] {
+      calls.push(opts);
+      return [];
+    },
+    rollupSession: (_sessionId: string): Promise<string | null> => Promise.resolve(null),
+  };
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = {
+    db,
+    clock: () => new Date("2026-04-23T12:00:00Z"),
+    uuid: () => "u",
+    embedder: null,
+    storageRoot: "/tmp/rollup-cadence-test",
+    log: { warn: () => undefined },
+  } as unknown as Services;
+
+  const worker = createRollupWorker({ services, idleMinutes: 10, t1: stubT1 });
+  for (let i = 0; i < 62; i++) await worker.tick();
+
+  expect(calls).toHaveLength(62);
+  expect(calls[0]).toBeUndefined();
+  expect(calls[60]).toBeUndefined();
+  const bounded = calls.filter((c) => c !== undefined);
+  expect(bounded).toHaveLength(60);
+  for (const call of bounded) {
+    expect(call).toEqual({ ingestedSince: "2026-04-23T11:00:00.000Z" });
   }
 });

@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { BenchTask } from "./bench-prompts.js";
-
 import { gradeSchemaTask, runGrade } from "./bench-grade.js";
+import { BENCH_TASKS, type BenchTask } from "./bench-prompts.js";
 
 interface ChatCompletionRequestBody {
   messages: { content: string }[];
@@ -170,8 +169,8 @@ test("gradeSchemaTask: passes when all expected extractions are present", () => 
     groundTruth: "x",
     schema: "T2MemoryExtraction[]",
     expected_extractions: [
-      { title_substr: "Postgres", body_substr: "audit", kind: "decision" },
-      { title_substr: "write", body_substr: "50", kind: "fact" },
+      { text_patterns: ["Postgres", "audit"], kind: "decision" },
+      { text_patterns: ["write", "50"], kind: "fact" },
     ],
   };
 
@@ -194,8 +193,8 @@ test("gradeSchemaTask: returns partial when only some expected extractions are p
     groundTruth: "x",
     schema: "T2MemoryExtraction[]",
     expected_extractions: [
-      { title_substr: "Postgres", body_substr: "audit", kind: "decision" },
-      { title_substr: "write", body_substr: "50", kind: "fact" },
+      { text_patterns: ["Postgres", "audit"], kind: "decision" },
+      { text_patterns: ["write", "50"], kind: "fact" },
     ],
   };
 
@@ -237,4 +236,118 @@ test("gradeSchemaTask: fails empty expected with non-empty actual", () => {
     verdict: "FAIL",
     detail: "expected empty, got 1 extractions",
   });
+});
+
+test("gradeSchemaTask: passes the observed T12 retries answer", () => {
+  const task = BENCH_TASKS.find((item) => item.id === "T12");
+  expect(task).toBeDefined();
+  expect(
+    gradeSchemaTask(
+      task!,
+      '[{"title":"Cap CI retries at 3 with exponential backoff starting at 250ms","body":"Keep the CI retry cap at 3 attempts and start exponential backoff at 250ms to absorb transient failures without long hangs.","kind":"decision"}]',
+    ),
+  ).toEqual({ verdict: "PASS", detail: "1/1 matched" });
+});
+
+test("gradeSchemaTask: passes the observed T12 retries answer with the cap written as a word", () => {
+  const task = BENCH_TASKS.find((item) => item.id === "T12");
+  expect(task).toBeDefined();
+  expect(
+    gradeSchemaTask(
+      task!,
+      '[{"title":"Cap CI retries at three with 250 ms exponential backoff","body":"To limit transient CI failures without causing cascading retries or long hangs, cap retry attempts at three and use exponential backoff starting at 250 ms.","kind":"decision"}]',
+    ),
+  ).toEqual({ verdict: "PASS", detail: "1/1 matched" });
+});
+
+test("gradeSchemaTask: passes the observed merged T9 write-rate and retention answer", () => {
+  const task = BENCH_TASKS.find((item) => item.id === "T9");
+  expect(task).toBeDefined();
+  expect(
+    gradeSchemaTask(
+      task!,
+      '[{"title":"Use Postgres for the audit log","body":"The audit log store will use Postgres instead of SQLite.","kind":"decision"},{"title":"Audit log workload and retention","body":"Append-only writes around 50 per second at peak, a weekly read-only analytics job, and 90 days of retention.","kind":"fact"}]',
+    ),
+  ).toEqual({ verdict: "PASS", detail: "3/3 matched" });
+  expect(
+    gradeSchemaTask(
+      task!,
+      '[{"title":"Use Postgres for audit log","body":"Store audit data in Postgres.","kind":"decision"},{"title":"Audit log workload","body":"Append-only writes around 50 per second and 90 days of retention.","kind":"fact"}]',
+    ),
+  ).toEqual({ verdict: "PASS", detail: "3/3 matched" });
+});
+
+test("gradeSchemaTask: matches T9 decision patterns across combined title and body", () => {
+  const task: BenchTask = {
+    id: "T9",
+    description: "json extraction",
+    fixturePath: "x",
+    fixtureLabel: "x",
+    question: "x",
+    maxTokens: 1,
+    groundTruth: "x",
+    schema: "T2MemoryExtraction[]",
+    expected_extractions: [{ text_patterns: ["postgres", "audit"], kind: "decision" }],
+  };
+
+  expect(
+    gradeSchemaTask(
+      task,
+      '[{"title":"audit log store","body":"Use Postgres instead of SQLite","kind":"decision"}]',
+    ),
+  ).toEqual({ verdict: "PASS", detail: "1/1 matched" });
+});
+
+test("gradeSchemaTask: requires a T9 decision to keep its decision kind", () => {
+  const task: BenchTask = {
+    id: "T9",
+    description: "json extraction",
+    fixturePath: "x",
+    fixtureLabel: "x",
+    question: "x",
+    maxTokens: 1,
+    groundTruth: "x",
+    schema: "T2MemoryExtraction[]",
+    expected_extractions: [{ text_patterns: ["postgres", "audit"], kind: "decision" }],
+  };
+
+  expect(
+    gradeSchemaTask(
+      task,
+      '[{"title":"audit log store","body":"Use Postgres instead of SQLite","kind":"fact"}]',
+    ),
+  ).toEqual({ verdict: "FAIL", detail: "0 expected extractions found" });
+});
+
+test("gradeSchemaTask: rejects a T12 decision with a cap of 5", () => {
+  const task = BENCH_TASKS.find((item) => item.id === "T12");
+  expect(task).toBeDefined();
+  expect(
+    gradeSchemaTask(
+      task!,
+      '[{"title":"Cap CI retries at 5","body":"Use exponential backoff starting at 250ms.","kind":"decision"}]',
+    ).verdict,
+  ).toBe("FAIL");
+});
+
+test("bench dispatcher ground truths stay anchored to source identifiers and count", () => {
+  const dispatcher = readFileSync(join(import.meta.dirname, "../src/worker/dispatcher.ts"), "utf8");
+  const t5 = BENCH_TASKS.find((item) => item.id === "T5");
+  const t7 = BENCH_TASKS.find((item) => item.id === "T7");
+  expect(t5).toBeDefined();
+  expect(t7).toBeDefined();
+
+  for (const identifier of [
+    "makeConvLocks",
+    "semaphore.acquire()",
+    "semaphore.release()",
+    "waiters",
+  ]) {
+    expect(dispatcher).toContain(identifier);
+    expect(t5!.groundTruth).toContain(identifier);
+  }
+
+  const literal = "waiters";
+  expect(t7!.question).toContain(`"${literal}"`);
+  expect(dispatcher.match(new RegExp(literal, "g"))?.length ?? 0).toBe(Number(t7!.groundTruth));
 });

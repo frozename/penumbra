@@ -138,7 +138,7 @@ export async function plansRegisterRoute(req: Request, services: Services): Prom
     repoRoot: process.cwd(),
     knownAgents,
     projectRegistry: services.projectRegistry,
-    header: { home_project },
+    header,
   });
   if (validationErrors.length > 0) {
     return json(

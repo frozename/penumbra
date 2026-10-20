@@ -60,3 +60,9 @@ export const PermissionDecideResponseSchema = z
   .object({ permission_id: z.string(), status: PermissionStatusSchema, decided_at: z.string() })
   .loose();
 export type PermissionDecideResponse = z.infer<typeof PermissionDecideResponseSchema>;
+
+export const PERMISSION_PROFILES = ["review_readonly"] as const;
+export const PermissionProfileSchema = z.enum(PERMISSION_PROFILES);
+export type PermissionProfile = z.infer<typeof PermissionProfileSchema>;
+
+export const EnforcesPermissionProfilesSchema = z.array(PermissionProfileSchema).optional();

@@ -4,6 +4,7 @@ import {
   decide,
   type HarnessContext,
   inferAgentTaskTypeForRole,
+  type PermissionProfile,
   profileTaskDeterministic,
   readRoutingBiases,
   readSubscriptionPressure,
@@ -88,6 +89,9 @@ export interface RouterRoutingHints {
   // instead of staying permanently dead behind the router integration.
   localOnly?: boolean;
   tool_free?: boolean;
+  // Forwarded to routeAgent's permission-profile hard filter; absent keeps
+  // the handoff chain-hop caller (handoffs.ts) byte-identical.
+  permission_profile?: PermissionProfile;
   // Populated as a side effect when the router computes a decision. Needed
   // because chain_start mints handoff_id AFTER routing resolves (chains.ts
   // :1531 vs :1542), so the caller can't get a decisionId-bearing return
@@ -111,6 +115,9 @@ function collectHarnessContext(opts: {
     ...(hints?.dispatchKind !== undefined ? { dispatchKind: hints.dispatchKind } : {}),
     ...(hints?.localOnly !== undefined ? { localOnly: hints.localOnly } : {}),
     ...(hints?.tool_free !== undefined ? { toolFree: hints.tool_free } : {}),
+    ...(hints?.permission_profile !== undefined
+      ? { permissionProfile: hints.permission_profile }
+      : {}),
     ...(services.agentRegistry ? { availableAgents: services.agentRegistry } : {}),
   };
 }
@@ -286,6 +293,7 @@ export function resolveSingleRoute(
     activeBiases,
     unhealthyAgents,
     tool_free: hints?.tool_free,
+    permission_profile: hints?.permission_profile,
     now: services.clock(),
   });
   if (out.detail !== "single") return null;

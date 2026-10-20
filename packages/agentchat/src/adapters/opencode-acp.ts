@@ -1,5 +1,12 @@
 import type { DispatchEventInput } from "@penumbra/core";
 
+import {
+  PERMISSION_PROFILE_MCP_ALLOWLIST,
+  renderOpencodeProfileConfig,
+  renderSandboxExecProfile,
+  resolveSandboxDenyRoots,
+} from "@penumbra/core";
+
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { AcpServerHandle, StartAcpServerOptions } from "./acp-server.js";
 import type {
@@ -13,7 +20,18 @@ import type {
 import { AcpClient, type AcpClientOptions } from "./acp-client.js";
 import { startAcpServer } from "./acp-server.js";
 import { createDispatchAbortSignal, type DispatchAbortHandle } from "./dispatch-abort.js";
-import { prepareOpencodeMcpConfigDir } from "./opencode-mcp-config.js";
+import {
+  prepareOpencodeMcpConfigDir,
+  type PrepareOpencodeMcpConfigOpts,
+} from "./opencode-mcp-config.js";
+import {
+  capAskPatterns,
+  type PermissionAskOutcome,
+  readAskPatterns,
+  readPermissionAsk,
+  sendAskReply,
+  throwOnRejectedAskIdleEmpty,
+} from "./opencode-permission.js";
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
 // reliability classifier sees no `http.*` / `acp.*` / `proc.*` events and
@@ -67,6 +85,7 @@ const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   // passes through — without this, the schema-injection bloat fix has no
   // way to land outside the cron tick path.
 ]);
+const MCP_ALLOWLIST_ENV_NAME = "PENUMBRA_MCP_TOOL_ALLOWLIST";
 const PENUMBRA_MCP_ORIGIN_FLEET_WORKER = "fleet-worker";
 const MCP_PATH_RE = /penumbra-mcp(?:\.[jt]s)?(?:$|[\s/])/;
 
@@ -101,12 +120,22 @@ function buildLongLivedMcpEnv(input: DispatchInput): { name: string; value: stri
 
 function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpServer[] {
   const longLivedEnv = buildLongLivedMcpEnv(input);
-  const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
+  const profile = input.permission_profile;
+  const hasProfile = profile !== undefined && profile !== null;
+  const shouldInjectDispatchEnv =
+    Boolean(input.handoff_id) || longLivedEnv.length > 0 || hasProfile;
   if (!shouldInjectDispatchEnv) return servers;
 
   return servers.map((server) => {
     if (!isPenumbraMcp(server)) return server;
-    const keptEnv = server.env.filter((entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name));
+    const keptEnv = server.env.filter(
+      (entry) =>
+        !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name) &&
+        // Under a permission profile the profile's allowlist is authoritative —
+        // a yaml-level PENUMBRA_MCP_TOOL_ALLOWLIST would widen the tool surface
+        // back open. Long-lived keeps last-wins append semantics instead.
+        !(hasProfile && entry.name === MCP_ALLOWLIST_ENV_NAME),
+    );
     return {
       ...server,
       env: [
@@ -114,6 +143,14 @@ function injectPenumbraMcpEnv(servers: McpServer[], input: DispatchInput): McpSe
         ...(input.handoff_id ? [{ name: "PENUMBRA_HANDOFF_ID", value: input.handoff_id }] : []),
         { name: "PENUMBRA_MCP_ORIGIN", value: PENUMBRA_MCP_ORIGIN_FLEET_WORKER },
         ...longLivedEnv,
+        ...(hasProfile
+          ? [
+              {
+                name: MCP_ALLOWLIST_ENV_NAME,
+                value: PERMISSION_PROFILE_MCP_ALLOWLIST[profile].join(","),
+              },
+            ]
+          : []),
       ],
     };
   });
@@ -144,6 +181,7 @@ interface OpencodeAcpDeps {
   createClient: (opts: AcpClientOptions) => AcpClientLike;
   prepareMcpConfig?: (
     servers: McpServer[],
+    opts?: PrepareOpencodeMcpConfigOpts,
   ) => Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }>;
 }
 
@@ -162,6 +200,8 @@ interface OpencodeWireEventProps {
   sessionID?: unknown;
   permission?: unknown;
   action?: unknown;
+  patterns?: unknown;
+  resources?: unknown;
 }
 
 function asWireEvent(evt: unknown): OpencodeWireEvent {
@@ -209,34 +249,6 @@ function truncateReason(reason: string): string {
   return reason.length > 300 ? reason.slice(0, 300) : reason;
 }
 
-interface PermissionAsk {
-  requestID: string;
-  sessionID: string;
-  permission: string;
-}
-
-// `permission.asked` carries the v1 shape {id, sessionID, permission, ...};
-// `permission.v2.asked` carries {id, sessionID, action, ...}. Normalizing here
-// lets one policy answer both — an ask that reads cleanly but cannot be tied
-// to a request id is unanswerable and must not wedge the stream loop.
-function readPermissionAsk(
-  wireType: string,
-  props: OpencodeWireEventProps | undefined,
-  fallbackSessionId: string,
-): PermissionAsk | null {
-  const rawId = props?.id;
-  const rawKind = wireType === "permission.v2.asked" ? props?.action : props?.permission;
-  const rawSession = props?.sessionID;
-  if (typeof rawId !== "string" || rawId.length === 0) return null;
-  if (typeof rawKind !== "string" || rawKind.length === 0) return null;
-  return {
-    requestID: rawId,
-    sessionID:
-      typeof rawSession === "string" && rawSession.length > 0 ? rawSession : fallbackSessionId,
-    permission: rawKind,
-  };
-}
-
 // Every permission ask on the wire gets exactly one reply attempt chain —
 // leaving one unanswered stalls the dispatch until the outer request budget,
 // and the inactivity watchdog cannot rescue it because server.heartbeat keeps
@@ -244,8 +256,11 @@ function readPermissionAsk(
 // opts a seat into "always" for the named permission kinds. v1 asks go to the
 // request-keyed reply route first (it carries a rejection message back to the
 // model) and fall back to the deprecated session-scoped respond route, which
-// is the documented pairing for `permission.asked` and stays mounted on
-// builds where the experimental reply route is absent.
+// Every permission ask on the wire gets exactly one reply attempt chain —
+// leaving one unanswered stalls the dispatch until the outer request budget,
+// and the inactivity watchdog cannot rescue it because server.heartbeat keeps
+// the stream live. Default is fail-closed reject; `autoApprovePermissions`
+// opts a seat into "always" for the named permission kinds.
 async function answerPermissionAsk(args: {
   input: DispatchInput;
   client: AcpClientLike;
@@ -254,20 +269,28 @@ async function answerPermissionAsk(args: {
   fallbackSessionId: string;
   autoApprove: ReadonlySet<string>;
   adapterKind: string;
-}): Promise<void> {
+}): Promise<PermissionAskOutcome | null> {
   const { input, client, wireType, props, fallbackSessionId, autoApprove, adapterKind } = args;
+  const hasProfile = input.permission_profile !== undefined && input.permission_profile !== null;
   const ask = readPermissionAsk(wireType, props, fallbackSessionId);
   if (!ask) {
     emitLifecycle(input, "http.session.permission", {
       adapter: adapterKind,
       session_id: fallbackSessionId,
       wire_event: wireType,
-      outcome: "unanswerable",
+      outcome: hasProfile ? "unexpected_ask" : "unanswerable",
+      ...(hasProfile ? { permission_profile: input.permission_profile } : {}),
+      patterns: capAskPatterns(readAskPatterns(wireType, props)).list,
     });
-    return;
+    return null;
   }
-  const approved = autoApprove.has(ask.permission);
+  // Under a permission profile NO ask may be approved — every permission is
+  // already resolved by the injected config, so an ask reaching the wire means
+  // the profile config failed to apply. Reject unconditionally and mark the
+  // lifecycle outcome so the breach is visible in dispatch_events.
+  const approved = !hasProfile && autoApprove.has(ask.permission);
   const reply: AcpPermissionReplyKind = approved ? "always" : "reject";
+  const cappedPatterns = capAskPatterns(ask.patterns);
   const meta: Record<string, unknown> = {
     adapter: adapterKind,
     session_id: ask.sessionID,
@@ -275,34 +298,26 @@ async function answerPermissionAsk(args: {
     permission: ask.permission,
     wire_event: wireType,
     reply,
+    patterns: cappedPatterns.list,
+    ...(cappedPatterns.truncated ? { patterns_truncated: true } : {}),
   };
-  try {
-    if (wireType === "permission.v2.asked") {
-      await client.replySessionPermission(ask.sessionID, ask.requestID, {
-        reply,
-        ...(approved ? {} : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
-      });
-    } else {
-      try {
-        await client.replyPermission(ask.requestID, {
-          reply,
-          ...(approved
-            ? {}
-            : { message: `penumbra: permission '${ask.permission}' auto-rejected` }),
-        });
-      } catch {
-        await client.respondPermission(ask.sessionID, ask.requestID, { response: reply });
-      }
-    }
-  } catch (err) {
+  const { route, error } = await sendAskReply({ client, wireType, ask, reply, approved });
+  if (error !== undefined) {
     emitLifecycle(input, "http.session.permission", {
       ...meta,
+      route,
       outcome: "reply_failed",
-      reason: truncateReason(errorMessage(err)),
+      reason: truncateReason(errorMessage(error)),
     });
-    return;
+    return { permission: ask.permission, reply, replyFailed: true };
   }
-  emitLifecycle(input, "http.session.permission", { ...meta, outcome: "answered" });
+  emitLifecycle(input, "http.session.permission", {
+    ...meta,
+    route,
+    outcome: hasProfile ? "unexpected_ask" : "answered",
+    ...(hasProfile ? { permission_profile: input.permission_profile } : {}),
+  });
+  return { permission: ask.permission, reply, replyFailed: false };
 }
 
 function emitDispatchError(
@@ -500,6 +515,43 @@ export class OpencodeAcpAdapter implements Adapter {
     return result;
   }
 
+  // Permission profile: the rendered config goes both as OPENCODE_CONFIG_CONTENT
+  // (merged last by opencode) and into the written config.json via
+  // prepareMcpConfig; project-level config is disabled so nothing under the
+  // dispatched cwd can re-grant a permission.
+  //
+  // Layer B OS backstop: the serve subprocess runs under sandbox-exec with a
+  // write-deny SBPL profile over the dispatch cwd plus every extra mutable
+  // root the worker resolved (caller cwd, project root, fleet base). The
+  // injected OPENCODE_* config is Layer A advisory — a bypassed permission
+  // hook cannot be allowed to write the repo. startServer fails closed via
+  // wrapSandboxExecArgv when sandbox-exec is unavailable.
+  private resolveProfiledDispatch(
+    input: DispatchInput,
+    cwd: string,
+  ): {
+    profileConfig: ReturnType<typeof renderOpencodeProfileConfig> | undefined;
+    profiledEnv: Record<string, string> | undefined;
+    sandboxProfile: string | undefined;
+  } {
+    const profileConfig = input.permission_profile
+      ? renderOpencodeProfileConfig({ agent: this.opts.agent })
+      : undefined;
+    if (profileConfig === undefined) {
+      return { profileConfig, profiledEnv: undefined, sandboxProfile: undefined };
+    }
+    return {
+      profileConfig,
+      profiledEnv: {
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(profileConfig),
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      },
+      sandboxProfile: renderSandboxExecProfile(
+        resolveSandboxDenyRoots(cwd, input.sandbox_deny_roots ?? []),
+      ),
+    };
+  }
+
   async *dispatchStream(input: DispatchInput): AsyncIterable<DispatchEvent> {
     const cwd = this.opts.cwd ?? process.cwd();
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -515,16 +567,22 @@ export class OpencodeAcpAdapter implements Adapter {
       };
     let extraEnv: Record<string, string> | undefined;
 
+    const { profileConfig, profiledEnv, sandboxProfile } = this.resolveProfiledDispatch(input, cwd);
+    extraEnv = profiledEnv;
+
     const mcpServersWithEnv = injectPenumbraMcpEnv(this.opts.mcpServers ?? [], input);
     if (mcpServersWithEnv.length > 0) {
       const prepare = this.deps.prepareMcpConfig ?? prepareOpencodeMcpConfigDir;
-      const { xdgConfigHome, cleanup } = await prepare(mcpServersWithEnv);
-      extraEnv = { XDG_CONFIG_HOME: xdgConfigHome };
+      const prepareOpts: PrepareOpencodeMcpConfigOpts = {
+        ...(profileConfig !== undefined ? { profileConfig } : {}),
+      };
+      const { xdgConfigHome, cleanup } = await prepare(mcpServersWithEnv, prepareOpts);
+      extraEnv = { ...extraEnv, XDG_CONFIG_HOME: xdgConfigHome };
       lifecycle.xdgCleanup = cleanup;
     }
 
     try {
-      yield* this.runSession(input, cwd, extraEnv, requestAbort, lifecycle);
+      yield* this.runSession(input, cwd, extraEnv, requestAbort, lifecycle, sandboxProfile);
     } catch (err) {
       if (
         requestAbort.timeoutError &&
@@ -561,6 +619,7 @@ export class OpencodeAcpAdapter implements Adapter {
     extraEnv: Record<string, string> | undefined,
     requestAbort: DispatchAbortHandle,
     lifecycle: { server: AcpServerHandle | null; xdgCleanup: (() => Promise<void>) | null },
+    sandboxProfile: string | undefined,
   ): AsyncIterable<DispatchEvent> {
     try {
       lifecycle.server = await this.deps.startServer({
@@ -571,6 +630,7 @@ export class OpencodeAcpAdapter implements Adapter {
         bootTimeoutMs: this.opts.bootTimeoutMs,
         ...(extraEnv ? { env: extraEnv } : {}),
         ...(this.opts.unsetEnv ? { unsetEnv: this.opts.unsetEnv } : {}),
+        ...(sandboxProfile !== undefined ? { sandboxProfile } : {}),
       });
     } catch (err) {
       emitDispatchError(input, "server_boot", err);
@@ -651,6 +711,7 @@ export class OpencodeAcpAdapter implements Adapter {
     // Stream ends on session.idle (turn complete) or session.error.
     const partTypeById = new Map<string, string>();
     const autoApprovePermissions = new Set(this.opts.autoApprovePermissions ?? []);
+    const rejectedAsks: { permission: string; replyFailed: boolean }[] = [];
     let text = "";
     let sawIdle = false;
     let lastEventType = "none";
@@ -715,7 +776,7 @@ export class OpencodeAcpAdapter implements Adapter {
           }
           case "permission.asked":
           case "permission.v2.asked": {
-            await answerPermissionAsk({
+            const outcome = await answerPermissionAsk({
               input,
               client,
               wireType: evt.type,
@@ -724,6 +785,12 @@ export class OpencodeAcpAdapter implements Adapter {
               autoApprove: autoApprovePermissions,
               adapterKind: this.kind,
             });
+            if (outcome?.reply === "reject") {
+              rejectedAsks.push({
+                permission: outcome.permission,
+                replyFailed: outcome.replyFailed,
+              });
+            }
             break;
           }
           case "session.error": {
@@ -753,6 +820,8 @@ export class OpencodeAcpAdapter implements Adapter {
     if (!sawIdle && text.length === 0) {
       throw new Error(`opencode-acp: stream ended without session.idle after ${lastEventType}`);
     }
+
+    throwOnRejectedAskIdleEmpty(rejectedAsks, text);
 
     yield { type: "done", result: { text } };
   }

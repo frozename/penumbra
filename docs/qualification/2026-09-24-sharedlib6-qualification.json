@@ -1,0 +1,1887 @@
+{
+  "schema": "sharedlib6-qualification/1",
+  "slice": "P2.2/penumbra-qualification",
+  "follow_up_event_id": 1830,
+  "coordinator": "frozename/llamactl#135",
+  "roadmap": "frozename/llamactl#127",
+  "generated_at": "2026-09-28T18:55:44.450Z",
+  "date": "2026-09-24",
+  "base_sha": "c264644bc2b4f1e1429e845208fd6ca7f6426d62",
+  "head_sha": "fb4e560078baaf9177eb32a44ea0d29186edfa4a",
+  "head_sha_note": "the commit this evidence was written against; the evidence commit itself lands on top",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v26.0.0",
+    "typescript": "6.0.3"
+  },
+  "result": "PASS",
+  "baseline": {
+    "measured_set": {
+      "packages/agentchat/test/adapters/cli-spawn.test.ts": 24,
+      "packages/agentchat/test/adapters/cli-spawn-stream.test.ts": 14,
+      "packages/agentchat/test/adapters/stdio-acp-client.test.ts": 11,
+      "packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts": 6,
+      "packages/agentchat/test/adapters/stdio-acp-server.test.ts": 5,
+      "packages/agentchat/test/adapters/stdio-acp-permission.test.ts": 29,
+      "packages/agentchat/test/adapters/acp-warm-pool.test.ts": 22,
+      "packages/agentchat/test/cli": 71
+    }
+  },
+  "after": {
+    "measured_set": {
+      "packages/agentchat/test/adapters/cli-spawn.test.ts": 24,
+      "packages/agentchat/test/adapters/cli-spawn-stream.test.ts": 14,
+      "packages/agentchat/test/adapters/stdio-acp-client.test.ts": 11,
+      "packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts": 6,
+      "packages/agentchat/test/adapters/stdio-acp-server.test.ts": 5,
+      "packages/agentchat/test/adapters/stdio-acp-permission.test.ts": 29,
+      "packages/agentchat/test/adapters/acp-warm-pool.test.ts": 22,
+      "packages/agentchat/test/cli": 71
+    }
+  },
+  "delta": 0,
+  "candidate": {
+    "name": "penumbra-exec-primitives",
+    "name_is_placeholder": true,
+    "version": "0.1.0",
+    "files": 8,
+    "lines": 2262,
+    "bytes": 70288,
+    "runtime_imports": 15,
+    "type_only_imports": 6,
+    "boundary_type_imports_removed": [
+      {
+        "file": "cli-spawn.ts (origin)",
+        "removed": "@penumbra/core (DispatchEventInput)",
+        "replaced_by": "generic supervision in process-supervisor.ts"
+      },
+      {
+        "file": "cli-spawn.ts (origin)",
+        "removed": "@src/sdk/adapter.js (DispatchEvent)",
+        "replaced_by": "onProcessEvent callback on ExecSupervisor"
+      },
+      {
+        "file": "cli-spawn.ts (origin)",
+        "removed": "@src/worker/thought-capture.js",
+        "replaced_by": "removed — thought capture is host-side"
+      },
+      {
+        "file": "stdio-acp-permission.ts",
+        "removed": "@src/sdk/adapter.js (DispatchInput)",
+        "replaced_by": "PermissionHost — host passes signal, dispatchId, decide, logger"
+      },
+      {
+        "file": "acp-warm-pool.ts",
+        "removed": "@src/adapters/stdio-acp-client.js (type-level)",
+        "replaced_by": "AcpPoolClient structural type (no runtime import)"
+      },
+      {
+        "file": "stdio-acp-server.ts",
+        "removed": "console.error + stderr tee",
+        "replaced_by": "ExecLogger + onStderrChunk callback"
+      },
+      {
+        "file": "stdio-acp-client.ts",
+        "removed": "console.*",
+        "replaced_by": "ExecLogger"
+      }
+    ]
+  },
+  "tarball": {
+    "name": "penumbra-exec-primitives-0.1.0.tgz",
+    "channel": "stand-in",
+    "sha256": "8896877b9666bb56b427aacc20197be7a740e68f6c1d93ba305c8f392d621975",
+    "packed_bytes": 18859,
+    "unpacked_bytes": 76336,
+    "files": 19,
+    "entries": [
+      "LICENSE",
+      "README.md",
+      "dist/src/acp-session.d.ts",
+      "dist/src/acp-session.js",
+      "dist/src/acp-warm-pool.d.ts",
+      "dist/src/acp-warm-pool.js",
+      "dist/src/host.d.ts",
+      "dist/src/host.js",
+      "dist/src/index.d.ts",
+      "dist/src/index.js",
+      "dist/src/process-supervisor.d.ts",
+      "dist/src/process-supervisor.js",
+      "dist/src/stdio-acp-client.d.ts",
+      "dist/src/stdio-acp-client.js",
+      "dist/src/stdio-acp-permission.d.ts",
+      "dist/src/stdio-acp-permission.js",
+      "dist/src/stdio-acp-server.d.ts",
+      "dist/src/stdio-acp-server.js",
+      "package.json"
+    ],
+    "content_sha256": "7f5d49b3771b272a8b044d1dfde8de8fe972f5a7652c5dff8c3c68f52904cb5e",
+    "byte_reproducible": true
+  },
+  "consumers": {
+    "penumbra-host": {
+      "runtime": "bun 1.3.14",
+      "copy_root": "tmp/sharedlib6/consumer-penumbra-host",
+      "install_specifier": "../pack/penumbra-exec-primitives-0.1.0.tgz",
+      "manifest_dependencies": {
+        "penumbra-exec-primitives": "../pack/penumbra-exec-primitives-0.1.0.tgz"
+      },
+      "manifest_dev_dependencies": {
+        "@types/node": "^25.6.0",
+        "typescript": "^6.0.3"
+      },
+      "installed_dependencies": [
+        "@types/node",
+        "penumbra-exec-primitives",
+        "typescript",
+        "undici-types"
+      ],
+      "resolved_to": "tmp/sharedlib6/consumer-penumbra-host/node_modules/penumbra-exec-primitives/dist/src/index.js",
+      "digest_equal": true,
+      "installed_content_sha256": "7f5d49b3771b272a8b044d1dfde8de8fe972f5a7652c5dff8c3c68f52904cb5e",
+      "home_entries_after": [],
+      "network_required": true,
+      "registry_packages": [
+        "typescript",
+        "@types/node"
+      ],
+      "poison_run": {
+        "exit": 1,
+        "pass": 0
+      },
+      "guard": {
+        "exit": 0
+      },
+      "steps": [
+        {
+          "name": "contract-port",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-contract-port.log",
+          "cmd": [
+            "bun",
+            "packages/exec-primitives/qualification/contract-port.ts",
+            "tmp/sharedlib6/consumer-penumbra-host"
+          ]
+        },
+        {
+          "name": "bun-add",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-bun-add.log",
+          "cmd": [
+            "bun",
+            "add",
+            "../pack/penumbra-exec-primitives-0.1.0.tgz"
+          ]
+        },
+        {
+          "name": "typecheck",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-typecheck.log",
+          "cmd": [
+            "tmp/sharedlib6/consumer-penumbra-host/node_modules/.bin/tsc",
+            "--noEmit",
+            "-p",
+            "tsconfig.consumer.json"
+          ]
+        },
+        {
+          "name": "smoke-bun",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-smoke-bun.log",
+          "cmd": [
+            "bun",
+            "src/smoke.ts"
+          ]
+        },
+        {
+          "name": "parity:acp-warm-pool.test.ts",
+          "exit": 0,
+          "pass": 22,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-acp-warm-pool.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/acp-warm-pool.test.ts"
+          ]
+        },
+        {
+          "name": "parity:cli-spawn.test.ts",
+          "exit": 0,
+          "pass": 24,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-cli-spawn.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/cli-spawn.test.ts"
+          ]
+        },
+        {
+          "name": "parity:cli-spawn-stream.test.ts",
+          "exit": 0,
+          "pass": 10,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-cli-spawn-stream.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/cli-spawn-stream.test.ts"
+          ]
+        },
+        {
+          "name": "parity:exports.test.ts",
+          "exit": 0,
+          "pass": 1,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-exports.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/exports.test.ts"
+          ]
+        },
+        {
+          "name": "parity:guard.test.ts",
+          "exit": 0,
+          "pass": 1,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-guard.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/guard.test.ts"
+          ]
+        },
+        {
+          "name": "parity:stdio-acp-client.test.ts",
+          "exit": 0,
+          "pass": 11,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-stdio-acp-client.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/stdio-acp-client.test.ts"
+          ]
+        },
+        {
+          "name": "parity:stdio-acp-client-onrequest.test.ts",
+          "exit": 0,
+          "pass": 6,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-stdio-acp-client-onrequest.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/stdio-acp-client-onrequest.test.ts"
+          ]
+        },
+        {
+          "name": "parity:stdio-acp-permission.test.ts",
+          "exit": 0,
+          "pass": 28,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-stdio-acp-permission.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/stdio-acp-permission.test.ts"
+          ]
+        },
+        {
+          "name": "parity:stdio-acp-server.test.ts",
+          "exit": 0,
+          "pass": 5,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-parity-stdio-acp-server.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/stdio-acp-server.test.ts"
+          ]
+        },
+        {
+          "name": "bun-test",
+          "exit": 0,
+          "pass": 178,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-bun-test.log",
+          "cmd": [
+            "bun",
+            "test"
+          ]
+        },
+        {
+          "name": "guard",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/penumbra-host-guard.log",
+          "cmd": [
+            "bun",
+            "-e",
+            "import(\"@penumbra/core\").then(() => process.exit(1), (e) => { process.exit(/resolution-guard/.test(String(e)) ? 0 : 2); });"
+          ]
+        }
+      ]
+    },
+    "infra-host": {
+      "runtime": "bun 1.3.14 + node v26.0.0",
+      "copy_root": "tmp/sharedlib6/consumer-infra-host",
+      "install_specifier": "../pack/penumbra-exec-primitives-0.1.0.tgz",
+      "manifest_dependencies": {
+        "penumbra-exec-primitives": "../pack/penumbra-exec-primitives-0.1.0.tgz"
+      },
+      "manifest_dev_dependencies": {
+        "@types/node": "^25.6.0",
+        "typescript": "^6.0.3"
+      },
+      "installed_dependencies": [
+        "@types/node",
+        "penumbra-exec-primitives",
+        "typescript",
+        "undici-types"
+      ],
+      "resolved_to": "tmp/sharedlib6/consumer-infra-host/node_modules/penumbra-exec-primitives/dist/src/index.js",
+      "digest_equal": true,
+      "installed_content_sha256": "7f5d49b3771b272a8b044d1dfde8de8fe972f5a7652c5dff8c3c68f52904cb5e",
+      "home_entries_after": [],
+      "network_required": true,
+      "registry_packages": [
+        "typescript",
+        "@types/node"
+      ],
+      "poison_run": {
+        "exit": 1,
+        "pass": 0
+      },
+      "guard": {
+        "exit": 0
+      },
+      "steps": [
+        {
+          "name": "bun-add",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-bun-add.log",
+          "cmd": [
+            "bun",
+            "add",
+            "../pack/penumbra-exec-primitives-0.1.0.tgz"
+          ]
+        },
+        {
+          "name": "typecheck",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-typecheck.log",
+          "cmd": [
+            "tmp/sharedlib6/consumer-infra-host/node_modules/.bin/tsc",
+            "--noEmit",
+            "-p",
+            "tsconfig.consumer.json"
+          ]
+        },
+        {
+          "name": "smoke-bun",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-smoke-bun.log",
+          "cmd": [
+            "bun",
+            "src/smoke.ts"
+          ]
+        },
+        {
+          "name": "smoke-node",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-smoke-node.log",
+          "cmd": [
+            "node",
+            "src/smoke.ts"
+          ]
+        },
+        {
+          "name": "parity:infra.test.ts",
+          "exit": 0,
+          "pass": 21,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-parity-infra.test.ts.log",
+          "cmd": [
+            "bun",
+            "test",
+            "test/infra.test.ts"
+          ]
+        },
+        {
+          "name": "bun-test",
+          "exit": 0,
+          "pass": 21,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-bun-test.log",
+          "cmd": [
+            "bun",
+            "test"
+          ]
+        },
+        {
+          "name": "guard",
+          "exit": 0,
+          "pass": 0,
+          "fail": 0,
+          "failing": [],
+          "log": "logs/infra-host-guard.log",
+          "cmd": [
+            "bun",
+            "-e",
+            "import(\"@penumbra/core\").then(() => process.exit(1), (e) => { process.exit(/resolution-guard/.test(String(e)) ? 0 : 2); });"
+          ]
+        }
+      ]
+    }
+  },
+  "poison_layer": [
+    "@penumbra/core",
+    "@penumbra/agy-acp-shim",
+    "@penumbra/config",
+    "@penumbra/agentchat",
+    "@penumbra/workflows",
+    "@penumbra/mcp",
+    "@penumbra/typesafe",
+    "@penumbra/cli",
+    "@penumbra/daemon",
+    "@penumbra/sirius-middleware",
+    "@penumbra/e2e",
+    "@penumbra/api-contract",
+    "@penumbra/console"
+  ],
+  "parity": {
+    "excluded_cases": [
+      {
+        "origin_title": "GeminiCliAdapter.dispatchStream yields done with correct text",
+        "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+        "reason": "vendor adapter class not extracted"
+      },
+      {
+        "origin_title": "ClaudeCliAdapter.dispatchStream yields done with correct text",
+        "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+        "reason": "vendor adapter class not extracted"
+      },
+      {
+        "origin_title": "CodexCliAdapter.dispatchStream yields done with correct text",
+        "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+        "reason": "vendor adapter class not extracted"
+      },
+      {
+        "origin_title": "dispatch() buffered path still returns correct text on GeminiCliAdapter",
+        "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+        "reason": "vendor adapter class not extracted"
+      },
+      {
+        "origin_title": "preserves the downstream terminal/create executor contract after allow_once",
+        "module": "packages/agentchat/test/adapters/stdio-acp-permission.test.ts",
+        "reason": "exercises only the non-extracted StdioAcpAdapter executor"
+      }
+    ],
+    "per_file": [
+      {
+        "origin": "packages/agentchat/test/adapters/cli-spawn.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/cli-spawn.parity.ts",
+        "baseline_tests": 24,
+        "ported": 24,
+        "passed": 24,
+        "not_portable": 0,
+        "reason": "verbatim port — titles preserved",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn.parity.ts",
+            "line": 1,
+            "old": "import type { DispatchEventInput } from \"@penumbra/core\";",
+            "new": "import type { DispatchEventInput } from \"../src/shim/types.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn.parity.ts",
+            "line": 12,
+            "old": "import type { DispatchEvent } from \"@src/sdk/adapter.js\";",
+            "new": "import type { DispatchEvent } from \"../src/shim/types.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn.parity.ts",
+            "line": 13,
+            "old": "import type { RecordThoughtInput } from \"@src/worker/thought-capture.js\";",
+            "new": "import type { RecordThoughtInput } from \"../src/shim/types.js\";"
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+        "baseline_tests": 14,
+        "ported": 10,
+        "passed": 10,
+        "not_portable": 4,
+        "reason": "re-expressed — parity titles carry the [re-expressed] marker and vendor-adapter cases are excluded",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 11,
+            "old": "import type { DispatchEventInput } from \"@penumbra/core\";",
+            "new": "import { describe, expect, test } from \"bun:test\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 13,
+            "old": "import { describe, expect, test } from \"bun:test\";",
+            "new": "import { spawnCliAdapterStream } from \"../src/shim/cli-spawn.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 14,
+            "old": "import { ClaudeCliAdapter } from \"@src/adapters/claude-cli.js\";",
+            "new": "import type { DispatchEvent, DispatchEventInput } from \"../src/shim/types.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 15,
+            "old": "import { spawnCliAdapterStream } from \"@src/adapters/cli-spawn.js\";",
+            "new": "import { assertDoneEvent } from \"../fixtures/cli-spawn-fixtures.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 0,
+            "old": "import { CodexCliAdapter } from \"@src/adapters/codex-cli.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 0,
+            "old": "import { GeminiCliAdapter } from \"@src/adapters/gemini-cli.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 0,
+            "old": "import type { DispatchEvent } from \"@src/sdk/adapter.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts",
+            "line": 0,
+            "old": "import { assertDoneEvent } from \"../helpers/cli-spawn-fixtures.js\";",
+            "new": ""
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/stdio-acp-client.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/stdio-acp-client.parity.ts",
+        "baseline_tests": 11,
+        "ported": 11,
+        "passed": 11,
+        "not_portable": 0,
+        "reason": "verbatim port — titles preserved",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-client.parity.ts",
+            "line": 4,
+            "old": "import { StdioAcpClient } from \"@src/adapters/stdio-acp-client.js\";",
+            "new": "import { StdioAcpClient } from \"../src/shim/stdio-acp-client.js\";"
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/stdio-acp-client-onrequest.parity.ts",
+        "baseline_tests": 6,
+        "ported": 6,
+        "passed": 6,
+        "not_portable": 0,
+        "reason": "verbatim port — titles preserved",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-client-onrequest.parity.ts",
+            "line": 4,
+            "old": "import { StdioAcpClient } from \"@src/adapters/stdio-acp-client.js\";",
+            "new": "import { StdioAcpClient } from \"../src/shim/stdio-acp-client.js\";"
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/stdio-acp-server.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/stdio-acp-server.parity.ts",
+        "baseline_tests": 5,
+        "ported": 5,
+        "passed": 5,
+        "not_portable": 0,
+        "reason": "verbatim port — titles preserved",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-server.parity.ts",
+            "line": 6,
+            "old": "import { startStdioAcpServer } from \"@src/adapters/stdio-acp-server.js\";",
+            "new": "import { startStdioAcpServer } from \"../src/shim/stdio-acp-server.js\";"
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/stdio-acp-permission.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+        "baseline_tests": 29,
+        "ported": 28,
+        "passed": 28,
+        "not_portable": 1,
+        "reason": "re-expressed — parity titles carry the [re-expressed] marker and vendor-adapter cases are excluded",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 16,
+            "old": "import { describe, expect, test, vi } from \"bun:test\";",
+            "new": "import { describe, expect, test } from \"bun:test\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 18,
+            "old": "import { PassThrough } from \"node:stream\";",
+            "new": "import {"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 23,
+            "old": "import { StdioAcpClient } from \"@src/adapters/stdio-acp-client.js\";",
+            "new": "import type {"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 0,
+            "old": "import { StdioAcpPermissionContext } from \"@src/adapters/stdio-acp-permission.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 0,
+            "old": "import type { StdioAcpHandle } from \"@src/adapters/stdio-acp-server.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 0,
+            "old": "import { StdioAcpAdapter } from \"@src/adapters/stdio-acp.js\";",
+            "new": ""
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts",
+            "line": 0,
+            "old": "import type { DispatchInput } from \"@src/sdk/adapter.js\";",
+            "new": ""
+          }
+        ]
+      },
+      {
+        "origin": "packages/agentchat/test/adapters/acp-warm-pool.test.ts",
+        "parity_file": "qualification/consumers/penumbra-host/test/acp-warm-pool.parity.ts",
+        "baseline_tests": 22,
+        "ported": 22,
+        "passed": 22,
+        "not_portable": 0,
+        "reason": "verbatim port — titles preserved",
+        "adaptations": [
+          {
+            "file": "qualification/consumers/penumbra-host/test/acp-warm-pool.parity.ts",
+            "line": 4,
+            "old": "import { createAcpWarmPool, poolKeyFor } from \"@src/adapters/acp-warm-pool.js\";",
+            "new": "import { createAcpWarmPool, poolKeyFor } from \"../src/shim/acp-warm-pool.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/acp-warm-pool.parity.ts",
+            "line": 5,
+            "old": "import type { StdioAcpClient } from \"@src/adapters/stdio-acp-client.js\";",
+            "new": "import type { StdioAcpClient } from \"../src/shim/stdio-acp-client.js\";"
+          },
+          {
+            "file": "qualification/consumers/penumbra-host/test/acp-warm-pool.parity.ts",
+            "line": 7,
+            "old": "import { makeMockAcpHandle, type MockAcpHandle } from \"../helpers/stdio-acp-fixtures.js\";",
+            "new": "import { makeMockAcpHandle, type MockAcpHandle } from \"../fixtures/stdio-acp-fixtures.js\";"
+          }
+        ]
+      }
+    ],
+    "shim_logic": [
+      {
+        "area": "cli-spawn host shim (penumbra-host/src/shim/cli-spawn.ts)",
+        "logic": "ambient process.env merge, PENUMBRA_* env reads, DispatchEvent emission, output-cap text accumulator, strip_patterns, thoughtCapture stub",
+        "measured_by": "test/cli-spawn.parity.ts + test/cli-spawn-stream.parity.ts",
+        "status": "shim-side logic — its passes measure the shim, not a future llamactl binding"
+      },
+      {
+        "area": "acp-warm-pool host shim (penumbra-host/src/shim/acp-warm-pool.ts)",
+        "logic": "implements holder/release/canAddEntry/peekMissReason and mints a credential scope per deposit",
+        "measured_by": "test/acp-warm-pool.parity.ts (22 tests)",
+        "status": "inferred"
+      }
+    ]
+  },
+  "section2": {
+    "measurements": {
+      "totals": {
+        "pass": 182,
+        "fail": 0,
+        "ran": 182
+      },
+      "baseline": {
+        "packages/agentchat/test/adapters/cli-spawn.test.ts": 24,
+        "packages/agentchat/test/adapters/cli-spawn-stream.test.ts": 14,
+        "packages/agentchat/test/adapters/stdio-acp-client.test.ts": 11,
+        "packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts": 6,
+        "packages/agentchat/test/adapters/stdio-acp-server.test.ts": 5,
+        "packages/agentchat/test/adapters/stdio-acp-permission.test.ts": 29,
+        "packages/agentchat/test/adapters/acp-warm-pool.test.ts": 22,
+        "packages/agentchat/test/cli": 71
+      }
+    },
+    "verdict": {
+      "consistent": true,
+      "rows": [
+        {
+          "origin": "packages/agentchat/test/adapters/cli-spawn.test.ts",
+          "kind": "verbatim",
+          "origin_pass": 24,
+          "origin_fail": 0,
+          "origin_ran": 24,
+          "parity": "cli-spawn.test.ts",
+          "parity_pass": 24,
+          "parity_fail": 0,
+          "excluded": [],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/cli-spawn.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+          "kind": "re-expressed",
+          "origin_pass": 14,
+          "origin_fail": 0,
+          "origin_ran": 14,
+          "parity": "cli-spawn-stream.test.ts",
+          "parity_pass": 10,
+          "parity_fail": 0,
+          "excluded": [
+            {
+              "origin_title": "GeminiCliAdapter.dispatchStream yields done with correct text",
+              "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+              "reason": "vendor adapter class not extracted"
+            },
+            {
+              "origin_title": "ClaudeCliAdapter.dispatchStream yields done with correct text",
+              "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+              "reason": "vendor adapter class not extracted"
+            },
+            {
+              "origin_title": "CodexCliAdapter.dispatchStream yields done with correct text",
+              "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+              "reason": "vendor adapter class not extracted"
+            },
+            {
+              "origin_title": "dispatch() buffered path still returns correct text on GeminiCliAdapter",
+              "module": "packages/agentchat/test/adapters/cli-spawn-stream.test.ts",
+              "reason": "vendor adapter class not extracted"
+            }
+          ],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/cli-spawn-stream.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/stdio-acp-client.test.ts",
+          "kind": "verbatim",
+          "origin_pass": 11,
+          "origin_fail": 0,
+          "origin_ran": 11,
+          "parity": "stdio-acp-client.test.ts",
+          "parity_pass": 11,
+          "parity_fail": 0,
+          "excluded": [],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/stdio-acp-client.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts",
+          "kind": "verbatim",
+          "origin_pass": 6,
+          "origin_fail": 0,
+          "origin_ran": 6,
+          "parity": "stdio-acp-client-onrequest.test.ts",
+          "parity_pass": 6,
+          "parity_fail": 0,
+          "excluded": [],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/stdio-acp-client-onrequest.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/stdio-acp-server.test.ts",
+          "kind": "verbatim",
+          "origin_pass": 5,
+          "origin_fail": 0,
+          "origin_ran": 5,
+          "parity": "stdio-acp-server.test.ts",
+          "parity_pass": 5,
+          "parity_fail": 0,
+          "excluded": [],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/stdio-acp-server.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/stdio-acp-permission.test.ts",
+          "kind": "re-expressed",
+          "origin_pass": 29,
+          "origin_fail": 0,
+          "origin_ran": 29,
+          "parity": "stdio-acp-permission.test.ts",
+          "parity_pass": 28,
+          "parity_fail": 0,
+          "excluded": [
+            {
+              "origin_title": "preserves the downstream terminal/create executor contract after allow_once",
+              "module": "packages/agentchat/test/adapters/stdio-acp-permission.test.ts",
+              "reason": "exercises only the non-extracted StdioAcpAdapter executor"
+            }
+          ],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/stdio-acp-permission.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/adapters/acp-warm-pool.test.ts",
+          "kind": "verbatim",
+          "origin_pass": 22,
+          "origin_fail": 0,
+          "origin_ran": 22,
+          "parity": "acp-warm-pool.test.ts",
+          "parity_pass": 22,
+          "parity_fail": 0,
+          "excluded": [],
+          "consistent": true,
+          "pointer": "qualification/consumers/penumbra-host/test/acp-warm-pool.parity.ts"
+        },
+        {
+          "origin": "packages/agentchat/test/cli",
+          "kind": "context",
+          "origin_pass": 71,
+          "origin_fail": 0,
+          "origin_ran": 71,
+          "parity": null,
+          "parity_pass": null,
+          "parity_fail": null,
+          "excluded": [],
+          "consistent": true,
+          "pointer": ""
+        }
+      ]
+    }
+  },
+  "gates": [
+    {
+      "gate": "L1",
+      "verdict": "PASS",
+      "scope": "branch",
+      "not_provable_here": [
+        "that the audit token list covers every future forbidden pattern — only the fixture shapes are proven",
+        "that the dist bundle cannot hide behaviour the source audit missed — the tarball (channel stand-in) audit runs over dist/src, not the bundler"
+      ],
+      "evidence": [
+        {
+          "claim": "src/ audits clean (specifiers, tokens, mutable bindings, allowlist)",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-closure-audit-src.log"
+        },
+        {
+          "claim": "self-test passes over the fixture set",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-precheck-closure-self-test.log"
+        },
+        {
+          "claim": "audit counts recorded: files=8, lines=2262, runtime specifiers=15, type-only=6",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-closure-audit-src.log"
+        },
+        {
+          "claim": "dist/ audits clean under the same rules plus the dist allowlist",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-closure-audit-tarball.log"
+        }
+      ],
+      "measurements": {
+        "files": 8,
+        "lines": 2262,
+        "bytes": 70288,
+        "specifiers": 21,
+        "runtimeSpecifiers": 15,
+        "typeOnlySpecifiers": 6,
+        "mutableBindings": 0,
+        "violations": 0
+      }
+    },
+    {
+      "gate": "L2",
+      "verdict": "PASS",
+      "scope": "branch",
+      "verdict_scope": "stand-in",
+      "not_provable_here": [
+        "a versioned channel — the locally packed tarball is a channel stand-in",
+        "a chosen home for the package",
+        "a llamactl-side install of the artifact",
+        "that either consumer ran outside this worktree"
+      ],
+      "evidence": [
+        {
+          "claim": "the packed tarball (channel stand-in) installs into both consumer copies",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json consumers.*.steps"
+        },
+        {
+          "claim": "manifest gate holds: no 0.0.0, no workspace/file/link specifiers, MIT license, entry whitelist",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json problems + tarball.entries"
+        },
+        {
+          "claim": "both copies resolve the package from inside the copy; installed content digest equals the tarball (channel stand-in) digest",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json consumers.*.resolved_to, digest_equal"
+        },
+        {
+          "claim": "runs without a Penumbra checkout, daemon, database, memory or config",
+          "status": "inferred",
+          "pointer": "rule (a) over the extraction plus the @penumbra/* stub tripwire (tmp/sharedlib6/logs/*-guard.log) and empty isolated HOME (home_entries_after)",
+          "would_confirm": "an install outside any checkout — owed to P2.2/llamactl-adoption"
+        },
+        {
+          "claim": "B1 resolved — private:true retained in the packed manifest (channel stand-in)",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/pack/extracted/package/package.json"
+        }
+      ],
+      "measurements": {
+        "consumers": {
+          "penumbra-host": {
+            "steps": 15,
+            "all_green": true,
+            "poison_pass": 0,
+            "guard_exit": 0,
+            "digest_equal": true
+          },
+          "infra-host": {
+            "steps": 7,
+            "all_green": true,
+            "poison_pass": 0,
+            "guard_exit": 0,
+            "digest_equal": true
+          }
+        }
+      }
+    },
+    {
+      "gate": "L3",
+      "verdict": "DEFERRED",
+      "scope": "branch",
+      "parts": {
+        "penumbra": "PASS",
+        "synthetic": "PASS",
+        "llamactl": "DEFERRED"
+      },
+      "deferred_to": "P2.2/llamactl-adoption",
+      "not_provable_here": [
+        "a llamactl-side run — there is no llamactl consumer in this worktree",
+        "parity against any adapter surface other than the two consumers measured"
+      ],
+      "evidence": [
+        {
+          "claim": "penumbra part PASS — origin adapter suite ported to the packed artifact (channel stand-in)",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json consumers.penumbra-host.steps parity:*"
+        },
+        {
+          "claim": "synthetic part PASS — infra-host consumer suite",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json consumers.infra-host.steps"
+        }
+      ],
+      "measurements": {
+        "penumbra": "PASS",
+        "synthetic": "PASS"
+      }
+    },
+    {
+      "gate": "L4",
+      "verdict": "PASS",
+      "scope": "branch",
+      "not_provable_here": [
+        "llamactl injecting its own values — env, timers, logger and decide come from the two stand-in hosts",
+        "host behaviours not pinned by the contract suite (open_findings records the list)"
+      ],
+      "evidence": [
+        {
+          "claim": "package contract suite green under the bun test gate",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-bun-test-gate.log"
+        },
+        {
+          "claim": "all six mutation patches break the suite as measured, and the suite is green after revert",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/mutations.json"
+        },
+        {
+          "claim": "B3, B4, B6, B7, B10 resolved by the same measurements",
+          "status": "confirmed",
+          "pointer": "blockers in this document"
+        }
+      ],
+      "measurements": {
+        "suite": {
+          "pass": 73,
+          "fail": 0
+        },
+        "mutations_detected": 6,
+        "t7_overshoot_bytes": 196608
+      }
+    },
+    {
+      "gate": "L5",
+      "verdict": "PASS",
+      "scope": "branch",
+      "release": "operator (D7)",
+      "not_provable_here": [
+        "the versioned release — the version-0.1.0 local tarball is a channel stand-in",
+        "publication state, registry state, or a chosen home"
+      ],
+      "evidence": [
+        {
+          "claim": "every gating step before qualify.ts passed",
+          "status": "confirmed",
+          "pointer": "check_steps in this document"
+        },
+        {
+          "claim": "the 6.2 manifest/content gate holds on the extracted tarball (channel stand-in)",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/measurements.json problems + tarball.entries"
+        },
+        {
+          "claim": "version is 0.1.0, not 0.0.0",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/pack/extracted/package/package.json"
+        },
+        {
+          "claim": "root lint:strict omits packages/exec-primitives — the package lint gate is the eslint step recorded above",
+          "status": "confirmed",
+          "pointer": "root package.json lint:strict script"
+        },
+        {
+          "claim": "root bun run lint recorded non-gating exit 1",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-root-lint.log"
+        }
+      ],
+      "measurements": {
+        "version": "0.1.0",
+        "root_lint_exit": 1
+      }
+    },
+    {
+      "gate": "L6",
+      "verdict": "PASS",
+      "scope": "branch",
+      "not_provable_here": [
+        "a real llamactl worker — warm pooling is measured against two stand-in hosts",
+        "that the allowlist can never hide a future control-flow entry — the classification rule is enforced per entry"
+      ],
+      "evidence": [
+        {
+          "claim": "no allowlist entry names a real control-flow path",
+          "status": "confirmed",
+          "pointer": "audit_allowlist_entries in this document"
+        },
+        {
+          "claim": "src and dist audits clean under (b) and (c)",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-closure-audit-*.log"
+        },
+        {
+          "claim": "T15 ([L6] module identity) and T9 ([B7] warm-pool tests) pass",
+          "status": "confirmed",
+          "pointer": "tmp/sharedlib6/check-logs/check-bun-test-gate.log"
+        },
+        {
+          "claim": "warm pooling is not a resume mechanism — stated in the report",
+          "status": "confirmed",
+          "pointer": "the L6 section of the accompanying .md"
+        }
+      ],
+      "measurements": {
+        "allowlist_entries": 13,
+        "control_flow_entries": 0
+      }
+    }
+  ],
+  "check_steps": [
+    {
+      "gate": "typecheck",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-typecheck.log",
+      "gating": true
+    },
+    {
+      "gate": "dist-freshness",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-dist-freshness.log",
+      "gating": true
+    },
+    {
+      "gate": "typecheck-coverage",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-typecheck-coverage-ratchet.log,check-logs/check-typecheck-coverage-files.log",
+      "gating": true
+    },
+    {
+      "gate": "lint-guards",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-lint-no-raw-env.log,check-logs/check-lint-no-sync-exec.log",
+      "gating": true
+    },
+    {
+      "gate": "eslint",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-eslint.log",
+      "gating": true
+    },
+    {
+      "gate": "prettier",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-prettier.log",
+      "gating": true
+    },
+    {
+      "gate": "test-gate",
+      "exit": 0,
+      "pass": 73,
+      "fail": 0,
+      "log": "check-logs/check-bun-test-gate.log,check-logs/check-test-gate-results.log,check-logs/check-suite-tags.log",
+      "gating": true
+    },
+    {
+      "gate": "mutations",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-mutations.log",
+      "gating": true
+    },
+    {
+      "gate": "section2-slice",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-section2-slice.log",
+      "gating": true
+    },
+    {
+      "gate": "closure-audit-src",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-closure-audit-src.log",
+      "gating": true
+    },
+    {
+      "gate": "qualify",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-qualify.log",
+      "gating": true
+    },
+    {
+      "gate": "closure-audit-tarball",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-closure-audit-tarball.log",
+      "gating": true
+    },
+    {
+      "gate": "fence",
+      "exit": 0,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-fence.log",
+      "gating": true
+    },
+    {
+      "gate": "root-lint",
+      "exit": 1,
+      "pass": null,
+      "fail": null,
+      "log": "check-logs/check-root-lint.log",
+      "gating": false
+    }
+  ],
+  "blockers": {
+    "B1": {
+      "status": "resolved",
+      "evidence": "private:true retained in package.json and in the packed manifest (channel stand-in); no publish path"
+    },
+    "B3": {
+      "status": "resolved",
+      "evidence": "[B3] env-boundary tests pass: the child env is the verbatim host env plus a computed PATH; mutation a (ambient merge) breaks the suite as measured"
+    },
+    "B4": {
+      "status": "resolved",
+      "evidence": "[B4] cancel-grace and watchdog tests pass; mutations d and f (hardcoded defaults) break the suite as measured"
+    },
+    "B6": {
+      "status": "resolved",
+      "evidence": "[B6]/[ACP-CLIENTINFO] pass: initialize advertises the host clientInfo verbatim; mutation e breaks the suite as measured"
+    },
+    "B7": {
+      "status": "resolved",
+      "evidence": "[B7]/[SCOPE-2] pass: pool keys include credential scope; mutation b (digestless key) breaks the suite as measured"
+    },
+    "B8": {
+      "status": "open",
+      "evidence": "B8 resolved needs T10 and T14: in the gate log [B8] passes, [T10] has no passing title and [T14] has no passing title; mutation c breaks the suite as measured; the T10 byte, request-count and backpressure limits are recorded in open_findings"
+    },
+    "B10": {
+      "status": "resolved",
+      "evidence": "zero mutable module-scope bindings under the audit; callback-failure and malformed-stream tests pass; T13 ([B10]) green"
+    }
+  },
+  "red_green": {
+    "tag_passes": {
+      "B3": 6,
+      "B4": 4,
+      "B6": 7,
+      "B7": 7,
+      "B8": 11,
+      "B10": 27
+    }
+  },
+  "mutations": [
+    {
+      "mutation": "a-env-base",
+      "patch": "a-env-base.patch",
+      "intent": "spawn merges ambient process.env under the host env",
+      "tag": "B3",
+      "numstat_paths": [
+        "packages/exec-primitives/src/process-supervisor.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 70,
+      "fail": 3,
+      "ran": 73,
+      "failing_tests": [
+        "[B10] single-owner guarantees > [B10] the closure audit reports zero mutable module-scope bindings",
+        "[B3] env boundary > [B3] runProcess passes the host env verbatim and leaks nothing",
+        "[B3] env boundary > [B3] startStdioAcpServer child sees exactly the host env keys"
+      ],
+      "expected_detectors": [
+        "[B3] env boundary > [B3] runProcess passes the host env verbatim and leaks nothing",
+        "[B3] env boundary > [B3] startStdioAcpServer child sees exactly the host env keys",
+        "[B10] single-owner guarantees > [B10] the closure audit reports zero mutable module-scope bindings"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    },
+    {
+      "mutation": "b-digestless-key",
+      "patch": "b-digestless-key.patch",
+      "intent": "poolKeyFor omits credentialScope from the key",
+      "tag": "B7",
+      "numstat_paths": [
+        "packages/exec-primitives/src/acp-warm-pool.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 71,
+      "fail": 2,
+      "ran": 73,
+      "failing_tests": [
+        "[B7] warm pool > [B7] an entry pooled under credentialScope A is never reused for scope B",
+        "[B7] warm pool > [B7] teardown kills exactly the deposited handles; a control process survives"
+      ],
+      "expected_detectors": [
+        "[B7] warm pool > [B7] an entry pooled under credentialScope A is never reused for scope B",
+        "[B7] warm pool > [B7] teardown kills exactly the deposited handles; a control process survives"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    },
+    {
+      "mutation": "c-unguarded-request",
+      "patch": "c-unguarded-request.patch",
+      "intent": "request() no longer rejects on a closed transport",
+      "tag": "B8",
+      "numstat_paths": [
+        "packages/exec-primitives/src/stdio-acp-client.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 70,
+      "fail": 3,
+      "ran": 73,
+      "failing_tests": [
+        "[B10] single-owner guarantees > [B10] the closure audit reports zero mutable module-scope bindings",
+        "[B8] closed transport > [B8] request() on a closed transport rejects AcpTransportClosedError within 50ms",
+        "[B8] stream and handler faults > [B8] a synchronous write failure rejects the request and leaves no orphan"
+      ],
+      "expected_detectors": [
+        "[B8] closed transport > [B8] request() on a closed transport rejects AcpTransportClosedError within 50ms",
+        "[B8] stream and handler faults > [B8] a synchronous write failure rejects the request and leaves no orphan",
+        "[B10] single-owner guarantees > [B10] the closure audit reports zero mutable module-scope bindings"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    },
+    {
+      "mutation": "d-grace-default",
+      "patch": "d-grace-default.patch",
+      "intent": "cancelGraceMs is replaced by the constant 10000",
+      "tag": "B4",
+      "numstat_paths": [
+        "packages/exec-primitives/src/process-supervisor.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 69,
+      "fail": 4,
+      "ran": 73,
+      "failing_tests": [
+        "[B10] cancel resolves the exit record only after the whole group is gone",
+        "[B10] required host inputs > [B10] missing cancelGraceMs throws HostInputError before spawn",
+        "[B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=2500",
+        "[B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=300"
+      ],
+      "expected_detectors": [
+        "[B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=300",
+        "[B4] cancel grace > [B4] SIGKILL lands inside (graceMs, graceMs+1500) at cancelGraceMs=2500",
+        "[B10] required host inputs > [B10] missing cancelGraceMs throws HostInputError before spawn",
+        "[B10] cancel resolves the exit record only after the whole group is gone"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    },
+    {
+      "mutation": "e-hardcoded-clientinfo",
+      "patch": "e-hardcoded-clientinfo.patch",
+      "intent": "initialize advertises a literal clientInfo instead of the host's",
+      "tag": "B6",
+      "numstat_paths": [
+        "packages/exec-primitives/src/acp-session.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 72,
+      "fail": 1,
+      "ran": 73,
+      "failing_tests": [
+        "[B6] session bootstrap > [B6] initialize params carry the host clientInfo verbatim on the wire"
+      ],
+      "expected_detectors": [
+        "[B6] session bootstrap > [B6] initialize params carry the host clientInfo verbatim on the wire"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    },
+    {
+      "mutation": "f-watchdog-default",
+      "patch": "f-watchdog-default.patch",
+      "intent": "watchdogMs is replaced by the constant 5000",
+      "tag": "B4",
+      "numstat_paths": [
+        "packages/exec-primitives/src/process-supervisor.ts"
+      ],
+      "test_exit_code": 1,
+      "pass": 67,
+      "fail": 6,
+      "ran": 73,
+      "failing_tests": [
+        "[B10] a leader exit with a detached descendant still resolves under the watchdog",
+        "[B10] a throwing onProcessEvent observer cannot defuse the watchdog and exit still settles",
+        "[B10] injected timers are fully disarmed by the time exit resolves on every outcome",
+        "[B10] required host inputs > [B10] missing watchdogMs throws HostInputError before spawn",
+        "[B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=2500",
+        "[B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=400"
+      ],
+      "expected_detectors": [
+        "[B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=400",
+        "[B4] watchdog > [B4] watchdog fires inside (watchdogMs, watchdogMs+1500) at watchdogMs=2500",
+        "[B10] required host inputs > [B10] missing watchdogMs throws HostInputError before spawn",
+        "[B10] injected timers are fully disarmed by the time exit resolves on every outcome",
+        "[B10] a leader exit with a detached descendant still resolves under the watchdog",
+        "[B10] a throwing onProcessEvent observer cannot defuse the watchdog and exit still settles"
+      ],
+      "expected_detectors_hit": true,
+      "detected": true,
+      "post_revert_green": true,
+      "exit": 0,
+      "errors_within_failing": true
+    }
+  ],
+  "mutations_clean_after": true,
+  "audit_allowlist_entries": [
+    {
+      "file": "process-supervisor.ts",
+      "line": 253,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: names a private helper that wires chunk/line handlers onto a piped child stream; no process/session attachment policy is involved",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "process-supervisor.ts",
+      "line": 316,
+      "token": "resume",
+      "classification": "false-positive",
+      "reason": "false-positive: Readable.resume() puts the piped child stream into flowing mode for the chunk handler; unrelated to session-resume or warm-reuse policy",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "process-supervisor.ts",
+      "line": 479,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "process-supervisor.ts",
+      "line": 482,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "stdio-acp-client.ts",
+      "line": 108,
+      "token": "attachnewlinereader",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the readline wirer; no attachment policy",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "stdio-acp-client.ts",
+      "line": 197,
+      "token": "attachnewlinereader",
+      "classification": "false-positive",
+      "reason": "false-positive: names the private helper wiring a readline interface to child stdout; no attachment policy",
+      "allowlist": "audit-allowlist.json"
+    },
+    {
+      "file": "process-supervisor.js",
+      "line": 108,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: compiled name of the private helper wiring chunk/line handlers onto a piped child stream; no process/session attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "process-supervisor.js",
+      "line": 171,
+      "token": "resume",
+      "classification": "false-positive",
+      "reason": "false-positive: Readable.resume() puts the piped child stream into flowing mode; unrelated to session-resume or warm-reuse policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "process-supervisor.js",
+      "line": 317,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "process-supervisor.js",
+      "line": 320,
+      "token": "attachstreamhandler",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the private stream-handler wirer; no attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "stdio-acp-client.d.ts",
+      "line": 58,
+      "token": "attachnewlinereader",
+      "classification": "false-positive",
+      "reason": "false-positive: declaration of the private readline wirer; no attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "stdio-acp-client.js",
+      "line": 48,
+      "token": "attachnewlinereader",
+      "classification": "false-positive",
+      "reason": "false-positive: call site of the private readline wirer; no attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    },
+    {
+      "file": "stdio-acp-client.js",
+      "line": 129,
+      "token": "attachnewlinereader",
+      "classification": "false-positive",
+      "reason": "false-positive: compiled name of the private readline wirer; no attachment policy",
+      "allowlist": "audit-allowlist-dist.json"
+    }
+  ],
+  "deferred": [
+    {
+      "gate": "L3",
+      "part": "llamactl",
+      "deferred_to": "P2.2/llamactl-adoption",
+      "reason": "no llamactl consumer exists in this worktree"
+    }
+  ],
+  "honesty": {
+    "channel_stand_in": true,
+    "channel_chosen": false,
+    "home_chosen": false,
+    "adoption_performed": false,
+    "overall_claim": "none"
+  },
+  "claims_not_made": [
+    "qualified",
+    "ready",
+    "released",
+    "channel chosen",
+    "home chosen",
+    "adopted by llamactl",
+    "dual-consumer parity",
+    "warm pooling is session resume"
+  ],
+  "open_findings": [
+    {
+      "id": "t10-limits",
+      "finding": "T10 byte, request-count and backpressure limits are unmeasured (keeps B8 open)",
+      "status": "open",
+      "pointer": "blockers.B8"
+    },
+    {
+      "id": "stderr-in-errors",
+      "finding": "stderr bytes can appear inside an errors payload (the stderr-in-errors leak vector)",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts stderr tail accumulation"
+    },
+    {
+      "id": "dts-needs-types-node",
+      "finding": "generated .d.ts references node: builtins — consumer typecheck needs @types/node",
+      "status": "open",
+      "pointer": "qualification consumer devDependencies"
+    },
+    {
+      "id": "detect-capacity-provider-specific",
+      "finding": "detectCapacityError matches provider-specific stderr patterns only",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts detectCapacityError"
+    },
+    {
+      "id": "stdio-acp-server-sync-throw",
+      "finding": "startStdioAcpServer is typed Promise but throws synchronously on a bad spawn",
+      "status": "open",
+      "pointer": "src/stdio-acp-server.ts"
+    },
+    {
+      "id": "cli-spawn-folded",
+      "finding": "the cli-spawn adapter surface is folded into process-supervisor.ts, not a separate module",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts"
+    },
+    {
+      "id": "content-length-unanchored",
+      "finding": "the Content-Length framing regex is unanchored",
+      "status": "open",
+      "pointer": "src/stdio-acp-client.ts"
+    },
+    {
+      "id": "pool-key-nul-joined",
+      "finding": "the pool key is NUL-joined and specHash is not validated against a digest grammar",
+      "status": "open",
+      "pointer": "src/acp-warm-pool.ts"
+    },
+    {
+      "id": "log-field-identifiers",
+      "finding": "method, toolName and dispatchId are written into logger fields",
+      "status": "open",
+      "pointer": "src/stdio-acp-client.ts, src/stdio-acp-permission.ts:393-395"
+    },
+    {
+      "id": "stdin-ignore-literal",
+      "finding": "the literal 'ignore' stdin option assumes every consumer wants the same default",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts stdio config"
+    },
+    {
+      "id": "warm-pool-shim-logic",
+      "finding": "the warm-pool parity passes measure a shim that implements holder/release/canAddEntry/peekMissReason and mints a scope per deposit",
+      "status": "inferred",
+      "would_confirm": "a delegation-only shim",
+      "pointer": "qualification/consumers/penumbra-host/src/shim/acp-warm-pool.ts"
+    },
+    {
+      "id": "unpinned-behaviours",
+      "finding": "unpinned behaviours: abort-listener removal, cap-before-callback ordering, the ?? \"reject\" decide default, and the persistent stdio error listeners",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts, src/stdio-acp-client.ts"
+    },
+    {
+      "id": "abort-listener-comment",
+      "finding": "the comment that no host code runs before addEventListener is wrong: n.now and n.timers run first and the post-registration aborted re-check was removed",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts:555"
+    },
+    {
+      "id": "outcome-frozen-before-group-gone",
+      "finding": "the outcome is frozen before waitGroupGone resolves, so a watchdog kill of a detached group still reports outcome 'exited'",
+      "status": "open",
+      "pointer": "src/process-supervisor.ts waitGroupGone"
+    },
+    {
+      "id": "review-record-only",
+      "finding": "record-only review items: no newline line bound; per-chunk Buffer.concat; no request() timeout; no close/dispose; the 4096 retired-id budget; the 64 KB rawInput deny; writeMessage ignores backpressure; unvalidated initialize and response shapes; the instanceof auth retry; ambient timers; bootDeadlineMs naming; the duplicate agentchat stack",
+      "status": "open",
+      "pointer": ".penumbra/reviews/2026-09-25T10-16-30.218Z/synthesis.md"
+    },
+    {
+      "id": "consumer-skiplibcheck",
+      "finding": "skipLibCheck:true in the generated tsconfig.consumer.json may hide .d.ts errors inside the installed package surface",
+      "status": "open",
+      "pointer": "scripts/qualify.ts copyConsumer tsconfig"
+    },
+    {
+      "id": "b10-logger-stdio-acp-client",
+      "finding": "host logger calls outside the supervisor are unguarded (B10 class): by code reading, a throwing logger in breakFraming leaves a pending request unsettled with the transport open, and a throwing handler plus a throwing logger leaves the peer request unanswered with an unhandled rejection",
+      "status": "inferred",
+      "would_confirm": "a [B10] test driving each path with a throwing logger",
+      "pointer": "src/stdio-acp-client.ts:309, :350, :372, :421"
+    },
+    {
+      "id": "b10-logger-stdio-acp-permission",
+      "finding": "the permission-failure catch block calls host.logger.warn unguarded before setting the reject decision (B10 class); by code reading, a throwing logger escapes the catch instead of rejecting",
+      "status": "inferred",
+      "would_confirm": "a [B10] test with a throwing decide and a throwing logger",
+      "pointer": "src/stdio-acp-permission.ts:393"
+    },
+    {
+      "id": "b10-logger-stdio-acp-server",
+      "finding": "the spawn-error paths call logger.error unguarded (B10 class); by code reading, a throwing logger at :95 throws out of startStdioAcpServer and at :102 rejects an unobserved promise",
+      "status": "inferred",
+      "would_confirm": "a [B10] test spawning a missing command with a throwing logger",
+      "pointer": "src/stdio-acp-server.ts:95, :102"
+    },
+    {
+      "id": "b10-logger-acp-warm-pool",
+      "finding": "crashed-entry teardown logs through an unguarded logger before teardownEntry runs (B10 class); by code reading, a throwing logger skips the teardown and leaves the crashed entry pooled",
+      "status": "inferred",
+      "would_confirm": "a [B10] test crashing a pooled entry with a throwing logger",
+      "pointer": "src/acp-warm-pool.ts:176"
+    },
+    {
+      "id": "b10-timers-orphan",
+      "finding": "a throwing or non-function host timers.setTimeout makes superviseProcess throw after spawn and leaves the spawned child running; post-spawn setup has no kill-on-throw (seen by an independent verification probe, not measured on this branch)",
+      "status": "inferred",
+      "would_confirm": "a [B10] test injecting a throwing timers.setTimeout",
+      "pointer": "src/process-supervisor.ts superviseProcess post-spawn timer setup"
+    },
+    {
+      "id": "mutation-loop-timing",
+      "finding": "the mutation-loop comparison is timing-sensitive: an independent verification saw one SHAPE mismatch in about eleven green-tree runs, and composite run 1 at de407cc83 hit it again with every step green; the differing field was not captured (the run deletes its logs), while 4 isolated loops and 12 loaded suite runs of mutations d and f matched the evidence exactly. Two check runs of one tree (f27fb40ca) then gave f-watchdog-default 5 and 4 errors, so the evidence records errors_within_failing, the bound the loop enforces on every run, instead of the count; SHAPE compares every mutation field exactly and names the differing mutation and field",
+      "status": "open",
+      "pointer": "scripts/run-mutations.ts, scripts/sharedlib6-shape-measured.ts shapeMutations"
+    },
+    {
+      "id": "t7-overshoot-domain",
+      "finding": "the committed T7 overshoot is bound to a whole number of 65536-byte reads and to within one read of each run's t7-overshoot marker, both measured on this host only (22 of 22 sampled runs gave 131072 or 196608); a host whose pipe reads are not 64 KiB multiples needs the domain re-derived before evidence is regenerated there",
+      "status": "inferred",
+      "would_confirm": "gate-log t7-overshoot markers from a second platform",
+      "pointer": "scripts/sharedlib6-shape-bind.ts t7Reasons"
+    },
+    {
+      "id": "audit-rule-b-syntactic",
+      "finding": "rule (b) is syntactic: module state reached only through a call to a function defined elsewhere (const x = make() where make returns a Map), a top-level statement that mutates an imported object, module state held on a function object (f.cache = new Map() or tick.count = 0 on a module-local function, exported or not), a module-scope regex literal with the g or y flag (its lastIndex is shared state), and an enum object are not flagged; the syntax-tree pass covers destructured, nested, factory-call, immediately-invoked, any-new, static-field, static-block and export-default shapes",
+      "status": "open",
+      "pointer": "scripts/closure-audit-ast.ts"
+    },
+    {
+      "id": "writer-unconditional-confirmed-claims",
+      "finding": "the evidence writer emits five gate claims with status confirmed whatever the measurements say: B1 resolved with private:true retained, B3, B4, B6, B7 and B10 resolved, every gating step before qualify.ts passed, no allowlist entry names a real control-flow path, and T15 and T9 pass; on a red run SHAPE's regeneration would reproduce the same confirmed text. Deferred by operator ruling",
+      "status": "open",
+      "pointer": "scripts/write-evidence-gates.ts:267, :326, :351, :392, :404"
+    },
+    {
+      "id": "artifact-sha256-format-only",
+      "finding": "SHAPE binds artifact_sha256 by key set and sha256 hex format only and never recomputes a digest, although section2.json and mutations.json reproduce byte-identically across runs (check.json and measurements.json carry timestamps)",
+      "status": "open",
+      "pointer": "scripts/sharedlib6-shape-env.ts artifactShaReasons"
+    },
+    {
+      "id": "parity-adaptations-incomplete",
+      "finding": "parity.per_file adaptations[] pairs single-line import/export lines by position; it misses multi-line import closers and omits the helper and fixture diffs",
+      "status": "open",
+      "pointer": "scripts/write-evidence.ts importAdaptations"
+    },
+    {
+      "id": "test-result-forgery-residual",
+      "finding": "bun test results are read from stderr only, with exactly one trailing summary block (Ran = pass + fail + skip + todo), and the package gate, suite-tags and mutation runs are cross-checked against bun's JUnit report and against static test( titles. Not closed: test code that prints a complete forged run and ends the process (process.exit(0): measured on bun 1.3.14, exit 0, no bun summary, no JUnit report) on the consumer suites in qualify.ts and on the section-2 slice, which parse stderr only; test code that learns the report path from the parent command line and rewrites the report after bun exits; and a test( call that is present but never runs",
+      "status": "open",
+      "pointer": "scripts/bun-test-junit.ts, scripts/suite-titles.ts, scripts/qualify.ts cmd"
+    },
+    {
+      "id": "timing-window-load-sensitivity",
+      "finding": "wall-clock windows in the package and consumer suites (elapsed < graceMs + 1500, watchdogMs + 1500) can fail at load averages far above the core count: an independent verification saw [B4] and [B10] cancel failures and consumer failures (names not recovered) at load 82/106/63 on 14 cores with three sibling check runs. The trap-install race behind the cancel failures is closed by a marker-line handshake: the child prints a marker after its traps and the test waits for it (a 300 ms pre-trap delay fails the four tests without it and passes with it); the windows themselves are unchanged",
+      "status": "open",
+      "pointer": "test/process-supervisor.test.ts, test/helpers.ts waitForText"
+    },
+    {
+      "id": "root-lint-qualification-errors",
+      "finding": "root `bun run lint` (non-gating) reports 28 errors in 12 files under packages/exec-primitives/qualification/**, which the package lint gate does not cover",
+      "status": "open",
+      "pointer": "tmp/sharedlib6/check-logs/check-root-lint.log; reproduce: NODE_OPTIONS=--max-old-space-size=8192 bunx eslint packages/exec-primitives/qualification",
+      "measured": {
+        "errors": 28,
+        "files": 12
+      }
+    }
+  ],
+  "deviations": [
+    {
+      "rule": "infra-host consumer language",
+      "change": "TypeScript sources (src/*.ts, test/infra.parity.ts) rather than plain .mjs sources",
+      "reason": "the qualification contract requires test/*.parity.ts plus typescript and @types/node devDependencies; node runs the .ts smoke via native type-stripping, so the no-toolchain property is preserved",
+      "pointer": "qualification/consumers/infra-host"
+    },
+    {
+      "rule": "vendor-dir consumer installs",
+      "change": "consumers are copied to tmp/sharedlib6/consumer-<name>/ and install the packed tarball (channel stand-in) via bun add",
+      "reason": "a tracked vendor/ directory and file: dependency let workspace resolution mask a broken install of the tarball (channel stand-in); the tmp copy makes missing isolation impossible to hide",
+      "pointer": "scripts/qualify.ts"
+    },
+    {
+      "rule": "sidecar verdict file",
+      "change": "removed; the composite derives its verdict from per-gate exits",
+      "reason": "a hidden verdict file let earlier runs print a pass while real gates had failed",
+      "pointer": "scripts/sharedlib6-check.ts"
+    },
+    {
+      "rule": "single-owner.test.ts port",
+      "change": "module-identity and closure-audit-hook tests stay repo-side; the namespace assertion is re-expressed as test/exports.parity.ts",
+      "reason": "module-instance identity and the audit script do not exist inside an installed consumer",
+      "pointer": "qualification/contract-port.ts"
+    },
+    {
+      "rule": "comment-only bunfig in consumer copies",
+      "change": "consumers ship a comment-only bunfig.toml",
+      "reason": "a preload bunfig would run inside every spawned bun child of the suite",
+      "pointer": "qualification/consumers/*/bunfig.toml"
+    },
+    {
+      "rule": "closure-audit split",
+      "change": "closure-audit.ts is split into closure-audit.ts + closure-audit-core.ts",
+      "reason": "the 700-line cap",
+      "pointer": "scripts/closure-audit-core.ts"
+    },
+    {
+      "rule": "mutation error count",
+      "change": "a mutated suite may report errors up to its failing-test count; errors beyond that fail the loop",
+      "reason": "bun counts a timed-out test as both a fail and an error, so requiring 0 errors would reject every timeout detector",
+      "pointer": "scripts/run-mutations.ts countsProblems"
+    },
+    {
+      "rule": "mutation errors record",
+      "change": "each mutations[] entry records errors_within_failing (0 <= errors <= the failing-test count, as run-mutations requires) instead of bun's errors count",
+      "reason": "the count is bun's timeout attribution and varies for one tree (f-watchdog-default gave 5, then 4, in two check runs at f27fb40ca), so a committed count could be bound only by a range",
+      "pointer": "scripts/sharedlib6-shape-util.ts evidenceMutationRecord"
+    },
+    {
+      "rule": "SHAPE t7_overshoot_bytes binding",
+      "change": "SHAPE binds the committed gates[L4].measurements.t7_overshoot_bytes to the measured domain, a whole number of 65536-byte reads in [65536, 917504], and to within one 65536-byte read of this run's t7-overshoot marker, and binds that marker to 0 < v <= 934464 (1000000 bytes produced minus the 65536-byte cap), not by equality",
+      "reason": "the overshoot varies with pipe chunking (131072 in 10 and 196608 in 12 of 22 sampled runs on this host, one read apart), so equality would fail at random",
+      "pointer": "scripts/sharedlib6-shape-bind.ts t7Reasons"
+    },
+    {
+      "rule": "SHAPE regeneration exemptions",
+      "change": "SHAPE rebuilds the evidence object from the check's own run (write-evidence-build.ts) and requires the committed .json to equal it, toolchain included, except head_sha (a commit in base..HEAD whose code tree outside docs/qualification equals HEAD's), generated_at (an ISO-8601 time between the head_sha commit and now), poison_layer (a superset of this run's guard stubs, each a workspace package, @penumbra/core included), artifact_sha256 (exactly the four run files the writer hashes, each a sha256 digest) and gates[L4].measurements.t7_overshoot_bytes (its own deviation); toolchain must also equal the check's own bun, node and tsc versions; the .md must equal the render of the committed .json byte for byte",
+      "reason": "poison_layer records the install (a fresh worktree install links 2 @penumbra packages where this worktree links 13), artifact_sha256 hashes run files that carry timestamps, generated_at is the write time, head_sha cannot name the evidence commit itself, and the T7 overshoot varies run to run, so each is bound by a rule instead of equality",
+      "pointer": "scripts/sharedlib6-shape-regen.ts, scripts/sharedlib6-shape-env.ts"
+    },
+    {
+      "rule": "re-expression two-file split",
+      "change": "the re-expressed cases live in test/cli-spawn-stream.parity.ts and test/stdio-acp-permission.parity.ts instead of one test/permission-and-stream.parity.ts",
+      "reason": "combined, the two files exceed the 700-line cap",
+      "pointer": "qualification/consumers/penumbra-host/test/"
+    },
+    {
+      "rule": "extra audit fixtures",
+      "change": "b-const-annotated-array, b-const-object-literal, b-const-arrow-map, b-const-arrow-record, b-static-scalar, b-const-destructured, b-const-destructured-array, b-const-new-typed-array, b-const-object-create, b-const-nested-map, b-const-iife-closure, b-export-default and d-consumer-guard-dynamic-import added; audit-allowlist-dist.json audits the dist bundle separately",
+      "reason": "the mutable-binding rule grew per-shape tokens, arrow-type annotations and a syntax-tree pass (scripts/closure-audit-ast.ts) that flags destructured, nested, factory-call, immediately-invoked, any-new, non-readonly static, static-block and export-default module state beyond the spec's literal list; the consumer guard-tripwire shape needed a src-side negative case",
+      "pointer": "qualification/audit-fixtures/"
+    }
+  ],
+  "artifact_sha256": {
+    "check.json": "50d0288fa03e8ab43d850c64a2a1be9aeb535d0d7acf0f4e723c083c42888a5b",
+    "measurements.json": "94fe7af9226383439a1dbb89567d9e58429c405e17289553094c08bd025022aa",
+    "mutations.json": "97227b38e6a0079fdc30514607115a6293d1d8e25e15c20d24f43612644a43a3",
+    "section2.json": "74d6bc500db886f8cadd7cece764d867a8865b5993fd414a05ffc5926c03aab5"
+  }
+}

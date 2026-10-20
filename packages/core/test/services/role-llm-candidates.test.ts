@@ -351,3 +351,31 @@ test("uses the supplied legacy candidate when no seat carries the role", () => {
     }),
   ).toEqual([fallback]);
 });
+
+test("exports the agents.yaml keychain ref parser", () => {
+  expect(typeof (llmCandidates as Record<string, unknown>).parseKeychainRef).toBe("function");
+  expect(llmCandidates.parseKeychainRef("llamactl/typesafe")).toEqual({
+    service: "llamactl",
+    account: "typesafe",
+  });
+  expect(llmCandidates.parseKeychainRef("a/b/c")).toEqual({ service: "a", account: "b/c" });
+  expect(llmCandidates.parseKeychainRef("llamactl/")).toBeNull();
+  expect(llmCandidates.parseKeychainRef("/typesafe")).toBeNull();
+  expect(llmCandidates.parseKeychainRef("no-slash")).toBeNull();
+});
+
+test("resolveAuthSecret resolves keychain auth once through the injected resolver and trims", () => {
+  expect(typeof (llmCandidates as Record<string, unknown>).resolveAuthSecret).toBe("function");
+  const calls: [string, string][] = [];
+  const secret = llmCandidates.resolveAuthSecret(
+    { source: "keychain", service: "llamactl", account: "typesafe" },
+    (service, account) => {
+      calls.push([service, account]);
+      return "k-chain\n";
+    },
+  );
+  expect(secret).toBe("k-chain");
+  expect(calls).toEqual([["llamactl", "typesafe"]]);
+  expect(llmCandidates.resolveAuthSecret({ source: "none" })).toBeNull();
+  expect(llmCandidates.resolveAuthSecret({ source: "bearer", token: "t" })).toBe("t");
+});

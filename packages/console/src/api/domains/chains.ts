@@ -6,6 +6,7 @@ import {
   ChainHistoryResponseSchema,
   type ChainMessagesResponse,
   ChainMessagesResponseSchema,
+  ChainMessagesTailOptionsSchema,
   type ChainResponsesPayload,
   ChainResponsesPayloadSchema,
   ChainSendMessageRequestSchema,
@@ -52,11 +53,56 @@ export interface ChainsSlice {
       conversation_id: string;
     }[];
   }>;
-  messages(conversationId: string, opts?: { limit?: number }): Promise<ChainMessagesResponse>;
+  messages(
+    conversationId: string,
+    opts?: { tail?: boolean; limit?: number },
+  ): Promise<ChainMessagesResponse>;
   responses(conversationId: string, which: "all" | "final"): Promise<ChainResponsesPayload>;
   agents(): Promise<ChainAgentsResponse>;
   start(body: ChainStartRequest): Promise<ChainStartResponse>;
   send(handoffId: string, body: { content: string }): Promise<ChainSendMessageResponse>;
+}
+
+function requestMessages(
+  t: DaemonTransport,
+  conversationId: string,
+  opts?: { tail?: boolean; limit?: number },
+): Promise<ChainMessagesResponse> {
+  const tail: unknown = opts?.tail;
+  if (tail !== undefined && tail !== false) {
+    const parsedTail = ChainMessagesTailOptionsSchema.safeParse({
+      tail,
+      limit: opts?.limit,
+    });
+    if (!parsedTail.success) {
+      return Promise.reject(
+        new DaemonContractError({
+          url: fillPath(PATHS.messages),
+          issues: parsedTail.error.issues,
+          rawBody: { tail, limit: opts?.limit },
+        }),
+      );
+    }
+    return t.request({
+      path: fillPath(PATHS.messages),
+      query: {
+        conversation_id: conversationId,
+        tail: parsedTail.data.tail,
+        limit: parsedTail.data.limit,
+      },
+      schema: ChainMessagesResponseSchema,
+    });
+  }
+
+  return t.request({
+    path: fillPath(PATHS.messages),
+    query: {
+      conversation_id: conversationId,
+      limit: opts?.limit,
+      tail: opts?.tail,
+    },
+    schema: ChainMessagesResponseSchema,
+  });
 }
 
 export function chainsSlice(t: DaemonTransport): ChainsSlice {
@@ -96,15 +142,8 @@ export function chainsSlice(t: DaemonTransport): ChainsSlice {
         schema: ChainHistoryResponseSchema,
       });
     },
-    messages(conversationId: string, opts?: { limit?: number }): Promise<ChainMessagesResponse> {
-      return t.request({
-        path: fillPath(PATHS.messages),
-        query: {
-          conversation_id: conversationId,
-          limit: opts?.limit,
-        },
-        schema: ChainMessagesResponseSchema,
-      });
+    messages(conversationId, opts): Promise<ChainMessagesResponse> {
+      return requestMessages(t, conversationId, opts);
     },
     responses(conversationId: string, which: "all" | "final"): Promise<ChainResponsesPayload> {
       return t.request({

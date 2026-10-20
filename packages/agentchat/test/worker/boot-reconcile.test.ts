@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { PenumbraHttpError } from "@src/penumbra-client.js";
 import {
   type BootReconcileDeps,
   type BootReconcileLogger,
@@ -218,4 +219,107 @@ test("reconcileOrphansAtWorkerBoot warns once after two failed attempts", async 
     meta: { err: secondError },
     msg: "long-lived orphan reconcile call failed at worker boot; continuing",
   });
+});
+
+function captureLogger(): { log: BootReconcileLogger; infos: WarnCall[]; warns: WarnCall[] } {
+  const infos: WarnCall[] = [];
+  const warns: WarnCall[] = [];
+  return {
+    infos,
+    warns,
+    log: {
+      info: (meta, msg): void => {
+        infos.push({ meta, msg });
+      },
+      warn: (meta, msg): void => {
+        warns.push({ meta, msg });
+      },
+    },
+  };
+}
+
+function successfulClient(): BootReconcileClient {
+  return {
+    postHeartbeat: () => Promise.resolve(),
+    reconcileLongLivedOrphans: () => Promise.resolve({ reconciled: 0 }),
+    reconcileDispatchOrphans: () => Promise.resolve({ requeued: 0, exhausted: 0 }),
+  };
+}
+
+test("permanent dispatch reconcile 503 logs the service cause and bounded retry", async () => {
+  const { log, infos, warns } = captureLogger();
+  const client = successfulClient();
+  const err = new PenumbraHttpError("HTTP 503", 503, {
+    error: { code: "recovery_service_unavailable" },
+  });
+  let attempts = 0;
+  client.reconcileDispatchOrphans = (): Promise<never> => {
+    attempts++;
+    return Promise.reject(err);
+  };
+  const sleeps: number[] = [];
+  await reconcileOrphansAtWorkerBoot({
+    client,
+    log,
+    workerId: "w1",
+    claimedBefore: "2026-10-07T12:00:00.000Z",
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+  });
+  expect(attempts).toBe(2);
+  expect(sleeps).toEqual([2000]);
+  expect(infos).toEqual([
+    {
+      meta: { err, status: 503, code: "recovery_service_unavailable" },
+      msg: "dispatch orphan reconcile failed; retrying in 2s",
+    },
+  ]);
+  expect(warns).toEqual([
+    {
+      meta: {
+        err,
+        status: 503,
+        code: "recovery_service_unavailable",
+        event: "boot_dispatch_reconcile_failed",
+        deferred: false,
+      },
+      msg: "dispatch orphan reconcile call failed at worker boot; continuing",
+    },
+  ]);
+  expect([...infos, ...warns].every(({ msg }) => !msg.includes("daemon not ready"))).toBe(true);
+});
+
+test("empty successful boot reconcile emits positive counts", async () => {
+  const { log, infos, warns } = captureLogger();
+  await reconcileOrphansAtWorkerBoot({
+    client: successfulClient(),
+    log,
+    workerId: "w1",
+    sleep: noopSleep,
+  });
+  expect(infos).toEqual([
+    {
+      meta: { requeued: 0, exhausted: 0, event: "boot_dispatch_reconcile_ok" },
+      msg: "dispatch orphans reconciled at worker boot",
+    },
+  ]);
+  expect(warns).toEqual([]);
+});
+
+test.each([
+  ["postHeartbeat", "heartbeat call failed; retrying in 2s"],
+  ["reconcileLongLivedOrphans", "long-lived orphan reconcile failed; retrying in 2s"],
+] as const)("%s retry reports the call failure", async (method, message) => {
+  const { log, infos } = captureLogger();
+  const client = successfulClient();
+  const err = new PenumbraHttpError("HTTP 503", 503, { error: { code: "service_unavailable" } });
+  client[method] = (): Promise<never> => Promise.reject(err);
+  await reconcileOrphansAtWorkerBoot({ client, log, workerId: "w1", sleep: noopSleep });
+  expect(infos).toContainEqual({
+    meta: { err, status: 503, code: "service_unavailable" },
+    msg: message,
+  });
+  expect(infos.every(({ msg }) => !msg.includes("daemon not ready"))).toBe(true);
 });

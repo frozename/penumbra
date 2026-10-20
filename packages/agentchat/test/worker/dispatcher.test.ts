@@ -16,6 +16,7 @@ import { PenumbraClient, PenumbraHttpError } from "@src/penumbra-client.js";
 import type { DispatchEvent } from "@src/sdk/adapter.js";
 import type { DiscordNotificationEvent } from "@src/worker/discord-events.js";
 import { createWorkerDispatcher, type WorkerDispatcherDeps } from "@src/worker/dispatcher.js";
+import type { TerminalReport } from "@src/worker/terminal-outbox.js";
 
 // Bun's mock() returns Mock<(...args: unknown[]) => unknown>; the .mock.calls
 // array is therefore unknown[][] and TypeScript loses the concrete arg tuple
@@ -919,6 +920,7 @@ test("real retry helper and worker finalize cancellation once without another tu
       chain_id: "c-real-cancel",
       reason: "cancelled",
     }),
+    expect.any(AbortSignal),
   );
 });
 
@@ -1449,4 +1451,258 @@ test("unmatched conversation-scoped cancels are bounded and evict oldest entries
   expect(internals.pendingCancelsByConvSize).toBe(1_000);
   expect(internals.pendingCancelsByConvKeys?.[0]).toBe("c-0005");
   expect(internals.pendingCancelsByConvKeys).not.toContain("c-0000");
+});
+
+function reportTerminalDeps(
+  over: Partial<WorkerDispatcherDeps> = {},
+  status: "delivered" | "pending" | "superseded" = "delivered",
+): { d: WorkerDispatcherDeps; reports: TerminalReport[]; onEventCalls: DispatchEventInput[] } {
+  const reports: TerminalReport[] = [];
+  const onEventCalls: DispatchEventInput[] = [];
+  const d = deps({
+    reportTerminal: mock((report: TerminalReport) => {
+      reports.push(report);
+      return Promise.resolve(status);
+    }),
+    onEvent: (event) => {
+      onEventCalls.push(event);
+    },
+    workerId: "w-terminal",
+    ...over,
+  });
+  return { d, reports, onEventCalls };
+}
+
+test("reportTerminal wired: dispatch.end travels inside the report, not the lossy queue", async () => {
+  const { d, reports, onEventCalls } = reportTerminalDeps();
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-terminal"));
+  await dispatcher.idle();
+
+  expect(reports).toHaveLength(1);
+  const report = reports[0]!;
+  expect(report.handoff_id).toBe("h-terminal");
+  expect(report.worker_id).toBe("w-terminal");
+  expect(report.outcome).toBe("complete");
+  expect(report.reason).toBeUndefined();
+  expect(report.dispatch_end.kind).toBe("dispatch.end");
+  expect(report.dispatch_end.meta?.status).toBe("ok");
+  // dispatch.end must NOT also go through the lossy event queue — it would be
+  // duplicated on outbox replay.
+  expect(onEventCalls.some((event) => event.kind === "dispatch.end")).toBe(false);
+  // The legacy terminal calls are replaced by the report.
+  expect(d.complete).not.toHaveBeenCalled();
+  expect(d.markFailed).not.toHaveBeenCalled();
+});
+
+test("reportTerminal wired: post-turn progress failures do not flip status to error", async () => {
+  const { d, reports } = reportTerminalDeps({
+    onChainEnd: mock(),
+    dispatch: mock().mockImplementation((_h: unknown, onChunk: (delta: string) => void) => {
+      onChunk("tail-delta");
+      return Promise.resolve({
+        next: null,
+        terminatedReason: "no_mention" as const,
+        text: "tail-delta",
+        agent: "executor",
+      });
+    }),
+    postProgress: mock().mockImplementation((_id: string, payload: ProgressPayload) => {
+      if (payload.type === "hop-start") return Promise.resolve();
+      // The tail token flush, hop-end, and chain-end all fail — exactly what a
+      // blocked daemon main thread did on 2026-10-06.
+      return Promise.reject(new TypeError("The socket connection was closed unexpectedly"));
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-postturn"));
+  await dispatcher.idle();
+
+  // A progress failure must no longer flip status to 'error' or skip onChainEnd.
+  expect(d.onChainEnd).toHaveBeenCalledTimes(1);
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.outcome).toBe("complete");
+  expect(reports[0]!.dispatch_end.meta?.status).toBe("ok");
+  expect(d.markFailed).not.toHaveBeenCalled();
+});
+
+test("reportTerminal wired: 'pending' return does not block idle()", async () => {
+  const { d } = reportTerminalDeps({}, "pending");
+  const dispatcher = createWorkerDispatcher(d);
+
+  const start = Date.now();
+  await dispatcher.handle(baseHandoff("h-pending"));
+  await dispatcher.idle();
+
+  expect(Date.now() - start).toBeLessThan(2_000);
+});
+
+test("reportTerminal wired: pendingObservations on the result land in the report", async () => {
+  const env = { event_id: "pre-1", event_type: "agent-response" };
+  const { d, reports } = reportTerminalDeps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "no_mention" as const,
+      text: "done",
+      agent: "executor",
+      pendingObservations: [env],
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-pending-obs"));
+  await dispatcher.idle();
+
+  expect(reports[0]!.observations).toEqual([env]);
+});
+
+test("reportTerminal wired: pendingObservations carried on a thrown dispatch error land in the report", async () => {
+  const env = { event_id: "pre-2", event_type: "agent-response" };
+  const thrown = Object.assign(new TypeError("socket closed"), {
+    pendingObservations: [env],
+  });
+  const { d, reports } = reportTerminalDeps({
+    dispatch: mock().mockRejectedValue(thrown),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-thrown-pending"));
+  await dispatcher.idle();
+
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.outcome).toBe("fail");
+  expect(reports[0]!.reason).toBe("socket closed");
+  expect(reports[0]!.observations).toEqual([env]);
+});
+
+test("reportTerminal wired: adapterError message becomes the fail reason", async () => {
+  const { d, reports } = reportTerminalDeps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "error" as const,
+      adapterError: { message: "adapter blew up" },
+      text: "",
+      agent: "executor",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-adapter-err"));
+  await dispatcher.idle();
+
+  expect(reports[0]!.outcome).toBe("fail");
+  expect(reports[0]!.reason).toBe("adapter blew up");
+});
+
+test("adapterError message also wins the legacy markFailed reason", async () => {
+  const d = deps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "error" as const,
+      adapterError: { message: "adapter blew up" },
+      text: "",
+      agent: "executor",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-adapter-err-legacy"));
+  await dispatcher.idle();
+
+  expect(d.markFailed).toHaveBeenCalledWith("h-adapter-err-legacy", "adapter blew up");
+});
+
+test("reportTerminal wired: cancelled dispatch stays fail-closed (outcome 'fail', reason 'cancelled')", async () => {
+  const { d, reports } = reportTerminalDeps({
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "cancelled" as const,
+      text: "",
+      agent: "executor",
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-cancelled-report"));
+  await dispatcher.idle();
+
+  expect(reports[0]!.outcome).toBe("fail");
+  expect(reports[0]!.reason).toBe("cancelled");
+});
+
+test("a mid-turn token post slower than the timeout does not abort the dispatch", async () => {
+  let dispatches = 0;
+  const d = deps({
+    progressPostTimeoutMs: 30,
+    postProgress: mock().mockImplementation(
+      (_id: string, payload: ProgressPayload, signal?: AbortSignal) => {
+        if (payload.type !== "token" || !signal) return Promise.resolve();
+        // A hung mid-turn token post: rejects only when the timeout signal fires.
+        return new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("timed out", "TimeoutError"));
+            },
+            { once: true },
+          );
+        });
+      },
+    ),
+    dispatch: mock().mockImplementation(
+      async (_h: unknown, onChunk: (delta: string) => void, signal: AbortSignal) => {
+        dispatches++;
+        onChunk("partial");
+        await new Promise((r) => setTimeout(r, 250));
+        if (signal.aborted) {
+          return {
+            next: null,
+            terminatedReason: "cancelled" as const,
+            text: "",
+            agent: "executor",
+          };
+        }
+        return {
+          next: null,
+          terminatedReason: "no_mention" as const,
+          text: "done",
+          agent: "executor",
+        };
+      },
+    ),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-slow-token"));
+  await dispatcher.idle();
+
+  expect(dispatches).toBe(1);
+  // The slow token post dropped its delta; the dispatch was NOT aborted.
+  expect(d.complete).toHaveBeenCalledTimes(1);
+  expect(d.markFailed).not.toHaveBeenCalled();
+});
+
+test("reportTerminal throwing is logged but does not wedge the dispatcher", async () => {
+  const warns: unknown[][] = [];
+  const { d } = reportTerminalDeps({
+    reportTerminal: mock((_report: TerminalReport) => {
+      return Promise.reject(new Error("outbox exploded"));
+    }),
+    log: asLogger({
+      info: mock(),
+      warn: mock((...args: unknown[]) => {
+        warns.push(args);
+      }),
+      debug: mock(),
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff("h-report-throws"));
+  await dispatcher.idle();
+
+  expect(warns.length).toBeGreaterThanOrEqual(1);
+  expect(d.complete).not.toHaveBeenCalled();
 });
