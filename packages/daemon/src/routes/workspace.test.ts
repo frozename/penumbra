@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { workspaceRoute } from "./workspace.js";
@@ -32,4 +35,27 @@ test("workspaceRoute fails closed to null when the repo path is unresolvable", a
   expect(body.branch).toBeNull();
   expect(body.dirty).toBeNull();
   expect(body.projectId === null || typeof body.projectId === "string").toBe(true);
+});
+
+test("workspaceRoute reports a changed origin instead of a process-lifetime snapshot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workspace-route-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["remote", "add", "origin", "https://example.com/before.git"], { cwd: root });
+    const services = { worktreeManager: { mainRepoDir: root } } as never;
+    const projectIdOf = async (): Promise<unknown> => {
+      const res = await workspaceRoute(new Request("http://localhost/workspace"), services);
+      return ((await res.json()) as { projectId: unknown }).projectId;
+    };
+    const before = await projectIdOf();
+    spawnSync("git", ["remote", "set-url", "origin", "https://example.com/after.git"], {
+      cwd: root,
+    });
+    const after = await projectIdOf();
+    expect(typeof before).toBe("string");
+    expect(typeof after).toBe("string");
+    expect(after).not.toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

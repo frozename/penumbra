@@ -15,23 +15,12 @@ const STATUS_EXCLUDE_PATHS = [
   ":(exclude).test-storage",
 ] as const;
 
-// The daemon's own repo identity is immutable for the process lifetime, but
-// resolveProjectId resolves it via two BLOCKING spawnSync git calls. Memoize the
-// successful result so it is computed once, not on every (5s) poll — keeps the
-// synchronous git out of the request hot path. A null (transient git failure) is
-// left uncached so it self-heals on the next poll.
-let projectIdCache: { repoRoot: string; projectId: string } | null = null;
-
-function resolveProjectIdCached(repoRoot: string): string | null {
-  if (projectIdCache?.repoRoot === repoRoot) return projectIdCache.projectId;
-  let projectId: string | null = null;
+function resolveProjectIdOrNull(repoRoot: string): string | null {
   try {
-    projectId = resolveProjectId({ cwd: repoRoot }).project_id;
+    return resolveProjectId({ cwd: repoRoot }).project_id;
   } catch {
-    projectId = null;
+    return null;
   }
-  if (projectId !== null) projectIdCache = { repoRoot, projectId };
-  return projectId;
 }
 
 /**
@@ -50,7 +39,7 @@ export async function workspaceRoute(_req: Request, services: Services): Promise
   // onto the Services object itself — read it where it actually lives.
   const repoRoot = services.worktreeManager.mainRepoDir;
 
-  const projectId = resolveProjectIdCached(repoRoot);
+  const projectId = resolveProjectIdOrNull(repoRoot);
 
   const [branch, dirty] = await Promise.all([
     execFile("git", ["-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"])

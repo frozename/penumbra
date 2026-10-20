@@ -109,3 +109,10 @@ test("marker-resolved project finds registered name from subdirectory", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a cwd deleted after a successful resolution resolves to kind=global", () => {
+  expect(resolveProjectScope({ cwd: dir }).kind).toBe("no_match");
+  rmSync(dir, { recursive: true, force: true });
+  const scope = resolveProjectScope({ cwd: dir });
+  expect(scope).toEqual({ kind: "global", project_id: null, repo_root: null });
+});
