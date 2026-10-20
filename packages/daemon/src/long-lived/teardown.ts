@@ -141,6 +141,14 @@ interface AgentPerformanceCostRow {
   cost_usd: number | null;
 }
 
+export const TICK_CHAIN_COST_SQL = `
+    SELECT cost_usd
+      FROM agent_performance
+     WHERE conversation_id = ?
+       AND source <> 'manual_seed'
+       AND cost_usd IS NOT NULL
+  `;
+
 export function maybeTeardownLongLivedTick(params: {
   services: Services;
   handoff_id: string;
@@ -166,13 +174,7 @@ export function maybeTeardownLongLivedTick(params: {
     const resolvedAtMs = Date.parse(params.resolved_at_iso);
     const costRows = tick.chain_id
       ? params.services.db
-          .query<AgentPerformanceCostRow, [string]>(
-            `SELECT cost_usd
-             FROM agent_performance
-            WHERE conversation_id = ?
-              AND source <> 'manual_seed'
-              AND cost_usd IS NOT NULL`,
-          )
+          .query<AgentPerformanceCostRow, [string]>(TICK_CHAIN_COST_SQL)
           .all(tick.chain_id)
       : [];
     const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);

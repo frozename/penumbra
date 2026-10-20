@@ -706,6 +706,7 @@
     ]
   },
   "indexes": [
+    "agent_perf_by_conversation",
     "agent_perf_by_task_agent",
     "agent_perf_by_ts",
     "claude_code_sessions_by_last_seen",

@@ -140,6 +140,34 @@ test("schema creates agent_performance table and indexes", () => {
   expect(execMs?.notnull).toBe(0);
 });
 
+test("applySchema creates agent_performance conversation index and is idempotent", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  applySchema(db);
+
+  const index = (): { type: string; name: string; tbl_name: string } | null =>
+    db
+      .query<
+        { type: string; name: string; tbl_name: string },
+        []
+      >("SELECT type, name, tbl_name FROM sqlite_master WHERE type='index' AND name='agent_perf_by_conversation'")
+      .get() ?? null;
+
+  expect(index()).toEqual({
+    type: "index",
+    name: "agent_perf_by_conversation",
+    tbl_name: "agent_performance",
+  });
+
+  applySchema(db);
+  expect(index()).toEqual({
+    type: "index",
+    name: "agent_perf_by_conversation",
+    tbl_name: "agent_performance",
+  });
+  db.close();
+});
+
 test("applySchema dedupes open lane rows before creating the partial unique index", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);

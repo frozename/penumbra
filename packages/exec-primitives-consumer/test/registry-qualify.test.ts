@@ -96,9 +96,9 @@ describe("registry qualification helpers", () => {
 
   test("classifies clean, dirty, and unreadable worktree status results", () => {
     expect(classifyWorktree({ exit: 0, stdout: "" })).toBe("clean");
-    expect(classifyWorktree({ exit: 0, stdout: " M packages/exec-primitives-consumer/src/pin.ts\n" })).toBe(
-      "dirty",
-    );
+    expect(
+      classifyWorktree({ exit: 0, stdout: " M packages/exec-primitives-consumer/src/pin.ts\n" }),
+    ).toBe("dirty");
     expect(classifyWorktree({ exit: 128, stdout: "" })).toBe("unreadable");
     expect(classifyWorktree({ exit: null, stdout: "" })).toBe("unreadable");
   });

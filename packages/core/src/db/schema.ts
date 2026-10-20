@@ -374,6 +374,10 @@ const SCHEMA_DDL_BLOCK_01 = `
         ON agent_performance(task_type, agent_name, ts DESC);
       CREATE INDEX IF NOT EXISTS agent_perf_by_ts
         ON agent_performance(ts DESC);
+      -- Long-lived tick teardown sums a chain's cost by conversation_id; tick
+      -- rows themselves carry NULL, so the partial predicate keeps them out.
+      CREATE INDEX IF NOT EXISTS agent_perf_by_conversation
+        ON agent_performance(conversation_id) WHERE conversation_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS lane_ledger (
         lane_id              TEXT PRIMARY KEY,

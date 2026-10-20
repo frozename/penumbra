@@ -333,7 +333,8 @@ function preflight(): void {
 function assertCleanWorktree(): string {
   const status = run("git", ["status", "--porcelain"]);
   const classification = classifyWorktree({ exit: status.exit, stdout: status.stdout });
-  if (classification === "dirty") failWorktree("worktree is dirty; refusing to write measured evidence");
+  if (classification === "dirty")
+    failWorktree("worktree is dirty; refusing to write measured evidence");
   if (classification === "unreadable") {
     failWorktree("worktree status unreadable; refusing to write measured evidence");
   }
