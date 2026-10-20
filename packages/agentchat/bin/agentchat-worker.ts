@@ -1330,6 +1330,7 @@ async function setUpDispatchWorktree(
         handoffId: handoff.handoff_id,
         workerId,
         worktreeMode: result.handle.worktreeMode,
+        gitHooks: result.handle.gitHooks,
         durationMs: Date.now() - worktreeSetupStart,
       }),
     );

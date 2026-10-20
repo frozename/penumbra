@@ -24,3 +24,21 @@ test("buildWorktreeReadyEvent emits path-free completion metadata", () => {
   });
   expect(event.meta).not.toHaveProperty("worktree_path");
 });
+
+test("buildWorktreeReadyEvent carries the git-hook status without the hooks path", () => {
+  const event = buildWorktreeReadyEvent({
+    handoffId: "h-hooks",
+    workerId: "worker-1",
+    worktreeMode: "isolated_install",
+    durationMs: 42,
+    ts: "2026-06-12T00:00:00.000Z",
+    gitHooks: { status: "missing", configured: ".husky/_" },
+  });
+
+  expect(event.meta).toEqual({
+    worktree_mode: "isolated_install",
+    duration_ms: 42,
+    git_hooks: "missing",
+  });
+  expect(JSON.stringify(event.meta)).not.toContain(".husky");
+});
