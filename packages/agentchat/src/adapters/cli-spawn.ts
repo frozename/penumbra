@@ -1,9 +1,12 @@
-import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchEventInput, PermissionProfile } from "@penumbra/core";
 
+import { renderSandboxExecProfile, resolveSandboxDenyRoots } from "@penumbra/core";
 import { type ChildProcess, spawn } from "node:child_process";
 
 import type { DispatchEvent } from "../sdk/adapter.js";
 import type { ThoughtCapture } from "../worker/thought-capture.js";
+
+import { wrapSandboxExecArgv } from "../worker/sandbox-spawn.js";
 
 export interface SpawnOpts {
   command: string;
@@ -14,6 +17,19 @@ export interface SpawnOpts {
   /** Names of inherited env vars to drop before spawning (e.g. when an inherited OPENAI_BASE_URL would override the CLI's own auth). */
   unset_env?: string[];
   cwd?: string;
+  /**
+   * Permission profile the dispatch must run under. When set, the CLI child is
+   * spawned via sandbox-exec with a write-deny SBPL profile over the dispatch
+   * cwd — the only enforcement surface cli adapters have (they expose no
+   * tool-call boundary to gate). Fails closed when sandbox-exec is missing.
+   */
+  permission_profile?: PermissionProfile | null;
+  /**
+   * Additional write-deny roots rendered into the SBPL profile alongside the
+   * dispatch cwd (caller cwd, project root, worktree fleet base). Ignored when
+   * permission_profile is unset.
+   */
+  sandbox_deny_roots?: readonly string[];
   pass_via?: "stdin" | "argv";
   /** Regex patterns whose matching output lines are removed before returning. Useful for CLIs whose own hook/wrapper code prints chatty noise around the model reply. */
   strip_patterns?: string[];
@@ -129,8 +145,13 @@ function spawnProcess(opts: {
   env: Record<string, string>;
   cwd?: string;
   stdinMode: "ignore" | "pipe";
+  sandboxProfile?: string;
 }): ChildProcess {
-  return spawn(opts.command, opts.args, {
+  const argv =
+    opts.sandboxProfile !== undefined
+      ? wrapSandboxExecArgv([opts.command, ...opts.args], opts.sandboxProfile)
+      : [opts.command, ...opts.args];
+  return spawn(argv[0] ?? opts.command, argv.slice(1), {
     cwd: opts.cwd,
     env: opts.env,
     stdio: [opts.stdinMode, "pipe", "pipe"],
@@ -297,12 +318,23 @@ function startSpawn(opts: SpawnOpts): SpawnContext {
     opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S,
   );
 
+  // SBPL subpath rules match resolved paths — the effective cwd (dispatch
+  // worktree, else the worker cwd) plus every caller-supplied mutable root
+  // must be realpath'd before rendering or the deny rules silently miss.
+  const sandboxProfile =
+    opts.permission_profile !== undefined && opts.permission_profile !== null
+      ? renderSandboxExecProfile(
+          resolveSandboxDenyRoots(opts.cwd ?? process.cwd(), opts.sandbox_deny_roots),
+        )
+      : undefined;
+
   const proc = spawnProcess({
     command: opts.command,
     args: finalArgs,
     env: mergedEnv,
     cwd: opts.cwd,
     stdinMode: isArgv ? "ignore" : "pipe",
+    sandboxProfile,
   });
   const spawnTs = Date.now();
   const exitPromise = settleProcessExit(proc);

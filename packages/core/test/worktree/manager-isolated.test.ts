@@ -86,6 +86,10 @@ async function setupWorkspaceRepo(prefix: string): Promise<string> {
         name: "test-root",
         type: "module",
         workspaces: ["packages/*", "packages/integrations/*"],
+        devDependencies: {
+          "@penumbra/core": "workspace:*",
+          "@penumbra/sirius-middleware": "workspace:*",
+        },
       },
       null,
       2,
@@ -376,7 +380,7 @@ describe("WorktreeManager isolated-install mode", () => {
     }
   });
 
-  it("isolated install materializes worktree-local @penumbra links", async () => {
+  it("isolated install materializes only root-declared worktree-local @penumbra links", async () => {
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
@@ -387,12 +391,17 @@ describe("WorktreeManager isolated-install mode", () => {
 
     try {
       expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/core");
-      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/daemon");
-      expectRootWorkspaceLinkInsideWorktree(handle.path, "@penumbra/agentchat");
+      expect(fs.readdirSync(path.join(handle.path, "node_modules", "@penumbra")).sort()).toEqual([
+        "core",
+        "sirius-middleware",
+      ]);
+      expect(fs.existsSync(rootWorkspaceLinkPath(handle.path, "@penumbra/daemon"))).toBe(false);
+      expect(fs.existsSync(rootWorkspaceLinkPath(handle.path, "@penumbra/agentchat"))).toBe(false);
 
       const requireFromAgentchat = createRequire(
         path.join(handle.path, "packages", "agentchat", "index.ts"),
       );
+      expect(() => requireFromAgentchat.resolve("@penumbra/daemon")).toThrow();
       expect(fs.realpathSync.native(requireFromAgentchat.resolve("@penumbra/core"))).toBe(
         fs.realpathSync.native(path.join(handle.path, "packages", "core", "index.ts")),
       );

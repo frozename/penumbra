@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { applySchema } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 import {
-  createSubscriptionPressureCache,
+  createSubscriptionPressureCache as createCache,
   type SubscriptionPressureCacheOptions,
 } from "@src/maestro/subscription-pressure-cache.js";
 
@@ -14,6 +14,13 @@ try {
   }
 } catch {
   // already loaded in this process
+}
+
+function createSubscriptionPressureCache(
+  db: Database,
+  opts: SubscriptionPressureCacheOptions = {},
+): ReturnType<typeof createCache> {
+  return createCache(db, { now: () => new Date("2026-05-08T01:00:00Z"), ...opts });
 }
 
 function makeDb(): Database {
@@ -59,6 +66,25 @@ function insertSnapshotRow(
 }
 
 describe("createSubscriptionPressureCache", () => {
+  it("removes expired windows before exposing pressure to nested dispatch caps", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "expired",
+      ts: "2026-09-14T21:28:11Z",
+      provider: "openai",
+      window_label: "secondary",
+      used_pct: 98,
+      resets_at: 1789813384,
+      source_kind: "local-state-codex-rollout",
+    });
+    const cache = createSubscriptionPressureCache(db, {
+      now: () => new Date("2026-10-01T12:00:00Z"),
+    });
+    expect(cache.forProvider("openai")).toEqual([]);
+    expect(cache.get("openai", "secondary")).toBeNull();
+    db.close();
+  });
+
   it("refreshes on construction so the first lookup is populated", () => {
     const db = makeDb();
     insertSnapshotRow(db, {
@@ -67,7 +93,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -77,7 +103,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       observed_at: "2026-05-08T00:00:00Z",
       source_kind: "local-state-claude-statusline",
     });
@@ -96,7 +122,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -117,7 +143,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -126,7 +152,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "seven_day",
       used_pct: 20,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -143,7 +169,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
 
@@ -184,7 +210,7 @@ describe("createSubscriptionPressureCache", () => {
       provider: "anthropic",
       window_label: "five_hour",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-claude-statusline",
     });
     cache.refresh();
@@ -213,7 +239,7 @@ describe("createSubscriptionPressureCache", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-google-otlp-synth",
     });
     insertSnapshotRow(db, {
@@ -223,7 +249,7 @@ describe("createSubscriptionPressureCache", () => {
       window_label: "daily",
       model: "gemini-3-flash-preview",
       used_pct: 20,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-google-otlp-synth",
     });
     const cache = createSubscriptionPressureCache(db);
@@ -245,7 +271,7 @@ describe("createSubscriptionPressureCache", () => {
       window_label: "daily",
       model: null,
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "legacy",
     });
     insertSnapshotRow(db, {
@@ -255,7 +281,7 @@ describe("createSubscriptionPressureCache", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 20,
-      resets_at: 200,
+      resets_at: 1778285000,
       source_kind: "local-state-google-otlp-synth",
     });
     const cache = createSubscriptionPressureCache(db);
@@ -272,7 +298,7 @@ describe("createSubscriptionPressureCache", () => {
       window_label: "daily",
       model: "gemini-3.1-pro-preview",
       used_pct: 10,
-      resets_at: 100,
+      resets_at: 1778284900,
       source_kind: "local-state-google-otlp-synth",
     });
     const cache = createSubscriptionPressureCache(db);

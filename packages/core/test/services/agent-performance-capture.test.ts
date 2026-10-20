@@ -723,7 +723,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
         [string]
       >(`SELECT reliability_status FROM agent_performance WHERE handoff_id = ?`)
       .get("h1");
-    expect(stored?.reliability_status).toBe("no_worktree_activity");
+    expect(stored?.reliability_status).toBe("complete");
   });
 
   it("keeps missing_dispatch_end fail-closed when dispatch_end_emitted is absent", () => {
@@ -1124,6 +1124,67 @@ describe("captureAgentPerformanceFromReconciler", () => {
     // silent_failure path wins for notes since signals.silent_failure=true.
     expect(row.notes).toBe("completed (silent_failure: empty worktree)");
     expect(row.outcome).toBe("failed");
+  });
+
+  it("persists reliability_status='end_turn_without_return_block' when dispatch.end recorded a dirty worktree", () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run("h1");
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "w", "dispatch.start", "2026-04-30T12:00:01Z", null);
+    insertEvt.run("h1", "w", "proc.spawn", "2026-04-30T12:00:02Z", null);
+    insertEvt.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-04-30T12:01:50Z",
+      JSON.stringify({ status: "ok", worktree_changed: true, dirty: true, committed: true }),
+    );
+    insertFinalResponse("r1", "Now let me write the evidence renderer file.");
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-dirty",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(row.reliability_status).toBe("end_turn_without_return_block");
+  });
+
+  it("does not judge the CHECK_RESULT contract against a worker-supplied response summary", () => {
+    db.prepare(`UPDATE handoffs SET message=? WHERE handoff_id=?`).run(
+      "Implement it.\nIMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`.",
+      "h1",
+    );
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run("h1", "w", "dispatch.start", "2026-04-30T12:00:01Z", null);
+    insertEvt.run("h1", "w", "proc.spawn", "2026-04-30T12:00:02Z", null);
+    insertEvt.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-04-30T12:01:50Z",
+      JSON.stringify({ status: "ok" }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-summary",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "completed",
+        has_meaningful_output: true,
+        final_response_chars: 400,
+      },
+    });
+
+    expect(row.reliability_status).toBe("complete");
   });
 
   it("persists reliability_status='non_terminal_stale' and annotates notes when the classifier recommends cancel", () => {

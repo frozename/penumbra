@@ -1,10 +1,12 @@
 // packages/agentchat/test/config/load.test.ts
+import { profilesEnforcedBySeats } from "@penumbra/core";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "@src/config/load.js";
+import { assertProfileDispatchSeat } from "@src/worker/dispatch-profile-gate.js";
 
 test("loadConfig parses a valid YAML config", () => {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
@@ -171,6 +173,77 @@ test("loadConfig throws on invalid shape", () => {
   const path = join(dir, "agentchat.yaml");
   writeFileSync(path, `agents: []`);
   expect(() => loadConfig(path)).toThrow(/agents/);
+});
+
+test("loadConfigPathOrDir keeps enforces_permission_profiles on opted-in seats", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const path = join(dir, "agentchat.yaml");
+  writeFileSync(
+    path,
+    `
+agents:
+  - name: claude
+    adapter: claude-cli
+    enforces_permission_profiles: [review_readonly]
+  - name: acp-seat
+    adapter: stdio-acp
+    enforces_permission_profiles:
+      - review_readonly
+`,
+  );
+  const cfg = loadConfigPathOrDir(path);
+  const claude = cfg.agents.find((a) => a.name === "claude");
+  const acp = cfg.agents.find((a) => a.name === "acp-seat");
+  expect(claude?.enforces_permission_profiles).toEqual(["review_readonly"]);
+  expect(acp?.enforces_permission_profiles).toEqual(["review_readonly"]);
+  expect(() => {
+    assertProfileDispatchSeat({
+      agentName: "claude",
+      permissionProfile: "review_readonly",
+      seat: claude,
+    });
+  }).not.toThrow();
+  expect(() => {
+    assertProfileDispatchSeat({
+      agentName: "acp-seat",
+      permissionProfile: "review_readonly",
+      seat: acp,
+    });
+  }).not.toThrow();
+  expect(profilesEnforcedBySeats(cfg.agents)).toContain("review_readonly");
+});
+
+test("loadConfigFromDir keeps enforces_permission_profiles on opted-in seats", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agentchat-split-"));
+  writeFileSync(
+    join(dir, "agents.yaml"),
+    `
+agents:
+  - name: claude
+    adapter: claude-cli
+    enforces_permission_profiles: [review_readonly]
+`,
+  );
+  writeFileSync(join(dir, "routing.yaml"), `default_roles: {}`);
+  writeFileSync(join(dir, "quotas.yaml"), `providers: []`);
+  const cfg = loadConfigPathOrDir(dir);
+  expect(cfg.agents[0]?.enforces_permission_profiles).toEqual(["review_readonly"]);
+  expect(profilesEnforcedBySeats(cfg.agents)).toEqual(["review_readonly"]);
+});
+
+test("loadConfig rejects enforces_permission_profiles entries outside the profile enum", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const path = join(dir, "agentchat.yaml");
+  writeFileSync(
+    path,
+    `
+agents:
+  - name: claude
+    adapter: claude-cli
+    enforces_permission_profiles: [typo_profile]
+`,
+  );
+  expect(() => loadConfig(path)).toThrow(/enforces_permission_profiles/);
 });
 
 test("parses allowed_tools and permission_ttl_s from agent options", () => {

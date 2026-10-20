@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 export interface SpawnSandboxedOpts {
   argv?: string[];
   cmd?: string;
@@ -8,6 +10,55 @@ export interface SpawnSandboxedOpts {
   signal?: AbortSignal;
   /** Override the sandbox PATH; default '/usr/bin:/bin' */
   path?: string;
+  /**
+   * Seatbelt (sandbox-exec -p) profile text. When set, the child is spawned
+   * via /usr/bin/sandbox-exec — the OS write-deny backstop for permission
+   * profile dispatches. Fails closed via SandboxUnavailableError when
+   * sandbox-exec is unavailable; an unsandboxed profile spawn is never run.
+   */
+  sandboxProfile?: string;
+}
+
+export const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
+
+export class SandboxUnavailableError extends Error {
+  readonly code = "sandbox_unavailable" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SandboxUnavailableError";
+  }
+}
+
+/**
+ * Assert sandbox-exec can be spawned. Fails closed: a profile dispatch on a
+ * platform without sandbox-exec must refuse rather than silently run
+ * unsandboxed. `platform`/`exists` are injectable for tests.
+ */
+export function assertSandboxExecAvailable(deps?: {
+  platform?: NodeJS.Platform;
+  exists?: (path: string) => boolean;
+}): void {
+  const platform = deps?.platform ?? process.platform;
+  const exists = deps?.exists ?? existsSync;
+  if (platform !== "darwin" || !exists(SANDBOX_EXEC_PATH)) {
+    throw new SandboxUnavailableError(
+      `sandbox-exec unavailable (platform=${platform}); refusing permission-profile spawn unsandboxed`,
+    );
+  }
+}
+
+/**
+ * Wrap an argv in `sandbox-exec -p <profile>`. Fails closed via
+ * assertSandboxExecAvailable. `platform`/`exists` are injectable for tests.
+ */
+export function wrapSandboxExecArgv(
+  argv: string[],
+  profile: string,
+  deps?: { platform?: NodeJS.Platform; exists?: (path: string) => boolean },
+): string[] {
+  assertSandboxExecAvailable(deps);
+  return [SANDBOX_EXEC_PATH, "-p", profile, ...argv];
 }
 
 export interface SpawnSandboxedResult {
@@ -128,7 +179,11 @@ async function readStream(
 export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSandboxedResult> {
   if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
 
-  const argv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
+  const innerArgv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
+  const argv =
+    opts.sandboxProfile !== undefined
+      ? wrapSandboxExecArgv(innerArgv, opts.sandboxProfile)
+      : innerArgv;
   const env = buildSandboxEnv(opts);
   const envKeys = Object.keys(env);
 

@@ -414,6 +414,57 @@ test("OrphanHandoffRecoveryService runOnce(workerId) requeues never-heartbeat de
   expect(row?.worker_id).toBeNull();
 });
 
+test("OrphanHandoffRecoveryService runOnce(workerId, {claimedBefore}) reconciles only rows claimed before the bound", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 60_000 });
+
+  const w = "rebooted-worker";
+  const bound = "2026-10-06T12:00:00.000Z";
+
+  const claimedBefore = await createDispatchedHandoff(services, w);
+  const claimedAt = await createDispatchedHandoff(services, w);
+  const claimedAfter = await createDispatchedHandoff(services, w);
+  const unstamped = await createDispatchedHandoff(services, w);
+
+  setLastDispatchStartedAt(services, claimedBefore, "2026-10-06T11:59:59.000Z");
+  setLastDispatchStartedAt(services, claimedAt, bound);
+  setLastDispatchStartedAt(services, claimedAfter, "2026-10-06T12:00:01.000Z");
+  // A row that predates last_dispatch_started_at: the current incarnation always
+  // stamps, so NULL can only be a legacy claim — still rescued.
+  services.db
+    .query<never, [string]>("UPDATE handoffs SET last_dispatch_started_at=NULL WHERE handoff_id=?")
+    .run(unstamped);
+
+  const result = recovery.runOnce(w, { workerKnownDead: true, claimedBefore: bound });
+  expect(result).toMatchObject({ requeued: 2, exhausted: 0 });
+  expect([...result.requeuedRowIds].sort()).toEqual([claimedBefore, unstamped].sort());
+
+  expect(services.handoffReader.get(claimedBefore)?.status).toBe("approved");
+  expect(services.handoffReader.get(unstamped)?.status).toBe("approved");
+  expect(services.handoffReader.get(claimedAt)).toMatchObject({
+    status: "dispatched",
+    worker_id: w,
+  });
+  expect(services.handoffReader.get(claimedAfter)).toMatchObject({
+    status: "dispatched",
+    worker_id: w,
+  });
+});
+
+test("OrphanHandoffRecoveryService runOnce(workerId) without claimedBefore keeps reconciling every dispatched row", async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 60_000 });
+
+  const w = "rebooted-worker-nb";
+  const h1 = await createDispatchedHandoff(services, w);
+  const h2 = await createDispatchedHandoff(services, w);
+  setLastDispatchStartedAt(services, h1, "2026-10-06T11:00:00.000Z");
+  setLastDispatchStartedAt(services, h2, "2999-01-01T00:00:00.000Z");
+
+  const result = recovery.runOnce(w, { workerKnownDead: true });
+  expect(result).toMatchObject({ requeued: 2, exhausted: 0 });
+});
+
 test("OrphanHandoffRecoveryService caps stale workers per call", () => {
   const services = tempServices();
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });

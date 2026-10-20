@@ -4,8 +4,10 @@ import {
   ChainAgentsResponseSchema,
   ChainMessageEventSchema,
   ChainMessagesResponseSchema,
+  ChainMessagesTailOptionsSchema,
   ChainSendMessageRequestSchema,
   ChainStartRequestSchema,
+  ChainStartResponseSchema,
   DispatchRefineRequestSchema,
   DispatchRefineResponseSchema,
 } from "../src/chains.js";
@@ -35,6 +37,7 @@ const allSupported = {
   task_class: "STANDARD" as const,
   tool_free: false,
   isolated_install: true,
+  permission_profile: "review_readonly" as const,
 };
 
 test("ChainStartRequestSchema strips unknown keys and preserves all supported fields", () => {
@@ -208,4 +211,77 @@ test("DispatchRefineResponseSchema parses {refined}", () => {
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
   expect(parsed.data.refined).toBe("refined prompt");
+});
+
+test("ChainMessagesTailOptionsSchema validates defaulted true tail limit", () => {
+  const parsed = ChainMessagesTailOptionsSchema.safeParse({ tail: true });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data).toEqual({ tail: true, limit: 500 });
+});
+
+test("ChainMessagesTailOptionsSchema rejects non-numeric and out-of-range limit", () => {
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: true, limit: "10" }).success).toBe(false);
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: true, limit: 0 }).success).toBe(false);
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: true, limit: 501 }).success).toBe(false);
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: true, limit: 10.5 }).success).toBe(false);
+});
+
+test("ChainMessagesTailOptionsSchema rejects invalid tail false and nonzero offset", () => {
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: false }).success).toBe(false);
+  expect(ChainMessagesTailOptionsSchema.safeParse({ tail: true, offset: 1 }).success).toBe(false);
+});
+
+test("ChainMessagesTailOptionsSchema rejects unknown keys and optional offset defaults", () => {
+  const parsed = ChainMessagesTailOptionsSchema.safeParse({
+    tail: true,
+    limit: 123,
+    offset: 0,
+    before_ts: "2026-09-12T00:00:00Z",
+    extra: "nope",
+  });
+  expect(parsed.success).toBe(false);
+  const parsedDefault = ChainMessagesTailOptionsSchema.safeParse({
+    tail: true,
+    limit: 300,
+    offset: 0,
+  });
+  expect(parsedDefault.success).toBe(true);
+  if (!parsedDefault.success) return;
+  expect(parsedDefault.data.offset).toBe(0);
+});
+
+test("ChainStartRequestSchema accepts permission_profile 'review_readonly'", () => {
+  const parsed = ChainStartRequestSchema.safeParse({
+    ...minimal,
+    permission_profile: "review_readonly",
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.permission_profile).toBe("review_readonly");
+});
+
+test("ChainStartRequestSchema rejects unknown permission_profile values (closed enum)", () => {
+  for (const value of ["bogus", "review_exec", "readonly", "", 0, null, true]) {
+    const parsed = ChainStartRequestSchema.safeParse({ ...minimal, permission_profile: value });
+    expect(parsed.success).toBe(false);
+  }
+});
+
+test("ChainStartResponseSchema carries a typed permission_profile echo", () => {
+  const parsed = ChainStartResponseSchema.safeParse({
+    conversation_id: "c-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.permission_profile).toBe("review_readonly");
+  expect(
+    ChainStartResponseSchema.safeParse({
+      conversation_id: "c-1",
+      handoff_id: "h-1",
+      permission_profile: "bogus",
+    }).success,
+  ).toBe(false);
 });

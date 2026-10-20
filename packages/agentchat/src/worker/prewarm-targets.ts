@@ -1,8 +1,8 @@
 /**
  * Phase 1 of the warm-pool x multi-worker integration: a PURE resolver that
  * computes the bounded set of `(agent, repoRoot)` tuples a worker should keep
- * warm at boot. No subprocesses, no side effects — provably a subset of what the
- * daemon would route to this worker.
+ * warm at boot. No subprocesses and no effects beyond the injected `log` —
+ * provably a subset of what the daemon would route to this worker.
  *
  * Every isolation mode pre-warms each opted-in agent at the worker's HOME
  * repoRoot (`resolveProjectRoot(workerProjectId) ?? mainRepoPath`):
@@ -11,6 +11,9 @@
  *   - `sticky`/`shared` workers CAN claim cross-project work, but are
  *     deliberately bounded to home so the idle warm-process count stays
  *     (workers x eligible agents) rather than (x every project).
+ * A worker whose project_id does not resolve (usually missing from
+ * projects.yaml) still falls back to mainRepoPath, but warns through `log`:
+ * otherwise it silently pre-warms the main repo instead of its own project.
  * The emitted repoRoot is byte-identical to the adapter's poolScope
  * (`repoRoot ?? cwd`, stdio-acp.ts) for that project, so the pre-warmed
  * connection is acquirable by the next matching dispatch.
@@ -43,18 +46,32 @@ export interface ComputePrewarmTargetsInput {
   mainRepoPath: string;
   /** Hard cap on the number of tuples returned. */
   cap: number;
+  /** Told when workerProjectId does not resolve and prewarm falls back to mainRepoPath. */
+  log?: { warn(obj: Record<string, unknown>, msg: string): void };
 }
 
 export function computePrewarmTargets(input: ComputePrewarmTargetsInput): PrewarmTarget[] {
   const { agents, workerProjectId, resolveProjectRoot, mainRepoPath, cap } = input;
   if (!Number.isFinite(cap) || cap <= 0) return [];
 
-  const homeRepoRoot = resolveProjectRoot(workerProjectId) ?? mainRepoPath;
+  const projectRoot = resolveProjectRoot(workerProjectId);
+  const homeRepoRoot = projectRoot ?? mainRepoPath;
   const targets: PrewarmTarget[] = [];
   const seen = new Set<string>();
 
   for (const agent of agents) {
     if (addAgentTargets(agent, homeRepoRoot, targets, seen, cap)) break;
+  }
+
+  if (workerProjectId !== undefined && projectRoot === undefined && targets.length > 0) {
+    input.log?.warn(
+      {
+        worker_project_id: workerProjectId,
+        isolation: input.isolation,
+        fallback_repo_root: mainRepoPath,
+      },
+      "prewarm-home-unresolved",
+    );
   }
 
   return targets;

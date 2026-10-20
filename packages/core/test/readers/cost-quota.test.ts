@@ -523,7 +523,7 @@ describe("quotaStatus token window selection", () => {
       model: "claude-sonnet",
       window_label: "five_hour",
       used_pct: 51,
-      resets_at: 1778166000,
+      resets_at: 1778252400,
       source_kind: "local-state-claude-statusline",
     });
     insertSnapshotRow(db, {
@@ -555,6 +555,7 @@ describe("quotaStatus token window selection", () => {
     const sorted = [...pressure].sort((a, b) => a.window_label.localeCompare(b.window_label));
     expect(sorted).toEqual([
       {
+        status: "fresh",
         window_label: "daily",
         used_pct: 80,
         observed_at: "2026-05-08T11:50:00Z",
@@ -562,11 +563,12 @@ describe("quotaStatus token window selection", () => {
         resets_at: null,
       },
       {
+        status: "fresh",
         window_label: "five_hour",
         used_pct: 51,
         observed_at: "2026-05-08T11:45:00Z",
         source_kind: "local-state-claude-statusline",
-        resets_at: 1778166000,
+        resets_at: 1778252400,
       },
     ]);
   });
@@ -619,4 +621,69 @@ describe("quotaStatus token window selection", () => {
     );
     expect(quota.providers[0]?.subscription_pressure).toEqual(recentRow?.subscription_pressure);
   });
+});
+
+it("quotaStatus reads rate-limit snapshots once per call", () => {
+  const inner = makeDb();
+  insertSnapshotRow(inner, {
+    event_id: "snap",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    window_label: "daily",
+    used_pct: 42,
+    resets_at: null,
+    source_kind: "test",
+  });
+  let pressureReads = 0;
+  const db = new Proxy(inner, {
+    get(target, prop): unknown {
+      const value: unknown = Reflect.get(target, prop, target);
+      if (prop !== "prepare") return value;
+      return (sql: string, ...rest: unknown[]): unknown => {
+        if (sql.includes("rate-limit-snapshot")) pressureReads += 1;
+        return (value as (...args: unknown[]) => unknown).call(target, sql, ...rest);
+      };
+    },
+  });
+
+  const result = quotaStatus(
+    db,
+    [{ provider: "openai", quota_usd_per_24h: 20 }],
+    { since: "2026-10-01T00:00:00Z" },
+    () => new Date("2026-10-01T12:00:00Z"),
+  );
+  expect(result.providers[0]?.subscription_pressure).toHaveLength(1);
+  expect(pressureReads).toBe(1);
+  inner.close();
+});
+
+it("quotaStatus surfaces an expired-only window with status expired", () => {
+  const db = makeDb();
+  insertUsageRow(db, {
+    event_id: "usage",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    cost_usd: null,
+    used: 1,
+    handoff_id: null,
+  });
+  insertSnapshotRow(db, {
+    event_id: "expired",
+    ts: "2026-10-01T11:59:00Z",
+    provider: "openai",
+    window_label: "daily",
+    used_pct: 98,
+    resets_at: Date.parse("2026-10-01T11:59:30Z") / 1000,
+    source_kind: "test",
+  });
+  const result = quotaStatus(
+    db,
+    [{ provider: "openai", quota_usd_per_24h: 20 }],
+    { since: "2026-10-01T00:00:00Z" },
+    () => new Date("2026-10-01T12:00:00Z"),
+  );
+  expect(result.providers[0]?.subscription_pressure).toMatchObject([
+    { window_label: "daily", status: "expired" },
+  ]);
+  db.close();
 });

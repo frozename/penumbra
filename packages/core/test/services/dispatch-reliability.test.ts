@@ -34,6 +34,24 @@ function baseInput(overrides: Partial<DispatchReliabilityInput> = {}): DispatchR
   };
 }
 
+function nonMutatingInput(
+  taskType: string,
+  extra: Partial<DispatchReliabilityInput> = {},
+): DispatchReliabilityInput {
+  return baseInput({
+    handoff: {
+      handoff_id: "h-1",
+      status: "completed",
+      ts: "2026-05-01T00:00:00.000Z",
+      resolved_at: "2026-05-01T00:00:10.000Z",
+      cancel_requested_at: null,
+      chain_task_type: taskType,
+      use_worktree: 1,
+    },
+    ...extra,
+  });
+}
+
 describe("classifyDispatchReliability", () => {
   test("returns complete for a terminal handoff with lifecycle and artifact evidence", () => {
     const report = classifyDispatchReliability(baseInput());
@@ -381,5 +399,172 @@ describe("classifyDispatchReliability", () => {
       }),
     );
     expect(report.status).toBe("non_terminal_stale");
+  });
+
+  test("review task in clean worktree is complete", () => {
+    const report = classifyDispatchReliability(
+      nonMutatingInput("review_adversarial", { worktreeChanged: false, reconciled: false }),
+    );
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(true);
+    expect(report.recommended_action).toBe("accept");
+    expect(report.missing_events).toEqual([]);
+  });
+
+  test("smoke_test task in clean worktree is complete", () => {
+    const report = classifyDispatchReliability(
+      nonMutatingInput("smoke_test", { worktreeChanged: false, reconciled: false }),
+    );
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(true);
+    expect(report.recommended_action).toBe("accept");
+  });
+
+  test("health_check task in clean worktree is complete", () => {
+    const report = classifyDispatchReliability(
+      nonMutatingInput("health_check", { worktreeChanged: false, reconciled: false }),
+    );
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(true);
+    expect(report.recommended_action).toBe("accept");
+  });
+
+  test("review task missing adapter lifecycle is still missing_adapter_lifecycle", () => {
+    const report = classifyDispatchReliability(
+      nonMutatingInput("review_adversarial", {
+        worktreeChanged: false,
+        events: [
+          { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+          { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z" },
+        ],
+      }),
+    );
+    expect(report.status).toBe("missing_adapter_lifecycle");
+    expect(report.trustworthy).toBe(false);
+    expect(report.missing_events).toContain("adapter.lifecycle");
+  });
+
+  test("review task with dirty worktree and failed tool is still tool_failure_with_end_turn", () => {
+    const report = classifyDispatchReliability(
+      nonMutatingInput("review_adversarial", {
+        worktreeChanged: true,
+        dispatchEndCommitted: false,
+        reconciled: true,
+        events: [
+          { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+          { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+          { kind: "agent.tool_call.failed", ts: "2026-05-01T00:00:05.000Z" },
+          {
+            kind: "acp.session.end",
+            ts: "2026-05-01T00:00:08.000Z",
+            meta: { stop_reason: "end_turn" },
+          },
+          { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:08.500Z" },
+          { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z", meta: { status: "ok" } },
+        ],
+      }),
+    );
+    expect(report.status).toBe("tool_failure_with_end_turn");
+    expect(report.trustworthy).toBe(false);
+  });
+
+  test("implement_small with use_worktree=false still requires worktree activity", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: {
+          handoff_id: "h-1",
+          status: "completed",
+          ts: "2026-05-01T00:00:00.000Z",
+          resolved_at: "2026-05-01T00:00:10.000Z",
+          cancel_requested_at: null,
+          chain_task_type: "implement_small",
+          use_worktree: 0,
+        },
+        worktreeChanged: false,
+        reconciled: false,
+      }),
+    );
+    expect(report.status).toBe("no_worktree_activity");
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("implement_substantial with use_worktree=false still requires worktree activity", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: {
+          handoff_id: "h-1",
+          status: "completed",
+          ts: "2026-05-01T00:00:00.000Z",
+          resolved_at: "2026-05-01T00:00:10.000Z",
+          cancel_requested_at: null,
+          chain_task_type: "implement_substantial",
+          use_worktree: 0,
+        },
+        worktreeChanged: false,
+        reconciled: false,
+      }),
+    );
+    expect(report.status).toBe("no_worktree_activity");
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("unknown task with use_worktree falls back to worktree semantics", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: {
+          handoff_id: "h-1",
+          status: "completed",
+          ts: "2026-05-01T00:00:00.000Z",
+          resolved_at: "2026-05-01T00:00:10.000Z",
+          cancel_requested_at: null,
+          chain_task_type: "unknown",
+          use_worktree: 1,
+        },
+        worktreeChanged: false,
+        reconciled: false,
+      }),
+    );
+    expect(report.status).toBe("no_worktree_activity");
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("legacy unknown task type with use_worktree falls back to worktree semantics", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: {
+          handoff_id: "h-1",
+          status: "completed",
+          ts: "2026-05-01T00:00:00.000Z",
+          resolved_at: "2026-05-01T00:00:10.000Z",
+          cancel_requested_at: null,
+          chain_task_type: "legacy_unknown_type",
+          use_worktree: 1,
+        },
+        worktreeChanged: false,
+        reconciled: false,
+      }),
+    );
+    expect(report.status).toBe("no_worktree_activity");
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("unknown task with use_worktree=false and no changes is complete", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: {
+          handoff_id: "h-1",
+          status: "completed",
+          ts: "2026-05-01T00:00:00.000Z",
+          resolved_at: "2026-05-01T00:00:10.000Z",
+          cancel_requested_at: null,
+          chain_task_type: "unknown",
+          use_worktree: 0,
+        },
+        worktreeChanged: false,
+        reconciled: false,
+      }),
+    );
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(true);
   });
 });

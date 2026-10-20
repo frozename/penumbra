@@ -44,4 +44,10 @@ describe("dispatch event contract", () => {
     expect(DispatchEventKindSchema.safeParse("claim.reoffer").success).toBe(true);
     expect(DispatchEventKindSchema.safeParse("claim.provider_cap_refused").success).toBe(true);
   });
+
+  it("DispatchEventKindSchema accepts dream_p1_promotion_retry_exhausted", () => {
+    expect(DispatchEventKindSchema.safeParse("dream_p1_promotion_retry_exhausted").success).toBe(
+      true,
+    );
+  });
 });

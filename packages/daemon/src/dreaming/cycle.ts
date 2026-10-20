@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
 import type { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import type { ResearchDeps } from "./research.js";
+import type { JevVetoReason, PromotionVeto } from "./typesafe-judge-seat.js";
 
 import {
   type LlmInvokeCandidateFailure,
@@ -24,7 +25,10 @@ import {
   type LlmInvokeResult,
   llmInvoke as realLlmInvoke,
 } from "../services/llm-invoke.js";
-import { recordSubsystemOutcome } from "../services/subsystem-health.js";
+import {
+  DREAM_JUDGE_SUBSYSTEM_PREFIX,
+  recordSubsystemOutcome,
+} from "../services/subsystem-health.js";
 import {
   DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES,
   type DreamConfig,
@@ -33,9 +37,15 @@ import {
 } from "./config.js";
 import { runPC1Phase } from "./curator/pc1-ephemera.js";
 import { runPC2Phase } from "./curator/pc2-cluster.js";
+import { finalizeCycleAsCrashed } from "./cycle-crash.js";
 import { REWRITE_RESPONSE_SCHEMA } from "./dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "./dream-rewriter-prompt.js";
-import { type JudgePool, type JudgeVote, StubJudgePool } from "./judge-pool.js";
+import {
+  type JudgePool,
+  type JudgeVote,
+  type SerializedJudgeVote,
+  StubJudgePool,
+} from "./judge-pool.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
@@ -45,6 +55,7 @@ import { isWebSearchable } from "./query-rewriting.js";
 import { sanitizeTitleForQuery } from "./query-sanitize.js";
 import { runReembedPhase } from "./reembed.js";
 import { hashQuery, runP5Phase } from "./research.js";
+import { invokeRewriter, noEligibleCandidateMessage } from "./rewrite-invoke.js";
 import {
   type DreamingRewriterInventory,
   resolveRewriterCandidatesAgainstInventory,
@@ -105,7 +116,7 @@ function degradedProjectBriefReason(
   }
   return null;
 }
-const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ["473ff22b-fa37-4707-b75c-9ecac18142aa"];
+export const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ["473ff22b-fa37-4707-b75c-9ecac18142aa"];
 
 interface PressureGuard {
   check(): Promise<{ anyThrottled: boolean }>;
@@ -185,6 +196,7 @@ export interface DreamCycleDeps {
   };
   costMeter?: DreamCostMeter;
   phaseCostEstimates?: DreamPhaseCostEstimatesUsd;
+  promotionVeto?: PromotionVeto;
 }
 
 interface CycleCtx {
@@ -281,6 +293,9 @@ export async function runDreamCycle(
 
     finalizeCycle(db, ctx, config);
     return ctx.cycleId;
+  } catch (err) {
+    finalizeCycleAsCrashed(db, ctx.cycleId, err);
+    throw err;
   } finally {
     delete deps.costMeter;
     dreamingCycleInFlight = false;
@@ -538,6 +553,7 @@ function ensureSchemaColumns(db: Database): void {
     "ALTER TABLE t1_rollups ADD COLUMN promotion_retry_count INTEGER NOT NULL DEFAULT 0",
   );
   alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_retry_after INTEGER");
+  alterIfMissing("ALTER TABLE t1_rollups ADD COLUMN promotion_retry_exhausted_at INTEGER");
 }
 
 async function canAdvance(config: DreamConfig, deps: DreamCycleDeps): Promise<boolean> {
@@ -624,6 +640,7 @@ async function runCycleP1(
   });
 
   const claimedRollups = claimT1Rollups(db, ctx, config, longLivedFilter);
+  const abstainLoggedSeats = new Set<string>();
 
   for (const rollup of claimedRollups) {
     const body = rollup.first_prompt_excerpt;
@@ -646,7 +663,8 @@ async function runCycleP1(
       continue;
     }
 
-    const votes = await getPromoteVotes(ctx.judgePool, body);
+    const votes = await getPromoteVotes(ctx.judgePool, body, rollup.rollup_id);
+    recordJudgeSeatOutcomes(db, ctx, votes, abstainLoggedSeats);
     const countedVotes = votes.filter((v) => !v.abstained);
     if (countedVotes.length === 0 || countedVotes.length < autoPromoteMinJudges) {
       // Too few real ballots is a non-verdict, not a judged NO: defer with
@@ -659,15 +677,44 @@ async function runCycleP1(
     const avgConfidence = countedVotes.reduce((s, v) => s + v.confidence, 0) / total;
     const autoPromote = yesCount >= Math.ceil((total * 2) / 3);
 
+    // Consulted only when the incumbent auto-promotes; it can remove a YES but
+    // never turn a NO into a YES. A throw or a non-"allow" answer fails closed.
+    let jevVeto: "allowed" | "blocked" | undefined;
+    let jevVetoReason: JevVetoReason | undefined;
+    if (autoPromote && deps.promotionVeto !== undefined) {
+      try {
+        const verdict = await deps.promotionVeto({ rollupId: rollup.rollup_id, body });
+        jevVeto = verdict.decision === "allow" ? "allowed" : "blocked";
+        jevVetoReason = verdict.reason;
+      } catch {
+        jevVeto = "blocked";
+        jevVetoReason = "exception";
+      }
+      // One line per consultation; only ids and the verdict class, never the
+      // rollup body or any settings material.
+      const vetoLogFields = {
+        rollup_id: rollup.rollup_id,
+        jev_veto: jevVeto,
+        jev_veto_reason: jevVetoReason,
+      };
+      if (jevVetoReason === "jev_promote" || jevVetoReason === "jev_reject") {
+        ctx.log?.info(vetoLogFields, "dream-cycle P1 jev veto");
+      } else {
+        ctx.log?.warn(vetoLogFields, "dream-cycle P1 jev veto");
+      }
+    }
+
     const result = await maybeAutoPromoteT1(
       db,
       ctx,
       deps,
       rollup,
       body,
-      autoPromote,
+      autoPromote && jevVeto !== "blocked",
       votes,
       avgConfidence,
+      jevVeto,
+      jevVetoReason,
     );
     if (result.skip) continue;
 
@@ -682,6 +729,7 @@ async function runCycleP1(
       rollupTargetIds,
       JSON.stringify({
         votes: serializeJudgeVotes(votes),
+        ...(jevVeto === undefined ? {} : { jev_veto: jevVeto, jev_veto_reason: jevVetoReason }),
         ...(result.mintedT2Id ? { t2_memory_id: result.mintedT2Id } : {}),
       }),
     );
@@ -709,13 +757,46 @@ interface ClaimedT1Rollup {
 const P1_PROMOTION_RETRY_BASE_MS = 60 * 60_000;
 const P1_PROMOTION_RETRY_MAX_MS = 24 * 60 * 60_000;
 
+// A rollup that reaches this many judge non-verdicts stops being retried. Only
+// insufficient_judge_votes deferrals count: a queued promote_t1 action means a
+// verdict already exists and is awaiting operator review, so there is nothing
+// for the judge to retry. The rollup gets a terminal stamp distinct from a
+// judged NO (promotion_filtered_at), so a deterministic abstention cannot
+// re-judge the same rollup every 24h forever, and an operator can re-open it
+// by clearing the stamp and the count.
+const P1_PROMOTION_MAX_DEFERRALS = 5;
+
 function deferT1PromotionRetry(
   db: Database,
   ctx: CycleCtx,
   rollup: ClaimedT1Rollup,
   reason: "insufficient_judge_votes" | "queued_action_pending",
 ): void {
+  // A queued promote_t1 is an outcome awaiting review, not a non-verdict:
+  // defer without touching the retry count or the exhaustion cap.
+  if (reason === "queued_action_pending") {
+    db.prepare(`UPDATE t1_rollups SET promotion_retry_after=? WHERE rollup_id=?`).run(
+      ctx.nowMs + P1_PROMOTION_RETRY_MAX_MS,
+      rollup.rollup_id,
+    );
+    ctx.log?.info(
+      {
+        phase: "P1",
+        cycleId: ctx.cycleId,
+        rollupId: rollup.rollup_id,
+        reason,
+        retryCount: rollup.promotion_retry_count,
+        retryAfterMs: P1_PROMOTION_RETRY_MAX_MS,
+      },
+      "dream-cycle P1 promotion deferred",
+    );
+    return;
+  }
   const attempt = rollup.promotion_retry_count;
+  if (attempt + 1 >= P1_PROMOTION_MAX_DEFERRALS) {
+    exhaustT1PromotionRetry(db, ctx, rollup, reason);
+    return;
+  }
   const delayMs = Math.min(
     P1_PROMOTION_RETRY_BASE_MS * 2 ** Math.min(attempt, 5),
     P1_PROMOTION_RETRY_MAX_MS,
@@ -736,13 +817,36 @@ function deferT1PromotionRetry(
   );
 }
 
-function serializeJudgeVotes(
-  votes: JudgeVote[],
-): { promote: boolean; confidence: number; abstained?: boolean }[] {
+function exhaustT1PromotionRetry(
+  db: Database,
+  ctx: CycleCtx,
+  rollup: ClaimedT1Rollup,
+  reason: "insufficient_judge_votes" | "queued_action_pending",
+): void {
+  const retryCount = rollup.promotion_retry_count + 1;
+  db.prepare(
+    `UPDATE t1_rollups
+        SET promotion_retry_count=?, promotion_retry_after=NULL, promotion_retry_exhausted_at=?
+      WHERE rollup_id=?`,
+  ).run(retryCount, ctx.nowMs, rollup.rollup_id);
+  ctx.emitDreamEvent("dream_p1_promotion_retry_exhausted", {
+    rollup_id: rollup.rollup_id,
+    reason,
+    retry_count: retryCount,
+  });
+  ctx.log?.warn(
+    { phase: "P1", cycleId: ctx.cycleId, rollupId: rollup.rollup_id, reason, retryCount },
+    "dream-cycle P1 promotion retries exhausted",
+  );
+}
+
+function serializeJudgeVotes(votes: JudgeVote[]): SerializedJudgeVote[] {
   return votes.map((v) => ({
+    ...(v.seat === undefined ? {} : { seat: v.seat }),
     promote: v.promote,
     confidence: v.confidence,
     ...(v.abstained === true ? { abstained: true } : {}),
+    ...(v.error_class === undefined ? {} : { error_class: clampJudgeErrorClass(v.error_class) }),
   }));
 }
 
@@ -772,6 +876,7 @@ function claimT1Rollups(
                  AND claimed_at IS NULL
                  AND promotion_filtered_at IS NULL
                  AND promotion_unusable_excerpt_at IS NULL
+                 AND promotion_retry_exhausted_at IS NULL
                  AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
                  AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
                  ${longLivedFilter}
@@ -799,6 +904,7 @@ function claimT1Rollups(
             AND claimed_at IS NULL
             AND promotion_filtered_at IS NULL
             AND promotion_unusable_excerpt_at IS NULL
+            AND promotion_retry_exhausted_at IS NULL
             AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
             AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
             ${longLivedFilter}
@@ -817,10 +923,14 @@ function claimT1Rollups(
   return rows.map((r) => ({ ...r, project_id: null }));
 }
 
-async function getPromoteVotes(judgePool: JudgePool, body: string): Promise<JudgeVote[]> {
+async function getPromoteVotes(
+  judgePool: JudgePool,
+  body: string,
+  subjectId: string,
+): Promise<JudgeVote[]> {
   try {
     if (judgePool.judgeAll) {
-      return await judgePool.judgeAll({ body, kind: "promote_t1" });
+      return await judgePool.judgeAll({ body, kind: "promote_t1", subjectId });
     }
     const result = await judgePool.judge({ body, kind: "promote_t1" });
     return [
@@ -837,6 +947,51 @@ async function getPromoteVotes(judgePool: JudgePool, body: string): Promise<Judg
   }
 }
 
+function httpStatusFromErrorClass(errorClass: string | undefined): number | null {
+  const match = /^http_(\d{3})$/.exec(errorClass ?? "");
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+// Class allowlist, enforced at every sink (health row, serialized payload,
+// log): a pool that stuffs upstream response text into error_class is
+// normalized to "unknown", never persisted or logged verbatim.
+const JUDGE_ERROR_CLASS_PATTERN =
+  /^(?:http_\d{3}|transport_error|invalid_response|parse_error|abstained)$/;
+
+function clampJudgeErrorClass(errorClass: string): string {
+  return JUDGE_ERROR_CLASS_PATTERN.test(errorClass) ? errorClass : "unknown";
+}
+
+// One subsystem row per seat, so one seat's success never resets another's
+// failure run. The log fires once per seat per cycle and names only the
+// failure class, never the judged body or the prompt.
+function recordJudgeSeatOutcomes(
+  db: Database,
+  ctx: CycleCtx,
+  votes: JudgeVote[],
+  abstainLoggedSeats: Set<string>,
+): void {
+  for (const vote of votes) {
+    if (vote.seat === undefined) continue;
+    const abstained = vote.abstained === true;
+    const errorClass = clampJudgeErrorClass(vote.error_class ?? "abstained");
+    recordSubsystemOutcome(db, {
+      subsystem: `${DREAM_JUDGE_SUBSYSTEM_PREFIX}${vote.seat}`,
+      tier: "primary",
+      ok: !abstained,
+      seat: vote.seat,
+      reason: abstained ? errorClass : null,
+      status: abstained ? httpStatusFromErrorClass(errorClass) : null,
+    });
+    if (!abstained || abstainLoggedSeats.has(vote.seat)) continue;
+    abstainLoggedSeats.add(vote.seat);
+    ctx.log?.warn(
+      { phase: "P1", cycleId: ctx.cycleId, seat: vote.seat, errorClass },
+      "dream-cycle P1 judge seat abstained",
+    );
+  }
+}
+
 async function maybeAutoPromoteT1(
   db: Database,
   ctx: CycleCtx,
@@ -846,6 +1001,8 @@ async function maybeAutoPromoteT1(
   autoPromote: boolean,
   votes: JudgeVote[],
   avgConfidence: number,
+  jevVeto?: "allowed" | "blocked",
+  jevVetoReason?: JevVetoReason,
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
   if (!autoPromote) return { skip: false, status: "queued" };
 
@@ -876,6 +1033,7 @@ async function maybeAutoPromoteT1(
           votes: serializeJudgeVotes(votes),
           dedup_against: existing.memory_id,
           project_id: rollup.project_id,
+          ...(jevVeto === undefined ? {} : { jev_veto: jevVeto, jev_veto_reason: jevVetoReason }),
         }),
       );
       db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
@@ -1334,6 +1492,7 @@ function recordRewriteFailure(
     status?: number;
     candidate?: LlmServingCandidate;
     candidateFailures?: LlmInvokeCandidateFailure[];
+    failureMessage?: string;
   },
 ): void {
   const ts = new Date().toISOString();
@@ -1348,6 +1507,7 @@ function recordRewriteFailure(
     ...(input.candidateFailures === undefined
       ? {}
       : { candidate_failures: input.candidateFailures }),
+    ...(input.failureMessage === undefined ? {} : { failure_message: input.failureMessage }),
   });
   recordSubsystemOutcome(db, {
     subsystem: "dream.query_rewrite",
@@ -1454,7 +1614,7 @@ async function fetchRewriteFromLlm(
   if (!primaryCandidate) return fallbackToMemoryTitle(ctx, memory, 0);
   const prompt = buildDreamQueryRewritePrompt({ title: memory.title, bodyFirst200: memory.body });
   const rewriteStart = Date.now();
-  const rewriteResult = await ctx.invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
+  const rewriteResult = await invokeRewriter<typeof REWRITE_RESPONSE_SCHEMA>(ctx.invokeLlm, {
     baseUrl: primaryCandidate.baseUrl,
     model: primaryCandidate.model,
     provider: primaryCandidate.provider,
@@ -1477,6 +1637,7 @@ async function fetchRewriteFromLlm(
       status: "status" in rewriteResult ? rewriteResult.status : undefined,
       candidate: rewriteResult.candidate ?? primaryRewriteCandidate(ctx),
       candidateFailures: rewriteResult.failures,
+      failureMessage: noEligibleCandidateMessage(rewriteResult),
     });
     return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
   }

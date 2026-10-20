@@ -511,6 +511,65 @@ test("a continuation note larger than the whole budget is head-truncated, never 
   }
 });
 
+test("skip_if_arg drops a source only when the named arg resolves non-empty", async () => {
+  const dir = initRepoWithSubjects(["skip one", "skip two"]);
+  const db = new Database(":memory:");
+  try {
+    const source = {
+      source: "git.log" as const,
+      args: { range: "HEAD" },
+      skip_if_arg: "content_path",
+    };
+    const templateCtxBase = {
+      now: (): Date => new Date(),
+      project: "demo",
+      sessionStart: new Date().toISOString(),
+      tz: "UTC",
+      cwd: dir,
+    };
+
+    const skipped = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      project: "demo",
+      sources: [source],
+      budgetTokens: 8000,
+      templateCtx: { ...templateCtxBase, args: { content_path: "doc.md" } },
+    });
+    expect("git.log" in skipped.byKey).toBe(false);
+    expect(skipped.warnings).toEqual([]);
+
+    for (const args of [{}, { content_path: "" }]) {
+      const ran = await composeRecall({
+        db,
+        embedder: new TestEmbedder({ dim: 384 }),
+        cwd: dir,
+        project: "demo",
+        sources: [source],
+        budgetTokens: 8000,
+        templateCtx: { ...templateCtxBase, args },
+      });
+      expect(typeof ran.byKey["git.log"]).toBe("string");
+      expect(ran.byKey["git.log"]).toContain("skip two");
+    }
+
+    // No templateCtx at all: the arg cannot resolve, so the source must run.
+    const noCtx = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      project: "demo",
+      sources: [source],
+      budgetTokens: 8000,
+    });
+    expect(typeof noCtx.byKey["git.log"]).toBe("string");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
+});
+
 test("composes file.contents source output", async () => {
   const dir = mkdtempSync(join(tmpdir(), "recall-file-contents-"));
   const file = join(dir, "README.md");

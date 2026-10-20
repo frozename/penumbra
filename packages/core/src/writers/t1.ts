@@ -265,20 +265,37 @@ export class T1Rollup {
     return rollupId;
   }
 
-  detectIdleSessions(idleMinutes: number, now: Date): string[] {
+  detectIdleSessions(idleMinutes: number, now: Date, opts?: { ingestedSince?: string }): string[] {
     type Row = { session_id: string };
     const cutoff = new Date(now.getTime() - idleMinutes * 60_000).toISOString();
-    return this.opts.db
-      .query<Row, [string]>(
-        `SELECT t.session_id
-           FROM t0_events t
-           LEFT JOIN t1_rollups r ON r.session_id = t.session_id
-          WHERE t.session_id IS NOT NULL
-          GROUP BY t.session_id
-         HAVING (COUNT(r.rollup_id) = 0 OR MAX(t.ts) > MAX(r.ended_at))
-            AND MAX(t.ts) < ?`,
-      )
-      .all(cutoff)
-      .map((r) => r.session_id);
+    const rows =
+      opts?.ingestedSince === undefined
+        ? this.opts.db
+            .query<Row, [string]>(
+              `SELECT t.session_id
+                 FROM t0_events t
+                 LEFT JOIN t1_rollups r ON r.session_id = t.session_id
+                WHERE t.session_id IS NOT NULL
+                GROUP BY t.session_id
+               HAVING (COUNT(r.rollup_id) = 0 OR MAX(t.ts) > MAX(r.ended_at))
+                  AND MAX(t.ts) < ?`,
+            )
+            .all(cutoff)
+        : this.opts.db
+            .query<Row, [string, string]>(
+              `SELECT t.session_id
+                 FROM t0_events t
+                 LEFT JOIN t1_rollups r ON r.session_id = t.session_id
+                WHERE t.session_id IS NOT NULL
+                  AND t.session_id IN (
+                    SELECT session_id FROM t0_events
+                     WHERE ingest_ts >= ? AND session_id IS NOT NULL
+                  )
+                GROUP BY t.session_id
+               HAVING (COUNT(r.rollup_id) = 0 OR MAX(t.ts) > MAX(r.ended_at))
+                  AND MAX(t.ts) < ?`,
+            )
+            .all(opts.ingestedSince, cutoff);
+    return rows.map((r) => r.session_id);
   }
 }

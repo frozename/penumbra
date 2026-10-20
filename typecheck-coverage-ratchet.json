@@ -20,19 +20,25 @@
       "errorCount": 0
     },
     "packages/core": {
-      "errorCount": 287
+      "errorCount": 274
     },
     "packages/daemon": {
       "errorCount": 660
     },
     "packages/e2e": {
-      "errorCount": 313
+      "errorCount": 10
+    },
+    "packages/exec-primitives-consumer": {
+      "errorCount": 0
     },
     "packages/integrations/sirius-middleware": {
       "errorCount": 8
     },
+    "packages/integrations/typesafe": {
+      "errorCount": 0
+    },
     "packages/mcp": {
-      "errorCount": 182
+      "errorCount": 169
     },
     "packages/workflows": {
       "errorCount": 0
@@ -41,5 +47,5 @@
       "errorCount": 14
     }
   },
-  "total": 1621
+  "total": 1292
 }

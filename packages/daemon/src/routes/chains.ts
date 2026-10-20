@@ -5,6 +5,7 @@ import {
 } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
 import {
+  agentEnforcesPermissionProfile,
   type AgentRecommendation,
   type AgentTaskType,
   buildHandoffBranchName,
@@ -18,6 +19,9 @@ import {
   insertLane,
   inspectPromptVsProject,
   MaestroSessionWriter,
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  PERMISSION_PROFILES,
+  type PermissionProfile,
   RecallRequestSchema,
   type RecallResult,
   resolveBiasEffect,
@@ -47,6 +51,10 @@ import {
   RouterHardConstraintExhaustedError,
   RoutingBiasExhaustedError,
 } from "./role-routing.js";
+import {
+  profiledLiveWorkerGateResponse,
+  scratchLiveWorkerGateResponse,
+} from "./worker-profile-gate.js";
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -64,11 +72,14 @@ interface RouterHarnessHints {
   projectId?: string;
   dispatchKind?: string;
   tool_free?: boolean;
+  permission_profile?: PermissionProfile;
 }
 
 type AgentChatConfigLike = {
   agents?: {
     name: string;
+    adapter?: string;
+    enforces_permission_profiles?: readonly string[];
     pricing_mode?: "api" | "subscription";
     subscription_provider?: string;
     subscription_model?: string;
@@ -440,7 +451,13 @@ function applyExtraFields(
 export async function chainStartFromInput(
   raw: unknown,
   services: Services,
-  opts?: { applyMaestroBudgetGate?: boolean; requireActiveWorker?: boolean },
+  opts?: {
+    applyMaestroBudgetGate?: boolean;
+    requireActiveWorker?: boolean;
+    // In-process workflow dispatch only (D8): the HTTP chain-start surface
+    // must not let callers smuggle a cwd override into a dispatch.
+    allowCwdOverride?: boolean;
+  },
 ): Promise<Response> {
   const requireActiveWorker = opts?.requireActiveWorker ?? true;
   if (requireActiveWorker) {
@@ -455,6 +472,17 @@ export async function chainStartFromInput(
   if (!parsed.success) {
     return validationErrorResponse(
       parsed.error.issues.map((i) => ({ path: i.path.map(String), message: i.message })),
+    );
+  }
+  if (opts?.allowCwdOverride !== true && parsed.data.cwd_override !== undefined) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_not_allowed",
+          message: "cwd_override is only accepted on the in-process workflow dispatch path",
+        },
+      },
+      400,
     );
   }
 
@@ -623,10 +651,10 @@ function isInternalHopForMismatch(
   );
 }
 
-function runProjectRegistryGuard(
+async function runProjectRegistryGuard(
   input: ChainStartRequestWithLongLived,
   services: Services,
-): ProjectRegistryGuardOutcome {
+): Promise<ProjectRegistryGuardOutcome> {
   const strictReject = maybeRejectMissingProjectIdForStrictWorkflow(input, services);
   if (strictReject) {
     return {
@@ -650,9 +678,10 @@ function runProjectRegistryGuard(
   }
   try {
     const projectRegistryEntries = services.projectRegistry.list();
-    const guardResult = inspectPromptVsProject({
+    const guardResult = await inspectPromptVsProject({
       prompt: input.message,
       project_id: input.project_id,
+      branch_base: input.branch_base,
       registry: projectRegistryEntries,
     });
     if (guardResult.status !== "mismatch") {
@@ -1223,6 +1252,115 @@ async function maybeRunAutoRecall(
   return { handoffMessage, recalled_memory_ids, recalled_memories, recalled_query };
 }
 
+// Review and plan personas inspect the repository without a worktree and must
+// never mutate it; when the caller didn't name a profile, no-worktree
+// review/plan dispatches default to the read-only profile so routing and the
+// seat gate below can fail closed instead of dispatching unconstrained.
+const PROFILE_DEFAULTING_TASK_TYPES: ReadonlySet<AgentTaskType> = new Set([
+  "review_adversarial",
+  "plan_refine",
+]);
+
+function applyPermissionProfileDefault(input: ChainStartRequestWithLongLived): void {
+  if (
+    input.permission_profile !== undefined ||
+    input.use_worktree !== false ||
+    input.task_type === undefined ||
+    !PROFILE_DEFAULTING_TASK_TYPES.has(input.task_type)
+  )
+    return;
+  input.permission_profile = PERMISSION_PROFILE_REVIEW_READONLY;
+}
+
+// A chain-start issued inside an existing chain is a hop, not a fresh root:
+// it inherits the parent's permission profile and caller_cwd so a profiled
+// persona cannot spawn an unprofiled child that mutates on its behalf. A hop
+// under a scratch-bound parent is rejected outright: scratch dispatches pin
+// max_hops:1, and a child row would carry a scratch root bound to a run id
+// the child does not own — there is no legitimate hop here.
+function applyParentProfileInheritance(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+): Response | null {
+  if (typeof input.parent_handoff_id !== "string") return null;
+  const parent = services.handoffReader.get(input.parent_handoff_id);
+  if (!parent) return null;
+  if (parent.cwd_override !== null && parent.cwd_override !== undefined) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_parent_scratch",
+          message:
+            "child handoffs are not allowed under a scratch-bound parent; scratch dispatches pin max_hops:1",
+          parent_cwd_override: parent.cwd_override,
+        },
+      },
+      400,
+    );
+  }
+  input.permission_profile ??= parent.permission_profile ?? undefined;
+  input.caller_cwd ??= parent.caller_cwd ?? undefined;
+  return null;
+}
+
+function rejectUnsupportedPermissionProfile(
+  input: ChainStartRequestWithLongLived,
+): Response | null {
+  const profile = input.permission_profile;
+  if (profile === undefined || (PERMISSION_PROFILES as readonly string[]).includes(profile))
+    return null;
+  return json(
+    {
+      error: {
+        code: "unsupported_permission_profile",
+        message: `permission_profile '${profile}' is not supported by this daemon`,
+      },
+    },
+    422,
+  );
+}
+
+function seatEnforcesInputProfile(
+  cfg: AgentChatConfigLike,
+  input: ChainStartRequestWithLongLived,
+  agentName: string,
+): boolean {
+  const profile = input.permission_profile;
+  if (profile === undefined) return true;
+  const seat = cfg.agents?.find((candidate) => candidate.name === agentName);
+  return agentEnforcesPermissionProfile(seat, profile);
+}
+
+function enforcePermissionProfileSeatGate(
+  services: Services,
+  routedAgent: string,
+  profile: PermissionProfile | undefined,
+): Response | null {
+  if (profile === undefined) return null;
+  const agents = (services.agentchatConfig as AgentChatConfigLike | undefined)?.agents;
+  const seat = agents?.find((candidate) => candidate.name === routedAgent);
+  if (agentEnforcesPermissionProfile(seat, profile)) return null;
+  services.log.warn(
+    {
+      event: "chain_start.permission_profile_unenforceable",
+      agent: routedAgent,
+      permission_profile: profile,
+    },
+    "chain-start profiled dispatch rejected: seat cannot enforce the profile",
+  );
+  return json(
+    {
+      error: {
+        code: "permission_profile_unenforceable",
+        message: `agent '${routedAgent}' cannot enforce permission_profile '${profile}'`,
+        agent: routedAgent,
+        permission_profile: profile,
+      },
+    },
+    422,
+  );
+}
+
 interface PersistChainStartArgs {
   services: Services;
   input: ChainStartRequestWithLongLived;
@@ -1318,6 +1456,9 @@ function persistChainStart(args: PersistChainStartArgs): void {
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
       branch_name: branchName,
+      permission_profile: input.permission_profile ?? null,
+      caller_cwd: input.caller_cwd ?? null,
+      cwd_override: input.cwd_override ?? null,
     });
     if (openPrOnReviewBool !== undefined) {
       services.db
@@ -1328,9 +1469,27 @@ function persistChainStart(args: PersistChainStartArgs): void {
         .run(openPrOnReviewBool ? 1 : 0, handoff_id);
     }
     if (lane_id !== null && taskClass !== undefined) {
+      // TRIVIAL workflow-internal dispatches (persona/synthesizer fan-out)
+      // produce nothing to land and run no gate — the orphan-lane sweeper
+      // would close them 'skipped' anyway — so their lane is recorded
+      // already closed instead of leaking to the sweeper. Non-TRIVIAL
+      // no-worktree dispatches stay open so the sweeper can record
+      // review_debt.
+      const trivialWorkflowInternal =
+        input.dispatch_kind === "workflow" &&
+        input.use_worktree === false &&
+        taskClass === "TRIVIAL";
       insertLane(services.db, {
         lane_id,
         ts_opened: ts,
+        ...(trivialWorkflowInternal
+          ? {
+              ts_closed: ts,
+              gate_status: "skipped" as const,
+              override_reason:
+                "TRIVIAL workflow-internal dispatch with no worktree: nothing to land, no gate",
+            }
+          : {}),
         task_class: taskClass,
         implementer_handoff: handoff_id,
         recalled_memory_ids,
@@ -1356,6 +1515,7 @@ interface BuildChainStartResponseArgs {
   route: InitialRoute | null;
   routingWarning: RoutingWarningPayload | undefined;
   routingAdvisory: RoutingAdvisoryPayload | undefined;
+  permissionProfile: PermissionProfile | undefined;
 }
 
 function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
@@ -1363,6 +1523,7 @@ function buildChainStartResponse(args: BuildChainStartResponseArgs): Response {
     conversation_id: args.conversation_id,
     handoff_id: args.handoff_id,
     branch_name: args.branchName,
+    ...(args.permissionProfile !== undefined ? { permission_profile: args.permissionProfile } : {}),
     ...(args.taskClass !== undefined
       ? {
           task_class: args.taskClass,
@@ -1474,6 +1635,7 @@ function resolveRoutingWithFallbacks(
       projectId: input.project_id ?? undefined,
       dispatchKind: input.dispatch_kind,
       tool_free: input.tool_free,
+      permission_profile: input.permission_profile,
     },
   });
   let route = initialRoute;
@@ -1671,10 +1833,16 @@ export async function chainStartInternal(
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+  applyPermissionProfileDefault(input);
+  const parentInheritanceResponse = applyParentProfileInheritance(input, services);
+  if (parentInheritanceResponse) return parentInheritanceResponse;
+  const unsupportedProfileResponse = rejectUnsupportedPermissionProfile(input);
+  if (unsupportedProfileResponse) return unsupportedProfileResponse;
+
   const explicitProjectIdResponse = enforceExplicitProjectIdGate(input, services);
   if (explicitProjectIdResponse) return explicitProjectIdResponse;
 
-  const guardOutcome = runProjectRegistryGuard(input, services);
+  const guardOutcome = await runProjectRegistryGuard(input, services);
   if (guardOutcome.response) return guardOutcome.response;
   const { routingWarning, projectRegistryEntries } = guardOutcome;
   let routingAdvisory = guardOutcome.routingAdvisory;
@@ -1739,12 +1907,105 @@ export async function chainStartInternal(
     routingDecision,
   } = routing;
 
+  const profileSeatResponse = enforcePermissionProfileSeatGate(
+    services,
+    routedAgent,
+    input.permission_profile,
+  );
+  if (profileSeatResponse) return profileSeatResponse;
+
+  // A profiled dispatch also requires at least one live worker that declared
+  // enforcement at registration — otherwise the approved handoff is
+  // unclaimable-by-design and starves in the queue instead of failing here.
+  if (input.permission_profile !== undefined) {
+    const profileWorkerResponse = profiledLiveWorkerGateResponse(
+      services,
+      input.permission_profile,
+      input.project_id ?? null,
+    );
+    if (profileWorkerResponse) return profileWorkerResponse;
+  }
+
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
 
   const unknownProjectId = guardUnknownProjectId(input, services, projectRegistryEntries);
   if (unknownProjectId.response) return unknownProjectId.response;
   routingAdvisory = unknownProjectId.routingAdvisory ?? routingAdvisory;
+
+  // cwd_override binding (P6): only workflow-dispatched, no-worktree starts
+  // may carry one, and the path must be the daemon-owned scratch of this
+  // workflow_run_id under the resolved project's fleet base. Validated after
+  // guardUnknownProjectId because that gate may drop/normalize project_id.
+  if (input.cwd_override !== undefined) {
+    if (
+      input.use_worktree !== false ||
+      input.dispatch_kind !== "workflow" ||
+      typeof input.workflow_run_id !== "string" ||
+      input.workflow_run_id.length === 0
+    ) {
+      return json(
+        {
+          error: {
+            code: "cwd_override_requires_workflow_dispatch",
+            message:
+              "cwd_override requires dispatch_kind 'workflow', use_worktree false, and a workflow_run_id",
+          },
+        },
+        400,
+      );
+    }
+    // The override's git lineage is authoritative for the project when the
+    // request carries none — for example a synthetic caller-side id that the
+    // unknown-project gate dropped. Derive it from the scratch's common dir
+    // so a second registered project's scratch still validates; a repo the
+    // daemon does not know fails closed.
+    if (input.project_id === undefined || input.project_id === null) {
+      const derived = services.scratchWorktrees.scratchCwdProject(input.cwd_override);
+      if (derived.status === "unmatched") {
+        return json(
+          {
+            error: {
+              code: "scratch_cwd_unknown_project",
+              message:
+                "cwd_override scratch does not share a git common dir with the daemon's main repo or any registered project",
+            },
+          },
+          400,
+        );
+      }
+      if (
+        derived.status === "matched" &&
+        derived.project_id !== null &&
+        derived.project_id !== undefined
+      ) {
+        input.project_id = derived.project_id;
+      }
+    }
+    const scratchValidation = services.scratchWorktrees.validateCwdOverride({
+      cwd_override: input.cwd_override,
+      owner_run_id: input.workflow_run_id,
+      project_id: input.project_id ?? null,
+    });
+    if (!scratchValidation.ok) {
+      return json(
+        {
+          error: {
+            code: "invalid_scratch_cwd_override",
+            message: `cwd_override is not a valid daemon-owned scratch root for this run: ${scratchValidation.reason}`,
+            reason: scratchValidation.reason,
+          },
+        },
+        400,
+      );
+    }
+    // Persist the canonical realpath — the worker re-validates the stored
+    // string against the on-disk owner marker, so a symlinked spelling of the
+    // same dir must normalize to the same value here.
+    input.cwd_override = scratchValidation.path;
+    const scratchWorkerResponse = scratchLiveWorkerGateResponse(services, input.project_id ?? null);
+    if (scratchWorkerResponse) return scratchWorkerResponse;
+  }
 
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();
@@ -1843,6 +2104,7 @@ export async function chainStartInternal(
     route,
     routingWarning,
     routingAdvisory,
+    permissionProfile: input.permission_profile,
   });
 }
 
@@ -1943,7 +2205,10 @@ function maybeSelectSubDispatchFallback(opts: {
   const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
   const rankedCandidates = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
-    .filter((recommendation) => configAgents.has(recommendation.agent_name));
+    .filter((recommendation) => configAgents.has(recommendation.agent_name))
+    .filter((recommendation) =>
+      seatEnforcesInputProfile(opts.cfg, opts.input, recommendation.agent_name),
+    );
 
   const syntheticCaps = collectSyntheticCaps(opts.services);
 
@@ -2094,7 +2359,11 @@ function maybeSelectClassifierDeclineFallback(opts: {
   );
   const fallback = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
-    .find((recommendation) => configAgents.has(recommendation.agent_name));
+    .find(
+      (recommendation) =>
+        configAgents.has(recommendation.agent_name) &&
+        seatEnforcesInputProfile(opts.cfg, opts.input, recommendation.agent_name),
+    );
   return fallback?.agent_name ?? null;
 }
 
@@ -2256,45 +2525,7 @@ export function chainsResponsesRoute(req: Request, services: Services): Response
   return json({ responses });
 }
 
-export function chainsMessagesRoute(req: Request, services: Services): Response {
-  const url = new URL(req.url);
-  const conversation_id = url.searchParams.get("conversation_id");
-  if (!conversation_id) {
-    return json(
-      { error: { code: "missing_param", message: "conversation_id query parameter is required" } },
-      400,
-    );
-  }
-  const typesParam = url.searchParams.get("types");
-  const types = typesParam
-    ? typesParam
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0)
-    : undefined;
-
-  const limitParam = url.searchParams.get("limit");
-  const offsetParam = url.searchParams.get("offset");
-  const beforeTsParam = url.searchParams.get("before_ts");
-  const parsedLimit = limitParam !== null ? Number.parseInt(limitParam, 10) : undefined;
-  const parsedOffset = offsetParam !== null ? Number.parseInt(offsetParam, 10) : undefined;
-  const limit =
-    parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? parsedLimit
-      : undefined;
-  const offset =
-    parsedOffset !== undefined && Number.isFinite(parsedOffset) && parsedOffset >= 0
-      ? parsedOffset
-      : undefined;
-  const before_ts = beforeTsParam !== null && beforeTsParam.length > 0 ? beforeTsParam : undefined;
-
-  const events = services.chainReader.getMessages(conversation_id, types, {
-    limit,
-    offset,
-    before_ts,
-  });
-  return json({ events });
-}
+export { chainsMessagesRoute } from "./chains-messages.js";
 
 export async function chainSendMessageRoute(
   req: Request,

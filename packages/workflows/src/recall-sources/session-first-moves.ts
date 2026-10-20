@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 
-import { collectSessionFirstMoves, type SessionFirstMoves } from "@penumbra/core";
+import {
+  collectOpenPrs,
+  collectSessionFirstMoves,
+  type GhRunner,
+  type SessionFirstMoves,
+} from "@penumbra/core";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -13,6 +18,7 @@ export type SessionFirstMovesSourceInput = {
   args: Record<string, unknown>;
   readDaemonPid?: () => number | null;
   readWorkerPids?: () => number[];
+  runGh?: GhRunner;
 };
 
 export type SessionFirstMovesSourceOutput = {
@@ -91,6 +97,7 @@ export async function runSessionFirstMovesSource(
     daemon_healthy: daemonPid !== null,
     worker_pids: workerPids,
     project_id: input.project,
+    open_prs: await collectOpenPrs({ cwd: input.cwd, run: input.runGh }),
   });
   return { result, warnings: [] };
 }

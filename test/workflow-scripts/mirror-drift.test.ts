@@ -3,6 +3,8 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 
+import { isLinkedCheckout } from "../../packages/cli/src/commands/init.js";
+
 // .claude/workflows/*.js are mirrored into ~/.claude/workflows/ for global
 // execution; several are plain copies, not symlinks, so a repo edit does not
 // reach the executing copy until re-mirrored. This test pins byte-equality for
@@ -29,6 +31,7 @@ const KNOWN_NON_PREFIX_SCRIPTS = [
   "land-and-close.js",
   "session-first-moves.js",
   "session-memory-sweep.js",
+  "penumbra.js",
 ];
 
 describe("workflow mirror guard breadth", () => {
@@ -47,7 +50,9 @@ describe("workflow mirror guard breadth", () => {
   });
 });
 
-if (!existsSync(MIRROR_DIR)) {
+if (isLinkedCheckout(REPO_DIR)) {
+  describe.skip("global workflow mirror drift (linked checkout)", () => {});
+} else if (!existsSync(MIRROR_DIR)) {
   describe.skip("global workflow mirror drift (no mirror directory)", () => {});
 } else {
   describe("global workflow mirror drift", () => {

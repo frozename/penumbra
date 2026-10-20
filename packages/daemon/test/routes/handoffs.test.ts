@@ -1,4 +1,5 @@
 import { HandoffDetailResponseSchema, HandoffStatusResponseSchema } from "@penumbra/api-contract";
+import { TaskRouterConfigSchema } from "@penumbra/config";
 import {
   AgentPerformanceWriter,
   buildServices,
@@ -332,6 +333,111 @@ test("POST /handoffs persists parent, branch base, and chain max hops", async ()
     branch_base: "feat/round-one",
     chain_max_hops: 3,
   });
+});
+
+test("POST /handoffs inherits caller_cwd from the parent handoff", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-parent-cwd",
+    ts: "2026-09-01T11:59:00.000Z",
+    project_id: null,
+    conversation_id: "conv-chain",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "parent",
+    triggered_by_event_id: "evt-parent-cwd",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+  });
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "hop two",
+        conversation_id: "conv-chain",
+        project_id: null,
+        triggered_by_event_id: "evt-hop-two",
+        parent_handoff_id: "h-parent-cwd",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+
+  const row = db
+    .query<
+      { caller_cwd: string | null },
+      [string]
+    >("SELECT caller_cwd FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row?.caller_cwd).toBe("/Volumes/WorkSSD/repos/penumbra");
+});
+
+test("POST /handoffs honors an explicit caller_cwd over the parent's", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.handoffWriter.createApproved({
+    handoff_id: "h-parent-cwd2",
+    ts: "2026-09-01T11:59:00.000Z",
+    project_id: null,
+    conversation_id: "conv-chain",
+    from: "user",
+    to: "planner",
+    to_role: null,
+    message: "parent",
+    triggered_by_event_id: "evt-parent-cwd2",
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: 3,
+    chain_trust_mode: "all",
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    caller_cwd: "/Volumes/WorkSSD/repos/original",
+  });
+
+  const res = await handoffsCreateRoute(
+    new Request("http://x/handoffs", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "planner",
+        to: "executor",
+        message: "hop with its own cwd",
+        conversation_id: "conv-chain",
+        project_id: null,
+        triggered_by_event_id: "evt-hop-own-cwd",
+        parent_handoff_id: "h-parent-cwd2",
+        caller_cwd: "/Volumes/WorkSSD/repos/other",
+      }),
+    }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+
+  const row = db
+    .query<
+      { caller_cwd: string | null },
+      [string]
+    >("SELECT caller_cwd FROM handoffs WHERE handoff_id=?")
+    .get(body.handoff_id);
+  expect(row?.caller_cwd).toBe("/Volumes/WorkSSD/repos/other");
 });
 
 test("POST /handoffs rejects an unknown parent before writing t0 or handoff rows", async () => {
@@ -2638,4 +2744,325 @@ test("GET /handoffs/<id>/status response safeParses HandoffStatusResponseSchema"
   const body = await res.json();
   const parsed = HandoffStatusResponseSchema.safeParse(body);
   expect(parsed.success).toBe(true);
+});
+
+function seedApprovedWithProfile(
+  services: Services,
+  handoff_id: string,
+  permission_profile: string | null,
+): void {
+  services.handoffWriter.createApproved({
+    handoff_id,
+    ts: "2026-04-25T19:00:00.000Z",
+    project_id: null,
+    conversation_id: "conv-profiled",
+    from: "user",
+    to: "reviewer-seat",
+    to_role: null,
+    message: "parent dispatch",
+    triggered_by_event_id: null,
+    resolved_by: "chain-start",
+    resolved_at: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: "review_adversarial",
+    dispatch_kind: "workflow",
+    use_worktree: false,
+    parent_handoff_id: null,
+    branch_base: null,
+    permission_profile: permission_profile as "review_readonly" | null,
+  });
+}
+
+function seedLiveEnforcingWorker(
+  services: Services,
+  opts?: { workerId?: string; staleMs?: number },
+): void {
+  const now = Date.now();
+  const workerId = opts?.workerId ?? "w-enforcer";
+  services.db.run(
+    `INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at, revoked_at, metadata_json)
+     VALUES (?, ?, ?, ?, NULL, ?)`,
+    [
+      `th-${workerId}-${String(now)}`,
+      workerId,
+      now - 60_000,
+      now - (opts?.staleMs ?? 0),
+      JSON.stringify({ enforces_permission_profiles: ["review_readonly"] }),
+    ],
+  );
+}
+
+function postHandoffBody(overrides: Record<string, unknown>): Request {
+  return new Request("http://x/handoffs", {
+    method: "POST",
+    body: JSON.stringify({
+      from: "reviewer-seat",
+      to: "synthesizer-seat",
+      message: "next hop",
+      conversation_id: "conv-profiled",
+      triggered_by_event_id: "evt-hop",
+      ...overrides,
+    }),
+  });
+}
+
+test("POST /handoffs inherits permission_profile from the parent handoff", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+  };
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "synthesizer-seat",
+        roles: [],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  seedApprovedWithProfile(services, "h-profiled-parent", "review_readonly");
+  seedLiveEnforcingWorker(services);
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ parent_handoff_id: "h-profiled-parent" }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id = ?")
+    .get(body.handoff_id);
+  expect(row?.permission_profile).toBe("review_readonly");
+});
+
+test("POST /handoffs with explicit null permission_profile still inherits the parent's profile", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+  };
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "synthesizer-seat",
+        roles: [],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  seedApprovedWithProfile(services, "h-profiled-parent", "review_readonly");
+  seedLiveEnforcingWorker(services);
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ parent_handoff_id: "h-profiled-parent", permission_profile: null }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id = ?")
+    .get(body.handoff_id);
+  expect(row?.permission_profile).toBe("review_readonly");
+});
+
+test("POST /handoffs rejects a profiled hop to a seat that cannot enforce it", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: { agents?: { name: string; adapter?: string }[] };
+  };
+  services.agentchatConfig = {
+    agents: [{ name: "synthesizer-seat", roles: [], adapter: "claude-cli" }],
+  };
+  seedApprovedWithProfile(services, "h-profiled-parent", "review_readonly");
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ parent_handoff_id: "h-profiled-parent" }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJsonAs<ErrorCodeBody>(res);
+  expect(body.error.code).toBe("permission_profile_unenforceable");
+  expect(countHandoffRows(db, "next hop")).toBe(0);
+});
+
+test("POST /handoffs profiled hop 503s when no live worker declares the profile", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+  };
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "synthesizer-seat",
+        roles: [],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  seedApprovedWithProfile(services, "h-profiled-parent", "review_readonly");
+  // An enforcing seat exists, but the only live worker never declared it.
+  services.db.run(
+    `INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at, revoked_at, metadata_json)
+     VALUES ('th-plain', 'w-plain', ?, ?, NULL, ?)`,
+    [Date.now() - 60_000, Date.now(), JSON.stringify({ enforces_permission_profiles: [] })],
+  );
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ parent_handoff_id: "h-profiled-parent" }),
+    services,
+  );
+  expect(res.status).toBe(503);
+  const body = await readJsonAs<ErrorCodeBody>(res);
+  expect(body.error.code).toBe("permission_profile_unenforceable");
+  expect(countHandoffRows(db, "next hop")).toBe(0);
+});
+
+test("POST /handoffs profiled hop succeeds when a live worker declares the profile", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+  };
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "synthesizer-seat",
+        roles: [],
+        adapter: "claude-cli",
+        enforces_permission_profiles: ["review_readonly"],
+      },
+    ],
+  };
+  seedApprovedWithProfile(services, "h-profiled-parent", "review_readonly");
+  seedLiveEnforcingWorker(services);
+  // A stale enforcing worker must not count, but the fresh one should.
+  seedLiveEnforcingWorker(services, { workerId: "w-stale", staleMs: 200_000 });
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ parent_handoff_id: "h-profiled-parent" }),
+    services,
+  );
+  expect(res.status).toBe(200);
+});
+
+test("POST /handoffs without a parent keeps no profile and imposes no seat gate", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const res = await handoffsCreateRoute(postHandoffBody({}), services);
+  expect(res.status).toBe(200);
+  const body = await readJsonAs<CreateBody>(res);
+  const row = db
+    .query<
+      { permission_profile: string | null },
+      [string]
+    >("SELECT permission_profile FROM handoffs WHERE handoff_id = ?")
+    .get(body.handoff_id);
+  expect(row?.permission_profile).toBeNull();
+});
+
+function roleRoutingServices(db: Database): Services & {
+  agentchatConfig?: {
+    agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+  };
+  localSeatHealth?: { getUnhealthyAgents(): Set<string> };
+} {
+  const services = makeServices(db) as Services & {
+    agentchatConfig?: {
+      agents?: { name: string; adapter?: string; enforces_permission_profiles?: string[] }[];
+    };
+    localSeatHealth?: { getUnhealthyAgents(): Set<string> };
+  };
+  services.agentRouting = {
+    agents: [{ name: "alpha", roles: ["executor"], adapter: "stdio-acp" }],
+    default_roles: {},
+    role_exploration_policy: "ranked-first",
+  };
+  services.agentRegistry = ["alpha"];
+  services.agentchatConfig = {
+    agents: [{ name: "alpha", roles: ["executor"], adapter: "stdio-acp" }],
+  };
+  services.taskRouterConfig = TaskRouterConfigSchema.parse({ mode: "auto" });
+  services.modelAliasMap = {};
+  services.aaSnapshotStore = {
+    readSync: () => ({ state: "missing", stale: false, ageSeconds: null }),
+  } as Services["aaSnapshotStore"];
+  return services;
+}
+
+test("POST /handoffs unprofiled role hop does not engage the model task router", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = roleRoutingServices(db);
+  // With every candidate unhealthy, auto-mode routing would throw
+  // RouterHardConstraintExhaustedError — but an unprofiled hop must pass no
+  // hints at all, so the router never runs and legacy routing just declines
+  // the seat (the literal `to` name survives the registry check).
+  services.localSeatHealth = { getUnhealthyAgents: (): Set<string> => new Set(["alpha"]) };
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({ to: "alpha", to_role: "executor" }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const row = db
+    .query<
+      { to_agent: string; permission_profile: string | null },
+      []
+    >("SELECT to_agent, permission_profile FROM handoffs WHERE message='next hop'")
+    .get();
+  expect(row?.to_agent).toBe("alpha");
+  expect(row?.permission_profile).toBeNull();
+});
+
+test("POST /handoffs profiled role hop maps router constraint exhaustion to a legible 422", async () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = roleRoutingServices(db);
+
+  const res = await handoffsCreateRoute(
+    postHandoffBody({
+      to: "alpha",
+      to_role: "executor",
+      permission_profile: "review_readonly",
+    }),
+    services,
+  );
+  expect(res.status).toBe(422);
+  const body = await readJsonAs<{
+    error: { code: string; reasons?: { route_id: string; reasons: string[] }[] };
+  }>(res);
+  expect(body.error.code).toBe("router_hard_constraint_exhausted");
+  expect(body.error.reasons?.[0]?.reasons).toContain("permission_profile_unenforceable");
+  expect(countHandoffRows(db, "next hop")).toBe(0);
 });

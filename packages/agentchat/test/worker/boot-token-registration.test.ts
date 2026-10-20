@@ -402,6 +402,199 @@ describe("runWorkerBoot", () => {
       }
     }
   });
+
+  test("drains the terminal outbox after registerWorker and before orphan reconcile", async () => {
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    delete process.env.PENUMBRA_BOOT_RECONCILE;
+    try {
+      const calls: string[] = [];
+      const drainBudgets: (number | undefined)[] = [];
+      const log = { info: noopVoid, warn: noopVoid, error: noopVoid };
+      const client: WorkerBootClient = {
+        registerWorker: () => {
+          calls.push("register");
+          return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+        },
+        postHeartbeat: () => {
+          calls.push("heartbeat");
+          return Promise.resolve();
+        },
+        reconcileLongLivedOrphans: () => {
+          calls.push("long-lived");
+          return Promise.resolve({ reconciled: 0 });
+        },
+        reconcileDispatchOrphans: () => {
+          calls.push("dispatch");
+          return Promise.resolve({ requeued: 0, exhausted: 0 });
+        },
+      };
+      const outbox = {
+        drain: (opts?: { budgetMs?: number }): Promise<{ remaining: number }> => {
+          calls.push("outbox-drain");
+          drainBudgets.push(opts?.budgetMs);
+          return Promise.resolve({ remaining: 0 });
+        },
+      };
+
+      await runWorkerBoot({ client, log, workerId: "W-A", outbox });
+
+      expect(calls[0]).toBe("register");
+      expect(calls[1]).toBe("outbox-drain");
+      // The drain is bounded; the budget must stay under the shutdown cap.
+      expect(drainBudgets[0]).toBeLessThanOrEqual(30_000);
+      // The replayed terminal reports beat the orphan requeue.
+      const rest = calls.slice(2);
+      expect(rest).toContain("heartbeat");
+      expect(rest).toContain("long-lived");
+      expect(rest).toContain("dispatch");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
+  });
+
+  test("skips dispatch orphan reconcile when the outbox still holds records after the drain", async () => {
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    delete process.env.PENUMBRA_BOOT_RECONCILE;
+    try {
+      const calls: string[] = [];
+      const log = { info: noopVoid, warn: noopVoid, error: noopVoid };
+      const client: WorkerBootClient = {
+        registerWorker: () => {
+          calls.push("register");
+          return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+        },
+        postHeartbeat: () => {
+          calls.push("heartbeat");
+          return Promise.resolve();
+        },
+        reconcileLongLivedOrphans: () => {
+          calls.push("long-lived");
+          return Promise.resolve({ reconciled: 0 });
+        },
+        reconcileDispatchOrphans: () => {
+          calls.push("dispatch");
+          return Promise.resolve({ requeued: 0, exhausted: 0 });
+        },
+      };
+      const outbox = {
+        drain: (): Promise<{ remaining: number }> => {
+          calls.push("outbox-drain");
+          return Promise.resolve({ remaining: 2 });
+        },
+      };
+
+      await runWorkerBoot({ client, log, workerId: "W-A", outbox });
+
+      // Records still pending after the bounded drain: reconcileDispatchOrphans
+      // must be skipped (it would requeue the very rows the outbox is about to
+      // report terminal), while heartbeat + long-lived reconcile still run.
+      expect(calls).toContain("register");
+      expect(calls).toContain("outbox-drain");
+      expect(calls).toContain("heartbeat");
+      expect(calls).toContain("long-lived");
+      expect(calls).not.toContain("dispatch");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
+  });
+
+  test("still drains the outbox when PENUMBRA_BOOT_RECONCILE=0", async () => {
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    process.env.PENUMBRA_BOOT_RECONCILE = "0";
+    try {
+      const calls: string[] = [];
+      const log = { info: noopVoid, warn: noopVoid, error: noopVoid };
+      const client: WorkerBootClient = {
+        registerWorker: () => {
+          calls.push("register");
+          return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+        },
+        postHeartbeat: () => {
+          calls.push("heartbeat");
+          return Promise.resolve();
+        },
+        reconcileLongLivedOrphans: () => {
+          calls.push("long-lived");
+          return Promise.resolve({ reconciled: 0 });
+        },
+        reconcileDispatchOrphans: () => {
+          calls.push("dispatch");
+          return Promise.resolve({ requeued: 0, exhausted: 0 });
+        },
+      };
+      const outbox = {
+        drain: (): Promise<{ remaining: number }> => {
+          calls.push("outbox-drain");
+          return Promise.resolve({ remaining: 0 });
+        },
+      };
+
+      await runWorkerBoot({ client, log, workerId: "W-A", outbox });
+
+      expect(calls).toEqual(["register", "outbox-drain"]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
+  });
+
+  test("a failed outbox drain is treated as records-remaining (skips dispatch reconcile)", async () => {
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    delete process.env.PENUMBRA_BOOT_RECONCILE;
+    try {
+      const calls: string[] = [];
+      const log = { info: noopVoid, warn: noopVoid, error: noopVoid };
+      const client: WorkerBootClient = {
+        registerWorker: () => {
+          calls.push("register");
+          return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+        },
+        postHeartbeat: () => {
+          calls.push("heartbeat");
+          return Promise.resolve();
+        },
+        reconcileLongLivedOrphans: () => {
+          calls.push("long-lived");
+          return Promise.resolve({ reconciled: 0 });
+        },
+        reconcileDispatchOrphans: () => {
+          calls.push("dispatch");
+          return Promise.resolve({ requeued: 0, exhausted: 0 });
+        },
+      };
+      const outbox = {
+        drain: (): Promise<{ remaining: number }> => {
+          calls.push("outbox-drain");
+          return Promise.reject(new Error("outbox exploded"));
+        },
+      };
+
+      await runWorkerBoot({ client, log, workerId: "W-A", outbox });
+
+      expect(calls).toContain("register");
+      expect(calls).toContain("outbox-drain");
+      expect(calls).toContain("heartbeat");
+      expect(calls).toContain("long-lived");
+      expect(calls).not.toContain("dispatch");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
+  });
 });
 
 describe("401 auto-re-register + retry", () => {
@@ -861,4 +1054,41 @@ describe("401 auto-re-register + retry", () => {
       cleanup();
     }
   });
+});
+
+test("runWorkerBoot forwards workerMetadata into registerWorker", async () => {
+  const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+  process.env.PENUMBRA_BOOT_RECONCILE = "0";
+  try {
+    let captured: Record<string, unknown> | undefined;
+    const client: WorkerBootClient = {
+      registerWorker: (args: {
+        worker_id: string;
+        metadata?: Record<string, unknown>;
+      }): Promise<{ worker_token: string; worker_id: string }> => {
+        captured = args.metadata;
+        return Promise.resolve({ worker_token: "wt-x", worker_id: "W-A" });
+      },
+      postHeartbeat: (): Promise<void> => Promise.resolve(),
+      reconcileLongLivedOrphans: (): Promise<{ reconciled: number }> =>
+        Promise.resolve({ reconciled: 0 }),
+      reconcileDispatchOrphans: (): Promise<{ requeued: number; exhausted: number }> =>
+        Promise.resolve({ requeued: 0, exhausted: 0 }),
+    };
+
+    await runWorkerBoot({
+      client,
+      log: { info: noopVoid, warn: noopVoid, error: noopVoid },
+      workerId: "W-A",
+      workerMetadata: { enforces_permission_profiles: ["review_readonly"] },
+    });
+
+    expect(captured).toEqual({ enforces_permission_profiles: ["review_readonly"] });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_BOOT_RECONCILE;
+    } else {
+      process.env.PENUMBRA_BOOT_RECONCILE = previous;
+    }
+  }
 });

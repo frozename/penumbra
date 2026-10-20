@@ -1,6 +1,8 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import * as net from "node:net";
 
+import { wrapSandboxExecArgv } from "../worker/sandbox-spawn.js";
+
 const DEFAULT_BOOT_TIMEOUT_MS = 10_000;
 const DEFAULT_KILL_TIMEOUT_MS = 2_000;
 const MAX_BOOT_OUTPUT_CHARS = 8_192;
@@ -33,6 +35,17 @@ export interface StartAcpServerOptions {
   getPort?: () => Promise<number>;
   waitForPort?: AcpServerPortWaiter;
   onChildErrorAfterBoot?: (err: Error) => void;
+  /**
+   * Seatbelt (sandbox-exec -p) profile text. When set, the agent server
+   * subprocess is spawned inside the profile — the OS-level write-deny
+   * backstop for permission-profile dispatches (covers native agent writes
+   * that bypass penumbra's executor and propagates to agent-spawned MCP
+   * children). Throws SandboxUnavailableError rather than ever spawning
+   * unsandboxed.
+   */
+  sandboxProfile?: string;
+  /** Test seam for the sandbox-exec availability assertion. */
+  sandboxDeps?: { platform?: NodeJS.Platform; exists?: (path: string) => boolean };
 }
 
 function noop(): void {
@@ -309,8 +322,17 @@ function spawnAcpChild(opts: StartAcpServerOptions, port: number): ChildProcessW
     return env;
   })();
 
+  const spawnArgv =
+    opts.sandboxProfile !== undefined
+      ? wrapSandboxExecArgv(
+          [opts.opencodeBinary ?? "opencode", ...args],
+          opts.sandboxProfile,
+          opts.sandboxDeps,
+        )
+      : [opts.opencodeBinary ?? "opencode", ...args];
+
   const spawnProcess = opts.spawn ?? spawn;
-  const child = spawnProcess(opts.opencodeBinary ?? "opencode", args, {
+  const child = spawnProcess(spawnArgv[0] ?? "opencode", spawnArgv.slice(1), {
     cwd: opts.cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: childEnv,

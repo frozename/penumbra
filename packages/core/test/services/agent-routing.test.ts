@@ -1521,6 +1521,100 @@ describe("routeAgent", () => {
     expect(summaryAgent.samples).toBe(1);
     expect(summaryAgent.success_rate).toBe(1);
   });
+
+  test("permission_profile rank only admits seats that can enforce it", () => {
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      agentchatConfig: {
+        agents: [
+          { name: "alpha", roles: ["coder"], adapter: "stdio-acp" },
+          { name: "beta", roles: ["coder"], adapter: "openai-compat-http" },
+          {
+            name: "reviewer",
+            roles: ["coder"],
+            adapter: "stdio-acp",
+            enforces_permission_profiles: ["review_readonly"],
+          },
+        ],
+      },
+      permission_profile: "review_readonly",
+      tool_free: true,
+      now: NOW,
+    });
+
+    const names = rankCandidates(out).map((candidate) => candidate.agent_name);
+    expect(names).toContain("beta");
+    expect(names).toContain("reviewer");
+    expect(names).not.toContain("alpha");
+  });
+
+  test("permission_profile single excludes non-enforcing role seats", () => {
+    const base = {
+      db,
+      detail: "single" as const,
+      role: "coder",
+      taskType: "implement_substantial" as const,
+      agentchatConfig: {
+        agents: [
+          { name: "alpha", roles: ["coder"], adapter: "stdio-acp" },
+          { name: "beta", roles: ["coder"], adapter: "openai-compat-http" },
+        ],
+      },
+      permission_profile: "review_readonly" as const,
+      tool_free: true,
+      roleExplorationPolicy: "ranked-first" as const,
+      now: NOW,
+    };
+
+    const mixed = routeAgent({ ...base, agentRegistry: ["alpha", "beta"] });
+    expect(mixed.detail).toBe("single");
+    if (mixed.detail !== "single") return;
+    expect(mixed.route?.agent).toBe("beta");
+
+    const onlyRunner = routeAgent({ ...base, agentRegistry: ["alpha"] });
+    expect(onlyRunner.detail).toBe("single");
+    if (onlyRunner.detail !== "single") return;
+    expect(onlyRunner.route).toBeNull();
+  });
+
+  test("permission_profile fails closed when no seat can enforce it", () => {
+    const out = routeAgent({
+      db,
+      detail: "single",
+      role: "coder",
+      taskType: "implement_substantial",
+      agentchatConfig: {
+        agents: [
+          { name: "alpha", roles: ["coder"], adapter: "stdio-acp" },
+          { name: "beta", roles: ["coder"], adapter: "claude-acp" },
+        ],
+      },
+      permission_profile: "review_readonly",
+      tool_free: true,
+      roleExplorationPolicy: "ranked-first",
+      now: NOW,
+    });
+
+    expect(out.detail).toBe("single");
+    if (out.detail !== "single") return;
+    expect(out.route).toBeNull();
+  });
+
+  test("permission_profile without an agents registry fails closed", () => {
+    const out = routeAgent({
+      db,
+      detail: "rank",
+      taskType: "implement_substantial",
+      agentRegistry: ["alpha", "beta"],
+      permission_profile: "review_readonly",
+      tool_free: true,
+      now: NOW,
+    });
+
+    expect(rankCandidates(out)).toHaveLength(0);
+  });
 });
 
 describe("latency_weighting routing", () => {

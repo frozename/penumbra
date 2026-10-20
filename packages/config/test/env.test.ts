@@ -59,6 +59,24 @@ describe("parseEnv", () => {
     expect(positive.PENUMBRA_AA_SNAPSHOT_REFRESH_INTERVAL_MS).toBe(60000);
   });
 
+  test("p1 jev shadow cost estimate registers with the P7 sibling's NonNegNum contract", () => {
+    const unset = parseEnv({});
+    expect(unset.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0.003);
+
+    const override = parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "0.01" });
+    expect(override.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0.01);
+
+    const zero = parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "0" });
+    expect(zero.PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD).toBe(0);
+
+    expect(() => parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "-0.5" })).toThrow(
+      /PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD/,
+    );
+    expect(() => parseEnv({ PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD: "" })).toThrow(
+      /PENUMBRA_DREAMING_COST_ESTIMATE_P1_JEV_SHADOW_USD/,
+    );
+  });
+
   test("t2 embed recipe defaults to title_plus_concise", () => {
     const result = parseEnv({});
     expect(result.PENUMBRA_T2_EMBED_RECIPE).toBe("title_plus_concise");
@@ -95,6 +113,34 @@ describe("ENV_REGISTRY", () => {
     expect(ENV_REGISTRY.PENUMBRA_EMBEDDINGS_TOKEN?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_DISCORD_WEBHOOK_URL?.isSensitive).toBe(true);
     expect(ENV_REGISTRY.PENUMBRA_JUDGE_TOKEN?.isSensitive).toBe(true);
+    expect(ENV_REGISTRY.PENUMBRA_TYPESAFE_API_KEY?.isSensitive).toBe(true);
+  });
+
+  test("typesafe defaults pin a versioned model, a total deadline and promotion off", () => {
+    const env = parseEnv({});
+    expect(env.PENUMBRA_TYPESAFE_BASE_URL).toBe("https://api.typesafe.ai");
+    expect(env.PENUMBRA_TYPESAFE_MODEL).toBe("jev-1.13.0");
+    expect(env.PENUMBRA_TYPESAFE_TIMEOUT_MS).toBe(10000);
+    expect(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION).toBe("off");
+    expect(env.PENUMBRA_TYPESAFE_API_KEY).toBeUndefined();
+    expect(ENV_REGISTRY.PENUMBRA_TYPESAFE_API_KEY_KEYCHAIN?.isSensitive).toBeFalsy();
+  });
+
+  test("typesafe judge promotion is a closed off|shadow|veto enum, not a boolean", () => {
+    expect(
+      parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "shadow" }).PENUMBRA_TYPESAFE_JUDGE_PROMOTION,
+    ).toBe("shadow");
+    const veto = ((): unknown => {
+      try {
+        return parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "veto" })
+          .PENUMBRA_TYPESAFE_JUDGE_PROMOTION;
+      } catch {
+        return "threw";
+      }
+    })();
+    expect(veto).toBe("veto");
+    expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "on" })).toThrow();
+    expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "true" })).toThrow();
   });
 
   test("non-secret key does not have isSensitive", () => {
@@ -159,4 +205,21 @@ describe("isMcpInvocationLogEnabled", () => {
     expect(isMcpInvocationLogEnabled({ PENUMBRA_MCP_INVOCATION_LOG_ENABLED: "1" })).toBe(true);
     expect(isMcpInvocationLogEnabled({})).toBe(false);
   });
+});
+
+describe("orphan lane grace registry", () => {
+  for (const [key, fallback] of [
+    ["PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES", 120],
+    ["PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES", 1440],
+  ] as const) {
+    test(`${key} registers a class default and integer override`, () => {
+      expect(parseEnv({})[key]).toBe(fallback);
+      expect(parseEnv({ [key]: "360" })[key]).toBe(360);
+    });
+    test(`${key} preserves settings fallback for invalid values`, () => {
+      for (const raw of ["0", "-1", "1.5", "banana", ""]) {
+        expect(parseEnv({ [key]: raw })[key]).toBe(fallback);
+      }
+    });
+  }
 });

@@ -80,7 +80,8 @@ if (typeof input.repo === 'string' && input.repo.trim() && !input.repo.trim().st
 validateSpec({
   workflowName: 'penumbra-tournament',
   input,
-  topLevelAllowedKeys: ['task', 'agents', 'defaults', 'dispatcherModel', 'judgeModel', 'project_id', 'caller_cwd', 'repo'],
+  topLevelAllowedKeys: ['task', 'agents', 'defaults', 'dispatcherModel',
+    'agentType', 'judgeModel', 'project_id', 'caller_cwd', 'repo'],
   requiredTopLevelKeys: ['task', 'agents'],
   defaults: fanoutDefaults,
   defaultsAllowedKeys: [
@@ -213,7 +214,7 @@ validateSpec({
 
 const fan = await workflow(
   'penumbra-fanout',
-  { tasks, defaults: fanoutDefaults, dispatcherModel, ...(typeof input.repo === 'string' ? { repo: input.repo } : {}) },
+  { tasks, defaults: fanoutDefaults, dispatcherModel, ...(input.agentType !== undefined ? { agentType: input.agentType } : {}), ...(typeof input.repo === 'string' ? { repo: input.repo } : {}) },
 )
 const candidates = ((fan && fan.results) || []).filter((r) => r && r.ok && r.branch && r.handoff_id)
 if (!candidates.length) {

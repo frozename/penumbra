@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
+import {
+  buildServices,
+  closeLane,
+  loadSqliteVec,
+  migrate,
+  ORPHAN_SWEEPER_REASON_PREFIX,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon";
 import { Database } from "bun:sqlite";
@@ -659,6 +665,60 @@ test("lane_close round-trips a reviewer-less passed close through the live daemo
       gate_status: "passed",
       implementer_handoff: "h-live-impl-2",
       reviewer_handoff: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    live.stop();
+  }
+});
+
+test("swept lane supersede passes through MCP and authorizes lane_close memory basis", async () => {
+  const live = makeLiveDaemon();
+  const originalFetch = globalThis.fetch;
+  const calls: { path: string; body: unknown }[] = [];
+  globalThis.fetch = (input, init): Promise<Response> => {
+    calls.push({
+      path: new URL(requestUrl(input)).pathname,
+      body: JSON.parse(bodyAsString(init?.body)),
+    });
+    return live.fetchImpl(input, init);
+  };
+  try {
+    const db = live.services.db;
+    for (const [id, agent] of [
+      ["impl-super", "worker"],
+      ["review-super", "reviewer"],
+    ]) {
+      db.run(
+        "INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, resolved_at) VALUES (?, '2026-05-10T00:00:00.000Z', 'conv-super', 'maestro', ?, 'work', 'completed', '2026-05-10T00:00:00.000Z')",
+        [id!, agent!],
+      );
+    }
+    db.run(
+      "INSERT INTO lane_ledger (lane_id, ts_opened, task_class, implementer_handoff, gate_status) VALUES ('lane-super', '2026-05-10T00:00:00.000Z', 'BOUNDARY', 'impl-super', 'open')",
+    );
+    closeLane(db, "lane-super", {
+      ts_closed: "2026-05-12T00:00:00.000Z",
+      gate_status: "review_debt",
+      override_reason: `${ORPHAN_SWEEPER_REASON_PREFIX} implementer completed`,
+    });
+    live.services.clock = (): Date => new Date("2026-05-12T01:00:00.000Z");
+    const out = parseToolResult(
+      await laneCloseHandler(live.daemon)({
+        lane_id: "lane-super",
+        gate_status: "passed",
+        reviewer_handoff_id: "review-super",
+      }),
+    );
+    expect(out).toMatchObject({
+      gate_status: "passed",
+      reviewer_handoff: "review-super",
+      superseded: { gate_status: "review_debt" },
+      memory_verify_authorization: "authorized",
+    });
+    expect(calls.map((call) => call.path)).toEqual(["/lanes/close", "/memory-verify/authorize"]);
+    expect(calls[1]?.body).toMatchObject({
+      basis: { kind: "lane_close", lane_id: "lane-super", reviewer_handoff: "review-super" },
     });
   } finally {
     globalThis.fetch = originalFetch;

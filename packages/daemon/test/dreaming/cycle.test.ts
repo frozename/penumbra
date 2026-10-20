@@ -1,15 +1,18 @@
 import type { LlamactlInventory, Logger } from "@penumbra/core";
 
+import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
 import { P1_CLAIM_TTL_MS, runDreamCycle } from "@src/dreaming/cycle.js";
-import { makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
+import { createDreamingJudgePool } from "@src/dreaming/dreaming-judge-pool.js";
+import { type JudgePool, type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
 import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { hashQuery } from "@src/dreaming/research.js";
+import { readSubsystemHealth } from "@src/services/subsystem-health.js";
 
 try {
   if (process.platform === "darwin") {
@@ -541,6 +544,50 @@ function testP1Embed(): Promise<Float32Array> {
   return Promise.resolve(new Float32Array([0.1, 0.2, 0.3]));
 }
 
+function chatReply(content: string): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Routes each judge seat by the port in its baseUrl; every call gets a fresh Response.
+function seatFetch(replies: Record<string, () => Response>): typeof fetch {
+  return ((input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const port = Object.keys(replies).find((p) => url.includes(`:${p}/`));
+    const reply = port === undefined ? undefined : replies[port];
+    return Promise.resolve(reply ? reply() : new Response("no route", { status: 599 }));
+  }) as unknown as typeof fetch;
+}
+
+function threeSeatPool(fetchImpl: typeof fetch): JudgePool {
+  return createDreamingJudgePool(
+    [
+      { name: "j1", baseUrl: "http://127.0.0.1:1111/v1", apiKey: "", model: "m" },
+      { name: "j2", baseUrl: "http://127.0.0.1:2222/v1", apiKey: "", model: "m" },
+      { name: "j3", baseUrl: "http://127.0.0.1:3333/v1", apiKey: "", model: "m" },
+    ],
+    fetchImpl,
+  );
+}
+
+const upstream502 = (): Response =>
+  new Response("upstream llama-server unreachable", { status: 502 });
+const yesReply =
+  (confidence: number): (() => Response) =>
+  (): Response =>
+    chatReply(JSON.stringify({ promote: true, confidence, rationale: "durable" }));
+
+function readP1Payload(db: Database, rollupId: string): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+    )
+    .get(JSON.stringify([rollupId])) as { payload_json: string } | null;
+  return row?.payload_json;
+}
+
 function seedNegativeResearchCache(
   db: Database,
   opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
@@ -1038,6 +1085,120 @@ it("P1 treats a throwing judge call as an abstention instead of crashing the cyc
   expect(row?.promotion_filtered_at).toBeNull();
 });
 
+it("P1 records a dream.judge.<seat> outcome per ballot and logs a failing seat once per cycle", async () => {
+  const db = openTestDb();
+  const bodyA =
+    "durable finding: a dead judge seat must leave a per-seat health trace every cycle.";
+  const bodyB = "durable convention: judge seat failures are logged by class, never by content.";
+  seedUnpromotedRollup(db, { body: bodyA });
+  seedUnpromotedRollup(db, { body: bodyB });
+  const warnCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+  const pool = threeSeatPool(
+    seatFetch({ "1111": upstream502, "2222": yesReply(0.9), "3333": yesReply(0.8) }),
+  );
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+    log: {
+      info: () => undefined,
+      warn: (fields: Record<string, unknown>, msg: string) => warnCalls.push({ fields, msg }),
+    } as unknown as Logger,
+  });
+
+  const dead = readSubsystemHealth(db, "dream.judge.j1");
+  expect(dead?.consecutive_failures).toBe(2);
+  expect(dead?.last_failure_reason).toBe("http_502");
+  expect(dead?.last_failure_status).toBe(502);
+  expect(dead?.seat).toBe("j1");
+  const healthy = readSubsystemHealth(db, "dream.judge.j2");
+  expect(healthy?.consecutive_failures).toBe(0);
+  expect(healthy?.last_success_ts).not.toBeNull();
+
+  const seatWarns = warnCalls.filter((c) => c.msg === "dream-cycle P1 judge seat abstained");
+  expect(seatWarns).toHaveLength(1);
+  expect(seatWarns[0]?.fields).toMatchObject({ seat: "j1", errorClass: "http_502" });
+  expect(JSON.stringify(seatWarns)).not.toContain(bodyA);
+  expect(JSON.stringify(seatWarns)).not.toContain(bodyB);
+});
+
+it("P1 persists seat and error_class per ballot in dream_actions.payload_json", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: every persisted ballot must name the seat that cast it.",
+  });
+  const pool = threeSeatPool(
+    seatFetch({ "1111": upstream502, "2222": yesReply(0.9), "3333": yesReply(0.8) }),
+  );
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const payload = JSON.parse(readP1Payload(db, rollupId) ?? "{}") as { votes?: unknown };
+  expect(payload.votes).toEqual([
+    { seat: "j1", promote: false, confidence: 0, abstained: true, error_class: "http_502" },
+    { seat: "j2", promote: true, confidence: 0.9 },
+    { seat: "j3", promote: true, confidence: 0.8 },
+  ]);
+});
+
+it("P1 serializes a seatless ballot with exactly the pre-attribution keys", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable convention: unattributed ballots keep the original persisted vote shape.",
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.85, rationale: "r" },
+  ]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+  });
+  const raw = readP1Payload(db, rollupId) ?? "{}";
+  expect((JSON.parse(raw) as { votes?: unknown }).votes).toEqual([
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.85 },
+  ]);
+  expect(raw).not.toContain("seat");
+  expect(raw).not.toContain("error_class");
+});
+
+it("P1 clamps a non-allowlisted judge error_class to 'unknown' at every sink", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable invariant: judge error classes carry a class label, never response text.",
+  });
+  const warnCalls: { fields: Record<string, unknown>; msg: string }[] = [];
+  const pool = makeFakeJudgePool([
+    {
+      promote: false,
+      confidence: 0,
+      abstained: true,
+      seat: "j9",
+      error_class: "upstream said: secret body text",
+    },
+    { promote: true, confidence: 0.9 },
+    { promote: true, confidence: 0.8 },
+  ]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: pool,
+    onReembed: testP1Embed,
+    log: {
+      info: () => undefined,
+      warn: (fields: Record<string, unknown>, msg: string) => warnCalls.push({ fields, msg }),
+    } as unknown as Logger,
+  });
+
+  const dead = readSubsystemHealth(db, "dream.judge.j9");
+  expect(dead?.last_failure_reason).toBe("unknown");
+  expect(JSON.stringify(warnCalls)).not.toContain("secret body text");
+  const raw = readP1Payload(db, rollupId) ?? "{}";
+  const payload = JSON.parse(raw) as { votes?: { seat?: string; error_class?: string }[] };
+  expect(payload.votes?.[0]).toMatchObject({ seat: "j9", error_class: "unknown" });
+  expect(raw).not.toContain("secret body text");
+});
+
 it("P1 excludes a rollup with a pending queued promote_t1 action from the claim batch", async () => {
   const db = openTestDb();
   const rollupId = seedUnpromotedRollup(db, {
@@ -1424,6 +1585,271 @@ it("P1 minted t2 memory includes project_id from rollup", async () => {
     .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
     .get() as { project_id: string | null } | null;
   expect(row?.project_id).toBe("proj_x");
+});
+
+it("P1 defers, never filters, a rollup whose only dissent is a malformed ballot", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a formatting failure is a non-verdict, not a judged decline.",
+  });
+  const pool = threeSeatPool(
+    seatFetch({
+      "1111": upstream502,
+      "2222": yesReply(0.9),
+      "3333": () => chatReply("Yes, promote this."),
+    }),
+  );
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), { judgePool: pool });
+  const row = db
+    .prepare(
+      `SELECT promotion_filtered_at, promotion_retry_count FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_filtered_at: string | null;
+    promotion_retry_count: number;
+  } | null;
+  expect(row?.promotion_filtered_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(1);
+  expect(readP1Payload(db, rollupId)).toBeUndefined();
+  expect(readSubsystemHealth(db, "dream.judge.j3")?.last_failure_reason).toBe("parse_error");
+});
+
+const allAbstain = (): JudgePool =>
+  makeFakeJudgePool([
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+    { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+  ]);
+
+it("P1 stamps promotion_retry_exhausted_at at the fifth deferral and emits a dream event", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a rollup that never gets a verdict must stop being re-judged.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_count=4 WHERE rollup_id=?`).run(rollupId);
+  // meta MUST stay optional: record() receives core's DispatchEventInput, whose
+  // meta is optional, so a required meta here is TS2345 in the daemon ratchet.
+  const events: { kind: string; meta?: unknown }[] = [];
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: allAbstain(),
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+  });
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_filtered_at, promotion_retry_count, promotion_retry_after
+         FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_filtered_at: string | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).not.toBeNull();
+  expect(row?.promotion_filtered_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(5);
+  expect(row?.promotion_retry_after).toBeNull();
+  const exhausted = events.filter((e) => e.kind === "dream_p1_promotion_retry_exhausted");
+  expect(exhausted).toHaveLength(1);
+  expect(exhausted[0]?.meta).toEqual({
+    rollup_id: rollupId,
+    reason: "insufficient_judge_votes",
+    retry_count: 5,
+  });
+  // The emitted kind must round-trip through the api-contract enum that
+  // constrains every dispatch_events reader.
+  expect(DispatchEventKindSchema.safeParse(exhausted[0]?.kind).success).toBe(true);
+  expect(readP1Payload(db, rollupId)).toBeUndefined();
+});
+
+it("P1 still defers normally below the deferral cap", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable convention: the fourth non-verdict is still a retry, not a terminal stamp.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_count=3 WHERE rollup_id=?`).run(rollupId);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), { judgePool: allAbstain() });
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(4);
+  expect(row?.promotion_retry_after).toBeGreaterThan(Date.now());
+});
+
+// Queues a P1 promote_t1 review action for rollupId. The claim batch already
+// excludes rollups with a queued promote, so the deferT1PromotionRetry
+// "queued_action_pending" branch is only reachable when the action lands
+// after the claim but before the rollup's own queued check inside the cycle.
+function queueP1PromoteAction(db: Database, rollupId: string): void {
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P1', 'promote_t1', 0.5, 'queued', ?, '{}')`,
+  ).run(crypto.randomUUID(), JSON.stringify([rollupId]));
+}
+
+// A helper rollup seeded before the target is reached first by the claim loop
+// (claim RETURNING order follows rowid order, not started_at). Its judging
+// round is the intra-cycle window where the target's queued promote_t1 lands.
+// The helper abstains, so it accrues retryable non-verdicts of its own; the
+// test resets its count between cycles to keep it claimable.
+function midCycleQueuePool(db: Database, targetRollupId: string): JudgePool {
+  return {
+    judge: () => Promise.resolve({ confidence: 0.9, verdict: "no" }),
+    judgeAll: (): Promise<JudgeVote[]> => {
+      queueP1PromoteAction(db, targetRollupId);
+      return Promise.resolve([
+        { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+        { promote: false, confidence: 0, rationale: "judge_error", abstained: true },
+      ]);
+    },
+  };
+}
+
+it("P1 keeps a pending queued promote_t1 action out of the retry cap across cycles", async () => {
+  const db = openTestDb();
+  const helperId = seedUnpromotedRollup(db, {
+    body: "helper rollup judged first each cycle so the target's queued review action lands mid-cycle.",
+  });
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a promote action awaiting operator review is an outcome in flight, not a judge non-verdict.",
+  });
+  const config = testConfig({
+    autoPromoteMinJudges: 2,
+    skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+  });
+  const dayMs = 24 * 60 * 60_000;
+  const events: { kind: string; meta?: unknown }[] = [];
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Object.defineProperty(Date, "now", { value: () => nowMs, writable: true });
+  try {
+    for (let cycle = 0; cycle < 7; cycle++) {
+      if (cycle > 0) {
+        nowMs += dayMs + 60_000;
+        // Resolve the previous cycle's queued action so the target is claimable
+        // again; the pool re-queues it mid-cycle while the helper is judged.
+        db.prepare(
+          `DELETE FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+        ).run(JSON.stringify([rollupId]));
+        db.prepare(`UPDATE t1_rollups SET promotion_retry_count=0 WHERE rollup_id=?`).run(helperId);
+      }
+      await runDreamCycle(db, config, {
+        judgePool: midCycleQueuePool(db, rollupId),
+        dispatchEventLog: {
+          record(event) {
+            events.push(event);
+          },
+        },
+      });
+      const row = db
+        .prepare(
+          `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after
+             FROM t1_rollups WHERE rollup_id=?`,
+        )
+        .get(rollupId) as {
+        promotion_retry_exhausted_at: number | null;
+        promotion_retry_count: number;
+        promotion_retry_after: number | null;
+      } | null;
+      expect(row?.promotion_retry_exhausted_at).toBeNull();
+      expect(row?.promotion_retry_count).toBe(0);
+      expect(row?.promotion_retry_after).toBe(nowMs + dayMs);
+    }
+  } finally {
+    Object.defineProperty(Date, "now", { value: originalDateNow, writable: true });
+  }
+  expect(events.filter((e) => e.kind === "dream_p1_promotion_retry_exhausted")).toHaveLength(0);
+});
+
+it("P1 starts a fresh retry count when judging resumes after a queued action resolves", async () => {
+  const db = openTestDb();
+  const helperId = seedUnpromotedRollup(db, {
+    body: "helper rollup judged first each cycle so the target's queued review action lands mid-cycle.",
+  });
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: a rejected promote action returns the rollup to judging with its retry budget intact.",
+  });
+  const config = testConfig({
+    autoPromoteMinJudges: 2,
+    skipPhases: new Set(["P2", "P3", "P4", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
+  });
+  const dayMs = 24 * 60 * 60_000;
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Object.defineProperty(Date, "now", { value: () => nowMs, writable: true });
+  try {
+    for (let cycle = 0; cycle < 4; cycle++) {
+      if (cycle > 0) {
+        nowMs += dayMs + 60_000;
+        db.prepare(
+          `DELETE FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+        ).run(JSON.stringify([rollupId]));
+        db.prepare(`UPDATE t1_rollups SET promotion_retry_count=0 WHERE rollup_id=?`).run(helperId);
+      }
+      await runDreamCycle(db, config, { judgePool: midCycleQueuePool(db, rollupId) });
+    }
+    // The operator rejects the queued action; the next cycle must judge the
+    // rollup again, and the resulting non-verdict is the first counted one.
+    db.prepare(
+      `UPDATE dream_actions SET status='rejected' WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=?`,
+    ).run(JSON.stringify([rollupId]));
+    nowMs += dayMs + 60_000;
+    await runDreamCycle(db, config, { judgePool: allAbstain() });
+  } finally {
+    Object.defineProperty(Date, "now", { value: originalDateNow, writable: true });
+  }
+  const row = db
+    .prepare(
+      `SELECT promotion_retry_exhausted_at, promotion_retry_count, promotion_retry_after
+         FROM t1_rollups WHERE rollup_id=?`,
+    )
+    .get(rollupId) as {
+    promotion_retry_exhausted_at: number | null;
+    promotion_retry_count: number;
+    promotion_retry_after: number | null;
+  } | null;
+  expect(row?.promotion_retry_exhausted_at).toBeNull();
+  expect(row?.promotion_retry_count).toBe(1);
+  expect(row?.promotion_retry_after).toBeGreaterThan(nowMs);
+});
+
+it("P1 never claims a rollup stamped promotion_retry_exhausted_at", async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: "durable finding: an exhausted rollup stays out of the claim head until an operator clears it.",
+  });
+  db.prepare(`UPDATE t1_rollups SET promotion_retry_exhausted_at=? WHERE rollup_id=?`).run(
+    Date.now(),
+    rollupId,
+  );
+  let judged = 0;
+  const countingPool: JudgePool = {
+    judge: () => Promise.resolve({ confidence: 0.9, verdict: "yes" }),
+    judgeAll: () => {
+      judged += 1;
+      return Promise.resolve([
+        { promote: true, confidence: 0.9 },
+        { promote: true, confidence: 0.9 },
+      ]);
+    },
+  };
+  const cycleId = await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 2 }), {
+    judgePool: countingPool,
+    onReembed: testP1Embed,
+  });
+  expect(getClaimedRollups(db, cycleId)).not.toContain(rollupId);
+  expect(judged).toBe(0);
 });
 
 // ── P3 quality signal ──────────────────────────────────────────────────────

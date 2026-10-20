@@ -137,3 +137,102 @@ test("default launchctl reader spawns once and derives daemon plus worker pids f
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("collects open PRs through the injected gh runner and marks foreign authors and heads no handoff produced", async () => {
+  const db = freshDb();
+  const repo = seedRepo();
+  try {
+    db.run(`
+      INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, branch_name)
+      VALUES ('h-lane', '2026-09-21T09:00:00.000Z', 'c1', 'maestro', 'worker', 'lane', 'completed', 'fix/issue-71_abcd1234')
+    `);
+    const calls: { cmd: string; args: string[]; cwd: string }[] = [];
+
+    const out = await runSessionFirstMovesSource({
+      db,
+      cwd: repo,
+      args: {},
+      readDaemonPid: () => null,
+      readWorkerPids: () => [],
+      runGh: (cmd, args, opts) => {
+        calls.push({ cmd, args, cwd: opts.cwd });
+        if (args[0] === "api") return Promise.resolve({ stdout: "frozename\n", stderr: "" });
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            {
+              number: 74,
+              title: "Implement #71",
+              headRefName: "feat/other-account",
+              author: { login: "second-account" },
+              createdAt: "2026-09-21T10:00:00Z",
+              statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+            },
+            {
+              number: 78,
+              title: "Fix #71",
+              headRefName: "fix/issue-71_abcd1234",
+              author: { login: "frozename" },
+              createdAt: "2026-09-21T11:00:00Z",
+              statusCheckRollup: [],
+            },
+          ]),
+          stderr: "",
+        });
+      },
+    });
+
+    expect(calls.map((call) => [call.cmd, ...call.args.slice(0, 2), call.cwd])).toEqual([
+      ["gh", "pr", "list", repo],
+      ["gh", "api", "user", repo],
+    ]);
+    expect(out.result.open_prs).toEqual({
+      reason: null,
+      prs: [
+        {
+          number: 74,
+          title: "Implement #71",
+          head_ref: "feat/other-account",
+          author: "second-account",
+          created_at: "2026-09-21T10:00:00Z",
+          checks: "success",
+          foreign_author: true,
+          not_from_known_lane: true,
+        },
+        {
+          number: 78,
+          title: "Fix #71",
+          head_ref: "fix/issue-71_abcd1234",
+          author: "frozename",
+          created_at: "2026-09-21T11:00:00Z",
+          checks: "none",
+          foreign_author: false,
+          not_from_known_lane: false,
+        },
+      ],
+    });
+  } finally {
+    db.close();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("reports open PRs as unavailable instead of failing when gh is missing", async () => {
+  const db = freshDb();
+  const repo = seedRepo();
+  try {
+    const out = await runSessionFirstMovesSource({
+      db,
+      cwd: repo,
+      args: {},
+      readDaemonPid: () => null,
+      readWorkerPids: () => [],
+      runGh: () => Promise.reject(Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" })),
+    });
+
+    expect(out.result.open_prs).toEqual({ prs: null, reason: "gh not installed" });
+    expect(out.result.head_sha).toHaveLength(40);
+  } finally {
+    db.close();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

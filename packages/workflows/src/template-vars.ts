@@ -36,7 +36,7 @@ function stringifyTemplateValue(value: unknown): string {
   return "";
 }
 
-function resolveArgsToken(
+export function resolveArgsToken(
   token: string,
   args: Record<string, unknown> | undefined,
 ): string | undefined {

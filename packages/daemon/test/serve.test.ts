@@ -2,6 +2,9 @@ import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createDaemonFetchHandler, serve } from "../src/serve.js";
 import { serviceTest } from "./helpers/service-gates.js";
@@ -14,23 +17,32 @@ try {
   /* already loaded */
 }
 
+const tempDirs: string[] = [];
+
 afterEach(() => {
   delete process.env.PENUMBRA_DAEMON_HOST;
   delete process.env.PENUMBRA_JUDGE_BASE_URL;
   delete process.env.PENUMBRA_REFINER_MODEL;
   mock.restore();
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 function makeServices(): Services {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  // mainRepoDir + worktreeRootDir point into a per-test mkdtemp so the
+  // scratch service can never resolve the real checkout's fleet base.
+  const root = mkdtempSync(join(tmpdir(), "penumbra-serve-test-"));
+  tempDirs.push(root);
   return buildServices({
     env: {},
     input: {},
-    storageRoot: "/tmp",
+    storageRoot: root,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
+    mainRepoDir: root,
+    worktreeRootDir: join(root, "worktrees"),
   });
 }
 
@@ -236,6 +248,46 @@ test("dispatch refiner fails over from a dead role-resolved local seat and recor
     });
   } finally {
     services.supervisor.stopAll();
+    services.db.close();
+  }
+});
+
+test("serve does not run the boot scratch sweep unless explicitly opted in", async () => {
+  // A second daemon instance must never reap a production daemon's live
+  // scratch worktrees: the boot sweep is opt-in (packages/cli start only).
+  const services = makeServices();
+  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+  const sweep = spyOn(services.scratchWorktrees, "sweepOrphans").mockResolvedValue({
+    reaped: [],
+    kept: [],
+    deferred: [],
+  });
+  const handle = serve({ services, token: "test-token", port: 0 });
+  try {
+    await Bun.sleep(0);
+    expect(sweep).not.toHaveBeenCalled();
+  } finally {
+    await handle.stop();
+    services.db.close();
+  }
+});
+
+test("serve runs the boot scratch sweep when bootScratchSweep is set", async () => {
+  const services = makeServices();
+  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+  const sweep = spyOn(services.scratchWorktrees, "sweepOrphans").mockResolvedValue({
+    reaped: [],
+    kept: [],
+    deferred: [],
+  });
+  const handle = serve({ services, token: "test-token", port: 0, bootScratchSweep: true });
+  try {
+    await Bun.sleep(0);
+    expect(sweep).toHaveBeenCalledTimes(1);
+  } finally {
+    await handle.stop();
     services.db.close();
   }
 });

@@ -4,8 +4,10 @@ import {
   HandoffWriter,
   loadSqliteVec,
   migrate,
+  ScratchWorktreesService,
   type Services,
   type WorktreeHandle,
+  WorktreeManager,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -73,6 +75,9 @@ function makeServices(
       discoverOrphanWorktrees: () => Promise.resolve(orphanHandles),
       teardownWorktree: wrappedTeardown,
       mainRepoDir: "/tmp/main-repo",
+    },
+    scratchWorktrees: {
+      sweepOrphans: () => Promise.resolve({ reaped: [], kept: [], deferred: [] }),
     },
   } as unknown as Services;
 }
@@ -737,6 +742,9 @@ function makeServicesWithRepo(
       teardownWorktree: () => Promise.resolve({ worktreeRemoved: true, branchDeleted: true }),
       mainRepoDir,
     },
+    scratchWorktrees: {
+      sweepOrphans: () => Promise.resolve({ reaped: [], kept: [], deferred: [] }),
+    },
   } as unknown as Services;
 }
 
@@ -1045,6 +1053,78 @@ describe("runWorktreeGcTick — default git-backed branchLandedCheck", () => {
       });
     } finally {
       fs.rmSync(nonRepo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runWorktreeGcTick — real ScratchWorktreesService", () => {
+  test("reaps an abandoned own scratch, defers a live own scratch and a foreign-owned scratch", async () => {
+    const db = setupDb();
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-scratch-gc-repo-"));
+    const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-scratch-gc-storage-"));
+    const foreignStorage = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-scratch-gc-foreign-"));
+    try {
+      await execFile("git", ["-C", repoDir, "init", "-b", "main"]);
+      await execFile("git", ["-C", repoDir, "config", "user.email", "test@example.com"]);
+      await execFile("git", ["-C", repoDir, "config", "user.name", "test"]);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "# base\n");
+      await execFile("git", ["-C", repoDir, "add", "README.md"]);
+      await execFile("git", ["-C", repoDir, "commit", "-m", "base"]);
+
+      const manager = new WorktreeManager({ mainRepoDir: repoDir });
+      const dispatchEventLog = new DispatchEventLog(db);
+      // A previous incarnation of this daemon left run-stale behind.
+      const stale = new ScratchWorktreesService({
+        db,
+        worktreeManager: manager,
+        dispatchEventLog,
+        mainRepoDir: repoDir,
+        storageRoot,
+        daemonIdentity: { daemon_id: "daemon-a", pid: process.pid, boot_id: "boot-1" },
+      });
+      const staleHandle = await stale.acquire({ owner_run_id: "run-stale", cwd: repoDir });
+      // A different daemon on the same fleet base must be left alone.
+      const foreign = new ScratchWorktreesService({
+        db,
+        worktreeManager: manager,
+        dispatchEventLog,
+        mainRepoDir: repoDir,
+        storageRoot: foreignStorage,
+      });
+      const foreignHandle = await foreign.acquire({ owner_run_id: "run-foreign", cwd: repoDir });
+      // The current daemon incarnation (same storage root, fresh boot id).
+      const scratchWorktrees = new ScratchWorktreesService({
+        db,
+        worktreeManager: manager,
+        dispatchEventLog,
+        mainRepoDir: repoDir,
+        storageRoot,
+        daemonIdentity: { daemon_id: "daemon-a", pid: process.pid, boot_id: "boot-2" },
+      });
+      const liveHandle = await scratchWorktrees.acquire({ owner_run_id: "run-live", cwd: repoDir });
+
+      const svc = makeServicesWithRepo(db, repoDir);
+      svc.scratchWorktrees = scratchWorktrees;
+      const result = await runWorktreeGcTick(
+        { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
+        NOW_FN,
+      );
+
+      expect(result.scratch_reaped).toEqual([staleHandle.path]);
+      expect(result.scratch_deferred.slice().sort()).toEqual(
+        [foreignHandle.path, liveHandle.path].sort(),
+      );
+      expect(fs.existsSync(staleHandle.path)).toBe(false);
+      expect(fs.existsSync(foreignHandle.path)).toBe(true);
+      expect(fs.existsSync(liveHandle.path)).toBe(true);
+      await foreignHandle.release();
+      await liveHandle.release();
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+      fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
+      fs.rmSync(storageRoot, { recursive: true, force: true });
+      fs.rmSync(foreignStorage, { recursive: true, force: true });
+      db.close();
     }
   });
 });

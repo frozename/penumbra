@@ -101,7 +101,7 @@ const maxPolls = Math.ceil(reviewTimeoutMs / 90000)
 const REVIEW_RESULT = {
   type: 'object',
   additionalProperties: false,
-  required: ['ok', 'target_ref', 'index'],
+  required: ['ok', 'target_ref', 'index', 'diff_truncated', 'diff_dropped_files'],
   properties: {
     ok: { type: 'boolean' },
     target_ref: { type: 'string', description: 'the target_ref echoed verbatim, binding this result to its sweep target' },
@@ -113,6 +113,10 @@ const REVIEW_RESULT = {
     summary: { type: 'string', description: 'short summary of the synthesized findings' },
     resolution_warning: { type: 'string', description: 'verbatim resolution_warning from the workflow_run response, when present' },
     review_cwd: { type: 'string', description: 'absolute cwd passed to workflow_run and workflow_wait' },
+    diff_truncated: { type: 'boolean', description: 'REQUIRED. verbatim diff_truncated from the terminal runResult — the review saw only part of the diff. If the runResult omits it, set false explicitly; never omit this field.' },
+    diff_dropped_files: { type: 'array', items: { type: 'string' }, description: 'REQUIRED. verbatim diff_dropped_files from the terminal runResult — file sections the cap dropped. If the runResult omits it, set [] explicitly; never omit this field.' },
+    diff_dropped_more: { type: 'boolean', description: 'verbatim diff_dropped_more from the terminal runResult — the dropped-file list itself was capped at 20 names' },
+    diff_cut_file: { type: 'string', description: 'verbatim diff_cut_file from the terminal runResult — a single oversized file section cut at a line boundary' },
     error_summary: { type: 'string' },
   },
 }
@@ -136,9 +140,9 @@ function buildPrompt(target, i) {
     '```',
     `Capture workflow_run_id from the immediate response (it returns within seconds; if it has a workflow_run_id but no outcome, it is a pending run). If the response carries a resolution_warning field, copy it VERBATIM into the resolution_warning output field — a value of "workflow_cwd_inferred_from_mcp_cwd" means the run resolved to the daemon's own repo and every persona reviewed the wrong tree, so report ok=false with error_summary naming the warning. Set review_cwd to the cwd you passed (${targetRepo}).`,
     `Then POLL with SHORT waits so you never stall: repeatedly call mcp__penumbra__workflow_wait({ workflow_run_id, timeout_ms: 90000, cwd: ${JSON.stringify(targetRepo)} }) — each returns within ~90s (under the watchdog) reporting terminal-or-still-running — until it reports a terminal state, for at most ${maxPolls} iterations (~${Math.round(reviewTimeoutMs / 60000)} min total). NEVER issue one long wait, and NEVER call workflow_run again.`,
-    'When terminal, read outcome and any synthesis.md artifact path from the TERMINAL mcp__penumbra__workflow_wait response you already polled; workflow_status is progress-only run state and does not include the result payload.',
+    'When terminal, read outcome, synthesis.md artifact path, and diff_truncated / diff_dropped_files from the TERMINAL mcp__penumbra__workflow_wait response you already polled (workflow_status is progress-only run state and does not include the result payload). Both coverage fields are REQUIRED in your report — copy them verbatim, and when the runResult omits them report diff_truncated=false and diff_dropped_files=[].',
     '',
-    `Return StructuredOutput per schema. ok=true only when the run reached success or success_partial AND carried no resolution_warning; otherwise ok=false with error_summary. Echo the target_ref "${targetId}" and index ${i} VERBATIM into target_ref and index.`,
+    `Return StructuredOutput per schema. ok=true only when the run reached success or success_partial AND carried no resolution_warning AND diff_truncated is not true — a capped diff is partial coverage, which is NOT a clean review; when diff_truncated is true report ok=false with error_summary "partial_diff_coverage". Echo the target_ref "${targetId}" and index ${i} VERBATIM into target_ref and index.`,
   ].join('\n')
 }
 
@@ -156,11 +160,16 @@ const results = await parallel(
 
 // Index-preserving: results[i] answers targets[i] even when the proxy call
 // dropped, so positional consumers keep their target pairing.
+// A diff_truncated review is partial coverage: force ok=false regardless of
+// what the proxy reported — zero HIGH on a partial diff is not a clean pass.
 const clean = results.map((r, i) => {
   const targetRef = targets[i].target_ref || `target-${i}`
-  return r
-    ? { ...r, target_ref: targetRef, index: i }
-    : { ok: false, target_ref: targetRef, index: i, error_summary: 'agent_dropped' }
+  if (!r) {
+    return { ok: false, target_ref: targetRef, index: i, error_summary: 'agent_dropped' }
+  }
+  return r.diff_truncated === true && r.ok === true
+    ? { ...r, ok: false, error_summary: 'partial_diff_coverage', target_ref: targetRef, index: i }
+    : { ...r, target_ref: targetRef, index: i }
 })
 const ok = clean.filter((r) => r.ok)
 const dropped = clean.filter((r) => r.error_summary === 'agent_dropped')

@@ -46,7 +46,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra", "sirius"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(errors).toEqual([]);
   });
@@ -58,7 +58,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(
       errors.some((e) => e.rule === "unknown_project" && e.message.includes("nonexistent")),
@@ -74,7 +74,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra", "sirius"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(
       errors.some((e) => e.rule === "unknown_dep_target" && e.message.includes("sirius/9.9")),
@@ -91,7 +91,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra", "sirius"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(errors.some((e) => /cycle/i.test(e.message))).toBe(true);
   });
@@ -106,7 +106,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra", "sirius"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(errors).toEqual([]);
   });
@@ -122,7 +122,7 @@ describe("validatePlan cross-project rules", () => {
       repoRoot,
       knownAgents: KNOWN_AGENTS,
       projectRegistry: fakeRegistry(["penumbra", "sirius"]),
-      header: { home_project: "penumbra" },
+      header: { plan_id: "demo", home_project: "penumbra" },
     });
     expect(errors).toEqual([]);
   });

@@ -89,6 +89,6 @@ Integration: <one or two sentences on cherry-pick / FF-merge / verification comm
 
 ### Validator gate
 
-After writing, run `penumbra plan validate docs/plans/{{date}}-<feature>.md` until it passes. The validator checks `parallel_with` reciprocity, `depends_on` cycles, `file_scope: new` collisions, and `preferred_agent` / `fallback_agent` membership in the registry.
+After writing, run `penumbra plan validate docs/plans/{{date}}-<feature>.md` until it passes. The validator checks the line-1 front matter (`plan_id`, `home_project`), `parallel_with` reciprocity, `depends_on` cycles, `file_scope: new` collisions, and `preferred_agent` / `fallback_agent` membership in the registry.
 
 After validation passes, do the spec self-review and offer Subagent-Driven vs Inline execution to the user.

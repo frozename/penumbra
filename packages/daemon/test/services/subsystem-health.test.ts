@@ -814,6 +814,52 @@ describe("subsystem health", () => {
     ]);
   });
 
+  test("role floors fall back to the default role when an env role is not slug-shaped", () => {
+    expect(
+      buildRequiredLlmRoleFloors({
+        env: {
+          PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE: "Brief-Synthesizer",
+          PENUMBRA_JUDGE_ROLE: "x.required_9.actual_9",
+          PENUMBRA_DREAMING_JUDGE_ROLE: "dreaming judge",
+          PENUMBRA_DREAMING_REWRITER_ROLE: "a".repeat(65),
+          PENUMBRA_REFINER_ROLE: "  custom_refiner-2  ",
+        },
+        dreamingAutoPromoteMinJudges: 2,
+      }).map((spec) => spec.role),
+    ).toEqual([
+      "brief-synthesizer",
+      "memory-refiner",
+      "dreaming-judge",
+      "dreaming-rewriter",
+      "custom_refiner-2",
+    ]);
+  });
+
+  test("a role name cannot spell another role's floor alert ID", () => {
+    const db = setupDb();
+
+    const alerts = computeSubsystemAlerts(db, {
+      requiredLlmRoleFloors: [
+        {
+          role: "dreaming-judge.required_2.actual_3",
+          consumer: "dreaming.p1_auto_promote",
+          minimumHolders: 1,
+        },
+        { role: "memory.refiner", consumer: "t2.promotion", minimumHolders: 1 },
+        { role: "memory_refiner", consumer: "t2.promotion", minimumHolders: 1 },
+      ],
+      agentchatConfig: { agents: [] },
+    });
+    const roleFloorAlerts = alerts.filter((alert) => alert.startsWith("llm.role_floor."));
+
+    expect(roleFloorAlerts).not.toContain("llm.role_floor.dreaming-judge.required_2.actual_3");
+    expect(new Set(roleFloorAlerts).size).toBe(3);
+    for (const alert of roleFloorAlerts) {
+      expect(alert).toMatch(/^llm\.role_floor\.[^.]+\.required_1\.actual_0$/);
+    }
+    expect(roleFloorAlerts).toContain("llm.role_floor.memory_refiner.required_1.actual_0");
+  });
+
   test("alerts when the dispatch refiner role consumer has no holders", () => {
     const evaluation = evaluateLlmRoleFloors({
       requiredRoles: buildRequiredLlmRoleFloors({
@@ -851,5 +897,54 @@ describe("subsystem health", () => {
         agentchatConfig: { agents: [{ name: "broken", roles: "memory-refiner" }] },
       }),
     ).toContain("llm.role_floor.memory-refiner.required_2.actual_0");
+  });
+
+  test("alerts on a judge seat whose abstention run reaches the threshold inside the recency window", () => {
+    const db = setupDb();
+    for (let i = 0; i < 5; i++) {
+      recordSubsystemOutcome(db, {
+        subsystem: "dream.judge.local-granite",
+        tier: "primary",
+        ok: false,
+        ts: "2026-09-18T11:00:00.000Z",
+        seat: "local-granite",
+        reason: "http_502",
+        status: 502,
+      });
+    }
+    expect(computeSubsystemAlerts(db, { now: new Date("2026-09-18T12:00:00.000Z") })).toContain(
+      "dream.health.judge_abstaining.local-granite",
+    );
+  });
+
+  test("does not alert on a judge seat below the threshold, recovered, or stale", () => {
+    const db = setupDb();
+    const fail = (seat: string, ts: string): void => {
+      recordSubsystemOutcome(db, {
+        subsystem: `dream.judge.${seat}`,
+        tier: "primary",
+        ok: false,
+        ts,
+        seat,
+      });
+    };
+    for (let i = 0; i < 4; i++) {
+      fail("below", "2026-09-18T11:00:00.000Z");
+    }
+    for (let i = 0; i < 5; i++) {
+      fail("recovered", "2026-09-18T11:00:00.000Z");
+    }
+    recordSubsystemOutcome(db, {
+      subsystem: "dream.judge.recovered",
+      tier: "primary",
+      ok: true,
+      ts: "2026-09-18T11:30:00.000Z",
+      seat: "recovered",
+    });
+    for (let i = 0; i < 5; i++) {
+      fail("stale", "2026-09-18T05:00:00.000Z");
+    }
+    const alerts = computeSubsystemAlerts(db, { now: new Date("2026-09-18T12:00:00.000Z") });
+    expect(alerts.filter((a) => a.startsWith("dream.health.judge_abstaining."))).toEqual([]);
   });
 });

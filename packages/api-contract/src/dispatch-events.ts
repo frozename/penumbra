@@ -13,6 +13,7 @@ export const DispatchEventKindSchema = z.enum([
   "acp.session.end",
   "acp.model_warmup",
   "acp.model_warmup.failed",
+  "acp.phase.drift",
   "http.server.start",
   "http.session.start",
   "http.session.open_timeout",
@@ -45,6 +46,7 @@ export const DispatchEventKindSchema = z.enum([
   "dream_p4_query_rewrite_failed",
   "dream_p4_query_rejected_unsearchable",
   "dream_p4_query_skipped",
+  "dream_p1_promotion_retry_exhausted",
   "extra_worker_wedge_evicted",
   "shell.session.open",
   "shell.run",
@@ -58,10 +60,15 @@ export const DispatchEventKindSchema = z.enum([
   "worker.recovery.exhausted",
   "lane.override",
   "long_lived.action.expired",
+  "workflow.cancel.wait_timeout",
 ]);
 export type DispatchEventKind = z.infer<typeof DispatchEventKindSchema>;
 
-export const DispatchEventSourceSchema = z.enum(["worker", "daemon"]);
+// Read contract for stored rows. "workflow" marks rows a workflow writes
+// directly (the wait-timeout cancel marker) and "sweeper" marks stale-handoff
+// sweeper ends; the worker POST route keeps its own ["worker", "daemon"] enum,
+// so neither source can be posted by a worker.
+export const DispatchEventSourceSchema = z.enum(["worker", "daemon", "workflow", "sweeper"]);
 export type DispatchEventSource = z.infer<typeof DispatchEventSourceSchema>;
 
 export const DispatchEventSchema = z
