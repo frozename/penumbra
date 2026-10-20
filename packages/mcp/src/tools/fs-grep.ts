@@ -26,7 +26,9 @@ export const FsGrepInputShape = {
   include_ignored: z
     .boolean()
     .optional()
-    .describe("Search files normally excluded by .gitignore. Default false."),
+    .describe(
+      "Search files normally excluded by .gitignore; also required when `path` is inside a gitignored directory. Default false.",
+    ),
   max_results: z
     .number()
     .int()
