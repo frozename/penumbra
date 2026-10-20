@@ -34,7 +34,6 @@ import {
   type TaskClass,
   writeRoutingDecision,
 } from "@penumbra/core";
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -43,6 +42,7 @@ import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
 import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
+import { availableBranchNameBestEffort } from "./chains-branch-precheck.js";
 import {
   readActiveRoutingBiases,
   resolveSingleRoute,
@@ -1751,37 +1751,6 @@ function resolveRoutingWithFallbacks(
   };
 }
 
-function gitBranchExists(repoRoot: string, branchName: string): boolean {
-  try {
-    execFileSync(
-      "git",
-      ["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
-      { stdio: "ignore" },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function availableBranchNameBestEffort(
-  repoRoot: string | undefined,
-  requestedName: string,
-): string {
-  if (repoRoot === undefined) return requestedName;
-  try {
-    execFileSync("git", ["-C", repoRoot, "rev-parse", "--git-dir"], { stdio: "ignore" });
-    if (!gitBranchExists(repoRoot, requestedName)) return requestedName;
-    for (let suffix = 2; suffix <= 99; suffix += 1) {
-      const candidate = `${requestedName}-${String(suffix)}`;
-      if (!gitBranchExists(repoRoot, candidate)) return candidate;
-    }
-  } catch {
-    return requestedName;
-  }
-  throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
-}
-
 function projectRootForBranchPrecheck(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -2009,7 +1978,7 @@ export async function chainStartInternal(
   const openPrOnReviewBool = typeof openPrOnReview === "boolean" ? openPrOnReview : undefined;
   const taskClass = (input as { task_class?: TaskClass }).task_class;
   const isolatedInstall = resolveIsolatedInstall(input, services, taskClass);
-  const branchName = ((): string | null => {
+  const branchName = await (async (): Promise<string | null> => {
     if (input.use_worktree === false) return null;
     // input.message is the raw, pre-stamp/pre-recall message (stamped/handoffMessage
     // are computed later, below) — naming off those would bake stamped retry
@@ -2032,7 +2001,7 @@ export async function chainStartInternal(
         "chain-start derived branch name from dispatch message",
       );
     }
-    return availableBranchNameBestEffort(
+    return await availableBranchNameBestEffort(
       projectRootForBranchPrecheck(input, services, projectRegistryEntries),
       requestedName,
     );
