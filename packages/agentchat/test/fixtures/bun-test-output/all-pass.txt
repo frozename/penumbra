@@ -1,0 +1,12 @@
+bun test v1.3.14 (0d9b296a)
+
+::group::a-pass/a.test.ts:
+(pass) first passes [0.07ms]
+(pass) fanout > retries only nested supported HTTP 503 error codes [0.03ms]
+
+::endgroup::
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [27.00ms]

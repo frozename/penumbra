@@ -94,6 +94,12 @@ test("parses zero passes from the captured broken baseline summary", () => {
   expect(report.reachedSummary).toBe(true);
 });
 
+test("parses the pluralised error count from the captured broken baseline summary", () => {
+  const report = parseBunTestReport(brokenBaselineRaw);
+
+  expect(report.errors).toBe(143);
+});
+
 test("parses passes from the captured healthy branch summary", () => {
   const report = parseBunTestReport(healthyBranchRaw);
 

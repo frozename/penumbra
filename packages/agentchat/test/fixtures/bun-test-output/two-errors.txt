@@ -1,0 +1,40 @@
+bun test v1.3.14 (0d9b296a)
+
+::group::e-err2/broken2.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | import { test } from "bun:test";
+2 | throw new Error("load failure two");
+              ^
+error: load failure two
+      at /repo/e-err2/broken2.test.ts:2:11
+
+::error file=e-err2/broken2.test.ts,line=2,col=11,title=error: load failure two::%0A      at /repo/e-err2/broken2.test.ts:2:11
+-------------------------------
+
+
+::group::e-err2/broken1.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | import { test } from "bun:test";
+2 | throw new Error("load failure one");
+              ^
+error: load failure one
+      at /repo/e-err2/broken1.test.ts:2:11
+
+::error file=e-err2/broken1.test.ts,line=2,col=11,title=error: load failure one::%0A      at /repo/e-err2/broken1.test.ts:2:11
+-------------------------------
+
+
+::group::e-err2/ok.test.ts:
+(pass) passes [0.17ms]
+
+::endgroup::
+
+ 1 pass
+ 2 fail
+ 2 errors
+ 1 expect() calls
+Ran 3 tests across 3 files. [25.00ms]
