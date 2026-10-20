@@ -91,6 +91,7 @@ describe("merge reconciler project repo resolution (#219)", () => {
 
   async function setup(
     branchBase: string | null,
+    opts: { handoffMissing?: boolean } = {},
   ): Promise<ReturnType<typeof createMergeReconciler>> {
     const manager = new WorktreeManager({
       rootDir: join(tmp, "default-worktrees"),
@@ -120,11 +121,13 @@ describe("merge reconciler project repo resolution (#219)", () => {
       },
       getHandoff: mock(() =>
         Promise.resolve(
-          makeHandoffRow({
-            handoff_id: handoffId,
-            project_id: "proj-b",
-            branch_base: branchBase,
-          }),
+          opts.handoffMissing
+            ? null
+            : makeHandoffRow({
+                handoff_id: handoffId,
+                project_id: "proj-b",
+                branch_base: branchBase,
+              }),
         ),
       ),
       exec: async (argv: string[], opts: { cwd: string }) => {
@@ -148,6 +151,7 @@ describe("merge reconciler project repo resolution (#219)", () => {
     expect(result.status).toBe("verified");
     const expected = git(repoB, ["rev-parse", "feature/only-in-b"]).trim();
     expect(verdicts[0]?.base_sha).toBe(expected);
+    expect(verdicts[0]?.ff_mergeable).toBe(true);
   });
 
   test("default branch_base reconciles against the project main, not the worker checkout", async () => {
@@ -158,5 +162,15 @@ describe("merge reconciler project repo resolution (#219)", () => {
     const repoAMain = git(repoA, ["rev-parse", "main"]).trim();
     expect(verdicts[0]?.base_sha).toBe(repoBMain);
     expect(verdicts[0]?.base_sha).not.toBe(repoAMain);
+    expect(verdicts[0]?.ff_mergeable).toBe(true);
+  });
+
+  test("resolves the project from the worktree when the handoff lookup fails", async () => {
+    const reconciler = await setup(null, { handoffMissing: true });
+    const result = await reconciler(handoffId);
+    expect(result.status).toBe("verified");
+    const repoBMain = git(repoB, ["rev-parse", "main"]).trim();
+    expect(verdicts[0]?.base_sha).toBe(repoBMain);
+    expect(verdicts[0]?.ff_mergeable).toBe(true);
   });
 });

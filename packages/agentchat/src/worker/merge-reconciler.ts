@@ -563,8 +563,9 @@ function resolveReconcileRepoDir(
   deps: ReconcilerDeps,
   handoff: HandoffRow | null,
   handoffId: string,
+  wt: WorktreeHandle,
 ): string {
-  const projectId = handoff?.project_id ?? undefined;
+  const projectId = handoff?.project_id ?? wt.projectId ?? undefined;
   const root = deps.worktreeManager.projectRootFor(projectId);
   if (root !== undefined) return root;
   if (projectId) {
@@ -2073,7 +2074,7 @@ export function createMergeReconciler(
       handoff,
       wt,
       baseRef,
-      repoDir: resolveReconcileRepoDir(deps, handoff, handoffId),
+      repoDir: resolveReconcileRepoDir(deps, handoff, handoffId, wt),
       startedAtMs,
       snapshot: null,
       packageJsonCache: new Map<string, WorkspacePackageJson | null>(),
