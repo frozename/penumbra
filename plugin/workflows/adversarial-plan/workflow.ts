@@ -4,11 +4,24 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import {
+  awaitChainOrCancel,
+  type AwaitedChain,
+  type CancelOutcome,
+  failureReasonSummary,
+} from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
+import {
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  type PermissionProfile,
+  READ_ONLY_REVIEW_INSTRUCTION,
+  requireDispatchProfileEcho,
+} from "../_shared/permission-profile.js";
 import {
   type AgentField,
   agentPoolToNames,
   parseAgentField,
+  PersonaSeatCannotEnforceProfileError,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
 
@@ -63,7 +76,10 @@ type PersonaRunResult = {
   conversation_id: string | null;
   handoff_id: string | null;
   error?: string;
+  error_code?: string;
   retry_count?: 1;
+  cancel_requested?: boolean;
+  cancel_error?: string;
 };
 
 const RETRY_BACKOFF_MS = 5000;
@@ -218,6 +234,8 @@ function renderPersonaPrompt(persona: PlannerPersona, args: Input, recall: Recal
 
   return `${persona.system_prompt}
 
+${READ_ONLY_REVIEW_INSTRUCTION}
+
 ## Topic
 
 ${topic}
@@ -260,6 +278,8 @@ as your entire response.
 ---
 
 ${synth.system_prompt}
+
+${READ_ONLY_REVIEW_INSTRUCTION}
 
 ---
 
@@ -365,6 +385,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "plan_refine", ctx, {
     fallback_role: "planner",
     tool_free: true,
+    permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
   });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
@@ -374,6 +395,31 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       error: "out_dir_outside_allowed_roots",
     };
   }
+
+  // P6: planner + synthesizer dispatches run inside a daemon-owned detached
+  // scratch worktree, never the operator checkout. No tripwire here — plan
+  // personas are prompt-only; the scratch boundary is the guard.
+  if (ctx.scratchWorktree === undefined) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: "ctx_missing_scratch_worktree",
+      hint: "workflow ctx has no scratchWorktree — runs on a daemon without P6 support",
+    };
+  }
+  let scratch: Awaited<ReturnType<NonNullable<typeof ctx.scratchWorktree>["acquire"]>>;
+  try {
+    scratch = await ctx.scratchWorktree.acquire();
+  } catch (err) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: `scratch_acquire_failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
   const absoluteOutDir = outDirResolution.path;
   const runTs = new Date().toISOString();
   await mkdir(absoluteOutDir, { recursive: true });
@@ -390,7 +436,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           handoff_id: result.handoff_id,
           error: result.error,
+          error_code: result.error_code,
           retry_count: result.retry_count,
+          cancel_requested: result.cancel_requested,
+          cancel_error: result.cancel_error,
         },
         null,
         2,
@@ -404,201 +453,263 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     );
   };
 
-  const personaResults = await Promise.all(
-    requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
-      const persona = personasByKey[key]!;
-      let retryCount: 0 | 1 = 0;
-      try {
-        let dispatch: { conversation_id: string; handoff_id: string };
-        let wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
-        // tool_free:true — planner persona dispatch is pure text generation:
-        // it receives topic + spec inlined in the prompt and emits a phased
-        // plan as response_text. No penumbra MCP tools, no worktree, no commit.
-        const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx, {
-          fallback_role: "planner",
-          tool_free: true,
-        });
-        while (true) {
-          try {
-            dispatch = await ctx.dispatch({
-              agent: personaAgent,
-              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
-              task_type: "plan_refine",
-              use_worktree: false,
-              task_class: "TRIVIAL",
-            });
-            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
-            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
-            break;
-          } catch (err) {
-            if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
-              retryCount = 1;
-              await sleep(RETRY_BACKOFF_MS);
-              continue;
+  try {
+    const personaResults = await Promise.all(
+      requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
+        const persona = personasByKey[key]!;
+        let retryCount: 0 | 1 = 0;
+        let cancelRequested = false;
+        let cancelError: string | undefined;
+        const recordCancel = (outcome: CancelOutcome): void => {
+          cancelRequested ||= outcome.cancel_requested;
+          cancelError ??= outcome.cancel_error;
+        };
+        try {
+          let dispatch: {
+            conversation_id: string;
+            handoff_id: string;
+            permission_profile?: PermissionProfile | null;
+          };
+          let wait: AwaitedChain;
+          // tool_free:true — planner persona dispatch is pure text generation:
+          // it receives topic + spec inlined in the prompt and emits a phased
+          // plan as response_text. No penumbra MCP tools, no worktree, no commit.
+          const personaAgent = resolveAgent(persona.preferred_agent, "plan_refine", ctx, {
+            fallback_role: "planner",
+            tool_free: true,
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          });
+          for (;;) {
+            try {
+              dispatch = await ctx.dispatch({
+                agent: personaAgent,
+                message: `cd ${scratch.path}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
+                task_type: "plan_refine",
+                use_worktree: false,
+                task_class: "TRIVIAL",
+                permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+                max_hops: 1,
+                cwd_override: scratch.path,
+                project_id: scratch.project_id ?? undefined,
+              });
+              requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
+            } catch (err) {
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err;
             }
-            throw err;
+            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+            const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, { timeoutMs });
+            recordCancel(awaited);
+            if (awaited.wait === null) {
+              const err = awaited.error;
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err instanceof Error ? err : new Error(String(err));
+            }
+            wait = awaited.wait;
+            break;
           }
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: wait.status,
+            response_text: wait.response_text,
+            conversation_id: dispatch.conversation_id,
+            handoff_id: dispatch.handoff_id,
+            error: failureReasonSummary(wait.failure_reason),
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
+        } catch (err) {
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: "failed",
+            response_text: null,
+            conversation_id: null,
+            handoff_id: null,
+            error: err instanceof Error ? err.message : String(err),
+            error_code: err instanceof PersonaSeatCannotEnforceProfileError ? err.code : undefined,
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
         }
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: wait.status,
-          response_text: wait.response_text,
-          conversation_id: dispatch.conversation_id,
-          handoff_id: dispatch.handoff_id,
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
-      } catch (err) {
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: "failed",
-          response_text: null,
-          conversation_id: null,
-          handoff_id: null,
-          error: err instanceof Error ? err.message : String(err),
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
+      }),
+    );
+
+    const completedResults = personaResults.filter(
+      (result) =>
+        result.status === "completed" &&
+        typeof result.response_text === "string" &&
+        result.response_text.length > 0,
+    );
+    const failedPersonas = personaResults
+      .filter((result) => result.status !== "completed")
+      .map((result) => result.persona);
+    const outcome = failedPersonas.length === 0 ? "success" : "success_partial";
+
+    if (completedResults.length === 0) {
+      return {
+        ok: false,
+        out_dir: absoluteOutDir,
+        personas: personaResults.map((result) => ({
+          name: result.persona,
+          status: result.status,
+          conversation_id: result.conversation_id,
+          cancel_requested: result.cancel_requested ?? false,
+          ...(result.cancel_error !== undefined ? { cancel_error: result.cancel_error } : {}),
+          ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
+        })),
+        synthesis_path: null,
+        synthesizer_status: null,
+        synthesizer_cancel_requested: false,
+        error: "all_persona_dispatches_failed",
+        hint: "all persona dispatches failed or timed out",
+      };
+    }
+
+    let synthesisPath: string | null = null;
+    let synthStatus: "completed" | "failed" | "timeout" | null = null;
+    let synthHandoffId: string | null = null;
+    let synthRetryUsed = false;
+    let synthCancelRequested = false;
+    let synthCancelError: string | undefined;
+    const personaHandoffIds: Record<string, string> = {};
+    for (const r of personaResults) {
+      if (r.handoff_id) {
+        personaHandoffIds[r.persona_key] = r.handoff_id;
       }
-    }),
-  );
+    }
 
-  const completedResults = personaResults.filter(
-    (result) =>
-      result.status === "completed" &&
-      typeof result.response_text === "string" &&
-      result.response_text.length > 0,
-  );
-  const failedPersonas = personaResults
-    .filter((result) => result.status !== "completed")
-    .map((result) => result.persona);
-  const outcome = failedPersonas.length === 0 ? "success" : "success_partial";
+    const dispatchSynth = async (): Promise<{
+      dispatch: {
+        conversation_id: string;
+        handoff_id: string;
+        permission_profile?: PermissionProfile | null;
+      };
+      wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
+    }> => {
+      let attempts = 0;
+      while (true) {
+        try {
+          const dispatch = await ctx.dispatch({
+            agent: synthAgent,
+            message: `cd ${scratch.path}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
+            task_type: "plan_refine",
+            use_worktree: false,
+            task_class: "TRIVIAL",
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+            max_hops: 1,
+            cwd_override: scratch.path,
+            project_id: scratch.project_id ?? undefined,
+          });
+          requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
+          const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
+            timeoutMs: parsedArgs.timeout_ms,
+          });
+          synthCancelRequested ||= awaited.cancel_requested;
+          if (awaited.cancel_error !== undefined) synthCancelError = awaited.cancel_error;
+          if (awaited.wait === null) {
+            throw awaited.error instanceof Error ? awaited.error : new Error(String(awaited.error));
+          }
+          return { dispatch, wait: awaited.wait };
+        } catch (err) {
+          if (attempts < 1 && shouldRetryWorkerUnavailable(err)) {
+            attempts += 1;
+            synthRetryUsed = true;
+            await sleep(RETRY_BACKOFF_MS);
+            continue;
+          }
+          throw err;
+        }
+      }
+    };
 
-  if (completedResults.length === 0) {
+    try {
+      const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      synthHandoffId = synthDispatch.handoff_id;
+      synthStatus = synthWait.status;
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = buildSynthesisFrontmatter({
+        run_ts: runTs,
+        synthesis_handoff_id: synthHandoffId,
+        persona_handoff_ids: personaHandoffIds,
+        topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
+        personas: selected.map(({ persona }) => persona.name),
+        synthesizer_agent: synthAgent,
+      });
+      await ctx.fileWrite(
+        synthesisPath,
+        synthRetryBanner +
+          (synthWait.status === "completed"
+            ? frontmatter + (synthWait.response_text ?? "")
+            : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
+      );
+    } catch (err) {
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      synthStatus = "failed";
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = buildSynthesisFrontmatter({
+        run_ts: runTs,
+        synthesis_handoff_id: synthHandoffId,
+        persona_handoff_ids: personaHandoffIds,
+        topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
+        personas: selected.map(({ persona }) => persona.name),
+        synthesizer_agent: synthAgent,
+      });
+      await ctx.fileWrite(
+        synthesisPath,
+        synthRetryBanner +
+          frontmatter +
+          `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      );
+    }
+
     return {
-      ok: false,
+      ok: synthStatus === "completed",
+      outcome,
+      failed_personas: failedPersonas,
+      completed_personas: personaResults
+        .filter((result) => result.status === "completed")
+        .map((result) => result.persona),
       out_dir: absoluteOutDir,
       personas: personaResults.map((result) => ({
         name: result.persona,
         status: result.status,
         conversation_id: result.conversation_id,
+        cancel_requested: result.cancel_requested ?? false,
+        ...(result.cancel_error !== undefined ? { cancel_error: result.cancel_error } : {}),
+        ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
       })),
-      synthesis_path: null,
-      synthesizer_status: null,
-      error: "all_persona_dispatches_failed",
-      hint: "all persona dispatches failed or timed out",
+      synthesis_path: synthesisPath,
+      synthesizer_status: synthStatus,
+      synthesizer_cancel_requested: synthCancelRequested,
+      ...(synthCancelError !== undefined ? { synthesizer_cancel_error: synthCancelError } : {}),
+      synth_failed: synthStatus !== "completed",
     };
+  } finally {
+    await scratch.release().catch(() => undefined);
   }
-
-  let synthesisPath: string | null = null;
-  let synthStatus: "completed" | "failed" | "timeout" | null = null;
-  let synthHandoffId: string | null = null;
-  let synthRetryUsed = false;
-  const personaHandoffIds: Record<string, string> = {};
-  for (const r of personaResults) {
-    if (r.handoff_id) {
-      personaHandoffIds[r.persona_key] = r.handoff_id;
-    }
-  }
-
-  const dispatchSynth = async (): Promise<{
-    dispatch: { conversation_id: string; handoff_id: string };
-    wait: { status: "completed" | "failed" | "timeout"; response_text: string | null };
-  }> => {
-    let attempts = 0;
-    while (true) {
-      try {
-        const dispatch = await ctx.dispatch({
-          agent: synthAgent,
-          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
-          task_type: "plan_refine",
-          use_worktree: false,
-          task_class: "TRIVIAL",
-        });
-        const wait = await ctx.awaitChain(dispatch.conversation_id, {
-          timeoutMs: parsedArgs.timeout_ms,
-        });
-        return { dispatch, wait };
-      } catch (err) {
-        if (attempts < 1 && shouldRetryWorkerUnavailable(err)) {
-          attempts += 1;
-          synthRetryUsed = true;
-          await sleep(RETRY_BACKOFF_MS);
-          continue;
-        }
-        throw err;
-      }
-    }
-  };
-
-  try {
-    const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    synthHandoffId = synthDispatch.handoff_id;
-    synthStatus = synthWait.status;
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = buildSynthesisFrontmatter({
-      run_ts: runTs,
-      synthesis_handoff_id: synthHandoffId,
-      persona_handoff_ids: personaHandoffIds,
-      topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
-      personas: selected.map(({ persona }) => persona.name),
-      synthesizer_agent: synthAgent,
-    });
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        (synthWait.status === "completed"
-          ? frontmatter + (synthWait.response_text ?? "")
-          : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
-    );
-  } catch (err) {
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    synthStatus = "failed";
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = buildSynthesisFrontmatter({
-      run_ts: runTs,
-      synthesis_handoff_id: synthHandoffId,
-      persona_handoff_ids: personaHandoffIds,
-      topic: parsedArgs.topic ?? parsedArgs.content_path ?? "",
-      personas: selected.map(({ persona }) => persona.name),
-      synthesizer_agent: synthAgent,
-    });
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        frontmatter +
-        `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
-    );
-  }
-
-  return {
-    ok: synthStatus === "completed",
-    outcome,
-    failed_personas: failedPersonas,
-    completed_personas: personaResults
-      .filter((result) => result.status === "completed")
-      .map((result) => result.persona),
-    out_dir: absoluteOutDir,
-    personas: personaResults.map((result) => ({
-      name: result.persona,
-      status: result.status,
-      conversation_id: result.conversation_id,
-    })),
-    synthesis_path: synthesisPath,
-    synthesizer_status: synthStatus,
-    synth_failed: synthStatus !== "completed",
-  };
 };
 
 export default spec;

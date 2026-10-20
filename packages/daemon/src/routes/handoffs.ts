@@ -1,10 +1,12 @@
 import { HandoffFailRequestSchema } from "@penumbra/api-contract";
 import {
+  agentEnforcesPermissionProfile,
   ApproveHandoffRequestSchema,
-  classifyDispatchReliability,
+  buildDispatchAuditReportForHandoff,
   CreateHandoffRequestSchema,
   type HandoffStatus,
   HandoffStatusSchema,
+  type PermissionProfile,
   type Services,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -13,7 +15,7 @@ import type { DaemonServices } from "../serve.js";
 import type { ExtraWorkerConfig } from "../workers/config.js";
 
 import { getPrincipal, requireWorkerPrincipalMatch } from "../auth.js";
-import { handleTickTeardown, type TickOutcome } from "../long-lived/teardown.js";
+import { maybeTeardownLongLivedTick } from "../long-lived/teardown.js";
 import {
   countProviderInFlight,
   type ProviderConcurrencyDecision,
@@ -21,34 +23,20 @@ import {
   resolveProviderConcurrencyDecision,
 } from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
-// Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
-// getWorktreeSnapshot — we avoid live git probes because post-merge they
-// can no longer distinguish "agent did nothing" from "agent committed and
-// main moved forward to the same SHA".
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
-import { resolveSingleRoute, RoutingBiasExhaustedError } from "./role-routing.js";
-function readWorktreeChangedSnapshot(events: { kind: string; meta: unknown }[]): boolean | null {
-  const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
-  const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "worktree_changed" in meta) {
-    const v = (meta as Record<string, unknown>).worktree_changed;
-    if (typeof v === "boolean") return v;
-  }
-  return null;
-}
-
-function readDispatchEndCommittedFromEvents(
-  events: { kind: string; meta: unknown }[],
-): boolean | null {
-  const dispatchEnd = events.filter((e) => e.kind === "dispatch.end").at(-1);
-  const meta = dispatchEnd?.meta;
-  if (meta && typeof meta === "object" && "committed" in meta) {
-    const v = (meta as Record<string, unknown>).committed;
-    if (typeof v === "boolean") return v;
-  }
-  return null;
-}
-
+import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
+import {
+  resolveSingleRoute,
+  RouterHardConstraintExhaustedError,
+  RoutingBiasExhaustedError,
+} from "./role-routing.js";
+import {
+  profiledLiveWorkerGateResponse,
+  workerCanClaimProject,
+  workerHeartbeatStaleMs,
+  workerTokenMetadataDeclaresProfile,
+  workerTokenMetadataDeclaresScratch,
+} from "./worker-profile-gate.js";
 // bun:sqlite returns 0/1 for BOOLEAN columns; coerce here so the JSON API
 // contract is boolean|null regardless of whether the reader layer already
 // normalised the value (belt-and-suspenders for legacy data paths).
@@ -67,18 +55,6 @@ function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_rev
 const NULL_PROJECT_ID_SENTINEL = "__null__"; // Sentinel token that maps to SQL NULL.
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
-interface LongLivedTickRow {
-  id: string;
-  agent_id: string;
-  chain_id: string | null;
-  completed_at: number | null;
-  outcome: string | null;
-}
-
-interface AgentPerformanceCostRow {
-  cost_usd: number | null;
-}
-
 interface ClaimSpreadDecision {
   workflow_run_id: string;
   active_worker_count: number;
@@ -94,19 +70,145 @@ interface CountRow {
   n: number;
 }
 
-function workerHeartbeatStaleMs(): number {
-  const configured = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : 90_000;
+interface WorkerTokenMetadataRow {
+  metadata_json: string | null;
 }
 
-function workerCanClaimProject(
-  authz: { project_id?: string; isolation: ExtraWorkerConfig["isolation"] } | undefined,
-  project_id: string | null,
+// Capability gates key on the PRESENTING bearer token's registration row,
+// not the newest row for the worker_id: a rotated registration must not
+// silently grant (or strip) capabilities claimed by the token in hand.
+function presentingTokenMetadata(services: Services, token_hash: string): string | null {
+  const row = services.db
+    .query<WorkerTokenMetadataRow, [string]>(
+      `SELECT metadata_json
+         FROM worker_tokens
+        WHERE token_hash = ? AND revoked_at IS NULL`,
+    )
+    .get(token_hash);
+  return row?.metadata_json ?? null;
+}
+
+function workerDeclaresProfileEnforcement(
+  services: Services,
+  token_hash: string,
+  profile: PermissionProfile,
 ): boolean {
-  return !(
-    authz?.isolation === "hard" &&
-    authz.project_id !== undefined &&
-    project_id !== authz.project_id
+  return workerTokenMetadataDeclaresProfile(presentingTokenMetadata(services, token_hash), profile);
+}
+
+// Claim gate keyed on the presenting worker's registration metadata: a
+// scratch-routed handoff must stay unclaimable for workers that never
+// declared scratch support.
+function workerDeclaresScratchSupport(services: Services, token_hash: string): boolean {
+  return workerTokenMetadataDeclaresScratch(presentingTokenMetadata(services, token_hash));
+}
+
+// A chain hop inherits the parent's permission profile unless the hop names
+// one explicitly; a hop can never drop its parent's profile because null is
+// treated as "not specified".
+function resolveEffectivePermissionProfile(
+  input: { permission_profile?: PermissionProfile | null; parent_handoff_id?: string | null },
+  services: Services,
+): PermissionProfile | null {
+  const parentProfile = input.parent_handoff_id
+    ? (services.handoffReader.get(input.parent_handoff_id)?.permission_profile ?? null)
+    : null;
+  return input.permission_profile ?? parentProfile;
+}
+
+// caller_cwd follows the same inheritance as permission_profile: hops inherit
+// the chain root's caller cwd so the worker's Layer B deny set keeps covering
+// the originating repository across every hop.
+function resolveEffectiveCallerCwd(
+  input: { caller_cwd?: string | null; parent_handoff_id?: string | null },
+  services: Services,
+): string | null {
+  const parentCwd = input.parent_handoff_id
+    ? (services.handoffReader.get(input.parent_handoff_id)?.caller_cwd ?? null)
+    : null;
+  return input.caller_cwd ?? parentCwd;
+}
+
+// cwd_override never crosses a hop boundary on the create route: scratch
+// roots are bound to the run that acquired them, scratch dispatches pin
+// max_hops:1, and a direct cwd_override is only legal on the in-process
+// chain_start path.
+function scratchBoundaryGateResponse(
+  data: {
+    cwd_override?: string | null;
+    parent_handoff_id?: string | null;
+    project_id?: string | null;
+  },
+  services: Services,
+): Response | null {
+  const parentCwdOverride = data.parent_handoff_id
+    ? (services.handoffReader.get(data.parent_handoff_id)?.cwd_override ?? null)
+    : null;
+  if (parentCwdOverride !== null) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_parent_scratch",
+          message:
+            "child handoffs are not allowed under a scratch-bound parent; scratch dispatches pin max_hops:1",
+          parent_cwd_override: parentCwdOverride,
+        },
+      },
+      400,
+    );
+  }
+  if (data.cwd_override !== undefined && data.cwd_override !== null) {
+    return json(
+      {
+        error: {
+          code: "cwd_override_not_allowed",
+          message: "cwd_override is only accepted on the in-process workflow dispatch path",
+        },
+      },
+      400,
+    );
+  }
+  return null;
+}
+
+function profiledSeatGateResponse(
+  services: Services,
+  agent: string,
+  profile: PermissionProfile,
+): Response | null {
+  const seat = services.agentchatConfig?.agents?.find((candidate) => candidate.name === agent);
+  if (agentEnforcesPermissionProfile(seat, profile)) return null;
+  services.log.warn(
+    {
+      event: "handoffs_create.permission_profile_unenforceable",
+      agent,
+      permission_profile: profile,
+    },
+    "handoff-create profiled hop rejected: seat cannot enforce the profile",
+  );
+  return json(
+    {
+      error: {
+        code: "permission_profile_unenforceable",
+        message: `agent '${agent}' cannot enforce permission_profile '${profile}'`,
+        agent,
+        permission_profile: profile,
+      },
+    },
+    422,
+  );
+}
+
+function profiledDispatchGateResponse(
+  services: Services,
+  routedAgent: string,
+  effectiveProfile: PermissionProfile | null,
+  projectId: string | null,
+): Response | null {
+  if (effectiveProfile === null) return null;
+  return (
+    profiledSeatGateResponse(services, routedAgent, effectiveProfile) ??
+    profiledLiveWorkerGateResponse(services, effectiveProfile, projectId)
   );
 }
 
@@ -266,66 +368,83 @@ function enforceProviderConcurrencyCap(
   return { decision };
 }
 
-function maybeTeardownLongLivedTick(params: {
-  services: Services;
-  handoff_id: string;
-  dispatch_kind: string | null | undefined;
-  long_lived_tick_id: string | null | undefined;
-  outcome: TickOutcome;
-  error?: string;
-  resolved_at_iso: string;
-}): void {
-  if (params.dispatch_kind !== "long_lived_tick") return;
-  if (!params.long_lived_tick_id) return;
-
+function resolveCreateRoute(
+  input: {
+    to_role?: string | null;
+    message: string;
+    chain_task_type?: Parameters<typeof resolveSingleRoute>[3] | null;
+  },
+  effectiveProfile: PermissionProfile | null,
+  services: Services,
+): { route: ReturnType<typeof resolveSingleRoute> | null; response: Response | null } {
   try {
-    const tick = params.services.db
-      .query<
-        LongLivedTickRow,
-        [string]
-      >("SELECT id, agent_id, chain_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?")
-      .get(params.long_lived_tick_id);
-    if (!tick) return;
-    if (tick.completed_at !== null || tick.outcome !== null) return;
-
-    const resolvedAtMs = Date.parse(params.resolved_at_iso);
-    const costRows = tick.chain_id
-      ? params.services.db
-          .query<AgentPerformanceCostRow, [string]>(
-            `SELECT cost_usd
-             FROM agent_performance
-            WHERE conversation_id = ?
-              AND source <> 'manual_seed'
-              AND cost_usd IS NOT NULL`,
-          )
-          .all(tick.chain_id)
-      : [];
-    const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);
-    const cost_cents = costRows.length > 0 ? Math.round(totalCostUsd * 100) : null;
-    if (cost_cents === null) {
-      params.services.log.warn(
-        { handoff_id: params.handoff_id, long_lived_tick_id: params.long_lived_tick_id },
-        "long-lived tick teardown could not stamp cost_cents yet",
-      );
-    }
-    handleTickTeardown(params.services.db, {
-      tick_id: tick.id,
-      agent_id: tick.agent_id,
-      outcome: params.outcome,
-      error: params.error,
-      now: Number.isNaN(resolvedAtMs) ? Date.now() : resolvedAtMs,
-      cost_cents: cost_cents ?? undefined,
-    });
+    const route = input.to_role
+      ? resolveSingleRoute(
+          services,
+          input.to_role,
+          input.message,
+          input.chain_task_type ?? undefined,
+          // Hints only when the profile applies: passing an object at all
+          // engages the model task router (mode !== off), which must stay
+          // byte-identical to legacy routing for unprofiled hops.
+          effectiveProfile === null ? undefined : { permission_profile: effectiveProfile },
+        )
+      : null;
+    return { route, response: null };
   } catch (err) {
-    params.services.log.warn(
-      {
-        handoff_id: params.handoff_id,
-        long_lived_tick_id: params.long_lived_tick_id,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "long-lived tick teardown failed during terminal handoff transition",
-    );
+    if (err instanceof RouterHardConstraintExhaustedError) {
+      return {
+        route: null,
+        response: json(
+          {
+            error: {
+              code: "router_hard_constraint_exhausted",
+              message: "the model task router excluded every candidate via a hard constraint",
+              reasons: err.decision.alternatives
+                .filter((alternative) => alternative.excluded)
+                .map((alternative) => ({
+                  route_id: alternative.routeId,
+                  reasons: alternative.reasons,
+                })),
+            },
+          },
+          422,
+        ),
+      };
+    }
+    if (err instanceof RoutingBiasExhaustedError) {
+      return {
+        route: null,
+        response: json(
+          {
+            error: {
+              code: "routing_bias_exhausted",
+              message: "routing biases excluded every candidate for the requested role",
+              role: err.role,
+              task_type: err.taskType,
+            },
+          },
+          422,
+        ),
+      };
+    }
+    throw err;
   }
+}
+
+// The create route cannot carry cwd_override at all — it is set only by the
+// in-process chain_start path — and a child under a scratch-bound parent is
+// rejected outright. What remains to gate is a live scratch-capable worker
+// whenever a scratch-bound hop somehow reaches the row level.
+function cwdOverrideGateResponse(
+  data: {
+    cwd_override?: string | null;
+    parent_handoff_id?: string | null;
+    project_id?: string | null;
+  },
+  services: Services,
+): Response | null {
+  return scratchBoundaryGateResponse(data, services);
 }
 
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
@@ -356,37 +475,30 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   const depthResponse = enforceRecursionDepthGuard(parsed.data, services);
   if (depthResponse) return depthResponse;
 
+  const effectiveProfile = resolveEffectivePermissionProfile(parsed.data, services);
+
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
-  let route: ReturnType<typeof resolveSingleRoute> | null = null;
-  try {
-    route = parsed.data.to_role
-      ? resolveSingleRoute(
-          services,
-          parsed.data.to_role,
-          parsed.data.message,
-          parsed.data.chain_task_type ?? undefined,
-        )
-      : null;
-  } catch (err) {
-    if (err instanceof RoutingBiasExhaustedError) {
-      return json(
-        {
-          error: {
-            code: "routing_bias_exhausted",
-            message: "routing biases excluded every candidate for the requested role",
-            role: err.role,
-            task_type: err.taskType,
-          },
-        },
-        422,
-      );
-    }
-    throw err;
-  }
+  const { route, response: routeResponse } = resolveCreateRoute(
+    parsed.data,
+    effectiveProfile,
+    services,
+  );
+  if (routeResponse) return routeResponse;
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;
   const routingTaskType = route?.taskType ?? parsed.data.chain_task_type ?? null;
+
+  const profileGateResponse = profiledDispatchGateResponse(
+    services,
+    routedAgent,
+    effectiveProfile,
+    parsed.data.project_id ?? null,
+  );
+  if (profileGateResponse) return profileGateResponse;
+
+  const cwdOverrideResponse = cwdOverrideGateResponse(parsed.data, services);
+  if (cwdOverrideResponse) return cwdOverrideResponse;
 
   // F6: phantom-seat rejection at the chain-HOP write boundary, mirroring the
   // chain_start rejectUnknownAgent shape so the two write paths agree on what
@@ -475,6 +587,9 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       parent_handoff_id: parsed.data.parent_handoff_id ?? null,
       branch_base: parsed.data.branch_base ?? null,
       chain_max_hops: parsed.data.chain_max_hops ?? null,
+      permission_profile: effectiveProfile,
+      caller_cwd: resolveEffectiveCallerCwd(parsed.data, services),
+      cwd_override: null,
     });
   })();
 
@@ -946,6 +1061,51 @@ function buildClaimConflictResponse(
   );
 }
 
+// Profile enforcement and scratch-worktree support are both
+// registration-declared capabilities; a handoff requiring either stays
+// unclaimed rather than run unconstrained.
+function claimCapabilityGateResponse(
+  services: DaemonServices,
+  cur: { permission_profile?: PermissionProfile | null; cwd_override?: string | null },
+  workerId: string,
+  tokenHash: string,
+): Response | null {
+  if (
+    cur.permission_profile !== null &&
+    cur.permission_profile !== undefined &&
+    !workerDeclaresProfileEnforcement(services, tokenHash, cur.permission_profile)
+  ) {
+    return json(
+      {
+        error: {
+          code: "permission_profile_unenforceable",
+          message: `worker '${workerId}' does not enforce permission_profile '${cur.permission_profile}'`,
+          worker_id: workerId,
+          permission_profile: cur.permission_profile,
+        },
+      },
+      403,
+    );
+  }
+  if (
+    cur.cwd_override !== null &&
+    cur.cwd_override !== undefined &&
+    !workerDeclaresScratchSupport(services, tokenHash)
+  ) {
+    return json(
+      {
+        error: {
+          code: "scratch_worker_not_capable",
+          message: `worker '${workerId}' does not declare scratch-worktree support`,
+          worker_id: workerId,
+        },
+      },
+      403,
+    );
+  }
+  return null;
+}
+
 export async function handoffsClaimRoute(
   req: Request,
   handoff_id: string,
@@ -974,6 +1134,13 @@ export async function handoffsClaimRoute(
 
   const principalErr = requireWorkerPrincipalMatch(req, body.data.worker_id);
   if (principalErr !== null) return principalErr;
+  const principal = getPrincipal(req);
+  if (principal?.kind !== "worker") {
+    return json(
+      { error: { code: "worker_token_required", message: "claim requires a worker token" } },
+      403,
+    );
+  }
 
   const cur = services.handoffReader.get(handoff_id);
   if (!cur)
@@ -1000,6 +1167,20 @@ export async function handoffsClaimRoute(
     );
   }
 
+  const cancelRequested = claimCancelRequestedResponse(services, cur);
+  if (cancelRequested) return cancelRequested;
+
+  // A profiled or scratch-routed handoff may only be claimed by a worker
+  // that declared the matching capability at registration; otherwise it must
+  // stay unclaimed rather than run unconstrained.
+  const capabilityGate = claimCapabilityGateResponse(
+    services,
+    cur,
+    body.data.worker_id,
+    principal.token_hash,
+  );
+  if (capabilityGate) return capabilityGate;
+
   const cap = enforceClaimSpreadCap(services, cur, body.data.worker_id, handoff_id);
   if (cap.response) return cap.response;
   const spreadDecision = cap.decision;
@@ -1015,12 +1196,15 @@ export async function handoffsClaimRoute(
     maxProviderInFlight: providerDecision?.max_in_flight,
   });
   if (!won) {
-    return buildClaimConflictResponse(
-      services,
-      handoff_id,
-      body.data.worker_id,
-      spreadDecision,
-      providerDecision,
+    return (
+      claimCancelRequestedResponse(services, services.handoffReader.get(handoff_id)) ??
+      buildClaimConflictResponse(
+        services,
+        handoff_id,
+        body.data.worker_id,
+        spreadDecision,
+        providerDecision,
+      )
     );
   }
 
@@ -1098,28 +1282,6 @@ function resolveExpectedWorkerForCompletion(
     kind: "ok",
     expected_worker_id: body.success ? (body.data as { worker_id?: string }).worker_id : undefined,
   };
-}
-
-function completeCancelFallback(services: Services, handoff_id: string): Response {
-  const cancelledAtIso = services.clock().toISOString();
-  services.handoffWriter.markFailed(handoff_id, {
-    reason: "cancelled",
-    resolved_by: "cancel",
-    ts: cancelledAtIso,
-  });
-  const cancelled = services.handoffReader.get(handoff_id);
-  if (cancelled) {
-    maybeTeardownLongLivedTick({
-      services,
-      handoff_id,
-      dispatch_kind: cancelled.dispatch_kind,
-      long_lived_tick_id: cancelled.long_lived_tick_id,
-      outcome: "failed",
-      error: "cancelled",
-      resolved_at_iso: cancelledAtIso,
-    });
-  }
-  return json({ handoff_id, status: "failed", reason: "cancelled" });
 }
 
 export async function handoffsCompleteRoute(
@@ -1217,33 +1379,7 @@ export function handoffsStatusRoute(
     row.status === "failed" && row.resolution_reason
       ? (row.resolution_reason.split("\n")[0]?.slice(0, 200) ?? null)
       : null;
-  const events = services.dispatchEventLog.listByHandoff(handoff_id).map((event) => ({
-    kind: event.kind,
-    ts: event.ts,
-    meta: parseMeta(event.meta_json),
-  }));
-  const responses = services.chainReader.getResponses(row.conversation_id, "final");
-  const worktreeChanged = readWorktreeChangedSnapshot(events);
-  const dispatchEndCommitted = readDispatchEndCommittedFromEvents(events);
-  const reliability = classifyDispatchReliability({
-    handoff: {
-      handoff_id: row.handoff_id,
-      status: row.status,
-      ts: row.ts,
-      resolved_at: row.resolved_at,
-      cancel_requested_at: row.cancel_requested_at,
-      chain_task_type: row.chain_task_type,
-      use_worktree: row.use_worktree,
-    },
-    events,
-    responseCount: responses.length,
-    finalResponseText: responses.at(-1)?.text ?? null,
-    worktreeChanged,
-    dispatchEndCommitted,
-    reconciled: null,
-    adapterStreaming: null,
-    now: services.clock(),
-  });
+  const reliability = buildDispatchAuditReportForHandoff(services, row);
 
   return json({
     handoff_id,
@@ -1261,15 +1397,6 @@ export function handoffsStatusRoute(
       summary: reliability.summary,
     },
   });
-}
-
-function parseMeta(metaJson: string | null): unknown {
-  if (!metaJson) return null;
-  try {
-    return JSON.parse(metaJson);
-  } catch {
-    return null;
-  }
 }
 
 export async function handoffsFailRoute(

@@ -190,6 +190,59 @@ test("startAcpServer logs child errors after boot settles", async () => {
   await handle.kill();
 });
 
+test("startAcpServer wraps the spawn argv in sandbox-exec when sandboxProfile is set", async () => {
+  const child = new FakeChildProcess(5440);
+  const assignedPort = 43_440;
+  const profile =
+    '(version 1)\n(allow default)\n(deny file-write* (subpath "/tmp/penumbra-acp"))\n';
+
+  const spawn = createSpawn(child);
+  const handle = await startAcpServer({
+    cwd: "/tmp/penumbra-acp",
+    spawn,
+    bootTimeoutMs: 250,
+    getPort: () => Promise.resolve(assignedPort),
+    waitForPort: () => Promise.resolve(),
+    sandboxProfile: profile,
+    sandboxDeps: { platform: "darwin", exists: () => true },
+  });
+
+  expect(spawn.mock.calls[0]?.[0]).toBe("/usr/bin/sandbox-exec");
+  const wrappedArgs = (spawn.mock.calls[0]?.[1] ?? []) as string[];
+  expect(wrappedArgs[0]).toBe("-p");
+  expect(wrappedArgs[1]).toBe(profile);
+  expect(wrappedArgs.slice(2)).toEqual([
+    "opencode",
+    "acp",
+    "--port",
+    assignedPort.toString(),
+    "--cwd",
+    "/tmp/penumbra-acp",
+    "--pure",
+  ]);
+  await handle.kill();
+});
+
+test("startAcpServer fails closed on a profiled spawn when sandbox-exec is unavailable", async () => {
+  const child = new FakeChildProcess(5441);
+  const spawn = createSpawn(child);
+  const profile = '(version 1)\n(allow default)\n(deny file-write* (subpath "/tmp/x"))\n';
+
+  await expectRejection(
+    startAcpServer({
+      cwd: "/tmp/penumbra-acp",
+      spawn,
+      bootTimeoutMs: 250,
+      getPort: () => Promise.resolve(43_441),
+      waitForPort: () => Promise.resolve(),
+      sandboxProfile: profile,
+      sandboxDeps: { platform: "linux" },
+    }),
+    /sandbox-exec unavailable/,
+  );
+  expect(spawn).not.toHaveBeenCalled();
+});
+
 serviceTest("startAcpServer removes unsetEnv keys after merging env", async () => {
   const child = new FakeChildProcess(5435);
   const previousFoo = process.env.FOO;

@@ -1,5 +1,5 @@
 import "../setup";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import {
@@ -9,6 +9,8 @@ import {
   type Subscription,
 } from "@src/api/streams";
 import { useStream } from "@src/hooks/useStream";
+
+afterEach(cleanup);
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,

@@ -5,6 +5,8 @@ import * as ts from "typescript";
 
 const TEST_ROOT = import.meta.dir;
 const SETUP_IMPORT_RE = /^import "(?:\.\.\/)+setup";$/;
+const RENDER_CALL_RE = /\b(?:render|renderHook)\(/;
+const CLEANUP_RE = /afterEach\(\s*cleanup\s*\)|\bcleanup\(\)/;
 const DOM_GLOBALS = new Set(["document", "window", "localStorage", "HTMLElement"]);
 
 function collectTestFiles(dir: string): string[] {
@@ -27,7 +29,7 @@ function displayPath(path: string): string {
 function isExcluded(path: string): boolean {
   const display = displayPath(path);
   return (
-    display === "packages/console/test/setup-import.test.ts" ||
+    path === import.meta.path ||
     display.includes("/e2e/") ||
     display.includes("/visual/") ||
     display.includes("/dist/")
@@ -72,6 +74,25 @@ describe("console test setup imports", () => {
 
     if (offenders.length > 0) {
       throw new Error(`Missing setup import as first import in:\n${offenders.join("\n")}`);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  // Each file must unmount its own trees. A cleanup registered in a shared setup
+  // module binds to whichever file imports it first, so a file that renders
+  // without its own cleanup leaks its DOM into every file that runs after it.
+  test("files that render register their own cleanup", () => {
+    const offenders = collectTestFiles(TEST_ROOT)
+      .filter((path) => !isExcluded(path))
+      .filter((path) => {
+        const source = readFileSync(path, "utf8");
+        return RENDER_CALL_RE.test(source) && !CLEANUP_RE.test(source);
+      })
+      .map(displayPath);
+
+    if (offenders.length > 0) {
+      throw new Error(`Missing afterEach(cleanup) in:\n${offenders.join("\n")}`);
     }
 
     expect(offenders).toEqual([]);

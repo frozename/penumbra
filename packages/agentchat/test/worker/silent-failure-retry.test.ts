@@ -15,6 +15,7 @@ import {
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
   SILENT_RETRY_PREFIX,
+  silentFailureRetrySuppressionReason,
 } from "@src/worker/silent-failure-retry.js";
 
 describe("shouldRetryForSilentFailure", () => {
@@ -170,6 +171,33 @@ describe("shouldRetryHandoffForSilentFailure", () => {
       chain_max_hops: 2,
     } as const;
     expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);
+  });
+
+  test("does not retry silent failures from permission-profiled handoffs", () => {
+    // The retry payload hardcodes use_worktree:true + trust_mode:"all" and
+    // selectRetryAgent has no enforcement data — a silent seat swap would drop
+    // the profile. Profiled dispatches must surface the failure, not retry.
+    const handoff = {
+      dispatch_kind: null,
+      chain_task_type: "implement_small",
+      branch_base: null,
+      chain_max_hops: 3,
+      permission_profile: "review_readonly",
+    } as const;
+    expect(shouldRetryHandoffForSilentFailure(handoff, perfThatRetries)).toBe(false);
+  });
+
+  test("reports retry_suppressed_permission_profile for profiled handoffs", () => {
+    const handoff = {
+      dispatch_kind: null,
+      chain_task_type: "implement_small",
+      branch_base: null,
+      chain_max_hops: 3,
+      permission_profile: "review_readonly",
+    } as const;
+    expect(silentFailureRetrySuppressionReason(handoff)).toBe(
+      "retry_suppressed_permission_profile",
+    );
   });
 
   test("does not retry silent failures from single-hop chains", () => {

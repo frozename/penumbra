@@ -16,6 +16,7 @@ export type { TaskMeta } from "./plan-meta/schema.js";
 export { validatePlan } from "./plan-meta/validator.js";
 export type { ValidateOpts, ValidationError } from "./plan-meta/validator.js";
 export { computeStateMetrics } from "./poller.js";
+export { BINARY_BODY_PLACEHOLDER } from "./recall-sources/file-contents.js";
 export { runMemorySearchSource } from "./recall-sources/memory.js";
 export type { MemoryHit, MemorySearchOutput } from "./recall-sources/memory.js";
 export { composeRecall, TOKEN_PER_CHAR } from "./recall.js";
@@ -28,5 +29,12 @@ export { writeSlashCommands } from "./slash-bridge.js";
 export { resolveTemplateVars } from "./template-vars.js";
 export type { TemplateVarContext } from "./template-vars.js";
 export { renderTemplate } from "./template.js";
+export { resolveSessionTranscript } from "./transcripts/resolve.js";
+export type {
+  ResolveSessionTranscriptInput,
+  ResolveSessionTranscriptResult,
+  TranscriptMessage,
+  TranscriptReadResult,
+} from "./transcripts/types.js";
 export { evaluateStateThresholds, evaluateTriggerEvent } from "./triggers.js";
 export type { StateMetrics } from "./triggers.js";

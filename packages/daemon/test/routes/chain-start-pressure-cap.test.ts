@@ -10,7 +10,7 @@ import {
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { beforeAll, expect, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, expect, setSystemTime, test } from "bun:test";
 
 import { chainStartInternal } from "@src/routes/chains.js";
 
@@ -68,6 +68,8 @@ function toAgentchatAgent(agent: AgentConfig): AgentchatAgent {
 }
 
 const NOW = new Date("2026-05-08T01:00:00Z");
+beforeEach(() => setSystemTime(NOW));
+afterEach(() => setSystemTime());
 
 function tempServices(opts: {
   agents: AgentConfig[];
@@ -1139,7 +1141,7 @@ test("sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: "openai",
       window_label: "five_hour",
       used_pct: 96,
-      resets_at: 20_000,
+      resets_at: NOW.getTime() / 1000 + 20_000,
       observed_at: "2026-05-08T00:50:00Z",
     },
     {
@@ -1147,7 +1149,7 @@ test("sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: "groq",
       window_label: "five_hour",
       used_pct: 99,
-      resets_at: 15_000,
+      resets_at: NOW.getTime() / 1000 + 15_000,
       observed_at: "2026-05-08T00:50:00Z",
     },
     {
@@ -1155,7 +1157,7 @@ test("sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: "google",
       window_label: "five_hour",
       used_pct: 99,
-      resets_at: 30_000,
+      resets_at: NOW.getTime() / 1000 + 30_000,
       observed_at: "2026-05-08T00:50:00Z",
     },
   ]);
@@ -1194,8 +1196,8 @@ test("sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       cap_pct: 95,
       snapshot_state: "fresh",
       snapshot_age_seconds: 600,
-      resets_at: 20_000,
-      earliest_resets_at: 15_000,
+      resets_at: NOW.getTime() / 1000 + 20_000,
+      earliest_resets_at: NOW.getTime() / 1000 + 15_000,
     },
   });
 

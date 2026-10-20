@@ -294,7 +294,12 @@ function revertP1(db: Database, action: DreamActionRow, actionId: string): void 
   if (!t2MemoryId) throw new Error("p1_revert_missing_t2_memory_id");
 
   db.transaction(() => {
-    db.prepare("UPDATE t1_rollups SET t2_promoted_at = NULL WHERE rollup_id = ?").run(rollupId);
+    // A revert is an operator verdict that the promotion was wrong; without the
+    // permanent filter mark both claim paths re-select the rollup and the same
+    // judges re-mint the same memory.
+    db.prepare(
+      "UPDATE t1_rollups SET t2_promoted_at = NULL, promotion_filtered_at = ? WHERE rollup_id = ?",
+    ).run(new Date().toISOString(), rollupId);
     // P1 revert intentionally bypasses the direct-origin guard to restore the original
     // rollup artifact state even when the promoted target was direct.
     db.prepare("UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?").run(

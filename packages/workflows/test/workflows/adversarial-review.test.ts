@@ -19,6 +19,7 @@ import { composeRecall } from "@src/recall.js";
 // tsconfig include — typed imports resolve to `any`. Wrap the dynamic import
 // once and cast the exports to typed views, so the rest of the file lints
 // with real type info.
+import { stubScratchWorktree } from "../../../../plugin/workflows/_shared/test-helpers.js";
 import * as adversarialReviewModule from "../../../../plugin/workflows/adversarial-review/workflow.js";
 import {
   EMPTY_HEADING_SYNTHESIS,
@@ -159,18 +160,81 @@ function makeConfig(): AdvReviewConfig {
   };
 }
 
+// review_readonly dispatches only land on seats that opt into
+// enforces_permission_profiles. Production gets those entries from
+// agents.yaml; here the accessor re-derives them from the live config so
+// tests that mutate ctx.config personas/workloads after makeCtx still see
+// every referenced seat as enforcing. An explicit ctx.config.agents
+// assignment (or a pre-existing yaml list) merges: entries keep their
+// routing fields and gain the profile marker, plus any seat the config
+// references that the list omits.
+function installEnforcingAgents<T extends object>(config: T): T {
+  // Shallow-clone first: loader-produced configs may freeze `agents`.
+  const wrapped = { ...(config as Record<string, unknown>) } as Record<string, unknown>;
+  const seed = wrapped.agents;
+  let override: unknown = Array.isArray(seed) ? seed : undefined;
+  Object.defineProperty(wrapped, "agents", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const cfg = wrapped as {
+        personas?: Record<string, { preferred_agent?: unknown }>;
+        workloads?: Record<string, { eligible_agents?: unknown; synthesizer?: unknown }>;
+        default_roles?: Record<string, unknown>;
+      };
+      const names = new Set<string>();
+      const add = (v: unknown): void => {
+        for (const n of Array.isArray(v) ? v : [v]) {
+          if (typeof n === "string") names.add(n);
+        }
+      };
+      for (const p of Object.values(cfg.personas ?? {})) add(p.preferred_agent);
+      for (const w of Object.values(cfg.workloads ?? {})) {
+        add(w.eligible_agents);
+        add(w.synthesizer);
+      }
+      for (const roleAgent of Object.values(cfg.default_roles ?? {})) add(roleAgent);
+      // An explicit list is authoritative — including an [] opt-out, which a
+      // test may install precisely to exercise the fail-closed path. Only
+      // seats that never declared the field get the marker stamped.
+      const enforce = (entry: Record<string, unknown>): Record<string, unknown> =>
+        entry.enforces_permission_profiles === undefined
+          ? { ...entry, enforces_permission_profiles: ["review_readonly"] }
+          : entry;
+      const out = Array.isArray(override)
+        ? override.map((entry) => enforce(entry as Record<string, unknown>))
+        : [];
+      const seen = new Set(out.map((entry) => entry.name));
+      for (const name of names) {
+        if (!seen.has(name)) out.push(enforce({ name, roles: [] }));
+      }
+      return out;
+    },
+    set: (v) => {
+      override = v;
+    },
+  });
+  return wrapped as T;
+}
+
 type DispatchInputReview = {
   agent: string;
   message: string;
   task_type?: string;
   task_class?: "BOUNDARY" | "STANDARD" | "TRIVIAL";
   use_worktree?: boolean;
+  permission_profile?: string | null;
 };
-type DispatchResultReview = { conversation_id: string; handoff_id: string };
+type DispatchResultReview = {
+  conversation_id: string;
+  handoff_id: string;
+  permission_profile?: string | null;
+};
 type AwaitResultReview = {
   status: "completed" | "failed" | "timeout";
   final_agent: string | null;
   response_text: string | null;
+  failure_reason?: string;
 };
 type DispatchImplReview = (input: DispatchInputReview) => Promise<DispatchResultReview>;
 type AwaitImplReview = (
@@ -186,6 +250,7 @@ type MakeReviewCtxResult = {
   dispatch: ReturnType<typeof mock<DispatchImplReview>>;
   awaitChain: ReturnType<typeof mock<AwaitImplReview>>;
   cancel: ReturnType<typeof mock<CancelImplReview>>;
+  scratchPath: string;
 };
 
 type AdversarialReviewWorkflowResult = {
@@ -196,6 +261,11 @@ type AdversarialReviewWorkflowResult = {
   synthesizer_status: string | null;
   synth_failed?: boolean;
   pool_exhausted?: boolean;
+  personas?: {
+    name: string;
+    status: string;
+    error_code?: string;
+  }[];
 };
 
 function makeCtx(opts?: {
@@ -224,9 +294,15 @@ function makeCtx(opts?: {
           ? WELL_FORMED_SYNTHESIS
           : `review for ${conversationId}\n\n\`\`\`json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n\`\`\``,
     });
-  const dispatch = mock(opts?.dispatchImpl ?? defaultDispatch);
+  // ctx.dispatch echoes the granted permission_profile back to the caller —
+  // wrap impls so mocks honor the same contract the workflow asserts.
+  const dispatchImpl = opts?.dispatchImpl ?? defaultDispatch;
+  const dispatch = mock((input: DispatchInputReview) =>
+    dispatchImpl(input).then((r) => ({ ...r, permission_profile: input.permission_profile })),
+  );
   const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
   const cancel = mock(opts?.cancelImpl ?? ((): Promise<void> => Promise.resolve()));
+  const scratchPath = join(root, ".scratch-test");
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
@@ -240,14 +316,17 @@ function makeCtx(opts?: {
       await Bun.write(path, body);
       return path;
     },
-    config: makeConfig(),
+    config: installEnforcingAgents(makeConfig()),
     cwd: root,
     storageRoot: root,
     project: "penumbra",
+    // The scratch path is a stub: the tripwire just reports unavailable on a
+    // non-git dir, matching the pre-P6 behavior of these mkdtemp roots.
+    scratchWorktree: stubScratchWorktree(scratchPath),
     args: parsedArgs,
     db: opts?.db,
   };
-  return { ctx, root, writes, dispatch, awaitChain, cancel };
+  return { ctx, root, writes, dispatch, awaitChain, cancel, scratchPath };
 }
 
 async function runWorkflowWithSynthResponse(responseText: string): Promise<{
@@ -639,14 +718,21 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     task_type?: string;
     use_worktree?: boolean;
   }[] = [];
-  const { ctx, root, dispatch } = makeCtx();
+  const { ctx, root, dispatch, scratchPath } = makeCtx();
   try {
     dispatch.mockImplementation(
-      (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => {
+      (input: {
+        agent: string;
+        message: string;
+        task_type?: string;
+        use_worktree?: boolean;
+        permission_profile?: string | null;
+      }) => {
         dispatchCalls.push(input);
         return Promise.resolve({
           conversation_id: `${input.agent}-conv`,
           handoff_id: `${input.agent}-handoff`,
+          permission_profile: input.permission_profile,
         });
       },
     );
@@ -665,10 +751,10 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(dispatchCalls).toHaveLength(3);
     expect(dispatchCalls[0]?.use_worktree).toBe(false);
     expect(dispatchCalls[0]?.task_class).toBe("TRIVIAL");
-    expect(dispatchCalls[0]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
+    expect(dispatchCalls[0]?.message.startsWith(`cd ${scratchPath}\n\n`)).toBe(true);
     expect(dispatchCalls[2]?.use_worktree).toBe(false);
     expect(dispatchCalls[2]?.task_class).toBe("TRIVIAL");
-    expect(dispatchCalls[2]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
+    expect(dispatchCalls[2]?.message.startsWith(`cd ${scratchPath}\n\n`)).toBe(true);
     await stat(join(result.out_dir, "security.json"));
     await stat(join(result.out_dir, "security.md"));
     await stat(join(result.out_dir, "performance.json"));
@@ -963,6 +1049,66 @@ test("all persona awaits fail: synthesizer is not dispatched and synthesis_path 
   }
 });
 
+test("failed persona chains name their failure reason in the synthesis prompt and artifacts", async () => {
+  const failures: Record<string, string> = {
+    "security-conv": "claude-acp exited 1\n  stderr: authentication expired",
+    "simplicity-conv": "completed_without_final_response",
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ["security", "performance", "simplicity"] },
+    awaitImpl: (conversationId) => {
+      const failureReason = failures[conversationId];
+      if (failureReason !== undefined) {
+        return Promise.resolve({
+          status: "failed" as const,
+          final_agent: null,
+          response_text: null,
+          failure_reason: failureReason,
+        });
+      }
+      return Promise.resolve({
+        status: "completed" as const,
+        final_agent: "agent",
+        response_text:
+          conversationId === "codex-conv"
+            ? WELL_FORMED_SYNTHESIS
+            : `review for ${conversationId}\n\n\`\`\`json\n[]\n\`\`\``,
+      });
+    },
+  });
+  try {
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>)
+      .review_adversarial as Record<string, unknown>;
+    reviewWorkload.eligible_agents = ["security", "performance", "simplicity"];
+    reviewWorkload.fan_out = 3;
+    const result = (await fn(ctx, baseRecall())) as { out_dir: string };
+    const synthMessage = dispatch.mock.calls.find(([input]) => input.agent === "codex")?.[0]
+      .message;
+    expect(synthMessage).toContain(
+      "### security (security)\nDISPATCH FAILED: claude-acp exited 1 stderr: authentication expired",
+    );
+    expect(synthMessage).toContain(
+      "### simplicity (simplicity)\nDISPATCH FAILED: completed_without_final_response",
+    );
+    expect(synthMessage).toContain("### performance (performance)\nreview for performance-conv");
+
+    const security = JSON.parse(
+      await readFile(join(result.out_dir, "security.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(security.error).toBe("claude-acp exited 1 stderr: authentication expired");
+    expect(await readFile(join(result.out_dir, "simplicity.md"), "utf8")).toBe(
+      "<dispatch failed: completed_without_final_response>",
+    );
+    const performance = JSON.parse(
+      await readFile(join(result.out_dir, "performance.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(performance.status).toBe("completed");
+    expect(performance).not.toHaveProperty("error");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("missing review_adversarial workload config returns no_personas_configured", async () => {
   const { ctx, root } = makeCtx();
   try {
@@ -1028,7 +1174,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const withVision = makeCtx();
   try {
-    withVision.ctx.config = configured;
+    withVision.ctx.config = installEnforcingAgents(configured);
     const result = (await fn(withVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1041,7 +1187,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const nonUi = makeCtx();
   try {
-    nonUi.ctx.config = configured;
+    nonUi.ctx.config = installEnforcingAgents(configured);
     const result = (await fn(nonUi.ctx, recallWithDiff(nonUiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1054,12 +1200,12 @@ diff --git a/docs/review.md b/docs/review.md
 
   const withoutVision = makeCtx();
   try {
-    withoutVision.ctx.config = {
+    withoutVision.ctx.config = installEnforcingAgents({
       ...configured,
       personas: Object.fromEntries(
         Object.entries(configured.personas ?? {}).filter(([key]) => key !== "vision_verify"),
       ),
-    };
+    });
     const result = (await fn(withoutVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1086,7 +1232,7 @@ test("optional UI persona dispatch failure does not fail an otherwise successful
     },
   });
   try {
-    ctx.config = configured;
+    ctx.config = installEnforcingAgents(configured);
     const result = (await fn(ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       outcome: string;
@@ -1146,7 +1292,7 @@ workloads:
     },
   });
   try {
-    ctx.config = configured;
+    ctx.config = installEnforcingAgents(configured);
     const result = (await fn(ctx, {
       ...baseRecall(),
       byKey: {
@@ -2255,5 +2401,620 @@ test("non-empty git diff recall does not trip the empty_review_target guard", as
     expect(result.synthesizer_status).toBe("completed");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("content_path error hint advises an explicit cwd, not extending allowed_roots", async () => {
+  const deniedRecall: RecallBundle = {
+    byKey: {
+      "git.diff": "",
+      "git.show": [],
+      "file.contents": {
+        path: "/repo/secret.md",
+        body: null,
+        error: "path_outside_allowed_roots",
+      },
+    },
+    warnings: [],
+    estimatedTokens: 10,
+  };
+  const { ctx, root } = makeCtx({
+    args: { content_path: "/repo/secret.md" },
+  });
+  try {
+    const result = (await fn(ctx, deniedRecall)) as {
+      ok: boolean;
+      error?: string;
+      hint?: string;
+      file_contents_error?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("empty_review_target");
+    expect(result.file_contents_error).toBe("path_outside_allowed_roots");
+    expect(result.hint).toBeDefined();
+    // A workflow_run caller cannot widen the daemon's allowed_roots; the only
+    // actionable advice is an explicit cwd.
+    expect(result.hint).toContain("`cwd`");
+    expect(result.hint).not.toContain("extend allowed_roots");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 20 commits with ~2KB bodies plus 40 added-file sections (~83KB diff): the
+// generic trimmer shrinks the commit bodies to their markers and still keeps
+// the diff whole, so the source cap must not cut it either.
+function makeLongBodyCommitRepo(opts: {
+  commits: number;
+  filesPerCommit: number;
+  linesPerFile: number;
+}): string {
+  const repoDir = makeFixtureRepo();
+  const commitBody = "detail ".repeat(285);
+  for (let i = 0; i < opts.commits; i += 1) {
+    for (let j = 0; j < opts.filesPerCommit; j += 1) {
+      const lines = Array.from(
+        { length: opts.linesPerFile },
+        (_, k) => `f${String(i)}_${String(j)} line ${String(k)} ${"x".repeat(28)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}-${String(j)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", ["-C", repoDir, "add", "-A"]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      `commit ${String(i)}: add files\n\n${commitBody}`,
+    ]);
+  }
+  return repoDir;
+}
+
+async function composeSpecRecall(
+  repoDir: string,
+  args: Record<string, unknown>,
+  budgetTokens?: number,
+): Promise<RecallBundle> {
+  const db = freshDb();
+  try {
+    return await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repoDir,
+      project: "demo",
+      sources: spec.recall,
+      budgetTokens: budgetTokens ?? spec.recall_budget_tokens ?? 24000,
+      templateCtx: {
+        now: () => new Date(),
+        project: "demo",
+        sessionStart: new Date().toISOString(),
+        tz: "UTC",
+        cwd: repoDir,
+        args,
+      },
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function diffSectionCount(diffText: string): number {
+  return diffText.split(/(?=^diff --git )/m).filter((s) => s.startsWith("diff --git")).length;
+}
+
+test("a diff the trimmer could keep whole is never section-capped", async () => {
+  const repoDir = makeLongBodyCommitRepo({ commits: 20, filesPerCommit: 2, linesPerFile: 45 });
+  try {
+    const bundle = await composeSpecRecall(repoDir, {
+      base_ref: "HEAD~20",
+      target_ref: "HEAD",
+    });
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    // Well past the round-1 cap (13400 tokens ~= 53.6K chars): this fixture
+    // proves the cap is sized off the trimmer's real floor, not git.show's
+    // untrimmed worst case.
+    expect(diffText.length).toBeGreaterThan(60000);
+    expect(diffSectionCount(diffText)).toBe(40);
+    expect(diffText).not.toContain("[recall budget: diff truncated to");
+    expect(bundle.warnings.some((w) => w.startsWith("git.diff: recall budget"))).toBe(false);
+    // The commit bodies did get trimmed — the diff surviving them is the point.
+    expect(bundle.warnings.some((w) => w.startsWith("recall budget exceeded: trimmed"))).toBe(true);
+
+    const { ctx, root } = makeCtx({ args: { base_ref: "HEAD~20", target_ref: "HEAD" } });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        diff_truncated?: boolean;
+        synthesizer_status: string | null;
+      };
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.synthesizer_status).toBe("completed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+// 20 body-carrying commits with long subjects plus a far-over-cap diff of
+// mixed section sizes: first-fit packs the capped diff close to the cap, and
+// the commits' post-trim floor grows with subject length. The cap must leave
+// room for that floor or the trimmer drops the capped diff whole.
+test("a capped diff survives 20 long-subject commits instead of becoming empty_review_target", async () => {
+  const repoDir = makeFixtureRepo();
+  const sizes = [45, 3, 1, 20, 7, 2, 33, 1, 12, 5, 1, 26, 4];
+  const body = "detail ".repeat(68);
+  try {
+    for (let i = 0; i < 20; i += 1) {
+      for (const [j, lineCount] of sizes.entries()) {
+        const lines = Array.from(
+          { length: lineCount },
+          (_, k) => `c${String(i)}_${String(j)} line ${String(k)} ${"y".repeat(30)}`,
+        ).join("\n");
+        writeFileSync(join(repoDir, `mixed-${String(i)}-${String(j)}.ts`), `${lines}\n`);
+      }
+      const subject = `commit ${String(i)}: ${"s".repeat(188)}`;
+      execFileSync("git", ["-C", repoDir, "add", "-A"]);
+      execFileSync("git", [
+        "-C",
+        repoDir,
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-q",
+        "-m",
+        `${subject}\n\n${body}`,
+      ]);
+    }
+    const args = { base_ref: "HEAD~20", target_ref: "HEAD" };
+    const bundle = await composeSpecRecall(repoDir, args);
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    expect(diffText).toContain("diff --git ");
+    expect(diffText).toContain("[recall budget: diff truncated to");
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(24000);
+
+    const { ctx, root } = makeCtx({ args });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        error?: string;
+        diff_truncated?: boolean;
+      };
+      expect(result.error).not.toBe("empty_review_target");
+      expect(result.ok).toBe(true);
+      expect(result.diff_truncated).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("an over-cap scratch-repo diff reaches personas as a partial diff, not empty_review_target", async () => {
+  const repoDir = makeFixtureRepo();
+  const db = freshDb();
+  const { ctx, root, dispatch } = makeCtx({
+    args: { base_ref: "HEAD~1", target_ref: "HEAD" },
+  });
+  ctx.cwd = repoDir;
+  try {
+    // ~40 files x ~2.7KB of added lines (~109KB, ~27K tokens) exceeds the
+    // whole 24K-token budget, so the generic trimmer would have dropped the
+    // diff string outright — the source cap is what produces partial coverage.
+    for (let i = 0; i < 40; i += 1) {
+      const lines = Array.from(
+        { length: 60 },
+        (_, j) => `line ${String(j)} ${"x".repeat(32)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "add",
+      "-A",
+    ]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      "big change",
+    ]);
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: repoDir,
+      project: "demo",
+      sources: spec.recall,
+      budgetTokens: spec.recall_budget_tokens ?? 24000,
+      templateCtx: {
+        now: () => new Date(),
+        project: "demo",
+        sessionStart: new Date().toISOString(),
+        tz: "UTC",
+        cwd: repoDir,
+        args: { base_ref: "HEAD~1", target_ref: "HEAD" },
+      },
+    });
+    const diffText = typeof bundle.byKey["git.diff"] === "string" ? bundle.byKey["git.diff"] : "";
+    expect(diffText).toContain("diff --git ");
+    expect(diffText).toContain("[recall budget: diff truncated to");
+    const budgetWarning = bundle.warnings.find((w) => w.startsWith("git.diff: recall budget"));
+    expect(budgetWarning).toBeDefined();
+
+    const result = (await fn(ctx, bundle)) as {
+      ok: boolean;
+      error?: string;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      recall_warnings?: string[];
+      synthesis_path?: string | null;
+    };
+    expect(result.error).toBeUndefined();
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_dropped_files?.length).toBeGreaterThan(0);
+    expect(result.recall_warnings).toContain(budgetWarning);
+    expect(dispatch).toHaveBeenCalled();
+    const synthesisPath = result.synthesis_path;
+    expect(synthesisPath).not.toBeNull();
+    const synthesis = await readFile(synthesisPath ?? "", "utf8");
+    expect(synthesis).toContain(`> Partial diff: ${budgetWarning ?? ""}`);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    db.close();
+  }
+});
+
+// diff_dropped_files comes from the machine-readable stats warning, not the
+// prose sentence — a path containing ", " must survive as one entry, and a
+// dropped list past the 20-name cap sets diff_dropped_more instead of gluing
+// "(+N more)" onto the last name.
+test("dropped-file parsing keeps ', ' paths whole and flags the capped overflow", async () => {
+  const dropped = ["dir/a, b.ts", ...Array.from({ length: 23 }, (_, i) => `f${String(i)}.ts`)];
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff": "diff --git a/keep.ts b/keep.ts\n+partial",
+    },
+    warnings: [
+      `git.diff: recall budget kept 1 of 25 file sections (200 of 90000 chars); dropped 24: dir/a, b.ts, f0.ts (+22 more)`,
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 1,
+        total: 25,
+        chars: 90000,
+        dropped: dropped.slice(0, 20),
+        overflow: 4,
+        cut_file: null,
+        whole_drop: false,
+      })}`,
+    ],
+  };
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      diff_dropped_more?: boolean;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_dropped_files).toEqual(dropped.slice(0, 20));
+    expect(result.diff_dropped_files?.[0]).toBe("dir/a, b.ts");
+    expect(result.diff_dropped_files?.[19]).toBe("f18.ts");
+    expect(result.diff_dropped_more).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A single oversized section cut at a line boundary is partial coverage of a
+// NAMED file — "kept 0 of 1" alone says which only inside the diff body.
+test("a single-section cut names the cut file and stays partial coverage", async () => {
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff":
+        "diff --git a/big.txt b/big.txt\n@@ -1 +1,2 @@\n one\n+partial\n… [recall budget: big.txt cut to 120 of 4400 chars]",
+    },
+    warnings: [
+      "git.diff: recall budget kept 0 of 1 file sections (140 of 4400 chars)",
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 0,
+        total: 1,
+        chars: 4400,
+        dropped: [],
+        overflow: 0,
+        cut_file: "big.txt",
+        whole_drop: false,
+      })}`,
+    ],
+  };
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      diff_truncated?: boolean;
+      diff_dropped_files?: string[];
+      diff_cut_file?: string;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.diff_truncated).toBe(true);
+    expect(result.diff_cut_file).toBe("big.txt");
+    expect(result.diff_dropped_files).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// When the source cap (not the generic trimmer, not bad refs) dropped the
+// whole diff, the empty_review_target hint must say so — the cwd/refs advice
+// is actively misleading for a diff that was simply too large to keep.
+test("cap-dropped whole diff produces a cap-blaming empty_review_target hint", async () => {
+  const recall: RecallBundle = {
+    ...baseRecall(),
+    byKey: {
+      ...baseRecall().byKey,
+      "git.diff": "",
+      "file.contents": { path: "", body: "", truncated: false, byte_size: 0 },
+    },
+    warnings: [
+      "git.diff: recall budget dropped the whole diff (40 file sections, 91010 chars)",
+      `git.diff: truncation_stats=${JSON.stringify({
+        kept: 0,
+        total: 40,
+        chars: 91010,
+        dropped: ["f0.ts"],
+        overflow: 39,
+        cut_file: null,
+        whole_drop: true,
+      })}`,
+    ],
+  };
+  const { ctx, root, dispatch } = makeCtx({
+    args: { base_ref: "main", target_ref: "HEAD" },
+  });
+  try {
+    const result = (await fn(ctx, recall)) as {
+      ok: boolean;
+      error?: string;
+      hint?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("empty_review_target");
+    expect(result.hint ?? "").toMatch(/cap/i);
+    expect(result.hint ?? "").toContain("91010");
+    expect(result.hint ?? "").not.toContain("Pass an explicit");
+    expect(result.hint ?? "").not.toContain("outside the allowed roots");
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Content mode: content_path is the authoritative review target, so the
+// refs-derived git.diff/git.show recall (which renderPersonaPrompt discards
+// anyway) must not consume budget the file body needs.
+test("content mode keeps the whole file body and never recalls the refs diff", async () => {
+  const repoDir = makeFixtureRepo();
+  try {
+    // ~22 added files -> ~46KB diff (~11.6K tokens), under the section cap but
+    // enough to squeeze a 56KB content body (~14K tokens) out of the 24K
+    // budget if the diff is recalled alongside it.
+    for (let i = 0; i < 22; i += 1) {
+      const lines = Array.from(
+        { length: 45 },
+        (_, j) => `f${String(i)} line ${String(j)} ${"x".repeat(28)}`,
+      ).join("\n");
+      writeFileSync(join(repoDir, `file-${String(i)}.ts`), `${lines}\n`);
+    }
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "add",
+      "-A",
+    ]);
+    execFileSync("git", [
+      "-C",
+      repoDir,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=test",
+      "commit",
+      "-q",
+      "-m",
+      "medium change",
+    ]);
+    const contentBody = Array.from(
+      { length: 1200 },
+      (_, i) => `Review paragraph ${String(i)}: prose content under test.`,
+    ).join("\n");
+    expect(contentBody.length).toBeGreaterThan(55000);
+    expect(contentBody.length).toBeLessThan(65536);
+    writeFileSync(join(repoDir, "review-doc.md"), contentBody);
+
+    const bundle = await composeSpecRecall(repoDir, {
+      content_path: "review-doc.md",
+      base_ref: "HEAD~1",
+      target_ref: "HEAD",
+    });
+    expect("git.diff" in bundle.byKey).toBe(false);
+    expect("git.show" in bundle.byKey).toBe(false);
+    const fileContents = bundle.byKey["file.contents"];
+    expect(fileContents && typeof fileContents === "object" && !Array.isArray(fileContents)).toBe(
+      true,
+    );
+    const record = fileContents as { body?: string; truncated?: boolean };
+    expect(record.truncated ?? false).toBe(false);
+    expect(record.body).toBe(contentBody);
+    expect(bundle.warnings.some((w) => w.startsWith("git.diff: recall budget"))).toBe(false);
+
+    const { ctx, root } = makeCtx({
+      args: { content_path: "review-doc.md", base_ref: "HEAD~1", target_ref: "HEAD" },
+    });
+    ctx.cwd = repoDir;
+    try {
+      const result = (await fn(ctx, bundle)) as {
+        ok: boolean;
+        error?: string;
+        diff_truncated?: boolean;
+        synthesizer_status: string | null;
+      };
+      expect(result.ok).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(result.diff_truncated).toBeUndefined();
+      expect(result.synthesizer_status).toBe("completed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("a content body larger than the whole budget is still truncated with its marker", async () => {
+  const repoDir = makeFixtureRepo();
+  try {
+    const contentBody = Array.from(
+      { length: 200 },
+      (_, i) => `Review paragraph ${String(i)}: prose content under test.`,
+    ).join("\n");
+    writeFileSync(join(repoDir, "review-doc.md"), contentBody);
+
+    const bundle = await composeSpecRecall(
+      repoDir,
+      { content_path: "review-doc.md", base_ref: "HEAD~1", target_ref: "HEAD" },
+      400,
+    );
+    const fileContents = bundle.byKey["file.contents"];
+    const record = fileContents as { body?: string; truncated?: boolean };
+    expect(record.truncated).toBe(true);
+    expect(record.body ?? "").toContain("… [recall budget: body truncated to ");
+    expect(bundle.estimatedTokens).toBeLessThanOrEqual(400);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("installEnforcingAgents preserves an explicit enforces_permission_profiles opt-out", () => {
+  // A seat that opts out with [] must stay opted out — otherwise a test can
+  // never express a non-enforcing pin and the fail-closed path is untestable.
+  const configured = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "security",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+  const agents = (
+    configured as unknown as {
+      agents: { name: string; enforces_permission_profiles?: string[] }[];
+    }
+  ).agents;
+  expect(agents.find((a) => a.name === "security")?.enforces_permission_profiles).toEqual([]);
+});
+
+test("a persona pinned to a non-enforcing seat fails with the typed code and never dispatches", async () => {
+  const ctxParts = makeCtx();
+  // config.agents is authoritative when provided: security stays opted out
+  // while the getter appends enforcing entries for the other referenced seats.
+  ctxParts.ctx.config = installEnforcingAgents({
+    ...makeConfig(),
+    agents: [
+      {
+        name: "security",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+
+  const result = (await fn(ctxParts.ctx, baseRecall())) as AdversarialReviewWorkflowResult;
+
+  try {
+    const security = result.personas?.find((p) => p.name === "security");
+    expect(security?.status).toBe("failed");
+    expect(security?.error_code).toBe("persona_seat_cannot_enforce_profile");
+    expect(ctxParts.dispatch.mock.calls.some(([input]) => input.agent === "security")).toBe(false);
+    const securityJson = ctxParts.writes.find((w) => w.path.endsWith("security.json"));
+    expect(securityJson?.body).toContain('"error_code": "persona_seat_cannot_enforce_profile"');
+  } finally {
+    rmSync(ctxParts.root, { recursive: true, force: true });
+  }
+});
+
+test("synthesizer failover pool exhaustion is reported when remaining seats cannot enforce", async () => {
+  const ctxParts = makeCtx({
+    awaitImpl: (conversationId) =>
+      Promise.resolve(
+        conversationId === "synth-a-conv"
+          ? { status: "failed" as const, final_agent: "synth-a", response_text: null }
+          : {
+              status: "completed" as const,
+              final_agent: "agent",
+              response_text: `review for ${conversationId}\n\n\`\`\`json\n[]\n\`\`\``,
+            },
+      ),
+  });
+  const configured = makeConfig();
+  configured.workloads.review_adversarial.synthesizer = ["synth-a", "synth-b"];
+  ctxParts.ctx.config = installEnforcingAgents({
+    ...configured,
+    agents: [
+      { name: "synth-a", roles: ["reviewer"], adapter: "openai-compat-http" },
+      {
+        name: "synth-b",
+        roles: ["reviewer"],
+        adapter: "stdio-acp",
+        enforces_permission_profiles: [],
+      },
+    ],
+  });
+
+  const result = (await fn(ctxParts.ctx, baseRecall())) as AdversarialReviewWorkflowResult;
+
+  try {
+    expect(result.synth_failed).toBe(true);
+    expect(result.synthesizer_status).toBe("failed");
+    expect(result.pool_exhausted).toBe(true);
+    expect(ctxParts.dispatch.mock.calls.some(([input]) => input.agent === "synth-b")).toBe(false);
+  } finally {
+    rmSync(ctxParts.root, { recursive: true, force: true });
   }
 });

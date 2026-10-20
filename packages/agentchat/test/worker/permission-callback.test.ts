@@ -210,3 +210,97 @@ describe("createPermissionCallback (v2 form, with allowlist + daemon)", () => {
     );
   });
 });
+
+describe("createPermissionCallback (permission_profile gate)", () => {
+  function profiledCallback(overrides?: Partial<PermissionCallbackV2Opts>): {
+    cb: ReturnType<typeof createPermissionCallback>;
+    calls: RequestPermissionInput[];
+  } {
+    const calls: RequestPermissionInput[] = [];
+    const cb = createPermissionCallback({
+      trustMode: "all",
+      allowedTools: [],
+      handoffId: "h-profile",
+      conversationId: "c-profile",
+      agentName: "reviewer",
+      ttlSeconds: 300,
+      daemonClient: makeDaemon((input) => {
+        calls.push(input);
+        return Promise.resolve({ decision: "approve", remember: null, reason: null });
+      }),
+      perDispatchAllowlist: new Set<string>(),
+      permissionProfile: "review_readonly",
+      ...overrides,
+    });
+    return { cb, calls };
+  }
+
+  it("denies file writes even under trust_mode='all'", async () => {
+    const { cb, calls } = profiledCallback();
+    for (const toolName of [
+      "fs.write_text_file",
+      "fs.write",
+      "fs.edit",
+      "write_file",
+      "apply_patch",
+    ]) {
+      expect(await cb({ toolName, rawInput: { path: "a.ts" }, dispatchId: "d" })).toBe("reject");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("denies mutating shell commands and allows read-only ones", async () => {
+    const { cb } = profiledCallback();
+    expect(
+      await cb({
+        toolName: "terminal.create",
+        rawInput: { command: "git commit -m x" },
+        dispatchId: "d",
+      }),
+    ).toBe("reject");
+    expect(
+      await cb({
+        toolName: "terminal.create",
+        rawInput: { command: "git status --short" },
+        dispatchId: "d",
+      }),
+    ).toBe("approve");
+  });
+
+  it("denies uninspectable command inputs fail-closed", async () => {
+    const { cb } = profiledCallback();
+    expect(await cb({ toolName: "terminal.create", rawInput: 42, dispatchId: "d" })).toBe("reject");
+  });
+
+  it("still approves non-write tools and read-only MCP calls", async () => {
+    const { cb } = profiledCallback();
+    expect(await cb({ toolName: "fs.read_text_file", rawInput: {}, dispatchId: "d" })).toBe(
+      "approve",
+    );
+    expect(
+      await cb({
+        toolName: "mcp__penumbra__memory.search",
+        rawInput: {},
+        dispatchId: "d",
+      }),
+    ).toBe("approve");
+  });
+
+  it("byte-identical behavior when permissionProfile is omitted", async () => {
+    const cb = createPermissionCallback({
+      trustMode: "all",
+      allowedTools: [],
+      handoffId: "h",
+      conversationId: "c",
+      agentName: "a",
+      ttlSeconds: 300,
+      daemonClient: makeDaemon(() =>
+        Promise.resolve({ decision: "reject", remember: null, reason: null }),
+      ),
+      perDispatchAllowlist: new Set<string>(),
+    });
+    expect(await cb({ toolName: "fs.write_text_file", rawInput: {}, dispatchId: "d" })).toBe(
+      "approve",
+    );
+  });
+});

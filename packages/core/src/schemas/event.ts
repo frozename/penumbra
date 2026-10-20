@@ -19,6 +19,7 @@ export const SourceSchema = z.enum([
   "transcript",
   "sirius-middleware",
   "claude-code",
+  "codex",
   "agentchat",
   "daemon",
 ]);

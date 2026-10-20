@@ -136,6 +136,7 @@ Two more baseline facts worth carrying into the plan: the real test gate is **sh
     - the **real gate commands** and the **verified baseline numbers**;
     - the **registered seat names** it may pin.
       All four come from `bun scripts/plan-context.ts`. None is typed by hand. Require agents to read real source before writing any code step.
+      Author the foundation phase **first** and give every later phase its exported contracts — public modules, types, signatures, ruled-out dependencies. Authors blind to each other invent different APIs; on one run a later phase re-introduced a dependency the foundation had banned. The `plan-author-audit` workflow does this by default (`foundationFirst: false` turns it off) and adds operator-written `contracts` text to every author prompt.
 11. **AUDIT.** One agent over the **assembled** document, not the fragments: validator rules, duplicate or malformed ids, leftover placeholders, cross-phase naming inconsistency, ordering violations, fabricated evidence. Fragment-level review cannot see any of those.
 
 ## Stage 4 — REGISTER + DISPATCH (steps 12-14)

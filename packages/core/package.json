@@ -21,7 +21,7 @@
     "@penumbra/api-contract": "workspace:*",
     "@penumbra/config": "workspace:*",
     "zod": "^4.3.0",
-    "fastembed": "^1.14.1",
+    "fastembed": "1.14.4",
     "pino": "^9.0.0",
     "sqlite-vec": "^0.1.6",
     "yaml": "^2.5.0"

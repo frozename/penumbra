@@ -508,6 +508,155 @@ test("chain.start resolves caller_cwd when project_id is null", async () => {
   });
 });
 
+test("chain.start forwards caller_cwd to the daemon for sandbox deny roots", async () => {
+  const { daemon, startChain } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    project_id: "penumbra",
+    caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+    permission_profile: "review_readonly",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      caller_cwd: "/Volumes/WorkSSD/repos/penumbra",
+      permission_profile: "review_readonly",
+    }),
+  );
+});
+
+test("chain.start forwards caller_cwd alongside resolved project_id", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon, {
+    resolveProjectIdFromPath: () => "llamactl",
+  });
+
+  await handler({
+    initial_agent: "planner",
+    message: "hi",
+    caller_cwd: "/Volumes/WorkSSD/repos/llamactl",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: "llamactl",
+      caller_cwd: "/Volumes/WorkSSD/repos/llamactl",
+    }),
+  );
+});
+
+test("chain.start throws when the daemon does not echo the requested permission_profile", async () => {
+  const { daemon } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: null,
+  });
+  const handler = chainStartHandler(daemon);
+
+  await expectRejectsWith(
+    handler({
+      initial_agent: "reviewer-seat",
+      message: "review",
+      project_id: "penumbra",
+      permission_profile: "review_readonly",
+    }),
+    /permission_profile_echo_mismatch/,
+  );
+});
+
+test("chain.start cancels the created conversation on permission_profile echo mismatch", async () => {
+  const { startChain } = makeStartChain({
+    conversation_id: "conv-echo",
+    handoff_id: "h-echo",
+    permission_profile: null,
+  });
+  const cancelConversation = mock<DaemonClient["cancelConversation"]>(() =>
+    Promise.resolve({ ok: true, changed: true }),
+  );
+  const handler = chainStartHandler(fakeDaemon({ startChain, cancelConversation }));
+
+  await expectRejectsWith(
+    handler({
+      initial_agent: "reviewer-seat",
+      message: "review",
+      project_id: "penumbra",
+      permission_profile: "review_readonly",
+    }),
+    /permission_profile_echo_mismatch[\s\S]*conv-echo[\s\S]*h-echo[\s\S]*cancelled/,
+  );
+  expect(cancelConversation).toHaveBeenCalledWith("conv-echo");
+});
+
+test("chain.start surfaces permission_profile_echo_mismatch even when the cancel call fails", async () => {
+  const { startChain } = makeStartChain({
+    conversation_id: "conv-echo",
+    handoff_id: "h-echo",
+    permission_profile: null,
+  });
+  const cancelConversation = mock<DaemonClient["cancelConversation"]>(() =>
+    Promise.reject(new Error("daemon unreachable")),
+  );
+  const handler = chainStartHandler(fakeDaemon({ startChain, cancelConversation }));
+
+  await expectRejectsWith(
+    handler({
+      initial_agent: "reviewer-seat",
+      message: "review",
+      project_id: "penumbra",
+      permission_profile: "review_readonly",
+    }),
+    /permission_profile_echo_mismatch[\s\S]*cancel failed: daemon unreachable/,
+  );
+});
+
+test("chain.start does not cancel a caller-supplied conversation on echo mismatch", async () => {
+  const { startChain } = makeStartChain({
+    conversation_id: "conv-caller",
+    handoff_id: "h-caller",
+    permission_profile: null,
+  });
+  const cancelConversation = mock<DaemonClient["cancelConversation"]>(() =>
+    Promise.resolve({ ok: true, changed: true }),
+  );
+  const handler = chainStartHandler(fakeDaemon({ startChain, cancelConversation }));
+
+  await expectRejectsWith(
+    handler({
+      initial_agent: "reviewer-seat",
+      message: "review",
+      project_id: "penumbra",
+      permission_profile: "review_readonly",
+      conversation_id: "conv-caller",
+    }),
+    /permission_profile_echo_mismatch[\s\S]*h-caller[\s\S]*not cancelled: caller-supplied conversation/,
+  );
+  expect(cancelConversation).not.toHaveBeenCalled();
+});
+
+test("chain.start accepts a matching permission_profile echo", async () => {
+  const { daemon } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  const res = await handler({
+    initial_agent: "reviewer-seat",
+    message: "review",
+    project_id: "penumbra",
+    permission_profile: "review_readonly",
+  });
+  expect(res.content.length).toBeGreaterThan(0);
+});
+
 test("chain.start re-throws registry_unavailable when cwd resolver cannot load registry", async () => {
   const { daemon, startChain } = makeStartChain();
   const resolver = mock<() => string | undefined>(() => {
@@ -827,4 +976,46 @@ test("chain.start handler forwards isolated_install: false explicitly", async ()
       isolated_install: false,
     }),
   );
+});
+
+test("ChainStartInputShape accepts permission_profile review_readonly", () => {
+  expect(ChainStartInputShape.permission_profile.parse("review_readonly")).toBe("review_readonly");
+  expect(() => ChainStartInputShape.permission_profile.parse("unrestricted")).toThrow();
+  expect(ChainStartInputShape.permission_profile.parse(undefined)).toBeUndefined();
+});
+
+test("chain.start handler forwards permission_profile to daemon.startChain", async () => {
+  const { daemon, startChain } = makeStartChain({
+    conversation_id: "conv-1",
+    handoff_id: "h-1",
+    permission_profile: "review_readonly",
+  });
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "reviewer",
+    message: "review this diff",
+    task_class: "BOUNDARY",
+    permission_profile: "review_readonly",
+  });
+
+  expect(startChain).toHaveBeenCalledWith(
+    expect.objectContaining({
+      permission_profile: "review_readonly",
+    }),
+  );
+});
+
+test("chain.start handler omits permission_profile when unset", async () => {
+  const { daemon, startChain } = makeStartChain();
+  const handler = chainStartHandler(daemon);
+
+  await handler({
+    initial_agent: "reviewer",
+    message: "review this diff",
+    task_class: "BOUNDARY",
+  });
+
+  const body = calls(startChain)[0];
+  expect(body).not.toHaveProperty("permission_profile");
 });

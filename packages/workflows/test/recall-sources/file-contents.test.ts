@@ -82,7 +82,51 @@ test("file.contents marks binary files with placeholder body", async () => {
     expect(out.result.body).toBe("<binary file omitted>");
     expect(out.result.truncated).toBe(false);
     expect(out.result.byte_size).toBe(5);
-    expect(out.warnings).toEqual([]);
+    expect(out.warnings).toEqual([`file.contents: ${absPath} binary content omitted`]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("file.contents treats UTF-16 text as binary instead of escaping dense NULs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const lePath = join(dir, "utf16le.txt");
+  const beBomPath = join(dir, "utf16be-bom.txt");
+  writeFileSync(lePath, Buffer.from("hello world\n", "utf16le"));
+  writeFileSync(beBomPath, Buffer.from([0xfe, 0xff, 0x00, 0x68, 0x00, 0x69, 0x00, 0x0a]));
+  try {
+    const le = await runFileContents({ cwd: dir, args: { path: "utf16le.txt" } });
+    expect(le.result.body).toBe("<binary file omitted>");
+    expect(le.warnings).toEqual([`file.contents: ${lePath} binary content omitted`]);
+
+    const beBom = await runFileContents({ cwd: dir, args: { path: "utf16be-bom.txt" } });
+    expect(beBom.result.body).toBe("<binary file omitted>");
+    expect(beBom.warnings).toEqual([`file.contents: ${beBomPath} binary content omitted`]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("file.contents escapes NUL bytes in UTF-8 text instead of omitting the file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
+  const relPath = "notes.txt";
+  const absPath = join(dir, relPath);
+  writeFileSync(
+    absPath,
+    Buffer.concat([
+      Buffer.from("alpha\nbeta "),
+      Buffer.from([0x00]),
+      Buffer.from("gamma\ndelta "),
+      Buffer.from([0x00]),
+      Buffer.from("end\n"),
+    ]),
+  );
+  try {
+    const out = await runFileContents({ cwd: dir, args: { path: relPath } });
+    expect(out.result.path).toBe(absPath);
+    expect(out.result.body).toBe("alpha\nbeta \\0gamma\ndelta \\0end\n");
+    expect(out.result.truncated).toBe(false);
+    expect(out.warnings).toEqual([`file.contents: ${absPath} 2 NUL bytes escaped`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

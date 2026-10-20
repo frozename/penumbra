@@ -194,10 +194,16 @@ A lane tracks one implementer handoff through review to a landing verdict; the l
 | Tool | Description |
 | --- | --- |
 | `lane_open` | Open a lane for an implementer handoff and task class. |
-| `lane_close` | Close a lane with a reviewer outcome. Pass `reviewer_handoff_id` on passed/failed closes when a reviewer handoff exists (else the memory-verify authorization step is skipped). |
+| `lane_close` | Close an open lane or supersede an orphan-sweeper close once, using the original `lane_id`. Superseding to passed/skipped requires `reviewer_handoff_id` or `override_reason` attesting the real gate evidence; failed/review_debt needs neither. Pass the reviewer when available so passed/failed closes authorize memory verification. Supersede returns the prior close in `superseded` and records an audit trail. A 409 means a real close already exists. |
 | `lane_ledger_recent` | Fetch recent lanes with optional filters. |
 
----
+Orphan lanes receive 120 minutes of grace for TRIVIAL and 1440 minutes for STANDARD/BOUNDARY, measured from the later of handoff resolution and lane opening. Configure `PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES` and `PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES`; restart the source-run daemon to activate changes. No dist rebuild or worker/MCP restart is required.
+
+Recover a swept lane by superseding its original `lane_id`, rather than opening a replacement lane. A replacement close cannot lift sticky `agent_performance.gate_outcome='review_debt'`. Supersede advances `ts_closed`, making the reviewed verdict the latest closed lane that landing and later reconciler/worker captures read. Never-superseded sweep closes do not consume the review round cap; real closes and superseded verdicts do.
+
+The response replaces sweep metadata with supplied metadata and a supersede note, and preserves the prior verdict/time on-row plus the complete prior close in the response and `lane.override` audit event. A console close submitted after an intervening sweep can now return 200 with `superseded`; passed/skipped still requires review evidence. Console recovery for already-listed closed lanes remains a follow-up.
+
+Deferred: `lane_touch` plus `gate_hold_until` could expose reviewer liveness to the sweeper. It requires a separate schema/tool design and is not part of supersede. Historic debt and replacement-lane repairs remain a separate operator-approved action after activation.
 
 ## Worktree
 

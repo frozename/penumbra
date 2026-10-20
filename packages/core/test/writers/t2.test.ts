@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { TestEmbedder } from "@src/testing/index.js";
 import {
+  readT2EmptyExtractionStreak,
   type T2MemoryExtraction,
   T2Promotion,
   verifyMemory,
@@ -929,6 +930,156 @@ test("writeDirectT2Memory rolls back t2_vec DELETE on slug-UPDATE when re-INSERT
     .query<{ body: string }, [string]>("SELECT body FROM t2_memories WHERE memory_id = ?")
     .get(first.memory_id);
   expect(bodyRow?.body).toBe("Initial body");
+});
+
+test("promoteRollup propagates a throwing judge as a failed attempt, not a stamp", async () => {
+  seedT1("r-judge-throw", "s-judge-throw", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.reject(new Error("judge exploded")),
+    minTranscriptChars: 0,
+  });
+
+  let caught: unknown;
+  try {
+    await prom.promoteRollup("r-judge-throw");
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as Error).message).toContain("judge exploded");
+
+  const rollup = db
+    .query<
+      { t2_promoted_at: string | null; failed_promotion_attempts: number },
+      []
+    >('SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id = "r-judge-throw"')
+    .get();
+  expect(rollup?.t2_promoted_at).toBeNull();
+  expect(rollup?.failed_promotion_attempts).toBe(1);
+});
+
+test("promoteRollup stamps a judge-reached empty result and counts the empty streak", async () => {
+  seedT1("r-empty-judge", "s-empty-judge", "2026-04-27T10:05:00Z");
+
+  const infos: string[] = [];
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
+    log: {
+      info: (...a: unknown[]): void => {
+        infos.push(a.map((arg) => JSON.stringify(arg)).join(" "));
+      },
+    },
+    minTranscriptChars: 0,
+  });
+  const count = await prom.promoteRollup("r-empty-judge");
+  expect(count).toBe(0);
+
+  const rollup = db
+    .query<
+      { t2_promoted_at: string | null },
+      []
+    >('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r-empty-judge"')
+    .get();
+  expect(rollup?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
+
+  expect(readT2EmptyExtractionStreak(db)).toBe(1);
+
+  const combined = infos.join("\n");
+  expect(combined).toContain("r-empty-judge");
+  expect(combined).toContain("transcriptChars");
+  expect(combined).not.toContain("Penumbra");
+});
+
+test("promoteRollup accumulates the empty streak across consecutive judge-reached empties", async () => {
+  seedT1("r-streak-1", "s-streak-1", "2026-04-27T10:05:00Z");
+  seedT1("r-streak-2", "s-streak-2", "2026-04-27T10:05:00Z");
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
+    minTranscriptChars: 0,
+  });
+
+  await prom.promoteRollup("r-streak-1");
+  await prom.promoteRollup("r-streak-2");
+
+  expect(readT2EmptyExtractionStreak(db)).toBe(2);
+});
+
+test("promoteRollup resets the empty streak when an extraction yields rows", async () => {
+  seedT1("r-reset-empty", "s-reset-empty", "2026-04-27T10:05:00Z");
+  seedT1("r-reset-rows", "s-reset-rows", "2026-04-27T10:05:00Z");
+
+  const emptyProm = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u-empty",
+    llm: (): Promise<T2MemoryExtraction[]> => Promise.resolve([]),
+    minTranscriptChars: 0,
+  });
+  await emptyProm.promoteRollup("r-reset-empty");
+  await emptyProm.promoteRollup("r-reset-empty");
+  await emptyProm.promoteRollup("r-reset-empty");
+
+  expect(readT2EmptyExtractionStreak(db)).toBe(3);
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u-rows",
+    llm: (): Promise<T2MemoryExtraction[]> =>
+      Promise.resolve([{ title: "T", body: "B", kind: "fact" }]),
+    minTranscriptChars: 0,
+  });
+  const count = await prom.promoteRollup("r-reset-rows");
+  expect(count).toBe(1);
+
+  expect(readT2EmptyExtractionStreak(db)).toBe(0);
+});
+
+test("promoteRollup stamps a short transcript without calling the judge or touching the streak", async () => {
+  seedT1("r-short", "s-short", "2026-04-27T10:05:00Z");
+
+  let called = 0;
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: (): Date => new Date("2026-04-27T15:00:00Z"),
+    uuid: (): string => "u",
+    llm: (): Promise<T2MemoryExtraction[]> => {
+      called++;
+      return Promise.resolve([]);
+    },
+    minTranscriptChars: 100_000,
+  });
+
+  const count = await prom.promoteRollup("r-short");
+  expect(count).toBe(0);
+  expect(called).toBe(0);
+
+  const rollup = db
+    .query<
+      { t2_promoted_at: string | null },
+      []
+    >('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = "r-short"')
+    .get();
+  expect(rollup?.t2_promoted_at).toBe("2026-04-27T15:00:00.000Z");
+
+  expect(readT2EmptyExtractionStreak(db)).toBe(0);
 });
 
 test("writeDirectT2Memory persists durability/is_episodic and defaults omitted values", () => {

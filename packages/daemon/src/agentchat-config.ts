@@ -57,6 +57,7 @@ export function loadAgentRoutingFromConfig(cfg: AgentChatConfig): AgentRoutingCo
       api_provider: agent.api_provider,
       pricing_mode: agent.pricing_mode,
       adapter: agent.adapter,
+      enforces_permission_profiles: agent.enforces_permission_profiles,
     })),
     default_roles: cfg.default_roles,
     role_exploration_policy: cfg.role_routing?.exploration_policy ?? "unsampled-first",

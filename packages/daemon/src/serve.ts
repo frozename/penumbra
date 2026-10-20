@@ -344,6 +344,12 @@ export interface ServeOpts {
   token: string;
   port: number;
   hostname?: string;
+  /**
+   * Opt-in crash-recovery sweep for daemon-owned scratch worktrees. Off by
+   * default so embedded/test daemons never reap a production daemon's
+   * scratches — only `penumbra start` passes this.
+   */
+  bootScratchSweep?: boolean;
   /** Called after supervisor and HTTP server are stopped. Use to release resources (e.g. db.close()). */
   onStop?: () => void;
 }
@@ -919,8 +925,9 @@ const ROUTES: Route[] = [
   ),
   staticRoute("POST", "/worker/heartbeat", (req, ctx) => workerHeartbeatRoute(req, ctx.services)),
   staticRoute("POST", "/worker/reconcile-orphans", (req, ctx) => {
-    if (!ctx.orphanHandoffRecovery) return jsonError("recovery_service_unavailable", 503);
-    return workerReconcileOrphansRoute(req, ctx.services, ctx.orphanHandoffRecovery);
+    const recovery = ctx.orphanHandoffRecovery ?? ctx.daemonServices.orphanHandoffRecovery;
+    if (!recovery) return jsonError("recovery_service_unavailable", 503);
+    return workerReconcileOrphansRoute(req, ctx.services, recovery);
   }),
   staticRoute("POST", "/worker/probe-ack", (req, ctx) => {
     if (!ctx.workerHealthProbe) return jsonError("worker_health_probe_unavailable", 503);
@@ -1478,6 +1485,7 @@ interface HttpServerHandle {
 
 function startHttpServer(args: {
   opts: ServeOpts;
+  orphanHandoffRecovery: OrphanHandoffRecoveryService;
   taskEvents: TaskEventBus;
   taskWriter: TaskWriter;
   ghTaskSyncService: GhTaskSyncService;
@@ -1488,6 +1496,7 @@ function startHttpServer(args: {
 }): HttpServerHandle {
   const {
     opts,
+    orphanHandoffRecovery,
     taskEvents,
     taskWriter,
     ghTaskSyncService,
@@ -1500,6 +1509,7 @@ function startHttpServer(args: {
   const fetchHandler = createDaemonFetchHandler({
     services: opts.services,
     token: opts.token,
+    orphanHandoffRecovery,
     taskEvents,
     taskWriter,
     ghTaskSyncService,
@@ -1882,6 +1892,25 @@ function setupRecoverySweepers(args: {
     services: opts.services,
     log: opts.services.log,
   });
+  // Crash recovery: a daemon that died mid-run leaves .scratch-* dirs whose
+  // owning run can never release them — reap anything not in the (empty at
+  // boot) live set; GC ticks keep reaping thereafter. Opt-in only: a second
+  // daemon instance must never sweep a production daemon's live scratches.
+  if (opts.bootScratchSweep === true) {
+    void opts.services.scratchWorktrees
+      .sweepOrphans()
+      .then((result) => {
+        if (result.reaped.length > 0 || result.deferred.length > 0) {
+          opts.services.log.info(
+            { reaped: result.reaped.length, deferred: result.deferred.length },
+            "boot scratch-worktree sweep complete",
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        opts.services.log.warn({ err: String(err) }, "boot scratch-worktree sweep failed");
+      });
+  }
   const stopStaleWorkerTokensSweeper = startStaleWorkerTokensSweeper({
     db: opts.services.db,
     log: opts.services.log,
@@ -2509,6 +2538,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const dreamingStops = setupDreamingCron(opts.services, runtimeDreamConfig);
   const { server, port } = startHttpServer({
     opts,
+    orphanHandoffRecovery: recovery.orphanHandoffRecovery,
     taskEvents: collaborators.taskEvents,
     taskWriter: collaborators.taskWriter,
     ghTaskSyncService: collaborators.ghTaskSyncService,

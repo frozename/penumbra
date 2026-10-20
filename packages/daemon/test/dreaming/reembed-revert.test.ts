@@ -1,11 +1,20 @@
-import { applySchema, loadSqliteVec } from "@penumbra/core";
+import { applySchema, loadSqliteVec, T2Promotion } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
+import type { DreamConfig } from "@src/dreaming/config.js";
+import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { revertDreamAction } from "@src/dreaming/reembed.js";
 
 interface RollupPromotedRow {
   t2_promoted_at: string | null;
+}
+
+interface RollupClaimRow {
+  t2_promoted_at: string | null;
+  promotion_filtered_at: string | null;
+  claimed_by_cycle: string | null;
 }
 
 interface MemoryRetiredRow {
@@ -108,6 +117,108 @@ function getRevertedBy(db: Database, actionId: string): ActionRevertedRow {
     .get(actionId) as ActionRevertedRow;
 }
 
+// File-local typed factory for DreamConfig stubs: runDreamCycle consumes only a
+// small subset (spend caps, p1BatchSize, autoPromoteMinJudges, skipPhases), so
+// hand-stubbing every env-derived field would dwarf the test bodies. ONE
+// documented `as unknown as` per the strict-bar helper rule.
+function makeCycleConfig(extra: Partial<DreamConfig> = {}): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 1.0,
+    dailyUsd: 100.0,
+    curatorEnabled: false,
+    pressureGuardEnabled: false,
+    perCycleEmbeddingUsd: 0.1,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    autoPromoteMinJudges: 1,
+    reembedBatchSize: 100,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "http://127.0.0.1:7944",
+    rewriterModel: "stub-model",
+    rewriterTimeoutMs: 5000,
+    rewriterCacheTtlMs: 30 * 24 * 60 * 60 * 1000,
+    rewriterConcurrency: 4,
+    skipPhases: new Set<string>(),
+    ...extra,
+  } as unknown as DreamConfig;
+}
+
+// P7 is env-gated; a stray PENUMBRA_T2_REEMBED_ENABLED would let the cycle
+// re-embed the seeded memory and add noise rows under the assertions.
+async function withReembedDisabled<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.PENUMBRA_T2_REEMBED_ENABLED;
+  delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.PENUMBRA_T2_REEMBED_ENABLED;
+    else process.env.PENUMBRA_T2_REEMBED_ENABLED = prev;
+  }
+}
+
+const PROMOTABLE_EXCERPT =
+  "durable decision about rollout ordering and dispatch backoff policy for handoffs";
+
+function seedPromotedRollup(
+  db: Database,
+  opts: { rollupId: string; t2MemoryId: string; actionId: string },
+): void {
+  db.prepare(
+    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, ended_at, n_events, first_prompt_excerpt, t2_promoted_at)
+     VALUES(?, 'system', ?, '2026-01-01T00:00:00.000Z', '2026-01-01T01:00:00.000Z', 6, ?, ?)`,
+  ).run(opts.rollupId, crypto.randomUUID(), PROMOTABLE_EXCERPT, new Date().toISOString());
+  seedMemory(db, { memory_id: opts.t2MemoryId });
+  seedAction(db, {
+    action_id: opts.actionId,
+    phase: "P1",
+    action_type: "promote_t1",
+    status: "auto_applied",
+    target_ids: [opts.rollupId],
+    payload: { t2_memory_id: opts.t2MemoryId, votes: [] },
+  });
+}
+
+function getRollupClaimRow(db: Database, rollupId: string): RollupClaimRow {
+  return db
+    .prepare(
+      "SELECT t2_promoted_at, promotion_filtered_at, claimed_by_cycle FROM t1_rollups WHERE rollup_id = ?",
+    )
+    .get(rollupId) as RollupClaimRow;
+}
+
+function countPromoteActions(db: Database, rollupId: string): number {
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM dream_actions
+         WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?`,
+      )
+      .get(JSON.stringify([rollupId])) as { n: number }
+  ).n;
+}
+
+function makeT2Promotion(db: Database): T2Promotion {
+  return new T2Promotion({
+    db,
+    embedder: { name: "stub", dim: 384, embed: () => Promise.resolve([]) },
+    clock: () => new Date(),
+    uuid: () => crypto.randomUUID(),
+    llm: () => Promise.resolve([]),
+  });
+}
+
+function runPromoteVotingCycle(db: Database): Promise<string> {
+  return withReembedDisabled(() =>
+    runDreamCycle(db, makeCycleConfig(), {
+      judgePool: makeFakeJudgePool([{ promote: true, confidence: 0.9 }]),
+      onReembed: () => Promise.resolve(new Float32Array(384).fill(0.01)),
+    }),
+  );
+}
+
 describe("revertDreamAction — per-phase compensation", () => {
   let db: Database;
 
@@ -196,6 +307,96 @@ describe("revertDreamAction — per-phase compensation", () => {
     expect(() => {
       revertDreamAction(db, "p1-action-missing", "none");
     }).toThrow("p1_revert_missing_t2_memory_id");
+  });
+
+  it("P1 revert: stamps promotion_filtered_at on the rollup", () => {
+    const rollupId = crypto.randomUUID();
+    const t2MemoryId = crypto.randomUUID();
+
+    seedPromotedRollup(db, { rollupId, t2MemoryId, actionId: "p1-action-filtered" });
+
+    revertDreamAction(db, "p1-action-filtered", "none");
+
+    const rollup = getRollupClaimRow(db, rollupId);
+    expect(rollup.t2_promoted_at).toBeNull();
+    // Same ISO-8601 format cycle.ts writes for judged-NO rollups.
+    expect(rollup.promotion_filtered_at).not.toBeNull();
+    expect(Number.isNaN(Date.parse(rollup.promotion_filtered_at!))).toBe(false);
+
+    const mem = getRetired(db, t2MemoryId);
+    expect(mem.retired_at).not.toBeNull();
+
+    const action = getRevertedBy(db, "p1-action-filtered");
+    expect(action.reverted_by).toBe("user");
+  });
+
+  it("P1 revert: the next dream cycle cannot re-claim or re-mint the rollup", async () => {
+    const rollupId = crypto.randomUUID();
+    const t2MemoryId = crypto.randomUUID();
+
+    seedPromotedRollup(db, { rollupId, t2MemoryId, actionId: "p1-action-reclaim" });
+    revertDreamAction(db, "p1-action-reclaim", "none");
+
+    const cycleId = await runPromoteVotingCycle(db);
+
+    const cycle = db
+      .prepare("SELECT outcome FROM dream_cycles WHERE cycle_id = ?")
+      .get(cycleId) as { outcome: string };
+    expect(cycle.outcome).toBe("completed");
+
+    const rollup = getRollupClaimRow(db, rollupId);
+    expect(rollup.claimed_by_cycle).toBeNull();
+    expect(rollup.t2_promoted_at).toBeNull();
+    expect(countPromoteActions(db, rollupId)).toBe(1);
+
+    const memoryCount = db.prepare("SELECT COUNT(*) AS n FROM t2_memories").get() as { n: number };
+    expect(memoryCount.n).toBe(1);
+
+    // The T2-extraction claim path filters on the same column.
+    expect(makeT2Promotion(db).detectEligibleRollups(1, new Date())).not.toContain(rollupId);
+  });
+
+  it("P1 revert: resetPromotionFilter re-arms the rollup for the next cycle", async () => {
+    const rollupId = crypto.randomUUID();
+    const t2MemoryId = crypto.randomUUID();
+
+    seedPromotedRollup(db, { rollupId, t2MemoryId, actionId: "p1-action-rearm" });
+    revertDreamAction(db, "p1-action-rearm", "none");
+
+    makeT2Promotion(db).resetPromotionFilter(rollupId);
+    expect(makeT2Promotion(db).detectEligibleRollups(1, new Date())).toContain(rollupId);
+
+    const cycleId = await runPromoteVotingCycle(db);
+
+    const cycle = db
+      .prepare("SELECT outcome FROM dream_cycles WHERE cycle_id = ?")
+      .get(cycleId) as { outcome: string };
+    expect(cycle.outcome).toBe("completed");
+
+    const rollup = getRollupClaimRow(db, rollupId);
+    expect(rollup.claimed_by_cycle).toBe(cycleId);
+    expect(rollup.t2_promoted_at).not.toBeNull();
+
+    const actions = db
+      .prepare(
+        `SELECT action_id, status, reverted_by FROM dream_actions
+         WHERE phase='P1' AND action_type='promote_t1' AND target_ids=?
+         ORDER BY rowid`,
+      )
+      .all(JSON.stringify([rollupId])) as {
+      action_id: string;
+      status: string;
+      reverted_by: string | null;
+    }[];
+    expect(actions).toHaveLength(2);
+    const rePromote = actions.find((a) => a.action_id !== "p1-action-rearm");
+    expect(rePromote?.status).toBe("auto_applied");
+    expect(rePromote?.reverted_by).toBeNull();
+
+    const liveMemoryCount = db
+      .prepare("SELECT COUNT(*) AS n FROM t2_memories WHERE retired_at IS NULL")
+      .get() as { n: number };
+    expect(liveMemoryCount.n).toBe(1);
   });
 
   // ── P2 ──────────────────────────────────────────────────────────────────

@@ -2,12 +2,14 @@ import "../setup";
 import type { ReactNode } from "react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
-import { expect, mock, test } from "bun:test";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { afterEach, expect, mock, test } from "bun:test";
 
 import { createStreamBroker } from "@src/api/streams";
 import { useLiveQuery } from "@src/hooks/useLiveQuery";
 import { useUIStore } from "@src/stores/ui-store";
+
+afterEach(cleanup);
 
 test("conversation changes detach callbacks, preserve peers and linger, and use the latest query key", () => {
   let now = 0;

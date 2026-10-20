@@ -61,6 +61,11 @@ describe("createWorkerShutdown", () => {
           calls.push("permissionDaemonClient.stop");
         }),
       },
+      terminalOutbox: {
+        stop: mock((): void => {
+          calls.push("terminalOutbox.stop");
+        }),
+      },
       dispatcher: {
         stop: mock((): void => {
           calls.push("dispatcher.stop");
@@ -93,6 +98,7 @@ describe("createWorkerShutdown", () => {
       "shutdownAllAcpWarmPools",
       "eventSource.stop",
       "permissionDaemonClient.stop",
+      "terminalOutbox.stop",
       "dispatcher.stop",
       "dispatcher.idle",
       "heartbeatLoop.stop",

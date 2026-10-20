@@ -14,6 +14,7 @@ import {
   executeWorkflow,
   type TemplateVarContext,
 } from "@src/index.js";
+import { emitNextSessionPromptOutput } from "@src/outputs/index.js";
 
 try {
   if (process.platform === "darwin") {
@@ -44,7 +45,8 @@ async function renderPrime(
   opts: {
     now?: Date;
     sessionStart?: string;
-    setupStorageRoot?: (root: string) => void;
+    project?: string;
+    setupStorageRoot?: (root: string) => void | Promise<void>;
   } = {},
 ): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), "mcp-int-"));
@@ -53,7 +55,7 @@ async function renderPrime(
     "../../../../plugin/playbooks/maestro-context-prime/playbook.md",
   );
   try {
-    opts.setupStorageRoot?.(root);
+    await opts.setupStorageRoot?.(root);
     const pbDir = join(root, "playbooks/maestro-context-prime");
     mkdirSync(pbDir, { recursive: true });
     writeFileSync(join(pbDir, "playbook.md"), readFileSync(playbookSrc, "utf8"));
@@ -71,7 +73,7 @@ async function renderPrime(
     migrate(db, { embeddingDim: 384 });
     const templateCtx: TemplateVarContext = {
       now: () => opts.now ?? new Date("2026-05-05T08:00:00Z"),
-      project: "penumbra",
+      project: opts.project ?? "penumbra",
       sessionStart: opts.sessionStart ?? "2026-05-05T07:00:00Z",
       tz: "UTC",
       repoRoot: repo,
@@ -83,8 +85,9 @@ async function renderPrime(
         embedder: new TestEmbedder({ dim: 384 }),
         cwd: repo,
         storageRoot: root,
-        project: "penumbra",
+        project: templateCtx.project,
         sources: spec.recall,
+        now: templateCtx.now,
         budgetTokens: spec.recall_budget_tokens,
         templateCtx,
       });
@@ -152,8 +155,14 @@ test("real playbook budget keeps the continuation note and first-moves payload",
     const body = await renderPrime(repo, {
       now: new Date("2026-05-05T08:00:00Z"),
       sessionStart: "2026-05-05T07:00:00Z",
-      setupStorageRoot: (root) => {
-        writeFileSync(join(root, "pending-handoff.md"), "PENDING_START\n" + "p".repeat(33_000));
+      setupStorageRoot: async (root) => {
+        await emitNextSessionPromptOutput({
+          body: "PENDING_START\n" + "p".repeat(33_000),
+          storageRoot: root,
+          workflowName: "session-handoff-stop",
+          project: "penumbra",
+          now: () => new Date("2026-05-05T07:30:00Z"),
+        });
       },
     });
 
@@ -175,6 +184,42 @@ test("renders a 'no continuation note found' marker, not a crash, on an empty do
     const body = await renderPrime(repo);
 
     expect(body).toContain("no continuation note found");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("boot context carries only the current project's pending handoff, never a foreign or unfenced head", async () => {
+  const repo = seedRepo();
+  const now = new Date("2026-09-21T16:00:00Z");
+  const setupStorageRoot = async (root: string): Promise<void> => {
+    writeFileSync(
+      join(root, "pending-handoff.md"),
+      "# PENUMBRA continuation 2026-09-09\n## First moves\n1. FOREIGN_BOUNCE_THE_DAEMON\n",
+    );
+    for (const [project, body] of [
+      ["penumbra", "PENUMBRA_CHECKPOINT"],
+      ["geo-eval", "GEO_EVAL_CHECKPOINT"],
+    ] as const) {
+      await emitNextSessionPromptOutput({
+        body,
+        storageRoot: root,
+        workflowName: "session-handoff-stop",
+        project,
+        now: () => now,
+      });
+    }
+  };
+  try {
+    const geo = await renderPrime(repo, { now, project: "geo-eval", setupStorageRoot });
+    const penumbra = await renderPrime(repo, { now, project: "penumbra", setupStorageRoot });
+
+    expect(geo).toContain("GEO_EVAL_CHECKPOINT");
+    expect(geo).not.toContain("PENUMBRA_CHECKPOINT");
+    expect(geo).not.toContain("FOREIGN_BOUNCE_THE_DAEMON");
+    expect(penumbra).toContain("PENUMBRA_CHECKPOINT");
+    expect(penumbra).not.toContain("GEO_EVAL_CHECKPOINT");
+    expect(penumbra).not.toContain("FOREIGN_BOUNCE_THE_DAEMON");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

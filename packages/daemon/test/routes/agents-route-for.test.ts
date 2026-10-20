@@ -1,4 +1,4 @@
-import { loadSqliteVec, migrate } from "@penumbra/core";
+import { loadSqliteVec, migrate, readSubscriptionPressure } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
@@ -76,6 +76,50 @@ describe("computeRouteForRole", () => {
     makeRows("low", preCutover(3), 8, 3);
     makeRows("tiny", preCutover(4), 2, 2);
     makeRows("outsider", preCutover(5), 12, 8);
+  });
+
+  test("ignores stale pressure from the reader while retaining fresh pressure for other model groups", () => {
+    db.run(
+      `INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, payload_json)
+      VALUES ('stale', '2026-09-14T21:28:11Z', '2026-09-14T21:28:11Z', 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', 'openai', ?)`,
+      [
+        JSON.stringify({
+          window_label: "secondary",
+          model: "codex",
+          used_pct: 98,
+          resets_at: null,
+          source_kind: "local-state-codex-rollout",
+        }),
+      ],
+    );
+    const pressureSnapshot = readSubscriptionPressure(db, {
+      now: () => new Date("2026-10-01T12:00:00Z"),
+    });
+    const input = {
+      db,
+      role: "reviewer",
+      windowDays: 365,
+      minSamples: 3,
+      pressureSnapshot,
+      agentchatRoles: {
+        agents: [{ name: "high-perf", roles: ["reviewer"], subscription_provider: "openai" }],
+      },
+    };
+    const out = computeRouteForRole(input);
+    expect(out.chosen?.agent).toBe("high-perf");
+    expect(out.rejected).toEqual([]);
+    pressureSnapshot.snapshots.push({
+      provider: "openai",
+      window_label: "secondary",
+      model: null,
+      used_pct: 98,
+      resets_at: null,
+      observed_at: "2026-10-01T12:00:00Z",
+      source_kind: "local-state-codex-rollout",
+    });
+    expect(computeRouteForRole(input).rejected).toEqual([
+      { agent: "high-perf", reason: "under_pressure", details: "openai" },
+    ]);
   });
 
   test("routes to the best eligible agent and explains rejections", () => {

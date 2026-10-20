@@ -1,7 +1,7 @@
 {
   "releaseReferences": {
     "hooks": "https://learn.chatgpt.com/docs/hooks",
-    "cliHelp": "codex-cli 0.153.4 --version observed 2026-09-10"
+    "cliHelp": "codex-cli 0.153.4 --version observed 2026-09-12"
   },
   "report": {
     "surface": "cli",
@@ -60,16 +60,31 @@
           "surface": "cli",
           "build": "0.153.4",
           "capability": "SessionStart",
-          "state": "unknown",
+          "state": "supported",
           "evidence": {
-            "kind": "contract",
+            "kind": "live",
             "surface": "cli",
             "source": "isolated-codex-capability-probe",
-            "observedAt": "2026-09-10T15:20:33.260Z",
-            "probeId": null
+            "observedAt": "2026-09-12T18:43:45.036Z",
+            "probeId": "isolated-cli-SessionStart-startup"
+          },
+          "input": {
+            "session_id": "cli-hook-probe-session",
+            "transcript_path": "/fixture/penumbra-codex-hook-probe/rollout.jsonl",
+            "cwd": "/fixture/penumbra-codex-hook-probe",
+            "hook_event_name": "SessionStart",
+            "model": "gpt-6-astra",
+            "permission_mode": "bypassPermissions",
+            "source": "startup"
+          },
+          "identity": {
+            "role": "root",
+            "sessionId": "cli-hook-probe-session",
+            "projectCwd": "/fixture/penumbra-codex-hook-probe",
+            "agentId": null
           }
         },
-        "reason": "probe_timeout",
+        "reason": null,
         "scenario": "startup"
       },
       {
@@ -128,16 +143,36 @@
           "surface": "cli",
           "build": "0.153.4",
           "capability": "PreToolUse",
-          "state": "unknown",
+          "state": "supported",
           "evidence": {
-            "kind": "contract",
+            "kind": "live",
             "surface": "cli",
             "source": "isolated-codex-capability-probe",
-            "observedAt": "2026-09-10T15:20:33.260Z",
-            "probeId": null
+            "observedAt": "2026-09-12T18:43:48.231Z",
+            "probeId": "isolated-cli-PreToolUse-bash"
+          },
+          "input": {
+            "session_id": "cli-hook-probe-session",
+            "turn_id": "cli-hook-probe-turn",
+            "transcript_path": "/fixture/penumbra-codex-hook-probe/rollout.jsonl",
+            "cwd": "/fixture/penumbra-codex-hook-probe",
+            "hook_event_name": "PreToolUse",
+            "model": "gpt-6-astra",
+            "permission_mode": "bypassPermissions",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "pwd"
+            },
+            "tool_use_id": "cli-hook-probe-tool"
+          },
+          "identity": {
+            "role": "root",
+            "sessionId": "cli-hook-probe-session",
+            "projectCwd": "/fixture/penumbra-codex-hook-probe",
+            "agentId": null
           }
         },
-        "reason": "probe_timeout",
+        "reason": null,
         "scenario": "bash"
       },
       {
@@ -195,6 +230,44 @@
         "fixture": {
           "surface": "cli",
           "build": "0.153.4",
+          "capability": "PostToolUse",
+          "state": "supported",
+          "evidence": {
+            "kind": "live",
+            "surface": "cli",
+            "source": "isolated-codex-capability-probe",
+            "observedAt": "2026-09-12T18:43:48.274Z",
+            "probeId": "isolated-cli-PostToolUse-bash"
+          },
+          "input": {
+            "session_id": "cli-hook-probe-session",
+            "turn_id": "cli-hook-probe-turn",
+            "transcript_path": "/fixture/penumbra-codex-hook-probe/rollout.jsonl",
+            "cwd": "/fixture/penumbra-codex-hook-probe",
+            "hook_event_name": "PostToolUse",
+            "model": "gpt-6-astra",
+            "permission_mode": "bypassPermissions",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "pwd"
+            },
+            "tool_response": "/fixture/penumbra-codex-hook-probe\n",
+            "tool_use_id": "cli-hook-probe-tool"
+          },
+          "identity": {
+            "role": "root",
+            "sessionId": "cli-hook-probe-session",
+            "projectCwd": "/fixture/penumbra-codex-hook-probe",
+            "agentId": null
+          }
+        },
+        "reason": null,
+        "scenario": "bash"
+      },
+      {
+        "fixture": {
+          "surface": "cli",
+          "build": "0.153.4",
           "capability": "PreCompact",
           "state": "unknown",
           "evidence": {
@@ -213,16 +286,33 @@
           "surface": "cli",
           "build": "0.153.4",
           "capability": "Stop",
-          "state": "unknown",
+          "state": "supported",
           "evidence": {
-            "kind": "contract",
+            "kind": "live",
             "surface": "cli",
             "source": "isolated-codex-capability-probe",
-            "observedAt": "2026-09-10T15:20:33.260Z",
-            "probeId": null
+            "observedAt": "2026-09-12T18:43:50.763Z",
+            "probeId": "isolated-cli-Stop-stop"
+          },
+          "input": {
+            "session_id": "cli-hook-probe-session",
+            "turn_id": "cli-hook-probe-turn",
+            "transcript_path": "/fixture/penumbra-codex-hook-probe/rollout.jsonl",
+            "cwd": "/fixture/penumbra-codex-hook-probe",
+            "hook_event_name": "Stop",
+            "model": "gpt-6-astra",
+            "permission_mode": "bypassPermissions",
+            "stop_hook_active": false,
+            "last_assistant_message": "PENUMBRA_HOOK_PROBE_OK"
+          },
+          "identity": {
+            "role": "root",
+            "sessionId": "cli-hook-probe-session",
+            "projectCwd": "/fixture/penumbra-codex-hook-probe",
+            "agentId": null
           }
         },
-        "reason": "probe_timeout",
+        "reason": null,
         "scenario": "stop"
       },
       {
@@ -278,5 +368,58 @@
       }
     ],
     "cleanupComplete": true
+  },
+  "qualificationProvenance": {
+    "source": "manual-authenticated-continuation",
+    "note": "This evidence is a supplied, manually authenticated continuation of an isolated CLI capability probe. The assistant did not rerun the probe; tests are executed fresh against the committed fixture.",
+    "runSessionId": "01a096ee-bdf5-76a0-ae64-03ccd3b15632",
+    "build": "0.153.4",
+    "sourceFiles": [
+      {
+        "file": "event-0.json",
+        "sha256": "72f9dc40511239f46b029f0d8fe179c010f5006d378930a7360901e8013f4d49",
+        "bytes": 432
+      },
+      {
+        "file": "event-1.json",
+        "sha256": "670ffce1f531495e90f80a58e573c6517da7f9800cfb437f5989c677f4c84178",
+        "bytes": 568
+      },
+      {
+        "file": "event-2.json",
+        "sha256": "bb7a34a96b91ff1ae6609a38c5c40abda399de33d0ff44041fc914a236fbba24",
+        "bytes": 674
+      },
+      {
+        "file": "event-3.json",
+        "sha256": "baa24391e68c05393153c9cf37fd526f62d0419fb14b65931cba76a0b6037ccf",
+        "bytes": 529
+      }
+    ],
+    "normalTrustReview": {
+      "interface": "Codex CLI /hooks",
+      "capturingHooks": 4,
+      "exactCommandReviewed": true,
+      "trustBypassUsed": false,
+      "globalProfileChanged": false
+    },
+    "captureInvocation": {
+      "exit": 0,
+      "elapsedSeconds": 8.04,
+      "tool": "pwd",
+      "toolExit": 0
+    },
+    "cleanup": {
+      "ownedHooksSourceRemoved": true,
+      "priorHooksSource": "absent",
+      "hashVerifiedBeforeRemoval": true,
+      "disposableAuthProfileRetained": true,
+      "inactiveCliGeneratedTrustHashesRetained": true,
+      "boundedRawCapturesRetainedForAudit": true,
+      "activeProbeHooksRemaining": 0
+    },
+    "sanitization": "replace disposable session/turn/tool IDs, cwd/transcript path and corresponding pwd response; no synthetic events",
+    "unknown": "resume/compact/apply_patch/MCP/deferred completion/session end/child lineage/Desktop unproven",
+    "references": ["https://learn.chatgpt.com/docs/hooks"]
   }
 }

@@ -90,6 +90,33 @@ test("listActiveCancellations excludes sweeper-expired handoffs", () => {
   ]);
 });
 
+test("listDispatchedCancellationsForWorker returns only that worker's cancel-requested dispatched rows", () => {
+  const rows = [
+    { handoff_id: "h-mine-cancel", status: "dispatched", worker_id: "W-A", cancelled: true },
+    { handoff_id: "h-mine-live", status: "dispatched", worker_id: "W-A", cancelled: false },
+    { handoff_id: "h-other-cancel", status: "dispatched", worker_id: "W-B", cancelled: true },
+    { handoff_id: "h-approved-cancel", status: "approved", worker_id: "W-A", cancelled: true },
+  ] as const;
+  for (const [i, row] of rows.entries()) {
+    insertHandoffRow({
+      handoff_id: row.handoff_id,
+      ts: isoAt(i),
+      conversation_id: `conv-${row.handoff_id}`,
+      root_handoff_id: row.handoff_id,
+      status: row.status,
+    });
+    db.run(`UPDATE handoffs SET worker_id=?, cancel_requested_at=? WHERE handoff_id=?`, [
+      row.worker_id,
+      row.cancelled ? isoAt(10) : null,
+      row.handoff_id,
+    ]);
+  }
+
+  expect(reader.listDispatchedCancellationsForWorker("W-A")).toEqual([
+    { conversation_id: "conv-h-mine-cancel", handoff_id: "h-mine-cancel" },
+  ]);
+});
+
 function markDispatched(handoff_id: string): void {
   db.run(`UPDATE handoffs SET status='dispatched' WHERE handoff_id=?`, [handoff_id]);
 }

@@ -1,3 +1,4 @@
+import { pressureSnapshotKey } from "@penumbra/core";
 import { Buffer } from "node:buffer";
 import * as fs from "node:fs";
 import { homedir } from "node:os";
@@ -27,7 +28,18 @@ interface FileCursor {
   mtime_ms: number;
   model_provider?: string;
 }
+interface RateLimitObservation {
+  rateLimits: Record<string, unknown>;
+  timestamp: number | null;
+}
+
+interface LatestRateLimitSnapshot {
+  snapshot: RateLimitDelta;
+  observedAt: number;
+}
+
 interface CodexRolloutCursor {
+  groups?: Record<string, number>;
   files: Record<string, FileCursor>;
 }
 
@@ -74,10 +86,11 @@ export class CodexRolloutReader implements UsageReader {
       };
     }
     const cursor = normalizeCursor(previousCursor);
-    const newCursor: CodexRolloutCursor = { files: { ...cursor.files } };
+    const groups = { ...cursor.groups };
+    const newCursor: CodexRolloutCursor = { files: { ...cursor.files }, groups };
 
     const files = this.listRolloutFiles();
-    const allRateLimitSnapshots: RateLimitDelta[] = [];
+    const latestByGroup = new Map<string, LatestRateLimitSnapshot>();
     const allUsageDeltas: UsageReaderDelta[] = [];
     const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
     const seenInWindow = new Set<string>();
@@ -88,7 +101,7 @@ export class CodexRolloutReader implements UsageReader {
         newCursor,
         cutoff,
         seenInWindow,
-        allRateLimitSnapshots,
+        latestByGroup,
         allUsageDeltas,
       );
     }
@@ -97,10 +110,18 @@ export class CodexRolloutReader implements UsageReader {
       Object.entries(newCursor.files).filter(([p]) => seenInWindow.has(p)),
     );
 
+    const snapshots: RateLimitDelta[] = [];
+    for (const [key, { snapshot, observedAt }] of latestByGroup) {
+      const highWater = groups[key];
+      if (highWater !== undefined && observedAt < highWater) continue;
+      snapshots.push(snapshot);
+      groups[key] = observedAt;
+    }
+
     return {
       cursor: newCursor,
       usage_deltas: allUsageDeltas,
-      rate_limit_snapshots: allRateLimitSnapshots,
+      rate_limit_snapshots: snapshots,
     };
   }
 
@@ -109,7 +130,7 @@ export class CodexRolloutReader implements UsageReader {
     cursor: CodexRolloutCursor,
     cutoff: number,
     seenInWindow: Set<string>,
-    allRateLimitSnapshots: RateLimitDelta[],
+    latestByGroup: Map<string, LatestRateLimitSnapshot>,
     allUsageDeltas: UsageReaderDelta[],
   ): void {
     const fileCursor = cursor.files[filePath];
@@ -121,10 +142,15 @@ export class CodexRolloutReader implements UsageReader {
 
     const scan = scanRolloutSlice(readTail(filePath, offset, size - offset));
     const modelProvider = fileCursor?.model_provider ?? scan.modelProvider;
-    if (scan.latestRateLimits) {
-      allRateLimitSnapshots.push(
-        ...this.buildRateLimitSnapshots(scan.latestRateLimits, modelProvider),
-      );
+    for (const observation of scan.rateLimitObservations) {
+      const observedAt = Math.min(observation.timestamp ?? mtime_ms, this.now());
+      for (const snapshot of this.buildRateLimitSnapshots(observation.rateLimits, modelProvider)) {
+        const key = pressureSnapshotKey({ ...snapshot, model: snapshot.model ?? null });
+        const previous = latestByGroup.get(key);
+        if (!previous || observedAt >= previous.observedAt) {
+          latestByGroup.set(key, { snapshot, observedAt });
+        }
+      }
     }
     const provider = modelProvider ?? this.canonicalizeProvider(undefined);
     for (const entry of scan.rawUsage) {
@@ -163,7 +189,7 @@ export class CodexRolloutReader implements UsageReader {
       }
     };
     walk(this.rootDir);
-    return out;
+    return out.sort();
   }
 
   private canonicalizeProvider(limit_id: string | undefined): string {
@@ -172,14 +198,14 @@ export class CodexRolloutReader implements UsageReader {
   }
 
   private buildRateLimitSnapshots(
-    latestRateLimits: Record<string, unknown>,
+    rateLimits: Record<string, unknown>,
     modelProvider: string | undefined,
   ): RateLimitDelta[] {
     const snapshots: RateLimitDelta[] = [];
-    const limitId = readString(latestRateLimits, "limit_id") ?? undefined;
+    const limitId = readString(rateLimits, "limit_id") ?? undefined;
     const provider = modelProvider?.length ? modelProvider : this.canonicalizeProvider(limitId);
     for (const key of ["primary", "secondary"] as const) {
-      const raw = latestRateLimits[key];
+      const raw = rateLimits[key];
       // Present-but-null means upstream retired the window; an absent key keeps
       // the old skip semantics so payload shapes that never had the window do
       // not start emitting tombstones.
@@ -191,13 +217,13 @@ export class CodexRolloutReader implements UsageReader {
           used_pct: 0,
           retired: true,
           extra: {
-            plan_type: readString(latestRateLimits, "plan_type"),
+            plan_type: readString(rateLimits, "plan_type"),
             limit_id: limitId,
           },
         });
         continue;
       }
-      const windowState = readRecord(latestRateLimits, key);
+      const windowState = readRecord(rateLimits, key);
       if (!windowState) continue;
       snapshots.push({
         provider,
@@ -206,7 +232,7 @@ export class CodexRolloutReader implements UsageReader {
         window_minutes: readNumber(windowState, "window_minutes") ?? undefined,
         resets_at: readNumber(windowState, "resets_at") ?? undefined,
         extra: {
-          plan_type: readString(latestRateLimits, "plan_type"),
+          plan_type: readString(rateLimits, "plan_type"),
           limit_id: limitId,
         },
       });
@@ -227,7 +253,17 @@ function normalizeCursor(cursor: unknown): CodexRolloutCursor {
       ...(modelProvider ? { model_provider: modelProvider } : {}),
     };
   }
-  return { files };
+  return { files, groups: normalizeGroups(cursor.groups) };
+}
+
+function normalizeGroups(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, number] =>
+        typeof entry[1] === "number" && Number.isFinite(entry[1]),
+    ),
+  );
 }
 
 interface RawUsageEntry {
@@ -239,13 +275,13 @@ interface RawUsageEntry {
 }
 
 interface RolloutScanResult {
-  latestRateLimits: Record<string, unknown> | null;
+  rateLimitObservations: RateLimitObservation[];
   modelProvider: string | undefined;
   rawUsage: RawUsageEntry[];
 }
 
 type RolloutScanState = {
-  latestRateLimits: Record<string, unknown> | null;
+  rateLimitObservations: RateLimitObservation[];
   modelProvider: string | undefined;
   currentModel: string | null;
   rawUsage: RawUsageEntry[];
@@ -253,7 +289,7 @@ type RolloutScanState = {
 
 function scanRolloutSlice(slice: string): RolloutScanResult {
   const state: RolloutScanState = {
-    latestRateLimits: null,
+    rateLimitObservations: [],
     modelProvider: undefined,
     currentModel: null,
     rawUsage: [],
@@ -274,7 +310,14 @@ function scanRolloutLine(rawLine: string, state: RolloutScanState): void {
   state.modelProvider ??= normalizeModelProvider(readString(payload, "model_provider"));
   const sessionModel = readString(payload, "model");
   if (sessionModel) state.currentModel = sessionModel;
-  state.latestRateLimits = readTokenCountRateLimits(obj, payload) ?? state.latestRateLimits;
+  const rateLimits = readTokenCountRateLimits(obj, payload);
+  if (rateLimits) {
+    const timestamp = Date.parse(readString(obj, "timestamp") ?? "");
+    state.rateLimitObservations.push({
+      rateLimits,
+      timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    });
+  }
   const lastTokenUsage = readLastTokenUsage(obj, payload);
   if (lastTokenUsage) {
     state.rawUsage.push(toRawUsageEntry(lastTokenUsage, obj, state.currentModel));

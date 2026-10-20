@@ -3,5 +3,6 @@
   "compilerOptions": {
     "noEmit": true
   },
+  "references": [{ "path": "../core" }, { "path": "../config" }, { "path": "../cli" }],
   "include": ["src/**/*.ts", "test/**/*.ts", "bin/**/*.ts"]
 }

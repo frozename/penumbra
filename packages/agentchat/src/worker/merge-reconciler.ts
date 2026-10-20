@@ -12,6 +12,7 @@ import {
 } from "@penumbra/core";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -19,6 +20,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { RuntimeThoughtsConfig } from "./thought-config.js";
 
 import { PenumbraHttpError } from "../penumbra-client.js";
+import { scopeDiffToPackages } from "./affected-packages.js";
 import {
   type BunTestReport,
   isKnownBunTeardownPanicPass,
@@ -106,41 +108,6 @@ class Mutex {
 
 const globalMergeLock = new Mutex();
 const testBaselineCache = new Map<string, Promise<BunTestCommandOutcome>>();
-
-/**
- * Maps changed file paths to affected package roots.
- *
- * Returns:
- * - null for conservative full-suite fallback when any non-package path is touched
- * - [] when only docs/non-code paths changed
- * - a deduplicated sorted list of `packages/<name>` roots otherwise
- */
-export function resolveAffectedPackages(paths: string[]): string[] | null {
-  const packageRoots = new Set<string>();
-  let docsOnly = true;
-
-  for (const p of paths) {
-    if (p.startsWith("packages/")) {
-      const segment = p.split("/", 2)[1];
-      if (!segment) continue;
-      packageRoots.add(`packages/${segment}`);
-      docsOnly = false;
-      continue;
-    }
-
-    if (p.startsWith("docs/") || p.startsWith(".github/")) {
-      continue;
-    }
-
-    return null;
-  }
-
-  if (packageRoots.size === 0 && docsOnly) {
-    return [];
-  }
-
-  return Array.from(packageRoots).sort();
-}
 
 export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
@@ -503,8 +470,10 @@ interface ReconcileState {
   diffStats: { filesChanged: number; linesAdded: number; linesDeleted: number };
   rebaseOutcome: RebaseOutcome;
   affectedPackages: string[] | null;
+  deletedPackages: string[];
   packagesToBuild: string[] | null;
   changedFiles: Set<string>;
+  runRootTestShard: boolean;
   testCommandUsed: string;
 }
 
@@ -885,8 +854,10 @@ async function loadWorkspacePackageJsons(
 }
 
 async function computeAffectedPackageClosure(ctx: ReconcileCtx): Promise<AffectedClosure> {
-  const { affectedPackages } = ctx.state;
-  if (affectedPackages === null) {
+  const { affectedPackages, deletedPackages } = ctx.state;
+  // A deleted package's dependents cannot be found through its removed
+  // package.json, so a deletion attributes every package diagnostic.
+  if (affectedPackages === null || deletedPackages.length > 0) {
     return { prefixes: ["packages/"], packages: [] };
   }
   if (affectedPackages.length === 0) {
@@ -1285,7 +1256,12 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
       .map((line) => line.trim())
       .filter(Boolean);
     state.changedFiles = new Set(diffFiles);
-    state.affectedPackages = resolveAffectedPackages(diffFiles);
+    const scope = scopeDiffToPackages(diffFiles, (dir) =>
+      existsSync(join(wt.path, dir, "package.json")),
+    );
+    state.affectedPackages = scope.affectedPackages;
+    state.deletedPackages = scope.deletedPackages;
+    state.runRootTestShard = scope.runRootTestShard;
   } catch (err) {
     deps.log.warn(
       { handoffId, baseRef: ctx.baseRef, branch: wt.branchName, err: String(err) },
@@ -1440,7 +1416,7 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
   const timeout = ctx.deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   const affectedPackages = ctx.state.affectedPackages;
   try {
-    if (affectedPackages === null) {
+    if (affectedPackages === null || ctx.state.deletedPackages.length > 0) {
       return await runTypecheckOnAllPackages(ctx, timeout);
     }
     if (affectedPackages.length === 0) {
@@ -1482,14 +1458,14 @@ function didBunTestCommandPass(exitCode: number, report: BunTestReport): boolean
   return isKnownBunTeardownPanicPass(report);
 }
 
-async function runBunTestCommand(
+async function runParsedBunCommand(
   ctx: ReconcileCtx,
-  testArgs: string[],
+  argv: CommandArgs,
   cwd: string,
   timeout: number,
 ): Promise<BunTestCommandOutcome> {
   try {
-    const res = await execCmd(ctx, ["bun", "test", ...testArgs], cwd, timeout);
+    const res = await execCmd(ctx, argv, cwd, timeout);
     const stdout = res.stdout;
     const stderr = res.stderr;
     const report = parseBunTestReport(`${stdout}${stderr}`);
@@ -1516,6 +1492,35 @@ async function runBunTestCommand(
     };
   }
 }
+
+async function runBunTestCommand(
+  ctx: ReconcileCtx,
+  testArgs: string[],
+  cwd: string,
+  timeout: number,
+): Promise<BunTestCommandOutcome> {
+  return await runParsedBunCommand(ctx, toCommandArgs("bun", ["test", ...testArgs]), cwd, timeout);
+}
+
+// The repo's real gate shards root-level tests (test/, scripts/) through this
+// exact invocation in .github/workflows/check.yml. The reconciler reuses it for
+// root-shard diffs instead of an unscoped `bun test`, which cannot finish
+// inside reconcileTestTimeoutSec. The gate streams the child's bun-test output
+// verbatim, so the same pass/fail parser applies; a non-zero exit without a
+// reachable summary fails closed exactly like an unparseable `bun test`.
+const ROOT_TEST_SHARD_COMMAND: CommandArgs = [
+  "bun",
+  "scripts/bun-test-gate.ts",
+  "--path-ignore-patterns=packages/**",
+  "--path-ignore-patterns=**/console/e2e/**",
+  "--path-ignore-patterns=**/visual/**",
+  "--path-ignore-patterns=**/dist/**",
+  "--path-ignore-patterns=**/scripts/bench*.test.ts",
+];
+// The merge-base baseline runs the shard's inner `bun test` argv directly —
+// the gate only wraps it for panic tolerance, which didBunTestCommandPass
+// already applies to parsed output.
+const ROOT_TEST_SHARD_TEST_ARGS = ROOT_TEST_SHARD_COMMAND.slice(2);
 
 function safePathToken(value: string): string {
   const token = value.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
@@ -1865,7 +1870,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
         await runBunTestCommand(ctx, [], wt.path, remainingStageSeconds(deadline)),
       );
     }
-    if (affectedPackages.length === 0) {
+    if (affectedPackages.length === 0 && !state.runRootTestShard) {
       deps.log.debug({ handoffId }, "skipping tests for docs-only diff");
       state.testCommandUsed = "skipped (docs-only diff)";
       state.testStatus = "skipped";
@@ -1880,8 +1885,10 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
         });
       }
     }
-    deps.log.debug({ handoffId, affectedPackages }, "running scoped tests in worktree");
-    state.testCommandUsed = `bun test ${scopedTestPaths.join(" ")}`;
+    deps.log.debug(
+      { handoffId, affectedPackages, rootTestShard: state.runRootTestShard },
+      "running scoped tests in worktree",
+    );
     provisionTestLocalCache(ctx, wt.path);
     try {
       await assertOwnedTestNodeModules(wt.path, "branch");
@@ -1890,12 +1897,7 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     }
     // Deliberate check-then-run TOCTOU: filesystem tampering after this point
     // is outside the reconciler's threat model.
-    return await evaluateBunTestOutcome(
-      ctx,
-      scopedTestPaths,
-      deadline,
-      await runBunTestCommand(ctx, scopedTestPaths, wt.path, remainingStageSeconds(deadline)),
-    );
+    return await runDiffScopedShards(ctx, scopedTestPaths, deadline);
   } catch (err: unknown) {
     const info = commandErrorInfo(err);
     if (isVerificationEnvironmentFailure(info)) {
@@ -1920,6 +1922,41 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     await emitResult(ctx, result);
     return result;
   }
+}
+
+async function runDiffScopedShards(
+  ctx: ReconcileCtx,
+  scopedTestPaths: string[],
+  deadline: TestStageDeadline,
+): Promise<MergeResult | null> {
+  const commandsUsed: string[] = [];
+  if (scopedTestPaths.length > 0) {
+    commandsUsed.push(`bun test ${scopedTestPaths.join(" ")}`);
+    ctx.state.testCommandUsed = commandsUsed.join(" && ");
+    const scopedResult = await evaluateBunTestOutcome(
+      ctx,
+      scopedTestPaths,
+      deadline,
+      await runBunTestCommand(ctx, scopedTestPaths, ctx.wt.path, remainingStageSeconds(deadline)),
+    );
+    if (scopedResult) return scopedResult;
+  }
+  if (ctx.state.runRootTestShard) {
+    commandsUsed.push(ROOT_TEST_SHARD_COMMAND.join(" "));
+    ctx.state.testCommandUsed = commandsUsed.join(" && ");
+    return await evaluateBunTestOutcome(
+      ctx,
+      [...ROOT_TEST_SHARD_TEST_ARGS],
+      deadline,
+      await runParsedBunCommand(
+        ctx,
+        ROOT_TEST_SHARD_COMMAND,
+        ctx.wt.path,
+        remainingStageSeconds(deadline),
+      ),
+    );
+  }
+  return null;
 }
 
 async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
@@ -2035,8 +2072,10 @@ export function createMergeReconciler(
         diffStats: { filesChanged: 0, linesAdded: 0, linesDeleted: 0 },
         rebaseOutcome: { attempted: false, result: "skipped" },
         affectedPackages: null,
+        deletedPackages: [],
         packagesToBuild: null,
         changedFiles: new Set<string>(),
+        runRootTestShard: false,
         testCommandUsed: "bun test",
       },
     };

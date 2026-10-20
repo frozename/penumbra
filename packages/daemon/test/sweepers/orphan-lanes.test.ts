@@ -1,8 +1,17 @@
-import { getLane, insertLane, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  captureAgentPerformanceFromReconciler,
+  getLane,
+  insertLane,
+  loadSqliteVec,
+  migrate,
+  ORPHAN_SWEEPER_REASON_PREFIX,
+  type Services,
+  SettingsDefaults,
+} from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { runOrphanLanesSweep } from "@src/sweepers/orphan-lanes.js";
+import { runOrphanLanesSweep, startOrphanLanesSweeper } from "@src/sweepers/orphan-lanes.js";
 
 try {
   if (process.platform === "darwin")
@@ -144,7 +153,7 @@ test("closes orphan lane whose implementer handoff completed past grace window",
   const lane = getLane(db, "lane-1");
   // Non-trivial orphan lanes must not receive a passing gate-quality stamp.
   expect(lane?.gate_status).toBe("review_debt");
-  expect(lane?.override_reason).toContain("orphan-lane sweeper");
+  expect(lane?.override_reason).toStartWith(ORPHAN_SWEEPER_REASON_PREFIX);
   expect(lane?.override_reason).toContain("completed");
   const metadata = JSON.parse(lane?.metadata_json ?? "{}") as { notes?: string };
   expect(metadata.notes).toContain("orphan-lane sweep");
@@ -181,6 +190,38 @@ test("closes trivial orphan lane as skipped", () => {
     >(`SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?`)
     .get("h-impl");
   expect(perf?.gate_outcome).toBe("skipped");
+});
+
+test("workflow-internal read-only lane is never an orphan-sweep candidate", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, "h-impl", "completed", PAST_GRACE);
+  insertLane(db, {
+    lane_id: "lane-wf-readonly",
+    ts_opened: "2026-01-01T09:00:00.000Z",
+    ts_closed: "2026-01-01T09:00:00.000Z",
+    task_class: "TRIVIAL",
+    implementer_handoff: "h-impl",
+    gate_status: "skipped",
+    override_reason: "workflow-internal read-only dispatch: no worktree, nothing to land, no gate",
+  });
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 0 });
+
+  expect(result.scanned).toBe(0);
+  expect(result.closed).toBe(0);
+  const lane = getLane(db, "lane-wf-readonly");
+  expect(lane?.gate_status).toBe("skipped");
+  expect(lane?.ts_closed).toBe("2026-01-01T09:00:00.000Z");
+
+  const perf = captureAgentPerformanceFromReconciler({
+    db,
+    uuid: () => "perf-wf-readonly",
+    clock: () => new Date(NOW),
+    input: { handoff_id: "h-impl", result: { status: "no_changes" } },
+  });
+  expect(perf.gate_outcome).toBe("skipped");
 });
 
 test("skips lane within grace window", () => {
@@ -439,3 +480,88 @@ test("orphan-lane sweeper close explicitly skips memory verify authorization", (
     .get();
   expect(count?.c).toBe(0);
 });
+
+test("default grace keeps three-hour BOUNDARY and STANDARD lanes open but closes TRIVIAL", () => {
+  const db = setupDb();
+  const sink: unknown[] = [];
+  const services = makeServices(db, sink);
+  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+    insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
+    openLane(db, `lane-${taskClass}`, taskClass, taskClass);
+  }
+  expect(runOrphanLanesSweep(services).lane_ids).toEqual(["lane-TRIVIAL"]);
+  expect(getLane(db, "lane-BOUNDARY")?.gate_status).toBe("open");
+  expect(getLane(db, "lane-STANDARD")?.gate_status).toBe("open");
+  expect(getLane(db, "lane-TRIVIAL")?.gate_status).toBe("skipped");
+  expect(sink[0]).toMatchObject({
+    payload_json: {
+      trivial_grace_ms: 120 * 60_000,
+      non_trivial_grace_ms: 1440 * 60_000,
+    },
+  });
+  db.close();
+});
+
+test("late-opened lane gets full grace from ts_opened even when implementer resolved two days ago", () => {
+  const db = setupDb();
+  insertHandoff(db, "h-late", "completed", "2025-12-30T12:00:00.000Z");
+  insertLane(db, {
+    lane_id: "lane-late",
+    implementer_handoff: "h-late",
+    task_class: "BOUNDARY",
+    ts_opened: "2026-01-01T11:59:00.000Z",
+  });
+  expect(runOrphanLanesSweep(makeServices(db), { graceMs: 30 * 60_000 }).closed).toBe(0);
+  expect(getLane(db, "lane-late")?.gate_status).toBe("open");
+  db.close();
+});
+
+test("production sweeper maps both env settings to class grace options", async () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  services.settings = SettingsDefaults.build({
+    env: {
+      PENUMBRA_LANE_ORPHAN_SWEEPER_GRACE_MINUTES: "10",
+      PENUMBRA_LANE_ORPHAN_SWEEPER_NON_TRIVIAL_GRACE_MINUTES: "240",
+    },
+    input: {},
+  });
+  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+    insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
+    openLane(db, `production-${taskClass}`, taskClass, taskClass);
+  }
+  const tick = { done: false };
+  services.t0Writer.write = (event): string => {
+    tick.done = true;
+    return event.event_id;
+  };
+  const stop = startOrphanLanesSweeper(services, 1);
+  try {
+    for (let i = 0; i < 100 && !tick.done; i++) await Bun.sleep(5);
+    expect(tick.done).toBe(true);
+    expect(getLane(db, "production-TRIVIAL")?.gate_status).toBe("skipped");
+    expect(getLane(db, "production-BOUNDARY")?.gate_status).toBe("open");
+    expect(getLane(db, "production-STANDARD")?.gate_status).toBe("open");
+  } finally {
+    stop();
+    db.close();
+  }
+});
+
+for (const [trivialGraceMs, nonTrivialGraceMs, expected] of [
+  [60 * 60_000, 240 * 60_000, ["alias-TRIVIAL"]],
+  [240 * 60_000, 60 * 60_000, ["alias-BOUNDARY", "alias-STANDARD"]],
+] as const) {
+  test(`explicit class grace takes precedence over graceMs alias: ${String(trivialGraceMs)}/${String(nonTrivialGraceMs)}`, () => {
+    const db = setupDb();
+    for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+      insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
+      openLane(db, `alias-${taskClass}`, taskClass, taskClass);
+    }
+    expect(
+      runOrphanLanesSweep(makeServices(db), { graceMs: 0, trivialGraceMs, nonTrivialGraceMs })
+        .lane_ids,
+    ).toEqual([...expected]);
+    db.close();
+  });
+}

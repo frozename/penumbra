@@ -56,6 +56,7 @@ export interface DispatchHandoffOpts {
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
     long_lived_tick_id?: string | null;
+    permission_profile?: ChatTurnInput["permission_profile"];
   };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
@@ -74,6 +75,12 @@ export interface DispatchHandoffOpts {
     reason: string,
   ) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
+  /**
+   * Worker-computed mutable roots for the Layer B sandbox when the handoff is
+   * profiled (caller cwd, project root, worktree fleet base). Forwarded onto
+   * DispatchInput so every spawn surface shares one deny set.
+   */
+  sandboxDenyRoots?: readonly string[];
   requestPermission?: ChatTurnInput["requestPermission"];
   eventContext?: ChatTurnInput["eventContext"];
   onEvent?: ChatTurnInput["onEvent"];
@@ -115,7 +122,31 @@ export interface DispatchHandoffResult {
   agent: string;
   /** Non-fatal terminal error from setting up the next hop after this hop completed. */
   terminalError?: DispatchTerminalError;
+  /** Adapter/model error that exhausted the retry budget. Tracked separately so
+   *  a later transport error cannot overwrite the reason the turn failed. */
+  adapterError?: { message: string };
+  /** Post-adapter observe envelopes that could not be delivered inline. */
+  pendingObservations?: Record<string, unknown>[];
   meta?: ChatTurnResult["meta"];
+}
+
+export function pendingObservationsOf(err: unknown): Record<string, unknown>[] {
+  if (err && typeof err === "object" && "pendingObservations" in err) {
+    const pending = (err as { pendingObservations?: unknown }).pendingObservations;
+    if (Array.isArray(pending)) return pending as Record<string, unknown>[];
+  }
+  return [];
+}
+
+export function attachPendingObservations(
+  err: unknown,
+  pending: Record<string, unknown>[] | undefined,
+): unknown {
+  if (pending && pending.length > 0 && err instanceof Error) {
+    (err as Error & { pendingObservations?: Record<string, unknown>[] }).pendingObservations =
+      pending;
+  }
+  return err;
 }
 
 const RETRY_BACKOFF_MS = [200, 400, 800] as const;
@@ -132,6 +163,7 @@ interface TurnAttempt {
   turn: ChatTurnResult | null;
   errMsg: string | null;
   errMeta?: ChatTurnResult["meta"];
+  pending?: Record<string, unknown>[];
 }
 
 async function runTurnOnce(
@@ -152,6 +184,8 @@ async function runTurnOnce(
       onChunk: opts.onChunk,
       requestPermission: opts.requestPermission,
       trust_mode: opts.trustMode,
+      permission_profile: opts.handoff.permission_profile,
+      sandbox_deny_roots: opts.sandboxDenyRoots,
       executor: opts.executor,
       eventContext: opts.eventContext,
       onEvent: opts.onEvent,
@@ -164,12 +198,42 @@ async function runTurnOnce(
     });
     const errMsg = extractTurnErrorMessage(turn);
     const errMeta = turn.meta?.classifier_declined ? turn.meta : undefined;
-    return { turn, errMsg, ...(errMeta ? { errMeta } : {}) };
+    return {
+      turn,
+      errMsg,
+      ...(errMeta ? { errMeta } : {}),
+      ...(turn.pendingObservations ? { pending: turn.pendingObservations } : {}),
+    };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     const classifierDecline = classifierDeclineMetaFromUnknown(err);
-    return { turn: null, errMsg, ...(classifierDecline ? { errMeta: classifierDecline } : {}) };
+    const pending = pendingObservationsOf(err);
+    return {
+      turn: null,
+      errMsg,
+      ...(classifierDecline ? { errMeta: classifierDecline } : {}),
+      ...(pending.length > 0 ? { pending } : {}),
+    };
   }
+}
+
+function exhaustedErrorResult(
+  targetAgent: string,
+  handoffId: string | undefined,
+  errMsg: string,
+  errMeta: ChatTurnResult["meta"] | undefined,
+  pending: Record<string, unknown>[],
+): DispatchHandoffResult {
+  return {
+    next: null,
+    terminatedReason: "error",
+    ...(handoffId ? { cappedHandoffId: handoffId } : {}),
+    adapterError: { message: errMsg },
+    text: "",
+    agent: targetAgent,
+    ...(errMeta ? { meta: errMeta } : {}),
+    ...(pending.length > 0 ? { pendingObservations: pending } : {}),
+  };
 }
 
 async function handleRetryExhaustion(
@@ -177,22 +241,17 @@ async function handleRetryExhaustion(
   targetAgent: string,
   errMsg: string,
   errMeta: ChatTurnResult["meta"] | undefined,
+  pending: Record<string, unknown>[],
 ): Promise<DispatchHandoffResult | null> {
   const handoffId = opts.handoff.handoff_id;
   if (!opts.markFailed || !handoffId) return null;
   try {
     await opts.markFailed(handoffId, errMsg);
-    return {
-      next: null,
-      terminatedReason: "error",
-      cappedHandoffId: handoffId,
-      text: "",
-      agent: targetAgent,
-      ...(errMeta ? { meta: errMeta } : {}),
-    };
   } catch {
-    return null;
+    // markFailed itself failed (daemon outage). Return the error result anyway
+    // so the dispatcher's durable reporter owns the terminal report.
   }
+  return exhaustedErrorResult(targetAgent, handoffId, errMsg, errMeta, pending);
 }
 
 function cancelledRetryResult(
@@ -208,32 +267,69 @@ function cancelledRetryResult(
   };
 }
 
+interface RetryState {
+  lastErrMsg: string;
+  lastAdapterErrMsg: string | null;
+  lastErrMeta: ChatTurnResult["meta"] | undefined;
+}
+
+/** Fold one attempt into retry state. Returns the ok-shape when the turn
+ *  finished — even with pendingObservations, since a failed daemon call must
+ *  never re-run a completed adapter turn. */
+function foldAttempt(
+  state: RetryState,
+  pending: Record<string, unknown>[],
+  result: TurnAttempt,
+): { ok: true; turn: ChatTurnResult } | null {
+  state.lastErrMeta = result.errMeta ?? state.lastErrMeta;
+  if (result.pending) pending.push(...result.pending);
+  if (!result.turn || result.errMsg !== null) {
+    if (result.turn !== null) state.lastAdapterErrMsg = result.errMsg;
+    state.lastErrMsg = result.errMsg ?? state.lastErrMsg;
+    return null;
+  }
+  // `pending` already includes this turn's own pendingObservations (pushed
+  // above) plus any carried over from earlier attempts.
+  if (pending.length > 0) {
+    result.turn = { ...result.turn, pendingObservations: pending };
+  }
+  return { ok: true, turn: result.turn };
+}
+
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
   promptText: string | undefined,
 ): Promise<{ ok: true; turn: ChatTurnResult } | { ok: false; result: DispatchHandoffResult }> {
   const delay = opts.delay ?? defaultDelay;
-  let lastErrMsg = "adapter dispatch failed";
-  let lastErrMeta: ChatTurnResult["meta"] | undefined;
+  const state: RetryState = {
+    lastErrMsg: "adapter dispatch failed",
+    lastAdapterErrMsg: null,
+    lastErrMeta: undefined,
+  };
+  const pending: Record<string, unknown>[] = [];
 
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
     if (opts.signal?.aborted)
-      return { ok: false, result: cancelledRetryResult(targetAgent, lastErrMeta) };
-    const result = await runTurnOnce(opts, targetAgent, promptText);
-    lastErrMeta = result.errMeta ?? lastErrMeta;
-    if (result.turn && !result.errMsg) return { ok: true, turn: result.turn };
+      return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
+    const done = foldAttempt(state, pending, await runTurnOnce(opts, targetAgent, promptText));
+    if (done) return done;
     if (opts.signal?.aborted)
-      return { ok: false, result: cancelledRetryResult(targetAgent, lastErrMeta) };
-    lastErrMsg = result.errMsg ?? lastErrMsg;
+      return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
     const backoff = RETRY_BACKOFF_MS[attempt];
     if (backoff === undefined) break;
     await delay(backoff);
   }
 
-  const failed = await handleRetryExhaustion(opts, targetAgent, lastErrMsg, lastErrMeta);
+  const failed = await handleRetryExhaustion(
+    opts,
+    targetAgent,
+    state.lastAdapterErrMsg ?? state.lastErrMsg,
+    state.lastErrMeta,
+    pending,
+  );
   if (failed) return { ok: false, result: failed };
-  throw new Error(lastErrMsg);
+  throw attachPendingObservations(new Error(state.lastAdapterErrMsg ?? state.lastErrMsg), pending);
 }
 
 function resolveNextHop(turn: ChatTurnResult): { nextTo: string; nextRole: string | null } | null {
@@ -257,6 +353,14 @@ function buildPromptText(opts: DispatchHandoffOpts): string | undefined {
   });
 }
 
+function pendingSpread(turn: ChatTurnResult): {
+  pendingObservations?: Record<string, unknown>[];
+} {
+  return turn.pendingObservations && turn.pendingObservations.length > 0
+    ? { pendingObservations: turn.pendingObservations }
+    : {};
+}
+
 function terminalResult(
   reason: NonNullable<DispatchHandoffResult["terminatedReason"]>,
   turn: ChatTurnResult,
@@ -272,6 +376,7 @@ function terminalResult(
     text: turn.text,
     agent: targetAgent,
     ...metaSpread(turn),
+    ...pendingSpread(turn),
   };
 }
 
@@ -283,22 +388,12 @@ function terminalErrorFromHttp(err: PenumbraHttpError): DispatchTerminalError {
   };
 }
 
-export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<DispatchHandoffResult> {
-  const targetAgent = opts.handoff.to_agent;
-  const promptText = buildPromptText(opts);
-
-  const attempt = await runTurnWithRetry(opts, targetAgent, promptText);
-  if (!attempt.ok) return attempt.result;
-  const turn = attempt.turn;
-
-  const nextHop = resolveNextHop(turn);
-  if (!nextHop) return terminalResult("no_mention", turn, targetAgent);
-
-  // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
-  if (opts.hopsSoFar + 1 >= opts.maxHops) {
-    return terminalResult("max_hops", turn, targetAgent);
-  }
-
+async function createNextHandoff(
+  opts: DispatchHandoffOpts,
+  turn: ChatTurnResult,
+  targetAgent: string,
+  nextHop: { nextTo: string; nextRole: string | null },
+): Promise<{ created: CreateHandoffResult } | { result: DispatchHandoffResult }> {
   let created: CreateHandoffResult;
   try {
     created = await opts.createHandoff({
@@ -329,17 +424,53 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
           "handoff creation rejected by daemon auth",
         );
       }
-      return terminalResult("handoff_creation_failed", turn, targetAgent, undefined, terminalError);
+      return {
+        result: terminalResult(
+          "handoff_creation_failed",
+          turn,
+          targetAgent,
+          undefined,
+          terminalError,
+        ),
+      };
     }
-    throw err;
+    // A retryable failure after the turn finished must still carry the unsent
+    // observe envelopes so the dispatcher's terminal report can deliver them.
+    throw attachPendingObservations(err, turn.pendingObservations);
   }
+  return { created };
+}
+
+export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<DispatchHandoffResult> {
+  const targetAgent = opts.handoff.to_agent;
+  const promptText = buildPromptText(opts);
+
+  const attempt = await runTurnWithRetry(opts, targetAgent, promptText);
+  if (!attempt.ok) return attempt.result;
+  const turn = attempt.turn;
+
+  const nextHop = resolveNextHop(turn);
+  if (!nextHop) return terminalResult("no_mention", turn, targetAgent);
+
+  // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
+  if (opts.hopsSoFar + 1 >= opts.maxHops) {
+    return terminalResult("max_hops", turn, targetAgent);
+  }
+
+  const createRes = await createNextHandoff(opts, turn, targetAgent, nextHop);
+  if ("result" in createRes) return createRes.result;
+  const created = createRes.created;
   const routedNextTo = created.routed_agent ?? nextHop.nextTo;
 
   if (opts.trustMode === "config" && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
     return terminalResult("untrusted", turn, targetAgent, created.handoff_id);
   }
 
-  await opts.approve(created.handoff_id, { resolved_by: "auto" });
+  try {
+    await opts.approve(created.handoff_id, { resolved_by: "auto" });
+  } catch (err) {
+    throw attachPendingObservations(err, turn.pendingObservations);
+  }
 
   return {
     next: {
@@ -352,5 +483,6 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     text: turn.text,
     agent: targetAgent,
     ...metaSpread(turn),
+    ...pendingSpread(turn),
   };
 }

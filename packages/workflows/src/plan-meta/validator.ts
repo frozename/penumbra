@@ -7,7 +7,7 @@ export type ValidationError = { task_id: string; rule: string; message: string }
 
 export type ValidatorTask = TaskMeta & { project?: string };
 
-export type ValidatorPlanHeader = { home_project?: string };
+export type ValidatorPlanHeader = { plan_id?: string; home_project?: string };
 
 export interface ProjectRegistryLike {
   has(project_id: string): boolean;
@@ -21,6 +21,8 @@ export interface ValidateOpts {
 }
 
 const NO_PROJECT_KEY = "__noproject__";
+const PLAN_ERROR_ID = "<plan>";
+const REQUIRED_HEADER_FIELDS = ["plan_id", "home_project"] as const;
 
 type TaskIndex = Map<string, number>;
 
@@ -135,6 +137,20 @@ function collectCycleNodes(
   }
 
   return cycleNodes;
+}
+
+function validateHeader(header: ValidatorPlanHeader | undefined): ValidationError[] {
+  const missing = REQUIRED_HEADER_FIELDS.filter((field) => !header?.[field]);
+  if (missing.length === 0) return [];
+  return [
+    {
+      task_id: PLAN_ERROR_ID,
+      rule: "header_missing",
+      message: header
+        ? `plan header is missing ${missing.join(", ")}`
+        : "plan has no front-matter header; open the document with a --- block declaring plan_id and home_project",
+    },
+  ];
 }
 
 function validateParallel(
@@ -269,7 +285,7 @@ export async function validatePlan(
     validateDeps(task, eff, canonicalIndex, cycleNodes, errors);
   }
 
-  return errors.sort((left, right) => {
+  const taskErrors = errors.sort((left, right) => {
     const leftIndex = taskIndex.get(left.task_id) ?? Number.MAX_SAFE_INTEGER;
     const rightIndex = taskIndex.get(right.task_id) ?? Number.MAX_SAFE_INTEGER;
     if (leftIndex !== rightIndex) {
@@ -277,4 +293,5 @@ export async function validatePlan(
     }
     return left.rule.localeCompare(right.rule);
   });
+  return [...validateHeader(opts.header), ...taskErrors];
 }

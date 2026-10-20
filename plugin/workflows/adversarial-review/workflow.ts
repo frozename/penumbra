@@ -1,16 +1,38 @@
-import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penumbra/workflows";
-
-import { mkdir } from "node:fs/promises";
+import { agentEnforcesPermissionProfile } from "@penumbra/core";
+import {
+  BINARY_BODY_PLACEHOLDER,
+  type RecallBundle,
+  type WorkflowCtx,
+  type WorkflowFn,
+  type WorkflowSpec,
+} from "@penumbra/workflows";
+import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import {
+  awaitChainOrCancel,
+  type AwaitedChain,
+  cancelChainQuietly,
+  type CancelOutcome,
+  failureReasonSummary,
+} from "../_shared/await-or-cancel.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
+import {
+  PERMISSION_PROFILE_REVIEW_READONLY,
+  type PermissionProfile,
+  READ_ONLY_REVIEW_INSTRUCTION,
+  requireDispatchProfileEcho,
+} from "../_shared/permission-profile.js";
 import {
   type AgentField,
   agentPoolToNames,
   parseAgentField,
+  PersonaSeatCannotEnforceProfileError,
   resolveAgent,
 } from "../_shared/pool-resolver.js";
+import { beginCheckoutTripwire } from "./checkout-tripwire.js";
+import { summarizeSeverityMetrics } from "./severity.js";
 import {
   REQUIRED_SYNTHESIS_SECTION_LABELS,
   SYNTHESIS_OUTPUT_SECTIONS,
@@ -87,10 +109,13 @@ type PersonaRunResult = {
   conversation_id: string | null;
   handoff_id: string | null;
   error?: string;
+  error_code?: string;
   findings: unknown[] | null;
   parse_error?: "no_json_block" | "invalid_json";
   triviality_reason?: "trivial_response" | "no_findings";
   retry_count?: 1;
+  cancel_requested?: boolean;
+  cancel_error?: string;
 };
 
 function isBlockingPersona(persona?: Pick<ReviewPersona, "optional">): boolean {
@@ -154,18 +179,46 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+// Source-level git.diff cap, sized off what the trimmer actually leaves: the
+// budget minus the post-trim floor of everything else in the bundle. The
+// generic trimmer (recall.ts compareSizedItems) shrinks ts-carrying git.show
+// commits first — each collapses to sha+subject+ts+truncation-marker, about
+// ceil((176 + subject chars) / 4) tokens, and subjects are never trimmed — while
+// no-ts strings like git.diff can only be dropped whole. The per-commit reserve
+// of 100 tokens covers subjects up to ~224 chars (this repo's history: median
+// 73, p99 137, max 216); a 60-token reserve let 20 commits with ordinary
+// 70-80 char subjects push a near-cap diff over budget so the trimmer dropped it
+// to empty_review_target. The file.contents stub for an unset content_path adds
+// ~15 tokens. A diff that can never fit gets section-capped instead of emptied.
+const GIT_SHOW_POST_TRIM_TOKENS_PER_COMMIT = 100;
+const GIT_DIFF_RECALL_MAX_TOKENS = 24000 - 20 * GIT_SHOW_POST_TRIM_TOKENS_PER_COMMIT - 15;
+
 const spec: WorkflowSpec = {
   name: "adversarial-review",
   description:
     "Fan out a code review across N reviewer personas with distinct biases; synthesize findings.",
   triggers: [{ kind: "manual" }, { kind: "slash", command: "adversarial-review" }],
   recall: [
-    { source: "git.diff", args: { range: "{{args.base_ref}}...{{args.target_ref}}" } },
+    {
+      source: "git.diff",
+      args: {
+        range: "{{args.base_ref}}...{{args.target_ref}}",
+        max_tokens: GIT_DIFF_RECALL_MAX_TOKENS,
+      },
+      // Content mode takes the file body as the review target; the refs diff
+      // and commit list render into nothing (renderPersonaPrompt drops them)
+      // and would only consume budget the body needs.
+      skip_if_arg: "content_path",
+    },
     {
       source: "git.show",
       args: { range: "{{args.base_ref}}..{{args.target_ref}}", max_commits: 20 },
+      skip_if_arg: "content_path",
     },
-    { source: "file.contents", args: { path: "{{args.content_path}}" } },
+    {
+      source: "file.contents",
+      args: { path: "{{args.content_path}}" },
+    },
   ],
   recall_budget_tokens: 24000,
   output: [],
@@ -366,6 +419,58 @@ function fileContentsBody(recall: RecallBundle): string {
   return typeof body === "string" ? body : "";
 }
 
+// not_found and path_outside_allowed_roots surface as body:null + error with no
+// warnings, so recall_warnings alone would hide why the target is empty.
+function fileContentsError(recall: RecallBundle): string | null {
+  const fileContents = recall.byKey["file.contents"];
+  if (!fileContents || typeof fileContents !== "object" || Array.isArray(fileContents)) return null;
+  const error = (fileContents as Record<string, unknown>).error;
+  return typeof error === "string" && error.length > 0 ? error : null;
+}
+
+function parseDiffDroppedFiles(warning: string | undefined): string[] {
+  const match = /; dropped \d+: (.+)$/.exec(warning ?? "");
+  if (match === null) return [];
+  return (match[1] ?? "")
+    .split(", ")
+    .filter((name) => name.length > 0 && !/^\(\+\d+ more\)$/.test(name));
+}
+
+// The git.diff cap emits a machine-readable `git.diff: truncation_stats={json}`
+// line next to the prose warning; the JSON is the contract (paths may contain
+// ", ", and the prose dropped list is capped with a glued "(+N more)" suffix).
+type DiffTruncationStats = {
+  kept?: number;
+  total?: number;
+  chars?: number;
+  dropped?: unknown[];
+  overflow?: number;
+  cut_file?: unknown;
+  whole_drop?: boolean;
+};
+
+function parseDiffTruncationStats(warnings: string[]): DiffTruncationStats | null {
+  const line = warnings.find((w) => w.startsWith("git.diff: truncation_stats="));
+  if (line === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(line.slice("git.diff: truncation_stats=".length));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+const RECALL_TRUNCATION_ONLY_RE = /^… \[recall budget: body truncated to \d+ of \d+ chars\]$/;
+
+// The binary placeholder and a marker-only body are omission markers, not
+// reviewable text — count them as empty so a trimmed or undecodable
+// content_path cannot pass itself off as the review target.
+function hasReviewableContent(body: string): boolean {
+  if (body.length === 0 || body === BINARY_BODY_PLACEHOLDER) return false;
+  return !RECALL_TRUNCATION_ONLY_RE.test(body.trim());
+}
+
 const REVIEW_MEMORY_TOP_K = 5;
 const REVIEW_MEMORY_BYTE_BUDGET = 2000;
 
@@ -463,7 +568,7 @@ function renderPersonaPrompt(
   // git.diff and git.show recall fetched from the workflow's cwd, which can be the
   // daemon's cwd (penumbra) rather than the target repo — drop the misleading
   // sections to prevent personas from reviewing the wrong thing.
-  const useContent = hasContentPath && content.length > 0;
+  const useContent = hasContentPath && hasReviewableContent(content);
   const diffBody = useContent ? content : gitDiff;
   const reviewTarget = useContent
     ? `content_path=${args.content_path}\nbase_ref=${args.base_ref}\ntarget_ref=${args.target_ref}\n\nThe Diff section below comes from the explicit content_path file — this is the authoritative review target. Ignore any git context from your worktree.`
@@ -490,6 +595,8 @@ substance, not the document.
   return `You are reviewing code as a ${persona.bias} reviewer.
 
 ${contentModePreamble}${persona.system_prompt}
+
+${READ_ONLY_REVIEW_INSTRUCTION}
 
 ## Review Target
 ${reviewTarget}
@@ -738,6 +845,8 @@ function synthesisPrompt(
 
   return `${synth.system_prompt}
 
+${READ_ONLY_REVIEW_INSTRUCTION}
+
 You are synthesizing ${selected.length} adversarial reviews. Each persona reviewed the same diff with a different lens.
 
 ${focusPrefix}${priorFindingsSection}## Reviews
@@ -763,6 +872,7 @@ function buildSynthesisFrontmatter(args: {
   synthesizer_failover_from?: string;
   synthesizer_failover_to?: string;
   pool_exhausted?: boolean;
+  attempt_cap_reached?: boolean;
 }): string {
   const lines = [
     "---",
@@ -775,6 +885,7 @@ function buildSynthesisFrontmatter(args: {
     lines.push(`synthesizer_failover_to: ${args.synthesizer_failover_to}`);
   }
   if (args.pool_exhausted) lines.push("pool_exhausted: true");
+  if (args.attempt_cap_reached) lines.push("attempt_cap_reached: true");
   lines.push("persona_handoff_ids:");
   for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
     lines.push(`  ${key}: ${id}`);
@@ -790,14 +901,66 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   // file.contents body means the refs resolved to nothing in this cwd — the
   // wrong-repo dispatch case, where recall ran against the daemon's repo, not
   // the target. Reporting "clean" here would close a review lane on a void run
-  // after paying for every persona. `&&` is load-bearing: a content_path-only
-  // review legitimately has an empty git.diff.
+  // after paying for every persona. A set-but-empty content_path fails closed
+  // on its own, whatever git.diff holds: the caller named the review target
+  // explicitly, and falling back to the cwd's refs would review the wrong
+  // change silently. The binary placeholder and a lone budget-truncation
+  // marker count as empty: they are omission markers, not reviewable text.
   const diffText = typeof recall.byKey["git.diff"] === "string" ? recall.byKey["git.diff"] : "";
-  const contentText = fileContentsBody(recall);
-  const recallErrs = recall.warnings.filter((w) =>
-    /^(?:git\.diff|git\.show|file\.contents):/.test(w),
+  const rawContentText = fileContentsBody(recall);
+  const contentIsBinary = rawContentText === BINARY_BODY_PLACEHOLDER;
+  const contentIsMarkerOnly = RECALL_TRUNCATION_ONLY_RE.test(rawContentText.trim());
+  const contentText = hasReviewableContent(rawContentText) ? rawContentText : "";
+  const hasContentPath =
+    typeof ctx.args.content_path === "string" && ctx.args.content_path.length > 0;
+  const recallErrs = recall.warnings.filter(
+    (w) =>
+      /^(?:git\.diff|git\.show|file\.contents):/.test(w) || w.startsWith("recall budget exceeded"),
   );
-  if (diffText.trim().length === 0 && contentText.trim().length === 0) {
+  // A capped git.diff means reviewers saw only part of the change. Content
+  // mode is exempt: the content_path body is the authoritative target and the
+  // incidental refs diff being capped says nothing about review coverage.
+  const diffBudgetWarning = recallErrs.find((w) => w.startsWith("git.diff: recall budget"));
+  const diffStats = parseDiffTruncationStats(recallErrs);
+  const reviewIsContentMode = hasContentPath && contentText.trim().length > 0;
+  const diffTruncated = diffBudgetWarning !== undefined && !reviewIsContentMode;
+  const statsDropped = Array.isArray(diffStats?.dropped)
+    ? diffStats.dropped.filter((n): n is string => typeof n === "string" && n.length > 0)
+    : null;
+  const diffDroppedFiles = diffTruncated
+    ? (statsDropped ?? parseDiffDroppedFiles(diffBudgetWarning))
+    : [];
+  const diffDroppedMore =
+    diffTruncated &&
+    (diffStats !== null
+      ? typeof diffStats.overflow === "number" && diffStats.overflow > 0
+      : /\(\+\d+ more\)$/.test(diffBudgetWarning ?? ""));
+  const partialDiffBanner =
+    diffTruncated && diffBudgetWarning !== undefined
+      ? `> Partial diff: ${diffBudgetWarning}\n\n`
+      : "";
+  const recallMeta = {
+    ...(recallErrs.length > 0 ? { recall_warnings: recallErrs } : {}),
+    ...(diffTruncated
+      ? {
+          diff_truncated: true,
+          diff_dropped_files: diffDroppedFiles,
+          diff_dropped_more: diffDroppedMore,
+          ...(typeof diffStats?.cut_file === "string" && diffStats.cut_file.length > 0
+            ? { diff_cut_file: diffStats.cut_file }
+            : {}),
+        }
+      : {}),
+  };
+  if (hasContentPath && contentText.trim().length === 0) {
+    const fileError = fileContentsError(recall);
+    const hint = contentIsBinary
+      ? "content_path resolved to binary content that cannot be decoded as text. Point content_path at a UTF-8 text file, or drop it and pass refs that produce a reviewable diff."
+      : contentIsMarkerOnly
+        ? "The recall budget trim emptied the content_path body; raise the workflow's recall_budget_tokens or point content_path at a smaller file."
+        : fileError === "not_found" || fileError === "path_outside_allowed_roots"
+          ? `content_path produced no content (file.contents: ${fileError}) — the path may be outside the allowed roots, or absent under this repo. Pass an explicit \`cwd\` to workflow_run — it defaults to the DAEMON's repo, not yours.`
+          : "content_path produced no reviewable content — the file is missing, unreadable, or empty. Point it at a UTF-8 text file, or drop it and pass refs that produce a reviewable diff.";
     return {
       ok: false,
       outcome: "failed",
@@ -806,7 +969,27 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       target_ref: ctx.args.target_ref,
       base_ref: ctx.args.base_ref,
       recall_warnings: recallErrs,
-      hint: "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.",
+      ...(fileError !== null ? { file_contents_error: fileError } : {}),
+      hint,
+    };
+  }
+  if (diffText.trim().length === 0 && contentText.trim().length === 0) {
+    const budgetTrimmed = recall.warnings.some((w) => w.startsWith("recall budget exceeded"));
+    const hint =
+      diffStats?.whole_drop === true
+        ? `The git.diff max_tokens cap dropped the whole diff (${String(diffStats.total ?? "?")} file sections, ${String(diffStats.chars ?? "?")} chars) — the diff is too large for the configured cap, not unresolvable refs. Narrow the diff range, pass a smaller target, or use content_path on a file containing the change.`
+        : budgetTrimmed
+          ? "The recall budget trim dropped every review input; raise the workflow's recall_budget_tokens or narrow the diff range / content_path."
+          : "No diff and no content resolved in this cwd. Refs are unresolvable here, or content_path is outside the allowed roots. Pass an explicit `cwd` to workflow_run — it defaults to the DAEMON's repo, not yours.";
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "empty_review_target",
+      cwd: ctx.cwd,
+      target_ref: ctx.args.target_ref,
+      base_ref: ctx.args.base_ref,
+      recall_warnings: recallErrs,
+      hint,
     };
   }
 
@@ -816,6 +999,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_personas_configured",
       hint: "add workloads.review_adversarial.eligible_agents to ~/.config/penumbra/routing.yaml",
+      ...recallMeta,
     };
   }
   if (!personaResolution.ok) {
@@ -825,6 +1009,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       missing_persona: personaResolution.missing_persona,
       workload: personaResolution.workload,
       hint: personaResolution.hint,
+      ...recallMeta,
     };
   }
   const personasByKey = personaResolution.personas;
@@ -835,6 +1020,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_synthesizer_configured",
       hint: "add workloads.review_adversarial.synthesizer to ~/.config/penumbra/routing.yaml",
+      ...recallMeta,
     };
   }
 
@@ -849,6 +1035,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       error: "unknown_personas",
       missing_personas: missing,
       hint: `available personas: ${personaKeys.join(", ")}`,
+      ...recallMeta,
     };
   }
   const selected = resolvedPersonas.resolved.map((key) => personasByKey[key]!).filter(Boolean);
@@ -857,6 +1044,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       ok: false,
       error: "no_personas_selected",
       hint: `available personas: ${personaKeys.join(", ")}`,
+      ...recallMeta,
     };
   }
   // tool_free:true — adversarial-review synthesizer dispatch is pure text
@@ -866,6 +1054,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const synthAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
     fallback_role: "reviewer",
     tool_free: true,
+    permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
   });
 
   const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
@@ -873,6 +1062,37 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: "out_dir_outside_allowed_roots",
+      ...recallMeta,
+    };
+  }
+
+  // P6: every reviewer/synthesizer dispatch runs inside a daemon-owned
+  // detached scratch worktree, never the operator checkout. Acquisition
+  // failure is a run failure — silent fallback to ctx.cwd would put writes
+  // back in the operator's tree.
+  if (ctx.scratchWorktree === undefined) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: "ctx_missing_scratch_worktree",
+      hint: "workflow ctx has no scratchWorktree — runs on a daemon without P6 support",
+      ...recallMeta,
+    };
+  }
+  let scratch: Awaited<ReturnType<NonNullable<typeof ctx.scratchWorktree>["acquire"]>>;
+  try {
+    // The review target is parsedArgs.target_ref, not the caller's HEAD —
+    // reviewing a fleet branch from the home checkout must give personas the
+    // branch's tree.
+    scratch = await ctx.scratchWorktree.acquire({ ref: parsedArgs.target_ref });
+  } catch (err) {
+    return {
+      ok: false,
+      outcome: "failed",
+      error: "review_worktree_unavailable",
+      detail: `scratch_acquire_failed: ${err instanceof Error ? err.message : String(err)}`,
+      ...recallMeta,
     };
   }
   const absoluteOutDir = outDirResolution.path;
@@ -896,7 +1116,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           parse_error: result.parse_error,
           error: result.error,
+          error_code: result.error_code,
           retry_count: result.retry_count,
+          cancel_requested: result.cancel_requested,
+          cancel_error: result.cancel_error,
         },
         null,
         2,
@@ -912,315 +1135,471 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const memoryQuery = buildMemoryQuery(recall, parsedArgs);
   const priorFindings = await fetchPriorFindings(ctx, memoryQuery);
 
-  const personaResults = await Promise.all(
-    resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
-      const persona = personasByKey[key]!;
-      let retryCount: 0 | 1 = 0;
-      try {
-        let dispatch: { conversation_id: string; handoff_id: string };
-        let wait: {
-          status: "completed" | "failed" | "timeout";
-          final_agent: string | null;
-          response_text: string | null;
+  // Record-only tripwire: the before-snapshot lands just before personas are
+  // dispatched; the after-snapshot runs in finally so every result produced
+  // past this point carries home_checkout_tripwire without changing it. With
+  // P6 the tripwire watches the scratch checkout AND the caller's cwd —
+  // a mutation in ctx.cwd means a persona escaped the scratch boundary.
+  const tripwire = await beginCheckoutTripwire({
+    cwd: scratch.path,
+    callerCwd: ctx.cwd,
+    db: ctx.db,
+    project: ctx.project,
+    outDir: absoluteOutDir,
+    baseRef: parsedArgs.base_ref,
+    targetRef: parsedArgs.target_ref,
+    contentPath: hasContentPath ? parsedArgs.content_path : null,
+  });
+  let reviewResult: Record<string, unknown> | undefined;
+  try {
+    const personaResults = await Promise.all(
+      resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
+        const persona = personasByKey[key]!;
+        let retryCount: 0 | 1 = 0;
+        let cancelRequested = false;
+        let cancelError: string | undefined;
+        const recordCancel = (outcome: CancelOutcome): void => {
+          cancelRequested ||= outcome.cancel_requested;
+          cancelError ??= outcome.cancel_error;
         };
-        // tool_free:true — reviewer persona dispatch is pure text generation:
-        // it receives the diff inlined in the prompt and emits a markdown
-        // review with a trailing JSON findings block. No penumbra MCP tools,
-        // no worktree, no commit.
-        const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
-          fallback_role: "reviewer",
-          tool_free: true,
-        });
-        while (true) {
-          try {
-            dispatch = await ctx.dispatch({
-              agent: personaAgent,
-              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
-              task_type: "review_adversarial",
-              use_worktree: false,
-              task_class: "TRIVIAL",
-            });
-            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
-            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
-            break;
-          } catch (err) {
-            if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
-              retryCount = 1;
-              await sleep(RETRY_BACKOFF_MS);
-              continue;
+        try {
+          let dispatch: {
+            conversation_id: string;
+            handoff_id: string;
+            permission_profile?: PermissionProfile | null;
+          };
+          let wait: AwaitedChain;
+          // tool_free:true — reviewer persona dispatch is pure text generation:
+          // it receives the diff inlined in the prompt and emits a markdown
+          // review with a trailing JSON findings block. No penumbra MCP tools,
+          // no worktree, no commit.
+          const personaAgent = resolveAgent(persona.preferred_agent, "review_adversarial", ctx, {
+            fallback_role: "reviewer",
+            tool_free: true,
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          });
+          for (;;) {
+            try {
+              dispatch = await ctx.dispatch({
+                agent: personaAgent,
+                message: `cd ${scratch.path}\n\n${renderPersonaPrompt(persona, recall, parsedArgs, priorFindings)}`,
+                task_type: "review_adversarial",
+                use_worktree: false,
+                task_class: "TRIVIAL",
+                permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+                max_hops: 1,
+                cwd_override: scratch.path,
+                project_id: scratch.project_id ?? undefined,
+              });
+              requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
+            } catch (err) {
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err;
             }
-            throw err;
+            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+            // A dispatched chain the workflow stops watching must not keep a
+            // worker retrying it: cancel on timeout/throw before any re-dispatch.
+            const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, { timeoutMs });
+            recordCancel(awaited);
+            if (awaited.wait === null) {
+              const err = awaited.error;
+              if (retryCount < 1 && shouldRetryWorkerUnavailable(err)) {
+                retryCount = 1;
+                await sleep(RETRY_BACKOFF_MS);
+                continue;
+              }
+              throw err instanceof Error ? err : new Error(String(err));
+            }
+            wait = awaited.wait;
+            break;
           }
+          const parsed = parseFindingsJson(wait.response_text);
+          let effectiveStatus = wait.status;
+          let trivialityReason: PersonaRunResult["triviality_reason"];
+          if (
+            effectiveStatus === "completed" &&
+            isTrivialResponse(wait.response_text) &&
+            parsed.findings === null
+          ) {
+            effectiveStatus = "failed";
+            trivialityReason = "trivial_response";
+          }
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: effectiveStatus,
+            raw_status: wait.status,
+            triviality_reason: trivialityReason,
+            response_text: wait.response_text,
+            conversation_id: dispatch.conversation_id,
+            handoff_id: dispatch.handoff_id,
+            error: failureReasonSummary(wait.failure_reason),
+            findings: parsed.findings,
+            parse_error: parsed.parse_error,
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
+        } catch (err) {
+          const result: PersonaRunResult = {
+            persona: persona.name,
+            persona_key: key,
+            bias: persona.bias,
+            status: "failed",
+            raw_status: "failed",
+            response_text: null,
+            conversation_id: null,
+            handoff_id: null,
+            error: err instanceof Error ? err.message : String(err),
+            // Typed failures (a pinned seat that cannot enforce the profile)
+            // keep their code so the failure stays distinguishable from a
+            // timeout or crash in the persona.json artifact.
+            error_code: err instanceof PersonaSeatCannotEnforceProfileError ? err.code : undefined,
+            findings: null,
+            retry_count: retryCount === 1 ? 1 : undefined,
+            cancel_requested: cancelRequested,
+            cancel_error: cancelError,
+          };
+          await writePersonaOutputs(result);
+          return result;
         }
-        const parsed = parseFindingsJson(wait.response_text);
-        let effectiveStatus = wait.status;
-        let trivialityReason: PersonaRunResult["triviality_reason"];
-        if (
-          effectiveStatus === "completed" &&
-          isTrivialResponse(wait.response_text) &&
-          parsed.findings === null
-        ) {
-          effectiveStatus = "failed";
-          trivialityReason = "trivial_response";
-        }
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: effectiveStatus,
-          raw_status: wait.status,
-          triviality_reason: trivialityReason,
-          response_text: wait.response_text,
-          conversation_id: dispatch.conversation_id,
-          handoff_id: dispatch.handoff_id,
-          findings: parsed.findings,
-          parse_error: parsed.parse_error,
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
-      } catch (err) {
-        const result: PersonaRunResult = {
-          persona: persona.name,
-          persona_key: key,
-          bias: persona.bias,
-          status: "failed",
-          raw_status: "failed",
-          response_text: null,
-          conversation_id: null,
-          handoff_id: null,
-          error: err instanceof Error ? err.message : String(err),
-          findings: null,
-          retry_count: retryCount === 1 ? 1 : undefined,
-        };
-        await writePersonaOutputs(result);
-        return result;
+      }),
+    );
+
+    const severityMetrics = summarizeSeverityMetrics(personaResults);
+
+    const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
+    const { completedCount, failedCount, failedPersonas, outcome } =
+      summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
+    const partialBanner =
+      failedCount > 0
+        ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`
+        : "";
+
+    const completedResults = personaResults.filter(
+      (result) =>
+        result.status === "completed" &&
+        typeof result.response_text === "string" &&
+        result.response_text.length > 0,
+    );
+
+    if (completedResults.length === 0) {
+      reviewResult = {
+        ok: false,
+        ...severityMetrics,
+        ...recallMeta,
+        out_dir: absoluteOutDir,
+        personas: personaResults.map((result) => ({
+          name: result.persona,
+          status: result.status,
+          conversation_id: result.conversation_id,
+          findings_count: Array.isArray(result.findings) ? result.findings.length : null,
+          cancel_requested: result.cancel_requested ?? false,
+          cancel_error: result.cancel_error,
+          ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
+        })),
+        synthesis_path: null,
+        synthesizer_status: null,
+        synthesizer_cancel_requested: false,
+        error: "all_persona_dispatches_failed",
+        hint: "all persona dispatches failed or timed out",
+      };
+      return reviewResult;
+    }
+
+    let synthesisPath: string | null = null;
+    let synthStatus: "completed" | "failed" | "timeout" | null = null;
+    let synthHandoffId: string | null = null;
+    let synthRetryUsed = false;
+    let synthCancelRequested = false;
+    let synthCancelError: string | undefined;
+    const synthFailover: { value: SynthFailover | null } = { value: null };
+    let synthStopReason: "pool_exhausted" | "attempt_cap_reached" | undefined;
+    let finalSynthAgentForFailure = synthAgent;
+    const attemptedSynthAgents = new Set<string>();
+    const personaHandoffIds: Record<string, string> = {};
+    for (const r of personaResults) {
+      if (r.handoff_id) {
+        personaHandoffIds[r.persona_key] = r.handoff_id;
       }
-    }),
-  );
+    }
+    const dispatchSynth = async (): Promise<{
+      agent: string;
+      dispatch: {
+        conversation_id: string;
+        handoff_id: string;
+        permission_profile?: PermissionProfile | null;
+      };
+      wait: {
+        status: "completed" | "failed" | "timeout";
+        final_agent: string | null;
+        response_text: string | null;
+      };
+    }> => {
+      let attempts = 0;
+      let currentAgent = synthAgent;
+      const markSynthStop = (): void => {
+        // Called only when failover produced no next seat. For a pool,
+        // pool_exhausted means every member that could enforce the profile
+        // was attempted — including when the final attempt lands exactly on
+        // the cap. Untried capable members mean the attempt limit cut the
+        // run short: attempt_cap_reached.
+        if (synthesizer.preferred_agent.kind !== "pool") {
+          if (attempts >= SYNTHESIS_DISPATCH_ATTEMPT_LIMIT) {
+            synthStopReason = "attempt_cap_reached";
+          }
+          return;
+        }
+        const agentsList = Array.isArray(ctx.config.agents) ? ctx.config.agents : [];
+        const capableCount = synthesizer.preferred_agent.agents.filter((name) =>
+          agentEnforcesPermissionProfile(
+            agentsList.find((agent) => agent.name === name),
+            PERMISSION_PROFILE_REVIEW_READONLY,
+          ),
+        ).length;
+        synthStopReason =
+          attemptedSynthAgents.size >= capableCount ? "pool_exhausted" : "attempt_cap_reached";
+      };
+      const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
+        synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
+      };
+      const failoverAgent = (): string | null => {
+        if (synthesizer.preferred_agent.kind !== "pool") return null;
+        if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
+        try {
+          const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
+            excludeAgents: Array.from(attemptedSynthAgents),
+            fallback_role: "reviewer",
+            tool_free: true,
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+          });
+          return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
+        } catch (err) {
+          // No remaining pool member can enforce the profile: that IS pool
+          // exhaustion, not a crash — report it as such instead of throwing
+          // past markSynthPoolExhausted.
+          if (err instanceof PersonaSeatCannotEnforceProfileError) return null;
+          throw err;
+        }
+      };
+      while (true) {
+        let dispatchConversationId: string | null = null;
+        let attemptCancelled = false;
+        try {
+          attempts += 1;
+          finalSynthAgentForFailure = currentAgent;
+          attemptedSynthAgents.add(currentAgent);
+          const dispatch = await ctx.dispatch({
+            agent: currentAgent,
+            message: `cd ${scratch.path}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
+            task_type: "review_adversarial",
+            use_worktree: false,
+            task_class: "TRIVIAL",
+            permission_profile: PERMISSION_PROFILE_REVIEW_READONLY,
+            max_hops: 1,
+            cwd_override: scratch.path,
+            project_id: scratch.project_id ?? undefined,
+          });
+          requireDispatchProfileEcho(dispatch, PERMISSION_PROFILE_REVIEW_READONLY);
+          dispatchConversationId = dispatch.conversation_id;
+          synthHandoffId = dispatch.handoff_id;
+          const awaited = await awaitChainOrCancel(ctx, dispatch.conversation_id, {
+            timeoutMs: parsedArgs.timeout_ms,
+          });
+          // A wait that timed out or threw leaves a live chain behind; the helper
+          // already requested its cancel, so failover below must not repeat it.
+          attemptCancelled = awaited.cancel_requested;
+          if (awaited.cancel_requested) synthCancelRequested = true;
+          if (awaited.cancel_error !== undefined) synthCancelError = awaited.cancel_error;
+          if (awaited.wait === null) {
+            throw awaited.error instanceof Error ? awaited.error : new Error(String(awaited.error));
+          }
+          const wait = awaited.wait;
+          if (wait.status === "completed" && isValidSynthesisOutput(wait.response_text)) {
+            return { agent: currentAgent, dispatch, wait };
+          }
+          const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
+          if (nextAgent) {
+            if (!attemptCancelled) {
+              const cancel = await cancelChainQuietly(ctx, dispatch.conversation_id);
+              if (cancel.cancel_requested) synthCancelRequested = true;
+              synthCancelError ??= cancel.cancel_error;
+            }
+            recordSynthFailover(currentAgent, nextAgent);
+            currentAgent = nextAgent;
+            continue;
+          }
+          markSynthStop();
+          return { agent: currentAgent, dispatch, wait };
+        } catch (err) {
+          if (
+            attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT &&
+            !synthRetryUsed &&
+            shouldRetryWorkerUnavailable(err)
+          ) {
+            synthRetryUsed = true;
+            await sleep(RETRY_BACKOFF_MS);
+            continue;
+          }
+          const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
+          if (nextAgent) {
+            if (dispatchConversationId && !attemptCancelled) {
+              const cancel = await cancelChainQuietly(ctx, dispatchConversationId);
+              if (cancel.cancel_requested) synthCancelRequested = true;
+              synthCancelError ??= cancel.cancel_error;
+            }
+            recordSynthFailover(currentAgent, nextAgent);
+            currentAgent = nextAgent;
+            continue;
+          }
+          markSynthStop();
+          throw err;
+        }
+      }
+    };
 
-  const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
-  const { completedCount, failedCount, failedPersonas, outcome } =
-    summarizePersonaCompletionOutcome(personaResults, minPassPct, personasByKey);
-  const partialBanner =
-    failedCount > 0
-      ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(", ")})\n\n`
-      : "";
+    try {
+      const {
+        agent: finalSynthAgent,
+        dispatch: synthDispatch,
+        wait: synthWait,
+      } = await dispatchSynth();
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      const synthFailoverBanner = synthFailover.value
+        ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
+        : "";
+      synthHandoffId = synthDispatch.handoff_id;
+      synthStatus =
+        synthWait.status === "completed" && !isValidSynthesisOutput(synthWait.response_text)
+          ? "failed"
+          : synthWait.status;
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = buildSynthesisFrontmatter({
+        review_run_ts: reviewRunTs,
+        synthesis_handoff_id: synthHandoffId,
+        persona_handoff_ids: personaHandoffIds,
+        target_ref: parsedArgs.target_ref,
+        base_ref: parsedArgs.base_ref,
+        synthesizer_agent: finalSynthAgent,
+        synthesizer_failover_from: synthFailover.value?.from,
+        synthesizer_failover_to: synthFailover.value?.to,
+        pool_exhausted: synthStopReason === "pool_exhausted",
+        attempt_cap_reached: synthStopReason === "attempt_cap_reached",
+      });
+      await ctx.fileWrite(
+        synthesisPath,
+        partialDiffBanner +
+          synthRetryBanner +
+          synthFailoverBanner +
+          partialBanner +
+          renderSynthesisBody(synthWait, frontmatter),
+      );
+    } catch (err) {
+      const synthRetryBanner = synthRetryUsed
+        ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
+        : "";
+      const synthFailoverBanner = synthFailover.value
+        ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
+        : "";
+      synthStatus = "failed";
+      synthesisPath = join(absoluteOutDir, "synthesis.md");
+      const frontmatter = synthHandoffId
+        ? buildSynthesisFrontmatter({
+            review_run_ts: reviewRunTs,
+            synthesis_handoff_id: synthHandoffId,
+            persona_handoff_ids: personaHandoffIds,
+            target_ref: parsedArgs.target_ref,
+            base_ref: parsedArgs.base_ref,
+            synthesizer_agent: finalSynthAgentForFailure,
+            synthesizer_failover_from: synthFailover.value?.from,
+            synthesizer_failover_to: synthFailover.value?.to,
+            pool_exhausted: synthStopReason === "pool_exhausted",
+            attempt_cap_reached: synthStopReason === "attempt_cap_reached",
+          })
+        : "";
+      await ctx.fileWrite(
+        synthesisPath,
+        partialDiffBanner +
+          synthRetryBanner +
+          synthFailoverBanner +
+          partialBanner +
+          frontmatter +
+          `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      );
+    }
 
-  const completedResults = personaResults.filter(
-    (result) =>
-      result.status === "completed" &&
-      typeof result.response_text === "string" &&
-      result.response_text.length > 0,
-  );
+    const finalOutcome =
+      synthStatus !== "completed" && outcome !== "failed" ? "success_partial" : outcome;
 
-  if (completedResults.length === 0) {
-    return {
-      ok: false,
+    reviewResult = {
+      ok: finalOutcome !== "failed" && synthStatus === "completed",
+      outcome: finalOutcome,
+      ...severityMetrics,
+      ...recallMeta,
+      ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
+      failed_personas: failedPersonas,
+      completed_personas: personaResults
+        .filter((r) => r.status === "completed")
+        .map((r) => r.persona),
       out_dir: absoluteOutDir,
       personas: personaResults.map((result) => ({
         name: result.persona,
         status: result.status,
         conversation_id: result.conversation_id,
         findings_count: Array.isArray(result.findings) ? result.findings.length : null,
+        cancel_requested: result.cancel_requested ?? false,
+        cancel_error: result.cancel_error,
+        ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
       })),
-      synthesis_path: null,
-      synthesizer_status: null,
-      error: "all_persona_dispatches_failed",
-      hint: "all persona dispatches failed or timed out",
+      synthesis_path: synthesisPath,
+      synthesizer_status: synthStatus,
+      synthesizer_cancel_requested: synthCancelRequested,
+      ...(synthCancelError !== undefined ? { synthesizer_cancel_error: synthCancelError } : {}),
+      synth_failed: synthStatus !== "completed",
+      ...(synthStopReason === "pool_exhausted" ? { pool_exhausted: true } : {}),
+      ...(synthStopReason === "attempt_cap_reached" ? { attempt_cap_reached: true } : {}),
     };
-  }
-
-  let synthesisPath: string | null = null;
-  let synthStatus: "completed" | "failed" | "timeout" | null = null;
-  let synthHandoffId: string | null = null;
-  let synthRetryUsed = false;
-  const synthFailover: { value: SynthFailover | null } = { value: null };
-  let synthPoolExhausted = false;
-  let finalSynthAgentForFailure = synthAgent;
-  const attemptedSynthAgents = new Set<string>();
-  const personaHandoffIds: Record<string, string> = {};
-  for (const r of personaResults) {
-    if (r.handoff_id) {
-      personaHandoffIds[r.persona_key] = r.handoff_id;
-    }
-  }
-  const dispatchSynth = async (): Promise<{
-    agent: string;
-    dispatch: { conversation_id: string; handoff_id: string };
-    wait: {
-      status: "completed" | "failed" | "timeout";
-      final_agent: string | null;
-      response_text: string | null;
-    };
-  }> => {
-    let attempts = 0;
-    let currentAgent = synthAgent;
-    const markSynthPoolExhausted = (): void => {
-      if (
-        synthesizer.preferred_agent.kind === "pool" &&
-        attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length
-      ) {
-        synthPoolExhausted = true;
-      }
-    };
-    const recordSynthFailover = (failedAgent: string, nextAgent: string): void => {
-      synthFailover.value = { from: synthFailover.value?.from ?? failedAgent, to: nextAgent };
-    };
-    const failoverAgent = (): string | null => {
-      if (synthesizer.preferred_agent.kind !== "pool") return null;
-      if (attemptedSynthAgents.size >= synthesizer.preferred_agent.agents.length) return null;
-      const nextAgent = resolveAgent(synthesizer.preferred_agent, "review_adversarial", ctx, {
-        excludeAgents: Array.from(attemptedSynthAgents),
-        fallback_role: "reviewer",
-        tool_free: true,
-      });
-      return attemptedSynthAgents.has(nextAgent) ? null : nextAgent;
-    };
-    while (true) {
-      let dispatchConversationId: string | null = null;
-      try {
-        attempts += 1;
-        finalSynthAgentForFailure = currentAgent;
-        attemptedSynthAgents.add(currentAgent);
-        const dispatch = await ctx.dispatch({
-          agent: currentAgent,
-          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs, priorFindings)}`,
-          task_type: "review_adversarial",
-          use_worktree: false,
-          task_class: "TRIVIAL",
-        });
-        dispatchConversationId = dispatch.conversation_id;
-        synthHandoffId = dispatch.handoff_id;
-        const wait = await ctx.awaitChain(dispatch.conversation_id, {
-          timeoutMs: parsedArgs.timeout_ms,
-        });
-        if (wait.status === "completed" && isValidSynthesisOutput(wait.response_text)) {
-          return { agent: currentAgent, dispatch, wait };
-        }
-        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
-        if (nextAgent) {
-          await ctx.cancel(dispatch.conversation_id).catch(() => {});
-          recordSynthFailover(currentAgent, nextAgent);
-          currentAgent = nextAgent;
-          continue;
-        }
-        markSynthPoolExhausted();
-        return { agent: currentAgent, dispatch, wait };
-      } catch (err) {
-        if (
-          attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT &&
-          !synthRetryUsed &&
-          shouldRetryWorkerUnavailable(err)
-        ) {
-          synthRetryUsed = true;
-          await sleep(RETRY_BACKOFF_MS);
-          continue;
-        }
-        const nextAgent = attempts < SYNTHESIS_DISPATCH_ATTEMPT_LIMIT ? failoverAgent() : null;
-        if (nextAgent) {
-          if (dispatchConversationId) await ctx.cancel(dispatchConversationId).catch(() => {});
-          recordSynthFailover(currentAgent, nextAgent);
-          currentAgent = nextAgent;
-          continue;
-        }
-        markSynthPoolExhausted();
-        throw err;
+    return reviewResult;
+  } finally {
+    const tripwireReport = await tripwire.finish();
+    // Only a mutation of the scratch checkout itself (head/branch/path —
+    // i.e. a persona wrote inside the review worktree) is the review's own
+    // fault. Stash and worktree-list signals are shared through the repo's
+    // common dir, and home/caller-target mutations are someone else's — both
+    // stay record-only. The predicate is computed off report.mutations so an
+    // 'unavailable' verdict on another target can't hide a scratch mutation.
+    const scratchTarget = await realpath(scratch.path).catch(() => scratch.path);
+    const scratchMutated = tripwireReport.mutations.some(
+      (m) =>
+        m.level === "mutated" &&
+        m.target === scratchTarget &&
+        (m.kind === "head" || m.kind === "branch" || m.kind === "path"),
+    );
+    if (reviewResult !== undefined) {
+      reviewResult["home_checkout_tripwire"] = tripwireReport;
+      // Flag-gated hard check — record-only stays the default rollout; the
+      // env arm flips a scratch mutation into a run failure for eval rigs.
+      if (process.env["PENUMBRA_REVIEW_TRIPWIRE_HARD"] === "1" && scratchMutated) {
+        reviewResult["ok"] = false;
+        reviewResult["outcome"] = "failed";
+        reviewResult["error"] = "review_worktree_mutated";
       }
     }
-  };
-
-  try {
-    const {
-      agent: finalSynthAgent,
-      dispatch: synthDispatch,
-      wait: synthWait,
-    } = await dispatchSynth();
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    const synthFailoverBanner = synthFailover.value
-      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
-      : "";
-    synthHandoffId = synthDispatch.handoff_id;
-    synthStatus =
-      synthWait.status === "completed" && !isValidSynthesisOutput(synthWait.response_text)
-        ? "failed"
-        : synthWait.status;
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = buildSynthesisFrontmatter({
-      review_run_ts: reviewRunTs,
-      synthesis_handoff_id: synthHandoffId,
-      persona_handoff_ids: personaHandoffIds,
-      target_ref: parsedArgs.target_ref,
-      base_ref: parsedArgs.base_ref,
-      synthesizer_agent: finalSynthAgent,
-      synthesizer_failover_from: synthFailover.value?.from,
-      synthesizer_failover_to: synthFailover.value?.to,
-      pool_exhausted: synthPoolExhausted,
-    });
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        synthFailoverBanner +
-        partialBanner +
-        renderSynthesisBody(synthWait, frontmatter),
-    );
-  } catch (err) {
-    const synthRetryBanner = synthRetryUsed
-      ? "> Synthesizer retried once after 503 no_worker_registered or worker_heartbeats_stale\n\n"
-      : "";
-    const synthFailoverBanner = synthFailover.value
-      ? `> Synthesizer failover: ${synthFailover.value.from} -> ${synthFailover.value.to}\n\n`
-      : "";
-    synthStatus = "failed";
-    synthesisPath = join(absoluteOutDir, "synthesis.md");
-    const frontmatter = synthHandoffId
-      ? buildSynthesisFrontmatter({
-          review_run_ts: reviewRunTs,
-          synthesis_handoff_id: synthHandoffId,
-          persona_handoff_ids: personaHandoffIds,
-          target_ref: parsedArgs.target_ref,
-          base_ref: parsedArgs.base_ref,
-          synthesizer_agent: finalSynthAgentForFailure,
-          synthesizer_failover_from: synthFailover.value?.from,
-          synthesizer_failover_to: synthFailover.value?.to,
-          pool_exhausted: synthPoolExhausted,
-        })
-      : "";
-    await ctx.fileWrite(
-      synthesisPath,
-      synthRetryBanner +
-        synthFailoverBanner +
-        partialBanner +
-        frontmatter +
-        `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
-    );
+    // A scratch mutation keeps the scratch for forensics until the daemon's
+    // keep TTL expires; clean runs release immediately. The daemon also
+    // releases on run settle, so a throw past this block still frees it.
+    const keepReason = scratchMutated ? "tripwire_mutated" : undefined;
+    await scratch.release({ keep_reason: keepReason }).catch(() => undefined);
   }
-
-  const finalOutcome =
-    synthStatus !== "completed" && outcome !== "failed" ? "success_partial" : outcome;
-
-  return {
-    ok: finalOutcome !== "failed" && synthStatus === "completed",
-    outcome: finalOutcome,
-    ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
-    failed_personas: failedPersonas,
-    completed_personas: personaResults
-      .filter((r) => r.status === "completed")
-      .map((r) => r.persona),
-    out_dir: absoluteOutDir,
-    personas: personaResults.map((result) => ({
-      name: result.persona,
-      status: result.status,
-      conversation_id: result.conversation_id,
-      findings_count: Array.isArray(result.findings) ? result.findings.length : null,
-    })),
-    synthesis_path: synthesisPath,
-    synthesizer_status: synthStatus,
-    synth_failed: synthStatus !== "completed",
-    ...(synthPoolExhausted ? { pool_exhausted: true } : {}),
-  };
 };
 
 export default spec;

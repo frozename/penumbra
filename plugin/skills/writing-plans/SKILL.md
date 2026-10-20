@@ -57,6 +57,11 @@ In penumbra, include `yaml meta` only when required (see Penumbra additions belo
 **Every plan MUST start with this header:**
 
 ```markdown
+---
+plan_id: [unique plan id, e.g. the file's basename]
+home_project: [projects.yaml id the plan belongs to]
+---
+
 # [Feature Name] Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -233,6 +238,7 @@ bun packages/cli/bin/penumbra.ts plan validate <path>
 
 The validator checks:
 
+- the front matter on line 1 declares `plan_id` and `home_project` (`header_missing` otherwise)
 - `parallel_with` reciprocity (A lists B → B must list A)
 - `depends_on` cycles (rejected)
 - `file_scope: new` collisions (same path declared new in two tasks)

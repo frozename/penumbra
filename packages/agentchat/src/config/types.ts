@@ -5,6 +5,7 @@ import {
   AgentPinSchema,
   AgentPoolSchema,
   CANONICAL_PROVIDER_VALUE_RE,
+  EnforcesPermissionProfilesSchema,
   refineAgentConfigAdapterOptions,
 } from "@penumbra/config";
 import { z } from "zod";
@@ -187,6 +188,7 @@ export const AgentConfigSchema = z
     provenance: AgentProvenanceSchema.optional(),
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
+    enforces_permission_profiles: EnforcesPermissionProfilesSchema,
   })
   .superRefine((data, ctx) => {
     refineAgentConfigAdapterOptions(data, ctx);

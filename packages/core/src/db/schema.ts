@@ -1,10 +1,12 @@
 import { Database } from "bun:sqlite";
 
+// 46 = judge_decisions shadow sink for the TypeSafe judge.
+// 45 = t1_rollups promotion_retry_exhausted_at terminal stamp.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 47;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -84,6 +86,15 @@ const SCHEMA_DDL_BLOCK_01 = `
           ts
         )
         WHERE event_type = 'workflow.outcome';
+
+      -- aggregateHandoffUsage sums per-handoff usage-update deltas; the CASE
+      -- expression must match the query verbatim for SQLite to seek this
+      -- index instead of scanning every usage-update row via t0_by_type_ts.
+      CREATE INDEX IF NOT EXISTS t0_events_usage_update_handoff
+        ON t0_events(
+          CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.handoff_id') END
+        )
+        WHERE event_type = 'usage-update';
 
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,
@@ -393,6 +404,9 @@ const SCHEMA_DDL_BLOCK_01 = `
       );
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
+      -- computeStateMetrics' latest-dispatch.end probe reverse-scans this
+      -- partial index instead of sorting the full dispatch_events table.
+      CREATE INDEX IF NOT EXISTS idx_dispatch_events_end_ts  ON dispatch_events(ts) WHERE kind = 'dispatch.end';
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff_kind ON dispatch_events(handoff_id, kind);
 
       CREATE TABLE IF NOT EXISTS session_events (
@@ -1041,6 +1055,23 @@ const SCHEMA_DDL_BLOCK_15 = `
       CREATE INDEX IF NOT EXISTS registrar_events_by_entry ON registrar_events(registrar_id, created_at);
       CREATE INDEX IF NOT EXISTS registrar_events_open_state ON registrar_events(registrar_id, kind, state);
 `;
+const SCHEMA_DDL_BLOCK_16 = `
+      CREATE TABLE IF NOT EXISTS judge_decisions (
+        decision_id         TEXT PRIMARY KEY,
+        site                TEXT NOT NULL,
+        subject_id          TEXT NOT NULL,
+        mode                TEXT NOT NULL,
+        model               TEXT NOT NULL,
+        incumbent_json      TEXT NOT NULL,
+        jev_json            TEXT NOT NULL,
+        applied             INTEGER NOT NULL CHECK (applied IN (0, 1)),
+        usage_input_tokens  INTEGER NOT NULL CHECK (usage_input_tokens >= 0),
+        created_at          TEXT NOT NULL,
+        CHECK (mode <> 'shadow' OR applied = 0)
+      );
+      CREATE INDEX IF NOT EXISTS idx_judge_decisions_site_created_at ON judge_decisions(site, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_judge_decisions_subject_id ON judge_decisions(subject_id);
+`;
 
 export interface ReleaseT1RollupClaimsOpts {
   terminalOutcomes?: readonly string[];
@@ -1072,6 +1103,9 @@ const HANDOFFS_ADDITIVE_COLUMNS: [string, string][] = [
   ["max_dispatch_attempts", "INTEGER NOT NULL DEFAULT 3"],
   ["last_dispatch_started_at", "TEXT"],
   ["workflow_run_id", "TEXT"],
+  ["permission_profile", "TEXT"],
+  ["caller_cwd", "TEXT"],
+  ["cwd_override", "TEXT"],
 ];
 
 const TASKS_ADDITIVE_COLUMNS: [string, string][] = [
@@ -1175,6 +1209,7 @@ const T1_ROLLUPS_LATE_ADDITIVE_COLUMNS: [string, string][] = [
   ["promotion_unusable_excerpt_at", "INTEGER"],
   ["promotion_retry_count", "INTEGER NOT NULL DEFAULT 0"],
   ["promotion_retry_after", "INTEGER"],
+  ["promotion_retry_exhausted_at", "INTEGER"],
 ];
 
 function addColumnsIfMissing(db: Database, table: string, cols: [string, string][]): void {
@@ -1396,6 +1431,7 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
     db.run(SCHEMA_DDL_BLOCK_12);
     db.run(SCHEMA_DDL_BLOCK_14);
     db.run(SCHEMA_DDL_BLOCK_15);
+    db.run(SCHEMA_DDL_BLOCK_16);
     db.run("COMMIT");
   } catch (err) {
     db.run("ROLLBACK");

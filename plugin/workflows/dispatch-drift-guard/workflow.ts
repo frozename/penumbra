@@ -72,9 +72,24 @@ const DISPATCH_TOOLS = new Set<string>([
 type Args = {
   db?: Database;
   session_id?: string;
+  harness?: "codex";
+  lineage?: "root" | "child" | "unknown";
+  ingress?: {
+    harness?: "codex";
+    role?: "maestro" | "dispatch" | "unknown";
+    lineage?: "root" | "child" | "unknown";
+    provenance?: "verified-launch" | "verified-session-correlation" | "unknown";
+    is_child?: boolean;
+    parent_session_id?: string | null;
+  };
 };
 
-type ToolRow = { tool: string | null; command: string | null; source_detail: string | null };
+type ToolRow = {
+  tool: string | null;
+  tool_activity: string | null;
+  command: string | null;
+  source_detail: string | null;
+};
 
 const spec: WorkflowSpec = {
   name: "dispatch-drift-guard",
@@ -228,10 +243,23 @@ function bashCommandLooksWritey(command: string): boolean {
 // Count the trailing run of consecutive SOLO tool-calls, stopping (resetting) at the
 // first real dispatch. Reads/greps and status polls are skipped (neither increment nor
 // reset). rows are newest-first.
-function countTrailingSoloStreak(rows: ToolRow[]): number {
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the per-harness solo streak count while grandfathering its pre-existing complexity.
+function countTrailingSoloStreak(rows: ToolRow[], source: "claude-code" | "codex"): number {
   let streak = 0;
   for (const row of rows) {
     const name = toolNameOf(row);
+    if (source === "codex") {
+      if (row.tool_activity === "fleet-dispatch") break;
+      if (row.tool_activity === "edit") {
+        streak += 1;
+        continue;
+      }
+      if (row.tool_activity === "shell") {
+        if (!name || !bashCommandLooksWritey(row.command ?? "")) continue;
+        streak += 1;
+      }
+      continue;
+    }
     if (!name) continue;
     if (DISPATCH_TOOLS.has(name)) break; // real dispatch resets the streak
     if (SOLO_TOOLS.has(name)) {
@@ -255,15 +283,31 @@ function render(streak: number, threshold: number): string {
   ].join("\n");
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the drift-guard workflow body while grandfathering its pre-existing complexity.
 export const fn: WorkflowFn<Args> = async (ctx) => {
   if (process.env.PENUMBRA_DISPATCH_DRIFT_ENABLED === "0") return "";
 
   const sessionId = ctx.args?.session_id;
-  // Only nag the maestro loop. Absent session_id, or a dispatch-worker session
-  // (conv-* prefix), stays silent. UUID-shaped session_id => maestro.
   if (!sessionId) return "";
-  if (sessionId.startsWith("conv-")) return "";
-  if (!/^[0-9a-f]{8}-/i.test(sessionId)) return "";
+  const isCodex = ctx.args?.harness === "codex";
+  const codexIngress = isCodex ? ctx.args?.ingress : undefined;
+  const source = isCodex ? "codex" : "claude-code";
+  if (isCodex) {
+    if (
+      codexIngress?.harness !== "codex" ||
+      codexIngress.role !== "maestro" ||
+      codexIngress.lineage !== "root" ||
+      codexIngress.provenance === "unknown" ||
+      codexIngress.provenance === undefined ||
+      codexIngress.is_child !== false ||
+      codexIngress.parent_session_id !== null
+    ) {
+      return "";
+    }
+  } else {
+    if (sessionId.startsWith("conv-")) return "";
+    if (!/^[0-9a-f]{8}-/i.test(sessionId)) return "";
+  }
 
   const threshold = resolveIntEnv("PENUMBRA_SOLO_DRIFT_THRESHOLD", DEFAULT_THRESHOLD);
   const renagEvery = resolveIntEnv("PENUMBRA_SOLO_DRIFT_RENAG", DEFAULT_RENAG);
@@ -279,19 +323,20 @@ export const fn: WorkflowFn<Args> = async (ctx) => {
       // NOT a usable filter here — one session scatters across many synthetic project_ids
       // (per-subdirectory relpath suffix).
       const rows = db
-        .query<ToolRow, [string, number]>(
+        .query<ToolRow, [string, "claude-code" | "codex", number]>(
           `SELECT json_extract(payload_json, '$.tool') AS tool,
+                  json_extract(payload_json, '$.tool_activity') AS tool_activity,
                   json_extract(payload_json, '$.input.command') AS command,
                   source_detail
              FROM t0_events
             WHERE session_id = ?
-              AND source = 'claude-code'
+              AND source = ?
               AND event_type = 'agent-tool-use'
             ORDER BY ts DESC, rowid DESC
             LIMIT ?`,
         )
-        .all(sessionId, SCAN_LIMIT);
-      streak = countTrailingSoloStreak(rows);
+        .all(sessionId, source, SCAN_LIMIT);
+      streak = countTrailingSoloStreak(rows, source);
     } finally {
       if (shouldClose) {
         try {

@@ -44,6 +44,7 @@
         "zod": "^4.3.0",
       },
       "devDependencies": {
+        "@penumbra/api-contract": "workspace:*",
         "@penumbra/daemon": "workspace:*",
         "@types/js-yaml": "^4.0.9",
         "@types/node": "^25.6.0",
@@ -95,6 +96,7 @@
       "name": "@penumbra/config",
       "version": "0.0.0",
       "dependencies": {
+        "@penumbra/api-contract": "workspace:*",
         "yaml": "^2.8.1",
         "zod": "^4.3.0",
       },
@@ -139,7 +141,7 @@
       "dependencies": {
         "@penumbra/api-contract": "workspace:*",
         "@penumbra/config": "workspace:*",
-        "fastembed": "^1.14.1",
+        "fastembed": "1.14.4",
         "pino": "^9.0.0",
         "sqlite-vec": "^0.1.6",
         "yaml": "^2.5.0",
@@ -158,6 +160,7 @@
         "@penumbra/config": "workspace:*",
         "@penumbra/core": "workspace:*",
         "@penumbra/mcp": "workspace:*",
+        "@penumbra/typesafe": "workspace:*",
         "@penumbra/workflows": "workspace:*",
         "croner": "9.1.0",
         "ignore": "^5.3.0",
@@ -187,6 +190,13 @@
         "@types/node": "^25.6.0",
       },
     },
+    "packages/exec-primitives-consumer": {
+      "name": "@penumbra/exec-primitives-consumer",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@novaproto/exec-primitives": "0.1.0",
+      },
+    },
     "packages/integrations/sirius-middleware": {
       "name": "@penumbra/sirius-middleware",
       "version": "0.0.0",
@@ -201,6 +211,14 @@
       },
       "peerDependencies": {
         "fastify": "^5.0.0",
+      },
+    },
+    "packages/integrations/typesafe": {
+      "name": "@penumbra/typesafe",
+      "version": "0.0.0",
+      "dependencies": {
+        "@penumbra/core": "workspace:*",
+        "zod": "^4.3.0",
       },
     },
     "packages/mcp": {
@@ -414,6 +432,8 @@
 
     "@novaproto/contracts": ["@novaproto/contracts@0.1.0", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-1JCKNrJaohgPoB1zySZ1Gy+Lk0nnKgzb+cpdI8VQJfWD6ZiFx97J30s6MCagpIu+h7C+z/kJJSSy5hGaY+w9TA=="],
 
+    "@novaproto/exec-primitives": ["@novaproto/exec-primitives@0.1.0", "", {}, "sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew=="],
+
     "@novaproto/mcp-shared": ["@novaproto/mcp-shared@0.1.0", "", { "dependencies": { "@novaproto/contracts": "0.1.0", "yaml": "^2.7.0" } }, "sha512-U6aYp11fURSCY4tvdnQhVl83AKOxXvfirVIaPgdPmzZM/EkrJseT71lY0pgTbv/jFj0QOsD0J+OFQM3Qcd1ZdA=="],
 
     "@package-json/types": ["@package-json/types@0.0.12", "", {}, "sha512-uu43FGU34B5VM9mCNjXCwLaGHYjXdNincqKLaraaCW+7S2+SmiBg1Nv8bPnmschrIfZmfKNY9f3fC376MRrObw=="],
@@ -436,9 +456,13 @@
 
     "@penumbra/e2e": ["@penumbra/e2e@workspace:packages/e2e"],
 
+    "@penumbra/exec-primitives-consumer": ["@penumbra/exec-primitives-consumer@workspace:packages/exec-primitives-consumer"],
+
     "@penumbra/mcp": ["@penumbra/mcp@workspace:packages/mcp"],
 
     "@penumbra/sirius-middleware": ["@penumbra/sirius-middleware@workspace:packages/integrations/sirius-middleware"],
+
+    "@penumbra/typesafe": ["@penumbra/typesafe@workspace:packages/integrations/typesafe"],
 
     "@penumbra/workflows": ["@penumbra/workflows@workspace:packages/workflows"],
 

@@ -24,7 +24,16 @@ export async function workerReconcileOrphansRoute(
     );
   }
 
-  const body = z.object({ worker_id: z.string().min(1) }).safeParse(raw);
+  // claimed_before bounds reconciliation to rows claimed strictly before it
+  // (last_dispatch_started_at). Unknown keys are rejected: a worker-side typo
+  // must fail closed rather than silently run an unbounded reconcile.
+  const body = z
+    .object({
+      worker_id: z.string().min(1),
+      claimed_before: z.iso.datetime({ offset: true }).optional(),
+    })
+    .strict()
+    .safeParse(raw);
   if (!body.success) {
     return json(
       {
@@ -42,7 +51,16 @@ export async function workerReconcileOrphansRoute(
   if (authErr) return authErr;
 
   try {
-    const result = recovery.runOnce(body.data.worker_id, { workerKnownDead: true });
+    // Normalize to the canonical ISO form claimDispatch stamps so the
+    // lexicographic column comparison is exact even for offset inputs.
+    const claimedBefore =
+      body.data.claimed_before !== undefined
+        ? new Date(body.data.claimed_before).toISOString()
+        : undefined;
+    const result = recovery.runOnce(body.data.worker_id, {
+      workerKnownDead: true,
+      claimedBefore,
+    });
     return json({
       requeued: result.requeued,
       exhausted: result.exhausted,

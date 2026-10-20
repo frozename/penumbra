@@ -1,4 +1,5 @@
 import type {
+  ChainStartResponse,
   RegistrarCreateRequest,
   RegistrarDetail,
   RegistrarEvent,
@@ -30,7 +31,6 @@ import type { z } from "zod";
 
 import { RecallRequestSchema } from "@penumbra/core";
 
-import type { ChainStartResult } from "./format-summary.js";
 type RecallInput = z.input<typeof RecallRequestSchema>;
 
 export interface StaticDaemonClientOpts {
@@ -762,7 +762,9 @@ export class DaemonClient {
     open_pr_on_review?: boolean;
     isolated_install?: boolean;
     tool_free?: boolean;
-  }): Promise<ChainStartResult> {
+    permission_profile?: ChainStartRequest["permission_profile"];
+    caller_cwd?: string;
+  }): Promise<ChainStartResponse> {
     return await this.post("/chains/start", body);
   }
 

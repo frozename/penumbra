@@ -1,3 +1,4 @@
+import { PermissionProfileSchema } from "@penumbra/api-contract";
 import { z } from "zod";
 
 const UnitIntervalSchema = z.number().min(0).max(1);
@@ -56,6 +57,7 @@ export const HarnessContextSchema = z
     role: z.string().optional(),
     localOnly: z.boolean().optional(),
     toolFree: z.boolean().optional(),
+    permissionProfile: PermissionProfileSchema.optional(),
     subscriptionQuota: z
       .object({
         remainingPct: UnitIntervalSchema.optional(),

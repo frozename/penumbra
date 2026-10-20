@@ -454,4 +454,193 @@ describe("land-and-close", () => {
     });
     expect(calls).toBe(3);
   });
+
+  test("STEP 3 names supersede_requires_review_evidence and never invites an override", async () => {
+    const prompts: string[] = [];
+    const agent: AgentFn = async (prompt, opts) => {
+      prompts.push(String(prompt));
+      if (opts.label === "land") return { commit_sha: "abc1234", error: "" };
+      if (opts.label === "verify")
+        return { head: "abc1234", commit_sha: "abc1234", files_changed: 1, verified: true };
+      if (opts.label === "close") return { lane_status: "closed", task_status: "skipped" };
+      return null;
+    };
+
+    const { result } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "msg", repo: "/abs/repo", lane_id: "l1" },
+      agent,
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    const closePrompt = prompts.find((p) => p.includes("STEP 3"));
+    expect(closePrompt).toBeDefined();
+    // A swept lane closed without reviewer evidence returns 400
+    // supersede_requires_review_evidence; the prompt must name it and tell the
+    // close agent to report the ledger row instead of retrying.
+    expect(closePrompt!).toContain("400 supersede_requires_review_evidence");
+    expect(closePrompt!).toContain("do NOT add an override_reason");
+    expect(closePrompt!).toContain("lane_ledger_recent");
+    expect(closePrompt!).toContain("NEVER retry");
+    // NEVER retry must apply to every lane_close error, not only the named ones.
+    expect(closePrompt!).toMatch(/any lane_close error/i);
+    // The close agent authoring its own override_reason could launder a
+    // review_debt sweeper stamp into passed — the prompt must not offer it.
+    expect(closePrompt!).not.toContain("explicit override_reason");
+  });
+});
+
+describe("land-and-close concurrent PR warning", () => {
+  const OTHER_PR = {
+    number: 74,
+    title: "Implement #71",
+    head_ref: "feat/other-account",
+    author: "second-account",
+    url: "https://github.com/acme/repo/pull/74",
+    issue: 71,
+  };
+
+  function landAgent(land: Record<string, unknown>, seen: Map<string, AgentOpts> = new Map()) {
+    const agent: AgentFn = async (_prompt, opts) => {
+      seen.set(String(opts.label), opts);
+      if (opts.label === "land") return land;
+      if (opts.label === "verify")
+        return { head: "abc1234", commit_sha: "abc1234", files_changed: 1, verified: true };
+      if (opts.label === "close") return { lane_status: "closed", task_status: "skipped" };
+      return null;
+    };
+    return agent;
+  }
+
+  test("asks the land agent to copy dispatch_land's concurrent_prs verbatim as a warning only", async () => {
+    const seen = new Map<string, AgentOpts>();
+
+    const { prompts } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+      landAgent({ commit_sha: "abc1234", error: "", concurrent_prs: [] }, seen),
+    );
+
+    const landPrompt = prompts.find((p) => p.includes("STEP 1"));
+    expect(landPrompt).toContain("concurrent_prs");
+    expect(landPrompt).toMatch(/copy .*concurrent_prs.* verbatim/i);
+    expect(landPrompt).toContain("[]");
+    expect(landPrompt).toMatch(/never retry, force, or stop/i);
+    const schema = seen.get("land")?.schema as {
+      required?: string[];
+      properties?: Record<string, { items?: { properties?: Record<string, unknown> } }>;
+    };
+    expect(schema.required).toContain("concurrent_prs");
+    expect(
+      Object.keys(schema.properties?.["concurrent_prs"]?.items?.properties ?? {}).sort(),
+    ).toEqual(["author", "head_ref", "issue", "number", "title", "url"]);
+  });
+
+  test("lands, verifies and closes anyway, and surfaces the warning in the result", async () => {
+    const { result, calls } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo", lane_id: "l1" },
+      landAgent({ commit_sha: "abc1234", error: "", concurrent_prs: [OTHER_PR] }),
+    );
+
+    expect(calls).toBe(3);
+    expect(result).toMatchObject({
+      ok: true,
+      commit_sha: "abc1234",
+      head_verified: true,
+      lane_status: "closed",
+      concurrent_prs: [OTHER_PR],
+    });
+    const notes = (result as { notes: string }).notes;
+    expect(notes).toStartWith("WARNING: 1 other open PR references the same issue as this land:");
+    expect(notes).toContain(
+      "#74 (issue #71, feat/other-account by second-account) https://github.com/acme/repo/pull/74",
+    );
+    expect(notes).not.toContain("Implement #71");
+    expect(notes).toEndWith("Successfully landed, verified, and closed.");
+  });
+
+  test("keeps the warning when verification fails after the land", async () => {
+    const agent: AgentFn = async (_prompt, opts) => {
+      if (opts.label === "land")
+        return { commit_sha: "abc1234", error: "", concurrent_prs: [OTHER_PR] };
+      if (opts.label === "verify")
+        return { head: "fff0000", commit_sha: "abc1234", files_changed: 0, verified: false };
+      return null;
+    };
+
+    const { result } = await runWorkflow(
+      ".claude/workflows/land-and-close.js",
+      { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+      agent,
+    );
+
+    expect(result).toMatchObject({ ok: false, concurrent_prs: [OTHER_PR] });
+    expect((result as { notes: string }).notes).toStartWith("WARNING: 1 other open PR");
+  });
+
+  test("reports no warning when dispatch_land returned none or the agent omitted the field", async () => {
+    for (const land of [
+      { commit_sha: "abc1234", error: "", concurrent_prs: [] },
+      { commit_sha: "abc1234", error: "" },
+    ]) {
+      const { result } = await runWorkflow(
+        ".claude/workflows/land-and-close.js",
+        { handoff_id: "h1", commit_message: "Fixes #71", repo: "/abs/repo" },
+        landAgent(land),
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        concurrent_prs: [],
+        notes: "Successfully landed, verified, and closed.",
+      });
+    }
+  });
+});
+
+describe("session-first-moves", () => {
+  const OPEN_PR_KEYS = [
+    "author",
+    "checks",
+    "created_at",
+    "foreign_author",
+    "head_ref",
+    "not_from_known_lane",
+    "number",
+    "title",
+  ];
+
+  for (const soak of [false, true]) {
+    test(`${soak ? "soak" : "default"} schema admits the collector's open_prs field`, async () => {
+      let schema: unknown;
+      const agent: AgentFn = async (_prompt, opts) => {
+        schema = opts.schema;
+        return {};
+      };
+
+      await runWorkflow(".claude/workflows/session-first-moves.js", { soak }, agent);
+
+      const root = schema as {
+        additionalProperties?: boolean;
+        properties?: Record<string, unknown>;
+      };
+      expect(root.additionalProperties).toBe(false);
+      const openPrs = root.properties?.["open_prs"] as
+        | {
+            additionalProperties?: boolean;
+            properties?: {
+              prs?: { type?: unknown; items?: { properties?: Record<string, unknown> } };
+              reason?: { type?: unknown };
+            };
+          }
+        | undefined;
+      expect(openPrs?.additionalProperties).toBe(false);
+      expect(openPrs?.properties?.prs?.type).toEqual(["array", "null"]);
+      expect(openPrs?.properties?.reason?.type).toEqual(["string", "null"]);
+      expect(Object.keys(openPrs?.properties?.prs?.items?.properties ?? {}).sort()).toEqual(
+        OPEN_PR_KEYS,
+      );
+    });
+  }
 });
