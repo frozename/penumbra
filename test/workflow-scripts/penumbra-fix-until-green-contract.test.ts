@@ -22,6 +22,7 @@ interface Round {
   check_verify_status?: string;
   check_passed?: boolean;
   ci_parity?: boolean;
+  hint?: string;
 }
 
 interface FixUntilGreenResult {
@@ -1218,5 +1219,84 @@ describe("penumbra-fix-until-green CI parity verification", () => {
     );
     expect(verifyCall).toBeDefined();
     expect(verifyCall!.prompt).toContain("PARITY run");
+  });
+});
+
+describe("penumbra-fix-until-green missing fanout proxy", () => {
+  const missingProxyStub = async () => ({
+    results: [
+      {
+        ok: false,
+        status: "proxy_error",
+        error_code: "not_found",
+        label: "t0",
+        index: 0,
+        error_summary: "proxy_error: agent type penumbra:penumbra-fanout-proxy not found",
+      },
+    ],
+  });
+
+  test("stops round 1 with proxy_not_installed and an actionable hint", async () => {
+    const { result, workflowCalls, logs, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      { workflow: missingProxyStub },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(result?.green).toBe(false);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("proxy_not_installed");
+    expect(rounds[0]?.hint).toContain("penumbra:penumbra-fanout-proxy");
+    expect(rounds[0]?.hint).toContain("agentType: 'inherit'");
+    expect(result?.last_output).toBe(rounds[0]?.hint);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    expect(
+      logs.some(
+        (entry) => entry.includes("proxy_not_installed") && entry.includes("agentType: 'inherit'"),
+      ),
+    ).toBe(true);
+  });
+
+  test("explicit agentType keeps a missing proxy as no_dispatch without a hint", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        repo: "/repo",
+        agentType: "custom:proxy",
+      },
+      { workflow: missingProxyStub },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("no_dispatch");
+    expect(rounds[0]?.hint).toBeUndefined();
+  });
+
+  test("a denied proxy keeps no_dispatch without a hint", async () => {
+    const { result, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: false,
+              status: "proxy_error",
+              error_code: "denied",
+              label: "t0",
+              index: 0,
+              error_summary: "proxy_error: denied",
+            },
+          ],
+        }),
+      },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("no_dispatch");
+    expect(rounds[0]?.hint).toBeUndefined();
   });
 });

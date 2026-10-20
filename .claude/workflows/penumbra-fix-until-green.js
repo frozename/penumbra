@@ -149,6 +149,7 @@ if (parityCheck !== null && !verifyCheck) {
 const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
+const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not installed on this host (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
 
 const RUBRIC_RESULT = {
   type: 'object',
@@ -488,6 +489,8 @@ for (let i = 0; i < maxRounds; i++) {
   let dispatchFailure = null
   if (!r) {
     dispatchFailure = 'agent_dropped'
+  } else if (r.status === 'proxy_error' && r.error_code === 'not_found' && input.agentType === undefined) {
+    dispatchFailure = 'proxy_not_installed'
   } else if (![r.conversation_id, r.root_handoff_id || r.handoff_id].some((id) => typeof id === 'string' && id.trim())) {
     dispatchFailure = 'no_dispatch'
   } else if (r.status === 'completed' && r.reliability_trustworthy !== true) {
@@ -504,8 +507,10 @@ for (let i = 0; i < maxRounds; i++) {
     const detail = dispatchFailure === 'untrustworthy_dispatch' ? (r.reliability_trustworthy === false ? 'audited and distrusted' : 'never audited') : ''
     const status = dispatchFailure === 'chain_failed' && r && typeof r.status === 'string' && r.status ? ` status=${r.status}` : ''
     const summary = r && typeof r.error_summary === 'string' && r.error_summary ? ` error_summary=${r.error_summary}` : ''
-    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r), ci_parity: false })
-    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}; stopping.`)
+    const hint = dispatchFailure === 'proxy_not_installed' ? PROXY_NOT_INSTALLED_HINT : ''
+    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, ...(hint ? { hint } : {}), result: r || null, ...hopFields(r), ci_parity: false })
+    if (hint) prevOutput = hint
+    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}${hint ? ` ${hint}` : ''}; stopping.`)
     break
   }
 
