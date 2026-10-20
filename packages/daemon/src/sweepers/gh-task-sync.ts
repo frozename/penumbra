@@ -1,7 +1,11 @@
+import type { Database } from "bun:sqlite";
+
 import type { GhClient, GhIssueComment, GhIssueState } from "../services/gh-client.js";
+import type { GhReconcileCursorStore } from "./gh-task-sync-scope.js";
 
 import { createGhCliClient } from "../services/gh-client.js";
 import { formatPenumbraComment, isPenumbraAuthoredComment } from "../services/gh-comment-format.js";
+import { createGhReconcileCursorStore, planChangedOnlyReconcile } from "./gh-task-sync-scope.js";
 
 type PushCloseReason = "completed" | "not planned";
 
@@ -25,9 +29,11 @@ export interface GhTaskSyncSummary {
   results: GhTaskSyncResult[];
 }
 
+export type GhTaskSyncAllOptions = { fullReconcile?: boolean; changedOnly?: boolean };
+
 export interface GhTaskSyncService {
   syncLinkedTask(task_id: string): Promise<GhTaskSyncResult>;
-  syncAllLinkedTasks(options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary>;
+  syncAllLinkedTasks(options?: GhTaskSyncAllOptions): Promise<GhTaskSyncSummary>;
   pushStatusNow(task_id: string): Promise<GhTaskSyncResult | null>;
   enqueueTaskGhCreate(
     task_id: string,
@@ -71,7 +77,7 @@ interface GhTaskSyncServiceOpts {
       task_id: string,
       opts: { repo: string; issue_number: number },
     ): { task_id: string; gh_issue_repo: string; gh_issue_number: number };
-    listLinkedTasksForReconcile(opts: { terminal_updated_since_ms: number }): TaskRecordLike[];
+    listLinkedTasks(): TaskRecordLike[];
     setGhLastCommentId(
       task_id: string,
       comment_id: string,
@@ -114,6 +120,7 @@ interface GhTaskSyncServiceOpts {
     markGhOutboxFailed(id: number, error: string): void;
   };
   ghClient?: GhClient;
+  reconcileCursors?: GhReconcileCursorStore;
   t0Writer: {
     write(event: {
       event_id: string;
@@ -185,7 +192,6 @@ interface SyncDecision {
 
 const GH_TASK_SYNC_BATCH_SIZE = 6;
 const GH_OUTBOX_PROCESSING_STALE_MS_DEFAULT = 10 * 60 * 1000;
-const GH_TASK_SYNC_TERMINAL_REVISIT_MS = 7 * 24 * 60 * 60 * 1000;
 
 type UnrefableTimer = ReturnType<typeof setInterval> & { unref?: () => void };
 
@@ -431,7 +437,7 @@ export function createGhTaskSyncSingleFlight(
   let inFlight = false;
   return {
     ...service,
-    async syncAllLinkedTasks(options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> {
+    async syncAllLinkedTasks(options?: GhTaskSyncAllOptions): Promise<GhTaskSyncSummary> {
       if (inFlight) {
         log?.warn?.(
           { event: "gh-task-sync.skip_in_flight", sweeper: "gh-task-sync" },
@@ -956,7 +962,7 @@ async function postDispatchFailureComment(
 
 async function syncAllLinkedTasks(
   runtime: GhTaskSyncRuntime,
-  options?: { fullReconcile?: boolean },
+  options?: GhTaskSyncAllOptions,
 ): Promise<GhTaskSyncSummary> {
   runtime.opts.taskWriter.requeueStaleGhOutboxProcessing(
     runtime.opts.now().getTime() - GH_OUTBOX_PROCESSING_STALE_MS_DEFAULT,
@@ -965,15 +971,18 @@ async function syncAllLinkedTasks(
   if (options?.fullReconcile === false) {
     return { linked: 0, pushed: 0, pulled: 0, errored: 0, skipped: false, results: [] };
   }
-  const linked = runtime.opts.taskWriter.listLinkedTasksForReconcile({
-    terminal_updated_since_ms: runtime.opts.now().getTime() - GH_TASK_SYNC_TERMINAL_REVISIT_MS,
-  });
+  const linked = runtime.opts.taskWriter.listLinkedTasks();
+  const plan = options?.changedOnly
+    ? await planChangedOnlyReconcile({ ...runtime.opts, ghClient: runtime.ghClient }, linked)
+    : null;
+  const selected = plan?.tasks ?? linked;
   const results = await runInBatches(
-    linked,
+    selected,
     GH_TASK_SYNC_BATCH_SIZE,
     async (task) => await syncLinkedTask(runtime, task.id),
   );
-  return summarizeGhTaskSync(runtime, linked.length, results);
+  plan?.commit(results);
+  return summarizeGhTaskSync(runtime, selected.length, results);
 }
 
 function summarizeGhTaskSync(
@@ -1001,7 +1010,7 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   return {
     syncLinkedTask: (task_id: string): Promise<GhTaskSyncResult> =>
       syncLinkedTask(runtime, task_id),
-    syncAllLinkedTasks: (options?: { fullReconcile?: boolean }): Promise<GhTaskSyncSummary> =>
+    syncAllLinkedTasks: (options?: GhTaskSyncAllOptions): Promise<GhTaskSyncSummary> =>
       syncAllLinkedTasks(runtime, options),
     pushStatusNow: (task_id: string): Promise<GhTaskSyncResult | null> =>
       pushStatusNow(runtime, task_id),
@@ -1136,7 +1145,7 @@ export function createGhTaskSyncSweeper(opts: {
   service: GhTaskSyncService;
   intervalMs?: number;
   /**
-   * How often the heavy full reconcile (listLinkedTasksForReconcile → per-task push/pull)
+   * How often the heavy full reconcile (listLinkedTasks → per-task push/pull)
    * runs. Every tick still drains the gh_outbox so status pushes stay prompt;
    * only the GitHub→local reconcile (the drift/pull path) is throttled. Defaults
    * to 5 minutes. The first tick after construction always runs a full reconcile
@@ -1176,7 +1185,7 @@ export function createGhTaskSyncSweeper(opts: {
           "gh-task-sync.skip_full_reconcile",
         );
       }
-      return await opts.service.syncAllLinkedTasks({ fullReconcile });
+      return await opts.service.syncAllLinkedTasks({ fullReconcile, changedOnly: true });
     } finally {
       inFlight = false;
     }
@@ -1205,6 +1214,7 @@ export function createGhTaskSyncSweeper(opts: {
 
 export function createDefaultGhTaskSyncService(
   services: {
+    db: Database;
     t0Writer: {
       write(event: {
         event_id: string;
@@ -1244,6 +1254,7 @@ export function createDefaultGhTaskSyncService(
   return createGhTaskSyncService({
     taskWriter,
     ghClient,
+    reconcileCursors: createGhReconcileCursorStore(services.db),
     t0Writer: services.t0Writer,
     now: () => services.clock(),
     uuid: services.uuid,

@@ -1446,14 +1446,9 @@ export class TaskWriter {
     return hydrateTask(row);
   }
 
-  /**
-   * Linked tasks whose GitHub state can still diverge: every non-terminal task,
-   * plus terminal tasks updated at or after `terminal_updated_since_ms` (so a
-   * fresh close still gets pushed and a quick remote reopen is still observed).
-   */
-  listLinkedTasksForReconcile(opts: { terminal_updated_since_ms: number }): TaskRecord[] {
+  listLinkedTasks(): TaskRecord[] {
     const rows = this.db
-      .query<TaskDbRow, [number]>(
+      .query<TaskDbRow, []>(
         `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
                 parent_task_id, kind, priority, prompt, acceptance_criteria,
                 expected_artifacts, eligibility, review_eligibility, requires_review,
@@ -1463,10 +1458,9 @@ export class TaskWriter {
                 gh_comments_synced_at, gh_create_status, gh_create_error
          FROM tasks
          WHERE gh_issue_repo IS NOT NULL AND gh_issue_number IS NOT NULL
-           AND (status IN ('pending', 'leased', 'done_pending_review') OR updated_at >= ?)
          ORDER BY updated_at DESC`,
       )
-      .all(opts.terminal_updated_since_ms);
+      .all();
     return rows.map(hydrateTask);
   }
 

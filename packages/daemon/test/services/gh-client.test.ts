@@ -372,6 +372,80 @@ describe("createGhCliClient", () => {
     ]);
   });
 
+  test("listIssuesUpdatedSince makes one paginated gh api call and reads server time from the first page", async () => {
+    const calls: string[][] = [];
+    const page = (date: string, rows: string[]): string =>
+      [
+        "HTTP/1.1 200 OK",
+        "Content-Type: application/json; charset=utf-8\r",
+        `Date: ${date}\r`,
+        'Link: <https://api.github.com/repos/frozename/penumbra/issues?page=2>; rel="next"\r',
+        "\r",
+        ...rows,
+      ].join("\n");
+    const exec: GhExec = (args) => {
+      calls.push(args);
+      return Promise.resolve({
+        stdout: `${page("Tue, 20 Oct 2026 03:14:34 GMT", ["215\t2026-10-20T02:03:57Z", "190\t2026-10-20T02:03:57Z"])}\n${page("Tue, 20 Oct 2026 03:14:35 GMT", ["135\t2026-10-20T02:03:47Z"])}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    };
+    const client = createGhCliClient({ exec });
+    if (!client.listIssuesUpdatedSince) throw new Error("missing listIssuesUpdatedSince");
+
+    const out = await client.listIssuesUpdatedSince("frozename/penumbra", "2026-10-20T02:00:00Z");
+
+    expect(calls).toEqual([
+      [
+        "api",
+        "--include",
+        "--paginate",
+        "repos/frozename/penumbra/issues?state=all&since=2026-10-20T02%3A00%3A00Z&per_page=100",
+        "--jq",
+        ".[] | [.number, .updated_at] | @tsv",
+      ],
+    ]);
+    expect(out).toEqual({
+      serverTime: "2026-10-20T03:14:34.000Z",
+      issues: [
+        { number: 215, updatedAt: "2026-10-20T02:03:57Z" },
+        { number: 190, updatedAt: "2026-10-20T02:03:57Z" },
+        { number: 135, updatedAt: "2026-10-20T02:03:47Z" },
+      ],
+    });
+  });
+
+  test("listIssuesUpdatedSince reports a null server time when no Date header is present", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({
+        stdout: "HTTP/1.1 200 OK\n\n7\t2026-10-20T01:00:00Z\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    const client = createGhCliClient({ exec });
+    if (!client.listIssuesUpdatedSince) throw new Error("missing listIssuesUpdatedSince");
+
+    const out = await client.listIssuesUpdatedSince("frozename/penumbra", "2026-10-20T00:00:00Z");
+
+    expect(out).toEqual({
+      serverTime: null,
+      issues: [{ number: 7, updatedAt: "2026-10-20T01:00:00Z" }],
+    });
+  });
+
+  test("listIssuesUpdatedSince rejects when gh fails", async () => {
+    const exec: GhExec = () =>
+      Promise.resolve({ stdout: "", stderr: "HTTP 503: Service Unavailable", exitCode: 1 });
+    const client = createGhCliClient({ exec });
+    if (!client.listIssuesUpdatedSince) throw new Error("missing listIssuesUpdatedSince");
+
+    await expectRejectsWithMessage(
+      client.listIssuesUpdatedSince("frozename/penumbra", "2026-10-20T00:00:00Z"),
+      "HTTP 503",
+    );
+  });
+
   test("getAuthenticatedLogin reads login via gh api user", async () => {
     const calls: string[][] = [];
     const exec: GhExec = (args) => {

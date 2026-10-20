@@ -58,29 +58,4 @@ describe("TaskWriter gh issue linking", () => {
     expect(row.gh_issue_repo).toBeNull();
     expect(row.gh_issue_number).toBeNull();
   });
-
-  test("listLinkedTasksForReconcile keeps non-terminal and recently-updated terminal tasks only", () => {
-    const file = (prompt: string): string =>
-      writer.file({ prompt, created_by_kind: "human", created_by_id: "cli" }).task_id;
-    const pendingId = file("pending");
-    const oldDoneId = file("old done");
-    const recentDoneId = file("recent done");
-    const unlinkedId = file("unlinked");
-    writer.linkGhIssue(pendingId, { repo: "frozename/penumbra", issue_number: 1 });
-    writer.linkGhIssue(oldDoneId, { repo: "frozename/penumbra", issue_number: 2 });
-    writer.linkGhIssue(recentDoneId, { repo: "frozename/penumbra", issue_number: 3 });
-    writer.cancel({ task_id: oldDoneId });
-    writer.cancel({ task_id: recentDoneId });
-    writer.cancel({ task_id: unlinkedId });
-    db.run(`UPDATE tasks SET updated_at = 1_000 WHERE id = ?`, [oldDoneId]);
-    db.run(`UPDATE tasks SET updated_at = 5_000 WHERE id = ?`, [recentDoneId]);
-    db.run(`UPDATE tasks SET updated_at = 1_000 WHERE id = ?`, [pendingId]);
-
-    const ids = writer
-      .listLinkedTasksForReconcile({ terminal_updated_since_ms: 2_000 })
-      .map((t) => t.id)
-      .sort();
-
-    expect(ids).toEqual([pendingId, recentDoneId].sort());
-  });
 });
