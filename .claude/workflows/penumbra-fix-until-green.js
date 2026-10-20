@@ -154,11 +154,15 @@ const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanou
 const RUBRIC_RESULT = {
   type: 'object',
   additionalProperties: false,
-  required: ['criteria'],
+  required: ['criteria', 'inspected'],
   properties: {
     overall_pass: {
       type: 'boolean',
       description: 'explicit verdict for the whole rubric; decide from this field',
+    },
+    inspected: {
+      type: 'boolean',
+      description: 'true only when you located and read the candidate diff; false means the rubric was not graded',
     },
     criteria: {
       type: 'array',
@@ -338,7 +342,7 @@ function hopFields(result) {
   }
 }
 
-function rubricPrompt(branch, handoffId) {
+function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
   const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
   const messagePreview = `${String(task.message || '').slice(0, 400)}…`
   return [
@@ -354,7 +358,11 @@ function rubricPrompt(branch, handoffId) {
     `Candidate branch: ${branch}`,
     `Handoff id: ${handoffId}`,
     ``,
-    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and run git diff --stat first. Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.`,
+    ...(repoRoot ? [`Repository root: ${repoRoot}`, `Candidate worktree (derived; it may not exist): ${worktreePath}`] : ['Repository root: unknown (args.repo, args.caller_cwd and defaults.caller_cwd are unset or relative).']),
+    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }).`,
+    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${base}...${branch} and then git -C ${repoRoot} diff ${base}...${branch} -- <path>. Every command must use git -C ${repoRoot}; never invoke in your own working directory, which can be a different repository.` : 'If worktree_inspect fails, do not invoke the diff command in your own working directory, which can be a different repository.',
+    'If you cannot read the candidate diff by either route, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
+    'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
     `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
@@ -521,12 +529,12 @@ for (let i = 0; i < maxRounds; i++) {
     log(`WARNING: fix-until-green round ${i + 1}: ignored ${r.extra_hops || 0} extra hop(s) for branch selection; retry_prompt_count=${r.retry_prompt_count || 0} hops_incomplete=${r.hops_incomplete === true}; using root_handoff_id=${r.root_handoff_id} branch=${r.branch}`)
   }
   log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
+  const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
+  const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
+  const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
   let checkVerified = false
   let checkVerifyStatus = 'skipped'
   if (verdict.passed && verifyCheck) {
-    const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
-    const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
-    const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
     const verifyPrompt = [
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
       '',
@@ -596,7 +604,7 @@ for (let i = 0; i < maxRounds; i++) {
     if (rubric.length > 0) {
       let grade
       try {
-        grade = await agent(rubricPrompt(r.branch, r.handoff_id), {
+        grade = await agent(rubricPrompt(r.branch, r.handoff_id, hasRepoRoot ? repoRoot : null, worktreePath), {
           label: `rubric#${i + 1}`,
           phase: 'Iterate',
           schema: RUBRIC_RESULT,
@@ -606,8 +614,9 @@ for (let i = 0; i < maxRounds; i++) {
       } catch {
         grade = null
       }
-      if (grade === null) {
-        const graderUnavailableOutput = 'Independent rubric grader was unavailable; rubric not attested.'
+      const notInspected = grade != null && grade.inspected === false
+      if (grade == null || notInspected) {
+        const graderUnavailableOutput = notInspected ? 'Independent rubric grader could not locate the candidate diff; rubric not attested.' : 'Independent rubric grader was unavailable; rubric not attested.'
         rounds.push({
           round: i + 1,
           agent: agentForRound,
@@ -617,12 +626,12 @@ for (let i = 0; i < maxRounds; i++) {
           check_passed: true,
           check_verify_status: checkVerifyStatus,
           rubric_status: 'GRADER_UNAVAILABLE',
-          rubric_grade: null,
+          rubric_grade: grade ?? null,
           verified: checkVerified,
           ci_parity: parityCheck !== null && checkVerified,
           passed: false,
         })
-        log(`fix-until-green round ${i + 1}: grader unavailable; rubric not attested on ${r.branch}`)
+        log(`fix-until-green round ${i + 1}: ${notInspected ? 'grader could not locate the candidate diff' : 'grader was unavailable'}; rubric not attested on ${r.branch}`)
         prevOutput = graderUnavailableOutput
         break
       }

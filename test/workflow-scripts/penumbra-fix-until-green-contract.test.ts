@@ -1300,3 +1300,129 @@ describe("penumbra-fix-until-green missing fanout proxy", () => {
     expect(rounds[0]?.hint).toBeUndefined();
   });
 });
+
+describe("penumbra-fix-until-green rubric grader scope", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("grader prompt is scoped to the dispatch repo, not its own cwd", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        repo: "/srv/other-repo",
+        base: "feat/base",
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "diff" }],
+        }),
+      },
+    );
+
+    expect(result?.green).toBe(true);
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("Repository root: /srv/other-repo");
+    expect(prompt).toContain("/srv/other-repo-worktrees/h-777");
+    expect(prompt).toContain("git -C /srv/other-repo diff --stat feat/base...test/x_h-777");
+    expect(prompt).toContain('mcp__penumbra__worktree_inspect({ handoff_id: "h-777" })');
+    expect(prompt).not.toMatch(/\bgit (?!-C )/);
+  });
+
+  test("grader prompt uses caller_cwd as repo root when repo is absent", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "diff" }],
+        }),
+      },
+    );
+
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("git -C /abs diff --stat main...test/x_h-777");
+  });
+
+  test("grader returning inspected:false yields GRADER_UNAVAILABLE without a second round", async () => {
+    const { result, workflowCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({ inspected: false, criteria: [], notes: "branch not found" }),
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds).toHaveLength(1);
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(rounds?.[0]?.passed).toBe(false);
+    const fanoutCalls = workflowCalls.filter((c) => c.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(1);
+  });
+
+  test("grader returning undefined yields GRADER_UNAVAILABLE", async () => {
+    const { result, workflowCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub(undefined),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    const fanoutCalls = workflowCalls.filter((c) => c.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(1);
+  });
+});
