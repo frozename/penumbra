@@ -3,16 +3,17 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
 
-async function gitBranchExists(repoRoot: string, branchName: string): Promise<boolean> {
+export type BranchProbeRunner = (args: readonly string[]) => Promise<unknown>;
+
+const defaultRunGit: BranchProbeRunner = async (args) => await execFile("git", [...args]);
+
+async function gitBranchExists(
+  runGit: BranchProbeRunner,
+  repoRoot: string,
+  branchName: string,
+): Promise<boolean> {
   try {
-    await execFile("git", [
-      "-C",
-      repoRoot,
-      "show-ref",
-      "--verify",
-      "--quiet",
-      `refs/heads/${branchName}`,
-    ]);
+    await runGit(["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`]);
     return true;
   } catch {
     return false;
@@ -22,17 +23,13 @@ async function gitBranchExists(repoRoot: string, branchName: string): Promise<bo
 export async function availableBranchNameBestEffort(
   repoRoot: string | undefined,
   requestedName: string,
+  runGit: BranchProbeRunner = defaultRunGit,
 ): Promise<string> {
   if (repoRoot === undefined) return requestedName;
-  try {
-    await execFile("git", ["-C", repoRoot, "rev-parse", "--git-dir"]);
-    if (!(await gitBranchExists(repoRoot, requestedName))) return requestedName;
-    for (let suffix = 2; suffix <= 99; suffix += 1) {
-      const candidate = `${requestedName}-${String(suffix)}`;
-      if (!(await gitBranchExists(repoRoot, candidate))) return candidate;
-    }
-  } catch {
-    return requestedName;
+  if (!(await gitBranchExists(runGit, repoRoot, requestedName))) return requestedName;
+  for (let suffix = 2; suffix <= 99; suffix += 1) {
+    const candidate = `${requestedName}-${String(suffix)}`;
+    if (!(await gitBranchExists(runGit, repoRoot, candidate))) return candidate;
   }
   throw new Error(`branch_name_collision_exhausted: ${requestedName}`);
 }
