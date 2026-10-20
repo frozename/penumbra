@@ -89,7 +89,7 @@ export { WorkerControlBus, type WorkerControlListener } from "./events/worker-co
 export { FsPathError, resolveInsideWorktree } from "./fs-paths.js";
 export { type GhRunner } from "./gh-runner.js";
 export { MachineId } from "./identity/machine-id.js";
-export { clearProjectIdCache, resolveProjectId } from "./identity/project-id.js";
+export { resolveProjectId } from "./identity/project-id.js";
 export { type ProjectScope, resolveProjectScope } from "./identity/project-resolver.js";
 export { createLogger, type Logger } from "./logger.js";
 export {
